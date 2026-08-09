@@ -32,17 +32,17 @@
 # guard, so the installer refused the domain it had just installed; the second
 # once classified clusters/active/*.yaml as safe to discard, so a merge
 # conflict would have resolved the installation's ledger away with the sync
-# reporting success. tools/lib/src/branch/branch_class_audit.dart reads THIS
-# file, mirrors both routines for real (the mirrors stand in
-# tools/lib/src/stamp/), and reports where they disagree with it.
+# reporting success. The gate reads THIS file, mirrors both routines for real,
+# and reports where they disagree with it. It lives in ansiwise-plugins, in the
+# package hostyour_cloud_gate — this repository ships no Dart and runs none.
 #
 # FORMAT. Sections of `  "<pattern>": <value>` lines, each with its reason on
 # the ONE comment line directly above it — the shape platform/versions.yaml
 # already uses, plain enough that a rule and the reason for it read together
 # with no nested structure in between.
 #
-# PATTERNS are bash pattern-match — GlobPattern
-# (tools/lib/src/tree/glob_pattern.dart) is what applies them — where `*`
+# PATTERNS are bash pattern-match — the gate's GlobPattern is what applies
+# them — where `*`
 # matches `/` as well: `*.sh` covers every script wherever it sits, and
 # `charts/*` covers the whole subtree instead of stopping at the first `/`,
 # which is the sense a shell glob or a package:glob pattern would give it.
@@ -68,7 +68,7 @@ classes:
 
   # git's own attributes for this repository — no writer, no installation coordinate.
   ".gitattributes": product
-  # The rule that keeps configs/config.<stage> and configs/mail-dns.<stage>.conf versioned per install branch and every secret out; identical in every installation.
+  # What never enters this tree — the agent instruction files and the vendored chart dependencies; identical in every installation.
   ".gitignore": product
   # The secret-scanner's allowlist for this repository; a scanner setting, not a machine setting.
   ".gitleaks.toml": product
@@ -79,13 +79,6 @@ classes:
 
   # The consumer scaffold copied into a customer's repository at onboarding; app-agnostic product content, never stamped — StampFqdn excludes every path with a templates segment, top-level or not.
   "templates/*": product
-
-  # The two templates an operator copies and fills, one per stage. Product: the same bytes on every
-  # installation, and what they carry is illustration — user@example.com, example.com — never this
-  # cluster's own name. config.example opens with a shebang, so the domain stamp passes over it by
-  # first line as it does over every script.
-  "configs/config.example": product
-  "secrets/secrets.example": product
 
   # The four public addresses of the bootstrap and the certificate in front of the secret store.
   # Each names a host built on this cluster's FQDN, so the domain stamp fills them like every other
@@ -112,9 +105,7 @@ classes:
 
   # The ten library charts every app depends on: no writer at all — not in the placeholder list, not pruned by StampRole, not touched by the version sync.
   "charts/*": product
-  # The gate: the checks, the library they share and the program that runs them on the developer's own machine. It decides things about the product tree, so it is the same in every installation; the placeholder domain its own fixtures need is split across two string literals (tools/lib/src/installation.dart) precisely so no file of this package ever carries the whole one, and a search for the placeholder finds nothing here to stamp.
-  "tools/*": product
-  # This file: the declaration itself, the same in every installation, and the one thing tools/test/branch_class_test.dart reads instead of deciding by grep.
+  # This file: the declaration itself, the same in every installation, and the one thing the gate's branch-class check reads instead of deciding by grep.
   "branch-classes.yaml": product
 
   # Chart metadata and dependency version pins, stamped on master only, by the version sync, from platform/versions.yaml.
@@ -164,19 +155,6 @@ classes:
   # Same mechanism as values-dev.yaml, and where the release bump writes: pipeline-release.yaml:806-810 commits builds[].tag to MASTER, and an install receives it when its pin moves.
   "apps/*/values-prod.yaml": product
 
-  # This machine's settings: the installer writes DEPLOY_ENV and DOMAIN_SUFFIX=CLUSTER_NAME=<fqdn>, the disk actually mounted at /mnt/data, and the operator's two mailboxes.
-  "configs/config.dev": install
-  # Same as config.dev, for a test-stage cluster.
-  "configs/config.test": install
-  # Same as config.dev, for a prod-stage cluster.
-  "configs/config.prod": install
-  # This installation's registrable sender apexes and their Cloudflare zones, scaffolded per branch by the installer; absent on a pure slave, which runs no Postfix. See uncertain:.
-  "configs/mail-dns.dev.conf": install
-  # Same as mail-dns.dev.conf, for a test-stage cluster.
-  "configs/mail-dns.test.conf": install
-  # Same as mail-dns.dev.conf, for a prod-stage cluster.
-  "configs/mail-dns.prod.conf": install
-
   # The 16 deploy toggles: on a branch `deploy:` states what runs on ONE cluster. StampAppToggles rewrites nine of them from what this cluster is — the build plane, the master part, and the one agent that runs where the master part is not; the other seven carry an operator's own decision, which is why derived: below names the nine and not the directory.
   "cluster/apps/*.yaml": install
   # Rendered whole by StampClusterProfile from the run's answers: domain, clusterName, unitApex, platformDomain, booksBranch, vaultUrl, tailnetUrl and the registry host all name one cluster.
@@ -193,10 +171,6 @@ classes:
   # The platform's own grammar and nothing else: releaseTagFilter, channelStages, the timezone, the storage class. global.domain used to sit here and made the file two classes at once; it is one installation's fqdn, and StampClusterProfile writes it into cluster/profile.yaml.
   "platform/values-common.yaml": product
 
-  # The empty-directory marker that lets this repository carry bin/ with no binary in it. The
-  # binary itself is built in simetrixch/ansiwise-plugins and dropped here, and .gitignore keeps
-  # it out of git — so what is tracked is the directory, which is the same in every installation.
-  "bin/.gitkeep": product
   # The empty-directory marker that lets the trunk carry clusters/active/ with no map in it — the state the installer asserts the trunk must be in.
   "clusters/active/.gitkeep": product
   # THE single source for every upstream component version, stamped into apps/*/Chart.yaml and apps/*/values-*.yaml by the version sync.
@@ -222,8 +196,7 @@ classes:
 # -----------------------------------------------------------------------------
 # stamped — the paths whose domain placeholder IS installation state, so the
 # stamp must rewrite it there. The value names the key that is stamped. The
-# check runs StampFqdn's real selection (tools/lib/src/stamp/domain_stamp.dart)
-# and reports both directions:
+# check runs StampFqdn's real selection and reports both directions:
 # a path it returns that is not declared here, and a path declared here that it
 # does not return. A stamped path is installation state on the branch, so its
 # class must be install or mixed — never product, which is byte-identical
@@ -366,18 +339,6 @@ trunk-absent:
   # Same as cluster/values/postfix.yaml.
   "cluster/values/observability.yaml": install-branch
 
-  # .gitignore:5-9 un-ignores exactly the three config.<stage> files; each stands on its own install branch and master carries none.
-  "configs/config.dev": install-branch
-  # Same as configs/config.dev.
-  "configs/config.test": install-branch
-  # Same as configs/config.dev.
-  "configs/config.prod": install-branch
-  # .gitignore:16-18 un-ignores exactly the three mail-dns.<stage>.conf files; the installer scaffolds one per branch and master carries none.
-  "configs/mail-dns.dev.conf": install-branch
-  # Same as configs/mail-dns.dev.conf.
-  "configs/mail-dns.test.conf": install-branch
-  # Same as configs/mail-dns.dev.conf.
-  "configs/mail-dns.prod.conf": install-branch
   # A map is one installation's identity; the trunk holds only clusters/active/.gitkeep, which the installer asserts.
   "clusters/active/*.yaml": books-branch
   # The Controller writes an onboarded unit's build declaration onto the books branch; the trunk carries only the seven platform ones, which are named above them.
@@ -397,12 +358,6 @@ trunk-absent:
 # -----------------------------------------------------------------------------
 uncertain:
 
-  # Classified install because the installer scaffolds it per branch and .gitignore versions it per branch — but its CONTENT is installation-wide, the same sender apexes the books already hold. Whether an installation with two mail-sending clusters must publish the same apex list from both would settle it: if yes it is books, duplicated per branch today.
-  "configs/mail-dns.dev.conf": install-or-books
-  # Same as configs/mail-dns.dev.conf.
-  "configs/mail-dns.test.conf": install-or-books
-  # Same as configs/mail-dns.dev.conf.
-  "configs/mail-dns.prod.conf": install-or-books
   # A slave's own map stands on its install branch AND on the books branch, with two writers and nothing reconciling them. Whether the Controller may write a slave's own-branch copy, or whether that copy is a read-only cache of one books row, would settle it.
   "clusters/active/*.yaml": books-row-on-an-install-branch
 
@@ -414,12 +369,6 @@ uncertain:
 # -----------------------------------------------------------------------------
 outside:
 
-  # The most installation-specific file on a machine: the hand-authored Vault-seed inputs. .gitignore:24-25 keeps only *.example, so this is install-class machine input that is never tracked.
-  "secrets/secrets.dev": install
-  # Same as secrets/secrets.dev.
-  "secrets/secrets.test": install
-  # Same as secrets/secrets.dev.
-  "secrets/secrets.prod": install
   # Vendored Helm dependency archives, fetched by `helm dependency build` and ignored by .gitignore:45; ArgoCD does its own dependency fetch when rendering.
   "apps/*/charts/*": product
   # The lockfile of that same dependency fetch, ignored beside it at .gitignore:46.

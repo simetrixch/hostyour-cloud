@@ -7,7 +7,9 @@
 # writes that block to a file and executes it — so a `\r` in the YAML travels
 # the whole way and arrives in a pod as `bad interpreter: /usr/bin/env sh^M`.
 #
-# tools/test/line_endings_test.dart reads this file back. It names those six
+# The gate's line-ending check reads this file back. It lives in the plugin
+# repository, simetrixch/ansiwise-plugins, because this repository ships no
+# code at all. It names those six
 # templates, and it reports a path declared LF that carries a carriage return,
 # a text path no rule here owns, and a rule that owns no tracked path — which
 # is how this file stops describing a repository that has changed underneath it.

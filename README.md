@@ -23,12 +23,17 @@ tree is the software's own.
 apps/          the 22 platform applications, each a chart
 charts/        the library charts they are built from
 argocd/        the ApplicationSets and projects, per stage
+bootstrap/     what is applied before ArgoCD exists
 cluster/       what ONE cluster is: its application toggles and its profile
 clusters/      an installation's cluster maps
 platform/      the version pins and the platform's own grammar
 templates/     the scaffold copied into a customer's repository at onboarding
-bin/           the compiled binary that deploys all of it
 ```
+
+**And nothing else.** No configuration, no secrets, no executable and no code that runs — this is
+structure, and it is the same structure for everybody who clones it. What belongs to ONE
+installation comes from outside: that company's own repository, carrying its configuration in the
+clear and its secrets encrypted, handed to the deployer along with the key that opens them.
 
 `branch-classes.yaml` states what every path here IS — **product** (byte-identical in every
 installation), **install** (one cluster's own settings) or **books** (what one installation knows

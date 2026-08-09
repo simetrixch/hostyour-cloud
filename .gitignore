@@ -1,76 +1,28 @@
-# configs/ — keep the *.example templates AND the per-install config.<env>
-# files checked in. config is NOT secret (domain, cluster name, admin email, host
-# prefixes, channels) — it is part of the install branch's reproducible definition.
-# Real SECRETS live in secrets/ and stay ignored (below).
-configs/*
-!configs/*.example
-!configs/config.dev
-!configs/config.test
-!configs/config.prod
-# mail-dns.<env>.conf — the mail-DNS publisher's declarative config (sender
-# domains, DKIM policy). Public DNS facts, no secrets — versioned per install
-# branch exactly like config.<env>. The sender domains are an installation's
-# registrable mail apexes, NOT the cluster FQDN, so the domain stamp never
-# rewrites them; each install branch carries its own file, master carries none (the
-# publisher synthesises the cluster's own domain when no file exists).
-!configs/mail-dns.dev.conf
-!configs/mail-dns.test.conf
-!configs/mail-dns.prod.conf
+# Helm dependency build artefacts. `helm dependency build` populates `charts/` and `Chart.lock`
+# under each app, and ArgoCD does its own dependency fetch when rendering — so tracking them
+# would only add drift the moment a Chart.yaml is bumped without a rebuild.
+apps/*/charts/
+apps/*/Chart.lock
 
-# secrets/ — consolidated home for ALL secrets: the
-# hand-authored Vault-seed inputs (secrets.<env>, secrets.<env>.pub.txt) AND the
-# generated credential files ({vault,argocd,kube,idp}-<env>.txt). Keep ONLY the
-# secrets.example template checked in; ignore every real secret.
-secrets/*
-!secrets/*.example
-
-# Belt-and-suspenders: never commit per-env SECRET / credential files even if
-# they show up outside the secrets/ directory. (config.<env> is NOT listed here —
-# it carries no secrets and is versionable, see the configs/ note above.)
-secrets.dev
-secrets.test
-secrets.prod
-secrets.dev.pub.txt
-secrets.test.pub.txt
-secrets.prod.pub.txt
+# NOTHING SECRET, EVER, ANYWHERE IN THIS TREE. This repository is the product and it is meant to
+# be cloned and used by anybody; one installation's secrets live in that installation's own
+# repository, encrypted, and never here. These patterns are the belt to that braces: a credential
+# file that turns up under some other name still does not get committed by accident.
+secrets
+secrets.*
+*-credentials
+*.pem
+*.key
 vault-*.txt
 argocd-*.txt
 kube-*.txt
 idp-*.txt
 
-# Helm dependency build artefacts — `helm dependency build` populates
-# `charts/` and `Chart.lock` under each app, but ArgoCD does its own
-# dependency fetch when rendering, so tracking these would only bloat the
-# repo and cause version drift when Chart.yaml is bumped without a re-build.
-apps/*/charts/
-apps/*/Chart.lock
-
-# What `dart pub get` writes for the gate package under tools/. It holds ABSOLUTE paths into the
-# machine it was resolved on, so it says nothing to any other machine and a copy of it would make
-# the analyzer resolve packages that are not there. tools/pubspec.lock is NOT ignored — the gate is
-# an application, and every machine that runs it resolves the versions the developer did.
-**/.dart_tool/
-
-# NOTE: secrets.enc (the GPG-AES256 encrypted backup of every secret) is
-# intentionally NOT ignored — it is COMMITTED to the remote as the off-site,
-# encrypted recovery copy.
-
-# Node app sources bundled in this repo (any future in-repo app)
-# — never commit dependencies or build output, wherever they sit.
-**/node_modules/
-*.log
-
-# Temp files
-*.tmp
-/tmp/
-
-# The compiled binary that gets copied to a machine. It is built in the plugin repository,
-# simetrixch/ansiwise-plugins, and dropped in here, so it is an artifact this
-# repository carries rather than one it produces.
-/bin/*
-!/bin/.gitkeep
-
 # Agent instructions. Loaded from disk by whichever harness opens this repository, and never
 # tracked: they are ours, and this repository is meant to be cloned and used by anybody.
 CLAUDE.md
 AGENTS.md
+
+# Editor and shell leftovers.
+*.log
+*.tmp
