@@ -344,14 +344,13 @@ externalsecret-postgres:
 # =============================================================================
 # PLATFORM-OWNED ESO SecretStore + ServiceAccount for the superuser credential.
 #
-# per-consumer-postgres.md §5.3 requires the platform source to ship its OWN
-# credential objects with DISTINCT names — so it never fights the consumer's chart
-# for a resource, and never depends on an object the consumer renders late.
+# The platform source ships its OWN credential objects under DISTINCT names — so it
+# never fights the consumer's chart for a resource, and never depends on an object
+# the consumer renders late.
 #
 # The consumer's chart owns SecretStore `vault-backend` + ServiceAccount
-# `external-secrets-sa` (templates/consumer-template/deploy/chart/templates/
-# secretstore.yaml) and creates them at the consumer's wave -3. The postgres pod is
-# at wave -20 (§4.3). Reusing `vault-backend` for the credential ExternalSecret would
+# `external-secrets-sa` and creates them at the consumer's wave -3. The postgres pod
+# is at wave -20. Reusing `vault-backend` for the credential ExternalSecret would
 # therefore point it at a store that does not exist until FAR AFTER the pod that
 # needs the Secret, so `postgresql-credentials` would never materialise in time and
 # the pod would deadlock in CreateContainerConfigError. That is the deadlock this

@@ -77,9 +77,6 @@ classes:
   # What the product is and what its directories hold. It names no domain and no cluster: an installation is described by its own cluster map, not here.
   "README.md": product
 
-  # The consumer scaffold copied into a customer's repository at onboarding; app-agnostic product content, never stamped — StampFqdn excludes every path with a templates segment, top-level or not.
-  "templates/*": product
-
   # The four public addresses of the bootstrap and the certificate in front of the secret store.
   # Each names a host built on this cluster's FQDN, so the domain stamp fills them like every other
   # placeholder in the tree. Install and not product for the same reason argocd/* is: what stands in
@@ -234,8 +231,6 @@ stamped:
 # -----------------------------------------------------------------------------
 never-stamp:
 
-  # The scaffold copied into a customer's repository: its placeholder is the value the customer replaces, excluded by the ^templates/ prefix.
-  "templates/*": illustration
   # This file quotes the placeholder to explain the stamp; stamped, the one file naming the paths that must never be stamped would name a real FQDN instead. StampFqdn excludes it by name.
   "branch-classes.yaml": documentation
 

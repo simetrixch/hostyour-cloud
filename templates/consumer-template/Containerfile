@@ -1,5 +1,0 @@
-# The unit's image build — deploy/platform.yaml builds[] points here, and the
-# platform's <unit>-release pipeline builds it at every release tag. The
-# reference app ships upstream whoami unchanged, so this build only re-tags it
-# under the unit's own flat image name; replace it with your real build stages.
-FROM docker.io/traefik/whoami:v1.10
