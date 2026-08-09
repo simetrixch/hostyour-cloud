@@ -1,0 +1,76 @@
+# Shared values across DEV / TEST / PROD. Per-env Vault paths in
+# values-{dev,test,prod}.yaml.
+#
+# What lives in this namespace after the per-unit release fan-out
+# (apps/consumer-build): the EventListener + its Ingress (the ONE webhook
+# entry point), the webhook HMAC Secret it verifies against, and the three
+# SHARED Tasks (git-clone, credential-scan, buildah-build-push) every
+# <unit>-release Pipeline resolves via the cluster resolver. The PipelineRuns
+# themselves run in the per-unit <unit>-build namespaces, with per-unit
+# credentials rendered there — nothing builds in this namespace any more.
+
+pipeline:
+  # SA for the EventListener pod — carries the Tekton Triggers ClusterRole
+  # bindings (incl. namespace Secret read for webhook HMAC interceptor
+  # secretRefs). The PipelineRun pods run in the unit namespaces under their
+  # own pipeline-sa (apps/consumer-build), never under this identity.
+  eventListenerServiceAccountName: eventlistener-sa
+
+# Workspace sizing. The `source` workspace holds the cloned source for the
+# duration of one PipelineRun (PVC-backed; auto-cleaned by Tekton's pruner).
+# Read by the deploy-request TriggerTemplate's volumeClaimTemplate.
+workspaces:
+  sourceSize: 10Gi
+
+# EventListener config — exposed publicly so GitHub can call it on a
+# deploy/<stage>/<release-tag> tag push.
+eventListener:
+  enabled: true
+
+  ingress:
+    enabled: true
+    # Composed at chart render time as <subdomain>.<domain>
+    # (e.g. build.dev.<your-domain>) using platform globals + tpl.
+    subdomain: build
+
+# ExternalSecret — the GitHub webhook signing secret. The deploy-request
+# Trigger's github Interceptor validates X-Hub-Signature-256 against the
+# `github` key of this Secret.
+externalsecret-webhooks:
+  externalSecret:
+    enabled: true
+    name: image-builder-webhook-secrets
+    namespace: image-builder
+    targetSecretName: image-builder-webhook-secrets
+    data:
+      - secretKey: github
+        property: github-webhook-secret
+
+# Monitoring chart — Pipeline alerting. The Tekton operator's own
+# ServiceMonitor lives in apps/tekton/. The pipelinerun metrics are
+# controller-wide, so these alerts cover the per-unit <unit>-build runs.
+monitoring:
+  prometheusRules:
+    image-builder:
+      enabled: true
+      groups:
+        - name: image-builder
+          interval: 60s
+          rules:
+            - alert: PipelineRunFailed
+              expr: increase(tekton_pipelines_controller_pipelinerun_count{status="failed"}[10m]) > 0
+              for: 1m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Release PipelineRun failed in last 10 minutes"
+                description: "Check `tkn pipelinerun list -A`."
+
+            - alert: PipelineRunRunningTooLong
+              expr: time() - max(tekton_pipelines_controller_running_pipelineruns_count > 0) > 1800
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Release PipelineRun running > 30 minutes"
+                description: "Check for stuck Buildah steps."

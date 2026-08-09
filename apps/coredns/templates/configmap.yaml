@@ -1,0 +1,86 @@
+{{- /*
+Owns kube-system/coredns. The base Corefile mirrors what the MicroK8s `dns`
+addon installs out of the box; the only differentiator is the per-env
+`rewrite name ...` rules that come from `.Values.rewrites`.
+
+The `reload` plugin already in the Corefile makes CoreDNS auto-detect this
+ConfigMap change and re-parse — no Deployment rollout needed. If
+`microk8s enable dns` is re-run later it will overwrite this; ArgoCD
+selfHeal restores it.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+  labels:
+    k8s-app: kube-dns
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+          lameduck 5s
+        }
+        ready
+        log . {
+          class error
+        }
+        {{- /*
+        Rewrites: `.from` is evaluated as a Go template (Helm `tpl`) so values
+        can reference .Values.global.env and .Values.global.domain — composing
+        per-env public hostnames from a single source of truth in
+        platform/values-{common,env}.yaml.
+
+        Sources, in order (CoreDNS uses the first match when the same `from`
+        appears twice):
+          1. .Values.rewrites      — every-env values-driven rewrites
+          2. the service hairpins below, each gated on global.servicesLocal.*
+             (the SERVICE being local, cluster/profile.yaml) — a rewrite for a
+             service this cluster does not host would resolve the public name
+             to a Service that does not exist here, or bounce a lookup meant
+             for another cluster into the local Traefik.
+          3. .Values.extraRewrites — per-env values-driven rewrites
+        */}}
+        {{- range .Values.rewrites }}
+        rewrite name {{ tpl .from $ }} {{ .to }}
+        {{- end }}
+        {{- /* Vault hairpin — emitted ONLY where Vault runs locally (a cluster
+             with the master part, global.servicesLocal.vault). In-cluster
+             https:// lookups of this cluster's own Vault hostname (every ESO
+             SecretStore dials global.vaultUrl) reach the Service directly
+             instead of resolving to the host's public IPv4 and NAT-hairpinning.
+             A pure slave dials the MASTER's vault hostname, which this rewrite
+             never matches. */}}
+        {{- if .Values.global.servicesLocal.vault }}
+        rewrite name vault.{{ .Values.global.domain }} vault.vault.svc.cluster.local
+        {{- end }}
+        {{- /* Zot registry hairpin — emitted ONLY where the registry runs locally
+             (the ONE build cluster, global.servicesLocal.registry). In-cluster
+             https:// lookups of this cluster's own registry hostname bounce
+             through Traefik for TLS termination + the LE cert chain, instead of
+             resolving to the host's public IPv4 and NAT-hairpinning. Follows the
+             registry to whichever cluster runs it — no per-env values needed. */}}
+        {{- if .Values.global.servicesLocal.registry }}
+        rewrite name zot.{{ .Values.global.domain }} traefik.ingress.svc.cluster.local
+        {{- end }}
+        {{- range .Values.extraRewrites }}
+        rewrite name {{ tpl .from $ }} {{ .to }}
+        {{- end }}
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+          pods insecure
+          fallthrough in-addr.arpa ip6.arpa
+        }
+        prometheus :9153
+        {{- if .Values.forward.forceTcp }}
+        forward . {{ .Values.forward.upstreams }} {
+          force_tcp
+        }
+        {{- else }}
+        forward . {{ .Values.forward.upstreams | default "/etc/resolv.conf" }}
+        {{- end }}
+        cache 30
+        loop
+        reload
+        loadbalance
+    }

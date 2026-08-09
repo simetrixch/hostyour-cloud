@@ -1,0 +1,10 @@
+middleware:
+  enabled: true
+  # The one type this chart renders. The middleware is namespace-local; consumer
+  # Ingresses reference it cross-namespace via the Traefik k8scrd provider as
+  # `<this-ns>-<name>@kubernetescrd`. The platform's forwardAuth and
+  # redirectRegex Middlewares are imperative objects under bootstrap/, not
+  # renders of this chart.
+  type: basicAuth
+  basicAuth:
+    secretName: ""

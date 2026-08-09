@@ -1,0 +1,37 @@
+{{- if .Values.eventListener.enabled }}
+{{- /*
+The ONE webhook entry point of the release cycle. A single Trigger attaches:
+github-deploy-request (templates/triggers/) — a push of the ref
+deploy/<stage>/<release-tag> routes into the unit's own <unit>-release
+Pipeline in namespace <unit>-build. GitHub does nothing else here: it only
+fires this webhook; build, push, bump and sync all run in the build plane.
+
+The Service backing the EventListener is named `el-image-builder` by Tekton's
+controller (prefix `el-` + EventListener name). Our Ingress points at it.
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: image-builder
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: eventlistener
+spec:
+  serviceAccountName: {{ .Values.pipeline.eventListenerServiceAccountName }}
+  triggers:
+    - triggerRef: github-deploy-request # deploy/<stage>/<release-tag> push → <unit>-release in <unit>-build
+  resources:
+    kubernetesResource:
+      spec:
+        template:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    cpu: 50m
+                    memory: 64Mi
+                  limits:
+                    cpu: 200m
+                    memory: 256Mi
+{{- end }}

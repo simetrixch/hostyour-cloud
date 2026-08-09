@@ -1,0 +1,44 @@
+# Traefik Middleware — pre-selects the OIDC auth method on the Vault UI's
+# login page (Method dropdown defaults to Token otherwise). One click of
+# "Sign in with OIDC Provider" then completes the SSO flow against
+# Authentik. The Role input may be left blank — Vault's server-side
+# `default_role=default` (set by enable_vault_oidc in deploy-vault.sh)
+# kicks in automatically; the form's helperText confirms this in-UI.
+#
+# True zero-click is impractical: Vault OSS UI's OIDC callback handler
+# does `window.opener.postMessage(...)` and the parent auth page handles
+# the actual code→token exchange + localStorage write through Vault UI's
+# auth service. Replicating that outside Vault UI couples us tightly to
+# the Vault UI version (TOKEN_PREFIX + TOKEN_SEPARATOR + cluster-scoped
+# token-storage), so we keep the one-button-click pattern instead.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: vault-oidc-redirect
+  namespace: vault
+spec:
+  redirectRegex:
+    regex: ^https?://vault.example.invalid/?$
+    replacement: https://vault.example.invalid/ui/vault/auth?with=oidc%2F
+    permanent: false
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: vault
+  namespace: vault
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`vault.example.invalid`)
+      kind: Rule
+      middlewares:
+        - name: vault-oidc-redirect
+          namespace: vault
+      services:
+        - name: vault
+          port: 8200
+          serversTransport: vault-transport
+  tls:
+    secretName: vault-tls

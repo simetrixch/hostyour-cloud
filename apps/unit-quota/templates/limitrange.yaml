@@ -1,0 +1,40 @@
+{{- /*
+The other half of the quota, and it ships WITH it or the quota is a trap.
+
+A ResourceQuota that bounds requests.cpu makes requests mandatory: the API server
+rejects any pod in the namespace whose containers declare none, because it cannot
+count what was not stated. Every chart the platform itself ships declares its
+resources — but a consumer's chart belongs to the consumer, and neither the
+contract nor any gate requires it to (G22 polices sync waves, nothing else). So
+the quota alone would stop such a consumer from deploying, with an admission
+error naming a resource nobody asked them about.
+
+This LimitRange supplies what they left unsaid: `defaultRequest` becomes the
+container's request, `default` becomes its limit, and the pod is then countable.
+It changes nothing for a container that states its own — an explicit value always
+wins over the default.
+
+TYPE Container, not Pod: the defaults are stamped per container, so a pod with a
+sidecar gets them for both, and a pod with one container is unaffected by the
+distinction. There is deliberately no `max`/`min` here: bounding a single
+container's size is a second policy with its own failure mode (a legitimately
+large single workload refused while the namespace has room), and the namespace
+ceiling above is what this ticket set out to give.
+*/ -}}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: unit-defaults
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: unit-quota
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: {{ .Values.limitRange.defaultRequest.cpu | quote }}
+        memory: {{ .Values.limitRange.defaultRequest.memory | quote }}
+      default:
+        cpu: {{ .Values.limitRange.default.cpu | quote }}
+        memory: {{ .Values.limitRange.default.memory | quote }}

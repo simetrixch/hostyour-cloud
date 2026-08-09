@@ -1,0 +1,13 @@
+{{- if .Values.middleware.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "common.fullname" . }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+spec:
+  {{- if eq .Values.middleware.type "basicAuth" }}
+  basicAuth:
+    secret: {{ .Values.middleware.basicAuth.secretName }}
+  {{- end }}
+{{- end }}

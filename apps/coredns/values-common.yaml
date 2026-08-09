@@ -1,0 +1,23 @@
+# Values-driven DNS rewrites applied on every env — an extension surface for
+# an install branch (e.g. a host LAN name an operator must resolve in-cluster).
+# `from` is evaluated as a Go template (Helm `tpl`) so an entry can compose
+# from .Values.global.env / .Values.global.domain. Empty on the trunk: every
+# platform-service hairpin (vault, zot) is emitted by configmap.yaml
+# itself, gated on global.servicesLocal.* — the service being LOCAL on this
+# cluster — so a rewrite never outlives the service it points at.
+rewrites: []
+
+# Per-env additional values-driven rewrites — set in values-{dev,test,prod}.yaml
+# when a mapping makes sense only on one cluster. Default empty so test/prod
+# don't silently inherit a one-off mapping.
+extraRewrites: []
+
+# Upstream DNS forwarding for non-cluster names. Default mirrors the MicroK8s
+# `dns` addon: forward to the node's /etc/resolv.conf (UDP). Override per-env in
+# values-{env}.yaml when the host LAN needs explicit resolvers and/or force_tcp.
+# NOTE: this Corefile OWNS kube-system/coredns, so it overrides whatever the
+# installer's fix_coredns_upstream patched — the per-env value here must match
+# the host's DNS_UPSTREAM_SERVERS + DNS_FORCE_TCP in configs/config.<env>.
+forward:
+  upstreams: "/etc/resolv.conf"
+  forceTcp: false

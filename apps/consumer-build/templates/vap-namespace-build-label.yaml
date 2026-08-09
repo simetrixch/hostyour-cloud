@@ -1,0 +1,85 @@
+{{- /*
+CATALOG mode only — ONE cluster-scoped policy on the build plane, not one per
+unit.
+
+The label `hostyour.cloud/build` is the whole binding of the Vault role
+build-eso, seeded with the cluster: a ServiceAccount named external-secrets-sa
+in ANY namespace carrying it logs in and reads the two platform GitOps PATs
+(build/hostyour-cloud/repo-pat, build/catalog/repo-pat) plus the build tier
+of whatever unit its own alias-metadata annotation names. A unit's chart
+renders Namespace objects of its own (the per-unit AppProject whitelists that
+cluster-scoped kind), so without this policy the label — and with it the role —
+is a unit's to claim.
+
+Two facts about a build namespace that a unit's chart cannot reproduce:
+
+  - it is named <unit>-build;
+  - ArgoCD stamps `argocd.argoproj.io/tracking-id` with the name of the
+    Application that manages the object, OVERWRITING whatever the manifest
+    carried, and the build fan-out names that Application <unit>-build as well
+    — the same string as the namespace. A unit's delivery Application is
+    <unit>-<stage> over namespace <unit>, so requiring the two names to agree
+    admits the fan-out and nothing else. The same clause also refuses the
+    takeover of an EXISTING build namespace: an update pushed by any other
+    Application arrives under that Application's tracking id.
+
+Cluster-scoped and unconditional: the binding carries no namespaceSelector,
+because the label a selector would read is the very thing under review. Every
+clause short-circuits on a namespace without the label, so namespaces that
+never touch the build tier are admitted unread.
+
+A hand-applied label is refused too (kubectl carries no tracking id). Granting
+the platform's GitOps PATs to a namespace is a fan-out decision; it is made in
+registrations/<unit>/build.yaml and nowhere else.
+
+NOT the same policy as the per-consumer one the Controller applies at onboard
+(hostyour-manager/server/domains/onboarding/admission-policy.ts), and neither
+makes the other redundant. That one is scoped to the namespaces of ONE unit's
+Application and holds every platform label prefix there. This one is scoped to
+NO unit: it reads every namespace admission on the build plane, including those
+of a tenant member chart, which has no per-unit policy at all.
+*/ -}}
+{{- if not .Values.unit }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: consumer-build-namespace-label
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["namespaces"]
+  variables:
+    - name: claimsBuild
+      expression: "has(object.metadata.labels) && 'hostyour.cloud/build' in object.metadata.labels"
+    - name: trackingId
+      expression: >-
+        (has(object.metadata.annotations) && 'argocd.argoproj.io/tracking-id' in object.metadata.annotations)
+          ? object.metadata.annotations['argocd.argoproj.io/tracking-id'] : ''
+  validations:
+    - expression: "!variables.claimsBuild || object.metadata.name.endsWith('-build')"
+      message: "the label hostyour.cloud/build binds the Vault role that holds the platform GitOps PATs — only a <unit>-build namespace may carry it."
+      reason: Forbidden
+    - expression: "!variables.claimsBuild || variables.trackingId.startsWith(object.metadata.name + ':')"
+      message: "a namespace labelled hostyour.cloud/build must be the one the build fan-out Application of the same name manages — its ArgoCD tracking id names another writer."
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: consumer-build-namespace-label
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  policyName: consumer-build-namespace-label
+  # Deny, never audit: an admitted label is a login, and a login is the PAT.
+  validationActions:
+    - Deny
+{{- end }}

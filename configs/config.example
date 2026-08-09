@@ -1,0 +1,179 @@
+#!/bin/bash
+# config.example — copied to config.<stage> by ./install.sh, then read by ./setup.sh.
+# SECTION 1 is yours to fill in. SECTION 2 is filled by install.sh or left at the
+# platform default; you do not normally touch it.
+
+################################################################################
+# SECTION 1 — WHAT YOU FILL IN
+################################################################################
+
+# --- Required ---------------------------------------------------------------
+
+# Let's Encrypt certificate notifications. A real mailbox.
+LETSENCRYPT_EMAIL="user@example.com"
+
+# The first administrator of the identity provider. Receives the password-reset
+# link for that account, so it must be a real mailbox you can read.
+# setup.sh refuses to run while this is still the placeholder.
+IDP_BOOTSTRAP_EMAIL="user@example.com"
+
+# Where this installation's platform alerts go — one or more mailboxes, separated
+# by commas. charts/monitoring refuses to render an enabled alert route that
+# resolves to no recipient, so an empty value fails at the first ArgoCD sync.
+ALERT_RECIPIENTS=""
+
+# The public apex consumers and tenants serve under: <name>.<apex>. install.sh
+# offers the fqdn minus its first label (m1.example.com -> example.com), so two
+# clusters in one zone share an apex and a unit keeps its address when it moves
+# between them.
+UNIT_APEX=""
+
+# This installation's BUSINESS domain: the mail sender identity the unit charts
+# derive when their own value is empty (no-reply@<platform-domain>), and the
+# postfix relay's sender allowlist. Defaults to the unit apex, so the derived
+# value can never be somebody else's domain.
+PLATFORM_DOMAIN=""
+
+# The fqdn of the cluster this one pulls its images from — its own, unless
+# another machine carries the build plane.
+BUILD_PLANE=""
+
+# The repository holding this installation's TENANT charts and their per-stage
+# pins, as <owner>/<name>. Demanded, never derived: it is your own repository,
+# not this cloud's, and no rule composes its name out of anything here. set-role
+# stamps the clone URL into the tenant ApplicationSets and refuses to run without
+# it, so an installation cannot carry a tenant until this is set.
+CATALOG_REPO=""
+
+# --- Change only if your machine differs from the default ---------------------
+
+# Upstream resolvers CoreDNS forwards non-cluster lookups to. The default is
+# Hetzner's, because a Hetzner machine blocks outbound UDP/53 to any other public
+# resolver — 1.1.1.1 and 8.8.8.8 simply time out there.
+# On another provider: set your provider's resolvers, or "" to auto-detect the
+# host's own. "" works anywhere and is the safe choice if you are unsure.
+DNS_UPSTREAM_SERVERS="185.12.64.1,185.12.64.2"
+
+# Set "true" only on a network that blocks outbound UDP/53 but allows TCP/53.
+# Symptom that calls for it: CoreDNS logs i/o timeouts and certificate issuance
+# fails with "server misbehaving".
+DNS_FORCE_TCP="false"
+
+# The LAN this machine shares with the other clusters. The install HARD-fails
+# when POD_CIDR below overlaps it — an overlap makes pods unable to reach the
+# other machines, which breaks every connection to a slave's API server.
+# "" skips the check.
+LAN_CIDR="10.1.1.0/24"
+
+################################################################################
+# SECTION 2 — FILLED BY install.sh, OR THE PLATFORM DEFAULT
+################################################################################
+
+# --- Written by install.sh from the arguments you gave it ---------------------
+CLUSTER_NAME="my-cluster"
+DOMAIN_SUFFIX="example.com"
+DEPLOY_ENV="prod"
+
+# Written when a filesystem is mounted at /mnt/data; left empty otherwise, and
+# then PV data stays on the root disk. Set together or not at all.
+STORAGE_PATH=""
+STORAGE_DEVICE=""
+STORAGE_DIRECTORY=""
+
+# --- MicroK8s ----------------------------------------------------------------
+# Do not pin older than 1.35/stable: 1.35 switched the ingress addon from
+# nginx-ingress to Traefik, and the Vault manifests use Traefik CRDs.
+MICROK8S_CHANNEL="1.35/stable"
+MICROK8S_USER="${SUDO_USER:-$(whoami)}"
+MICROK8S_STORAGE_PATH="/var/snap/microk8s/common/default-storage"
+
+ADDONS=(
+    "dns"
+    # FIRST on purpose. Without it the API server runs with
+    # --authorization-mode=AlwaysAllow: RBAC objects are accepted and look
+    # correct, nothing is enforced, and every pod can read every Secret.
+    "rbac"
+    "hostpath-storage"
+    "helm3"
+    "cert-manager"
+    "ingress"
+    "metrics-server"
+)
+
+# Disabled on every install — the built-in registry runs on :32000 without auth
+# or TLS and is replaced by the GitOps-managed Zot in apps/registry/.
+DISABLED_ADDONS=(
+    "registry"
+)
+
+# Extra Traefik TCP entrypoints as `name:port`, for non-HTTP services that need
+# their own port. Example: ("mqtt:1883")
+TRAEFIK_EXTRA_TCP_ENTRYPOINTS=()
+
+# Pod network. NOT the MicroK8s default: that one contains a typical 10.1.1.0/24
+# cluster LAN, and an overlap makes pods unable to reach the other machines.
+POD_CIDR="10.244.0.0/16"
+
+# --- cert-manager ------------------------------------------------------------
+CLUSTER_ISSUER_NAME="letsencrypt-prod"
+# Staging URL for testing without rate limits:
+# https://acme-staging-v02.api.letsencrypt.org/directory
+ACME_SERVER="https://acme-v02.api.letsencrypt.org/directory"
+
+# --- Runtime -----------------------------------------------------------------
+STATE_DIR="/var/lib/kubernetes-setup"
+ENABLE_COLOR="true"
+MICROK8S_READY_TIMEOUT=180
+CERT_MANAGER_READY_TIMEOUT=300
+ADDON_ENABLE_TIMEOUT=60
+POD_READY_TIMEOUT=300
+CERTIFICATE_READY_TIMEOUT=300
+
+# --- Bootstrap applications ---------------------------------------------------
+ENABLE_IDP="true"
+ENABLE_KUBE="true"
+ENABLE_ARGOCD="true"
+ENABLE_VAULT="true"
+
+IDP_HOST_PREFIX="idp"
+KUBE_HOST_PREFIX="kube"
+ARGOCD_HOST_PREFIX="argo"
+VAULT_HOST_PREFIX="vault"
+
+# Derived — do not edit.
+IDP_HOST="${IDP_HOST_PREFIX}.${DOMAIN_SUFFIX}"
+KUBE_HOST="${KUBE_HOST_PREFIX}.${DOMAIN_SUFFIX}"
+ARGOCD_HOST="${ARGOCD_HOST_PREFIX}.${DOMAIN_SUFFIX}"
+VAULT_HOST="${VAULT_HOST_PREFIX}.${DOMAIN_SUFFIX}"
+
+IDP_REPO_NAME="authentik"
+IDP_REPO_URL="https://charts.goauthentik.io"
+KUBE_REPO_NAME="headlamp"
+KUBE_REPO_URL="https://kubernetes-sigs.github.io/headlamp"
+ARGOCD_REPO_NAME="argo"
+ARGOCD_REPO_URL="https://argoproj.github.io/argo-helm"
+VAULT_REPO_NAME="hashicorp"
+VAULT_REPO_URL="https://helm.releases.hashicorp.com"
+
+# Chart versions are pinned in lib/deploy-{argocd,vault,idp}.sh. Uncomment to
+# override; an unset value would float across a major release.
+#IDP_CHART_VERSION="2026.5.6"
+#ARGOCD_CHART_VERSION="10.2.1"
+#VAULT_CHART_VERSION="0.34.0"
+
+IDP_NAMESPACE="idp"
+KUBE_NAMESPACE="kubernetes-dashboard"
+ARGOCD_NAMESPACE="argocd"
+VAULT_NAMESPACE="vault"
+
+IDP_RELEASE="idp"
+KUBE_RELEASE="headlamp"
+ARGOCD_RELEASE="argocd"
+VAULT_RELEASE="vault"
+
+VAULT_STORAGE_SIZE="10Gi"
+
+# Namespaces outside this repo that read this Vault through ESO. Each needs a
+# ServiceAccount `external-secrets-sa` and a SecretStore pointing at
+# https://vault.<DOMAIN_SUFFIX>:8200. Re-run --seed-vault after changing it.
+EXTERNAL_ESO_NAMESPACES=()

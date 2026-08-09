@@ -1,0 +1,77 @@
+apiVersion: v2
+name: observability-agent
+version: 1.0.0
+description: |
+  Light observability PUSH agent for a SLAVE cluster (D4b).
+
+  A slave has NO Grafana / Prometheus / Loki / Tempo server of its own — the
+  full stack (apps/observability) lives on the master. This app instead ships a
+  tiny scraper + shipper that PUSHES metrics and logs to the master:
+
+    - Grafana Alloy (singleton DaemonSet) discovers the cluster's
+      ServiceMonitors / PodMonitors (exactly what the per-app `monitoring:` keys
+      already declare), scrapes kubelet / cAdvisor / node, and remote_writes to
+      the master's Prometheus; it also tails pod + journald logs and pushes them
+      to the master's Loki. Both carry an `external_labels.cluster` tag so the
+      master can slice by slave. Alloy's config is rendered by the agent-mode
+      ConfigMap template in charts/monitoring (a template can read globals; a
+      values file cannot) — see charts/monitoring/templates/alloy-agent-config.yaml.
+    - kube-state-metrics for kube_* metrics (pod state / restarts) — Alloy has
+      no built-in KSM.
+    - The 3 monitoring CRDs (ServiceMonitor / PodMonitor / PrometheusRule) as
+      static manifests in templates/. Every workload app (redis, mongodb, …)
+      emits these CRs via charts/monitoring, so without the CRDs installed those
+      apps could never sync on a slave that runs no prometheus-operator. Same
+      static-CRD pattern as apps/external-secrets. PrometheusRule CRs are inert
+      here (no operator) — rule evaluation happens centrally on the master.
+    - secret-store + external-secret (like every app): the basic-auth push
+      credentials, materialized by ESO from the master's per-slave Vault mount at
+      <mount>/<stage>/app/observability-agent/*.
+
+  Toggle: cluster/apps/observability-agent.yaml — master default deploy:"false"
+  (StampAppToggles flips it "true" wherever the role lacks the master part). Catalog entry in
+  argocd/<stage>/apps/applicationset.yaml (project observability, wave 30),
+  deployed into the `observability` namespace — the observability plane on this
+  cluster; mutually exclusive with the full apps/observability (D2), so they
+  never coexist and the observability AppProject's existing destination /
+  whitelists cover it.
+type: application
+dependencies:
+  # Per-app monitoring resources + the agent-mode Alloy config (a templated
+  # ConfigMap `alloy-config`, gated on monitoring.alloyAgent.enabled).
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring
+
+  # The scraper + shipper. Same chart + version apps/observability pins
+  # (apps/observability/Chart.yaml:30-32). configMap.create=false → reads the
+  # ConfigMap the monitoring chart renders above.
+  - name: alloy
+    version: 1.11.0
+    repository: https://grafana.github.io/helm-charts
+
+  # kube_* metrics. Version pinned to what the master's kube-prometheus-stack
+  # (apps/observability/Chart.yaml) bundles for KSM — so the slave and the
+  # master emit the same kube-state-metrics schema across the clusters.
+  - name: kube-state-metrics
+    version: 8.0.0
+    repository: https://prometheus-community.github.io/helm-charts
+
+  # Per-namespace SecretStore (the Vault backend the push-cred ExternalSecret
+  # reads). On a slave this resolves to the master's per-slave KV mount via the
+  # global.vaultKvMount / global.vaultKubernetesAuthPath fallbacks (D4a, I4).
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # ExternalSecret — materializes the basic-auth push credentials Secret that
+  # Alloy's remote_write / loki.write reference.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: observability-agent-push-secret
+
+  # Shared named templates (common.labels etc.) used by the library charts above.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

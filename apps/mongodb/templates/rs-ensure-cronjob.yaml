@@ -1,0 +1,106 @@
+{{- if .Values.mongodb.rsEnsure.enabled }}
+# Self-healing replica-set guard. The PostSync rs-init Job (rs-init-job.yaml)
+# initiates rs0 once per ArgoCD sync; it does NOT re-run when data is wiped out
+# of band (e.g. `kubectl delete pvc`), leaving mongod as RSGhost with no PRIMARY
+# — which silently blocks the service-provisioner (no primary → no claimed users
+# / Secrets, so the exporter and every consumer stall). This CronJob runs the SAME
+# idempotent ensure logic on a schedule, so rs0 self-heals after any wipe without
+# a sync. It is a no-op when rs0 is already healthy.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongodb-rs-ensure
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: rs-ensure
+spec:
+  schedule: {{ .Values.mongodb.rsEnsure.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 200
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 180
+      ttlSecondsAfterFinished: 120
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: mongodb
+            app.kubernetes.io/component: rs-ensure
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+          containers:
+            - name: rs-ensure
+              image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
+              imagePullPolicy: {{ .Values.mongodb.image.pullPolicy }}
+              env:
+                - name: REPLICAS
+                  value: {{ .Values.mongodb.replicas | quote }}
+                - name: STS
+                  value: "mongodb-{{ .Values.global.env }}"
+                - name: SVC
+                  value: "mongodb-{{ .Values.global.env }}-headless"
+                - name: NS
+                  value: {{ .Release.Namespace | quote }}
+                # rs.* admin commands require auth (mongod runs --auth). The root
+                # user is created from this same Secret on first init, so it is
+                # present even right after a wipe.
+                - name: ROOT_PW
+                  valueFrom:
+                    secretKeyRef:
+                      name: mongodb-credentials
+                      key: root-password
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -uo pipefail
+                  # Member list from the StatefulSet's stable per-pod DNS.
+                  members=""
+                  for i in $(seq 0 $((REPLICAS-1))); do
+                    h="${STS}-${i}.${SVC}.${NS}.svc.cluster.local:27017"
+                    [ -n "$members" ] && members="$members,"
+                    members="${members}{_id:${i},host:\"${h}\"}"
+                  done
+                  # Host-only URI; root creds via -u/-p so a password with URI
+                  # metacharacters (:/@?&) needs no URL-escaping.
+                  SEED="mongodb://${STS}-0.${SVC}.${NS}.svc.cluster.local:27017/?directConnection=true&authSource=admin"
+                  # Bounded wait for the seed node to answer (post-wipe it may
+                  # still be starting); give up to ~60s, then let the next tick retry.
+                  for t in $(seq 1 20); do
+                    mongosh "$SEED" -u root -p "${ROOT_PW}" --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1 && break
+                    sleep 3
+                  done
+                  # Idempotent ensure: initiate if no config, reconfig only on
+                  # member-set drift, else no-op.
+                  mongosh "$SEED" -u root -p "${ROOT_PW}" --quiet --eval "
+                    var desired = [${members}];
+                    var conf = null;
+                    try { conf = rs.conf(); } catch (e) {}
+                    if (!conf) {
+                      rs.initiate({_id: 'rs0', members: desired});
+                      print('rs0 initiated with ' + desired.length + ' member(s)');
+                    } else {
+                      var cur = conf.members.map(function (m) { return m.host; }).sort().join(',');
+                      var want = desired.map(function (m) { return m.host; }).sort().join(',');
+                      if (cur !== want) {
+                        conf.members = desired;
+                        rs.reconfig(conf, {force: true});
+                        print('rs0 reconfigured -> ' + want);
+                      } else { print('rs0 ok: ' + cur); }
+                    }"
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+{{- end }}

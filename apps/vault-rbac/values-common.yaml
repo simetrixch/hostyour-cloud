@@ -1,0 +1,3 @@
+# No values — the chart renders one fixed ClusterRole/ClusterRoleBinding pair;
+# subject and rules live in templates/rbac.yaml (names are load-bearing: they
+# must stay `vault-namespace-reader`, the objects Vault's auth path relies on).

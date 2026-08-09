@@ -1,0 +1,5 @@
+# TEST-specific Tekton overrides — none today.
+#
+# The file stays even while empty. The catalog lists values-<stage>.yaml
+# unconditionally for every app it renders (argocd/test/apps/applicationset.yaml)
+# and ignoreMissingValueFiles is not set, so a missing file fails the render.

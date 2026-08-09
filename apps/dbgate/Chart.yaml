@@ -1,0 +1,38 @@
+apiVersion: v2
+name: dbgate
+version: 1.0.0
+description: DBGate — unified web UI for MongoDB, Redis, and PostgreSQL (replaces mongoexpress/redisinsight)
+type: application
+appVersion: "7.2.1"
+dependencies:
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: app
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-db
+  # Separate ExternalSecret for the IdP-bundled PostgreSQL — reads from
+  # Vault path `<env>/app/idp` (not `app/dbgate`): the IdP's postgres
+  # password is seeded there because ESO's policy can only read the app
+  # tier (system/* is deliberately unreadable to it).
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-idp-db
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  # Shared named templates (common.labels etc.) used by every library chart
+  # above. Declared at APP level because Helm doesn't vendor nested file://
+  # deps — see charts/common/Chart.yaml for the consumption rule.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

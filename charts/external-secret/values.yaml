@@ -1,0 +1,20 @@
+externalSecret:
+  enabled: true
+  name: ""
+  namespace: ""
+  # Optional metadata.annotations on the ExternalSecret resource (e.g. an ArgoCD
+  # sync-wave, so the materialized Secret lands before the pod that mounts it).
+  # Default empty = no annotations block emitted (byte-identical for apps that set
+  # nothing). Same guarded idiom as charts/pvc's pvc.annotations.
+  annotations: {}
+  # secretStoreName + secretStoreKind: empty here. The template falls back to
+  # .Values.global.secretStoreName (platform/values-common.yaml: vault-backend)
+  # and defaults kind to "SecretStore".
+  secretStoreName: ""
+  secretStoreKind: ""
+  targetSecretName: ""
+  vaultPath: ""
+  data: []
+  # Example data structure:
+  # - secretKey: password
+  #   property: password

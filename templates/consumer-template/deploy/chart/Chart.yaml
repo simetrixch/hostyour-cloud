@@ -1,0 +1,6 @@
+apiVersion: v2
+name: consumer-template
+version: 1.0.0
+appVersion: "v1.10"
+description: Reference consumer app — traefik/whoami + one ESO secret. Self-contained.
+type: application

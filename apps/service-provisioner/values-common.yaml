@@ -1,0 +1,66 @@
+# service-provisioner — env-agnostic defaults. Per-env values-{dev,test,prod}.yaml
+# set the mongo + postgres hosts (their env-suffixed Service DNS). global.env +
+# global.dbConsumerLabel come from platform/values-<env>.yaml. Each backend's
+# admin credential is read at runtime from that backend's own Secret via the
+# controller's cluster-wide secret-read RBAC — no ESO/Vault wiring here.
+
+controller:
+  serviceAccountName: service-provisioner
+  image:
+    repository: python
+    tag: "3.12-slim"
+    pullPolicy: IfNotPresent
+  pollIntervalSeconds: 15
+
+  mongo:
+    host: ""                              # per-env (mongodb-<env>-headless...)
+    rootUser: root
+    authSource: admin
+    replicaSet: rs0
+    credentialsNamespace: mongodb
+    credentialsSecret: mongodb-credentials
+    credentialsKey: root-password
+    # Namespaces whose claims may use spec.roles (extra, whitelisted role@db
+    # grants). PLATFORM-ONLY on purpose: every whitelisted role is cluster-wide
+    # by nature — clusterMonitor@admin reads stats for EVERY database — so it
+    # steps outside the per-claim `<namespace>_<claim>` prefix that is the whole
+    # isolation guarantee. A consumer or tenant namespace must therefore never be
+    # able to grant itself one, however harmless the role looks. Empty ⇒ nobody
+    # may (fail-closed); today only mongodb, for its own exporter's claim.
+    extraRolesNamespaces:
+      - mongodb
+
+  postgres:
+    # PER-CONSUMER (per-consumer-postgres.md §5.4, §6): no `host` and no
+    # `credentialsNamespace`. provisioner.py resolves the host (Service `postgres`
+    # in the claim's own namespace) and the admin Secret (postgresql-credentials in
+    # that same namespace) from the claim itself — there is no shared instance to
+    # point at. Only the namespace-independent knobs remain.
+    port: "5432"
+    adminUser: postgres
+    credentialsSecret: postgresql-credentials
+    credentialsKey: postgres-password
+
+  registry:
+    # Build-cluster identity (the ONE cluster running apps/registry, i.e.
+    # global.servicesLocal.registry — at any stage). The `registry` ServiceClaim
+    # backend copies the pull dockerconfigjson (Vault <env>/app/registry,
+    # property pull-dockerconfigjson) from this source Secret — materialised by
+    # registrySource below, gated on the build cluster — into consumer
+    # namespaces. Harmless on non-build clusters: registrySource is off there, so
+    # the source Secret doesn't exist and a `registry` claim reports a clear
+    # "not available" / "not configured" Error instead of provisioning. See README.
+    sourceNamespace: service-provisioner
+    sourceSecret: registry-pull-source
+    sourceKey: .dockerconfigjson
+
+# Materialize the shared registry pull dockerconfigjson so the `registry`
+# ServiceClaim backend has a source Secret. The ExternalSecret + its SecretStore
+# are gated on the build cluster (global.servicesLocal.registry), so they follow
+# the registry to whichever ONE cluster runs it, at any stage — `enabled` here is
+# just an extra manual override.
+registrySource:
+  enabled: false
+# Per-namespace SecretStore for that ESO source (external-secrets app-tier role;
+# vaultUrl from global). Rendered on the build cluster (see Chart.yaml condition).
+secret-store: {}

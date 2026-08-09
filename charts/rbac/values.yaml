@@ -1,0 +1,4 @@
+# This is a LIBRARY chart (type: library) — it renders nothing on its own and
+# takes no values of its own. All input is passed by the consuming chart as the
+# argument to `include "rbac.grants"` (see templates/_grants.tpl for the call
+# shape). Kept as an (empty) placeholder so `helm dependency build` is happy.

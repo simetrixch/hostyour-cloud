@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — the platform `admins` group (staff / Controller access).
+#
+# state: created is LOAD-BEARING. The default (`present`) would re-assert the group on
+# every worker reconcile and wipe invitation-added members; `created` means "create if
+# absent, then never touch again", so members added via the invitation flow survive.
+# Runs before 99-controller.yaml, which binds this group to the Controller application
+# (staff-only access). Restored generically after the old in-cluster console was removed.
+version: 1
+metadata:
+  name: admins group
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - id: admins-group
+    model: authentik_core.group
+    state: created
+    identifiers:
+      name: admins
+    attrs:
+      name: admins

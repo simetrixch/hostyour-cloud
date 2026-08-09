@@ -1,0 +1,15 @@
+# DEV pins of the manager app's images — the ONE grammar the release bump
+# searches (builds[]{name,image,tag}; `image` is the FLAT build name). The
+# tag is written by the bump on a release; edit it by hand only to roll back.
+builds:
+  - name: manager
+    image: manager
+    tag: "0.41.0"
+  # The dbtools job image (hostyour-manager/docker/dbtools.Dockerfile): the
+  # Deployment projects it as DBTOOLS_IMAGE and the manager runs every
+  # move/backup/restore Job on it. It builds in hostyour-manager because that
+  # is where its caller lives, so a hostyour-manager release bumps this pin.
+  # 0.0.0 is the pre-first-release placeholder.
+  - name: dbtools
+    image: dbtools
+    tag: "0.0.0"

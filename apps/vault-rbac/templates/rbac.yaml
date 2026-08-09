@@ -1,0 +1,38 @@
+{{- /*
+vault-namespace-reader — namespace + service account read for Vault's auth mount.
+
+Vault (ServiceAccount `vault` in ns `vault` — the VAULT_NAMESPACE default)
+authenticates ESO logins whose Vault roles bind namespaces by LABEL
+(bound_service_account_namespace_selector, e.g. consumer-eso): on every such
+login Vault GETs the calling SA's Namespace, authenticated as its OWN SA.
+system:auth-delegator (bound when the cluster is seeded) only covers
+TokenReview/SubjectAccessReview — under enforced RBAC (the rbac addon) the
+namespace GET 403s and every consumer login dies with "namespace not
+authorized ... failed to get namespace".
+
+The ServiceAccount GET is the second half: the auth mount runs with
+use_annotations_as_alias_metadata, so on every login Vault reads the calling
+ServiceAccount and lifts its vault.hashicorp.com/alias-metadata-* annotations
+into the login alias metadata. The tenant and build policies template their
+paths on those values, so without this grant the login fails on the annotation
+read.
+
+GitOps-owned HERE (single owner, wipe-safe: ArgoCD self-heals it) — the
+imperative MASTER copy is gone; it was only recreated when somebody seeded
+Vault again by hand.
+
+NOT the slave twin: adding a slave binds the same-named ClusterRole to
+kube-system:vault-token-reviewer via its OWN ClusterRoleBinding
+(slave-mgmt-vault-token-reviewer-namespaces) — that stays imperative on the
+slaves. Where this app also syncs on a slave, its objects are identical-content
+(the ClusterRole) or inert (this CRB's subject vault:vault does not exist
+there), so there is no ArgoCD/imperative fight.
+*/ -}}
+{{- include "rbac.grants" (dict
+    "root" $
+    "subject" (dict "name" "vault" "namespace" "vault")
+    "grants" (list
+      (dict "name" "vault-namespace-reader" "rules" (list
+        (dict "apiGroups" (list "") "resources" (list "namespaces" "serviceaccounts") "verbs" (list "get" "list"))
+      ))
+    )) }}

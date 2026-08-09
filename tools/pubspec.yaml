@@ -1,0 +1,31 @@
+# The gate of hostyour-cloud, and nothing else.
+#
+# This repository is Helm charts and ArgoCD manifests; it ships no Dart and runs none on a cluster.
+# The package exists so the checks can be TESTS — a `dart test` that fails is a check that went red,
+# with no output to parse and no verdict protocol to keep in step between a runner and its members.
+#
+# lib/ holds what DECIDES and test/ holds what asserts. An audit takes a tree and returns findings;
+# it never asserts, prints or exits, which is what lets a counter-probe drive the same audit over a
+# tree it planted and what keeps a check from being a shell script with Dart syntax.
+name: hostyour_cloud_gate
+description: The checks that decide whether this tree of charts and manifests is in a finishable state.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  # branch-classes.yaml, platform/versions.yaml, the ApplicationSets and everything helm renders are
+  # YAML, and this reads all of them. It is why the gate asks for no yq: a check that parses the
+  # document itself cannot be defeated by a query expression that stopped matching, and helm is
+  # then the only tool tool/toolchain_guard.dart has to pin besides the SDK.
+  yaml: ^3.1.3
+  path: ^1.9.1
+  # `@immutable` on every finding and every value an audit takes, so the analyzer refuses a
+  # field somebody would otherwise mutate under a test that has already read it.
+  meta: ^1.19.0
+
+dev_dependencies:
+  test: ^1.31.2
+  lints: ^6.1.0

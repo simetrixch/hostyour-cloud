@@ -1,0 +1,34 @@
+apiVersion: v2
+name: tailnet-coordinator
+version: 1.0.0
+description: Headscale — the self-hosted coordination server of the private tailnet the platform's hosts join. The tailnet client is already installed and running on every host, placed there unpinned by the installer; this is the control plane it logs in to instead of the hosted one. Runs on the cluster with the master part, reachable at global.tailnetUrl over a public Ingress — a host that has not joined yet has no other path. State (the coordinator's own noise key + the node database) on the platform StorageClass.
+type: application
+appVersion: "v0.29.2"
+
+dependencies:
+  # headscale pod — Deployment + ClusterIP Service via shared library chart.
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: app
+
+  # Coordinator state — bound by the pod at /var/lib/headscale: the noise
+  # private key that identifies THIS coordinator to every joined host, and the
+  # SQLite node database. Losing it means every host has to join again.
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+
+  # Public Ingress at the host half of global.tailnetUrl. cert-manager issues
+  # the LE cert via the platform-global ClusterIssuer; headscale itself serves
+  # plain HTTP behind Traefik.
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+
+  # Shared named templates (common.labels etc.) used by every library chart
+  # above. Declared at APP level because Helm doesn't vendor nested file://
+  # deps — see charts/common/Chart.yaml for the consumption rule.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

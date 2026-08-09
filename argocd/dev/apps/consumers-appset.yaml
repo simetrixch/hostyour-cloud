@@ -1,0 +1,325 @@
+# Consumer delivery — one ApplicationSet driven by the registrations
+# registrations/<unit>/dev.yaml IN THIS INSTALLATION'S BOOKS. A unit's stage file there IS the
+# deployment for this stage; the Controller writes and removes it, and
+# removing it offboards. The generator matches dev.yaml ONLY: the stage-free
+# build declaration registrations/<unit>/build.yaml never reaches this
+# ApplicationSet, so a build-only unit generates nothing here.
+#
+# The registration's fields (name, repoURL, chartPath, cluster, suspended,
+# quiesced, databases, services) become the template parameters. NOTE the
+# field is chartPath, NOT path — the git files generator reserves .path for
+# file metadata.
+#
+# No commit SHA and no image tag of a consumer lives in this repo: source 1
+# follows the consumer's delivery branch deploy/dev as a LITERAL. What that
+# branch points at is decided in the consumer's repo, not here.
+#
+# The post-selector pins cluster=__CLUSTER__. On master the placeholder
+# matches no registration, so the trunk generates nothing; set-domain.sh
+# stamps it to the install branch's cluster short name (the fqdn's first
+# label), so the branch admits exactly this cluster's registrations. The
+# generator revision is a DIFFERENT stamp, and deliberately not this branch:
+# set-role.sh writes the BOOKS branch there, the install branch of the cluster
+# holding the master role, because that is the only branch the registrations
+# stand on. set-domain keeps registrations/ on that branch and prunes them off a
+# pure slave's — so a slave reading its own branch would generate nothing for
+# the consumers placed on it, and a files generator matching nothing is not an
+# error. The two stamps together are what lets one slave's ArgoCD instance
+# deliver its own consumers out of its master's books.
+#
+# suspended and quiesced are NOT selectors and never prune: both reach the
+# chart as values (source 1 below) and the chart renders the off state —
+# replicas 0, no Ingress. The reason prune is off the table sits in the
+# service-provisioner: its finalizer platform.hostyour.cloud/deprovision
+# runs on EVERY ServiceClaim deletion, an ArgoCD prune included
+# (apps/service-provisioner/templates/configmap.yaml), and drops the user
+# AND the databases — a prune-based suspend would be destructive by
+# construction.
+#
+# ArgoCD creates the Namespace (CreateNamespace) with platform-enforced
+# restricted PSA + the consumer-eso label + Delete=false via
+# managedNamespaceMetadata; the per-consumer AppProject (name == the
+# consumer; Application/AppProject/Role/RoleBinding blacklisted; sourceRepos
+# pinned to the consumer's repo + this hostyour-cloud repo for the $values
+# source; destination pinned to the consumer's namespace) is the isolation —
+# the Controller renders it (renderConsumerAppProject) BEFORE it writes the
+# registration, so this template's `project: {{ .name }}` always resolves.
+# No app-of-apps, no floating child. See docs/consumer-contract/.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: consumer-apps-dev
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:
+    - git:
+        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        revision: __BOOKS_BRANCH__  # set-role stamps this installation's BOOKS branch here — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
+        files:
+          - path: "registrations/*/dev.yaml"
+      selector:
+        matchLabels:
+          cluster: __CLUSTER__
+  template:
+    metadata:
+      name: "{{ .name }}-dev"
+      namespace: argocd
+      annotations:
+        # After the platform apps (wave 10-26); consumers come last.
+        argocd.argoproj.io/sync-wave: "50"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: "{{ .name }}"
+      # NOTE: spec.sources is set entirely in templatePatch below (the
+      # databases range + the conditional PostgreSQL source require a block
+      # scalar). Keeping it out of the typed template keeps this file
+      # parseable as static YAML.
+      destination:
+        server: https://kubernetes.default.svc
+        # One unit, one namespace: the namespace IS the unit name — the ingress
+        # host <name>.<unitApex> and the per-consumer Vault paths key on the
+        # same name.
+        namespace: "{{ .name }}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+        # The namespace metadata the platform stamps: restricted PodSecurity, the
+        # consumer-eso label (so ESO in-namespace reads only
+        # secret/dev/consumer/<name>/*), and data protection (Delete=false on
+        # the NAMESPACE — the empty namespace survives offboard; a per-PVC
+        # Delete=false is the consumer.s responsibility for data survival).
+        #
+        # What makes these NOT the consumer's to change is a separate object: the
+        # per-consumer ValidatingAdmissionPolicy the Controller applies at onboard
+        # (hostyour-manager/server/domains/onboarding/admission-policy.ts) admits,
+        # on a Namespace this unit's Application owns, only the exact label pairs
+        # listed below under hostyour.cloud/, platform/ and
+        # pod-security.kubernetes.io/. Without it a unit's own chart could render
+        # `kind: Namespace` carrying any of them — the AppProject whitelists that
+        # cluster-scoped kind — and ArgoCD would apply the unit's version. So this
+        # list and that policy's granted set are ONE statement: a label added here
+        # has to be added there in the same change, or every sync of every consumer
+        # is refused.
+        managedNamespaceMetadata:
+          labels:
+            pod-security.kubernetes.io/enforce: restricted
+            hostyour.cloud/consumer: "true"
+            hostyour.cloud/consumer-name: "{{ .name }}"
+            # DB-consumer label (global.dbConsumerLabel): admits this namespace through
+            # the CREDENTIALED backing-service NetworkPolicies (mongodb, postgresql).
+            # Harmless without a claim — those services still require a provisioned
+            # per-unit credential. The no-auth redis is NOT admitted by this label:
+            # there, reach is the grant, so its NetworkPolicy admits only the
+            # redis-consumer label the templatePatch below stamps when the
+            # registration claims `redis` in services[].
+            platform/db-consumer: "true"
+          annotations:
+            argocd.argoproj.io/sync-options: Prune=false,Delete=false
+        syncOptions:
+          - CreateNamespace=true
+
+  # The sources live here (block scalar): the databases range and the
+  # conditional PostgreSQL source cannot be expressed in the typed template
+  # without breaking a static YAML parse. templatePatch is rendered by the
+  # ApplicationSet's go-template and merge-patched onto the Application above
+  # (arrays are replaced, so the full sources list is authoritative here).
+  # set-domain restamps the `master` targetRevisions to the install branch,
+  # like every other argocd/ file; `deploy/dev` carries no `master` token,
+  # so the retarget never touches it.
+  templatePatch: |
+    spec:
+      {{- if or (has "redis" .services) (has "smtp-relay" .services) }}
+      # Namespace labels the platform grants on an ATTESTED claim, and only then.
+      # Both services below answer without authenticating the caller, so REACH is
+      # the grant and a unit that never claimed one must not be able to write
+      # itself into the selector. ONE syncPolicy block for both: maps deep-merge
+      # in the patch, so the labels of the template above are kept, but a second
+      # syncPolicy key would not be YAML.
+      syncPolicy:
+        managedNamespaceMetadata:
+          labels:
+            {{- if has "redis" .services }}
+            platform/redis-consumer: "true"
+            {{- end }}
+            {{- if has "smtp-relay" .services }}
+            platform/smtp-relay-consumer: "true"
+            {{- end }}
+      {{- end }}
+      sources:
+        # 0. Values-only source — makes $values/... resolvable for the sources below.
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: master
+          ref: values
+        # 1. The consumer's CHART on its delivery branch deploy/dev — a
+        #    LITERAL, never a pin. The platform values reach the chart as
+        #    global.* over the SAME $values chain every platform app loads:
+        #    platform files first, the chart's own values in between,
+        #    cluster/profile.yaml LAST (highest precedence).
+        - repoURL: "{{ .repoURL }}"
+          targetRevision: deploy/dev
+          path: "{{ .chartPath }}"
+          helm:
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-dev.yaml
+              - values.yaml
+              - values-dev.yaml
+              - $values/cluster/profile.yaml
+            valuesObject:
+              # suspended pauses the unit; quiesced closes it for a move or
+              # backup. The chart renders the off state from these two values
+              # (replicas 0, no Ingress) — see the prune note in the header.
+              # Bare access is safe under goTemplateOptions missingkey=error:
+              # both fields are mandatory in the registration, written
+              # explicitly by the Controller every time.
+              suspended: {{ .suspended }}
+              quiesced: {{ .quiesced }}
+              # DB-name contract: the registration's `databases` (copied
+              # VERBATIM from the consumer's platform.yaml `databases:`)
+              # reaches the chart as .Values.mongodb.databases — the LITERAL
+              # Mongo DB name(s), the single source of truth the chart's
+              # mongodb ServiceClaim passes through with no prefix. Bare
+              # access is safe under missingkey=error: in a stage
+              # registration the deploy group stands or falls together
+              # (ConsumerRegistrationSchema), so `databases` is always
+              # present — an empty list when the consumer requests none.
+              mongodb:
+                databases:
+                  {{- range .databases }}
+                  - "{{ . }}"
+                  {{- end }}
+        # 2. Per-consumer PostgreSQL instance (apps/postgresql), rendered ONLY
+        #    when the registration's services[] includes "postgresql": a
+        #    consumer that claims postgresql gets its OWN instance in its OWN
+        #    namespace, as a source of its single Application. The
+        #    service-provisioner then resolves the claim to this in-namespace
+        #    instance. Bare access to `services` is safe under
+        #    missingkey=error: the field is mandatory in the deployable
+        #    registration (an empty list is allowed).
+        {{- if has "postgresql" .services }}
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: master
+          path: apps/postgresql
+          helm:
+            # Platform globals only — the SAME $values chain source 1 reads.
+            # The chart's own values.yaml (the small-preset per-consumer
+            # template) is Helm's implicit base; a template has no stage
+            # identity of its own, so there is deliberately no
+            # values-<stage>.yaml for it (apps/postgresql/Chart.yaml
+            # description).
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-dev.yaml
+              # The size preset, named by the consumer's OWN size — the same word that bounds its
+              # namespace, because a unit has exactly one. Relative to the chart path above, so it is
+              # the chart's OWN file — not a $values reference. Bare access is safe under
+              # missingkey=error: `size` is part of the deploy group and the Controller writes a
+              # literal on every commit ("small" when the manifest expressed no preference, which is
+              # what the chart's values.yaml carries anyway).
+              - values-size-{{ .size }}.yaml
+              - $values/cluster/profile.yaml
+            valuesObject:
+              externalsecret-postgres:
+                externalSecret:
+                  # The ExternalSecret's remoteRef.KEY (charts/external-secret
+                  # renders externalSecret.vaultPath as remoteRef.key) — the
+                  # per-consumer path INSIDE the KV mount, NOT the mount
+                  # itself. A per-stage LITERAL, like everything else in this
+                  # per-stage file. The chart leaves this value empty and
+                  # `required`s it, so a render that forgets it fails loudly
+                  # rather than silently attaching to another consumer's
+                  # credential.
+                  vaultPath: "dev/consumer/{{ .name }}/postgres"
+        {{- end }}
+        # 2b. Per-consumer MongoDB instance (apps/unit-mongodb), rendered ONLY
+        #    when the registration's `mongodb` is not "shared". `shared` means the
+        #    CLUSTER's own replica set in namespace `mongodb` — the one every
+        #    tenant runs on — and a unit on it renders no instance of its own. The
+        #    other two words give it an instance in its OWN namespace, and the
+        #    difference between them is capability: `standalone` is one mongod
+        #    with no replica set, which serves no multi-document transactions,
+        #    while `replicaset` is three members that do. The chart refuses any
+        #    other word rather than guessing a member count.
+        #
+        #    The service-provisioner needs no switch of its own: it resolves a
+        #    mongodb claim to the Service `mongodb` in the claim's OWN namespace
+        #    when the instance credential is there, exactly as it does for
+        #    postgresql. Bare access to `mongodb` is safe under missingkey=error —
+        #    it is part of the deploy group, so the Controller writes a literal on
+        #    every commit.
+        {{- if ne .mongodb "shared" }}
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: master
+          path: apps/unit-mongodb
+          helm:
+            # Platform globals only — the SAME $values chain source 1 reads. The
+            # chart's own values.yaml (the small-preset per-unit template) is
+            # Helm's implicit base; a template has no stage identity of its own,
+            # so there is deliberately no values-<stage>.yaml for it.
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-dev.yaml
+              # The unit's ONE size, naming the preset — the same word that bounds
+              # its namespace and sizes its PostgreSQL.
+              - values-size-{{ .size }}.yaml
+              - $values/cluster/profile.yaml
+            valuesObject:
+              mongodb:
+                # The word itself, passed through. The chart derives the member
+                # count from it, and the Controller's quota table multiplied the
+                # mongodb row by the same count when it priced the unit.
+                mode: "{{ .mongodb }}"
+              externalsecret-mongodb:
+                externalSecret:
+                  # The ExternalSecret's remoteRef.KEY — the per-consumer path
+                  # INSIDE the KV mount, not the mount itself. A per-stage
+                  # LITERAL, like everything else in this per-stage file. The
+                  # chart leaves it empty and `required`s it, so a render that
+                  # forgets it fails loudly rather than silently attaching to
+                  # another unit's credential.
+                  vaultPath: "dev/consumer/{{ .name }}/mongodb"
+        {{- end }}
+        # 3. The platform's own ingress policy for this consumer's namespace
+        #    (apps/unit-networkpolicy on the trunk, one NetworkPolicy and nothing else):
+        #    the namespace is deny-by-default inbound, with same-namespace pods, Traefik
+        #    and Prometheus open. UNCONDITIONAL, unlike source 2 — a namespace with no
+        #    policy is the gap this closes, so a consumer that claims no service is
+        #    exactly the case that must not be skipped. It rides in the consumer's OWN
+        #    Application so it is created, healed and pruned with the namespace it
+        #    protects. No $values file: the chart reads no platform value, and the
+        #    tenant-sibling rule its values.yaml carries stays off for a consumer, which
+        #    is one namespace with no siblings.
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: master
+          path: apps/unit-networkpolicy
+        # 4. The platform's own resource ceiling for this consumer's namespace
+        #    (apps/unit-quota on the trunk: a ResourceQuota and the LimitRange that keeps it from
+        #    rejecting a pod which declares no resources of its own). UNCONDITIONAL, like the policy
+        #    above and for the same reason — a namespace with no ceiling is the gap this closes, so a
+        #    consumer that claims no service is exactly the case that must not be skipped.
+        #    The figures come from the REGISTRATION, where the Controller resolved them from its size
+        #    table when it wrote the file; no $values file and no preset name, because the table lives
+        #    in the Controller's database and no cluster can read it.
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: master
+          path: apps/unit-quota
+          helm:
+            valuesObject:
+              quota:
+                requestsCpu: "{{ .quota.requestsCpu }}"
+                requestsMemory: "{{ .quota.requestsMemory }}"
+                limitsCpu: "{{ .quota.limitsCpu }}"
+                limitsMemory: "{{ .quota.limitsMemory }}"
+                pods: "{{ .quota.pods }}"
+                persistentVolumeClaims: "{{ .quota.persistentVolumeClaims }}"

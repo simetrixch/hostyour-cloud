@@ -1,0 +1,44 @@
+{{- /*
+The mongodb exporter's monitoring credentials, claimed from the generic
+service-provisioner like any other consumer — this replaced the dedicated
+annotation-driven mongodb-provisioner (retired). Roles-ONLY claim
+(clusterMonitor@admin, no database): the provisioner mints the user
+`sp_mongodb_exporter` and writes the `exporter-mongodb` Secret (key
+MONGODB_URI, path-less URI) that the prometheus-mongodb-exporter Deployment
+consumes via existingSecret (values-common.yaml).
+
+SkipDryRunOnMissingResource: on a FRESH install this app (sync wave 10)
+syncs before service-provisioner (wave 16) ships the ServiceClaim CRD — the
+skip plus ArgoCD's sync retry make this CR apply cleanly once the CRD lands
+(same self-heal pattern as the exporter pod waiting for its Secret).
+
+The UPGRADE case is a different, nastier one, and it is worth knowing about
+before adding the next CRD field. Where a fresh install has NO CRD (apply fails
+loudly → retry), an upgrade has a STALE one: wave 10 applied this claim while
+the OLD schema — which had no `roles` — was still live, so the apiserver PRUNED
+the field and the apply SUCCEEDED. No error, nothing to retry, and a claim
+stored as {service, secretName} that the handler then rejected with "claim needs
+at least one database or role". It self-heals (ArgoCD sees the live object
+missing `roles`, marks the app OutOfSync and re-applies once the wave-16 CRD is
+current — observed live on a master, ~5 minutes, monitoring never gapped because the old
+exporter pod holds its still-valid credentials until the new one is Ready), but
+it heals via plain OutOfSync/re-apply, NOT via the annotation above. Anyone
+extending the ServiceClaim schema and using the new field in the same rollout
+should expect this window rather than be surprised by it.
+*/ -}}
+apiVersion: platform.hostyour.cloud/v1alpha1
+kind: ServiceClaim
+metadata:
+  name: exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: exporter
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  service: mongodb
+  roles: ["clusterMonitor@admin"]
+  # Explicit (equals the default <claim>-<service>) — values-common.yaml's
+  # prometheus-mongodb-exporter.existingSecret must reference the same name.
+  secretName: exporter-mongodb

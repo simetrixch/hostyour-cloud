@@ -1,0 +1,5 @@
+apiVersion: v2
+name: coredns
+version: 1.0.0
+description: CoreDNS Corefile with the public-hostname hairpin rewrites (vault/zot), each gated on the service running locally (global.servicesLocal.*). Owns kube-system/coredns ConfigMap.
+type: application

@@ -1,0 +1,73 @@
+apiVersion: v2
+name: slave
+version: 1.0.0
+appVersion: "v3.4.5"
+description: |
+  Per-slave management instance (namespaced ArgoCD + Vault mounts) — the
+  MASTER-side GitOps vehicle (D5).
+
+  One release per slave, deployed by the slaves ApplicationSet
+  (argocd/<stage>/apps/slaves-appset.yaml, driven by the cluster maps
+  clusters/active/*.yaml on master) into namespace <name> ON THE MASTER. It contains:
+
+    - a dedicated, NAMESPACED ArgoCD instance (argo-cd dep below) that
+      manages ONE remote slave cluster, dialled on the map's apiHost/apiPort
+      (the slave's tailnet address once the two share that private network,
+      its LAN address when it sits in the master's network). NOT a registered cluster
+      inside the master's own ArgoCD — its own instance, so the slave branch's
+      argocd tree (root app -> projects -> appsets) is reused nearly verbatim
+      with zero name collisions across slaves.
+    - the slave CLUSTER registration Secret (cluster name `<name>`) and
+      the REPO credential Secret — both materialized by ESO from the
+      master's Vault at secret/<stage>/slaves/<name>/{cluster,repo-pat}
+      (written there when a slave is added to the installation).
+    - the HANDOFF root Application (`root-applications`) pointing this ArgoCD at
+      the SLAVE branch's argocd/<stage>/apps — from there the slave branch drives
+      everything, exactly like argocd/<stage>/root-app.yaml does on a full
+      cluster.
+    - (kube dashboard: deliberately NOT in this chart — ONE SHARED master
+      Headlamp in ns kubernetes-dashboard serves the master and every slave
+      via its cluster picker; contexts come from the kube-slaves-kubeconfig
+      Secret that adding or removing a slave rebuilds.)
+
+  The per-slave Vault surface is NOT in this chart: it is a per-slave KV-v2 mount
+  + auth mount on the master's EXISTING Vault, created imperatively by
+  the run that adds a slave — as is the slave's OWN ArgoCD AppProject `<name>`
+  (the Application deploying this chart references that project, so a
+  chart-carried AppProject could never survive its own first sync; see the
+  per-slave projects note in argocd/<stage>/apps/projects.yaml).
+
+  Per-slave inputs (slave.*) are injected by the slaves ApplicationSet from the
+  slave's cluster map (clusters/active/<fqdn>.yaml) via helm valuesObject; the
+  platform globals arrive through the same $values chain every platform app
+  uses (platform/values-*.yaml + cluster/profile.yaml).
+type: application
+dependencies:
+  # The namespaced ArgoCD instance. Version pinned to the SAME chart the
+  # master's bootstrap installs: the version sync stamps this dependency AND the
+  # bootstrap's own ArgoCD install from the one key platform/versions.yaml
+  # bootstrap.argocd, so the two sites cannot drift apart. Keeping master +
+  # this instance on one version means ONE set of CRDs fits both
+  # (crds.install=false here — the master's bootstrap already installed them
+  # cluster-wide). appVersion above mirrors the ArgoCD app version the chart
+  # deploys; it lands in the app.kubernetes.io/version label of every resource
+  # this chart renders (charts/common labels).
+  - name: argo-cd
+    version: 10.2.1
+    repository: https://argoproj.github.io/argo-helm
+
+  # Per-namespace ESO SecretStore (vault-backend) + ServiceAccount in ns <name>,
+  # so the ExternalSecrets in templates/ can read the MASTER's Vault (mount
+  # `secret`, auth path `kubernetes` — the defaults; the slave-mount globals are
+  # only ever set on SLAVE branches, never on the master's). Vault's
+  # external-secrets role must include namespace <name> in its
+  # bound_service_account_namespaces — extended when a slave is added.
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # Shared named templates (common.labels etc.) used by the templates in this
+  # chart. Declared at APP level per the consumption rule in charts/common.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

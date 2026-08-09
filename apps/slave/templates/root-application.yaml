@@ -1,0 +1,76 @@
+{{- /*
+The HANDOFF root Application (D5) — the moment GitOps takes over for the slave.
+
+This Application CR lands in ns <name>. The MASTER's ArgoCD (which deploys
+this chart) only watches Applications in ns `argocd`, so for the master it is
+an inert managed resource; the slave's own ArgoCD controller watches its OWN
+namespace, picks it up, and syncs the SLAVE branch's argocd/<stage>/apps
+directory (projects.yaml + applicationset.yaml + consumers-appset.yaml +
+slaves-appset.yaml, all stamped on the slave branch to ns <name> / destination
+name:<name>) into ns <name>. From there the slave branch drives everything —
+the exact per-cluster mechanism argocd/<stage>/root-app.yaml implements on a
+full cluster (the installer's GitOps handoff), relocated onto the master.
+
+project `default`: the instance's own auto-created allow-all default project —
+this root app CREATES the slave tree's AppProjects, so it cannot reference one
+(the same first-sync chicken-and-egg the MASTER solves imperatively for the
+slave's own AppProject <name> — see the per-slave projects note in
+argocd/<stage>/apps/projects.yaml; here `default` always exists, so no
+imperative step is needed).
+
+NAME COLLISION WITH THE MASTER'S ROOT APP is survived by design: the master's
+own root Application is ALSO named root-applications (argocd/<stage>/
+root-app.yaml), and both instances share one physical cluster — with ArgoCD
+v3's default annotation tracking the master would attribute everything this
+app syncs (tracking-id `root-applications:...`) to ITS root app and
+auto-prune it on creation. The per-slave instance therefore runs with
+argocd-cm installationID=<name> (slaves-appset.yaml valuesObject), which
+namespaces resource attribution per instance and makes the shared name safe.
+
+NO resources-finalizer on purpose (root-app.yaml has one; this one must not):
+on slave teardown (pointer file removed) the master prunes the instance's
+Deployments and this CR concurrently — a finalizer here would need the slave's
+own controller alive to cascade, deadlocking namespace cleanup. Without it the
+CR deletes cleanly and the slave's workloads are untouched; the instance's own
+generated child Applications remain as inert CRs in ns <name> (offboard/rebuild
+cleanup is the job of removing the slave).
+*/ -}}
+{{- $slave := .Values.slave }}
+{{- $branch := required "slave.branch is required (pointer-file field branch — the slave's install branch, == its FQDN)" $slave.branch }}
+{{- $env := required "slave.stage is required (injected by slaves-appset.yaml)" .Values.slave.stage }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-applications
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+spec:
+  project: default
+
+  source:
+    repoURL: {{ .Values.repo.url }}
+    targetRevision: {{ $branch }}
+    path: argocd/{{ $env }}/apps
+
+  destination:
+    # In-cluster from the instance's perspective = the MASTER: the directory's
+    # contents are argocd-tree CRs applied into the instance's own namespace (the
+    # slave branch stamps their in-app destinations to the remote name:<name>).
+    server: https://kubernetes.default.svc
+    namespace: {{ .Release.Namespace }}
+
+  # Mirrors argocd/<stage>/root-app.yaml (automated + retry — cold-bootstrap
+  # syncs can race; retry converges without waiting for the selfHeal cycle).
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

@@ -1,0 +1,175 @@
+# Slaves — one ApplicationSet driven by the cluster maps
+# clusters/active/*.yaml IN THIS INSTALLATION'S BOOKS. A map with role: slave whose master:
+# names THIS cluster generates the slave's management app; removing the
+# slave's map tears it down (offboard/rebuild reuse this). A master+slave
+# generates NOTHING here: its own root ArgoCD in ns argocd IS its instance.
+#
+# Each matching map generates ONE Application `<name>-apps` (name = the first
+# DNS label of the map's fqdn, derived ONCE in the generator's values block —
+# the maps store no name) deploying the apps/slave chart into ns <name> ON
+# THIS (the master) cluster: a dedicated namespaced ArgoCD instance, the
+# ESO-materialized slave cluster + repo credential Secrets, the handoff root
+# Application that points it at the SLAVE branch's argocd tree. (The kube
+# dashboard is the ONE shared master Headlamp — base/lib/deploy-kube.sh — not a per-slave app.) The per-slave Vault
+# surface is NOT GitOps-deployed — it is a per-slave mount on the master's
+# Vault, created by `setup.sh --slave-add`, which also seeds the
+# secret/prod/app/<name>/* material the ESO templates here consume AND creates
+# the slave's own AppProject `<name>` (referenced by the generated Application
+# below — see the per-slave projects note in projects.yaml). The map lands on
+# master at install time (install.sh), so the generated Application can EXIST
+# before --slave-add has run on this master — it then waits on its missing
+# AppProject and starts syncing once --slave-add created it.
+#
+# Map fields read here — ALL REQUIRED on a slave map (goTemplate
+# missingkey=error):
+#   fqdn:    s1.example.com           # == the slave's install branch; its first
+#                                     #    label is the derived short name
+#   stage:   prod                     # selector — stages never share a cluster
+#   role:    slave                    # selector — only pure slaves generate here
+#   master:  m1.example.com           # selector — only THIS master's slaves
+#   apiHost: 100.64.0.11              # the address the master dials its kube-apiserver on
+#                                     #    (its tailnet address once the two share that network)
+#   apiPort: 16443                    # the slave's kube-apiserver port (MicroK8s)
+#
+# The selector's master value is the domain placeholder on master (the trunk),
+# so the trunk generates NOTHING — set-domain stamps it to the install
+# branch's own fqdn. The generator revision is stamped by set-role.sh to the
+# BOOKS branch — the install branch of the cluster holding the master role,
+# which is the one branch carrying every cluster map of the installation. On the
+# branch of the cluster that HOLDS that role those two are the same name, and
+# this appset only ever produces anything there: on a pure slave's branch the
+# selector asks for maps naming that slave as their master, and none does.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: slaves-prod
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:
+    - git:
+        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        revision: __BOOKS_BRANCH__  # set-role stamps this installation's BOOKS branch here — every cluster map of the installation stands on the install branch of the cluster holding the MASTER role
+        files:
+          - path: "clusters/active/*.yaml"
+        # The ONE derivation of the slave's short name from its fqdn in this
+        # artifact family; the template reads it as {{ .values.cluster }}.
+        values:
+          cluster: '{{ index (splitList "." .fqdn) 0 }}'
+      selector:
+        matchLabels:
+          role: slave
+          stage: prod
+          master: example.invalid
+  template:
+    metadata:
+      # Per-slave name shape `<name>-apps` (no stage suffix — a master runs one
+      # stage): matches what I9's runbook and the Controller's ClusterPlane v0
+      # (argo.appName) look for.
+      name: "{{ .values.cluster }}-apps"
+      namespace: argocd
+      annotations:
+        # After the platform apps (waves 1-40, ESO included — the slave's
+        # ExternalSecrets need it), before the consumers (50).
+        argocd.argoproj.io/sync-wave: "45"
+      finalizers:
+        # Cascade on map removal: prune the slave's resources (the ArgoCD
+        # instance's Deployments, the credential Secrets, the handoff root
+        # Application). The root Application itself carries NO finalizer (see
+        # apps/slave/templates/root-application.yaml) so teardown cannot
+        # deadlock on the slave's own controller.
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      # The slave's OWN AppProject `<name>` — every cluster gets its own ArgoCD
+      # project named after it. Created (with the per-slave Vault surface) by
+      # `setup.sh --slave-add`: an Application whose project does not exist
+      # cannot start its first sync, so the project must never be a resource
+      # OF this app — this Application waits until --slave-add created it.
+      project: "{{ .values.cluster }}"
+      sources:
+        # Same $values composition as platform-apps (applicationset.yaml):
+        # platform globals + stage + this chart's values + cluster profile
+        # LAST. `&repo`/`&branch` anchors: the repo/branch literal appears
+        # once; set-domain.sh restamps revision/targetRevision per branch.
+        - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
+          targetRevision: &branch master
+          ref: values
+        - repoURL: *repo
+          targetRevision: *branch
+          path: apps/slave
+          helm:
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-prod.yaml
+              - values-common.yaml
+              - values-prod.yaml
+              - $values/cluster/profile.yaml   # per-cluster overrides (global.* only) — highest precedence
+            # The per-slave inputs, straight from the cluster map fields
+            # (global.env is unusable inside the slave chart, see
+            # apps/slave/values-common.yaml — the stage arrives as slave.stage
+            # instead, pinned by this per-stage file's selector). Rendered by
+            # the ApplicationSet's go-template (everything arrives as a
+            # string) and deep-merged ON TOP of the valueFiles above.
+            valuesObject:
+              slave:
+                name: "{{ .values.cluster }}"
+                branch: "{{ .fqdn }}"
+                apiHost: "{{ .apiHost }}"
+                apiPort: "{{ .apiPort }}"
+                masterFqdn: "{{ .master }}"
+                stage: "{{ .stage }}"
+              # ArgoCD-in-ArgoCD isolation — load-bearing, do not remove.
+              # The per-slave instance and the MASTER's ArgoCD share ONE
+              # physical cluster, and both have a root Application named
+              # `root-applications`. With ArgoCD v3's default annotation
+              # tracking, the argocd-tree CRs the instance syncs into ns <name>
+              # carry tracking-id `root-applications:...` — the master
+              # attributes them to ITS OWN root-applications app and its
+              # automated prune deletes them the moment they are created (the
+              # instance then fails its sync with "Resource ... is missing, it
+              # might have been deleted"). `installationID` (argocd-cm) is
+              # upstream's multi-instances-per-cluster isolation: the instance
+              # stamps argocd.argoproj.io/installation-id=<name> on everything
+              # it syncs and only attributes resources whose id matches its
+              # own; an instance with a DIFFERENT (or no) id ignores them
+              # (argo-cd util/argo/resource_tracking.go getAppInstanceValue) —
+              # so the master needs no config change. Injected here, not in
+              # apps/slave/values-common.yaml: values files are static and the
+              # id must be per-slave.
+              argo-cd:
+                configs:
+                  cm:
+                    installationID: "{{ .values.cluster }}"
+                    # UI links + the OIDC callback base. Per-slave, so injected
+                    # here (values files are static) like installationID.
+                    url: "https://argo-{{ .values.cluster }}.{{ .master }}"
+                    # OIDC login via the controller's Authentik — ONE SHARED public
+                    # client `argo-slave` (bootstrap/idp/blueprints/99-argo-slave.yaml)
+                    # whose regex redirect matches this argo-<name> callback. PKCE →
+                    # no per-slave client secret. Injected here (not in the static
+                    # values file) because the issuer host needs the master's fqdn. The
+                    # RBAC group→role mapping is static (apps/slave/values-common.yaml).
+                    oidc.config: |
+                      name: Authentik
+                      issuer: https://idp.{{ .master }}/application/o/argo-slave/
+                      clientID: argo-slave
+                      enablePKCEAuthentication: true
+                      requestedScopes: [openid, profile, email, groups]
+                      requestedIDTokenClaims: {groups: {essential: true}}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ .values.cluster }}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+        syncOptions:
+          - CreateNamespace=true

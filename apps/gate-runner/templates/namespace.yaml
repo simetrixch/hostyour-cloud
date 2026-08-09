@@ -1,0 +1,30 @@
+{{- /*
+The fenced gate-sandbox namespace. ArgoCD's CreateNamespace=true also creates
+it, but rendering it here attaches the labels up front (the
+service-provisioner pattern) — the PodSecurity levels must hold before the
+FIRST PipelineRun pod ever starts.
+
+PodSecurity: enforce is values-driven (default `baseline`) because the cluster's
+Tekton ships feature-flags set-security-context:"false" (its injected init
+containers carry no securityContext) and the reused git-clone Task's step sets
+none either — `restricted` ENFORCE would reject every TaskRun pod at
+admission. warn+audit stay `restricted` so the gap is visible, and our own
+gate/publish steps already run restricted-grade securityContexts. The
+sandbox's actual security boundary is the gate-egress-fence NetworkPolicy plus
+the tokenless pipeline-sa, not PSA. See values-common.yaml
+`namespace.podSecurityEnforce` for the flip conditions.
+*/ -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gate-runner
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    # Same label the ApplicationSet's managedNamespaceMetadata stamps on every
+    # platform workload namespace — keeps the per-slave Vault external-secrets
+    # role's label-binding consistent here too.
+    hostyour.cloud/workload: "true"
+    pod-security.kubernetes.io/enforce: {{ .Values.namespace.podSecurityEnforce }}
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

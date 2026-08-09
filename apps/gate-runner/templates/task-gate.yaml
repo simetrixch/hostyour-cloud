@@ -1,0 +1,127 @@
+{{- /*
+gate — the sandboxed gates. Runs the gate-runner image's
+one-shot CLI (`node dist/gate-runner/src/cli.js`; image built by
+image-builder's `gate-runner` Pipeline from the hostyour-manager repo) over
+the cloned workspace: fence self-probe first (fail-closed SandboxAttestation),
+then the check gates (G1 structure, G2 determinism, G3 render, then
+G6/G7/G8/G22 over the rendered chart), then the full GateReport JSON to
+REPORT_OUT.
+Exit 0 even on gate FAIL — the verdict lives in the report; non-zero only on
+an internal error (no report producible), in which case publish-report
+synthesizes a FAIL report.
+
+Pod hardening per the onboarding contract: no SA token (pipeline-sa carries
+automountServiceAccountToken=false), non-root, all capabilities dropped,
+RuntimeDefault seccomp, read-only rootfs (writes go to the workspace PVC and
+the /tmp emptyDir only), bounded resources. This exceeds the namespace's
+baseline PSA on purpose — the step is restricted-grade even though enforce
+can't be yet (see namespace.yaml).
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: gate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gate-runner
+    app.kubernetes.io/component: task
+spec:
+  description: >-
+    Run the gate-runner CLI over the cloned `source` workspace and write the
+    GateReport JSON to <workspace>/.gate-report.json.
+  workspaces:
+    - name: source
+      description: The cloned repo (input) and the report drop point (output).
+  params:
+    - name: target-name
+      type: string
+    - name: stage
+      type: string
+    - name: chart-path
+      type: string
+    - name: cluster-value-files
+      type: string
+    # Report metadata + the fence the CLI proves fail-closed — all Controller-supplied per run
+    # (confirmed-listening is a per-run attestation, so none of these can be a static value).
+    - { name: repo-url, type: string }
+    - { name: resolved-sha, type: string }
+    - { name: requested-ref, type: string }
+    - { name: must-fail-targets, type: string }
+    - { name: manager-addr, type: string }
+    - { name: must-pass-target, type: string }
+    - { name: confirmed-listening, type: string }
+    - { name: runner-version, type: string }
+    - { name: kube-version, type: string }
+    - { name: job-budget-ms, type: string }
+  steps:
+    - name: run-gates
+      image: {{ include "common.buildImage" (dict "root" $ "builds" .Values.builds "name" "gate-runner") | quote }}
+      imagePullPolicy: Always
+      # The image runs TypeScript directly via tsx (no dist/ build) — same as the Containerfile CMD.
+      command: ["node", "--import", "tsx", "gate-runner/src/cli.ts"]
+      env:
+        - name: TARGET_NAME
+          value: $(params.target-name)
+        - name: STAGE
+          value: $(params.stage)
+        - name: CHART_PATH
+          value: $(params.chart-path)
+        - name: CLUSTER_VALUE_FILES
+          value: $(params.cluster-value-files)
+        # The cloned workspace the CLI reads its files map from
+        # (readWorkspace(dir) — replaces the old bundle unpackAndVerify).
+        - name: SOURCE_DIR
+          value: $(workspaces.source.path)
+        # Report drop point INSIDE the shared workspace so the publish-report
+        # finally task can hand it off without any pod-to-pod path.
+        - name: REPORT_OUT
+          value: $(workspaces.source.path)/.gate-report.json
+        # Report metadata (the report the Controller commits verbatim carries these).
+        - name: REPO_URL
+          value: $(params.repo-url)
+        - name: RESOLVED_SHA
+          value: $(params.resolved-sha)
+        - name: REQUESTED_REF
+          value: $(params.requested-ref)
+        - name: RUNNER_VERSION
+          value: $(params.runner-version)
+        - name: KUBE_VERSION
+          value: $(params.kube-version)
+        - name: JOB_BUDGET_MS
+          value: $(params.job-budget-ms)
+        # Fence self-probe targets — prove the egress fence from inside before validating anything
+        # (fail-closed). Controller-supplied per run; CONFIRMED_LISTENING gates the whole probe.
+        - name: MUST_FAIL_TARGETS
+          value: $(params.must-fail-targets)
+        - name: MANAGER_ADDR
+          value: $(params.manager-addr)
+        - name: MUST_PASS_TARGET
+          value: $(params.must-pass-target)
+        - name: CONFIRMED_LISTENING
+          value: $(params.confirmed-listening)
+        # Read-only rootfs: pin every writable path to /tmp (emptyDir below)
+        # or the workspace.
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+      securityContext:
+        runAsNonRoot: true
+        # node-base images ship the `node` user as uid 1000; the PipelineRun
+        # podTemplate's fsGroup (1000) makes the root-cloned workspace
+        # group-writable for this uid — REPORT_OUT lives there.
+        runAsUser: {{ .Values.gate.runAsUser }}
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+        readOnlyRootFilesystem: true
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      computeResources:
+        {{- toYaml .Values.gate.resources | nindent 8 }}
+  volumes:
+    - name: tmp
+      emptyDir: {}

@@ -1,0 +1,66 @@
+mail:
+  config:
+    general:
+      # Per-env selector → DKIM record at dev._domainkey.<apex>; d= stays the apex.
+      DKIM_SELECTOR: "dev"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  extraVolumes:
+    - name: dkim-keys-secret
+      secret:
+        secretName: postfix-dkim-key
+        defaultMode: 0400
+        # No `path`: the file lands under its KEY name, dkim-private-key. The name
+        # opendkim needs is the domain's, and that is one installation's — it is
+        # composed in the init container below, which the chart renders through tpl
+        # (charts/mail statefulset.yaml:60). This block is rendered with toYaml
+        # (:230), where no template action would ever run.
+        items:
+          - key: dkim-private-key
+    - name: dkim-keys
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: dkim-keys
+      mountPath: /etc/opendkim/keys
+  # boky's mail subchart consumes extraInitContainers (a tpl'd STRING), NOT
+  # pod.initContainers — the latter silently renders nothing (that's why
+  # /etc/opendkim/keys stayed empty). chown to opendkim (101:104) so opendkim can
+  # actually READ the key — a root-owned 600 file would be rejected.
+  extraInitContainers: |
+    - name: fix-dkim-permissions
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+        - |
+          cp /dkim-source/dkim-private-key /dkim-keys/{{ .Values.global.domain }}.private
+          chown 101:104 /dkim-keys /dkim-keys/{{ .Values.global.domain }}.private
+          chmod 700 /dkim-keys
+          chmod 600 /dkim-keys/{{ .Values.global.domain }}.private
+      volumeMounts:
+        - name: dkim-keys-secret
+          mountPath: /dkim-source
+          readOnly: true
+        - name: dkim-keys
+          mountPath: /dkim-keys
+
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource under this app).
+secret-store: {}
+
+# ExternalSecret (external-secret) — pulls DKIM key from Vault
+external-secret:
+  externalSecret:
+    enabled: true
+    name: postfix-dkim-key
+    namespace: postfix
+    secretStoreKind: SecretStore
+    targetSecretName: postfix-dkim-key
+    vaultPath: dev/app/postfix
+    data:
+      - secretKey: dkim-private-key
+        property: dkim-private-key

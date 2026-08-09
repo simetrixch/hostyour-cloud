@@ -1,0 +1,67 @@
+# SIZE PRESET — large. Layer over values.yaml: -f values-size-large.yaml
+#
+#   cpu req 250m · mem req 2Gi · cpu lim 2 · mem lim 4Gi · data PVC 50Gi
+#
+# FOR: the ceiling we are still willing to put on a shared node — sustained
+# write volume, many concurrent connections, large joins, a working set in the
+# tens of gigabytes. Picking this for a consumer is a deliberate act: on the
+# 24 vCPU / 30GB node, two large instances alone promise 4 CPU and 8Gi of
+# limits on top of everything else already running.
+#
+# CEILING BY CONSTRUCTION: the limits below are EXACTLY what the retired shared
+# cluster instance was permitted (2 CPU / 4Gi) and the PVC is exactly the 50Gi it
+# held. Any database migrated off that instance therefore provably cannot need
+# more than this preset — and no per-consumer instance may ever be granted more
+# than the single shared one used to be.
+#
+# Only the four resource numbers, the server config (args) and the PVC size
+# differ from the small default; every other value (image, probes, security
+# context, monitoring, exporter) stays as values.yaml defines it. The
+# measurements these numbers are reasoned from are documented once, in the
+# values.yaml header.
+postgres:
+  # SERVER CONFIG — restated in full (Helm replaces list values, does not merge).
+  # Scaled to the 4Gi limit; still deterministic and comfortably inside it.
+  args:
+    # shared_buffers 512MB — 25% of the 2Gi request, the ceiling tier's cache.
+    # Idle baseline (512MB + backends) lives inside the 2Gi request.
+    - "-c"
+    - "shared_buffers=512MB"
+    # max_connections 200 — large is "many concurrent connections". Peak check:
+    # shared_buffers 512 + 3 autovacuum × 64 (192) + 200 backends ≈ 1.9GB, under
+    # the 4Gi limit.
+    - "-c"
+    - "max_connections=200"
+    # autovacuum_work_mem 64MB — stock maintenance size; 192MB worst case is a
+    # rounding error against 4Gi.
+    - "-c"
+    - "autovacuum_work_mem=64MB"
+  resources:
+    requests:
+      # MEMORY 2Gi request = HALF the 4Gi limit — the shared instance requested
+      # 1Gi while using 56Mi, a reservation nothing ever claimed; requesting half
+      # of a limit that is itself the ceiling keeps the scheduler honest without
+      # hoarding the node's allocatable memory. CPU is the opposite: 250m request
+      # is 1/8 of the 2-core limit, NOT half — CPU is compressible (throttled, not
+      # killed), so the request tracks the few hundred millicores a busy large
+      # instance actually draws while the limit permits bursting to two full cores
+      # for a big join or parallel query. Do not "fix" the CPU request up to half
+      # the limit: that would reserve a core the database does not hold at rest and
+      # deepen the node's LIMITS oversubscription (122% CPU / 146% memory).
+      cpu: 250m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+postgres-data:
+  pvc:
+    # 50Gi — the retired shared instance's PVC size, kept ONLY here so that a
+    # migration off it can never be blocked by the target being smaller.
+    # Storage is the scarce resource: do not pick this preset for headroom,
+    # pick it because a measurement says the data is there.
+    storageSize: "50Gi"
+
+monitoring:
+  # ~80% of this preset's 50Gi PVC — the storage early-warning trip point.
+  dataAlertThresholdGi: 40

@@ -1,0 +1,60 @@
+{{- /* No Ingress while the unit is suspended or quiesced: the off state must
+close the public address, not just empty the Deployment — a quiesce protects
+a move/backup from writes arriving mid-copy. */ -}}
+{{- if not (or .Values.suspended .Values.quiesced) }}
+{{- /* The platform FQDN of the unit: <namespace>.<unitApex>. The namespace IS
+the unit name, and the apex is the cluster map's unit-apex (set-role.sh writes
+it into cluster/profile.yaml) — the address belongs to the unit, not to the
+cluster it runs on, so a move never changes it. A second, granted FQDN
+(.Values.fqdn) rides on the SAME Ingress as one more rule: same Service, same
+pods, told apart by the Host header. Every FQDN the platform did not grant is
+refused by the unit's own ValidatingAdmissionPolicy, applied at onboarding
+beside the AppProject. */ -}}
+{{- $baseHost := printf "%s.%s" .Release.Namespace (required "global.unitApex comes from the platform $values chain (cluster/profile.yaml); for a local render pass -f cluster/profile.yaml from an install branch" .Values.global.unitApex) }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Chart.Name }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer }}
+spec:
+  ingressClassName: public
+  rules:
+    - host: {{ $baseHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Chart.Name }}
+                port:
+                  number: 80
+{{- if .Values.fqdn }}
+    - host: {{ .Values.fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Chart.Name }}
+                port:
+                  number: 80
+{{- end }}
+  tls:
+    - hosts:
+        - {{ $baseHost }}
+      secretName: {{ .Values.tlsSecretName }}
+{{- if .Values.fqdn }}
+    {{- /* The granted FQDN gets its OWN tls entry and secret, never a second
+    host in the entry above: cert-manager orders one certificate per entry and
+    an ACME order is atomic, so a granted domain whose DNS points elsewhere
+    would block the renewal of the unit's platform certificate if the two
+    shared an entry. Separated, the platform certificate stands on its own —
+    the admission policy enforces exactly this split. */}}
+    - hosts:
+        - {{ .Values.fqdn }}
+      secretName: {{ .Values.tlsSecretName }}-fqdn
+{{- end }}
+{{- end }}

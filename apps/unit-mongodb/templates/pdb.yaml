@@ -1,0 +1,24 @@
+{{- /*
+PodDisruptionBudget for the replica set: minAvailable = members-1, so a voluntary
+disruption (node drain, rolling update) can never evict more than one member at a
+time and the set keeps a quorum with a PRIMARY elected.
+
+Only in replicaset mode. A standalone is ONE pod with one ReadWriteOnce volume:
+a PDB there would not protect availability, it would block node drains outright.
+*/ -}}
+{{- if eq (include "unit-mongodb.isReplicaSet" .) "true" }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mongodb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: pdb
+spec:
+  minAvailable: {{ sub (int (include "unit-mongodb.replicas" .)) 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

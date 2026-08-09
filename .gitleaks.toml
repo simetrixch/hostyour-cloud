@@ -1,0 +1,33 @@
+# gitleaks configuration for the hostyour-cloud monorepo.
+#
+# The build pipeline's credential-scan step (apps/image-builder/templates/tasks/
+# credential-scan.yaml) runs `gitleaks detect` over the cloned source and FAILS the
+# PipelineRun on any leak. It honors this file from the source root.
+#
+# The allowlist below covers an upstream CRD's OpenAPI example — never real credentials. Real
+# secrets live only in gitignored files on the machine and in Vault; they are never committed.
+#
+# An entry for the secrets template is deliberately absent: the template that carried a PEM
+# placeholder was part of the shell layer and does not exist here. Its replacement gets its own
+# entry when it is written, so the allowlist never covers a path nothing matches.
+title = "hostyour-cloud gitleaks config"
+
+# Keep all of gitleaks' default rules; this file only ADDS an allowlist.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Example / upstream-CRD placeholders — not real secrets"
+paths = [
+  # Upstream external-secrets CRD OpenAPI schema embeds a "<private-key>" example.
+  '''crd-secretstore\.yaml''',
+]
+
+regexes = [
+  # An ExternalSecret's remoteRef names a PATH IN VAULT and never a value — that separation is what
+  # the whole mechanism exists for. gitleaks reads the line as a credential because it is
+  # high-entropy text under a secret-shaped structure. Matched on the path grammar rather than on a
+  # file name, so an ExternalSecret written tomorrow is covered and a real credential sitting in an
+  # ordinary file still turns this red.
+  '''key:\s*(secret|build|kv)/[a-z0-9<>/_-]+''',
+]

@@ -1,0 +1,8 @@
+# Toggle for 'tailnet-coordinator' (the self-hosted coordination server every
+# host's tailnet client logs in to) on THIS cluster. deploy:"false" drops it
+# (Application + state pruned); "true" runs it. master default "false" (off
+# everywhere) — the coordinator is provided ONCE, by the cluster with the
+# master part, and every other cluster's hosts join THAT one; StampAppToggles
+# flips it "true" there.
+name: tailnet-coordinator
+deploy: "false"

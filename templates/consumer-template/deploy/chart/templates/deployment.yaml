@@ -1,0 +1,55 @@
+{{- /* The image ref composes from the platform's registry endpoint contract
+(global.endpoints.registry.host, else zot.<domain> — the same rule the
+platform's own charts read via common.registryHost) and THIS chart's
+builds[]{name,image,tag} pin in values-<stage>.yaml. The pin's `image` is the
+FLAT build name from deploy/platform.yaml builds[] — the release bump finds
+the pin by exactly that key and writes `tag`; compose the ref any other way
+and your releases stop reaching this Deployment. */ -}}
+{{- $registry := .Values.global.endpoints.registry.host | default (printf "zot.%s" .Values.global.domain) -}}
+{{- $pin := dict -}}
+{{- range .Values.builds }}{{- if eq .name $.Chart.Name }}{{- $pin = . -}}{{- end }}{{- end -}}
+{{- $image := $pin.image | required (printf "builds[] in values-<stage>.yaml carries no entry named %q — the image pin is missing" .Chart.Name) -}}
+{{- $tag := $pin.tag | required (printf "builds[] entry %q has no tag — the image pin is incomplete" .Chart.Name) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+spec:
+  revisionHistoryLimit: 3
+  {{- /* suspended pauses the unit, quiesced closes it for a move or backup —
+  both scale to zero WITHOUT pruning: the ServiceClaim and any PVC stay. */}}
+  replicas: {{ if or .Values.suspended .Values.quiesced }}0{{ else }}{{ .Values.replicas }}{{ end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: "{{ $registry }}/{{ $image }}:{{ $tag }}"
+          args: ["--port", "8080"]
+          ports:
+            - containerPort: 8080
+          env:
+            # Proves the ESO -> consumer Vault path end to end.
+            - name: EXAMPLE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Chart.Name }}-app
+                  key: EXAMPLE_TOKEN
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

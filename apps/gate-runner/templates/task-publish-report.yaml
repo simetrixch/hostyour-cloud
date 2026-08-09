@@ -1,0 +1,99 @@
+{{- /*
+publish-report — the report hand-off. A small kubectl step that reads
+<workspace>/.gate-report.json and applies it as ConfigMap
+gate-report-<run-id> (key report.json) in THIS namespace, where the
+Controller's poll picks it up (and later deletes it with its own RBAC). If
+the gate task crashed before writing a report, a SYNTHETIC fail report is
+published instead — the Controller must never hang on a missing report.
+
+Runs as the pipeline's `finally` task under SA gate-report-writer (bound by
+the Controller's PipelineRun taskRunSpecs — see pipeline.yaml): the ONLY pod
+in the sandbox holding an API token, and that token can only write ConfigMaps
+here (rbac.yaml). Its API-server egress comes from the additive
+gate-report-writer-apiserver NetworkPolicy pinhole.
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: publish-report
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gate-runner
+    app.kubernetes.io/component: task
+spec:
+  description: >-
+    Publish <workspace>/.gate-report.json as ConfigMap gate-report-<run-id>
+    (key report.json); synthesize a FAIL report when the file is missing.
+  workspaces:
+    - name: source
+      description: The run workspace carrying .gate-report.json (if the gate wrote one).
+  params:
+    - name: run-id
+      type: string
+      description: Controller-issued run id — names the ConfigMap gate-report-<run-id>.
+  steps:
+    - name: publish
+      image: {{ .Values.reportWriter.image }}
+      env:
+        # kubectl writes its discovery/http cache under $HOME — point it at
+        # the writable emptyDir (rootfs is read-only).
+        - name: HOME
+          value: /tmp
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        REPORT="$(workspaces.source.path)/.gate-report.json"
+        OUT=/tmp/report.json
+
+        if [ -s "$REPORT" ]; then
+          cp "$REPORT" "$OUT"
+        else
+          # The gate task died before writing REPORT_OUT (internal error /
+          # OOM / image pull failure upstream). Publish a synthetic FAIL so
+          # the Controller's poll resolves to a verdict instead of hanging.
+          NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > "$OUT" <<EOF
+        {
+          "verdict": "FAIL",
+          "synthetic": true,
+          "runId": "$(params.run-id)",
+          "reason": "gate task produced no report file (crashed before REPORT_OUT was written) - synthesized by publish-report",
+          "generatedAt": "${NOW}"
+        }
+        EOF
+        fi
+
+        # create-or-update (idempotent across ArgoCD/Tekton retries of this
+        # finally task). The hostyour.cloud/gate-report label lets operators
+        # GC orphaned reports in bulk; the Controller itself deletes by name.
+        kubectl create configmap "gate-report-$(params.run-id)" \
+          --from-file=report.json="$OUT" \
+          --namespace {{ .Release.Namespace }} \
+          --dry-run=client -o yaml \
+          | kubectl label --local -f - hostyour.cloud/gate-report=true -o yaml \
+          | kubectl apply -f -
+      securityContext:
+        runAsNonRoot: true
+        # Same uid as the gate step so the report file is readable here no
+        # matter what mode the CLI created it with.
+        runAsUser: {{ .Values.gate.runAsUser }}
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+        readOnlyRootFilesystem: true
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      computeResources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+  volumes:
+    - name: tmp
+      emptyDir: {}

@@ -1,0 +1,50 @@
+# The four numbers and the two counts that bound ONE unit namespace. They arrive
+# from the unit's REGISTRATION, resolved there by the Controller from the one size
+# table it holds — so a registration states literally what its unit gets, and this
+# chart carries no table and no preset of its own.
+#
+# WHY THE VALUES BELOW ARE EMPTY AND `required`. A default here would be a second
+# source for a number the registration already states, and the two would drift
+# apart the first time the table changes. An empty value fails the render loudly
+# instead of quietly bounding a customer's namespace at a figure nobody chose.
+quota:
+  # requests — what the scheduler RESERVES for this namespace. The sum over all
+  # its pods may not exceed these, and a pod that would exceed them is REJECTED at
+  # creation (not left Pending), which is why the LimitRange below is not optional.
+  requestsCpu: ""
+  requestsMemory: ""
+  # limits — what the namespace may BURST to. A CPU limit throttles, a memory
+  # limit OOM-kills, so the two behave differently under pressure and the memory
+  # figure is the one that decides whether a unit survives a spike.
+  limitsCpu: ""
+  limitsMemory: ""
+  # count/pods — the pod ceiling. It bounds what the CPU and memory figures cannot:
+  # a runaway that creates many tiny pods stays inside the resource caps while
+  # filling the node's pod slots, which are finite per kubelet.
+  pods: ""
+  # persistentvolumeclaims — storage is the resource that does not come back when a
+  # workload stops, so it is capped by count here and by size in the PVC itself.
+  persistentVolumeClaims: ""
+
+# The per-container defaults the LimitRange stamps on a pod that declares none.
+#
+# WHY THIS EXISTS AT ALL. A ResourceQuota that bounds requests.cpu makes requests
+# MANDATORY: Kubernetes rejects any pod in the namespace whose containers declare
+# none. A consumer's chart belongs to the consumer, and nothing in the contract
+# requires it to declare resources — so without these defaults, the day a quota
+# lands is the day such a consumer stops deploying, with an admission error rather
+# than anything the customer could act on.
+#
+# The numbers are deliberately SMALL. They are not an allowance, they are what a
+# container that stated no need gets: enough to start and serve, little enough
+# that a real workload's own declaration is always the larger one. The measure
+# they were set against is a static front-end serving one page: if the default
+# ever exceeds what such a container asks for, it has stopped being a floor and
+# started being a budget nobody chose.
+limitRange:
+  defaultRequest:
+    cpu: 50m
+    memory: 64Mi
+  default:
+    cpu: 200m
+    memory: 128Mi

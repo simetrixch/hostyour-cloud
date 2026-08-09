@@ -1,0 +1,20 @@
+{{- if .Values.persistence.enabled }}
+# Every PVC must carry the sync-options annotation below —
+# it keeps ArgoCD from pruning or deleting the claim (and your data) on sync.
+# Hard gate G6 rejects any PVC without it. whoami needs no storage, so this
+# example is OFF by default (persistence.enabled: false).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Chart.Name }}-data
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

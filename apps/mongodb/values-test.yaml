@@ -1,0 +1,31 @@
+mongodb-data:
+  pvc:
+    storageSize: "20Gi"
+
+mongodb:
+  resources:
+    # Burstable: low requests (not reserved up-front) so the scheduler packs pods,
+    # but each pod may climb to 4 vCPU / 4 Gi under load. CPU limit only throttles
+    # (never crashes); the 4 Gi memory ceiling is generous headroom so normal load
+    # never OOM-kills. (mongodb sizes its WiredTiger cache from the cgroup limit.)
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+
+# prometheus-mongodb-exporter connection is no longer configured per-env: the
+# exporter consumes the service-provisioner-written exporter-mongodb Secret
+# (existingSecret in values-common.yaml + the roles-only ServiceClaim in
+# templates/serviceclaim-exporter.yaml). The URI's host comes from the
+# service-provisioner's own per-env mongoHost.
+
+# Per-namespace SecretStore — Vault URL falls back to global.vaultUrl, written
+# by StampClusterProfile into cluster/profile.yaml from the cluster map.
+secret-store: {}
+
+# mongodb-credentials ExternalSecret — reads Vault path test/app/mongodb.
+externalsecret-mongodb:
+  externalSecret:
+    vaultPath: test/app/mongodb

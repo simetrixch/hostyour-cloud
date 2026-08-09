@@ -1,0 +1,26 @@
+apiVersion: v2
+name: vault-rbac
+version: 1.0.0
+description: >-
+  ClusterRole + ClusterRoleBinding vault-namespace-reader (get/list namespaces
+  → ServiceAccount vault:vault). Vault's kubernetes auth evaluates LABEL-bound
+  ESO roles (bound_service_account_namespace_selector) by GETting the calling
+  SA's Namespace as its own SA; under enforced RBAC that read 403s without this
+  grant and every consumer login fails. GitOps-owned so it survives a wipe —
+  replaces the imperative block that used to create it when the cluster was seeded.
+type: application
+
+dependencies:
+  # RBAC library — the `rbac.grants` helper renders the cluster-scoped
+  # ClusterRole/ClusterRoleBinding pair (templates/rbac.yaml), same building
+  # block as apps/manager.
+  - name: rbac
+    version: 1.0.0
+    repository: file://../../charts/rbac
+
+  # Shared named templates (common.labels etc.) used by the rbac library.
+  # Declared at APP level because Helm doesn't vendor nested file:// deps —
+  # see charts/common/Chart.yaml for the consumption rule.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

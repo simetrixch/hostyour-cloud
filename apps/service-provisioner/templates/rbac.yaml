@@ -1,0 +1,91 @@
+{{- /*
+RBAC for the controller. It watches ServiceClaims cluster-wide, patches their
+.status, and writes the per-claim credential Secret into whatever namespace the
+claim lives in — so both the claim-watch and the Secret verbs are cluster-scoped
+(ClusterRole + ClusterRoleBinding). The `secrets get` verb also lets it READ the
+backend admin credentials (mongodb/mongodb-credentials, postgresql/postgresql-
+credentials) and READ BACK an existing target Secret to
+reuse its generate-once password.
+
+It also READS the claim's own namespace, for one decision: a namespace annotated
+platform.hostyour.cloud/relocating belongs to a unit that is moving to another
+cluster, and its data must outlive the claim's deletion (the relocation hold in
+configmap.yaml).
+
+The cluster-wide `secrets` grant is broad but inherent to a credential
+provisioner (consumer namespaces are dynamic, so the write side can't be pinned
+ahead of time). It never touches anything else.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.controller.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: service-provisioner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.controller.serviceAccountName }}
+  labels:
+    app.kubernetes.io/name: service-provisioner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+  # Discover ServiceClaims cluster-wide + record their status. update/patch on the
+  # MAIN resource is what authorizes editing metadata.finalizers — the deprovision
+  # finalizer is ADDED on first sight and REMOVED after teardown, and both are
+  # merge-patches of the main object's metadata. Without these verbs the controller
+  # could add a finalizer but NEVER clear it, wedging every ServiceClaim-bearing
+  # delete/offboard in Terminating forever: the classic 'added a finalizer, forgot
+  # the RBAC to clear it' outage. This grant is the single hard gate on the feature.
+  - apiGroups: ["platform.hostyour.cloud"]
+    resources: ["serviceclaims"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["platform.hostyour.cloud"]
+    resources: ["serviceclaims/status"]
+    verbs: ["get", "patch", "update"]
+  # The /finalizers subresource by convention (kubebuilder scaffolding). Only
+  # strictly required if a serviceclaim ever becomes a blockOwnerDeletion owner;
+  # harmless otherwise, and it keeps the grant future-proof.
+  - apiGroups: ["platform.hostyour.cloud"]
+    resources: ["serviceclaims/finalizers"]
+    verbs: ["update", "patch"]
+  # Read backend admin creds + read-back target Secrets; write per-claim Secrets
+  # into the claiming namespace; and DELETE the per-claim Secret on deprovision so
+  # a torn-down claim leaves NO stale credential behind when its namespace survives
+  # (bare `kubectl delete serviceclaim` / lone ArgoCD prune). Code scopes every
+  # delete to Secrets we manage (app.kubernetes.io/managed-by=service-provisioner,
+  # the W1 guard), so the broad grant stays honest. Still NO `list`.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch", "delete"]
+  # Read the claim's namespace at teardown — the relocation hold sits there as an
+  # annotation (configmap.yaml relocation_held). Cluster-scoped for the same reason
+  # the Secret verbs are: consumer and tenant namespaces are created dynamically.
+  # Without this grant the read 403s on EVERY teardown, which keeps the data (the
+  # bounded escape releases with it recorded as an orphan) but turns every ordinary
+  # offboard into an orphan report. `get` only — nothing here writes a namespace.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.controller.serviceAccountName }}
+  labels:
+    app.kubernetes.io/name: service-provisioner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.controller.serviceAccountName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.controller.serviceAccountName }}
+    namespace: {{ .Release.Namespace }}

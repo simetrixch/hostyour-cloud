@@ -1,0 +1,65 @@
+{{- if .Values.networkPolicy.enabled }}
+# NetworkPolicy — isolate this consumer's PostgreSQL on :5432.
+#
+# WHY THIS EXISTS. A per-consumer database holds that customer's data, and a
+# ClusterIP Service is reachable by IP from ANY pod in the cluster; Calico
+# enforces NetworkPolicy on the cluster, so without this every other consumer (and
+# every platform workload) could open a socket to :5432. Moving the instance
+# into the consumer's namespace does NOT isolate it by itself — this policy does.
+#
+# HOW IT DIFFERS FROM apps/mongodb + apps/redis, DELIBERATELY. Those admit their
+# clients by `global.dbConsumerLabel` (platform/db-consumer=true) because they
+# are SHARED databases that many namespaces legitimately reach. This one must NOT
+# use that label: the consumers ApplicationSet stamps platform/db-consumer=true on
+# EVERY consumer namespace (managedNamespaceMetadata), so admitting by it would
+# open THIS consumer's database to EVERY OTHER consumer — the exact cross-consumer
+# blast radius the per-consumer design exists to close (per-consumer-postgres.md
+# §9.1). Cross-namespace access is therefore admitted ONLY by explicit namespace
+# NAME (.Values.networkPolicy.allowedNamespaces), never by label. If you are here
+# to "make it consistent with mongodb", STOP — the divergence is the point.
+#
+# WHAT IS ADMITTED:
+#   • same-namespace pods (podSelector: {}) — the consumer's application, its
+#     migrate Job, and the metrics exporter (which connects to :5432 from this
+#     same namespace);
+#   • each namespace in .Values.networkPolicy.allowedNamespaces BY NAME —
+#     service-provisioner (creates databases[1..], mints/re-mints the consumer
+#     role, §5.4) and backup (nightly pg_dumpall once apps/backup exists, §11).
+#
+# Prometheus scraping is unaffected: it scrapes the EXPORTER on :9187, and this
+# policy selects only the postgres pod, leaving the exporter pod unpoliced.
+#
+# Wave -20 — database infra, before anything a consumer declares (contract floor
+# -10), per per-consumer-postgres.md §4.3. This policy is authored directly here,
+# so it carries its own annotation rather than routing through a shared library
+# chart. Set in slice S2a together with -20 on the Deployment/Service/PVC and -21
+# on the credential trio, as one coherent wave set.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-internal
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+spec:
+  podSelector:
+    matchLabels:
+      # Matches the postgres pod: charts/deployment aliased as `postgres` renders
+      # common.selectorLabels app.kubernetes.io/name=<alias>=postgres (verified by
+      # render). The exporter pod carries name=prometheus-postgres-exporter and is
+      # deliberately NOT selected, so scraping on :9187 stays open.
+      app.kubernetes.io/name: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+        {{- range .Values.networkPolicy.allowedNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}

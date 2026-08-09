@@ -1,0 +1,152 @@
+{{- $rs := eq (include "unit-mongodb.isReplicaSet" .) "true" -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  # A StatefulSet and not a Deployment, in BOTH modes. A replica set needs it for
+  # the obvious reason — each member gets a stable per-pod identity and DNS that
+  # resolves to its own pod IP, which is how mongod recognises itself as a
+  # configured member across restarts. A standalone needs it for the volume: one
+  # mongod owns one data directory, and a Deployment's rolling update would start
+  # a second pod against the same ReadWriteOnce volume.
+  #
+  # The name is PINNED to `mongodb`, not derived from the release: one instance
+  # per namespace is a hard invariant here (the credential Secret, the SecretStore
+  # and both Services carry fixed names too), and the service-provisioner resolves
+  # a claim to `mongodb.<namespace>.svc.cluster.local` without being told where it
+  # is. Same discipline as apps/postgresql pinning `postgres`.
+  name: mongodb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  revisionHistoryLimit: 3
+  serviceName: mongodb-headless
+  replicas: {{ include "unit-mongodb.replicas" . }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongodb
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.mongodb.podSecurityContext | nindent 8 }}
+      {{- if $rs }}
+      initContainers:
+        # A K8s Secret volume is mounted root-owned and 0644; mongod refuses a
+        # --keyFile that is group/world-readable or not owned by the running user
+        # (uid 999). This initContainer (as root) copies the keyfile off the
+        # read-only Secret mount onto a shared emptyDir, then chmod 400 + chown
+        # 999:999 so mongod accepts it. Only in replicaset mode: the keyfile
+        # authenticates INTRA-SET traffic, and a standalone has none.
+        - name: keyfile-perms
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              cp /secret/keyfile /keyfile/keyfile
+              chmod 400 /keyfile/keyfile
+              chown 999:999 /keyfile/keyfile
+          volumeMounts:
+            - name: keyfile-secret
+              mountPath: /secret
+              readOnly: true
+            - name: keyfile
+              mountPath: /keyfile
+      {{- end }}
+      containers:
+        - name: mongodb
+          image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
+          imagePullPolicy: {{ .Values.mongodb.image.pullPolicy }}
+          args:
+            - --bind_ip_all
+            # SCRAM auth in both modes: the root user is created on first init
+            # from MONGO_INITDB_ROOT_* below, and the service-provisioner
+            # authenticates as it to mint the consumer's own users.
+            - --auth
+            {{- if $rs }}
+            - --replSet
+            - {{ .Values.mongodb.replicaSetName }}
+            # Mandatory once --auth is on for a replica set: it authenticates
+            # traffic BETWEEN members.
+            - --keyFile
+            - /etc/mongo-keyfile/keyfile
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.mongodb.containerPort }}
+              name: mongodb
+          env:
+            - name: TZ
+              value: {{ .Values.global.timezone | quote }}
+            # Keeps mongod from segfaulting roughly every thirty seconds on this
+            # machine's kernel. MongoDB vendors its own TCMalloc, and TCMalloc
+            # disagrees with Linux 6.19 through 7.0.13 over restartable sequences;
+            # the image does NOT refuse to start on such a kernel, so without this
+            # the database serves for about half a minute, dies with SIGSEGV,
+            # comes back and does it again — taking writes in between, which is
+            # why it reads as healthy from the outside. Same setting the shared
+            # instance carries, for the same kernel.
+            - name: GLIBC_TUNABLES
+              value: "glibc.pthread.rseq=1"
+            # The official mongo entrypoint creates the SCRAM root user on FIRST
+            # init from these (it runs with or without --replSet, before the set
+            # is configured). On later boots the user already exists in the volume
+            # and the entrypoint skips creation.
+            - name: MONGO_INITDB_ROOT_USERNAME
+              value: "root"
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: root-password
+          securityContext:
+            {{- toYaml .Values.mongodb.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+            {{- if $rs }}
+            - name: keyfile
+              mountPath: /etc/mongo-keyfile
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.mongodb.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.mongodb.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.mongodb.resources | nindent 12 }}
+      {{- if $rs }}
+      volumes:
+        # Raw keyfile from the ESO-materialized mongodb-credentials Secret,
+        # projected single-key so the path is exactly /secret/keyfile above.
+        - name: keyfile-secret
+          secret:
+            secretName: mongodb-credentials
+            items:
+              - key: keyfile
+                path: keyfile
+        # Shared scratch the initContainer writes the mode-fixed keyfile to.
+        - name: keyfile
+          emptyDir: {}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.global.storageClass }}
+        storageClassName: {{ .Values.global.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.mongodb.storageSize }}

@@ -1,0 +1,77 @@
+{{- /*
+RBAC is split across TWO ServiceAccounts (the image-builder pattern, taken
+one step further because the sandbox runs partially tenant-authored code):
+
+  pipeline-sa (pipeline.serviceAccountName)
+    Default SA of every gate-run PipelineRun — the clone + gate pods. It has
+    ZERO API grants (no Role at all) and automountServiceAccountToken=false,
+    so no token even reaches those pods' filesystems: the sandbox must hold
+    no cluster credential whatsoever. Its only function is carrying the
+    registry pull Secret (kubelet consumes imagePullSecrets without any API
+    permission). The workspace PVC is created by the Tekton controller from
+    the PipelineRun's volumeClaimTemplate — no PVC verbs needed here either.
+
+  gate-report-writer (reportWriter.serviceAccountName)
+    Bound by the Controller's PipelineRun (taskRunSpecs) to EXACTLY the
+    publish-report finally task. The only token in the namespace, and it can
+    only write the report ConfigMap here — worthless for lateral movement.
+    Its API-server egress is the gate-report-writer-apiserver pinhole in
+    networkpolicy.yaml.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.pipeline.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gate-runner
+    app.kubernetes.io/component: pipeline-sa
+# No token ever mounts into clone/gate pods — the sandbox stays
+# credential-free even though Tekton's podTemplate is Controller-supplied.
+automountServiceAccountToken: false
+imagePullSecrets:
+  # Zot requires pull auth; materialized by ESO from the shared app-tier
+  # registry secret (templates/externalsecret-registry-pull.yaml).
+  - name: gate-runner-registry-pull
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.reportWriter.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gate-runner
+    app.kubernetes.io/component: gate-report-writer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.reportWriter.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gate-runner
+rules:
+  # Exactly the report hand-off, nothing else. kubectl's create --dry-run |
+  # label | apply flow needs get+create+patch; update covers the
+  # last-applied fallback. Deliberately NO list/watch (can't enumerate other
+  # runs' reports) and NO delete — the Controller reads the ConfigMap by NAME
+  # (gate-report-<run-id>) and deletes it with its own RBAC after the poll.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.reportWriter.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: gate-runner
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.reportWriter.serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.reportWriter.serviceAccountName }}

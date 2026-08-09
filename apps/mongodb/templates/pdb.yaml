@@ -1,0 +1,24 @@
+{{- /*
+PodDisruptionBudget for the rs0 replica set. minAvailable = replicas-1 so a
+voluntary disruption (node drain, rolling update) can never evict more than one
+member at a time — the replica set keeps a majority (quorum) and a PRIMARY stays
+elected. Only rendered for a multi-member set (replicas > 1); a single-member rs
+has no quorum to protect. Selector matches the StatefulSet pods exactly (same
+labels the headless Service selects on).
+*/ -}}
+{{- if gt (int .Values.mongodb.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mongodb-{{ .Values.global.env }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: replicaset-pdb
+spec:
+  minAvailable: {{ sub (int .Values.mongodb.replicas) 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

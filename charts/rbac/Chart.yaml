@@ -1,0 +1,13 @@
+apiVersion: v2
+name: rbac
+version: 1.0.0
+description: >-
+  Generic RBAC LIBRARY chart. Exposes the named template `rbac.grants`, which
+  renders — for each entry in a caller-supplied list — either a Role +
+  RoleBinding (namespaced) or a ClusterRole + ClusterRoleBinding (cluster-scoped
+  when the entry's namespace is empty), all bound to one shared (possibly
+  cross-namespace) ServiceAccount subject. Lets a workload chart ship its OWN
+  RBAC alongside itself (RBAC with the workload) instead of a satellite app —
+  e.g. apps/manager emits its four onboarding grants from this one building
+  block. type:library ⇒ nothing renders on its own; parents `include` the helper.
+type: library

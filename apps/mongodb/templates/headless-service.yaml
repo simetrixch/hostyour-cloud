@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  # Headless Service = the StatefulSet's governing service (spec.serviceName).
+  # It gives each pod a STABLE per-pod DNS name
+  # (mongodb-<env>-<ordinal>.mongodb-<env>-headless.<ns>.svc.cluster.local) that
+  # resolves directly to that pod's IP — which mongod recognises as one of its
+  # own bound addresses, so each rs member self-identifies reliably across
+  # restarts. The rs members advertise these per-pod FQDNs (set by the rs-init
+  # Job). publishNotReadyAddresses so the per-pod DNS resolves during startup,
+  # before the readiness probe passes.
+  name: mongodb-{{ .Values.global.env }}-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: replicaset-headless
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - port: 27017
+      targetPort: 27017
+      protocol: TCP
+      name: mongodb

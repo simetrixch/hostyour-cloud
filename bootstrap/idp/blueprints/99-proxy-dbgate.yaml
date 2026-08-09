@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — uses custom YAML tags !Find and !KeyOf that the VS
+# Code YAML linter does not recognize. The schema=null directive above
+# suppresses its "Unresolved tag" errors. Authentik's own blueprint loader
+# (Python yaml.SafeLoader subclass) registers these tags via construct_yaml_str
+# fallbacks — see authentik.blueprints.v1.common.BlueprintLoader.
+version: 1
+metadata:
+  name: dbgate Forward Auth
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - id: dbgate-proxy-provider
+    model: authentik_providers_proxy.proxyprovider
+    identifiers:
+      name: dbgate
+    attrs:
+      name: dbgate
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      external_host: https://gate.${IDP_DOMAIN}
+      mode: forward_domain
+      cookie_domain: .${IDP_DOMAIN}
+      access_token_validity: hours=24
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+  - id: dbgate-app
+    model: authentik_core.application
+    identifiers:
+      slug: dbgate
+    attrs:
+      name: dbgate
+      slug: dbgate
+      provider: !Find [authentik_providers_proxy.proxyprovider, [name, dbgate]]
+      meta_launch_url: https://gate.${IDP_DOMAIN}/
+      open_in_new_tab: true
+      group: Platform

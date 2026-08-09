@@ -1,0 +1,9 @@
+# DEV-specific platform globals.
+# Merged with platform/values-common.yaml by every Application via $values ref.
+global:
+  env: dev
+  # DEV is the build cluster today — it runs apps/registry, so the registry is
+  # LOCAL here (enables the CoreDNS hairpin). Across the
+  # multi-VM clusters, only the ONE build cluster sets this true.
+  servicesLocal:
+    registry: true

@@ -1,0 +1,122 @@
+{{- /*
+Egress policy for the unit's build namespace. The namespace holds nothing but
+this unit's PipelineRun pods, so the selector is the whole namespace.
+
+SHAPE: "open outward, segment inside". A build pod may reach the PUBLIC
+internet on 443/80 (npmjs, PyPI, crates.io, GitHub, …), but NOT the
+private/cluster ranges — so it cannot touch Vault, a sibling unit's build
+namespace, the API server, or any in-cluster service other than the few
+explicitly allowed below. Isolation of the build does not come from fencing
+where it may talk to: it comes from the BUILD/PUSH SPLIT
+(apps/image-builder/templates/tasks/buildah-build-push.yaml — the push
+credential is never in the step that runs untrusted code) plus this
+outward-only egress, which stops a pivot INTO the cluster.
+
+The `except` list covers every private range this cluster uses: pods are
+POD_CIDR=10.244.0.0/16, Services are MicroK8s' fixed 10.152.183.0/24, and the
+cluster LAN is 10.1.1.0/24 (bootstrap/configs/config.example) — all inside
+10.0.0.0/8. Calico evaluates egress AFTER DNAT, so in-cluster traffic to a
+ClusterIP lands on the destination POD IP (pod CIDR → excepted → denied by the
+ipBlock rule); every in-cluster destination the build legitimately needs is
+allowed by an explicit namespaceSelector rule below, never by the ipBlock.
+*/ -}}
+{{- if .Values.unit }}
+{{- $unit := include "consumer-build.unitName" . -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: build-egress
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    image-builder.io/consumer: {{ $unit | quote }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # kube-dns — name resolution for the git host, the registry host and every
+    # public dependency registry.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # The PUBLIC internet on 443/80 — git clone + npm/PyPI/… dependency
+    # installs. `except` carves the private + cluster ranges back OUT, so this
+    # rule can never be what reaches Vault, the API server or a peer namespace.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8 # pods 10.244.0.0/16 + Services 10.152.183.0/24 + cluster LAN 10.1.1.0/24
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              # CGNAT — a NAT'd node or ingress address can live here.
+              - 100.64.0.0/10
+              # Link-local, and with it the cloud metadata endpoint
+              # 169.254.169.254: on Hetzner /hetzner/v1/userdata serves
+              # provisioning data (SSH keys, secrets) unauthenticated over
+              # plain port 80, which this rule would otherwise open.
+              - 169.254.0.0/16
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+    # In-cluster registry Service (if the push resolves to the ClusterIP).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: registry
+      ports:
+        - { protocol: TCP, port: 5000 }
+        - { protocol: TCP, port: 443 }
+    # In-cluster ingress (Traefik): a buildah push or registry probe to the zot
+    # FQDN resolves via the CoreDNS hairpin to the Traefik ClusterIP, which
+    # kube-proxy DNATs to the Traefik POD — a Calico workload the ipBlock rule
+    # above does NOT match. The port must be the POD/container port: Calico
+    # evaluates egress AFTER the DNAT, and Traefik's `websecure` Service port
+    # 443 targets container port 8443 — a `port: 443`-only rule silently drops
+    # the push.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress
+      ports:
+        - { protocol: TCP, port: 8443 } # Traefik `websecure` container port (Service 443 → 8443)
+        - { protocol: TCP, port: 443 } # belt: an ingress that terminates on 443 directly
+---
+{{- /*
+API-server pinhole for the BUMP pod ONLY. Tekton stamps every TaskRun pod with
+tekton.dev/pipelineTask=<task name>, so this selects exactly the bump task's
+pod — the one pod in the namespace that runs kubectl (the argo-sync patch on
+the unit's own Applications) and runs no unit code. Same post-DNAT reasoning
+as the gate-runner report-writer pinhole.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bump-apiserver
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    image-builder.io/consumer: {{ $unit | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: bump
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.bump.apiServer.cidr }}
+      ports:
+        {{- range .Values.bump.apiServer.ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+{{- end }}

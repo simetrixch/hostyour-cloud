@@ -1,0 +1,5 @@
+# Toggle for 'observability' on THIS cluster. deploy:"false" drops it (Application + data
+# pruned, unless PVC delete-protected); "true" runs it. master = "true" (generic
+# default); edit on the installation branch after merging master.
+name: observability
+deploy: "true"

@@ -1,0 +1,93 @@
+{{- /*
+RBAC for the instance's IN-CLUSTER destination (ns <name> only).
+
+The argo-cd sub-chart runs namespace-scoped (createClusterRoles: false in
+values-common.yaml) and its bundled Roles cover only the components' OWN
+bookkeeping (secrets/configmaps, argoproj.io CRs, events, deployments). But the
+controller's cluster cache for the in-cluster destination (templates/
+cluster-in-cluster.yaml — restricted to ns <name>) must LIST/WATCH every
+namespaced resource kind in ns <name>, and syncing the handoff root
+Application writes whatever the slave branch's argocd tree contains there.
+Under MicroK8s AlwaysAllow this gap was invisible; with the rbac addon
+enforced the cache dies with
+  cannot list resource "..." in the namespace "<name>"
+→ root-applications ComparisonError / sync status Unknown.
+
+These Roles are the namespace-scoped twin of what the MASTER's full install
+holds cluster-wide (ClusterRole argocd-application-controller: all groups/
+resources/verbs; ClusterRole argocd-server: delete,get,patch on everything
++ events + pod logs) — the exact shape upstream's namespace-install
+manifests ship as namespace Roles. The per-slave
+instance thus ends up with the master's RBAC surface, scoped to its one
+namespace. The REMOTE slave cluster needs none of this: it is reached via the
+cluster-slave Secret's bearerToken (cluster-admin SA on the slave).
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-application-controller-in-cluster
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+rules:
+  # The master's controller ClusterRole verbatim, minus nonResourceURLs (not
+  # expressible in a Role; /version + discovery are open to every
+  # authenticated principal anyway, so nothing is lost).
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-application-controller-in-cluster
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-application-controller-in-cluster
+subjects:
+  # SA name is constant across slaves: argo-cd.fullnameOverride=argocd.
+  - kind: ServiceAccount
+    name: argocd-application-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-server-in-cluster
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+rules:
+  # The master's argocd-server ClusterRole, namespace-scoped: live-manifest
+  # view + the UI's resource actions (delete/patch), events tab, log streaming.
+  # The master's two extra creation rules (batch jobs / argoproj workflows) are
+  # the unused Argo-Workflows integration — deliberately not mirrored.
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["delete", "get", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "create"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-server-in-cluster
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-server-in-cluster
+subjects:
+  - kind: ServiceAccount
+    name: argocd-server
+    namespace: {{ .Release.Namespace }}

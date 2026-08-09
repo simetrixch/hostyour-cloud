@@ -1,0 +1,119 @@
+{{- /*
+ArgoCD PostSync hook: configure the replica set across the StatefulSet's members.
+Builds the member list from the stable per-pod DNS, waits for every member's
+mongod, then initiates the set (or force-reconfigures it if the member set
+drifted). Idempotent and self-healing; a plain pod restart needs no Job, since
+the set's config persists on each member's volume and the per-pod DNS resolves a
+member back to itself.
+
+Only in replicaset mode. A standalone has no set to initiate, and running this
+against one would hang waiting for a PRIMARY that a non---replSet mongod never
+reports.
+
+Unlike the shared instance, there is no rs-ensure CronJob beside this. That guard
+exists because a manual data wipe on the platform's own database leaves mongod as
+RSGhost until the next sync, and the platform's own database has no operator
+watching it. A unit's instance is reconciled by the same ArgoCD sync that owns
+everything else in its namespace, and a wipe there is the unit's own event.
+*/ -}}
+{{- if eq (include "unit-mongodb.isReplicaSet" .) "true" }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-rs-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: rs-init
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 20
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongodb
+        app.kubernetes.io/component: rs-init
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+      containers:
+        - name: rs-init
+          image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
+          imagePullPolicy: {{ .Values.mongodb.image.pullPolicy }}
+          env:
+            - name: REPLICAS
+              value: {{ include "unit-mongodb.replicas" . | quote }}
+            - name: RS
+              value: {{ .Values.mongodb.replicaSetName | quote }}
+            - name: STS
+              value: "mongodb"
+            - name: SVC
+              value: "mongodb-headless"
+            - name: NS
+              value: {{ .Release.Namespace | quote }}
+            # Root password for the authenticated seed connection — rs.conf(),
+            # rs.initiate(), rs.reconfig() and rs.status() all require auth now
+            # that mongod runs with --auth.
+            - name: ROOT_PW
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: root-password
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -uo pipefail
+              # The member list, from the StatefulSet's stable per-pod DNS.
+              hosts=""; members=""
+              for i in $(seq 0 $((REPLICAS-1))); do
+                h="${STS}-${i}.${SVC}.${NS}.svc.cluster.local:27017"
+                hosts="$hosts $h"
+                [ -n "$members" ] && members="$members,"
+                members="${members}{_id:${i},host:\"${h}\"}"
+              done
+              echo "${RS} members:$hosts"
+              # Wait for every member's mongod to answer before configuring.
+              for h in $hosts; do
+                echo "waiting for $h ..."
+                until mongosh "mongodb://$h/?directConnection=true" --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; do sleep 3; done
+              done
+              # Authenticated seed. Host-only URI with -u/-p rather than
+              # credentials in the URI, so a password carrying URI metacharacters
+              # (:/@?&) needs no escaping. authSource=admin: root lives there.
+              SEED="mongodb://${STS}-0.${SVC}.${NS}.svc.cluster.local:27017/?directConnection=true&authSource=admin"
+              echo "ensuring ${RS} ..."
+              mongosh "$SEED" -u root -p "${ROOT_PW}" --quiet --eval "
+                var desired = [${members}];
+                var conf = null;
+                try { conf = rs.conf(); } catch (e) {}
+                if (!conf) {
+                  rs.initiate({_id: '${RS}', members: desired});
+                  print('${RS} initiated with ' + desired.length + ' member(s)');
+                } else {
+                  var cur = conf.members.map(function (m) { return m.host; }).sort().join(',');
+                  var want = desired.map(function (m) { return m.host; }).sort().join(',');
+                  if (cur !== want) {
+                    conf.members = desired;
+                    rs.reconfig(conf, {force: true});
+                    print('${RS} reconfigured -> ' + want);
+                  } else { print('${RS} ok: ' + cur); }
+                }"
+              echo "waiting for a PRIMARY ..."
+              until [ "$(mongosh "$SEED" -u root -p "${ROOT_PW}" --quiet --eval 'try{rs.status().members.some(function(m){return m.stateStr=="PRIMARY";})?1:0}catch(e){0}')" = "1" ]; do sleep 2; done
+              echo "${RS} has a PRIMARY — done."
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+{{- end }}

@@ -1,0 +1,851 @@
+{{- /*
+The generic service-provisioner controller, shipped as a ConfigMap and mounted
+at /app in the Deployment (the pod pip-installs pinned libs at boot — no
+separate image-build pipeline, the platform owns the code in git). A
+ServiceClaim-driven controller with one handler per backing service — it
+replaced (and retired) the annotation-driven mongodb-provisioner.
+
+Reconcile loop: list every ServiceClaim cluster-wide; dispatch by .spec.service
+to a handler; write a namespace-local credentials Secret (generate-once
+password — read back from the Secret, never rotated); record .status. Every
+per-claim action is wrapped in try/except so one bad claim never stalls the loop.
+
+ISOLATION: the mongo USER is named from a
+NAMESPACE-anchored identity `<namespace>_<claim>` (see sanitize), so a claim can
+NEVER name — and thus gain access to — another tenant's (or the platform's) user.
+DATABASE names, by contrast, are taken VERBATIM from .spec.databases:
+they are the LITERAL Mongo/Postgres database names the platform DB-name contract
+declares (the consumer's deploy/platform.yaml `databases:`, carried unchanged
+through the registry pointer and the chart's ServiceClaim), and the provisioner
+creates EXACTLY those — no prefix, no composition. What keeps a claim from naming
+a foreign database is the platform (onboard-time validation + the
+ApplicationSet-injected mongodb.databases value), not a provisioner prefix; the
+provisioner trusts the literal names. The consumer still reads the names back from
+the Secret (MONGODB_DATABASES / the MONGODB_URI path) rather than re-deriving them.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "service-provisioner.scriptConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: service-provisioner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  provisioner.py: |
+    #!/usr/bin/env python3
+    """ServiceClaim-driven, multi-backend credential provisioner."""
+    import base64
+    import json
+    import logging
+    import os
+    import re
+    import secrets
+    import sys
+    import time
+    import urllib.request
+    import urllib.error
+    from datetime import datetime, timezone
+    # quote_plus is NOT optional here: every credential that gets interpolated into a
+    # mongodb:// URI below must be percent-encoded first. pymongo parses the URI per
+    # RFC 3986 + the '+'-as-space rule, so an unescaped '+' in a password silently
+    # becomes a SPACE and authentication fails with a bare "Authentication failed"
+    # (code 18) that looks like a wrong credential rather than a parsing bug. The
+    # retired mongodb-provisioner already did this (its connect_mongo); this handler
+    # did not, which is exactly how a base64-shaped root password containing '+' broke
+    # every mongodb ServiceClaim while the identical Secret worked everywhere else.
+    from urllib.parse import quote_plus
+
+    from kubernetes import client, config
+    from kubernetes.client.rest import ApiException
+
+    GROUP = "platform.hostyour.cloud"
+    VERSION = "v1alpha1"
+    PLURAL = "serviceclaims"
+    MANAGED_BY = "service-provisioner"
+
+    # ---- Deprovision / finalizer -------------------------------------------------
+    # A k8s finalizer stamped on every ServiceClaim we provision, so teardown runs
+    # HOWEVER the claim dies (ArgoCD prune, `kubectl delete`, Controller offboard) —
+    # not only on a Controller-driven path. On deletionTimestamp we destroy exactly
+    # what the create handler made, THEN strip this string so the object (and, on a
+    # namespace teardown, the namespace) can be garbage-collected. Without the
+    # finalizer a delete just drops the claim from the next list and the backend
+    # user/db lives on forever — the whole gap #18 targets.
+    FINALIZER = "platform.hostyour.cloud/deprovision"
+    # Operator escape lever: set this annotation to "true" on a wedged claim to
+    # release the finalizer on the next poll even if teardown keeps failing (the
+    # orphan is still recorded LOUD). Freeform annotation ⇒ no CRD schema change.
+    FORCE_RELEASE_ANNOTATION = "platform.hostyour.cloud/force-release"
+    # Bounded escape: after this many FAILED teardown passes we record the orphan
+    # and release the finalizer anyway. A permanently-failing finalizer wedges the
+    # namespace forever AND stalls the Controller offboard for its full 10-min watch
+    # timeout (leaking the Vault secrets too) — strictly WORSE than a VISIBLE
+    # leftover. Small on purpose (~5 polls of retries before releasing LOUD).
+    MAX_DELETION_ATTEMPTS = 5
+    # WALL-CLOCK BACKSTOP for that escape, and it must NOT lean on any status field:
+    # the attempt counter lives in status.deletionAttempts, which the apiserver
+    # PRUNES whenever the live CRD schema lags this controller (the 'roles'-pruning
+    # window we have already hit). A pruned counter reads 0 every poll → never
+    # reaches MAX_DELETION_ATTEMPTS → finalizer kept forever → namespace wedged. So
+    # we ALSO release once the claim has been Deleting longer than this, measured
+    # from metadata.deletionTimestamp — core k8s metadata that can never be pruned.
+    MAX_DELETION_SECONDS = 900   # 15 min — beyond the Controller's 10-min offboard watch
+    # A unit that is MOVING to another cluster loses its claims to this very teardown, and
+    # loses them FIRST: the move repoints the registration, the source appset stops
+    # selecting the unit, and the Application's resources-finalizer deletes the Application
+    # WITH its resources — the ServiceClaims among them. So the deprovisioners below would
+    # drop the databases the move is carrying before it has restored anything on the target.
+    # This annotation on the claim's NAMESPACE suspends the DATA half of the teardown while the
+    # credentials (the mongo user, the namespace-local Secret) still go. What is held back:
+    #   mongodb — the databases STAY and the move drops them itself in clear-source, once the
+    #     target holds a verified copy. This is the hold the move depends on: without it the
+    #     source data is gone at repoint time, before the restore has read anything.
+    # THE NAMESPACE carries the mark because it is the one object still readable here. A
+    # consumer has no CR to annotate; and a namespace can neither be pruned away (a
+    # consumer's carries Delete=false through the appset's managedNamespaceMetadata) nor
+    # finish terminating while a claim inside it still holds the finalizer above — so even a
+    # namespace the cascade IS deleting is still there to be read at this moment.
+    # ANY non-empty value holds, the same rule the tenant operator uses for its own
+    # relocating annotation on the Tenant CR: a switch whose job is to protect data must not
+    # turn destructive on a value nobody anticipated.
+    RELOCATING_ANNOTATION = "platform.hostyour.cloud/relocating"
+
+    ENV = os.environ.get("ENV", "")
+    POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECONDS", "15"))
+
+    MONGO_HOST = os.environ.get("MONGO_HOST", "")
+    MONGO_ROOT_USER = os.environ.get("MONGO_ROOT_USER", "root")
+    MONGO_CRED_NS = os.environ.get("MONGO_CREDENTIALS_NAMESPACE", "mongodb")
+    MONGO_CRED_SECRET = os.environ.get("MONGO_CREDENTIALS_SECRET", "mongodb-credentials")
+    MONGO_CRED_KEY = os.environ.get("MONGO_CREDENTIALS_KEY", "root-password")
+    MONGO_AUTH_SOURCE = os.environ.get("MONGO_AUTH_SOURCE", "admin")
+    MONGO_REPLICA_SET = os.environ.get("MONGO_REPLICA_SET", "rs0")
+
+    # PostgreSQL is PER-CONSUMER (per-consumer-postgres.md §5.4, §6): a postgresql
+    # claim is served by the instance in the CLAIM'S OWN namespace, so the host and
+    # the admin credential are resolved from `ns` at provision time (see
+    # handle_postgresql). There is deliberately NO global PG_HOST /
+    # PG_CREDENTIALS_NAMESPACE any more — those two reads, and the deployment env +
+    # values that fed them, are gone with the shared instance. The remaining knobs
+    # are namespace-independent: the port, the admin role name (`postgres`, created
+    # by initdb), and the in-namespace Secret name + key ESO materializes from Vault.
+    PG_PORT = os.environ.get("PG_PORT", "5432")
+    PG_ADMIN_USER = os.environ.get("PG_ADMIN_USER", "postgres")
+    PG_CRED_SECRET = os.environ.get("PG_CREDENTIALS_SECRET", "postgresql-credentials")
+    PG_CRED_KEY = os.environ.get("PG_CREDENTIALS_KEY", "postgres-password")
+
+
+    REG_SOURCE_NS = os.environ.get("REGISTRY_SOURCE_NAMESPACE", "")
+    REG_SOURCE_SECRET = os.environ.get("REGISTRY_SOURCE_SECRET", "")
+    REG_SOURCE_KEY = os.environ.get("REGISTRY_SOURCE_KEY", ".dockerconfigjson")
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        stream=sys.stdout,
+    )
+    log = logging.getLogger("service-provisioner")
+
+    PASSWORD_KEY = "PASSWORD"
+
+    def sanitize(ns, name):
+        """Stable, DB-safe identity prefix from namespace + claim (<=48 chars, so
+        composed `<prefix>_<logical>` names stay under the 63-byte identifier
+        limit). This claim-scoped prefix names the mongo USER (`sp_<prefix>`) — it
+        stays claim-scoped so two claims in ONE namespace never share a user."""
+        cleaned = re.sub(r"[^a-zA-Z0-9_]", "_", "%s_%s" % (ns, name)).lower()
+        return cleaned[:48]
+
+    def read_secret_key(core, ns, name, key):
+        """Return a decoded value from a Secret, or None if the Secret/key absent."""
+        try:
+            sec = core.read_namespaced_secret(name, ns)
+        except ApiException as exc:
+            if exc.status == 404:
+                return None
+            raise
+        b64 = (sec.data or {}).get(key)
+        return base64.b64decode(b64).decode("utf-8") if b64 else None
+
+    def relocation_held(core, ns):
+        """Is this namespace marked RELOCATING_ANNOTATION? Read at teardown time and never
+        cached: the mark is written by the move right before it commits the new cluster, so a
+        claim whose delete lands seconds later has to see it. A FAILED read is deliberately
+        NOT swallowed — it travels up into the caller's bounded escape, which keeps the data
+        and records it LOUD, where defaulting to "not relocating" would drop the data the
+        move is carrying. Needs the `namespaces get` verb (rbac.yaml)."""
+        meta = core.read_namespace(ns).metadata
+        return bool((meta.annotations or {}).get(RELOCATING_ANNOTATION))
+
+    def read_own_secret(core, ns, name):
+        """Return the target Secret ONLY if service-provisioner manages it. Raises
+        if a Secret of that name exists but is NOT ours — we never read back from,
+        or overwrite, a Secret we don't own (W1: no cross-secret clobber)."""
+        try:
+            sec = core.read_namespaced_secret(name, ns)
+        except ApiException as exc:
+            if exc.status == 404:
+                return None
+            raise
+        mgr = (sec.metadata.labels or {}).get("app.kubernetes.io/managed-by")
+        if mgr != MANAGED_BY:
+            raise RuntimeError(
+                "Secret %s/%s exists but is not managed by %s — refusing to touch it"
+                % (ns, name, MANAGED_BY))
+        return sec
+
+    def get_existing_password(core, ns, secret_name):
+        """Reuse the stored password if OUR target Secret already has one."""
+        sec = read_own_secret(core, ns, secret_name)
+        if sec is None:
+            return None
+        b64 = (sec.data or {}).get(PASSWORD_KEY)
+        return base64.b64decode(b64).decode("utf-8") if b64 else None
+
+    def write_secret(core, ns, secret_name, owner, payload, secret_type="Opaque"):
+        """Create or patch the namespace-local Secret. Patches ONLY a Secret we
+        already own (W1)."""
+        meta = client.V1ObjectMeta(
+            name=secret_name,
+            namespace=ns,
+            labels={
+                "app.kubernetes.io/managed-by": MANAGED_BY,
+                "platform.hostyour.cloud/claim": owner[:63],
+            },
+        )
+        body = client.V1Secret(metadata=meta, string_data=payload, type=secret_type)
+        existing = read_own_secret(core, ns, secret_name)  # raises if not ours
+        if existing is not None:
+            core.patch_namespaced_secret(secret_name, ns, body)
+            log.info("patched secret %s/%s", ns, secret_name)
+        else:
+            core.create_namespaced_secret(ns, body)
+            log.info("created secret %s/%s", ns, secret_name)
+
+    def set_status(custom, ns, name, phase, secret_name, message, generation):
+        body = {"status": {
+            "phase": phase,
+            "secretName": secret_name or "",
+            "message": (message or "")[:512],
+            "observedGeneration": generation or 0,
+        }}
+        try:
+            custom.patch_namespaced_custom_object_status(
+                GROUP, VERSION, ns, PLURAL, name, body)
+        except ApiException as exc:
+            log.warning("status patch failed for %s/%s: %s", ns, name, exc)
+
+    def set_delete_status(custom, ns, name, phase, attempts, orphans, message, generation):
+        """Status writer for the DELETING lifecycle. Persists the bounded-escape
+        attempt counter and the machine-readable orphan list — BOTH must be declared
+        in the CRD schema (crd.yaml status.deletionAttempts / status.orphanedResources)
+        or the apiserver silently PRUNES them on write (proven in-repo for the
+        exporter's `roles` field)."""
+        body = {"status": {
+            "phase": phase,
+            "message": (message or "")[:512],
+            "observedGeneration": generation or 0,
+            "deletionAttempts": attempts,
+            "orphanedResources": orphans or [],
+        }}
+        try:
+            custom.patch_namespaced_custom_object_status(
+                GROUP, VERSION, ns, PLURAL, name, body)
+        except ApiException as exc:
+            log.warning("delete-status patch failed for %s/%s: %s", ns, name, exc)
+
+    def add_finalizer(custom, ns, name, current):
+        """Stamp FINALIZER onto the MAIN object's metadata.finalizers. This is a
+        merge-patch that REPLACES the array, so we send current + ours. It needs
+        update/patch on `serviceclaims` itself — the /status grant used by set_status
+        is a SEPARATE subresource endpoint and does NOT authorize a metadata edit
+        (that RBAC gap is the single hard gate on the whole feature). Single-replica
+        controller (deployment strategy Recreate), so the read-modify-write race on
+        the finalizer array is not a concern here."""
+        body = {"metadata": {"finalizers": list(current) + [FINALIZER]}}
+        try:
+            custom.patch_namespaced_custom_object(GROUP, VERSION, ns, PLURAL, name, body)
+            log.info("added finalizer to %s/%s", ns, name)
+        except ApiException as exc:
+            # Non-fatal: provisioning still proceeds this pass and the next poll
+            # retries the add before any realistic delete arrives.
+            log.warning("could not add finalizer to %s/%s: %s", ns, name, exc)
+
+    def remove_finalizer(custom, ns, name, current):
+        """Strip FINALIZER so the object (and, on a namespace teardown, the namespace)
+        can be garbage-collected. Merge-patch the remaining list. If this fails the
+        object stays Terminating and the next poll re-runs deprovision (idempotent)
+        then retries the strip — so we log, we do NOT raise."""
+        remaining = [f for f in (current or []) if f != FINALIZER]
+        body = {"metadata": {"finalizers": remaining}}
+        try:
+            custom.patch_namespaced_custom_object(GROUP, VERSION, ns, PLURAL, name, body)
+            log.info("removed finalizer from %s/%s", ns, name)
+        except ApiException as exc:
+            log.warning("could not remove finalizer from %s/%s: %s", ns, name, exc)
+
+    def delete_own_secret(core, ns, secret_name):
+        """Delete the namespace-local credential Secret — but ONLY if WE manage it
+        (W1: never touch a Secret we do not own). 404 and not-ours are clean no-ops
+        so deprovision stays idempotent across retries. On a full namespace teardown
+        the Secret dies with the namespace anyway; this matters on a bare
+        `kubectl delete serviceclaim` / lone ArgoCD prune where the namespace SURVIVES
+        and a stale Secret would otherwise linger with live-looking creds pointing at
+        an already-destroyed backend. Needs the `secrets delete` verb (rbac.yaml)."""
+        try:
+            sec = core.read_namespaced_secret(secret_name, ns)
+        except ApiException as exc:
+            if exc.status == 404:
+                return
+            raise
+        mgr = (sec.metadata.labels or {}).get("app.kubernetes.io/managed-by")
+        if mgr != MANAGED_BY:
+            log.warning("secret %s/%s not managed by %s (managed-by=%r) — leaving it",
+                        ns, secret_name, MANAGED_BY, mgr)
+            return
+        try:
+            core.delete_namespaced_secret(secret_name, ns)
+            log.info("deleted secret %s/%s", ns, secret_name)
+        except ApiException as exc:
+            if exc.status == 404:
+                return
+            raise
+
+    def _databases(spec):
+        """The LITERAL database names a claim asks for — spec.databases used
+        VERBATIM (platform DB-name contract). These are the single source of truth:
+        declared in the consumer's deploy/platform.yaml `databases:`, carried
+        unchanged through the registry pointer and the chart's ServiceClaim, so the
+        provisioner creates EXACTLY these names with NO prefix and NO composition.
+        Empty ⇒ [] (a mongodb roles-only claim owns no database). Recomputed from
+        the same spec on create and teardown, so deprovision targets exactly what
+        create made. Never raises — the postgresql path guards the empty case."""
+        return [d for d in (spec.get("databases") or []) if d]
+
+    # EXTRA `role@db` grants a mongodb claim may request WITHOUT owning a
+    # database (spec.roles). STRICT WHITELIST — mirrors the CRD enum: a claim
+    # must never be able to self-grant an arbitrary role (root@admin,
+    # readWriteAnyDatabase@admin, …), so BOTH the schema and this handler gate
+    # every value. Today only the monitoring role the mongodb exporter needs;
+    # extending the set is a deliberate platform decision (edit both lists).
+    ALLOWED_EXTRA_ROLES = {"clusterMonitor@admin"}
+
+    # WHO may ask at all. Every whitelisted role is cluster-wide BY NATURE — that
+    # is why it needs spec.roles instead of a database: clusterMonitor@admin can
+    # read stats, database names and collection names across the WHOLE server. So
+    # it steps outside the `<namespace>_<claim>` prefix that this controller's
+    # isolation rests on (see the header): the prefix stops a claim from NAMING
+    # another tenant's database, but a cluster-wide role does not need to name it.
+    # Restricting the field to platform namespaces keeps the escape hatch usable
+    # for the platform's own monitoring without handing every consumer/tenant a
+    # cross-tenant metadata read. Fail-closed: unset ⇒ nobody may.
+    EXTRA_ROLES_NAMESPACES = {n.strip() for n in os.environ.get("EXTRA_ROLES_NAMESPACES", "").split(",") if n.strip()}
+
+    def _replica_set_of(host, root_pw):
+        """The replica set's name at `host`, READ OFF THE SERVER — "" for a standalone.
+
+        A per-unit instance is either a TRUE standalone (one mongod, no --replSet, and
+        therefore no multi-document transactions) or a three-member set, and which one it is
+        was chosen by the consumer's manifest. Asking `hello` is the only reading that cannot
+        disagree with what is actually running: a name taken from a label or a value would
+        survive the instance being re-rendered as the other shape and would then be written
+        into every consumer URI, where `replicaSet=` against a standalone makes the driver
+        refuse the server it just connected to.
+        """
+        from pymongo import MongoClient
+        uri = ("mongodb://%s:%s@%s:27017/?authSource=%s"
+               % (quote_plus(MONGO_ROOT_USER), quote_plus(root_pw), host, MONGO_AUTH_SOURCE))
+        probe = MongoClient(uri, directConnection=True, serverSelectionTimeoutMS=10000)
+        try:
+            return probe.admin.command("hello").get("setName") or ""
+        finally:
+            probe.close()
+
+    def _mongo_backend(core, ns):
+        """WHERE a mongodb claim is served from: (host, root password, replica set name).
+
+        A unit that brings its OWN MongoDB has the instance in ITS namespace, and the
+        credential the chart materializes there is the switch — the same rule
+        handle_postgresql follows, one namespace-local lookup and no mode flag anywhere. A
+        claim in a namespace with no such credential is served by the CLUSTER's shared
+        replica set, which is what every tenant and every consumer that asked for nothing
+        else runs on.
+
+        The shared instance's OWN namespace is excluded from the lookup: the metrics
+        exporter's claim lives there, and the credential it would find is the shared one —
+        resolving it as "namespace-local" would rewrite the exporter's host to a Service that
+        does not exist under that name.
+        """
+        if ns != MONGO_CRED_NS:
+            own_pw = read_secret_key(core, ns, MONGO_CRED_SECRET, MONGO_CRED_KEY)
+            if own_pw is not None:
+                # apps/unit-mongodb pins the Service name, so the host follows from the
+                # namespace alone — nothing has to be told the instance is there.
+                host = "mongodb.%s.svc.cluster.local" % ns
+                return host, own_pw, _replica_set_of(host, own_pw)
+        if not MONGO_HOST:
+            raise RuntimeError("MONGO_HOST not configured")
+        root_pw = read_secret_key(core, MONGO_CRED_NS, MONGO_CRED_SECRET, MONGO_CRED_KEY)
+        if root_pw is None:
+            raise RuntimeError("mongo root credentials not available yet")
+        return MONGO_HOST, root_pw, MONGO_REPLICA_SET
+
+    def _mongo_uri(user, password, host, path, replica_set):
+        """One connection URI builder for every mongodb connection this controller makes or
+        hands out. Both credential parts are quote_plus'd: the live root password is
+        base64-shaped and contains '+', and an unescaped '+' becomes a space, which fails
+        authentication with a bare code-18. `replicaSet=` is appended only where there IS a
+        set — naming one against a standalone makes the driver reject the server."""
+        uri = ("mongodb://%s:%s@%s:27017%s?authSource=%s"
+               % (quote_plus(user), quote_plus(password), host, path, MONGO_AUTH_SOURCE))
+        if replica_set:
+            uri += "&replicaSet=%s" % replica_set
+        return uri
+
+    def _extra_roles(spec, ns):
+        """spec.roles ["role@db", …] -> mongo role docs. Gated twice: the asking
+        namespace must be platform-owned, and each value must be whitelisted."""
+        items = spec.get("roles") or []
+        if not items:
+            return []
+        if ns not in EXTRA_ROLES_NAMESPACES:
+            raise RuntimeError(
+                "namespace %r may not claim extra roles: spec.roles is reserved for platform "
+                "namespaces (%s) because every allowed role is cluster-wide"
+                % (ns, ", ".join(sorted(EXTRA_ROLES_NAMESPACES)) or "none configured"))
+        out = []
+        for item in items:
+            if item not in ALLOWED_EXTRA_ROLES:
+                raise RuntimeError("role %r is not in the platform whitelist" % item)
+            role, _, db = item.partition("@")
+            doc = {"role": role, "db": db}
+            if doc not in out:
+                out.append(doc)
+        return out
+
+    # ---- Backend handlers — each returns (payload_dict, secret_type) ------------
+    def handle_mongodb(core, spec, ns, claim, user, password, prefix):
+        from pymongo import MongoClient
+        from pymongo.errors import OperationFailure
+        # The claim's own namespace first, the cluster's shared replica set otherwise —
+        # _mongo_backend states the rule and is the ONLY place that decides it.
+        host, root_pw, replica_set = _mongo_backend(core, ns)
+        # databases -> readWrite on each (LITERAL) database; spec.roles adds
+        # whitelisted extra grants. A roles-ONLY claim (no databases) is valid —
+        # e.g. the mongodb exporter's clusterMonitor@admin monitoring user.
+        dbs = _databases(spec)
+        roles = [{"role": "readWrite", "db": d} for d in dbs] + _extra_roles(spec, ns)
+        if not roles:
+            raise RuntimeError("claim needs at least one database or role")
+        mongo = MongoClient(_mongo_uri(MONGO_ROOT_USER, root_pw, host, "/", replica_set),
+                            serverSelectionTimeoutMS=10000)
+        try:
+            admin = mongo[MONGO_AUTH_SOURCE]
+            try:
+                admin.command("createUser", user, pwd=password, roles=roles)
+                log.info("created mongo user %s", user)
+            except OperationFailure as exc:
+                if exc.code != 51003 and "already exists" not in str(exc).lower():
+                    raise
+                admin.command("updateUser", user, pwd=password, roles=roles)
+                log.info("updated mongo user %s", user)
+        finally:
+            mongo.close()
+        # Roles-only claims (no databases) get the PATH-LESS URI form so nothing
+        # scopes the connection to a database — e.g. the exporter's monitoring URI.
+        path = ("/%s" % dbs[0]) if dbs else "/"
+        # The consumer pastes this straight into its driver, so it names the set only where
+        # there is one: a unit on a standalone gets a URI its driver accepts.
+        conn = _mongo_uri(user, password, host, path, replica_set)
+        return ({
+            "PASSWORD": password,
+            "MONGODB_USER": user,
+            "MONGODB_PASSWORD": password,
+            "MONGODB_DATABASES": ",".join(dbs),
+            "MONGODB_URI": conn,
+        }, "Opaque")
+
+    def handle_postgresql(core, spec, ns, claim, user, password, prefix):
+        import psycopg2
+        from psycopg2 import sql
+        # PER-CONSUMER INSTANCE (per-consumer-postgres.md §5.4, §6). A postgresql
+        # claim is served by the PostgreSQL instance that lives in the CLAIM'S OWN
+        # namespace — never a shared server. Both coordinates come from `ns`:
+        #   • host  — the in-namespace Service `postgres` (apps/postgresql pins that
+        #     name via fullnameOverride), reachable at the stable namespace-anchored
+        #     DNS below;
+        #   • admin — the per-consumer superuser password ESO materializes from Vault
+        #     (secret/<stage>/consumer/<name>/postgres) into Secret
+        #     `postgresql-credentials` IN THIS namespace — the SAME password initdb
+        #     booted the instance with (§5). NOT the retired shared
+        #     postgresql/postgresql-credentials.
+        # The provisioner has NO mode (§6): one rule — resolve from the claim's own
+        # namespace. A claim in a namespace where no instance is rendered simply
+        # fails to connect and reports a clear Error (reconcile's except path); it
+        # never writes a Secret pointing at a Service nobody created.
+        host = "postgres.%s.svc.cluster.local" % ns
+        admin_pw = read_secret_key(core, ns, PG_CRED_SECRET, PG_CRED_KEY)
+        if admin_pw is None:
+            raise RuntimeError("postgres admin credentials not available yet")
+        dbs = _databases(spec)
+        if not dbs:
+            # postgresql has no roles-only form — it always owns at least one DB,
+            # and the Secret payload below dereferences dbs[0].
+            raise RuntimeError("claim needs at least one database")
+        conn = psycopg2.connect(
+            host=host, port=PG_PORT, user=PG_ADMIN_USER,
+            password=admin_pw, dbname="postgres", connect_timeout=10)
+        conn.autocommit = True  # CREATE DATABASE cannot run inside a transaction
+        try:
+            with conn.cursor() as cur:
+                # SUPERUSER, not the shared server's plain LOGIN role. On a DEDICATED
+                # instance the consumer owns its whole server (decision 3), so its
+                # role may CREATE ROLE / CREATE EXTENSION / restore ownership — the
+                # rights an external consumer's schema bootstrap needs (e.g.
+                # swissbookai's rls.sql CREATE ROLE, which the shared LOGIN role could
+                # not run). Safe precisely because the blast radius ends at this one
+                # namespace-local instance. Both branches assert SUPERUSER so the
+                # property holds after every reconcile: the re-mint on resume (§5.1)
+                # takes the ALTER branch, and ALTER ... SUPERUSER on an already-super
+                # role is a no-op.
+                cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (user,))
+                if cur.fetchone() is None:
+                    cur.execute(sql.SQL("CREATE ROLE {} LOGIN SUPERUSER PASSWORD %s").format(
+                        sql.Identifier(user)), (password,))
+                    log.info("created pg role %s", user)
+                else:
+                    cur.execute(sql.SQL("ALTER ROLE {} LOGIN SUPERUSER PASSWORD %s").format(
+                        sql.Identifier(user)), (password,))
+                for db in dbs:  # the literal names the platform DB-name contract declared
+                    cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db,))
+                    if cur.fetchone() is None:
+                        cur.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                            sql.Identifier(db), sql.Identifier(user)))
+                        log.info("created pg database %s owner %s", db, user)
+                    cur.execute(sql.SQL("GRANT ALL PRIVILEGES ON DATABASE {} TO {}").format(
+                        sql.Identifier(db), sql.Identifier(user)))
+        finally:
+            conn.close()
+        first = dbs[0]
+        uri = "postgresql://%s:%s@%s:%s/%s" % (user, password, host, PG_PORT, first)
+        return ({
+            "PASSWORD": password,
+            "POSTGRES_USER": user,
+            "POSTGRES_PASSWORD": password,
+            "POSTGRES_DB": first,
+            "POSTGRES_DATABASES": ",".join(dbs),
+            "DATABASE_URL": uri,
+        }, "Opaque")
+    def handle_registry(core, spec, ns, claim, user, password, prefix):
+        """Deliver the shared pull dockerconfigjson into the claiming namespace."""
+        if not (REG_SOURCE_NS and REG_SOURCE_SECRET):
+            raise RuntimeError("registry source secret not configured")
+        dockercfg = read_secret_key(core, REG_SOURCE_NS, REG_SOURCE_SECRET, REG_SOURCE_KEY)
+        if dockercfg is None:
+            raise RuntimeError("registry pull dockerconfigjson not available yet")
+        return ({".dockerconfigjson": dockercfg}, "kubernetes.io/dockerconfigjson")
+
+    HANDLERS = {
+        "mongodb": handle_mongodb,
+        "postgresql": handle_postgresql,
+        "registry": handle_registry,
+    }
+
+    # ---- Backend deprovisioners — the exact INVERSE of each handler -------------
+    # Every deprovisioner is IDEMPOTENT: an already-absent user/db is a
+    # clean no-op, so a retried delete pass never fails on artifacts a prior pass
+    # already removed. Each destroys ONLY what its matching handler created — the
+    # claim-scoped `<ns>_<claim>` user and the LITERAL spec.databases names,
+    # recomputed from the still-present claim object at finalization time, so
+    # teardown targets exactly what create made. No new backend creds are needed:
+    # the mongo/pg roots are read from the very same admin Secrets the create
+    # path already reads.
+    def deprovision_mongodb(core, spec, ns, claim, user, prefix):
+        from pymongo import MongoClient
+        from pymongo.errors import OperationFailure
+        # SAME resolve as the create path: a claim is torn down on the instance that served
+        # it, so a unit with its own MongoDB never has its user dropped on the shared one.
+        host, root_pw, replica_set = _mongo_backend(core, ns)
+        # A roles-only claim (e.g. the exporter's clusterMonitor@admin) owns NO
+        # database — only the user gets dropped. SAME literal spec.databases as the
+        # create path (recomputed from the still-present claim), so teardown targets
+        # exactly the databases create provisioned.
+        dbs = _databases(spec)
+        # The USER goes even under a relocation hold, so the hold leaves nothing behind: no
+        # source-side step of a move ever authenticates as it (every dump, listing and clear
+        # job of a move runs on the Mongo ROOT credential), and a live credential on a cluster
+        # the unit no longer serves from is a leftover. Only the DATABASES are held back.
+        held = bool(spec.get("_relocating"))
+        mongo = MongoClient(_mongo_uri(MONGO_ROOT_USER, root_pw, host, "/", replica_set),
+                            serverSelectionTimeoutMS=10000)
+        try:
+            admin = mongo[MONGO_AUTH_SOURCE]
+            try:
+                admin.command("dropUser", user)
+                log.info("dropped mongo user %s", user)
+            except OperationFailure as exc:
+                # UserNotFound (code 11) ⇒ already gone; idempotent no-op.
+                if exc.code != 11 and "not found" not in str(exc).lower():
+                    raise
+                log.info("mongo user %s already absent", user)
+            if held:
+                log.info("relocation hold on namespace %s — KEEPING mongo database(s) %s",
+                         ns, ", ".join(dbs) or "none")
+            else:
+                for d in dbs:
+                    # dropDatabase on a non-existent DB returns ok:1 — inherently idempotent.
+                    mongo[d].command("dropDatabase")
+                    log.info("dropped mongo database %s", d)
+        finally:
+            mongo.close()
+
+    def deprovision_postgresql(core, spec, ns, claim, user, prefix):
+        """No-op on a DEDICATED instance (per-consumer-postgres.md §7). The old body
+        connected to a shared server and ran DROP DATABASE / DROP ROLE; both reasons
+        it did are now fatal:
+          • Correctness — the instance's life is the NAMESPACE's, not the claim's. A
+            `suspend` deletes the claim while the data must SURVIVE (§5.1). Dropping
+            the databases here would destroy a customer's data on a routine lifecycle
+            run.
+          • Liveness — on a real removal the host this would connect to is a
+            Deployment ArgoCD is pruning at the same moment. The connection fails and
+            the finalizer retries up to MAX_DELETION_SECONDS=900s — past the
+            Controller's 10-min offboard watch — so `watch-removal` times out and
+            fails the offboard run. A no-op finalizer releases immediately.
+        A relocation hold (RELOCATING_ANNOTATION) therefore changes nothing here — this path
+        already drops no data, so there is nothing for a hold to hold back.
+        The whole instance (Deployment, Service, PVC) is reaped only by namespace
+        deletion; the PVC additionally carries Prune=false,Delete=false. The
+        namespace-local credential Secret is still deleted by delete_own_secret in the
+        deprovision orchestrator — correct under §5.1, because that Secret is
+        re-mintable while the data is not. Same shape as deprovision_registry:
+        nothing for this handler to tear down."""
+        return
+    def deprovision_registry(core, spec, ns, claim, user, prefix):
+        """No backend resource exists for registry — the only artifact is the
+        namespace-local dockerconfigjson Secret, and that is deleted by the common
+        delete_own_secret path in deprovision(). Nothing to do here."""
+        return
+
+    DEPROVISIONERS = {
+        "mongodb": deprovision_mongodb,
+        "postgresql": deprovision_postgresql,
+        "registry": deprovision_registry,
+    }
+
+    def describe_orphans(service, spec, ns, prefix, user, secret_name):
+        """Machine-readable list of what a FAILED teardown may have left behind — the
+        EXACT handarbeit an operator must do. Written to .status.orphanedResources and
+        logged LOUD on release, so 'nothing may silently survive' stays honest even
+        when we release the finalizer to avoid wedging the namespace.
+
+        A relocation hold (RELOCATING_ANNOTATION) takes the MONGO DATABASES off this list, and
+        only those: the move keeps them deliberately and drops them itself in clear-source, so
+        naming them here — where the list is read as an instruction to delete by hand — would
+        destroy the source copy the move is still standing on. When the hold could not even be
+        determined (the namespace read itself failed) the databases are listed too, which is
+        right: nothing was dropped, so an operator has to be told it is standing."""
+        held = bool(spec.get("_relocating"))
+        out = []
+        if service == "mongodb":
+            out.append("mongo:user:%s" % user)
+            if not held:
+                for d in _databases(spec):
+                    out.append("mongo:db:%s" % d)
+        elif service == "postgresql":
+            out.append("pg:role:%s" % user)
+            for d in _databases(spec):
+                out.append("pg:db:%s" % d)
+        out.append("secret:%s/%s" % (ns, secret_name))
+        return out
+
+    def deletion_age_seconds(meta):
+        """Seconds since metadata.deletionTimestamp (0 if absent/unparseable). This is
+        the wedge backstop's clock: deletionTimestamp is core metadata and is NEVER
+        pruned, unlike the status attempt counter. Parse failure returns 0 (fall back
+        to the counter) — k8s always emits RFC3339 'Z', so that path is defensive only."""
+        ts = meta.get("deletionTimestamp")
+        if not ts:
+            return 0
+        try:
+            dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            return max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+        except (ValueError, TypeError):
+            return 0
+
+    def deprovision(core, custom, claim):
+        """DELETING branch: destroy exactly what the create handler made, then remove
+        our finalizer so the object (and, on a namespace teardown, the namespace) can
+        be garbage-collected.
+
+        WEDGE TRADE-OFF (owner rule 'traces not facts' — nothing may silently
+        survive): a finalizer that keeps FAILING blocks the ServiceClaim AND its
+        namespace from EVER terminating, and — because the consumer's ArgoCD
+        Application carries the resources-finalizer cascade — it also stalls the
+        Controller's offboard run for the full 10-minute watch timeout, which then
+        leaks the Vault secrets too. A permanently-wedged namespace is STRICTLY WORSE
+        than a recorded leftover. So this does NOT retry forever: after
+        MAX_DELETION_ATTEMPTS failed passes (or an operator-set force-release
+        annotation) it records the exact orphaned names in .status + a LOUD error
+        banner and RELEASES the finalizer. The leftover is VISIBLE and names the
+        handarbeit — it is never silent, and the namespace is never stuck."""
+        meta = claim.get("metadata", {})
+        spec = claim.get("spec", {})
+        ns = meta.get("namespace")
+        name = meta.get("name")
+        gen = meta.get("generation")
+        service = spec.get("service")
+        finalizers = meta.get("finalizers") or []
+        status = claim.get("status") or {}
+        try:
+            attempts = int(status.get("deletionAttempts") or 0)
+        except (TypeError, ValueError):
+            # A tampered/foreign non-numeric value must not raise OUT of deprovision
+            # (that would keep the finalizer and wedge). Treat as 0; the wall-clock
+            # backstop below still guarantees eventual release.
+            attempts = 0
+        age = deletion_age_seconds(meta)
+
+        prefix = sanitize(ns, name)          # identical derivation to the create path
+        user = ("sp_" + prefix)[:63]
+        secret_name = spec.get("secretName") or ("%s-%s" % (name, service))
+        spec["_secret_name"] = secret_name
+        ann = meta.get("annotations") or {}
+        force = str(ann.get(FORCE_RELEASE_ANNOTATION, "")).strip().lower() in ("true", "1", "yes")
+
+        deprov = DEPROVISIONERS.get(service)
+        try:
+            # Resolve the relocation hold BEFORE any teardown runs and carry it on the spec,
+            # the way _secret_name is carried — the deprovisioners take their whole input from
+            # there. A held claim releases WITHOUT its data: same finalizer release, same
+            # Secret delete, only the databases stay.
+            spec["_relocating"] = relocation_held(core, ns)
+            if spec["_relocating"]:
+                log.info("namespace %s is marked %s — %s/%s (%s) releases without dropping its data",
+                         ns, RELOCATING_ANNOTATION, ns, name, service)
+            if deprov is not None:
+                deprov(core, spec, ns, name, user, prefix)
+            else:
+                # Unknown service ⇒ this controller could not have created anything.
+                log.info("deprovision %s/%s: unknown service %r — nothing to tear down",
+                         ns, name, service)
+            # Backend gone first, THEN the local credential Secret (W1-guarded).
+            delete_own_secret(core, ns, secret_name)
+        except Exception as exc:  # noqa: BLE001 — teardown fault → retry then LOUD escape
+            attempts += 1
+            orphans = describe_orphans(service, spec, ns, prefix, user, secret_name)
+            log.error("deprovision failed for %s/%s (%s) attempt %d/%d, age %ds/%ds: %s",
+                      ns, name, service, attempts, MAX_DELETION_ATTEMPTS, age,
+                      MAX_DELETION_SECONDS, exc)
+            # RETRY only while BOTH bounds hold. The wall-clock bound (age) is the
+            # non-prunable backstop: even if deletionAttempts is pruned to 0 on every
+            # write (stale CRD), age keeps climbing from deletionTimestamp and forces
+            # the release — so the namespace can never be wedged forever.
+            timed_out = age >= MAX_DELETION_SECONDS
+            if not force and not timed_out and attempts < MAX_DELETION_ATTEMPTS:
+                # Keep the finalizer and retry next poll — the resource may free up
+                # (e.g. a database still being drained by its owner).
+                set_delete_status(custom, ns, name, "Deleting", attempts, orphans,
+                                  "deprovision failed (will retry): %s" % exc, gen)
+                return
+            # BOUNDED ESCAPE — release LOUD, never silent (see the trade-off above).
+            why = ("force-release annotation" if force
+                   else "deletion age %ds >= %ds" % (age, MAX_DELETION_SECONDS) if timed_out
+                   else "%d failed attempt(s)" % attempts)
+            log.error("%s", "=" * 72)
+            log.error("ORPHAN RELEASE %s/%s (%s): giving up (%s)",
+                      ns, name, service, why)
+            log.error("MANUAL CLEANUP REQUIRED — orphaned resources: %s",
+                      ", ".join(orphans) or "none")
+            log.error("%s", "=" * 72)
+            set_delete_status(custom, ns, name, "Orphaned", attempts, orphans,
+                              "released with orphans: %s" % (", ".join(orphans) or "none"), gen)
+            remove_finalizer(custom, ns, name, finalizers)
+            return
+        # Teardown clean → release the finalizer so the object GCs.
+        log.info("deprovision complete for %s/%s (%s) — releasing finalizer",
+                 ns, name, service)
+        remove_finalizer(custom, ns, name, finalizers)
+
+    def reconcile(core, custom, claim):
+        meta = claim.get("metadata", {})
+        spec = claim.get("spec", {})
+        ns = meta.get("namespace")
+        name = meta.get("name")
+        gen = meta.get("generation")
+        service = spec.get("service")
+        finalizers = meta.get("finalizers") or []
+
+        # (1) DELETING: a claim carrying a deletionTimestamp must NEVER re-enter a
+        # create handler (that would ping-pong against its own teardown every poll).
+        # Tear the backend down and release our finalizer; if the finalizer is
+        # already absent there is nothing left for us to do — the object is either
+        # mid-GC or was deleted before we ever provisioned it.
+        if meta.get("deletionTimestamp"):
+            if FINALIZER in finalizers:
+                deprovision(core, custom, claim)
+            return
+
+        # (2) FIRST SIGHT: stamp the finalizer on the MAIN object BEFORE provisioning,
+        # so a delete arriving before the next poll still triggers deprovision. This
+        # patches metadata (patch_namespaced_custom_object), NOT the /status
+        # subresource used by set_status — it needs update/patch on `serviceclaims`.
+        if FINALIZER not in finalizers:
+            add_finalizer(custom, ns, name, finalizers)
+
+        # (3) PROVISION — unchanged from here down.
+        handler = HANDLERS.get(service)
+        if handler is None:
+            set_status(custom, ns, name, "Error", "", "unknown service %r" % service, gen)
+            return
+
+        secret_name = spec.get("secretName") or ("%s-%s" % (name, service))
+        spec["_secret_name"] = secret_name
+        prefix = sanitize(ns, name)          # per-claim resource-name prefix (isolation)
+        user = ("sp_" + prefix)[:63]         # sp_ marks every user this controller mints
+        try:
+            password = get_existing_password(core, ns, secret_name)
+        except Exception as exc:  # noqa: BLE001 — not-ours secret, etc.
+            log.error("secret read-back failed for %s/%s: %s", ns, name, exc)
+            set_status(custom, ns, name, "Error", secret_name, str(exc), gen)
+            return
+        if password is None:
+            password = secrets.token_urlsafe(24)
+
+        try:
+            payload, secret_type = handler(core, spec, ns, name, user, password, prefix)
+            write_secret(core, ns, secret_name, name, payload, secret_type)
+        except Exception as exc:  # noqa: BLE001 — surface on the claim, keep the loop
+            log.error("provision failed for %s/%s (%s): %s", ns, name, service, exc)
+            set_status(custom, ns, name, "Error", secret_name, str(exc), gen)
+            return
+        set_status(custom, ns, name, "Ready", secret_name, "provisioned", gen)
+
+    def reconcile_all(core, custom):
+        claims = custom.list_cluster_custom_object(GROUP, VERSION, PLURAL)
+        items = claims.get("items", [])
+        for claim in items:
+            meta = claim.get("metadata", {})
+            try:
+                reconcile(core, custom, claim)
+            except Exception as exc:  # noqa: BLE001 — never let one claim kill the loop
+                log.error("reconcile error for %s/%s: %s",
+                          meta.get("namespace"), meta.get("name"), exc)
+        log.info("reconcile pass complete — %d claim(s)", len(items))
+
+    def main():
+        log.info("service-provisioner starting (env=%s poll=%ss)", ENV, POLL_INTERVAL)
+        config.load_incluster_config()
+        core = client.CoreV1Api()
+        custom = client.CustomObjectsApi()
+        while True:
+            try:
+                reconcile_all(core, custom)
+            except Exception as exc:  # noqa: BLE001 — keep the loop alive
+                log.error("reconcile loop error: %s", exc)
+            time.sleep(POLL_INTERVAL)
+
+    if __name__ == "__main__":
+        main()

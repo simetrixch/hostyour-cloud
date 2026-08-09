@@ -1,0 +1,85 @@
+{{- if .Values.metrics.enabled }}
+# PrometheusRule — INLINED here rather than fed through the shared charts/monitoring
+# subchart, and that is the point of the file.
+#
+# WHY LOCAL, NOT THE SUBCHART. Per-consumer isolation requires every alert
+# EXPRESSION to be scoped to this instance's own namespace (finding 5 / §10.3).
+# The live Prometheus has an empty enforcedNamespaceLabel and a cluster-wide
+# ruleSelector, so it evaluates every PrometheusRule against every namespace's
+# metrics: an UNSCOPED `pg_up == 0` would fire this consumer's PostgreSQLDown
+# whenever ANY OTHER consumer's database is down. The subchart renders rules from
+# values verbatim (toYaml, no tpl), so it structurally cannot inject
+# .Release.Namespace into an expr — only a real template can. The cost is that
+# Prometheus's own {{`{{ $labels.x }}`}} variables must be escaped so Helm emits
+# them literally instead of resolving them at render; that is done below.
+#
+# The exporter's ServiceMonitor scrape stamps every pg_* series with
+# namespace=<this namespace> (verified by render: namespaceSelector matchNames is
+# .Release.Namespace), which is the label every expr below pins.
+#
+# SYNC-WAVE: none needed, ever — monitoring neither blocks nor is blocked by the
+# database boot, so it is outside the wave ordering of §4.3 / S2a.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: postgresql
+  namespace: {{ .Release.Namespace }}
+  labels:
+    # Ties the rule to the central kube-prometheus-stack — the same `release`
+    # label the exporter's ServiceMonitor carries. Prometheus' ruleSelector is
+    # cluster-wide today, so this is informational; the namespace pin in each
+    # expr is what actually isolates one consumer's alerts from another's.
+    release: observability
+spec:
+  groups:
+    - name: postgresql
+      interval: 60s
+      rules:
+        - alert: PostgreSQLDown
+          # Fires only for THIS consumer's instance (namespace-pinned), so a
+          # neighbour's outage can never raise this consumer's critical alert.
+          expr: pg_up{namespace="{{ .Release.Namespace }}"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PostgreSQL in namespace {{ .Release.Namespace }} is down"
+
+        - alert: PostgreSQLConnectionsSaturated
+          # >80% of the instance's CONFIGURED max_connections: the expr divides by
+          # pg_settings_max_connections, so it auto-adapts to the preset's cap
+          # (50 small / 100 medium / 200 large) with no hardcoded 100. The `args`
+          # in values.yaml guarantee the pod fits its memory limit at that cap, so
+          # this warning is reached with headroom instead of after an OOM kill.
+          expr: sum by (namespace) (pg_stat_activity_count{namespace="{{ .Release.Namespace }}"}) / on(namespace) pg_settings_max_connections{namespace="{{ .Release.Namespace }}"} > 0.8
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL connections > 80% of max_connections in namespace {{ .Release.Namespace }}"
+            description: "Active connections approaching max_connections; reaching it rejects new clients."
+
+        - alert: PostgreSQLDeadlocksSpiking
+          expr: rate(pg_stat_database_deadlocks{namespace="{{ .Release.Namespace }}"}[5m]) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            # $labels.datname is a Prometheus var (evaluated at fire time) — escaped.
+            summary: "PostgreSQL deadlocks > 0.1/s in namespace {{ .Release.Namespace }} (db {{`{{ $labels.datname }}`}})"
+
+        - alert: PostgreSQLStorageFillingUp
+          # Storage early warning (§10.3 / risk R12): the PVC size is a declaration
+          # the hostpath provisioner does not enforce, so a runaway database can
+          # fill the node's single filesystem and take Vault/zot/Prometheus/etc.
+          # with it. Warn per-database at ~80% of the preset's PVC. The threshold
+          # is rendered to a plain byte literal here (dataAlertThresholdGi × 1 GiB
+          # = 4→4294967296 small / 16 medium / 40 large), so the expr needs no
+          # PromQL arithmetic.
+          expr: pg_database_size_bytes{namespace="{{ .Release.Namespace }}"} > {{ mul .Values.monitoring.dataAlertThresholdGi 1073741824 }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL database {{`{{ $labels.datname }}`}} in namespace {{ .Release.Namespace }} is over {{ .Values.monitoring.dataAlertThresholdGi }}GiB (approaching its PVC size)"
+{{- end }}

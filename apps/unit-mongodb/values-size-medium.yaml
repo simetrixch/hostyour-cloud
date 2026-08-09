@@ -1,0 +1,28 @@
+# SIZE PRESET — medium. Layer over values.yaml: -f values-size-medium.yaml
+#
+#   cpu req 250m · mem req 1Gi · cpu lim 2 · mem lim 4Gi · data volume 40Gi
+#
+# PER MEMBER. A replicaset runs three of these; the Controller's quota table
+# multiplies the mongodb row by the same member count.
+#
+# FOR: a working set that no longer fits the small preset's cache. The MEMORY
+# LIMIT is the number that matters — WiredTiger sizes its cache from the cgroup
+# limit, so 2Gi to 4Gi is what actually buys the cache, and the request follows
+# it closely because memory is OOM-killed rather than throttled.
+#
+# Only the resource numbers and the data volume differ from the small default;
+# image, mode, probes and security context stay as values.yaml defines them.
+mongodb:
+  resources:
+    requests:
+      # 250m is what the shared instance requests per member — a set that carries
+      # every tenant. For one application it is a slice the scheduler honours.
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      # CPU 250m -> 2 is 8x, deliberately: CPU is compressible (throttled, never
+      # killed), so the request tracks the idle draw while the limit lets an
+      # index build or a large aggregation run.
+      cpu: "2"
+      memory: 4Gi
+  storageSize: 40Gi

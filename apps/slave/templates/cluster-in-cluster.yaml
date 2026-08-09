@@ -1,0 +1,34 @@
+{{- /*
+Namespace-restricted IN-CLUSTER registration for the slave's ArgoCD instance.
+
+Why: this ArgoCD is a NAMESPACED install (argo-cd.createClusterRoles: false in
+values-common.yaml) — its ServiceAccounts hold Roles in ns <name> only. ArgoCD's
+IMPLICIT in-cluster destination, however, assumes cluster-wide reach: the
+controller's cluster cache would try to list every API resource cluster-wide
+and drown in Forbidden errors. The upstream namespace-scoped-installation
+pattern is to declare the in-cluster server EXPLICITLY as a cluster Secret
+carrying a `namespaces` restriction — the cache then watches only those
+namespaces and ignores cluster-scoped resources for this destination.
+
+The instance's in-cluster surface is exactly ONE namespace: its own (the handoff
+root Application syncs the slave branch's argocd-tree CRs — AppProjects +
+ApplicationSets + the Applications they generate — into ns <name>). Everything
+else it manages lives on the REMOTE slave cluster (Secret cluster-slave),
+which is unrestricted — the slave branch's platform tree legitimately creates
+cluster-scoped resources THERE (CRDs, ClusterRoles, Namespaces).
+
+No credentials in this Secret: for the in-cluster server ArgoCD uses its own
+ServiceAccount; the entry only names + restricts the destination.
+*/ -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-in-cluster
+  namespace: {{ .Release.Namespace }}
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    {{- include "common.labels" . | nindent 4 }}
+stringData:
+  name: in-cluster
+  server: https://kubernetes.default.svc
+  namespaces: {{ .Release.Namespace }}

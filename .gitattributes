@@ -1,0 +1,24 @@
+# The bytes of this repository, and what fixing them is for.
+#
+# hostyour-cloud is deployed to Linux and is edited on Windows. It carries no
+# shell at all, so what a carriage return would break here is not a checked-out
+# script: it is the first line of one INSIDE a chart. Six templates under apps/
+# ship a Tekton `script:` block opening with `#!/usr/bin/env sh`, and a cluster
+# writes that block to a file and executes it — so a `\r` in the YAML travels
+# the whole way and arrives in a pod as `bad interpreter: /usr/bin/env sh^M`.
+#
+# tools/test/line_endings_test.dart reads this file back. It names those six
+# templates, and it reports a path declared LF that carries a carriage return,
+# a text path no rule here owns, and a rule that owns no tracked path — which
+# is how this file stops describing a repository that has changed underneath it.
+
+# Every text file, LF in the index and LF in the working copy, on every platform.
+# git's content heuristic decides what is text, and it keeps its hands off
+# anything holding a zero byte, so no separate rule is needed for a binary.
+* text=auto eol=lf
+
+# The chart material a cluster renders, declared text rather than guessed at:
+# these are the files whose bytes travel into a pod, and `text` is unconditional
+# where the `text=auto` above would still be asking a heuristic.
+*.yaml text eol=lf
+*.tpl  text eol=lf

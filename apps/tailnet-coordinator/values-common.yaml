@@ -1,0 +1,144 @@
+# Tailnet coordinator (headscale) — shared values across all stages.
+#
+# In every stage's catalog; deployed on the cluster with the master part
+# (gated by cluster/apps/tailnet-coordinator.yaml, master default
+# deploy:"false"), because the coordinator is provided once, by the same
+# cluster that provides Vault — every other cluster's hosts log in to it.
+#
+# Its address is global.tailnetUrl (cluster/profile.yaml, written by
+# StampClusterProfile from the cluster map). The Ingress host below and server_url in
+# templates/configmap-config.yaml both derive from that one value: headscale
+# composes its login and registration URLs from server_url, so a client sent
+# to any other address ends up somewhere this Ingress does not serve.
+
+# ----- headscale pod (Deployment + Service via charts/deployment/) ----------
+app:
+  image:
+    # Single-binary coordination server. Tag MUST match Chart.yaml appVersion.
+    # This is one half of a wire protocol whose other half — the client on each
+    # host — is installed unpinned by the installer, so the two are
+    # versioned independently: a bump here has to stay speakable by whatever
+    # client version the hosts already carry.
+    repository: ghcr.io/juanfont/headscale
+    tag: "v0.29.2"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  podAnnotations:
+    # Bump when templates/configmap-config.yaml changes so ArgoCD rolls the
+    # pod and it re-reads the file — headscale loads its config ONLY at
+    # startup, and a ConfigMap mount update alone does not restart it. Value
+    # is arbitrary; changing it = a roll.
+    hostyour.cloud/config-revision: "no-relay-no-magicdns"
+  # Recreate (not RollingUpdate) — the state PVC is RWO and headscale holds an
+  # exclusive lock on the SQLite database file. With RollingUpdate the new pod
+  # cannot start until the old one releases it.
+  strategy:
+    type: Recreate
+  # headscale listens on 8080 (listen_addr in the config template).
+  containerPort: 8080
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8080
+
+  # The image's entrypoint IS the headscale binary; `serve` runs the
+  # coordination server and reads /etc/headscale/config.yaml.
+  args:
+    - "serve"
+
+  volumeMounts:
+    # Inline ConfigMap → /etc/headscale/config.yaml
+    - name: config
+      mountPath: /etc/headscale
+      readOnly: true
+    # Noise private key + the node database.
+    - name: data
+      mountPath: /var/lib/headscale
+    # headscale binds its CLI socket in this directory at startup. The image
+    # does not carry it, and `serve` fails when it is missing.
+    - name: run
+      mountPath: /var/run/headscale
+
+  volumes:
+    - name: config
+      configMap:
+        name: headscale-config
+    - name: data
+      persistentVolumeClaim:
+        claimName: headscale-data
+    - name: run
+      emptyDir: {}
+
+  # Plain TCP probe — the HTTP surface is the client protocol, not a status
+  # page, so a TCP connect is the simplest indicator that the process is
+  # listening.
+  livenessProbe:
+    tcpSocket:
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    tcpSocket:
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      # One coordinator serves the whole installation's hosts; the work is a
+      # long poll per host plus SQLite writes on membership changes.
+      cpu: "500m"
+      memory: "512Mi"
+
+# ----- Coordinator state ----------------------------------------------------
+# Prune/Delete protection, like every other state-bearing PVC here
+# (apps/manager, apps/postgresql). /var/lib/headscale
+# holds the noise private key that identifies THIS coordinator to every joined
+# host, and the node database that IS the record of which hosts have joined.
+# Neither can be rebuilt from git: a coordinator that comes back on a fresh
+# volume has a new identity and an empty member list, so every host has to
+# join again by hand. Without the annotation, flipping
+# cluster/apps/tailnet-coordinator.yaml to deploy:"false" drops the element
+# from the catalog and ArgoCD prunes the volume with the Application.
+# Deleting it is an explicit opt-in:
+#   microk8s kubectl -n tailnet-coordinator delete pvc headscale-data
+pvc:
+  pvc:
+    enabled: true
+    name: headscale-data
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    accessModes:
+      - ReadWriteOnce
+    # storageClassName intentionally omitted — falls back to
+    # .Values.global.storageClass (microk8s-hostpath on the platform default).
+    storageSize: "1Gi"
+
+# ----- Public Ingress -------------------------------------------------------
+# Public on purpose: a host that has not joined yet has only the public path,
+# so the coordinator cannot sit behind the tailnet it hands out. No auth
+# middleware — headscale authenticates every client itself, by join credential
+# and node key.
+#
+# The host is the host half of global.tailnetUrl, not a second composition of
+# the same name: the Ingress must serve exactly the name the clients dial.
+# Service name and TLS secret name use Helm tpl to pull .Values.global.env at
+# render time — see charts/ingress/templates/ingress.yaml.
+ingress:
+  ingress:
+    enabled: true
+    className: public
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    host: '{{ required "global.tailnetUrl must be set (cluster/profile.yaml, rendered per install branch from the cluster map)" .Values.global.tailnetUrl | trimPrefix "https://" }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        serviceName: 'tailnet-coordinator-{{ .Values.global.env }}-app'
+        servicePort: 8080
+    tls:
+      enabled: true
+      secretName: 'tailnet-coordinator-{{ .Values.global.env }}-tls'

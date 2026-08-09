@@ -1,0 +1,9 @@
+# PROD pin of the gate-runner image — the ONE grammar the release bump
+# searches (builds[]{name,image,tag}; `image` is the FLAT build name). The
+# tag is written by the bump on a hostyour-manager release; edit it by hand
+# only to roll back. `0.0.0` is the last image of the retired mutable-tag
+# arrangement — the first release replaces it.
+builds:
+  - name: gate-runner
+    image: gate-runner
+    tag: "0.0.0"

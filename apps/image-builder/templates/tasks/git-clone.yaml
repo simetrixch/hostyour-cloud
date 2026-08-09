@@ -1,0 +1,129 @@
+{{- /*
+git-clone — clones a source repo over HTTPS using a PAT-based credential
+helper. The caller names the Secret carrying the GITCREDENTIALS
+credential-store value (credentials-secret param, resolved in the RUN's
+namespace); this step envFroms it, writes a ~/.git-credentials file at
+start-up, and points git at it via `credential.helper=store`. Git then
+auto-injects the matching user:pat into every `https://<host>/...` clone URL.
+
+The credentials value is multi-line — one `https://<user>:<pat>@<host>`
+record per line. Git's credential-store matches by URL prefix, so several
+records coexist in one Secret without collision.
+
+Adapted from tektoncd/catalog git-clone v0.9 (MIT). Simplified for our
+single use case (HTTPS only, no submodules auto-init, no LFS).
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: git-clone
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: task
+spec:
+  description: >-
+    Clone a Git repo over HTTPS into the `source` workspace. Honors a
+    single revision (branch / tag / commit SHA). Emits the resolved commit
+    SHA as a result for downstream tasks (image tag, OCI labels).
+  workspaces:
+    - name: source
+      description: Output workspace — the cloned repo lands here.
+  params:
+    - name: url
+      description: HTTPS git URL (e.g. https://github.com/org/repo.git).
+      type: string
+    - name: revision
+      description: Branch / tag / commit SHA to check out.
+      type: string
+      default: main
+    - name: depth
+      description: Shallow clone depth (0 = full clone).
+      type: string
+      default: "1"
+    - name: subdirectory
+      description: Subdirectory inside the workspace to clone into.
+      type: string
+      default: ""
+    - name: credentials-secret
+      description: >-
+        Name of the Secret carrying the GITCREDENTIALS credential-store value,
+        resolved in the RUN's namespace (envFrom below). No default on
+        purpose: every caller names its own credential — a <unit>-release
+        Pipeline its build-git-https (the unit's repo-pat), the gate-run
+        pipeline a per-run Secret — so no clone can silently ride a shared
+        platform credential.
+      type: string
+  results:
+    - name: commit
+      description: Resolved commit SHA.
+    - name: url
+      description: Repository URL (echoed back for downstream tasks).
+  steps:
+    - name: clone
+      image: alpine/git:2.45.2
+      envFrom:
+        # GITCREDENTIALS = multi-line value, one credential-store record per
+        # provider. The Secret is resolved in the RUN's namespace and the
+        # reference is NOT optional, so the named Secret must already exist
+        # there when the TaskRun starts — the caller creates it (a per-unit
+        # ExternalSecret, a per-run Secret) before it starts the run.
+        - secretRef:
+            name: $(params.credentials-secret)
+      env:
+        - name: HOME
+          value: /workspace/source
+      workingDir: /workspace/source
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        # Materialize the git-credentials store file from the env var.
+        # `printf '%s\n'` preserves the trailing newline that git expects
+        # between records. Mode 600 — file contains PATs.
+        printf '%s\n' "${GITCREDENTIALS}" > /tmp/git-credentials
+        chmod 600 /tmp/git-credentials
+        export HOME=/tmp
+        git config --global credential.helper "store --file=/tmp/git-credentials"
+
+        # Compose TARGET. Plain if/else avoids the `set -e` trap that fires
+        # when a test inside `$( ... )` returns 1 (e.g. when subdirectory is
+        # empty) — the failing exit status bubbles up to the assignment line
+        # and kills the script before any echo runs.
+        if [ -n "$(params.subdirectory)" ]; then
+          TARGET="/workspace/source/$(params.subdirectory)"
+        else
+          TARGET="/workspace/source"
+        fi
+        mkdir -p "$TARGET"
+        cd "$TARGET"
+
+        if [ "$(params.depth)" != "0" ]; then
+          DEPTH_FLAG="--depth=$(params.depth)"
+        else
+          DEPTH_FLAG=""
+        fi
+
+        echo "Cloning $(params.url)@$(params.revision) into $TARGET (depth=$(params.depth))"
+        # -q -b main: a bare `git init` prints git's multi-line "hint: Using
+        # 'master' as the name for the initial branch…" advice to stderr on EVERY
+        # clone step of EVERY pipeline — pure log noise, since the very next step
+        # checks out FETCH_HEAD and the initial branch name is never used at all.
+        # Naming it explicitly (any name would do) silences the hint for good.
+        git init -q -b main
+        git remote add origin "$(params.url)"
+        # shellcheck disable=SC2086
+        git fetch $DEPTH_FLAG origin "$(params.revision)"
+        git checkout FETCH_HEAD
+
+        RESOLVED_SHA="$(git rev-parse HEAD)"
+        echo "Cloned $(params.url)@$(params.revision) -> $RESOLVED_SHA"
+        printf "%s" "$RESOLVED_SHA" > $(results.commit.path)
+        printf "%s" "$(params.url)" > $(results.url.path)
+      computeResources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi

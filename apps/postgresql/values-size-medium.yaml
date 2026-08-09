@@ -1,0 +1,67 @@
+# SIZE PRESET — medium. Layer over values.yaml: -f values-size-medium.yaml
+#
+#   cpu req 100m · mem req 1Gi · cpu lim 1 · mem lim 2Gi · data PVC 20Gi
+#
+# FOR: a consumer whose working set has outgrown PostgreSQL's stock 128MB
+# shared_buffers, or that runs reporting queries next to its transactional
+# traffic — tens of concurrent connections, sorts and index builds that need
+# real work_mem, low single-digit gigabytes of data.
+#
+# Only the four resource numbers, the server config (args) and the PVC size
+# differ from the small default; every other value (image, probes, security
+# context, monitoring, exporter) stays as values.yaml defines it. The
+# measurements these numbers are reasoned from are documented once, in the
+# values.yaml header.
+postgres:
+  # SERVER CONFIG — restated in full because Helm REPLACES list values, it does
+  # not merge them. Same purpose as the small preset's args (bound the footprint
+  # so the pod fits its limit) but scaled to the 2Gi limit; this is also what
+  # actually DELIVERS the "room to raise shared_buffers to ~256MB" the request
+  # comment below promises — small only stated it, medium sets it.
+  args:
+    # shared_buffers 256MB — 25% of the 1Gi request (the guaranteed reservation),
+    # double small's 128MB. This is the reason to pick medium: the working set no
+    # longer fits stock 128MB. Idle baseline (256MB + a few backends) still lives
+    # inside the 1Gi request.
+    - "-c"
+    - "shared_buffers=256MB"
+    # max_connections 100 — PostgreSQL stock; medium is "tens of connections".
+    # Peak check: shared_buffers 256 + 3 autovacuum × 64 (192) + 100 backends
+    # ≈ 950MB, well under the 2Gi limit.
+    - "-c"
+    - "max_connections=100"
+    # autovacuum_work_mem 64MB — stock maintenance size; 3 workers × 64 = 192MB
+    # fits comfortably in 2Gi, so no need for small's 32MB clamp here.
+    - "-c"
+    - "autovacuum_work_mem=64MB"
+  resources:
+    requests:
+      # 4x the small request. A real in-use small instance sits at 231Mi; the
+      # step to 1Gi is what buys room for the 256MB shared_buffers set above and
+      # still keeps tens of backends at the default 4MB work_mem resident.
+      # 100m CPU is ~6x the 12-17m a live instance idles at, i.e. a slice the
+      # scheduler will honour for a database that is actually being queried.
+      cpu: 100m
+      memory: 1Gi
+    limits:
+      # MEMORY 1Gi → 2Gi = 2x the request, the same tight ratio small uses for the
+      # same reason (memory is OOM-killed, so the request stays close to the
+      # limit): enough for one large sort / index build / checkpoint storm on top
+      # of the bounded baseline above. CPU 100m → 1 = 10x, NOT 2x — CPU is
+      # compressible (throttled, never killed), so the request tracks idle draw
+      # while the limit lets one heavy query run at a full core. Neither number
+      # worsens the node's already-oversubscribed LIMITS (122% CPU / 146% memory,
+      # measured 2026-07-22): the request is what the scheduler reserves.
+      cpu: "1"
+      memory: 2Gi
+
+postgres-data:
+  pvc:
+    # 20Gi — 4x small. This was the dev/test PVC size of the retired shared
+    # instance, i.e. the size the platform already considered sufficient for a
+    # whole stage's worth of databases; for ONE consumer it is years of growth.
+    storageSize: "20Gi"
+
+monitoring:
+  # ~80% of this preset's 20Gi PVC — the storage early-warning trip point.
+  dataAlertThresholdGi: 16

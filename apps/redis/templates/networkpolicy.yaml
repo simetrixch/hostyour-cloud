@@ -1,0 +1,38 @@
+# Redis is no-auth + cluster-internal (no Ingress), so REACH IS THE GRANT:
+# any pod that can open :6379 can read every key and FLUSHALL. This
+# NetworkPolicy is therefore the isolation, and it must not admit the blanket
+# db-consumer label every unit namespace carries (that label only says "may
+# dial the credentialed DBs", where a per-unit credential still gates).
+# Admitted instead: platform namespaces by name (global.dbConsumerNamespaces),
+# namespaces carrying the REDIS-specific global.redisConsumerLabel=true —
+# stamped only where the registration claims `redis` in services[]
+# (consumers-appset templatePatch) or where a tenant member's own registration
+# carries the label — and same-namespace pods (metrics exporter).
+# Any other workload is denied. Calico-enforced.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-internal
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- range .Values.global.dbConsumerNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.redisConsumerLabel }}
+        - namespaceSelector:
+            matchLabels:
+              {{ . }}: "true"
+        {{- end }}
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 6379

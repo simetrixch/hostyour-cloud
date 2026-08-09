@@ -1,0 +1,6 @@
+# PROD-specific coredns overrides — currently none. The file must exist: every
+# generated platform Application names values-prod.yaml in its valueFiles chain
+# (argocd/prod/apps/applicationset.yaml), and helm refuses a named values file
+# that is absent. Per-stage `extraRewrites` or `forward` overrides go here;
+# the service hairpins (vault/zot) are template-gated on
+# global.servicesLocal.* and never per-stage values.

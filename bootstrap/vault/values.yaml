@@ -1,0 +1,109 @@
+# Vault Helm Values
+
+# Global Configuration
+global:
+  enabled: true
+  tlsDisable: false
+
+# Server Configuration
+server:
+  # Standalone mode (not HA for single node)
+  ha:
+    enabled: false
+
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+
+      listener "tcp" {
+        tls_disable = 0
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+        tls_cert_file = "/vault/userconfig/vault-tls/tls.crt"
+        tls_key_file  = "/vault/userconfig/vault-tls/tls.key"
+
+        # /v1/sys/metrics needs a token unless this is set — and a sealed Vault
+        # can issue none, which is exactly the state the platform must be able to
+        # see. The ServiceMonitor in apps/observability scrapes this endpoint
+        # anonymously, so without this flag Vault answers 400 and the platform
+        # collects no Vault metric at all: no vault_core_unsealed, nothing for the
+        # VaultSealed alert to fire on.
+        telemetry {
+          unauthenticated_metrics_access = true
+        }
+      }
+
+      # disable_hostname keeps the metric names as Prometheus expects them
+      # (vault_core_unsealed); left at its default, go-metrics prefixes every name
+      # with the pod's hostname and no alert expression matches. The retention time
+      # must stay well above the 60s scrape interval — 0 switches the Prometheus
+      # endpoint off entirely.
+      telemetry {
+        disable_hostname = true
+        prometheus_retention_time = "24h"
+      }
+
+      storage "file" {
+        path = "/vault/data"
+      }
+
+  # Service
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8200
+    targetPort: 8200
+
+  # Data Storage
+  #
+  # 5Gi, and it is a ceiling rather than a measurement: what Vault stores is its
+  # own seal metadata, nine policies, thirteen auth roles and one KV entry per
+  # unit — kilobytes that grow with the number of consumers and tenants, never
+  # with their data. An operator who outgrows it edits this on the install
+  # branch; the claim cannot be resized in place on the storage class below.
+  dataStorage:
+    enabled: true
+    size: 5Gi
+    storageClass: microk8s-hostpath
+    accessMode: ReadWriteOnce
+
+  # Ingress (disabled here — applied as a standalone manifest from
+  # manifests/vault/ingress.yaml so we can pass nginx-specific annotations
+  # to talk to Vault's HTTPS listener).
+  ingress:
+    enabled: false
+
+  # Volume for TLS cert
+  volumes:
+    - name: vault-tls
+      secret:
+        secretName: vault-tls
+        defaultMode: 0400
+
+  volumeMounts:
+    - name: vault-tls
+      mountPath: /vault/userconfig/vault-tls
+      readOnly: true
+
+  # Resources
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+# UI Configuration
+ui:
+  enabled: true
+  serviceType: ClusterIP
+
+# Vault Agent Injector — DISABLED. The platform delivers secrets exclusively via
+# External-Secrets-Operator (ESO), never Vault Agent sidecar injection (no pod
+# carries a vault.hashicorp.com/agent-inject annotation). The injector is dead
+# weight here — an unused Deployment + MutatingWebhookConfiguration — and it ships
+# a HARD podAntiAffinity that deadlocks its own rolling update on a single node.
+injector:
+  enabled: false

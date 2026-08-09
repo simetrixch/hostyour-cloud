@@ -1,0 +1,72 @@
+# Defaults; overridden per env by values-<env>.yaml. The image PIN is not
+# here: it lives in values-<stage>.yaml as builds[]{name,image,tag} — the one
+# grammar the platform's release bump searches and writes.
+replicas: 1
+
+# The platform's off states, written by the consumers ApplicationSet from the
+# registration (suspended pauses the unit; quiesced closes it for a move or
+# backup). The chart renders them: replicas 0 and no Ingress in either state —
+# the ServiceClaim and any PVC STAY, so the unit's data survives and a resume
+# is a values flip, not a re-provision. Defaults exist for a local render; a
+# platform render always writes both explicitly.
+suspended: false
+quiesced: false
+
+# Literals YOU own. (The platform values are NOT in this block — they arrive
+# as global.*; see below.)
+tlsSecretName: consumer-template-tls
+clusterIssuer: letsencrypt-prod
+
+# The extra public FQDN this unit was GRANTED — the same value the manifest
+# declares as `fqdn` in deploy/platform.yaml and the onboard verb attested
+# into the unit's stage registration. The Ingress then serves it beside
+# <name>.<unitApex> with a tls entry of its own (templates/ingress.yaml). A
+# value here that was never attested is refused whole by the unit's
+# ValidatingAdmissionPolicy — the Ingress does not deploy. Empty = the unit
+# serves only its platform address.
+fqdn: ""
+
+# ---------------------------------------------------------------------------
+# Platform values (global.*) — do NOT set them here. They arrive over the
+# platform $values chain (platform/values-common.yaml, platform/
+# values-<stage>.yaml, cluster/profile.yaml) that the platform adds to every
+# consumer Application, and the chain wins:
+#   global.vaultUrl                 URL of the platform Vault (SecretStore .server)
+#   global.vaultKvMount             the ONE KV mount (SecretStore .path)
+#   global.vaultKubernetesAuthPath  the cluster's Kubernetes auth mount
+#                                   (SecretStore auth .mountPath)
+#   global.env                      the target stage (dev | test | prod)
+#   global.unitApex                 public apex of unit addresses — the ingress
+#                                   host is <namespace>.<unitApex>
+# For a local render, pass the chain files, e.g.:
+#   helm template consumer-template deploy/chart -n <name> \
+#     -f <hostyour-cloud>/platform/values-common.yaml \
+#     -f <hostyour-cloud>/platform/values-dev.yaml \
+#     -f <hostyour-cloud>/cluster/profile.yaml
+# ---------------------------------------------------------------------------
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: 32Mi
+  limits:
+    cpu: "200m"
+    memory: 64Mi
+
+# Optional persistent storage (OFF for whoami). Every PVC
+# must carry argocd.argoproj.io/sync-options: Prune=false,Delete=false — hard
+# gate G6 rejects one without it; see templates/pvc.yaml for the annotated
+# example.
+persistence:
+  enabled: false
+  size: 1Gi
+  # storageClassName: ""
+
+# Optional: request a backing service from the platform (D8 service-provisioner).
+# When enabled, the platform provisions it and writes a credentials Secret named
+# "<release>-<service>" in this namespace — envFrom it in the Deployment. whoami
+# needs nothing, so this is OFF by default.
+serviceClaim:
+  enabled: false
+  service: postgresql        # mongodb | postgresql | registry
+  databases: [consumer_template]  # mongodb/postgresql — LITERAL db name(s), taken verbatim (no auto-prefix); namespace-anchor them yourself

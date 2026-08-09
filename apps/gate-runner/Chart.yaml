@@ -1,0 +1,32 @@
+apiVersion: v2
+name: gate-runner
+version: 1.0.0
+description: >-
+  In-cluster onboarding gate sandbox — runs the check gates (G1 structure,
+  G2 determinism, G3 render, then G6/G7/G8/G22 over the rendered chart) as a
+  Tekton PipelineRun in the locked-down, egress-fenced `gate-runner`
+  namespace. Replaces the host-podman Quadlet gate-runner:
+  the Controller dispatches a `gate-run` PipelineRun (clone -> gate ->
+  publish-report), the gate step runs the gate-runner image's one-shot
+  CLI over the cloned workspace, and the verdict comes back as ConfigMap
+  gate-report-<run-id>. The sandbox boundary is the Calico `gate-egress-fence`
+  NetworkPolicy (DNS + public internet only, no cluster LAN / Controller /
+  cluster services), proven fail-closed from inside by the CLI's own fence
+  self-probe. PROVIDER-ONLY like the build plane: cluster/apps/gate-runner.yaml
+  is master-default "false"; the control host's install branch flips it "true".
+type: application
+
+dependencies:
+  # Per-namespace ESO SecretStore backing the registry-pull ExternalSecret
+  # (templates/externalsecret-registry-pull.yaml) — the gate step's image lives
+  # in the platform Zot registry, which requires pull auth.
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # Shared named templates — common.registryHost resolves the gate-runner image
+  # host from the endpoint contract (zot.<domain> / the central build cluster),
+  # like every other platform app image.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

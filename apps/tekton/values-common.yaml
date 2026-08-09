@@ -1,0 +1,112 @@
+# Tekton operator install — NOT version-pinned at the Helm-chart level because
+# Tekton releases are best consumed as raw YAML manifests from the
+# tektoncd/{pipeline,triggers} GitHub releases. Refresh by re-downloading the
+# release manifest over templates/release-<component>.yaml and updating the
+# version recorded below.
+#
+# The chart itself emits the ServiceMonitor + alert rules; the actual operator
+# manifests are vendored in templates/release-*.yaml (refresh by re-downloading).
+# Vendored versions, recorded here rather than inside the manifests because a
+# re-download overwrites those files verbatim:
+#   templates/release-pipelines.yaml     v1.12.0  (ghcr.io anon-pull, gcr.io retired pre-v0.65)
+#   templates/release-triggers.yaml      v0.35.0
+#   templates/release-interceptors.yaml  v0.35.0
+#   templates/release-dashboard.yaml     v0.69.0  (build cluster only)
+
+# ----- Tekton Dashboard (build-cluster only) -------------------------------
+# The Dashboard UI + its Ingress render only on the ONE build cluster (the
+# cluster with global.servicesLocal.registry: true, set in cluster/profile.yaml)
+# — on ANY stage, since that flag follows the build cluster and survives the
+# prod stage-prune that deletes values-dev.yaml.
+#   - dashboard resources: gated in templates/release-dashboard.yaml on
+#     `dashboard.enabled OR global.servicesLocal.registry`.
+#   - the Ingress: gated by the ingress sub-chart's `condition:` in Chart.yaml
+#     (global.servicesLocal.registry). `enabled: true` below just satisfies the
+#     sub-chart's own gate once the condition has loaded it.
+# dashboard.enabled stays false here as the default OR term; the build cluster
+# turns everything on via servicesLocal.registry.
+#
+# Auth is delegated to the platform IdP (Authentik, installed by
+# the base layer — see bootstrap/idp/). Traefik
+# forwardAuth Middleware annotation below points at
+# idp-forwardauth@kubernetescrd. No per-app auth bits in this chart.
+# Cookie set at idp.<domain> carries here via the apex-scoped session.
+dashboard:
+  enabled: false   # build cluster turns this on via global.servicesLocal.registry
+
+ingress:
+  ingress:
+    enabled: true   # gated by the Chart.yaml `condition:` (build cluster only)
+    className: public
+    annotations:
+      # Cross-namespace Middleware ref: <namespace>-<middleware-name>@kubernetescrd
+      # The Middleware lives in the `idp` namespace and is created with the
+      # cluster's IdP. Order matters — Traefik evaluates
+      # auth BEFORE routing.
+      traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    host: 'tekton.{{ .Values.global.domain }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        # Direct backend — Traefik proxies to the upstream Dashboard once
+        # forwardAuth has signed off. Service emitted by the vendored
+        # release-dashboard.yaml (name `tekton-dashboard`, port 9097).
+        serviceName: tekton-dashboard
+        servicePort: 9097
+    tls:
+      enabled: true
+      secretName: tekton-dashboard-tls
+
+# Monitoring — scrape the Tekton controllers' metrics endpoints and alert on
+# Pipeline failures + long-running PipelineRuns.
+monitoring:
+  serviceMonitors:
+    tekton:
+      enabled: true
+      namespaces: [tekton]
+      matchLabels:
+        app.kubernetes.io/part-of: tekton
+      endpoints:
+        - port: http-metrics
+          interval: 60s
+    tekton-triggers:
+      enabled: true
+      namespaces: [tekton]
+      matchLabels:
+        app.kubernetes.io/part-of: tekton-triggers
+      endpoints:
+        - port: http-metrics
+          interval: 60s
+
+  prometheusRules:
+    tekton:
+      enabled: true
+      groups:
+        - name: tekton
+          interval: 60s
+          rules:
+            - alert: TektonControllerDown
+              expr: up{job=~"tekton.*|tekton-triggers.*"} == 0
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Tekton controller {{ $labels.job }} is down"
+
+            - alert: PipelineRunFailed
+              expr: increase(tekton_pipelines_controller_pipelinerun_count{status="failed"}[10m]) > 0
+              for: 1m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Tekton PipelineRun failed in last 10 min"
+                description: "Check `tkn pipelinerun list` in the image-builder namespace."
+
+            - alert: PipelineRunRunningTooLong
+              expr: time() - max(tekton_pipelines_controller_running_pipelineruns_count > 0) > 1800
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Tekton PipelineRun has been running > 30 minutes"

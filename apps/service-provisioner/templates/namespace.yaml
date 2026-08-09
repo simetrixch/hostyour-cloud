@@ -1,0 +1,13 @@
+{{- /*
+The controller's own namespace. Labelled with the platform db-consumer label so
+the mongodb NetworkPolicy admits the controller pod to reach mongod on :27017 by
+LABEL (postgresql ships no NetworkPolicy, so it is reachable
+without it). ArgoCD's CreateNamespace=true also creates the namespace, but
+rendering it here lets us attach the label up front.
+*/ -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    {{ .Values.global.dbConsumerLabel }}: "true"

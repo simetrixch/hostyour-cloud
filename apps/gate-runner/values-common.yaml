@@ -1,0 +1,80 @@
+# gate-runner — shared values across DEV / TEST / PROD. There is nothing
+# stage-specific here: the stage a gate run validates AGAINST arrives per run
+# as the `stage` PipelineRun param from the Controller, and all hostnames are
+# composed from the platform globals at render time.
+
+pipeline:
+  # SA for the clone + gate PipelineRun pods (the PipelineRun's default SA).
+  # Deliberately ZERO API grants and automountServiceAccountToken=false (see
+  # templates/rbac.yaml): the sandbox pods run partially tenant-authored chart
+  # code and must never hold a cluster credential.
+  serviceAccountName: pipeline-sa
+  # Namespace of the platform build plane whose SHARED git-clone Task the
+  # gate-run Pipeline references via the cluster resolver (no second copy of
+  # the clone logic). gate-runner is provider-only, so image-builder is always
+  # present wherever this app deploys.
+  builderNamespace: image-builder
+
+namespace:
+  # PodSecurity ENFORCE level for the sandbox namespace. `restricted` is the
+  # target, but two cluster facts pin enforce at `baseline` today:
+  #   1. apps/tekton ships feature-flags `set-security-context: "false"`, so
+  #      Tekton's injected init containers (prepare/place-scripts) carry no
+  #      securityContext and restricted ADMISSION would reject every TaskRun
+  #      pod outright.
+  #   2. the reused git-clone Task's step (alpine/git) sets no securityContext
+  #      either.
+  # warn+audit stay `restricted` (hardcoded in templates/namespace.yaml) so
+  # violations are visible; flip this to `restricted` once (1) and (2) are
+  # fixed upstream. The actual SECURITY boundary of the sandbox is the
+  # gate-egress-fence NetworkPolicy + the tokenless SA, not PSA.
+  podSecurityEnforce: baseline
+
+# The gate-runner image pin lives in values-{dev,test,prod}.yaml as the ONE
+# pin grammar builds[]{name,image,tag} — `image` is the FLAT build name
+# (`gate-runner`, built from the hostyour-manager repo by that unit's
+# <unit>-release pipeline), and the full ref renders via common.buildImage
+# from common.registryHost. The release bump writes the tag; the mutable
+# always-rebuilt 0.0.0 tag is gone — gate-runner carries real release tags.
+
+gate:
+  # UID the gate step runs as. node-base images ship the `node` user as 1000;
+  # the Controller's PipelineRun podTemplate fsGroup (1000) makes the
+  # clone-written workspace writable for this uid (REPORT_OUT lives there).
+  runAsUser: 1000
+  # Bounded: a render+gate pass over one consumer chart. Raise limits only if
+  # a legitimate chart-dependency fetch demonstrably needs it.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# The publish-report finally task — the ONLY pod in the namespace with an API
+# token, scoped to ConfigMap writes in this namespace (templates/rbac.yaml).
+reportWriter:
+  serviceAccountName: gate-report-writer
+  # kubectl toolbox image for the publish step (docker.io; minor version
+  # tracks the kubelet).
+  image: alpine/k8s:1.35.6
+  # Post-DNAT API-server egress pinhole for the publish pod ONLY (second
+  # NetworkPolicy in templates/networkpolicy.yaml). Calico evaluates egress
+  # AFTER kube-proxy DNAT, so kubernetes.default.svc resolves to the node's
+  # apiserver endpoint inside the fenced private ranges. Default admits the
+  # 10/8 range on the usual apiserver ports; tighten to <nodeIP>/32 + the one
+  # real port (microk8s: 16443) on an install branch if desired.
+  apiServer:
+    cidr: 10.0.0.0/8
+    ports:
+      - 443
+      - 6443
+      - 16443
+
+# Per-namespace SecretStore (library chart). vaultUrl falls back to
+# .Values.global.vaultUrl; role is the app-tier `external-secrets`. NOTE:
+# Vault's role must bind ns gate-runner (it stands on the cross-tier consumer
+# list the cluster is seeded with) or the registry-pull ExternalSecret cannot
+# authenticate.
+secret-store: {}

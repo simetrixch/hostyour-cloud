@@ -1,0 +1,35 @@
+# Public Certificate + IngressRoute for the Authentik UI.
+# Pattern matches manifests/vault/{certificate,ingressroute}.yaml — Traefik
+# CRD-native rather than k8s Ingress with annotations, so middlewares,
+# entryPoints, and TLS handling all live in the spec.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: idp-tls
+  namespace: idp
+spec:
+  secretName: idp-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - idp.example.invalid
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: idp
+  namespace: idp
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`idp.example.invalid`)
+      kind: Rule
+      services:
+        # Chart names the Service `{release}-authentik-{component}` —
+        # `idp-authentik-server` for our release.
+        - name: idp-authentik-server
+          port: 80
+  tls:
+    secretName: idp-tls

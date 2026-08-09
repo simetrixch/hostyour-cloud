@@ -1,0 +1,363 @@
+# Zot OCI registry — shared values across all stages.
+#
+# In every stage's catalog; deployed on exactly ONE build cluster (gated by
+# cluster/apps/registry.yaml, master default deploy:"false"), because promote
+# test->prod reuses the SAME built image. Its own hostname is zot.<domain>;
+# every OTHER cluster addresses it via global.endpoints.registry.host.
+#
+# Push:  image-builder/buildah-build-push logs in with push-user from Vault.
+# Pull:  any workload that consumes a registry image gets an imagePullSecret
+#        of its own — each app carries an ExternalSecret template that reads
+#        secret/<env>/app/registry/pull-dockerconfigjson into its namespace.
+
+# ----- Zot pod (Deployment + Service via charts/deployment/) ----------------
+app:
+  image:
+    # Single-binary OCI registry. Tag MUST match Chart.yaml appVersion above.
+    repository: ghcr.io/project-zot/zot-linux-amd64
+    tag: "v2.1.18"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  podAnnotations:
+    # Bump when config.json below changes so ArgoCD rolls the zot pod and it
+    # re-reads the file — zot loads config ONLY at startup, and a ConfigMap mount
+    # update alone does not restart it. Value is arbitrary; changing it = a roll.
+    hostyour.cloud/config-revision: "docker-io-mirror-consumer-carveout"
+  # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
+  # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
+  # With RollingUpdate, the new pod fails to start until the old pod
+  # releases the lock, and Tekton's healthcheck timeout fires.
+  strategy:
+    type: Recreate
+  # Zot listens on 5000 by default; matched in configFiles.config.json below.
+  containerPort: 5000
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 5000
+
+  # Zot reads its config from /etc/zot/config.json. The command line is just
+  # `zot serve <config-path>`; the default ENTRYPOINT in the image runs zot.
+  args:
+    - "serve"
+    - "/etc/zot/config.json"
+
+  volumeMounts:
+    # htpasswd Secret (materialized by externalsecret-htpasswd) — Zot's
+    # http.auth.htpasswd.path reads this file.
+    - name: htpasswd
+      mountPath: /secret
+      readOnly: true
+    # Inline ConfigMap → /etc/zot/config.json
+    - name: config
+      mountPath: /etc/zot
+      readOnly: true
+    # Persistent image + DB store.
+    - name: data
+      mountPath: /var/lib/registry
+    # Docker Hub sync credentials (materialized by externalsecret-sync-credentials);
+    # Zot's extensions.sync.credentialsFile reads /sync/credentials.json.
+    - name: sync-credentials
+      mountPath: /sync
+      readOnly: true
+
+  volumes:
+    - name: htpasswd
+      secret:
+        secretName: zot-htpasswd
+    - name: config
+      configMap:
+        name: zot-config
+    - name: sync-credentials
+      secret:
+        secretName: zot-sync-credentials
+    - name: data
+      persistentVolumeClaim:
+        claimName: zot-data
+
+  # Plain TCP probe — Zot's /v2/ requires auth when configured, so a TCP
+  # connect is the simplest indicator that the process is listening.
+  livenessProbe:
+    tcpSocket:
+      port: 5000
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    tcpSocket:
+      port: 5000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      # Pushes / GC bursts can be CPU-heavy on large layers; one full core
+      # is a reasonable ceiling for a low-traffic dev registry.
+      cpu: "1"
+      memory: "1Gi"
+
+# ----- Image + DB storage ---------------------------------------------------
+pvc:
+  pvc:
+    enabled: true
+    name: zot-data
+    accessModes:
+      - ReadWriteOnce
+    # storageClassName intentionally omitted — falls back to
+    # .Values.global.storageClass (microk8s-hostpath on the platform default).
+    storageSize: "50Gi"
+
+# ----- Public Ingress (zot.<DOMAIN_SUFFIX>) ---------------------------------
+# `host` + service name + TLS secret name use Helm tpl to pull
+# .Values.global.env and .Values.global.domain at render time — so the build
+# cluster serves its registry at its own zot.<domain>. Deployed only where
+# cluster/apps/registry.yaml enables it (the ONE build cluster).
+#
+# Zot's bundled web UI is served from the SAME hostname (extensions.ui.enable
+# = true in config.json below); no second hostname needed.
+ingress:
+  ingress:
+    enabled: true
+    className: public
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    host: 'zot.{{ .Values.global.domain }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        serviceName: 'registry-{{ .Values.global.env }}-app'
+        servicePort: 5000
+    tls:
+      enabled: true
+      secretName: 'registry-{{ .Values.global.env }}-tls'
+
+# ----- Zot config.json (mounted into the pod) -------------------------------
+# Access-control policy:
+#   - admin     → accessControl.adminPolicy (read+create+update+delete across
+#                 ALL repositories + UI "settings", GC, browse-all). Use this
+#                 for interactive ops via the Zot web UI.
+#   - push-user → read+create+update+delete on every repo (consumed by
+#                 image-builder's buildah-build-push).
+#   - pull-user → read-only on every repo (consumed by imagePullSecrets).
+#   - Anonymous access disabled (defaultPolicy + anonymousPolicy both []).
+# Prometheus metrics extension enabled on /metrics (scraped by the
+# ServiceMonitor below). Default storage: filesystem at /var/lib/registry
+# (bound to the PVC above).
+#
+# docker.io pull-through cache (extensions.sync, onDemand): a pull of any
+# repo NOT found locally triggers an on-demand fetch from registry-1.docker.io,
+# cached under the SAME repo name (library/redis, ...). Each slave's containerd
+# mirrors docker.io -> this Zot (a hosts.toml the installer writes on the node),
+# so the platform hits Docker Hub's anonymous rate limit once per image from the
+# master instead of once per node per pull. Local repos always win (sync only
+# fires on a local miss); the retention policy below also evicts stale cached
+# upstream tags. Requires a Zot image built with the sync extension (the
+# official ghcr.io/project-zot/zot images bundle it).
+#
+# RETENTION POLICIES (below) — ORDER MATTERS: zot applies the FIRST policy whose
+# `repositories` glob matches a repo, so the single-segment ["*"] policy is
+# listed BEFORE the ["**"] catch-all.
+#   1. ["*"] — OUR images: a build name is FLAT, one segment with no owner
+#      prefix, so after the registry wipe every single-segment repo is one of
+#      ours. Keep ALL tags (patterns [".*"], no count) and
+#      deleteUntagged false, so zot NEVER prunes one of our image tags. The
+#      registry-reaper CronJob (apps/manager) is the SOLE cleaner here: it
+#      alone knows which tags are still pinned by a values-<stage>.yaml on any
+#      branch, so zot's blind 50-count rule must not race it and evict a
+#      referenced tag. (Blob-level GC still reclaims space after the reaper
+#      deletes a manifest — storage.gc/gcDelay is independent of these
+#      per-repo retention policies.)
+#   2. ["**"] — the docker.io pull-through cache repos (library/**, ...): every
+#      multi-segment repo is a cache path zot manages itself. Keep the 50
+#      most-recently-pushed tags, deleteUntagged true.
+configmap:
+  configmap:
+    enabled: true
+    name: zot-config
+    data:
+      config.json: |-
+        {
+          "distSpecVersion": "1.1.0",
+          "storage": {
+            "rootDirectory": "/var/lib/registry",
+            "dedupe": true,
+            "gc": true,
+            "gcDelay": "2h",
+            "gcInterval": "1h",
+            "retention": {
+              "dryRun": false,
+              "policies": [
+                {
+                  "repositories": ["*"],
+                  "deleteUntagged": false,
+                  "keepTags": [
+                    {
+                      "patterns": [".*"]
+                    }
+                  ]
+                },
+                {
+                  "repositories": ["**"],
+                  "deleteUntagged": true,
+                  "keepTags": [
+                    {
+                      "patterns": [".*"],
+                      "mostRecentlyPushedCount": 50
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "http": {
+            "address": "0.0.0.0",
+            "port": "5000",
+            "realm": "zot",
+            "auth": {
+              "htpasswd": {
+                "path": "/secret/htpasswd"
+              }
+            },
+            "accessControl": {
+              "adminPolicy": {
+                "users": ["admin"],
+                "actions": ["read", "create", "update", "delete"]
+              },
+              "repositories": {
+                "**": {
+                  "policies": [
+                    {
+                      "users": ["push-user"],
+                      "actions": ["read", "create", "update", "delete"]
+                    },
+                    {
+                      "users": ["pull-user"],
+                      "actions": ["read"]
+                    }
+                  ],
+                  "defaultPolicy": [],
+                  "anonymousPolicy": []
+                }
+              }
+            }
+          },
+          "log": {
+            "level": "info"
+          },
+          "extensions": {
+            "metrics": {
+              "enable": true,
+              "prometheus": {
+                "path": "/metrics"
+              }
+            },
+            "search": {
+              "enable": true
+            },
+            "ui": {
+              "enable": true
+            },
+            "sync": {
+              "enable": true,
+              "credentialsFile": "/sync/credentials.json",
+              "registries": [
+                {
+                  "urls": ["https://registry-1.docker.io"],
+                  "onDemand": true,
+                  "tlsVerify": true,
+                  "maxRetries": 3,
+                  "retryDelay": "5m"
+                }
+              ]
+            }
+          }
+        }
+
+# ----- ExternalSecret: htpasswd from Vault ----------------------------------
+# Vault path is filled in by the per-env values file (vaultPath: <env>/app/registry).
+externalsecret-htpasswd:
+  externalSecret:
+    enabled: true
+    name: zot-htpasswd
+    namespace: registry
+    targetSecretName: zot-htpasswd
+    data:
+      - secretKey: htpasswd
+        property: htpasswd
+
+# ----- ExternalSecret: Docker Hub creds for the docker.io pull-through ---------
+# ESO templates Zot's sync credentialsFile JSON from the app/registry dockerhub-user
+# + dockerhub-token properties (installer-seeded) into zot-sync-credentials, mounted
+# at /sync/credentials.json. vaultPath is per-env (values-<env>.yaml). Without a
+# real Docker Hub token the pull-through falls back to anonymous (rate-limited).
+externalsecret-sync-credentials:
+  externalSecret:
+    enabled: true
+    name: zot-sync-credentials
+    namespace: registry
+    targetSecretName: zot-sync-credentials
+    # ESO's own templating (engineVersion v2): assemble the credentialsFile JSON from
+    # the two pulled properties. RAW ESO syntax {{ .key }} — Helm does NOT template
+    # values files, so it passes through verbatim into the ExternalSecret's template
+    # where ESO (not Helm) evaluates it.
+    template:
+      engineVersion: v2
+      data:
+        credentials.json: |-
+          {"registry-1.docker.io":{"username":"{{ .dockerhubUser }}","password":"{{ .dockerhubToken }}"}}
+    data:
+      - secretKey: dockerhubUser
+        property: dockerhub-user
+      - secretKey: dockerhubToken
+        property: dockerhub-token
+
+
+# ----- ESO SecretStore in this namespace ------------------------------------
+secret-store:
+  enabled: true
+  name: vault-backend
+  # vaultUrl supplied per-env in values-{dev,test,prod}.yaml.
+
+# ----- ServiceMonitor + alerts ----------------------------------------------
+monitoring:
+  serviceMonitors:
+    registry:
+      enabled: true
+      namespaces:
+        - registry
+      # Matches the Service auto-created by the `app` deployment chart
+      # (selector labels are app.kubernetes.io/{name=app, instance=registry-<env>}).
+      matchLabels:
+        app.kubernetes.io/name: app
+        app.kubernetes.io/instance: 'registry-{{ .Values.global.env }}'
+      endpoints:
+        - port: http
+          path: /metrics
+          interval: 30s
+  prometheusRules:
+    registry:
+      enabled: true
+      groups:
+        - name: registry
+          interval: 60s
+          rules:
+            - alert: RegistryDown
+              expr: up{job=~".*registry.*"} == 0
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Zot registry pod has been unreachable for 5+ minutes"
+                description: "Pulls + pushes are failing platform-wide. Check `microk8s kubectl -n registry get pods,events`."
+
+            - alert: RegistryStorageFillingUp
+              expr: (kubelet_volume_stats_available_bytes{persistentvolumeclaim="zot-data"}
+                     / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="zot-data"}) < 0.20
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Zot image-store PVC has < 20% free space"
+                description: "Consider running Zot GC or growing the PVC. df-style check: kubectl -n registry exec deploy/registry-dev-app -- du -sh /var/lib/registry"

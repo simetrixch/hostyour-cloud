@@ -1,0 +1,25 @@
+# The platform namespaces admitted to every pod of the unit namespace, BY NAME
+# (namespaceSelector on kubernetes.io/metadata.name, the label the API server
+# sets on every namespace). Both names are fixed by the platform catalog
+# argocd/*/apps/applicationset.yaml, not per installation:
+#
+#   ingress         Traefik. THE public path into the unit — and also the path
+#                   every cross-unit call takes, because a unit addresses another
+#                   unit by its public FQDN and CoreDNS hairpins that name back to
+#                   the Traefik ClusterIP.
+#   observability   Prometheus. It scrapes the postgres exporter on :9187 inside
+#                   the consumer's OWN namespace (apps/postgresql/templates/networkpolicy.yaml
+#                   leaves that pod unpoliced on purpose) and whatever a unit
+#                   declares through charts/monitoring.
+#
+# A name removed here is a path closed for every unit at once.
+admittedNamespaces:
+  - ingress
+  - observability
+
+tenant:
+  # The tenant guid, when this namespace is a tenant MEMBER (<guid>-apps,
+  # <guid>-auth, <guid>-jobs, <guid>-report). Set by the tenant ApplicationSet
+  # from the registration; EMPTY for a consumer, which is a single namespace with
+  # no siblings. See the sibling rule in templates/networkpolicy.yaml.
+  guid: ""

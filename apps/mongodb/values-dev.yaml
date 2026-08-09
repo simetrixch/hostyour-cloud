@@ -1,0 +1,29 @@
+mongodb-data:
+  pvc:
+    storageSize: "20Gi"
+
+mongodb:
+  # replicas is set in values-common.yaml (3 for all envs); override here only
+  # if this host needs a different member count.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+# prometheus-mongodb-exporter connection is no longer configured per-env: the
+# exporter consumes the service-provisioner-written exporter-mongodb Secret
+# (existingSecret in values-common.yaml + the roles-only ServiceClaim in
+# templates/serviceclaim-exporter.yaml). The URI's host comes from the
+# service-provisioner's own per-env mongoHost.
+
+# Per-namespace SecretStore — Vault URL falls back to global.vaultUrl, written
+# by StampClusterProfile into cluster/profile.yaml from the cluster map.
+secret-store: {}
+
+# mongodb-credentials ExternalSecret — reads Vault path dev/app/mongodb.
+externalsecret-mongodb:
+  externalSecret:
+    vaultPath: dev/app/mongodb
