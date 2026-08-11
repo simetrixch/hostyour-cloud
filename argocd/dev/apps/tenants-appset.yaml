@@ -20,19 +20,30 @@
 #
 # The two catalog sources part ways here. The chart source's targetRevision KEEPS master (the
 # set-domain:keep marker): the member charts are PRODUCT, shared by every installation. The generator
-# revision is stamped by set-role.sh to the BOOKS branch — the install branch of the cluster holding
-# the master role, in the catalog — because that is where the Controller writes the tenant
-# registrations, and a second installation must be able to hold its own without colliding. A tenant
-# only ever lands on a slave, whose own branch does not exist in the catalog at all, so a generator
-# stamped to this branch would evaluate against a ref that is not there. The $values source is the
-# ONE hostyour-cloud line: it is stamped normally, so the platform values chain follows THIS cluster's
+# revision names the BOOKS branch — the install branch of the cluster holding the master role, in
+# the catalog — because that is where the Controller writes the tenant registrations, and a second
+# installation must be able to hold its own without colliding. A tenant only ever lands on a slave,
+# whose own branch does not exist in the catalog at all, so a generator pointed at this branch would
+# evaluate against a ref that is not there. The $values source is the ONE hostyour-cloud line: the
+# branch program's revision stamp rewrites it, so the platform values chain follows THIS cluster's
 # install branch.
 #
-# The post-selector pins cluster=__CLUSTER__. On master the placeholder matches no registration, so
-# the trunk generates nothing; set-domain.sh stamps it to the install branch's cluster short name
-# (the fqdn's first label), so the branch admits exactly this cluster's registrations. The
-# destination resolves that same cluster name: on a master the named cluster Secret comes from
-# cluster-self.yaml, on a slave from the instance's ESO-materialized cluster Secret.
+# THE THREE MARKERS IN THIS FILE, AND WHAT PUTS A VALUE IN EACH.
+#
+# The generator's repoURL carries the catalog marker, and the branch program's catalog stamp fills it
+# from the answer this installation names its tenant catalog in — an owner and a name, with the forge
+# and the .git suffix staying as the lines below write them. That marker is deliberately NOT spelled
+# out anywhere else in this file: the stamp rewrites every occurrence of it on any line it reaches,
+# so a sentence quoting it would come out of a run stating a repository instead of explaining one.
+#
+# __BOOKS_BRANCH__ and __CLUSTER__ have NO writer at all. The shell that used to fill them is gone,
+# and neither value is an answer the branch program holds: the books branch is this cluster's own
+# domain where it holds the master role and the named master's domain where it does not, and the
+# cluster is the first DNS label of this cluster's domain — the name the Controller writes into a
+# registration's `cluster:` field and the name the destination below resolves (on a master from the
+# cluster Secret in cluster-self.yaml, on a slave from the instance's ESO-materialized one). A branch
+# cut today carries both markers exactly as they stand, so this ApplicationSet reads registrations
+# from a ref that does not exist and its selector admits none of them.
 #
 # Deliberately NO suspended clause in the selector: suspended and quiesced are NOT selectors and
 # never prune — both reach the chart as values and the chart renders the off state (replicas 0, no
@@ -66,8 +77,8 @@ spec:
     - matrix:
         generators:
           - git:
-              repoURL: __CATALOG_REPO__  # set-role stamps this installation's tenant catalog here — the repository holding the member charts, named in the cluster map
-              revision: __BOOKS_BRANCH__  # set-role stamps this installation's BOOKS branch here — the tenant registrations in the catalog stand on it (the CHARTS below stay on the trunk)
+              repoURL: https://github.com/__CATALOG_REPO__.git  # the catalog stamp writes the owner and the name of this installation's tenant catalog into the marker — the repository holding the member charts, named in the cluster map
+              revision: __BOOKS_BRANCH__  # NOTHING fills this — the tenant registrations in the catalog stand on the books branch, which is not an answer of the branch program (the CHARTS below stay on the trunk)
               files:
                 - path: "registrations/*/dev.yaml"
               values:
@@ -76,7 +87,7 @@ spec:
               elementsYaml: "{{ .members | toJson }}"
       selector:
         matchLabels:
-          cluster: __CLUSTER__
+          cluster: __CLUSTER__  # NOTHING fills this — the short name is not an answer of the branch program
   template:
     metadata:
       name: "{{ .values.guid }}-{{ .name }}-dev"
@@ -133,15 +144,15 @@ spec:
         #    another's version, and the next bump would overwrite it. The release pipeline's bump
         #    writes <chart>/pins-dev.yaml here; until it has, the chart's own values.yaml carries
         #    the product default and the file is simply absent (ignoreMissingValueFiles).
-        - repoURL: __CATALOG_REPO__  # set-role stamps this installation's tenant catalog here
-          targetRevision: __BOOKS_BRANCH__  # set-role stamps this installation's BOOKS branch here — the pins stand on it, the CHARTS below on the trunk
+        - repoURL: https://github.com/__CATALOG_REPO__.git  # filled by the catalog stamp, as the generator above is
+          targetRevision: __BOOKS_BRANCH__  # NOTHING fills this — the pins stand on the books branch, the CHARTS below on the trunk
           ref: pins
         # 1..n. The member's own charts on the catalog's trunk, in the order the registration lists
         #    them. The platform values reach every one of them as global.* over the SAME $values chain
         #    every platform app loads: platform files first, the chart's own values in between, the
         #    chart's extra value files after those, cluster/profile.yaml LAST (highest precedence).
         {{- range .sources }}
-        - repoURL: __CATALOG_REPO__  # set-role stamps this installation's tenant catalog here
+        - repoURL: https://github.com/__CATALOG_REPO__.git  # filled by the catalog stamp, as the two sources above are
           targetRevision: master  # set-domain:keep — the member charts live on the catalog's master, never on an install branch
           path: {{ .chart | quote }}
           helm:
@@ -160,13 +171,12 @@ spec:
             # The pins file above is the ONE file MEANT to be missing, and only until this
             # installation has built. The flag permits more than that one file: a values file named
             # here and no longer carried by the repository it stands in renders from whatever files
-            # are left, with no sync error anywhere. Which half of this list is guarded follows from
-            # which repository the file stands in. The three $values/ paths are this repository's
-            # own, and tools/lib/src/values/value_files_audit.dart requires every one of them that
-            # branch-classes.yaml calls product to be here. The member chart's own values.yaml, its
-            # stage file and whatever the registration's valueFiles adds stand in the tenant
-            # catalog, which this gate does not read — for those the flag is a silence an
-            # installation accepts rather than one something guards.
+            # are left, with no sync error anywhere. NOTHING GUARDS EITHER HALF of this list today —
+            # the audit that used to require every $values/ path named here to exist in this
+            # repository is gone with the tools tree it lived in, and the member chart's own
+            # values.yaml, its stage file and whatever the registration's valueFiles adds have never
+            # been read by anything here, since they stand in the tenant catalog. So the flag is a
+            # silence an installation accepts, on every path in the list.
             ignoreMissingValueFiles: true
             valuesObject:
               # THE TENANT'S OWN FACTS, handed to every source of every member. Bare access is safe

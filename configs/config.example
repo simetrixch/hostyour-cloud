@@ -1,0 +1,190 @@
+# What this installation is — the answers a generated branch is made one installation by.
+#
+# THIS FILE IS THE TEMPLATE. It stands on the trunk with every value empty. The run that generates
+# an installation branch copies it to configs/config.<stage> and fills the keys it owns IN PLACE:
+# each value is rewritten on the line this file declares it on, so a key appears exactly once and
+# keeps the paragraph above it, and every other line is copied through untouched. A key this file
+# does not declare cannot be filled at all — the run refuses and names it, rather than appending a
+# bare assignment at the end of a file whose whole value is that each key stands under its
+# explanation.
+#
+# AN EMPTY VALUE MEANS UNANSWERED, WHICH IS WHY EVERY ASSIGNMENT BELOW IS EMPTY. A value that is
+# empty, absent, or still exactly what this template carries counts as no answer. So an example
+# value on one of these lines would be read as somebody's answer and left standing — which is how
+# certificate mail and an identity provider's first account once ended up on a mailbox nobody reads.
+# The same rule runs the other way: a key that carries anything else is NEVER rewritten, so a value
+# you typed survives every re-run of the generator instead of being reset to the answer the run was
+# given.
+#
+# HOW THE CONDITIONS READ IT BACK. Shell assignment syntax, one KEY=value per line: everything after
+# the first `=` is the value, an `export ` prefix is stripped, surrounding quotes are taken off, and
+# blank lines and lines starting with `#` are ignored. Nothing strips a comment from the END of a
+# value line, so `ENABLE_VAULT=true # switched on` is the value `true # switched on` and not `true`,
+# and the phase behind it stays off — put a remark of your own on a line of its own. A value cannot
+# carry a double quote or a line break: the run refuses such an answer instead of writing a file the
+# next reader would misparse.
+#
+# WHAT IS NOT HERE. The platform's own defaults — the pod network, the addon list, the chart
+# repositories, the timeouts — belong to the product and not to an installation, so nothing asks you
+# for them and nothing writes them here. The credentials belong to the other hand-filled file,
+# secrets/secrets.<stage>.
+
+# ── what this installation is ────────────────────────────────────────────────────────────────────
+
+# Which of the product's three stages this installation runs: dev, test or prod. The generator
+# writes it here from the stage it was told, and that same word names this file's filled copy,
+# configs/config.<stage>. It is also written into this cluster's map under `stage:`, and the step
+# that reduces the branch to one stage refuses to prune while the map and the run disagree — pruning
+# to the wrong stage would leave a branch whose values, secret paths and release names belong to a
+# stage it does not run. A word that is not one of the three is refused when the map is written.
+#
+# NOTHING READS THIS LINE, AND NOTHING READS THIS FILE'S NAME EITHER. The reader lists the configs
+# directory, drops the template by its own name, and takes the one entry that is left — whatever
+# that entry happens to be called. So renaming configs/config.dev to configs/config.prod moves
+# nothing, and a directory holding two such files is refused as a branch that was never reduced to
+# one stage. Every program takes the stage from its own run.
+DEPLOY_ENV=
+
+# The domain name this cluster answers on, as it is reached from outside. The same answer names the
+# git branch this installation is generated on and its cluster map, clusters/active/<domain>.yaml,
+# and is stamped into cluster/profile.yaml as `global.domain`, which every platform hostname of this
+# cluster hangs off.
+#
+# THIS IS ONE OF THE FIVE VALUES IN THIS FILE THAT A LATER RUN REALLY READS BACK OUT OF IT: this
+# one, BUILD_PLANE_FQDN below, and the three ENABLE_ switches at the foot. Every other key here is
+# this installation's record of an answer, and each of their paragraphs says so.
+#
+# The two conditions that decide where the build plane is are nothing but the comparison of this
+# value with BUILD_PLANE_FQDN — equal means the build tier belongs on this cluster, different means
+# it belongs on the other one. The comparison is exact text: a trailing dot, a different spelling or
+# a different letter case is a different cluster. When either key is missing from the filled file,
+# NEITHER condition holds and every row hanging off them is skipped: the build tier's two read
+# policies, the login role its build namespaces use, the three entries gated on the build plane —
+# and, because those are written whole per shape rather than negated, the cluster manager's own
+# policy and the login role every PLATFORM secret reader uses, each in BOTH of its two shapes. That
+# last part is the one that hurts. A cluster left in that state carries no manager policy and no
+# platform reader role at all, so every platform secret store on it is refused at login; only the
+# consumer and tenant roles, which hang off neither condition, are still written.
+DOMAIN_SUFFIX=
+
+# This cluster's full domain again, written unchanged — NOT a short name. The short name the charts
+# use, `global.clusterName`, is the first label of that domain and is derived where the cluster
+# profile is stamped, from the same answer; the cluster's own map is filed under the full domain.
+# Nothing reads this line.
+CLUSTER_NAME=
+
+# ── where this installation's units and its mail live ────────────────────────────────────────────
+
+# The public apex the consumers and tenants of this installation are reached below, as
+# <name>.<apex>: a unit called shop under an apex of example.com answers at shop.example.com. Two
+# clusters in one zone share an apex, and that is what lets a unit keep its address when it moves
+# between them; it is usually this cluster's domain without its first label. A value that is not a
+# domain name is refused when the map is written, where the generator records the same answer as
+# `unit-apex`.
+#
+# Nothing reads this line. The same answer is also stamped into cluster/profile.yaml as
+# `global.unitApex`, the file every application loads LAST in its values chain, and no chart in this
+# repository reads that key today.
+UNIT_APEX=
+
+# The business domain of this installation — the domain its mail is sent from, and the identity its
+# sender addresses are built on. Usually the same as the unit apex. A value that is not a domain
+# name is refused when the map is written, where the generator records the same answer as
+# `platform-domain`.
+#
+# Nothing reads this line. The same answer is also stamped into cluster/profile.yaml as
+# `global.platformDomain`, and no chart in this repository reads that key today.
+PLATFORM_DOMAIN=
+
+# ── where this installation builds, and what its tenants are built from ──────────────────────────
+
+# The domain of the cluster whose image registry and builders this installation pulls from: this
+# cluster's own domain where it carries the build plane itself, another machine's domain where it
+# does not. Read back out of the filled file and compared with DOMAIN_SUFFIX above, and that
+# comparison alone decides which shape the grants in the secret store are written in — the build
+# tier's read policies and its secret-reader role exist only on the cluster that carries the plane,
+# because a build is stage-free and can authenticate only against the one store standing beside it.
+# The registry address every cluster of this installation pulls through is composed from the same
+# answer, as zot.<build-plane> in cluster/profile.yaml. An installation has exactly ONE build plane,
+# so every cluster of it is given the SAME value here: two clusters that both named themselves would
+# each build their own copy of what is meant to be one image promoted from stage to stage. Nothing
+# derives this value from anything else.
+BUILD_PLANE_FQDN=
+
+# The repository holding this installation's TENANT charts and their per-stage pins, written as
+# owner/name. It is your own repository and not this platform's, and no rule composes its name out
+# of anything else here. Something that is not an owner and a name is refused when the map is
+# written, where the generator records the same answer as `catalog-repo`. The same answer is also
+# stamped into the reconciler's tenant generators, in place of the marker the trunk carries for it,
+# which is what points them at your catalog. Nothing reads THIS line, so editing it later retargets
+# nothing.
+CATALOG_REPO=
+
+# ── the mailboxes ────────────────────────────────────────────────────────────────────────────────
+
+# A real mailbox the certificate authority writes to before a certificate expires and when its
+# policy changes. It is not used to log in anywhere, and nothing judges the address — it is yours,
+# and a rule that recognized an example would refuse an operator whose own mailbox reads like one.
+# The address that is actually registered comes from the answer the cluster run was given: that run
+# writes it into the ClusterIssuer this cluster issues every certificate through, and that object is
+# what the authority knows. This line is this installation's record of the same answer, and nothing
+# reads it — changing it later re-registers nothing.
+LETSENCRYPT_EMAIL=
+
+# A real mailbox you can read: the one the first administrator of this installation's identity
+# provider is meant to be created on, and the one the link that sets that account's password would
+# be sent to. Nothing reads this line, and no step of the install reads this answer either — the
+# identity provider is installed from bootstrap/idp/values.yaml with its credentials taken out of
+# the secret store, and none of them is this mailbox. So answering it does not by itself create
+# anybody: what it does today is record who this installation's first administrator is meant to be.
+IDP_BOOTSTRAP_EMAIL=
+
+# The mailboxes this installation's platform alerts are sent to — several on ONE line, separated by
+# COMMAS. The comma is the separator on both sides of the answer: what takes the answer splits the
+# text typed into it on commas, and the generator joins the list back with commas to write this
+# line. At least one real address, and each one must be a mailbox: an empty list and anything
+# without an @ and a dotted name after it are refused when the map is written, where the same answer
+# is recorded as `alert-recipients`.
+#
+# Nothing reads this line, and nothing splits it apart again. What the alerting stack delivers to is
+# `global.alertRecipients` in the values chain.
+ALERT_RECIPIENTS=
+
+# ── the three switches ───────────────────────────────────────────────────────────────────────────
+#
+# No step writes these: you answer them here by hand, and they are read straight out of the filled
+# file by the conditions that gate whole phases of the install. A phase that is switched off leaves
+# NOTHING behind — no namespace, no release, no credential file, not a half-built one — because its
+# rows never run, and the plan says which condition skipped each of them instead of showing a row
+# that reported success without doing anything.
+#
+# Only the exact word `true` switches a phase on. `1`, `yes` and `True` are read as a no, and the
+# condition says so: they state something this installation never defined, and taking one for
+# agreement is how a cluster ends up running a component nobody switched on.
+
+# Whether this installation runs the platform's secret store, the one place a credential of this
+# installation comes into being and lives. Its condition gates the whole phase: bringing the store
+# up, unsealing it, creating the mount, every policy and every login role written on it, and every
+# value seeded into it. LEFT EMPTY MEANS NO — bringing up the platform's only secret store, minting
+# its quorum and writing the one file that holds it is not something a machine gets because nobody
+# said otherwise.
+ENABLE_VAULT=
+
+# Whether this installation runs an identity provider — the one every cluster of the installation
+# authenticates against, and the one the reconciler logs its users in through. LEFT EMPTY MEANS YES,
+# the opposite of the other two switches: a cluster without an identity provider stands perfectly
+# well, it simply cannot log anybody in yet, so an installation that says nothing gets one. It
+# cannot stand alone, though: the row that puts its credentials on the cluster is gated on the
+# secret store as well, because that is where they come into being — so an installation with the
+# store switched off gets no identity provider either, as a skipped row with its reason and not as a
+# pod that starts and cannot reach its database.
+ENABLE_IDP=
+
+# Whether this installation hands its cluster over to the reconciler. Its condition gates the
+# reconciler's namespace, its release, its public address — and the handoff itself, the single
+# application from which the reconciler creates the projects, the generators and every platform
+# application below them. That last row is the point of no return: from there the reconciler owns
+# every object of every platform application, and taking that one application away again takes all
+# of them with it. LEFT EMPTY MEANS NO, so a cluster is handed over only where an installation asks
+# for it — until then the platform applications of this branch simply do not exist on it.
+ENABLE_ARGOCD=

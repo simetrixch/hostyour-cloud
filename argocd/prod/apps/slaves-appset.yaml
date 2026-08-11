@@ -32,13 +32,20 @@
 #   apiPort: 16443                    # the slave's kube-apiserver port (MicroK8s)
 #
 # The selector's master value is the domain placeholder on master (the trunk),
-# so the trunk generates NOTHING — set-domain stamps it to the install
-# branch's own fqdn. The generator revision is stamped by set-role.sh to the
-# BOOKS branch — the install branch of the cluster holding the master role,
-# which is the one branch carrying every cluster map of the installation. On the
-# branch of the cluster that HOLDS that role those two are the same name, and
-# this appset only ever produces anything there: on a pure slave's branch the
+# so the trunk generates NOTHING — the branch program's domain stamp writes the
+# install branch's own fqdn there. The generator revision names the BOOKS
+# branch — the install branch of the cluster holding the master role, which is
+# the one branch carrying every cluster map of the installation. On the branch
+# of the cluster that HOLDS that role those two are the same name, and this
+# appset only ever produces anything there: on a pure slave's branch the
 # selector asks for maps naming that slave as their master, and none does.
+#
+# THE REVISION MARKER HAS NO WRITER. __BOOKS_BRANCH__ is filled by nothing: the
+# shell that used to write it is gone, and the books branch is not an answer the
+# branch program holds — it is this cluster's own domain where it holds the
+# master role and the named master's domain where it does not. A branch cut
+# today reads its cluster maps from a ref that does not exist, so this appset
+# generates nothing at all and no slave is managed.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -51,7 +58,7 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: __BOOKS_BRANCH__  # set-role stamps this installation's BOOKS branch here — every cluster map of the installation stands on the install branch of the cluster holding the MASTER role
+        revision: __BOOKS_BRANCH__  # NOTHING fills this — every cluster map of the installation stands on the install branch of the cluster holding the MASTER role
         files:
           - path: "clusters/active/*.yaml"
         # The ONE derivation of the slave's short name from its fqdn in this

@@ -2,24 +2,34 @@
 # On `master` this is empty (`global: {}`); every app's ArgoCD Application loads it
 # LAST in the valueFiles chain, so whatever global.* keys it sets win.
 #
-# Written per install branch by StampClusterProfile from the cluster map
-# clusters/active/<fqdn>.yaml (not hand-edited normally): one rule per key —
+# Written per install branch by StampClusterProfile from the ANSWERS the run that
+# generated the branch was given (not hand-edited normally, and not parsed back
+# out of clusters/active/<fqdn>.yaml — that map is a second rendering of the same
+# answers): one rule per key —
 # domain is THIS cluster's fqdn, which is the name of this branch: every platform
 # hostname hangs off it, so it says which installation this is and cannot stand on
 # the trunk;
-# clusterName is the derived short name; unitApex is the map's unit-apex;
-# platformDomain is the map's platform-domain (the installation's business
-# domain — the mail sender identity the unit charts derive when their own
-# value is empty, and the relay's sender allowlist);
+# clusterName is the derived short name; unitApex is the unit_apex answer;
+# platformDomain is the platform_domain answer (the installation's business
+# domain — the sender identity a unit chart derives its mail from when its own
+# value is empty);
+# alertRecipients is the alert_recipients answer, the mailboxes an alert route
+# that carries no `emails` of its own is delivered to — charts/monitoring stops
+# the render of an enabled route that resolves to neither;
 # booksBranch is the install branch of the cluster holding the MASTER role —
 # where this installation keeps its cluster maps and its registrations, which
 # is a DIFFERENT branch from this one on a pure slave;
-# vaultUrl and tailnetUrl both follow the master part; vaultKubernetesAuthPath
-# is always kubernetes-<name>; endpoints.registry.host is always zot.<build-plane>;
-# endpoints.post.url is the map's post-url (a mandatory map field — the tenant
-# auth/report charts hard-require it); servicesLocal.registry follows the
-# build plane, servicesLocal.{vault,observabilityCentral} the
-# master part.
+# vaultUrl follows the master part, as vault.<master>; tailnetUrl is the
+# tailnet_url answer written out verbatim, composed from nothing;
+# vaultKubernetesAuthPath is always kubernetes-<name>; endpoints.registry.host is
+# always zot.<build-plane>;
+# endpoints.post.url is the post_url answer and stands here ONLY when that answer
+# was given: it is optional, and an installation that runs no mail service has
+# none. A tenant's auth and report charts require it in tenant mode and stop
+# their render naming global.endpoints.post.url when it is absent, which is why
+# the key is left out rather than written empty;
+# servicesLocal.registry follows the build plane,
+# servicesLocal.{vault,observabilityCentral} the master part.
 #
 # Only global.* keys belong here — they propagate to every subchart via Helm's
 # `global:` convention. App-specific values stay in each app's values-<stage>.yaml.

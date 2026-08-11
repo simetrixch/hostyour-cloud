@@ -168,9 +168,10 @@ kube-prometheus-stack:
       # Default route receiver is now "null". Actual delivery is handled by the
       # `platform-default` AlertmanagerConfig CR (see
       # apps/observability/values-common.yaml.monitoring.alertmanagerConfigs),
-      # whose recipients come from .Values.global.alertRecipients, written into
-      # cluster/profile.yaml by StampClusterProfile from the cluster map — ONE place to
-      # change this installation's alert mailbox.
+      # whose recipients come from .Values.global.alertRecipients, rendered into
+      # cluster/profile.yaml by StampClusterProfile from the alert_recipients
+      # answer the generating run was given — ONE place to change the mailbox of
+      # every entry that carries no `emails` of its own.
       route:
         receiver: "null"
         group_by: [alertname, namespace]

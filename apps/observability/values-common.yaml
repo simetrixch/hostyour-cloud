@@ -242,13 +242,18 @@ monitoring:
   # `platform-default` has no matchers — it's the catch-all that delivers any
   # alert not already null-routed by the global config (Watchdog / InfoInhibitor
   # / severity=info). With `emails:` omitted, the chart template falls back to
-  # .Values.global.alertRecipients, which StampClusterProfile writes into
-  # cluster/profile.yaml from the cluster map's alert-recipients — the
-  # installation's own mailboxes, since platform/values-common.yaml is the trunk
-  # and a mailbox names one installation. That is THE single source of truth for
-  # this installation's alert mailbox: change the map field and stamp the branch
-  # again to reroute every alert. The chart REFUSES to render an enabled entry
-  # that resolves to no recipient, so the reroute cannot end in silence.
+  # .Values.global.alertRecipients, which StampClusterProfile renders into
+  # cluster/profile.yaml from the operator's alert_recipients ANSWER while the
+  # install branch is generated — the installation's own mailboxes, since
+  # platform/values-common.yaml is the trunk and a mailbox names one
+  # installation. clusters/active/<fqdn>.yaml states the same answer as
+  # alert-recipients; that is a second rendering of it and NOT what the profile
+  # is read out of, so editing that field by hand reroutes nothing and the next
+  # run writes the answer back over it. Generating the branch again with a
+  # different answer reroutes every entry that carries no `emails` of its own —
+  # an entry that carries them keeps them, which is what the per-app overrides
+  # below are. The chart REFUSES to render an enabled entry that resolves to no
+  # recipient, so the reroute cannot end in silence.
   #
   # Per-app overrides (e.g. mongodb → db-team@..., observability → ops@...)
   # live in each app's own values file as additional AlertmanagerConfig
@@ -303,14 +308,20 @@ kube-prometheus-stack:
       podMonitorSelectorNilUsesHelmValues: false
       probeSelectorNilUsesHelmValues: false
       retention: 15d
-      # Remote-write receiver (Prometheus /api/v1/write). OFF here so a plain
-      # full cluster is byte-identical to today (the chart default is also
-      # false → the CR field is omitted entirely). The MASTER turns it ON via
-      # cluster/profile.yaml (StampClusterProfile) so it can accept the slave
-      # observability agents' remote_write — the D4b/I6 receive path. This one
-      # field can't be gated by a Helm sub-chart `condition:` (it's a
-      # kube-prometheus-stack value, not a chart of ours), so the master enables
-      # it through its role profile, matching D4b "set via the global".
+      # Remote-write receiver (Prometheus /api/v1/write). OFF here, which is also
+      # the chart default → the CR field is omitted entirely. The master needs it
+      # ON to accept the slave observability agents' remote_write, and it cannot
+      # be gated by a Helm sub-chart `condition:` on
+      # global.servicesLocal.observabilityCentral the way the push Ingresses in
+      # Chart.yaml are: it is a kube-prometheus-stack value, not a chart of ours.
+      #
+      # NOTHING IN THIS TREE TURNS IT ON. cluster/profile.yaml carries global.*
+      # keys only and StampClusterProfile writes no such key, so the profile is
+      # not the surface it was once set from. The only place an installation can
+      # set it today is its own cluster/values/observability.yaml, which the
+      # ApplicationSet loads just before the profile. Until one does, the master
+      # serves no /api/v1/write and the prom-push Ingress below leads to an
+      # endpoint Prometheus never registered.
       enableRemoteWriteReceiver: false
 
   grafana:
@@ -552,10 +563,16 @@ grafana-oidc-secret:
 # agents at prom-push./loki-push.<master-fqdn>.
 # ============================================================================
 
-# prom-push.<master-fqdn> → Prometheus service :9090, path /api/v1/write
-# (the remote_write receiver enabled via prometheusSpec.enableRemoteWriteReceiver
-# on the master). The slave agent posts to <prometheusPush>/api/v1/write
+# prom-push.<master-fqdn> → Prometheus service :9090, path /api/v1/write. The
+# slave agent posts to <prometheusPush>/api/v1/write
 # (charts/monitoring/templates/alloy-agent-config.yaml).
+#
+# THE PATH IT POSTS TO DOES NOT EXIST UNTIL SOMEBODY TURNS THE RECEIVER ON.
+# prometheusSpec.enableRemoteWriteReceiver stands at false above, which is also
+# the chart's own default, and nothing in this tree sets it — so this route
+# reaches a Prometheus that never registered /api/v1/write. An installation that
+# wants it sets the value in its own cluster/values/observability.yaml, which the
+# ApplicationSet loads just before the profile.
 ingress-prom-push:
   ingress:
     enabled: true

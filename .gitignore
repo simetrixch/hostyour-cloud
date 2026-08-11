@@ -18,6 +18,25 @@ argocd-*.txt
 kube-*.txt
 idp-*.txt
 
+# The ONE file this tree carries under `secrets/`: the TEMPLATE. Every value in it is empty, so it
+# is the only thing in that folder that is not a credential, and it has to arrive by a commit —
+# generating an installation reads it to write `secrets/secrets.<stage>` beside it, and without it
+# on the branch that step has nothing to make the file from.
+#
+# THREE lines rather than one, because git never descends into an excluded directory and so cannot
+# re-include a file whose parent is excluded: a bare `!secrets/secrets.example` under the rules
+# above does nothing at all. The root folder is admitted first, everything in it is excluded again,
+# and only then is the template named. Each line is load-bearing — drop the first and the template
+# stays invisible.
+#
+# The rules above are anchored to no directory and keep their full reach: a `secrets` folder, or a
+# file of that name, ANYWHERE ELSE in this tree is still excluded whole. Only the root folder is
+# entered, and of its contents only this one path is admitted, so every `secrets/secrets.<stage>` a
+# machine fills in stays out.
+!/secrets/
+/secrets/*
+!/secrets/secrets.example
+
 # Agent instructions. Loaded from disk by whichever harness opens this repository, and never
 # tracked: they are ours, and this repository is meant to be cloned and used by anybody.
 CLAUDE.md

@@ -7,9 +7,11 @@
 # The allowlist below covers an upstream CRD's OpenAPI example — never real credentials. Real
 # secrets live only in gitignored files on the machine and in Vault; they are never committed.
 #
-# An entry for the secrets template is deliberately absent: the template that carried a PEM
-# placeholder was part of the shell layer and does not exist here. Its replacement gets its own
-# entry when it is written, so the allowlist never covers a path nothing matches.
+# The secrets template gets NO allowlist entry, and it never will. `secrets/secrets.example`
+# declares every key with an EMPTY value and carries no credential-shaped text, so the scan already
+# reports nothing on it and there is nothing to allow. An entry would first take effect the day
+# somebody filled a real value in — and that is precisely what this scan has to catch on that path,
+# because the template is the one file under `secrets/` that IS committed.
 title = "hostyour-cloud gitleaks config"
 
 # Keep all of gitleaks' default rules; this file only ADDS an allowlist.

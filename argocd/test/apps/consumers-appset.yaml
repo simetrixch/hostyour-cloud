@@ -14,18 +14,23 @@
 # follows the consumer's delivery branch deploy/test as a LITERAL. What that
 # branch points at is decided in the consumer's repo, not here.
 #
-# The post-selector pins cluster=__CLUSTER__. On master the placeholder
-# matches no registration, so the trunk generates nothing; set-domain.sh
-# stamps it to the install branch's cluster short name (the fqdn's first
-# label), so the branch admits exactly this cluster's registrations. The
-# generator revision is a DIFFERENT stamp, and deliberately not this branch:
-# set-role.sh writes the BOOKS branch there, the install branch of the cluster
-# holding the master role, because that is the only branch the registrations
-# stand on. set-domain keeps registrations/ on that branch and prunes them off a
-# pure slave's — so a slave reading its own branch would generate nothing for
-# the consumers placed on it, and a files generator matching nothing is not an
-# error. The two stamps together are what lets one slave's ArgoCD instance
-# deliver its own consumers out of its master's books.
+# THE TWO MARKERS IN THIS FILE HAVE NO WRITER. The post-selector pins
+# cluster=__CLUSTER__ — the install branch's cluster short name, which is the
+# fqdn's first DNS label and the name the Controller writes into a
+# registration's `cluster:` field. The generator revision is __BOOKS_BRANCH__
+# and deliberately not this branch: the registrations stand on the install
+# branch of the cluster holding the master role, which on a pure slave is
+# another branch. Neither value is an answer the branch program holds, and the
+# shell that used to write them is gone — so a branch cut today carries both
+# markers exactly as they stand, reads its registrations from a ref that does
+# not exist, and admits none of them.
+#
+# What DOES happen on a branch: StampRole keeps registrations/ on the branch of
+# the cluster holding the master role and prunes them off a pure slave's, so a
+# slave reading its own branch would generate nothing for the consumers placed
+# on it, and a files generator matching nothing is not an error. Filling the two
+# markers is what would let one slave's ArgoCD instance deliver its own
+# consumers out of its master's books.
 #
 # suspended and quiesced are NOT selectors and never prune: both reach the
 # chart as values (source 1 below) and the chart renders the off state —
@@ -57,12 +62,12 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: __BOOKS_BRANCH__  # set-role stamps this installation's BOOKS branch here — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
+        revision: __BOOKS_BRANCH__  # NOTHING fills this — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
         files:
           - path: "registrations/*/test.yaml"
       selector:
         matchLabels:
-          cluster: __CLUSTER__
+          cluster: __CLUSTER__  # NOTHING fills this — the short name is not an answer of the branch program
   template:
     metadata:
       name: "{{ .name }}-test"

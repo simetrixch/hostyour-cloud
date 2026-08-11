@@ -30,7 +30,11 @@ resources:
 
 # Settings
 settings:
-  # Global dashboard settings
+  # Global dashboard settings. __CLUSTER_NAME__ is this cluster's short name —
+  # the fqdn's first DNS label — and NOTHING fills it: the shell that used to is
+  # gone, and the short name is not an answer the branch program holds, so an
+  # install branch carries the marker as it stands and the dashboard would title
+  # itself with it.
   clusterName: "__CLUSTER_NAME__"
   itemsPerPage: 10
   labelsLimit: 3
@@ -61,8 +65,11 @@ config:
   inCluster: true
   # Name the in-cluster (master) context after the master's short name — e.g.
   # "m1", matching how the slave contexts are named (s1, s2) — instead
-  # of the chart default "main". __MASTER_NAME__ is stamped by render_manifest
-  # (cli.sh) from CLUSTER_NAME's first DNS label. Shown in the cluster picker.
+  # of the chart default "main". Shown in the cluster picker. __MASTER_NAME__ is
+  # the first DNS label of the domain of the cluster holding the master role,
+  # and NOTHING fills it either: that domain is this cluster's own where it holds
+  # the role and the named master's where it does not, and neither the domain nor
+  # its first label is one answer the branch program can hand to a stamp.
   inClusterContextName: "__MASTER_NAME__"
   extraArgs:
     - -kubeconfig=/etc/kube-slaves/kubeconfig

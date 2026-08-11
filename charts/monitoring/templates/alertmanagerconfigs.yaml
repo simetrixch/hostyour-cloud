@@ -9,11 +9,13 @@ are available to every AlertmanagerConfig in the cluster.
 
 Recipient fallback chain:
   $cfg.emails (explicit list per entry, optional)
-    → .Values.global.alertRecipients (the installation's own: the operator's
-      answer stands as alert-recipients in the cluster map, and
-      StampClusterProfile renders it into cluster/profile.yaml;
-      platform/values-common.yaml holds an empty list because a mailbox names one
-      installation and the trunk names none)
+    → .Values.global.alertRecipients (the installation's own: the operator
+      answers alert_recipients when the install branch is generated, and
+      StampClusterProfile renders THAT ANSWER into cluster/profile.yaml, which
+      every app loads last. clusters/active/<fqdn>.yaml states the same answer as
+      alert-recipients — it is a second rendering of it, not the file the profile
+      is read out of. platform/values-common.yaml holds an empty list because a
+      mailbox names one installation and the trunk names none)
   An ENABLED route that resolves to neither STOPS THE RENDER. It used to emit an
   AlertmanagerConfig with no emailConfigs, which fires nothing and looks healthy
   in every view — a monitoring stack that reports its own silence as success.
@@ -35,7 +37,7 @@ and fail.
 {{- if $cfg.enabled }}
 {{- $emails := $cfg.emails | default $.Values.global.alertRecipients -}}
 {{- if not $emails }}
-{{- fail (printf "monitoring: alertmanagerConfigs.%s is enabled and resolves to no recipient. Set this installation's global.alertRecipients — alert-recipients stands in clusters/active/<fqdn>.yaml and is rendered from there into cluster/profile.yaml per install branch — or give the entry its own `emails`, or set `enabled: false` to mean the silence." $name) }}
+{{- fail (printf "monitoring: alertmanagerConfigs.%s is enabled and resolves to no recipient. Set this installation's global.alertRecipients — it is rendered into cluster/profile.yaml from the alert_recipients answer when the install branch is generated, so generate the branch again with a mailbox in that answer — or give the entry its own `emails`, or set `enabled: false` to mean the silence." $name) }}
 {{- end }}
 ---
 apiVersion: monitoring.coreos.com/v1alpha1
