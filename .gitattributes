@@ -7,12 +7,16 @@
 # writes that block to a file and executes it — so a `\r` in the YAML travels
 # the whole way and arrives in a pod as `bad interpreter: /usr/bin/env sh^M`.
 #
-# The gate's line-ending check reads this file back. It lives in the plugin
-# repository, simetrixch/ansiwise-plugins, because this repository ships no
-# code at all. It names those six
-# templates, and it reports a path declared LF that carries a carriage return,
-# a text path no rule here owns, and a rule that owns no tracked path — which
-# is how this file stops describing a repository that has changed underneath it.
+# NOTHING CHECKS THIS AFTERWARDS, AND NOTHING NEEDS TO. git normalizes on the
+# write into the index, so while the rules below stand a carriage return cannot
+# enter this repository through a commit at all. `git ls-files --eol` states what
+# is actually stored, and it is the whole audit: a line that is not `i/lf` is a
+# file that would arrive in a pod broken.
+#
+# A separate check used to read this file back from another repository. It was
+# deleted rather than moved: it reported a failure git had already made
+# impossible, and a check that cannot go red is read as a guarantee while
+# guaranteeing nothing.
 
 # Every text file, LF in the index and LF in the working copy, on every platform.
 # git's content heuristic decides what is text, and it keeps its hands off

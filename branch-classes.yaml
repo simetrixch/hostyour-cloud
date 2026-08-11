@@ -32,17 +32,29 @@
 # guard, so the installer refused the domain it had just installed; the second
 # once classified clusters/active/*.yaml as safe to discard, so a merge
 # conflict would have resolved the installation's ledger away with the sync
-# reporting success. The gate reads THIS file, mirrors both routines for real,
-# and reports where they disagree with it. It lives in ansiwise-plugins, in the
-# package hostyour_cloud_gate — this repository ships no Dart and runs none.
+# reporting success.
+#
+# WHAT HOLDS THE ROUTINES TO THIS FILE TODAY: NOTHING. A check used to mirror
+# both of them and report where they disagreed with it; it was deleted with the
+# gate package it lived in. The routines still decide for themselves — they do
+# not read this file — so this file and their behaviour are two statements of one
+# thing, and a drift between them is not reported by anything.
+#
+# That is stated here rather than left to be discovered, because of the second
+# incident above: a wrong classification there is not a failed run, it is a
+# successful sync that threw an installation's ledger away.
+#
+# THE FIX IS NOT A NEW CHECK. It is for the routines to READ this file and act on
+# what it says, at which point there is one statement instead of two and nothing
+# left to compare. That is what turning the stampers into configured steps is
+# for.
 #
 # FORMAT. Sections of `  "<pattern>": <value>` lines, each with its reason on
 # the ONE comment line directly above it — the shape platform/versions.yaml
 # already uses, plain enough that a rule and the reason for it read together
 # with no nested structure in between.
 #
-# PATTERNS are bash pattern-match — the gate's GlobPattern is what applies
-# them — where `*`
+# PATTERNS are bash pattern-match, where `*`
 # matches `/` as well: `*.sh` covers every script wherever it sits, and
 # `charts/*` covers the whole subtree instead of stopping at the first `/`,
 # which is the sense a shell glob or a package:glob pattern would give it.
@@ -102,7 +114,7 @@ classes:
 
   # The ten library charts every app depends on: no writer at all — not in the placeholder list, not pruned by StampRole, not touched by the version sync.
   "charts/*": product
-  # This file: the declaration itself, the same in every installation, and the one thing the gate's branch-class check reads instead of deciding by grep.
+  # This file: the declaration itself, the same in every installation. Product because it describes the product's shape and names no cluster — and because a stamper must never rewrite the file that says what may be stamped.
   "branch-classes.yaml": product
 
   # Chart metadata and dependency version pins, stamped on master only, by the version sync, from platform/versions.yaml.
