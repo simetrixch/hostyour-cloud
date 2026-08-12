@@ -25,12 +25,12 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
       client_type: confidential
       client_id: vault
-      client_secret: ${IDP_VAULT_CLIENT_SECRET}
+      client_secret: !Env IDP_VAULT_CLIENT_SECRET
       # Vault uses TWO redirect URIs: the in-browser UI flow + the CLI's
       # localhost listener used by `vault login -method=oidc`.
       redirect_uris:
         - matching_mode: strict
-          url: https://vault.${IDP_DOMAIN}/ui/vault/auth/oidc/oidc/callback
+          url: !Format ["https://vault.%s/ui/vault/auth/oidc/oidc/callback", !Env IDP_DOMAIN]
         - matching_mode: strict
           url: http://localhost:8250/oidc/callback
       access_token_validity: hours=1
@@ -53,6 +53,6 @@ entries:
       name: Vault
       slug: vault
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, Vault]]
-      meta_launch_url: https://vault.${IDP_DOMAIN}/
+      meta_launch_url: !Format ["https://vault.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Platform

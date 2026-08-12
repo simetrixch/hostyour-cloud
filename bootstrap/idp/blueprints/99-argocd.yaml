@@ -42,10 +42,10 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
       client_type: confidential
       client_id: argocd
-      client_secret: ${IDP_ARGOCD_CLIENT_SECRET}
+      client_secret: !Env IDP_ARGOCD_CLIENT_SECRET
       redirect_uris:
         - matching_mode: strict
-          url: https://argo.${IDP_DOMAIN}/auth/callback
+          url: !Format ["https://argo.%s/auth/callback", !Env IDP_DOMAIN]
       access_token_validity: hours=1
       refresh_token_validity: days=30
       sub_mode: hashed_user_id
@@ -66,6 +66,6 @@ entries:
       name: ArgoCD
       slug: argocd
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, ArgoCD]]
-      meta_launch_url: https://argo.${IDP_DOMAIN}/
+      meta_launch_url: !Format ["https://argo.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Platform

@@ -27,9 +27,9 @@ entries:
       name: Tekton Dashboard
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
-      external_host: https://tekton.${IDP_DOMAIN}
+      external_host: !Format ["https://tekton.%s", !Env IDP_DOMAIN]
       mode: forward_domain
-      cookie_domain: .${IDP_DOMAIN}
+      cookie_domain: !Format [".%s", !Env IDP_DOMAIN]
       access_token_validity: hours=24
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
@@ -43,6 +43,6 @@ entries:
       name: Tekton Dashboard
       slug: tekton-dashboard
       provider: !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]
-      meta_launch_url: https://tekton.${IDP_DOMAIN}/
+      meta_launch_url: !Format ["https://tekton.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Build

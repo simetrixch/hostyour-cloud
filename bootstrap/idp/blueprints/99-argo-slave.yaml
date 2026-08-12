@@ -41,7 +41,7 @@ entries:
       # `argo-` prefix + `/auth/callback` anchors make that harmless.
       redirect_uris:
         - matching_mode: regex
-          url: ^https://argo-[a-z0-9-]+\.${IDP_DOMAIN}/auth/callback$
+          url: !Format ["^https://argo-[a-z0-9-]+\\.%s/auth/callback$", !Env IDP_DOMAIN]
       access_token_validity: hours=1
       refresh_token_validity: days=30
       sub_mode: hashed_user_id

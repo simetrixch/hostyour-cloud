@@ -35,16 +35,16 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
       client_type: confidential
       client_id: controller
-      client_secret: ${IDP_CONTROLLER_CLIENT_SECRET}
+      client_secret: !Env IDP_CONTROLLER_CLIENT_SECRET
       redirect_uris:
         - matching_mode: strict
-          url: https://controller.${IDP_DOMAIN}/auth/callback
+          url: !Format ["https://controller.%s/auth/callback", !Env IDP_DOMAIN]
         # RP-initiated logout (/auth/logout): Authentik validates the post_logout_redirect_uri
         # against THIS list. The Controller sends config.publicUrl (the site root, no path), so it
         # must be registered too — otherwise Authentik rejects the logout redirect and "logout
         # does nothing". Matches PUBLIC_URL exactly (https://controller.<domain>, no trailing slash).
         - matching_mode: strict
-          url: https://controller.${IDP_DOMAIN}
+          url: !Format ["https://controller.%s", !Env IDP_DOMAIN]
       access_token_validity: hours=1
       refresh_token_validity: days=30
       sub_mode: hashed_user_id
@@ -65,7 +65,7 @@ entries:
       name: Controller
       slug: controller
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, Controller]]
-      meta_launch_url: https://controller.${IDP_DOMAIN}/
+      meta_launch_url: !Format ["https://controller.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Platform
       # Explicit OR across the bindings below: a sign-in passes when ANY
