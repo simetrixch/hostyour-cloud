@@ -1,0 +1,7 @@
+name: redis
+project: data
+syncWave: "20"
+namespace: redis
+prune: "true"
+createNamespace: "true"
+runsOn: slave

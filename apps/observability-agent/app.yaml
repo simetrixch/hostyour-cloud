@@ -1,0 +1,7 @@
+name: observability-agent
+project: observability
+syncWave: "30"
+namespace: observability
+prune: "true"
+createNamespace: "true"
+runsOn: slave

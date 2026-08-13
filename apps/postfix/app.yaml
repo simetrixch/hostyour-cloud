@@ -1,0 +1,7 @@
+name: postfix
+project: services
+syncWave: "20"
+namespace: postfix
+prune: "true"
+createNamespace: "true"
+runsOn: master

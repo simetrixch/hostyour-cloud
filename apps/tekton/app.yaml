@@ -1,0 +1,7 @@
+name: tekton
+project: cicd
+syncWave: "3"
+namespace: tekton
+prune: "true"
+createNamespace: "true"
+runsOn: master

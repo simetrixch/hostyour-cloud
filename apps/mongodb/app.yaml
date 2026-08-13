@@ -1,0 +1,7 @@
+name: mongodb
+project: data
+syncWave: "10"
+namespace: mongodb
+prune: "true"
+createNamespace: "true"
+runsOn: slave

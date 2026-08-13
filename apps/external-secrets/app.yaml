@@ -1,0 +1,8 @@
+name: external-secrets
+project: core
+syncWave: "1"
+namespace: external-secrets
+prune: "true"
+createNamespace: "true"
+serverSideApply: "true"
+runsOn: every-cluster

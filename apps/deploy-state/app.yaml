@@ -1,0 +1,7 @@
+name: deploy-state
+project: core
+syncWave: "0"
+namespace: kube-system
+prune: "true"
+createNamespace: "false"
+runsOn: every-cluster

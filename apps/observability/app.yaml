@@ -1,0 +1,17 @@
+name: observability
+project: observability
+syncWave: "30"
+namespace: observability
+prune: "true"
+createNamespace: "true"
+serverSideApply: "true"
+runsOn: master
+ignoreDifferences: |
+  - group: apps
+    kind: StatefulSet
+    jsonPointers:
+      - /spec/volumeClaimTemplates
+  - group: apps
+    kind: Deployment
+    jqPathExpressions:
+      - '.spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor'

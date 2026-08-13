@@ -1,0 +1,7 @@
+name: tailnet-coordinator
+project: services
+syncWave: "42"
+namespace: tailnet-coordinator
+prune: "true"
+createNamespace: "true"
+runsOn: master

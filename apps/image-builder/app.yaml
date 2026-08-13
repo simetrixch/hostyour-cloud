@@ -1,0 +1,7 @@
+name: image-builder
+project: cicd
+syncWave: "25"
+namespace: image-builder
+prune: "true"
+createNamespace: "true"
+runsOn: master

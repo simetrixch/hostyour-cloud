@@ -1,0 +1,7 @@
+name: coredns
+project: core
+syncWave: "5"
+namespace: kube-system
+prune: "false"
+createNamespace: "false"
+runsOn: every-cluster

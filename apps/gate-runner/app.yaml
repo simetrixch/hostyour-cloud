@@ -1,0 +1,7 @@
+name: gate-runner
+project: cicd
+syncWave: "27"
+namespace: gate-runner
+prune: "true"
+createNamespace: "true"
+runsOn: master

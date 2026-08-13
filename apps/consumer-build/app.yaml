@@ -1,0 +1,7 @@
+name: consumer-build
+project: cicd
+syncWave: "26"
+namespace: argocd
+prune: "true"
+createNamespace: "false"
+runsOn: master

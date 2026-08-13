@@ -1,0 +1,7 @@
+name: registry
+project: cicd
+syncWave: "7"
+namespace: registry
+prune: "true"
+createNamespace: "true"
+runsOn: master
