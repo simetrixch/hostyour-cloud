@@ -77,9 +77,20 @@ config:
     secret:
       create: false
     externalSecret:
-      enabled: true
-      name: headlamp-oidc
-      hasScopes: true
+      enabled: false
+
+extraEnv:
+  - name: OIDC_CLIENT_ID
+    value: "headlamp"
+  - name: OIDC_ISSUER_URL
+    value: "https://idp.example.invalid/application/o/headlamp/"
+  - name: OIDC_SCOPES
+    value: "openid,profile,email,goauthentik.io/api"
+  - name: OIDC_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: headlamp-oidc
+        key: headlamp-client-secret
 
 # The shared slaves kubeconfig mount. `optional: true`: the pod must stay
 # schedulable even if the Secret is ever deleted — the LIVE master dashboard

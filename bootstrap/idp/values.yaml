@@ -70,7 +70,9 @@ server:
   #   - IDP_{ARGOCD,GRAFANA,HEADLAMP,VAULT}_CLIENT_SECRET (blueprints).
   envFrom:
     - secretRef:
-        name: idp-bootstrap
+        name: idp-bootstrap-secrets
+    - configMapRef:
+        name: idp-bootstrap-env
   volumes:
     - name: blueprints-overlay
       configMap:
@@ -99,7 +101,9 @@ worker:
   replicas: 1
   envFrom:
     - secretRef:
-        name: idp-bootstrap
+        name: idp-bootstrap-secrets
+    - configMapRef:
+        name: idp-bootstrap-env
   volumes:
     - name: blueprints-overlay
       configMap:
