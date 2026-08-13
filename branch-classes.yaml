@@ -170,7 +170,7 @@ classes:
   "cluster/profile.yaml": install
   # Per-APP installation values, one level below cluster/profile.yaml: keys that name one machine or one installation and belong to a SINGLE app, so they cannot ride in global.*. The ApplicationSet loads $values/cluster/values/<app>.yaml after that app's own values-<stage>.yaml. The Controller's four machine keys — nothing derives them, so the installer scaffolds the file EMPTY on the branch and never rewrites it; it is absent from the trunk, which is not a machine.
   "cluster/values/manager.yaml": install
-  # The relay's hostname and sender allowlist, rendered in full from the cluster map on every set-role run.
+  # The relay's hostname and sender allowlist, rendered in full from the cluster map by the deploy-branch pipeline.
   "cluster/values/postfix.yaml": install
   # Every URL that names this cluster — Grafana's ingress and OIDC endpoints, the three alert-mail links. Rendered in full from the map.
   "cluster/values/observability.yaml": install

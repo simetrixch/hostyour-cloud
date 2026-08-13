@@ -10,7 +10,7 @@
 # PKCE); authorization is per-instance ArgoCD RBAC by group, not by the OIDC client.
 #
 # Mounted into the Authentik pod at /blueprints/local/99-argo-slave.yaml via the
-# idp-blueprints ConfigMap (deploy_idp picks up every *.yaml in this dir). The
+# idp-blueprints ConfigMap (the pipeline picks up every *.yaml in this dir). The
 # worker auto-applies on startup; idempotent on re-apply. ${IDP_DOMAIN} resolves
 # from the idp-bootstrap Secret mounted as envFrom. Mirrors 99-argocd.yaml (the
 # master's own ArgoCD), which is a confidential client with a static redirect.

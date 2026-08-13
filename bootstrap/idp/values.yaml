@@ -1,4 +1,4 @@
-# Authentik Helm values — rendered via render_manifest(): every __IDP_*__
+# Authentik Helm values: every __IDP_*__
 # placeholder is substituted at install time from configs/config.<env> +
 # the credentials in secrets/idp-<env>.txt.
 #
@@ -64,7 +64,7 @@ server:
   replicas: 1
   # The chart auto-creates an internal Secret from `authentik.*` values
   # above and envFroms it into the pod. We ADD our own `idp-bootstrap`
-  # Secret (created by deploy_idp.sh) which carries:
+  # Secret which carries:
   #   - IDP_ENV / IDP_DOMAIN / IDP_HOST (blueprint string interpolation)
   #   - IDP_{ARGOCD,GRAFANA,HEADLAMP,VAULT}_CLIENT_SECRET (blueprints).
   envFrom:

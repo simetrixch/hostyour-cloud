@@ -68,7 +68,7 @@ configs:
       return hs
     # OIDC client config — Authentik provides the OIDC issuer at
     # idp.<domain>. The clientSecret is read from the K8s Secret
-    # `argocd-oidc` (key `clientSecret`) which deploy_idp pre-creates in
+    # `argocd-oidc` (key `clientSecret`) which is created in
     # this namespace. ArgoCD's `$secret-name:key` syntax substitutes it
     # at runtime.
     oidc.config: |
