@@ -1,0 +1,74 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: slaves-__STAGE__
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:
+    - git:
+        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        revision: __BOOKS_BRANCH__
+        files:
+          - path: "clusters/active/*.yaml"
+        values:
+          cluster: '{{ index (splitList "." .fqdn) 0 }}'
+      selector:
+        matchLabels:
+          role: slave
+          stage: __STAGE__
+          master: example.invalid
+  template:
+    metadata:
+      name: "{{ .values.cluster }}-apps"
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: "45"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: "{{ .values.cluster }}"
+      sources:
+        - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
+          targetRevision: &branch master
+          ref: values
+        - repoURL: *repo
+          targetRevision: *branch
+          path: apps/slave
+          helm:
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-__STAGE__.yaml
+              - values-common.yaml
+              - values-__STAGE__.yaml
+              - $values/cluster/profile.yaml
+            valuesObject:
+              slave:
+                name: "{{ .values.cluster }}"
+                branch: "{{ .fqdn }}"
+                apiHost: "{{ .apiHost }}"
+                apiPort: "{{ .apiPort }}"
+                masterFqdn: "{{ .master }}"
+                stage: "{{ .stage }}"
+              argo-cd:
+                configs:
+                  cm:
+                    installationID: "{{ .values.cluster }}"
+                    url: "https://argo-{{ .values.cluster }}.{{ .master }}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ .values.cluster }}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+        syncOptions:
+          - CreateNamespace=true

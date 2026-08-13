@@ -1,5 +1,5 @@
-# Tenant fan-out — ONE Application "<guid>-<member>-prod" per (tenant, member), from the tenant
-# registrations registrations/<guid>/prod.yaml IN THIS INSTALLATION'S BOOKS, in the tenant catalog. A
+# Tenant fan-out — ONE Application "<guid>-<member>-__STAGE__" per (tenant, member), from the tenant
+# registrations registrations/<guid>/__STAGE__.yaml IN THIS INSTALLATION'S BOOKS, in the tenant catalog. A
 # tenant's stage file there IS the deployment for this stage; the Controller writes and removes it,
 # and removing it offboards the whole fan-out.
 #
@@ -67,7 +67,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: tenants-prod
+  name: tenants-__STAGE__
   namespace: argocd
 spec:
   goTemplate: true
@@ -80,7 +80,7 @@ spec:
               repoURL: https://github.com/__CATALOG_REPO__.git  # the catalog stamp writes the owner and the name of this installation's tenant catalog into the marker — the repository holding the member charts, named in the cluster map
               revision: __BOOKS_BRANCH__  # NOTHING fills this — the tenant registrations in the catalog stand on the books branch, which is not an answer of the branch program (the CHARTS below stay on the trunk)
               files:
-                - path: "registrations/*/prod.yaml"
+                - path: "registrations/*/__STAGE__.yaml"
               values:
                 guid: "{{ index .path.segments 1 }}"
           - list:
@@ -90,7 +90,7 @@ spec:
           cluster: __CLUSTER__  # NOTHING fills this — the short name is not an answer of the branch program
   template:
     metadata:
-      name: "{{ .values.guid }}-{{ .name }}-prod"
+      name: "{{ .values.guid }}-{{ .name }}-__STAGE__"
       namespace: argocd
       labels:
         platform/tenant: "{{ .values.guid }}"
@@ -142,7 +142,7 @@ spec:
         #    branch. A tag says which version THIS installation runs, so it cannot stand on the
         #    trunk below, which every installation reads: one installation's build would decide
         #    another's version, and the next bump would overwrite it. The release pipeline's bump
-        #    writes <chart>/pins-prod.yaml here; until it has, the chart's own values.yaml carries
+        #    writes <chart>/pins-__STAGE__.yaml here; until it has, the chart's own values.yaml carries
         #    the product default and the file is simply absent (ignoreMissingValueFiles).
         - repoURL: https://github.com/__CATALOG_REPO__.git  # filled by the catalog stamp, as the generator above is
           targetRevision: __BOOKS_BRANCH__  # NOTHING fills this — the pins stand on the books branch, the CHARTS below on the trunk
@@ -158,15 +158,15 @@ spec:
           helm:
             valueFiles:
               - $values/platform/values-common.yaml
-              - $values/platform/values-prod.yaml
+              - $values/platform/values-__STAGE__.yaml
               - values.yaml
-              - values-prod.yaml
+              - values-__STAGE__.yaml
               {{- range .valueFiles }}
               - {{ . | quote }}
               {{- end }}
               # This installation's own pin, after every product file, so nothing shipped can
               # decide the version it runs. Absent until the bump has written one.
-              - $pins/{{ .chart }}/pins-prod.yaml
+              - $pins/{{ .chart }}/pins-__STAGE__.yaml
               - $values/cluster/profile.yaml
             # The pins file above is the ONE file MEANT to be missing, and only until this
             # installation has built. The flag permits more than that one file: a values file named
@@ -191,7 +191,7 @@ spec:
                 # gets its own name here, which those charts never look at.
                 appName: "{{ $.name }}"
                 subdomain: "{{ $.subdomain }}"
-                stage: prod
+                stage: __STAGE__
                 # suspended pauses the tenant; quiesced closes it for a move or backup. The chart
                 # renders the off state from these two values (replicas 0, no Ingress) — see the
                 # prune note in the header.

@@ -1,11 +1,38 @@
-# ArgoCD AppProjects for the PROD cluster. See argocd/dev/apps/projects.yaml
-# for the full rationale. The build plane is centralized on ONE build cluster;
-# the `cicd` project is defined in every stage's catalog and stays empty unless
-# cluster/apps enables the build apps (tekton / registry / image-builder).
+# ArgoCD AppProjects for the __STAGE__ cluster.
 #
-# Applied by root-app.yaml's directory sync (this file sits next to
-# applicationset.yaml). sync-wave -1 makes the projects exist before the
-# generated Applications reference them. The root-app stays in `default`.
+# Why projects (not just `default`): the stock `default` project allows `*`
+# repos, `*` destinations and `*` cluster-scoped resources — i.e. no blast
+# radius at all. These projects pin each app group to:
+#   • the one source repo
+#   • exactly the namespaces it deploys to (destinations)
+#   • only the cluster-scoped resource kinds it legitimately creates
+#     (data / services create NONE → clusterResourceWhitelist: [])
+#
+# Lifecycle: this file lives in argocd/__STAGE__/apps/ next to applicationset.yaml,
+# so root-app.yaml's directory sync applies it. The sync-wave -1 annotation
+# guarantees the AppProjects exist before the ApplicationSet's generated
+# Applications (which reference them by name) attempt their first sync.
+#
+# The generated Applications pick their project via the `project:` field added
+# to each element in applicationset.yaml. The root-app itself stays in
+# `default` on purpose: it CREATES these projects, so it can't depend on one
+# existing first (chicken-and-egg).
+#
+# Every stage defines the same 6 projects (core / data / services /
+# observability / cicd / consumers). The build plane
+# (tekton / registry / image-builder) is centralized on ONE build cluster and
+# stays off elsewhere via cluster/apps, but the `cicd` project exists in every
+# catalog for symmetry.
+#
+# Cluster-resource whitelists below were derived from the ACTUAL rendered
+# manifests, not assumptions:
+#   • external-secrets: vendored CRDs (apps/external-secrets/templates/) +
+#     the operator's ClusterRole/Binding. Webhook + cert-controller disabled.
+#   • observability: kube-prometheus-stack CRDs + ClusterRole/Binding +
+#     prometheus-operator admission webhooks.
+#   • cicd/tekton: the vendored release-*.yaml create Namespace objects
+#     (tekton, tekton-resolvers), CRDs, ClusterRole/Binding and Validating/
+#     Mutating webhooks — confirmed by grep over apps/tekton/templates/.
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -61,9 +88,13 @@ spec:
       namespace: mongodb
     - server: https://kubernetes.default.svc
       namespace: redis
-  # Namespace is the ONE permitted cluster-scoped kind — required by
-  # CreateNamespace=true when the namespace does not exist yet.
-  # See argocd/dev/apps/projects.yaml for the full rationale.
+  # Namespace is the ONE permitted cluster-scoped kind: the ApplicationSet
+  # sets CreateNamespace=true and ArgoCD validates the auto-created Namespace
+  # against this whitelist whenever the namespace does NOT exist yet. The
+  # mongodb/redis namespaces predate the projects so the check never fired for
+  # them; the first data namespace created AFTER them hit it:
+  # "resource :Namespace is not permitted in project data". Everything else
+  # (ClusterRole, CRDs, webhooks, ...) stays blocked.
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
@@ -90,6 +121,9 @@ spec:
       namespace: postfix
     - server: https://kubernetes.default.svc
       namespace: dbgate
+    # The coordinator's own namespace: Deployment/Service, the state PVC, its
+    # config ConfigMap and the public Ingress. Namespaced only — nothing
+    # cluster-scoped beyond the Namespace itself (createNamespace=true).
     - server: https://kubernetes.default.svc
       namespace: tailnet-coordinator
   clusterResourceWhitelist:
@@ -138,7 +172,6 @@ spec:
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
-
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -176,11 +209,13 @@ spec:
       namespace: argocd
     # set-role:cicd-dest-end
   clusterResourceWhitelist:
-    # Tekton's release manifests create the Namespace objects themselves.
+    # Tekton's release manifests create the Namespace objects themselves
+    # (release-pipelines.yaml:16 + :26038, release-dashboard.yaml:23).
     - group: ""
       kind: Namespace
-    # Tekton Triggers ships its core interceptors as cluster-scoped CRs.
-    - group: triggers.tekton.dev
+    # Tekton Triggers ships its core interceptors as cluster-scoped CRs
+    # (release-interceptors.yaml:163+ — github/gitlab/bitbucket/cel/slack).
+    - group: triggers.tekton.__STAGE__
       kind: ClusterInterceptor
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
@@ -279,32 +314,3 @@ spec:
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
-
-# ---------------------------------------------------------------------------
-# Slaves (D5) — one AppProject PER SLAVE, named `<name>` (e.g. s1,
-# the first DNS label of the slave's FQDN). Deliberately NOT defined in this
-# file:
-#
-#   - master (the git trunk) must stay generic — a per-slave AppProject would
-#     hardcode a slave name here (the same rule that keeps the slaves-appset's
-#     selector unstamped on the trunk, where it matches no cluster map).
-#   - it cannot ride in the apps/slave chart either: the generated Application
-#     `<name>-apps` (slaves-appset.yaml) references project `<name>`, and an
-#     Application whose project does not exist can never START its first sync
-#     — a chart-carried AppProject would never get applied (chicken-and-egg).
-#
-# So each slave's project is created imperatively on the master by
-# `setup.sh --slave-add` (I8) — the same pre-GitOps per-slave surface as the
-# Vault mounts — and deleted by `--slave-remove`. The documented onboarding
-# order (--slave-add FIRST, pointer file SECOND) guarantees the project exists
-# before the ApplicationSet generates the Application that references it.
-#
-# Shape (_slave_appproject_manifest, base/lib/slave.sh): sourceRepos = the
-# monorepo + the one upstream chart repo the slave chart pulls (argo-helm);
-# destination pinned to EXACTLY ns <name> on this cluster (tighter
-# than any shared project could be); cluster-scoped kinds: Namespace only
-# (CreateNamespace=true). Labeled hostyour.cloud/slave=true so --slave-add
-# refuses a name collision with a platform project and --slave-remove only
-# ever deletes its own. Being imperative (untracked), the root-app's prune
-# never touches these projects.
-# ---------------------------------------------------------------------------

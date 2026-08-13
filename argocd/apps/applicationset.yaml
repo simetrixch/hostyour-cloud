@@ -1,0 +1,78 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform-apps-__STAGE__
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+
+  generators:
+    - git:
+        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        revision: master
+        files:
+          - path: "apps/*/app.yaml"
+      selector:
+        matchExpressions:
+          - key: runsOn
+            operator: In
+            values:
+              - every-cluster
+              - __CLUSTER_ROLE__
+
+  template:
+    metadata:
+      name: "{{ .name }}-__STAGE__"
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: "{{ .syncWave }}"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: "{{ .project }}"
+      sources:
+        - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
+          targetRevision: &branch master
+          ref: values
+        - repoURL: *repo
+          targetRevision: *branch
+          path: "apps/{{ .name }}"
+          helm:
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-__STAGE__.yaml
+              - values-common.yaml
+              - values-__STAGE__.yaml
+              - $values/cluster/values/{{ .name }}.yaml
+              - $values/cluster/profile.yaml
+            ignoreMissingValueFiles: true
+      destination:
+        server: "https://kubernetes.default.svc"
+        namespace: "{{ .namespace }}"
+
+  templatePatch: |
+    spec:
+      syncPolicy:
+        automated:
+          prune: {{ .prune }}
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+        managedNamespaceMetadata:
+          labels:
+            hostyour.cloud/workload: "true"
+        syncOptions:
+          - CreateNamespace={{ .createNamespace }}
+          {{- if .serverSideApply }}
+          - ServerSideApply={{ .serverSideApply }}
+          {{- end }}
+      {{- if .ignoreDifferences }}
+      ignoreDifferences:
+        {{- .ignoreDifferences | nindent 8 }}
+      {{- end }}
