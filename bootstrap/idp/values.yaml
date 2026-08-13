@@ -65,7 +65,6 @@ server:
   # The chart auto-creates an internal Secret from `authentik.*` values
   # above and envFroms it into the pod. We ADD our own `idp-bootstrap`
   # Secret (created by deploy_idp.sh) which carries:
-  #   - AUTHENTIK_BOOTSTRAP_PASSWORD / _EMAIL (first-time admin creation)
   #   - IDP_ENV / IDP_DOMAIN / IDP_HOST (blueprint string interpolation)
   #   - IDP_{ARGOCD,GRAFANA,HEADLAMP,VAULT}_CLIENT_SECRET (blueprints).
   envFrom:

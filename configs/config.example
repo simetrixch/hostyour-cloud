@@ -131,13 +131,6 @@ CATALOG_REPO=
 # reads it — changing it later re-registers nothing.
 LETSENCRYPT_EMAIL=
 
-# A real mailbox you can read: the one the first administrator of this installation's identity
-# provider is meant to be created on, and the one the link that sets that account's password would
-# be sent to. Nothing reads this line, and no step of the install reads this answer either — the
-# identity provider is installed from bootstrap/idp/values.yaml with its credentials taken out of
-# the secret store, and none of them is this mailbox. So answering it does not by itself create
-# anybody: what it does today is record who this installation's first administrator is meant to be.
-IDP_BOOTSTRAP_EMAIL=
 
 # The mailboxes this installation's platform alerts are sent to — several on ONE line, separated by
 # COMMAS. The comma is the separator on both sides of the answer: what takes the answer splits the
