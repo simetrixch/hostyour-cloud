@@ -125,15 +125,15 @@ classes:
   "apps/consumer-build/files/applicationset.yaml": product
   # Helm packaging directive for the image-builder chart; no writer of any kind.
   "apps/image-builder/.helmignore": product
-  # The per-consumer PostgreSQL template's base values — values.yaml and not values-common.yaml because Helm loads only the implicit file when the chart is an extra source (argocd/prod/apps/consumers-appset.yaml:207).
+  # The per-consumer PostgreSQL template's base values — values.yaml and not values-common.yaml because Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml:207).
   "apps/postgresql/values.yaml": product
   # The three workload sizing presets a renderer selects with -f values-size-<size>.yaml; a sizing table is the software's own.
   "apps/postgresql/values-size-*.yaml": product
-  # The per-unit MongoDB template's base values — values.yaml and not values-common.yaml for the same reason as apps/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/prod/apps/consumers-appset.yaml). It carries the small preset and the `standalone` default, both the software's own.
+  # The per-unit MongoDB template's base values — values.yaml and not values-common.yaml for the same reason as apps/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml). It carries the small preset and the `standalone` default, both the software's own.
   "apps/unit-mongodb/values.yaml": product
   # Its three sizing presets, selected with -f values-size-<size>.yaml, exactly as apps/postgresql's are.
   "apps/unit-mongodb/values-size-*.yaml": product
-  # The unit ingress policy's base values — values.yaml and not values-common.yaml for the same reason as apps/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/prod/apps/consumers-appset.yaml). The two names it carries, `ingress` and `observability`, are platform namespaces out of argocd/*/apps/applicationset.yaml, so they are the same on every installation.
+  # The unit ingress policy's base values — values.yaml and not values-common.yaml for the same reason as apps/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml). The two names it carries, `ingress` and `observability`, are platform namespaces out of argocd/*/apps/applicationset.yaml, so they are the same on every installation.
   "apps/unit-networkpolicy/values.yaml": product
   # The unit quota chart's base values — values.yaml for the same reason as the sibling above (Helm loads only the implicit file when the chart is an extra source). It carries NO figures: the six numbers are empty and `required`, because the Controller resolves them per unit from its size table and the ApplicationSet passes them in. What does stand here is the LimitRange defaults, which are the same on every installation.
   "apps/unit-quota/values.yaml": product
@@ -226,11 +226,11 @@ stamped:
   "bootstrap/argocd/values.yaml": global.domain
 
   # The per-slave generator's selector `master:` — on a branch it must name this installation's master cluster, or the generator matches no map.
-  "argocd/dev/apps/slaves-appset.yaml": spec.generators.selector.master
+  "argocd/apps/slaves-appset.yaml": spec.generators.selector.master
   # Same selector as the dev file.
-  "argocd/test/apps/slaves-appset.yaml": spec.generators.selector.master
+  "argocd/apps/slaves-appset.yaml": spec.generators.selector.master
   # Same selector as the dev file.
-  "argocd/prod/apps/slaves-appset.yaml": spec.generators.selector.master
+  "argocd/apps/slaves-appset.yaml": spec.generators.selector.master
 
 # -----------------------------------------------------------------------------
 # never-stamp — the paths whose domain placeholder is a guard, a fixture, an
