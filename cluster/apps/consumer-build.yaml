@@ -1,7 +1,0 @@
-# Toggle for 'consumer-build' on THIS cluster. Part of the CENTRALIZED build
-# plane (tekton + registry + image-builder) — one build namespace per
-# registered unit only makes sense where the registry and the EventListener
-# are. master default "false" (off everywhere); the ONE build cluster's branch
-# flips this to "true" — StampAppToggles's onTheBuildPlane.
-name: consumer-build
-deploy: "false"

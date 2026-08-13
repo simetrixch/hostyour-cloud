@@ -1,7 +1,0 @@
-# Toggle for 'tekton' on THIS cluster. Part of the CENTRALIZED build plane
-# (tekton + registry + image-builder) — deployed on exactly ONE build cluster,
-# because promote test->prod reuses the SAME built image. master default "false"
-# (off everywhere); the ONE build cluster's branch flips this to "true" (and sets
-# global.servicesLocal.registry: true).
-name: tekton
-deploy: "false"

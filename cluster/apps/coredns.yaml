@@ -1,6 +1,0 @@
-# Toggle for 'coredns' on THIS cluster. deploy:"false" drops it (Application + data
-# pruned, unless PVC delete-protected); "true" runs it. master = "true" (generic
-# default); an operator's own choice alongside the build plane (the zot hairpin
-# serves the locally hosted registry).
-name: coredns
-deploy: "true"

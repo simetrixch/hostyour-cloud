@@ -1,8 +1,0 @@
-# Toggle for 'gate-runner' (the in-cluster onboarding gate sandbox) on THIS
-# cluster. PROVIDER-ONLY like the build plane and the Controller: it references
-# image-builder's shared git-clone Task and only serves the Controller's gate
-# dispatches, so it deploys only on the control/build host. master default
-# "false" (off everywhere); the control host's install branch flips this to
-# "true" together with controller.yaml.
-name: gate-runner
-deploy: "false"

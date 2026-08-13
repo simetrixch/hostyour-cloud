@@ -1,8 +1,0 @@
-# Toggle for 'observability-agent' (the light Alloy push agent, D4b) on THIS
-# cluster. deploy:"false" drops it (Application pruned); "true" runs it. master
-# default "false" (OFF everywhere) — this app belongs where the role lacks the
-# MASTER part: no local Grafana/Prometheus/Loki, metrics+logs push to the master.
-# StampAppToggles flips it "true" there (and turns the full 'observability' off);
-# a cluster with the master part keeps it "false" and runs apps/observability instead.
-name: observability-agent
-deploy: "false"
