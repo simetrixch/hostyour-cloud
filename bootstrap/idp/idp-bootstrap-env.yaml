@@ -1,9 +1,17 @@
+# The one value the identity provider's blueprints interpolate.
+#
+# It is mounted into the pod with envFrom, so every key here becomes an environment variable
+# the blueprints can read with !Env. There is one, and there is one on purpose: a key nothing
+# reads is a setting somebody will one day change expecting it to do something.
+#
+# IT CARRIES THE DOMAIN STAND-IN, which makes this file installation state and not product,
+# whatever directory it sits in. branch-classes.yaml classifies it as install for that reason,
+# above the rule that would otherwise own the whole of bootstrap/.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: idp-bootstrap-env
   namespace: idp
 data:
+  # Every blueprint builds its redirect and launch addresses on this, with !Format.
   IDP_DOMAIN: "example.invalid"
-  IDP_HOST: "idp.example.invalid"
-  IDP_ENV: "prod"

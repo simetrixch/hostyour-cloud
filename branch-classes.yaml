@@ -100,6 +100,12 @@ classes:
   "bootstrap/vault/ingressroute.yaml": install
   "bootstrap/vault/certificate.yaml": install
 
+  # The identity provider's own environment, read by its bootstrap. Two of its three values are
+  # built on this cluster's FQDN, so the domain stamp fills them like every other placeholder in the
+  # tree — which makes the file installation state and not product, whatever its directory says.
+  # Declared BEFORE the bootstrap rule below, because the first matching rule owns a path.
+  "bootstrap/idp/idp-bootstrap-env.yaml": install
+
   # ArgoCD's own helm values, and the one file of the bootstrap that carries this installation's
   # domain: its server address and the issuer it validates tokens against are both built on the
   # cluster FQDN, so the domain stamp fills them like every other placeholder in the tree. Declared
@@ -133,7 +139,7 @@ classes:
   "apps/unit-mongodb/values.yaml": product
   # Its three sizing presets, selected with -f values-size-<size>.yaml, exactly as apps/postgresql's are.
   "apps/unit-mongodb/values-size-*.yaml": product
-  # The unit ingress policy's base values — values.yaml and not values-common.yaml for the same reason as apps/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml). The two names it carries, `ingress` and `observability`, are platform namespaces out of argocd/*/apps/applicationset.yaml, so they are the same on every installation.
+  # The unit ingress policy's base values — values.yaml and not values-common.yaml for the same reason as apps/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml). The two names it carries, `ingress` and `observability`, are platform namespaces out of argocd/apps/applicationset.yaml, so they are the same on every installation.
   "apps/unit-networkpolicy/values.yaml": product
   # The unit quota chart's base values — values.yaml for the same reason as the sibling above (Helm loads only the implicit file when the chart is an extra source). It carries NO figures: the six numbers are empty and `required`, because the Controller resolves them per unit from its size table and the ApplicationSet passes them in. What does stand here is the LimitRange defaults, which are the same on every installation.
   "apps/unit-quota/values.yaml": product
@@ -225,11 +231,7 @@ stamped:
   # file, all of them this cluster's own name, and helm reads the file after the branch was stamped.
   "bootstrap/argocd/values.yaml": global.domain
 
-  # The per-slave generator's selector `master:` — on a branch it must name this installation's master cluster, or the generator matches no map.
-  "argocd/apps/slaves-appset.yaml": spec.generators.selector.master
-  # Same selector as the dev file.
-  "argocd/apps/slaves-appset.yaml": spec.generators.selector.master
-  # Same selector as the dev file.
+  # The per-slave generator's selector `master:` — on a branch it must name this installation's master cluster, or the generator matches no map. One entry, because the three stage trees became one parameterized tree and there is one file to stamp.
   "argocd/apps/slaves-appset.yaml": spec.generators.selector.master
 
 # -----------------------------------------------------------------------------
