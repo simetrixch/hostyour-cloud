@@ -52,6 +52,19 @@ spec:
         server: "https://kubernetes.default.svc"
         namespace: "{{ .namespace }}"
 
+  # The patch is rendered by the same go template as the fields above and under the same
+  # goTemplateOptions, so missingkey=error binds here too. Under that option a bare `.key` against a
+  # generator parameter map that does not carry the key is an ERROR, and one such error ends the
+  # whole reconcile: the controller records an ErrorOccurred condition and creates NO Application at
+  # all — not even for the apps whose parameters were complete.
+  #
+  # So the two kinds of parameter are read differently, and the difference is the contract:
+  #   MANDATORY — `prune` and `createNamespace` are read bare. Every app.yaml carries them, and an
+  #     app.yaml that does not is meant to be refused.
+  #   OPTIONAL — `serverSideApply` and `ignoreDifferences` describe an app that needs an exception.
+  #     Most do not, so they are looked up with a default and the line is written only for an app
+  #     that declared one. `with` rebinds the dot to the looked-up value, which keeps a second bare
+  #     lookup from creeping back inside the block.
   templatePatch: |
     spec:
       syncPolicy:
@@ -69,10 +82,10 @@ spec:
             hostyour.cloud/workload: "true"
         syncOptions:
           - CreateNamespace={{ .createNamespace }}
-          {{- if .serverSideApply }}
-          - ServerSideApply={{ .serverSideApply }}
+          {{- with dig "serverSideApply" "" . }}
+          - ServerSideApply={{ . }}
           {{- end }}
-      {{- if .ignoreDifferences }}
+      {{- with dig "ignoreDifferences" "" . }}
       ignoreDifferences:
-        {{- .ignoreDifferences | nindent 8 }}
+        {{- . | nindent 8 }}
       {{- end }}
