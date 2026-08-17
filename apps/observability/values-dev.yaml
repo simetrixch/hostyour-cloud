@@ -246,8 +246,4 @@ push-htpasswd-secret:
 
 grafana-oidc-secret:
   externalSecret:
-    # <stage>/idp/bootstrap and not <stage>/app/idp: this is the SAME entry the identity
-    # provider is configured from, and a client secret held in two places is two values that
-    # can drift. Nothing ever wrote <stage>/app/idp, so this waited on a Secret that could
-    # not arrive.
-    vaultPath: dev/idp/bootstrap
+    vaultPath: dev/app/idp

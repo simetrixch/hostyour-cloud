@@ -251,11 +251,7 @@ push-htpasswd-secret:
 grafana-oidc-secret:
   externalSecret:
     # Enabled with the OIDC config block above (D7). Requires
-    # prod/idp/bootstrap/grafana-client-secret, minted with the provider's own clients.
+    # prod/app/idp/grafana-client-secret seeded in Vault.
     enabled: true
-    # <stage>/idp/bootstrap and not <stage>/app/idp: this is the SAME entry the identity
-    # provider is configured from, and a client secret held in two places is two values that
-    # can drift. Nothing ever wrote <stage>/app/idp, so this waited on a Secret that could
-    # not arrive.
-    vaultPath: prod/idp/bootstrap
+    vaultPath: prod/app/idp
 
