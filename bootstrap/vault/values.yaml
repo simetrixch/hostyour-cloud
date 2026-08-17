@@ -79,7 +79,14 @@ server:
     - name: vault-tls
       secret:
         secretName: vault-tls
-        defaultMode: 0400
+        # 256 IS 0400, AND IT IS WRITTEN AS THE NUMBER ON PURPOSE. Two readers read this file: helm,
+        # which follows YAML 1.1 and reads a leading zero as octal, and the deploy step that compares
+        # the file against what the release actually holds, which follows YAML 1.2 and has no bare
+        # octal at all. Written 0400 the first stores 256 and the second reads 400, so the two never
+        # agree — and what an operator is told is that a release installed perfectly is "still not in
+        # the state it produces", on every run, forever. Neither reader is wrong; the file has to be
+        # written in the subset both agree on, and a plain decimal is that subset.
+        defaultMode: 256
 
   volumeMounts:
     - name: vault-tls
