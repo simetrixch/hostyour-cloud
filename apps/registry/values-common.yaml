@@ -275,17 +275,33 @@ configmap:
           }
         }
 
-# ----- ExternalSecret: htpasswd from Vault ----------------------------------
+# ----- ExternalSecret: htpasswd, COMPOSED from the two atomic values ----------
 # Vault path is filled in by the per-env values file (vaultPath: <env>/app/registry).
+#
+# THE STORE HOLDS A USER AND A PASSWORD, NOT AN HTPASSWD LINE. It used to be asked for the finished
+# line, which nothing wrote — so this Secret never materialized, the registry's pod could not mount
+# it, and everything that pulls an image from this installation waited on a pod that would not start.
+# A store is for values; a format is for whoever needs it in that format.
+#
+# ESO's own templating does the hashing, the same way the sync credentials below assemble their JSON.
+# RAW ESO syntax: Helm does not template values files, so it passes through verbatim into the
+# ExternalSecret where ESO evaluates it.
 externalsecret-htpasswd:
   externalSecret:
     enabled: true
     name: zot-htpasswd
     namespace: registry
     targetSecretName: zot-htpasswd
+    template:
+      engineVersion: v2
+      data:
+        htpasswd: |-
+          {{ htpasswd .user .password }}
     data:
-      - secretKey: htpasswd
-        property: htpasswd
+      - secretKey: user
+        property: pull-user
+      - secretKey: password
+        property: pull-password
 
 # ----- ExternalSecret: Docker Hub creds for the docker.io pull-through ---------
 # ESO templates Zot's sync credentialsFile JSON from the app/registry dockerhub-user
