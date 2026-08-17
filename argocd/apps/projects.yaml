@@ -65,6 +65,14 @@ spec:
       kind: ClusterRole
     - group: rbac.authorization.k8s.io
       kind: ClusterRoleBinding
+    # The two the operator's own chart renders to keep a malformed ExternalSecret from being
+    # accepted in the first place. Missing here, the operator does not install — and because its
+    # CRDs come with it, every application on this cluster that reads a credential out of the store
+    # then fails on a kind the API has never heard of, which reads as six unrelated problems.
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicy
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicyBinding
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
