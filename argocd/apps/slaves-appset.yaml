@@ -19,7 +19,10 @@ spec:
         matchLabels:
           role: slave
           stage: __STAGE__
-          master: example.invalid
+          # The field the cluster maps actually carry. It was `master` until the answer behind it
+          # was renamed, and the maps stopped carrying that word — a selector matching nothing
+          # produces zero Applications and reports nothing, so this cannot be left to be noticed.
+          books-cluster: example.invalid
   template:
     metadata:
       name: "{{ .values.cluster }}-apps"
