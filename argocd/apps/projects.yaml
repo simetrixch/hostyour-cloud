@@ -112,7 +112,14 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Supporting platform services — Postfix, DBGate, the tailnet coordinator. Namespaced only. (The Controller moved to its OWN dedicated `controller` project — it ships cross-namespace + cluster-scoped onboarding RBAC that this restricted project must not permit.)
+  # The Controller does NOT live here. It moved to its own dedicated `controller` project because it
+  # ships cross-namespace and cluster-scoped onboarding RBAC with the workload, and this project is
+  # restricted precisely so that it cannot permit that.
+  #
+  # The sentence above used to stand in `description`, which the API caps at 255 bytes: over the cap
+  # the object is refused, the whole sync fails, and NO application below the root is created at all.
+  # A comment carries the same words with no limit and reaches the same reader.
+  description: Supporting platform services — Postfix, DBGate, the tailnet coordinator. Namespaced only.
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
     - https://bokysan.github.io/docker-postfix/
@@ -245,7 +252,13 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: "Per-unit build namespaces (apps/consumer-build in unit mode): namespace <unit>-build + SecretStore + the <unit>-release Pipeline + credentials + NetworkPolicy. One glob destination — the fan-out creates units dynamically, and a glob applies to all clusters. The Application carrying the fan-out ApplicationSet itself runs in `cicd`."
+  # What one unit gets: a namespace `<unit>-build`, a SecretStore, the `<unit>-release` Pipeline, its
+  # credentials and a NetworkPolicy. ONE GLOB DESTINATION, because the fan-out creates units
+  # dynamically and a glob applies to every cluster. The Application carrying that fan-out
+  # ApplicationSet does not run here — it runs in `cicd`.
+  #
+  # Kept as a comment rather than in `description`, which the API caps at 255 bytes.
+  description: "Per-unit build namespaces, one per unit, created by the fan-out."
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
   destinations:
@@ -271,7 +284,13 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: "hostyour-cloud Controller, dedicated tight project. Ships its OWN onboarding RBAC with the workload (Model A): cross-namespace Roles in gate-runner/kube-system + cluster-scoped roles for the dynamic namespaces (smoke, argocd onboarding, reapers). Whitelists = what the chart renders."
+  # Its own project, and a tight one, because it ships its OWN onboarding RBAC with the workload:
+  # cross-namespace Roles in gate-runner and kube-system, plus cluster-scoped roles for the
+  # namespaces it creates as it runs — smoke, the onboarding it does in argocd, the reapers. What is
+  # whitelisted below is exactly what the chart renders, and nothing wider.
+  #
+  # Kept as a comment rather than in `description`, which the API caps at 255 bytes.
+  description: "The Controller, in a project of its own with its onboarding RBAC."
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
   destinations:
