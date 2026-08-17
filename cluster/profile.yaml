@@ -19,8 +19,9 @@
 # booksBranch is the install branch of the cluster holding the MASTER role —
 # where this installation keeps its cluster maps and its registrations, which
 # is a DIFFERENT branch from this one on a pure slave;
-# vaultUrl follows the master part, as vault.<master>; tailnetUrl is the
-# tailnet_url answer written out verbatim, composed from nothing;
+# vaultUrl follows the master part, as vault.<master>; tailnetUrl follows it too,
+# as tale.<master> — one coordinator per installation, on the cluster that also
+# provides Vault, and every other cluster's hosts log in to that one;
 # vaultKubernetesAuthPath is always kubernetes-<name>; endpoints.registry.host is
 # always zot.<build-plane>;
 # endpoints.post.url is the post_url answer and stands here ONLY when that answer
