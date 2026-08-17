@@ -15,13 +15,22 @@ mail:
       secret:
         secretName: postfix-dkim-key
         defaultMode: 0400
-        # No `path`: the file lands under its KEY name, dkim-private-key. The name
-        # opendkim needs is the domain's, and that is one installation's — it is
-        # composed in the init container below, which the chart renders through tpl
-        # (charts/mail statefulset.yaml:60). This block is rendered with toYaml
-        # (:230), where no template action would ever run.
+        # THE PATH IS REQUIRED HERE, and the comment that stood in its place said the
+        # opposite. A secret volume without `items` does land each key under its own
+        # name — but the moment `items` is written, Kubernetes requires a path for
+        # every entry and refuses the whole volume without one. What that produced was
+        # a StatefulSet the API would not take, reported as two faults: the missing
+        # path, and an init container mounting a volume that "does not exist" because
+        # the invalid one was never registered.
+        #
+        # The name opendkim needs is the domain's, and that is one installation's — it
+        # is composed in the init container below, which the chart renders through tpl
+        # (charts/mail statefulset.yaml:60). This block is rendered with toYaml (:230),
+        # where no template action would ever run, so the path here is the key's own
+        # name and the renaming happens there.
         items:
           - key: dkim-private-key
+            path: dkim-private-key
     - name: dkim-keys
       emptyDir: {}
   extraVolumeMounts:
