@@ -48,12 +48,27 @@ data:
         {{- /* Vault hairpin — emitted ONLY where Vault runs locally (a cluster
              with the master part, global.servicesLocal.vault). In-cluster
              https:// lookups of this cluster's own Vault hostname (every ESO
-             SecretStore dials global.vaultUrl) reach the Service directly
-             instead of resolving to the host's public IPv4 and NAT-hairpinning.
-             A pure slave dials the MASTER's vault hostname, which this rewrite
-             never matches. */}}
+             SecretStore dials global.vaultUrl) bounce through Traefik instead of
+             resolving to the host's public IPv4 and NAT-hairpinning. A pure
+             slave dials the MASTER's vault hostname, which this rewrite never
+             matches.
+
+             THROUGH TRAEFIK AND NOT AT THE SERVICE, because a rewrite changes the
+             NAME and never the port. This used to name vault.vault.svc directly,
+             which is where the store listens — on 8200. The caller's URL is
+             https://, so it asks for 443, and every SecretStore on this cluster
+             got `connect: connection refused` from a Vault that was running
+             perfectly. What an operator saw was every workload that reads a
+             credential coming up Degraded at once, with nothing wrong anywhere
+             the eye could reach.
+
+             It costs a dependency: the platform's most critical component is now
+             reached through the ingress like everything else. That is the same
+             path the registry rewrite below already takes, it is the path the
+             certificate and the ServersTransport are set up for, and it is the
+             only one where the port in the URL means anything. */}}
         {{- if .Values.global.servicesLocal.vault }}
-        rewrite name vault.{{ .Values.global.domain }} vault.vault.svc.cluster.local
+        rewrite name vault.{{ .Values.global.domain }} traefik.ingress.svc.cluster.local
         {{- end }}
         {{- /* Zot registry hairpin — emitted ONLY where the registry runs locally
              (the ONE build cluster, global.servicesLocal.registry). In-cluster
