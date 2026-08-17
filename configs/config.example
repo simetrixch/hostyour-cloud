@@ -158,26 +158,26 @@ ALERT_RECIPIENTS=
 # Whether this installation runs the platform's secret store, the one place a credential of this
 # installation comes into being and lives. Its condition gates the whole phase: bringing the store
 # up, unsealing it, creating the mount, every policy and every login role written on it, and every
-# value seeded into it. LEFT EMPTY MEANS NO — bringing up the platform's only secret store, minting
-# its quorum and writing the one file that holds it is not something a machine gets because nobody
-# said otherwise.
-ENABLE_VAULT=
+# value seeded into it. SAY IT, IN THE WORD true OR THE WORD false: the condition behind it refuses a
+# key that holds nothing at all, because bringing up the platform's only secret store, minting its
+# quorum and writing the one file that holds it is not something a machine should get, or lose, by
+# somebody leaving a line alone.
+ENABLE_VAULT=true
 
 # Whether this installation runs an identity provider — the one every cluster of the installation
-# authenticates against, and the one the reconciler logs its users in through. LEFT EMPTY MEANS YES,
-# the opposite of the other two switches: a cluster without an identity provider stands perfectly
-# well, it simply cannot log anybody in yet, so an installation that says nothing gets one. It
-# cannot stand alone, though: the row that puts its credentials on the cluster is gated on the
-# secret store as well, because that is where they come into being — so an installation with the
-# store switched off gets no identity provider either, as a skipped row with its reason and not as a
-# pod that starts and cannot reach its database.
-ENABLE_IDP=
+# authenticates against, and the one the reconciler logs its users in through. A cluster without one
+# stands perfectly well, it simply cannot log anybody in yet. It cannot stand alone, though: the row
+# that puts its credentials on the cluster is gated on the secret store as well, because that is
+# where they come into being — so an installation with the store switched off gets no identity
+# provider either, as a skipped row with its reason and not as a pod that starts and cannot reach its
+# database.
+ENABLE_IDP=true
 
 # Whether this installation hands its cluster over to the reconciler. Its condition gates the
 # reconciler's namespace, its release, its public address — and the handoff itself, the single
 # application from which the reconciler creates the projects, the generators and every platform
 # application below them. That last row is the point of no return: from there the reconciler owns
 # every object of every platform application, and taking that one application away again takes all
-# of them with it. LEFT EMPTY MEANS NO, so a cluster is handed over only where an installation asks
-# for it — until then the platform applications of this branch simply do not exist on it.
-ENABLE_ARGOCD=
+# of them with it. An installation that does not want to hand over writes false here, and until it
+# does the platform applications of this branch simply do not exist on its cluster.
+ENABLE_ARGOCD=true
