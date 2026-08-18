@@ -57,7 +57,25 @@ data:
     derp:
       server:
         enabled: false
-      urls: []
+      # ONE RELAY MAP, BECAUSE THE COORDINATOR REFUSES TO START WITHOUT ONE, and the
+      # paragraph above says why neither of the other two doors is open:
+      #
+      #   headscale ran into an error and had to shut down: initial DERPMap is empty,
+      #   Headscale requires at least one entry
+      #
+      # The embedded relay is the one that would keep everything inside this
+      # installation, and it needs a UDP entrypoint for STUN that this platform's
+      # ingress does not open and its firewall does not carry — 443, 80 and 22 and
+      # nothing else, on purpose.
+      #
+      # WHAT THIS COSTS, said plainly rather than left in the word "urls": a host that
+      # cannot reach another directly relays through a third party's servers. What
+      # that party sees is ciphertext — the relay carries a tunnel it holds no key to,
+      # and it is used only when a direct connection cannot be made. What a
+      # self-hosted coordinator is actually for is the CONTROL plane: who may join,
+      # what they may reach, and where that is recorded. That stays here.
+      urls:
+        - https://controlplane.tailscale.com/derpmap/default
       paths: []
       auto_update_enabled: false
 
