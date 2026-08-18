@@ -71,6 +71,12 @@ app:
     - name: sync-credentials
       secret:
         secretName: zot-sync-credentials
+        # OPTIONAL, because what it holds is optional. An installation with no Docker Hub account
+        # writes no such credentials, and the mirror in front of that registry then pulls
+        # anonymously — rate-limited and working, which is the documented fallback. Mounted as
+        # required, the whole registry does not start for want of a credential nobody promised, and
+        # what an operator sees is a platform with no registry rather than a rate limit.
+        optional: true
     - name: data
       persistentVolumeClaim:
         claimName: zot-data
