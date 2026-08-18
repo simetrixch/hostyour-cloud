@@ -78,7 +78,7 @@ FLAT build name (== the zot repo — no prefix of any kind left to compose,
 not the tier and not the unit), so the ref is <registryHost>/<image>:<tag>. The release
 bump finds pins by exactly this grammar; an image composed any other way
 would be invisible to it.
-Call: include "common.buildImage" (dict "root" $ "builds" .Values.builds "name" "controller")
+Call: include "common.buildImage" (dict "root" $ "builds" .Values.builds "name" "manager")
 (`builds` is passed from the CALLER so the reading template names
 .Values.builds itself.) Fails the render when the named pin is absent — a
 missing pin must never render an empty image ref.

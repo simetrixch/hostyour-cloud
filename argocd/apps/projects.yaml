@@ -120,7 +120,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  # The Controller does NOT live here. It moved to its own dedicated `controller` project because it
+  # The manager does NOT live here. It stands in its own dedicated `manager` project because it
   # ships cross-namespace and cluster-scoped onboarding RBAC with the workload, and this project is
   # restricted precisely so that it cannot permit that.
   #
@@ -285,7 +285,7 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: controller
+  name: manager
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
@@ -298,15 +298,15 @@ spec:
   # whitelisted below is exactly what the chart renders, and nothing wider.
   #
   # Kept as a comment rather than in `description`, which the API caps at 255 bytes.
-  description: "The Controller, in a project of its own with its onboarding RBAC."
+  description: "The manager, in a project of its own with its onboarding RBAC."
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
   destinations:
-    # The Controller's own namespace: Deployment/Service/ServiceAccount, local
+    # The manager's own namespace: Deployment/Service/ServiceAccount, local
     # configmap-reader Role/RoleBinding, ESO ExternalSecrets + SecretStore, the
     # DATA_DIR PVC, the ingress, and (on the build cluster) the registry-reaper.
     - server: https://kubernetes.default.svc
-      namespace: controller
+      namespace: manager
     # Cross-namespace onboarding grants (Role + RoleBinding only in each):
     #   gate-runner   — gate-run PipelineRun dispatch + report;
     #   kube-system   — the hostyour-deploy-state ConfigMap reader.
@@ -319,8 +319,8 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: kube-system
   clusterResourceWhitelist:
-    # createNamespace=true on the controller Application: ArgoCD validates the
-    # auto-created `controller` Namespace against this list on a fresh cluster.
+    # createNamespace=true on the manager Application: ArgoCD validates the
+    # auto-created `manager` Namespace against this list on a fresh cluster.
     - group: ""
       kind: Namespace
     # The smoke ClusterRole + its binding — read-only smoke over DYNAMIC consumer
@@ -331,7 +331,7 @@ spec:
       kind: ClusterRoleBinding
   # Broad namespaced whitelist ('*/*'), matching the core/data/services/observability
   # sibling projects. ArgoCD's resource TREE only DISPLAYS kinds the project allows, so
-  # the previous curated list hid the running Pods/ReplicaSets from the UI. The controller
+  # the previous curated list hid the running Pods/ReplicaSets from the UI. The manager
   # is platform-trusted (its chart is authored in THIS repo, like its siblings), so '*/*'
   # is consistent and makes the live tree fully visible. Cluster-scoped kinds stay tightly
   # whitelisted above.

@@ -1,7 +1,7 @@
 name: manager
-project: controller
+project: manager
 syncWave: "40"
-namespace: controller
+namespace: manager
 prune: "true"
 createNamespace: "true"
 runsOn: master

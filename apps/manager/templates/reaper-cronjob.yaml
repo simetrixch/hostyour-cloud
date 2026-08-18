@@ -127,7 +127,7 @@ spec:
                 # secret/build/catalog/repo-pat). Addressed by owner/name because
                 # the reaper goes through the GitHub API, not by clone.
                 - name: CATALOG_REPO
-                  value: {{ .Values.github.deployRepo | default (required "controller: global.catalogRepo is required (cluster/profile.yaml, rendered per install branch from the cluster map's catalog-repo)" .Values.global.catalogRepo) | quote }}
+                  value: {{ .Values.github.deployRepo | default (required "manager: global.catalogRepo is required (cluster/profile.yaml, rendered per install branch from the cluster map's catalog-repo)" .Values.global.catalogRepo) | quote }}
                 - name: CATALOG_WRITE_PAT
                   valueFrom:
                     secretKeyRef:
