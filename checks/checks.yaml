@@ -1,0 +1,13 @@
+# Every check this repository makes, and the file that carries it.
+#
+# WHY THIS FILE EXISTS. `dart test` discovers whatever is on disk and reports whether any of it
+# failed. Delete a check file and nothing fails: the check is simply not there, and the run prints
+# that every check is green. It is worse than a missing test, because a check and its counter-probe
+# live in the same file — the thing that would have noticed goes with the thing it was watching.
+#
+# FORMAT. `<check>: <file, relative to this file>`, one per line, the reason on the comment line
+# directly above it.
+
+# Every apps/<name>/app.yaml carries every key the ApplicationSet generator reads bare. One that does
+# not ends the WHOLE reconcile under missingkey=error, so no Application is created at all.
+app-manifest-keys: test/app_manifest_keys_test.dart

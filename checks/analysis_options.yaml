@@ -1,0 +1,76 @@
+# The same rule set the rest of this organisation holds itself to.
+#
+# Copied rather than included, and the reason is the one thing this repository is not: a Dart tree.
+# Including it would make this package depend on one published for Dart code, which would put a
+# dependency on the chart repository for the sake of a lint file. The copy is small, it is read by
+# people as much as by the analyzer, and a drift in it costs a style difference rather than a defect.
+
+include: package:lints/recommended.yaml
+
+# 100 rather than the default 80. The names in this code are descriptive on purpose — a step is
+# named for what it does to a machine — and at 80 columns a single call with three named arguments
+# wraps into five lines, which costs more in readability than the extra twenty columns.
+formatter:
+  page_width: 100
+
+analyzer:
+  language:
+    # An implicit cast, an inferred `dynamic` or a raw generic is a type the author never chose.
+    # With these on, the compiler asks instead of guessing.
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # `dart analyze --fatal-infos` already fails the build on every info; listing them here would
+    # only duplicate that. What is raised to an error is what the analyzer reports as a warning by
+    # default and we treat as a defect.
+    unused_import: error
+    unused_local_variable: error
+    dead_code: error
+
+linter:
+  rules:
+    # Types and nullability
+    - always_declare_return_types
+    - avoid_dynamic_calls
+    - avoid_type_to_string
+    - cast_nullable_to_non_nullable
+    - null_check_on_nullable_type_parameter
+    - unnecessary_null_checks
+    - unnecessary_nullable_for_final_variable_declarations
+    - tighten_type_of_initializing_formals
+
+    # Immutability. Steps are value objects; a program's step list is const.
+    - prefer_const_constructors
+    - prefer_const_constructors_in_immutables
+    - prefer_const_declarations
+    - prefer_final_fields
+    - prefer_final_in_for_each
+    - prefer_final_locals
+
+    # Async correctness. A dropped Future in a deployment step is a step that did not happen.
+    - avoid_void_async
+    - discarded_futures
+    - unawaited_futures
+    - await_only_futures
+
+    # Errors
+    - avoid_catches_without_on_clauses
+    - avoid_catching_errors
+    - only_throw_errors
+    - throw_in_finally
+
+    # Structure
+    - avoid_classes_with_only_static_members
+    # one_member_abstracts is deliberately absent. It would ask for the four ports — Shell, Files,
+    # Http, Clock — to become bare function types. A named interface is the point: each has a real
+    # implementation, a planning one that refuses mutations, a recording one, and a fake, and a
+    # function type would let any function of the right shape stand in for any of them.
+    - prefer_interpolation_to_compose_strings
+    - unnecessary_lambdas
+    - use_enums
+    - use_super_parameters
+
+    # Documentation of the public contract
+    - public_member_api_docs
+    - comment_references
