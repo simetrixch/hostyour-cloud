@@ -178,6 +178,19 @@ ingress:
 #   2. ["**"] — the docker.io pull-through cache repos (library/**, ...): every
 #      multi-segment repo is a cache path zot manages itself. Keep the 50
 #      most-recently-pushed tags, deleteUntagged true.
+#
+# WHO MAY READ AND WHO MAY PUSH, BY NAME. accessControl below grants by account name, so the two it
+# lists must be the same names the credentials carry — and the credentials get theirs out of the
+# secret store, where the installer seeded them. Both sides therefore read ONE per-installation
+# value: global.registryPullUser and global.registryPushUser in cluster/profile.yaml, written from
+# the same answer that seeded the credential. charts/configmap runs tpl over this data, so the two
+# expressions resolve before the file reaches zot — and they must stay Helm expressions rather than
+# JSON comments, because what is below becomes config.json literally and JSON has no comments.
+#
+# Spelled out literally, the two disagreed the moment an operator chose a name: the credential said
+# platform-pull, this policy said pull-user, and every probe against the registry answered 403 —
+# authenticated and then refused, which is neither present nor absent and the one answer a probe that
+# decides whether to build cannot act on.
 configmap:
   configmap:
     enabled: true
@@ -235,11 +248,11 @@ configmap:
                 "**": {
                   "policies": [
                     {
-                      "users": ["push-user"],
+                      "users": ["{{ .Values.global.registryPushUser }}"],
                       "actions": ["read", "create", "update", "delete"]
                     },
                     {
-                      "users": ["pull-user"],
+                      "users": ["{{ .Values.global.registryPullUser }}"],
                       "actions": ["read"]
                     }
                   ],
