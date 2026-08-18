@@ -316,7 +316,18 @@ externalsecret-htpasswd:
 # real Docker Hub token the pull-through falls back to anonymous (rate-limited).
 externalsecret-sync-credentials:
   externalSecret:
-    enabled: true
+    # OFF UNLESS AN INSTALLATION SAYS IT HAS A DOCKER HUB ACCOUNT, for the same reason the volume two
+    # hundred lines up is mounted optional: what this holds is optional, and the fallback — pulling
+    # anonymously, rate-limited — is the documented behaviour rather than a failure.
+    #
+    # An ExternalSecret has no per-property optionality: it names two properties and fails whole when
+    # either is absent. So an installation that promised no Docker Hub account carried a secret that
+    # could never sync, its app stood Degraded for as long as it existed, and the registry it was
+    # about ran perfectly the entire time. What an operator reads from that is a broken registry.
+    #
+    # Turned on in the per-installation values beside vaultPath, which is where the rest of what one
+    # installation knows about this secret already stands.
+    enabled: false
     name: zot-sync-credentials
     namespace: registry
     targetSecretName: zot-sync-credentials

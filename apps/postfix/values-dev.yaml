@@ -75,7 +75,14 @@ secret-store: {}
 # ExternalSecret (external-secret) — pulls DKIM key from Vault
 external-secret:
   externalSecret:
-    enabled: true
+    # OFF UNLESS AN INSTALLATION SUPPLIES A SIGNING KEY, matching what the rest of this file already
+    # says about that key: the volume carrying it is mounted optional and the init that installs it
+    # is guarded on the file being there, because mail relays without DKIM and signs when it can.
+    #
+    # An ExternalSecret has no per-property optionality — it names the property and fails whole when
+    # it is absent — so an installation with no key carried a secret that could never sync and an app
+    # that stood Degraded forever, while the relay beside it ran and delivered mail.
+    enabled: false
     name: postfix-dkim-key
     namespace: postfix
     secretStoreKind: SecretStore
