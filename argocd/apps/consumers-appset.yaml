@@ -62,12 +62,12 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: __BOOKS_BRANCH__  # NOTHING fills this — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
+        revision: __BOOKS_BRANCH__  # the books stamp fills it — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
         files:
           - path: "registrations/*/__STAGE__.yaml"
       selector:
         matchLabels:
-          cluster: __CLUSTER__  # NOTHING fills this — the short name is not an answer of the branch program
+          cluster: __CLUSTER__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
   template:
     metadata:
       name: "{{ .name }}-__STAGE__"

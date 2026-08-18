@@ -26,5 +26,5 @@ metadata:
   labels:
     argocd.argoproj.io/secret-type: cluster
 stringData:
-  name: __CLUSTER__  # NOTHING fills this — the short name is not an answer of the branch program
+  name: __CLUSTER__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
   server: https://kubernetes.default.svc
