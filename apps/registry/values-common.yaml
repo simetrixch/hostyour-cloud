@@ -296,7 +296,7 @@ externalsecret-htpasswd:
       engineVersion: v2
       data:
         htpasswd: |-
-          {{ htpasswd .user .password }}
+          {{ .user }}:{{ bcrypt .password }}
     data:
       - secretKey: user
         property: pull-user

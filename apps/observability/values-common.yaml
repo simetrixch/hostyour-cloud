@@ -625,11 +625,16 @@ push-auth-middleware:
       secretName: obs-push-htpasswd
 
 # ExternalSecret → K8s Secret obs-push-htpasswd with a single `users` key holding
-# the htpasswd line (bcrypt). Read from the mount-relative Vault path
-# <env>/app/observability, property push-htpasswd (per-env vaultPath in
-# values-{dev,test,prod}.yaml). The observability namespace already binds the
-# external-secrets Vault role (existing app|observability schema rows), so no new
-# role-namespace wiring is needed.
+# the htpasswd line. COMPOSED HERE from the two atomic values, not read as a finished
+# line: the store used to be asked for `push-htpasswd`, which nothing wrote, so this
+# Secret never materialized and the middleware in front of both push endpoints had no
+# credentials to check against. A store holds values; a format belongs to whoever needs
+# that format.
+#
+# RAW ESO syntax — Helm does not template values files, so it passes through verbatim
+# into the ExternalSecret where ESO evaluates it. `bcrypt` and not `htpasswd`: the
+# engine's htpasswd takes three arguments, and this is the two-argument shape spelled
+# out, which is what an htpasswd line is.
 push-htpasswd-secret:
   externalSecret:
     enabled: true
@@ -637,9 +642,16 @@ push-htpasswd-secret:
     namespace: observability
     secretStoreKind: SecretStore
     targetSecretName: obs-push-htpasswd
+    template:
+      engineVersion: v2
+      data:
+        users: |-
+          {{ .user }}:{{ bcrypt .password }}
     data:
-      - secretKey: users
-        property: push-htpasswd
+      - secretKey: user
+        property: push-user
+      - secretKey: password
+        property: push-password
 
 # Alertmanager sends mail directly via Postfix (in-cluster, no auth required)
 # — no SMTP credentials secret needed.
