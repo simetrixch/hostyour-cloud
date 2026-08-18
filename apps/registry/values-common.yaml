@@ -305,6 +305,13 @@ configmap:
 # ESO's own templating does the hashing, the same way the sync credentials below assemble their JSON.
 # RAW ESO syntax: Helm does not template values files, so it passes through verbatim into the
 # ExternalSecret where ESO evaluates it.
+#
+# BOTH ACCOUNTS, ONE LINE EACH. The access policy above grants two — one that reads and one that
+# reads and writes — and a policy naming an account the password file never heard of grants nothing:
+# the registry refuses the login before any policy is consulted. This file carried the reading
+# account alone, so the release pipeline built its image, tagged it, and was turned away at the push
+# with "invalid username/password" for an account this installation had seeded, granted and named
+# everywhere except in the one file that decides who may log in.
 externalsecret-htpasswd:
   externalSecret:
     enabled: true
@@ -315,12 +322,17 @@ externalsecret-htpasswd:
       engineVersion: v2
       data:
         htpasswd: |-
-          {{ .user }}:{{ bcrypt .password }}
+          {{ .pullUser }}:{{ bcrypt .pullPassword }}
+          {{ .pushUser }}:{{ bcrypt .pushPassword }}
     data:
-      - secretKey: user
+      - secretKey: pullUser
         property: pull-user
-      - secretKey: password
+      - secretKey: pullPassword
         property: pull-password
+      - secretKey: pushUser
+        property: push-user
+      - secretKey: pushPassword
+        property: push-password
 
 # ----- ExternalSecret: Docker Hub creds for the docker.io pull-through ---------
 # ESO templates Zot's sync credentialsFile JSON from the app/registry dockerhub-user
