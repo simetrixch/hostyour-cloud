@@ -14,6 +14,12 @@ mail:
     - name: dkim-keys-secret
       secret:
         secretName: postfix-dkim-key
+        # OPTIONAL, because signing is. An installation that has not published a DKIM record has no
+        # key to sign with, and a relay that signs nothing is a relay that works — its mail is simply
+        # unsigned until the record and the key exist together. Mounted as required, the whole mail
+        # service does not start, and what an operator sees is a platform with no mail rather than
+        # mail without a signature.
+        optional: true
         defaultMode: 0400
         # THE PATH IS REQUIRED HERE, and the comment that stood in its place said the
         # opposite. A secret volume without `items` does land each key under its own
@@ -46,10 +52,15 @@ mail:
         - sh
         - -c
         - |
+          # The key may not be there: signing is optional and the volume is mounted that way.
+          # Without it the relay starts and its mail is unsigned, which is the honest state of
+          # an installation that has published no DKIM record yet.
+          if [ -f /dkim-source/dkim-private-key ]; then
           cp /dkim-source/dkim-private-key /dkim-keys/{{ .Values.global.domain }}.private
           chown 101:104 /dkim-keys /dkim-keys/{{ .Values.global.domain }}.private
           chmod 700 /dkim-keys
           chmod 600 /dkim-keys/{{ .Values.global.domain }}.private
+          fi
       volumeMounts:
         - name: dkim-keys-secret
           mountPath: /dkim-source
