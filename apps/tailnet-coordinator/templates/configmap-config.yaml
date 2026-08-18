@@ -63,9 +63,23 @@ data:
 
     # No MagicDNS: hosts address each other by tailnet address, and a base
     # domain here would be a name the installation does not own.
+    #
+    # AND THE HOSTS KEEP THEIR OWN RESOLVERS, which is what the empty list above
+    # meant and did not say. The coordinator defaults to taking the resolver
+    # configuration of every host that joins, and it then requires a global list to
+    # hand them — so an empty list with the default left alone is refused at
+    # startup, and the pod restarts for ever:
+    #
+    #   Fatal config error: dns.nameservers.global must be set when
+    #   dns.override_local_dns is true
+    #
+    # Saying it plainly is also the safer half: a coordinator that rewrote the
+    # resolvers of every machine on the tailnet would undo the one this
+    # installation measured and wrote itself.
     dns:
       magic_dns: false
       base_domain: ""
+      override_local_dns: false
       nameservers:
         global: []
 
