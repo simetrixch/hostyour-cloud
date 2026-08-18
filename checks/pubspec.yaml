@@ -18,5 +18,9 @@ dependencies:
   yaml: ^3.1.2
 
 dev_dependencies:
+  # The probes that drive the installation search over planted trees compare paths the file system
+  # answered against paths they planted, and the two spell their separators differently per
+  # platform.
+  path: ^1.9.1
   test: ^1.31.2
   lints: ^6.1.0

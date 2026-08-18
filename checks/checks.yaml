@@ -11,3 +11,15 @@
 # Every apps/<name>/app.yaml carries every key the ApplicationSet generator reads bare. One that does
 # not ends the WHOLE reconcile under missingkey=error, so no Application is created at all.
 app-manifest-keys: test/app_manifest_keys_test.dart
+
+# Every path the chart material names resolves in the TRACKED tree: a file:// dependency to a
+# Chart.yaml of the matching name, a valueFile to a tracked file — except where absence is another
+# repository's to answer, composed at render time, or declared deliberate with
+# ignoreMissingValueFiles. The defect surfaces only on a cluster's fresh clone, never on a
+# case-insensitive checkout, which is why the paths are judged against git, not the file system.
+chart-paths: test/chart_paths_test.dart
+
+# Every label key the deploy programs' Vault namespace selectors match is one this repository's
+# labels: blocks set. A selector key nothing sets matches no namespace, so the role admits no login —
+# and that defect shipped twice, each time invisible until the first namespace of its kind existed.
+vault-selector-labels: test/vault_selector_labels_test.dart
