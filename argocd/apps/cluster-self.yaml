@@ -6,10 +6,8 @@
 # field — so on a master that name must resolve to the master's OWN
 # apiserver, or a master cannot carry tenants. __CLUSTER__ is the install
 # branch's cluster short name — the fqdn's first DNS label, the same value the
-# tenant appset selectors admit — and NOTHING fills it: the shell that used to
-# is gone, and the short name is not an answer the branch program holds. A
-# branch cut today registers a cluster literally called __CLUSTER__, which no
-# destination resolves.
+# tenant appset selectors admit — and the branch program fills it, deriving the
+# label from the FQDN it was answered rather than asking for it twice.
 #
 # On a PURE SLAVE branch this file has to GO: the slave's ArgoCD instance
 # already registers the slave under that same name with the slave's real
