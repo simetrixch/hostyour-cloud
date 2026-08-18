@@ -54,7 +54,9 @@ metadata:
   name: repo-catalog
   namespace: argocd
 spec:
-  refreshInterval: 1h
+  # Read when it is deployed and when its target Secret is deleted, never on a timer — the platform's
+  # own admission policy refuses anything else, and refuses an ExternalSecret that leaves it unset.
+  refreshPolicy: OnChange
   secretStoreRef:
     name: vault-backend
     kind: SecretStore
