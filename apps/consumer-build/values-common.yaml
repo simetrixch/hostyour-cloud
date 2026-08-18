@@ -26,6 +26,18 @@
 #                              would not)
 unit: null
 
+# WHO MAY LAND A RUN IN A UNIT'S BUILD NAMESPACE. The EventListener runs in its
+# own namespace and creates the PipelineRun in the unit's, so the grant lives
+# where the run lands — rendered per unit by templates/rbac-eventlistener.yaml,
+# scoped to `create` on pipelineruns and to that one namespace.
+#
+# Named here rather than composed, because these are the identity of another
+# release (apps/image-builder) and a chart that guessed them would fail at the
+# moment a webhook arrives rather than at the moment it renders.
+eventListener:
+  serviceAccountName: eventlistener-sa
+  namespace: image-builder
+
 # npm registries the per-unit .npmrc points at (templates/externalsecret-npmrc.yaml).
 # Only PRIVATE scopes are configured:
 #   • The DEFAULT (unscoped) registry is deliberately NOT set, so pnpm resolves

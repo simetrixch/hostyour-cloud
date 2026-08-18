@@ -1,0 +1,57 @@
+{{- /*
+The one grant that lets a webhook land in THIS unit's build namespace: the
+EventListener's identity may create PipelineRuns here, and nothing else.
+
+WHY IT IS RENDERED AND NOT PROVISIONED. The grant used to be written
+imperatively when a unit was onboarded, which is correct for every unit the
+manager onboards and impossible for the one unit that IS the manager: on a first
+installation nothing has run that could write it, so the platform's own release
+webhook was accepted, resolved every parameter, and was refused at the last step
+with "cannot create resource pipelineruns in the namespace <unit>-build".
+
+It loses nothing that made the imperative form safe. That form's argument was
+that an unregistered repository's webhook must have nothing to land on — and a
+registration is exactly what this chart renders from. No registration, no build
+namespace, no binding, nothing to land on. One mechanism instead of two, and the
+two could drift.
+
+SCOPED TO CREATE, AND TO THIS NAMESPACE. A Role rather than the stock
+tekton-triggers-eventlistener-roles ClusterRole, which also carries reads on
+Trigger CRs, configmaps and ServiceAccount impersonation — none of which the sink
+needs where it lands a run, and impersonation in a namespace holding a unit's
+build credentials is not a grant to hand out for tidiness.
+*/ -}}
+{{- if .Values.unit }}
+{{- $unit := include "consumer-build.unitName" . -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eventlistener-create-pipelineruns
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: eventlistener-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: eventlistener-create-pipelineruns
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: eventlistener-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ required "consumer-build: eventListener.serviceAccountName is required" .Values.eventListener.serviceAccountName }}
+    namespace: {{ required "consumer-build: eventListener.namespace is required" .Values.eventListener.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: eventlistener-create-pipelineruns
+{{- end }}
