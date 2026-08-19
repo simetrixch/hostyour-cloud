@@ -1,6 +1,6 @@
 {{- /*
-The controller pod. Runs the ConfigMap-mounted provisioner.py under a stock
-python:3.12-slim image (no custom build) — pip-installs the client libs at boot
+The controller pod. Runs the ConfigMap-mounted provisioner.py under the stock
+python image the values pin (no custom build) — pip-installs the client libs at boot
 then execs the script. Each backend's admin credential is read at runtime from
 that backend's own Secret via the controller's cluster-wide secret-read RBAC.
 */ -}}
