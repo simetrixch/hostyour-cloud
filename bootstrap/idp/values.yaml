@@ -1,20 +1,35 @@
-# Authentik Helm values: every __IDP_*__
-# placeholder is substituted at install time from configs/config.<env> +
-# the credentials in secrets/idp-<env>.txt.
+# The Helm values authentik is installed with. Nothing in this file is substituted at install time:
+# no value here belongs to one installation, and the ones that do arrive from the secret store
+# through the Secrets named below.
 #
-# Authentik is deployed under release name "idp" in namespace "idp", so all
-# emitted Services are named "idp-server" / "idp-worker" / "idp-postgresql".
-# Upstream chart 2026.5.2 — note the major restructure: all `replicas`,
-# `resources`, `envFrom`, `volumes`, `volumeMounts`, `ingress`, `service`
+# Authentik is deployed under release name "idp" in namespace "idp", and the chart names its
+# objects "{release}-authentik-{component}" — so the Service the ingress route and the forward-auth
+# middleware address is "idp-authentik-server", and the bundled database is "idp-postgresql".
+# Upstream chart 2026.5.6, which platform/versions.yaml pins — note the major restructure: all
+# `replicas`, `resources`, `envFrom`, `volumes`, `volumeMounts`, `ingress`, `service`
 # fields moved INSIDE `server:` and `worker:` blocks (top-level ones are
 # now hard-deprecated and the chart refuses to install if any are set).
 
-# The two values this release cannot be given here. A file in this tree is committed, so a secret
+# The three values this release cannot be given here. A file in this tree is committed, so a secret
 # written into it would be the same on every installation of the product — in the one component
 # every other component authenticates against. They are minted per installation into the Secret
 # idp-credentials and arrive through the envFrom below, which the chart appends AFTER its own
-# configuration secret: a later envFrom wins for a key both carry, so exactly these two are
-# overridden and the nineteen configuration values stay where a reader can see them.
+# configuration secret, so for any key that stands in both this one is the last word.
+#
+# AUTHENTIK_SECRET_KEY and AUTHENTIK_POSTGRESQL__PASSWORD are the signing key and the password
+# authentik connects to its database with. The chart has a values field for each — `secret_key` and
+# `postgresql.password` — and both are left at their empty default, which the chart leaves out of
+# its own Secret rather than writing as an empty variable. So what the pod reads for those two comes
+# from here and from nowhere else.
+#
+# AUTHENTIK_BOOTSTRAP_PASSWORD IS THE FIRST ADMINISTRATOR'S, and it is a variable authentik reads
+# directly rather than a field of this chart. Without it a fresh install comes up with the
+# out-of-box flow still open on a public address, and whoever reaches that address first sets the
+# password and becomes the administrator of this whole installation. With it, authentik seeds the
+# `akadmin` account on the first start of an empty database, marks itself set up, and the flow is
+# refused from then on. It has to be in `global` and not in `server`: the startup hook that seeds
+# the account runs in the server AND in the worker, whichever gets there first, and `global.envFrom`
+# is the one field this chart puts on both deployments.
 global:
   envFrom:
     - secretRef:
@@ -62,11 +77,10 @@ postgresql:
 server:
   enabled: true
   replicas: 1
-  # The chart auto-creates an internal Secret from `authentik.*` values
-  # above and envFroms it into the pod. We ADD our own `idp-bootstrap`
-  # Secret which carries:
-  #   - IDP_DOMAIN (blueprint string interpolation)
-  #   - IDP_{ARGOCD,GRAFANA,HEADLAMP,VAULT}_CLIENT_SECRET (blueprints).
+  # The chart auto-creates an internal Secret from the `authentik.*` values above and envFroms it
+  # into the pod. These two are ours, and they carry what the blueprints read with !Env:
+  #   - idp-bootstrap-secrets: IDP_{ARGOCD,CONTROLLER,GRAFANA,HEADLAMP,VAULT}_CLIENT_SECRET
+  #   - idp-bootstrap-env: IDP_DOMAIN, which every blueprint builds its addresses on with !Format.
   envFrom:
     - secretRef:
         name: idp-bootstrap-secrets
