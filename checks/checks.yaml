@@ -23,3 +23,8 @@ chart-paths: test/chart_paths_test.dart
 # labels: blocks set. A selector key nothing sets matches no namespace, so the role admits no login —
 # and that defect shipped twice, each time invisible until the first namespace of its kind existed.
 vault-selector-labels: test/vault_selector_labels_test.dart
+
+# Every role value the tree names is one the app generator can match: a literal its selector admits,
+# or a role the installation's own answer allows. A value neither side admits matches nothing, and an
+# ApplicationSet that matches nothing produces zero Applications and no error at all.
+cluster-role-values: test/cluster_role_values_test.dart
