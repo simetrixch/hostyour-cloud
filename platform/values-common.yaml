@@ -186,8 +186,8 @@ global:
   # hostyour-manager/server/domains/inventory/channel-stages.ts — never a copy.
   # Nothing else carries a copy — a release script may check it locally as a
   # courtesy, but nothing relies on that.
-  # checks/lib/src/channel_table_single.dart, registered as channel-table-single
-  # in checks/checks.yaml, turns the gate red where a second place states this
+  # checks/lib/src/channel_table_single.dart, which opens by naming itself
+  # channel-table-single, turns the gate red where a second place states this
   # ceiling: a channel of this table standing with a stage of this table — on
   # one line, over the lines indented below it, or over the block-sequence
   # items at a mapping key's own column; and the table written the other way

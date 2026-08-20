@@ -16,6 +16,19 @@
 /// the check goes on passing over the manifest that now breaks the reconcile. What is listed here is
 /// only the OPPOSITE — the shapes that do not make a key required, because they already say what
 /// they do when it is absent.
+///
+/// **WHAT IT DOES NOT REACH.** One generator, and of a key nothing but its presence. The template
+/// read is `argocd/apps/applicationset.yaml` and the manifests are `apps/*/app.yaml`. The three
+/// other ApplicationSets of this tree render their own templates under the same option —
+/// `argocd/apps/slaves-appset.yaml:8-9`, `argocd/apps/consumers-appset.yaml:59-61` and
+/// `argocd/apps/tenants-appset.yaml:74-75` — from parameter files this check reads nothing of. What
+/// the slaves appset reads out of a cluster map is held by `appset_cluster_map_keys.dart` instead;
+/// the consumers and tenants appsets select `registrations/*/__STAGE__.yaml` off a books branch,
+/// which is tracked on no branch this suite reads, so a key either of them reads bare is held to
+/// nothing anywhere.
+///
+/// And what is judged is PRESENCE: [auditAppManifestKeys] asks `containsKey`, so a key standing with
+/// nothing after the colon answers this check exactly as a filled one does.
 library;
 
 /// A key a manifest does not carry, and the manifest that does not carry it.

@@ -24,7 +24,7 @@
 /// database and is the dangerous one. So the check reports each of them in its own words, and the
 /// finding names the file to open rather than the symptom.
 ///
-/// **What it CANNOT reach, named one by one rather than counted.** The entry point itself is static
+/// **WHAT IT DOES NOT REACH, named one by one rather than counted.** The entry point itself is static
 /// configuration of the ingress controller — an argument on the controller's container and the port
 /// it publishes on the machine — written by the deploy program of the installation repository and
 /// by nothing here. So this check cannot say that the entry point a route names exists, that its

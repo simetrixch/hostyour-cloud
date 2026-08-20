@@ -1,4 +1,5 @@
-/// The image tag a pin carries, held against the release grammar the Controller states.
+/// release-pin-tags — the image tag a pin carries, held against the release grammar the Controller
+/// states.
 ///
 /// **WHY A PIN'S TAG IS DANGEROUS AND NOT MERELY UNTIDY.** A `builds[]` entry in
 /// `values-<stage>.yaml` is what says which image a stage runs FOR AN IMAGE THIS PLATFORM BUILDS,
@@ -31,7 +32,7 @@
 /// **What is judged.** Every `builds[]` entry of every tracked file of this repository that states
 /// pins.
 ///
-/// **What is NOT judged, each with the reason it is not.**
+/// **WHAT IT DOES NOT REACH, each with the reason it is not judged.**
 ///
 ///   * A tag that is not a `builds[]` pin. `apps/redis/values-common.yaml:8` states `tag: "8.8"`
 ///     and `apps/registry/values-common.yaml:18` states `tag: "v2.1.18"`, both under `image:`, and

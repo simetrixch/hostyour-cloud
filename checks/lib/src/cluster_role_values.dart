@@ -1,4 +1,5 @@
-/// The role a cluster carries, held against what the generators can actually match.
+/// cluster-role-values — the role a cluster carries, held against what the generators can actually
+/// match.
 ///
 /// **WHY A ROLE VALUE IS DANGEROUS AND NOT MERELY A WORD.** It is one identity across a repository
 /// boundary: the installation's own repository states it as an answer and stamps it into the app
@@ -20,6 +21,14 @@
 /// **What is judged.** Every `runsOn:` in `apps/*/app.yaml`, and every role a generator's
 /// `matchLabels` names. A value that is neither a literal the selector admits nor a role the answer
 /// allows can never match, whatever machine it meets.
+///
+/// **WHAT IT DOES NOT REACH.** Three things. The registrations the manager writes — the third writer
+/// of this identity, named above — stand on a books branch and are tracked on no branch this suite
+/// reads, so a registration naming a role the answer does not allow is caught by nothing. [runsOnIn]
+/// matches `runsOn:` only at the start of a line, so a manifest carrying the key nested under
+/// another drops out of the comparison rather than being reported. And a role named in a
+/// `matchExpressions` entry is read by neither end: [runsOnSelectorIn] reads only the entry whose
+/// key is `runsOn`, and [selectedRolesIn] reads only inside a `matchLabels:` block.
 library;
 
 /// One place naming a role value that nothing can match, and why it cannot.

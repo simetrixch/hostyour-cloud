@@ -27,7 +27,8 @@
 /// - A stamp marker (`__STAGE__`, `__CLUSTER__`, ...) is a value this check cannot know, so it
 ///   stands as a wildcard: the path resolves when ANY tracked file matches the shape.
 ///
-/// **What this tree can answer for a generator, and what it cannot.** A generator names a repository
+/// **WHAT IT DOES NOT REACH — what this tree can answer for a generator, and what it cannot.** A
+/// generator names a repository
 /// and a revision. Where either is another repository's, or a revision this tree is not — every
 /// `revision: __BOOKS_BRANCH__`, which reads the books branch — the files it selects are not tracked
 /// on master and their absence here says nothing. Those generators are left alone, so

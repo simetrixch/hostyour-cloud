@@ -1,4 +1,5 @@
-/// What an ApplicationSet reads out of a cluster map, held against what the map's writers write.
+/// appset-cluster-map-keys — what an ApplicationSet reads out of a cluster map, held against what
+/// the map's writers write.
 ///
 /// **WHY THIS IS DANGEROUS AND NOT MERELY UNTIDY.** `clusters/active/<fqdn>.yaml` is one file read
 /// across three repositories. This repository's generators SELECT maps by their fields and READ
@@ -34,6 +35,14 @@
 /// be stamped FROM THE SAME ANSWER the map's key is written from. Two answers that happen to agree
 /// on one installation are not one answer: the moment an operator answers them differently the
 /// selector matches nothing, and nothing goes red.
+///
+/// **WHAT IT DOES NOT REACH.** The consumers and tenants appsets. Their generators select
+/// `registrations/*/__STAGE__.yaml` and not `clusters/active/*.yaml` — another file, with another
+/// writer — so a key either of them reads bare, and a value either of them selects on, are held
+/// here by nothing. The suite names those two appsets rather than counting them, so an appset moving
+/// INTO this check's reach is reported rather than passed over. The other direction is not held: a
+/// NEW appset standing outside it passes, because the suite asserts the two are among the outsiders
+/// and not that the outsiders are only those two.
 library;
 
 import 'package:yaml/yaml.dart';

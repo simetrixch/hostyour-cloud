@@ -19,6 +19,14 @@
 /// **What cannot be read is an ERROR, never a pass.** A selector this library cannot decode is a
 /// selector it cannot hold to anything, and green over it is the exact failure the check exists to
 /// refuse — so extraction throws, naming the program, instead of passing over the step.
+///
+/// **WHAT IT DOES NOT REACH.** The VALUE a selector matches on, and what a `labels:` block labels.
+/// [auditVaultSelectorLabels] holds the selector's KEY against the keys the charts set and reads the
+/// value of neither side, so a role selecting a key with one value where the charts set that key to
+/// another matches no namespace and is reported here by nothing. And [chartLabelKeysIn] reads any
+/// `labels:` block of any object: a key set only on a Deployment's pods answers a NAMESPACE selector
+/// here exactly as a namespace's own label does, because what a block labels is not readable from
+/// the block.
 library;
 
 import 'dart:convert';
