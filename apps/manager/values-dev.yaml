@@ -9,7 +9,6 @@ builds:
   # Deployment projects it as DBTOOLS_IMAGE and the manager runs every
   # move/backup/restore Job on it. It builds in hostyour-manager because that
   # is where its caller lives, so a hostyour-manager release bumps this pin.
-  # 0.0.0 is the pre-first-release placeholder.
   - name: dbtools
     image: dbtools
     tag: "0.41.0-stable-20260818095821-beeae7f"

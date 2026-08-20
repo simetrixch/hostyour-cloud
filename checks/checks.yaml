@@ -45,3 +45,15 @@ cluster-role-values: test/cluster_role_values_test.dart
 # WHAT IT DOES NOT REACH: the consumers and tenants appsets, whose generators read the registrations
 # and not the cluster maps — another file, with another writer.
 appset-cluster-map-keys: test/appset_cluster_map_keys_test.dart
+
+# Every tag a builds[] pin states in this tree is a tag a release minted, judged against the release
+# grammar the Controller states and the `-<sha7>` suffix a pushed image tag carries. Nothing else
+# refuses one: charts/common `common.buildTag` only requires the key to be present, the release bump
+# only overwrites an entry it already finds, and the Controller's pin schema types the tag as a
+# non-empty string — so a stage no release has reached keeps whatever a person typed until a pull
+# fails on a cluster.
+# WHAT IT DOES NOT REACH: a tag that is not a builds[] pin — apps/redis and apps/registry state a
+# vendor's own version under image:, which no release of ours minted — and the channel CEILING,
+# which IS stated at platform/values-common.yaml:173-176 and read by the Controller, but needs the
+# stage a pin serves held against the channel its tag names. That is hostyour-cloud#60's subject.
+release-pin-tags: test/release_pin_tags_test.dart
