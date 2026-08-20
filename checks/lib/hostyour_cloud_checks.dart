@@ -8,6 +8,7 @@ export 'src/appset_written_paths.dart';
 export 'src/channel_table_single.dart';
 export 'src/chart_paths.dart';
 export 'src/check_register.dart';
+export 'src/client_flutter_pin.dart';
 export 'src/cluster_role_values.dart';
 export 'src/credentialed_readers.dart';
 export 'src/external_secret_keys.dart';

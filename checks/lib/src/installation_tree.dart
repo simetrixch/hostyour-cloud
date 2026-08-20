@@ -4,14 +4,22 @@
 /// statement whose other half is written somewhere else, and either half alone proves nothing. The
 /// namespace labels this tree sets are answered by the selector a deploy program writes into a Vault
 /// auth role; the keys an ApplicationSet reads out of a cluster map are answered by the two writers
-/// of that map. Each of the selectors these checks were built after was syntactically sound on its
-/// own and dead against the other side.
+/// of that map; the Flutter version `platform/versions.yaml` decides is spelled a second time in the
+/// tree that is built with it. Each of the selectors these checks were built after was syntactically
+/// sound on its own and dead against the other side.
 ///
 /// **A tree is found by its SHAPE, never by a name.** What is searched for is the layout the tree
 /// has — [installationPrograms] below an installation's root, [controllerInventory] below the
-/// Controller's — because which checkout deploys or operates these charts is not this repository's
-/// to know. Whoever keeps a tree where the search does not reach, or keeps two, names the one that
-/// is meant in [installationVariable] or [controllerVariable] and the search does not run at all.
+/// Controller's, [clientPinReader] inside the client's — because which checkout deploys, operates or
+/// is built beside these charts is not this repository's to know. Whoever keeps a tree where the
+/// search does not reach, or keeps two, names the one that is meant in [installationVariable],
+/// [controllerVariable] or [clientVariable] and the search does not run at all.
+///
+/// **A marker may be a file.** Two of the three markers are directories and the client's is a file,
+/// because what makes a checkout the client for this purpose is that it carries the client's reader
+/// of this repository's declaration, and that reader is one file. The directory it stands in is no
+/// marker: `tool/` is a directory this repository's own checks package carries as well, one level
+/// below this tree's root, and a search for it would answer with `checks/`.
 ///
 /// **Absent REFUSES, and the refusal says what to do.** A comparison that can see only one side and
 /// passes is precisely the defect these checks exist for — a guard standing where the material it
@@ -36,6 +44,19 @@ const String controllerVariable = 'HOSTYOUR_CONTROLLER';
 /// programs when the cluster is installed, a slave's is written by the Controller, and which keys a
 /// map may carry is answerable only with both trees in hand.
 const String controllerInventory = 'server/domains/inventory';
+
+/// The environment variable that names the client tree, overriding the search.
+const String clientVariable = 'ANSIWISE_CLIENT';
+
+/// The file that makes a checkout the client, and the file this repository's Flutter pin is read
+/// against.
+///
+/// The client is the OTHER speller of `toolchains.flutter.version`: `tool/version_guard.dart`
+/// refuses every SDK but the one the client's own gate names, so that number is written in the
+/// client too, and whether the two agree is answerable only with both trees in hand. This file is
+/// the client's reader of this repository's declaration — it names, in its own words, which file of
+/// the client carries the spelling — so a tree that holds it is a tree that has one.
+const String clientPinReader = 'tool/flutter_pin.dart';
 
 /// How far below a directory on the way up the search looks.
 ///
@@ -86,20 +107,35 @@ const _Kind _controller = _Kind(
       'Controller writes into one, and a comparison that can see only one side may not pass.',
 );
 
+const _Kind _client = _Kind(
+  marker: clientPinReader,
+  variable: clientVariable,
+  subject: 'the client',
+  stake:
+      'The Flutter version this repository decides is held against the one the client is built '
+      'with, and a comparison that can see only one side may not pass.',
+);
+
 /// The installation tree, as the environment names it or as found from where the suite runs.
 Directory installationRoot() => _rootOf(_installation);
 
 /// The Controller tree, as the environment names it or as found from where the suite runs.
 Directory controllerRoot() => _rootOf(_controller);
 
+/// The client tree, as the environment names it or as found from where the suite runs.
+Directory clientRoot() => _rootOf(_client);
+
 /// The installation tree found by searching from [start] upward, or a refusal saying what was
 /// looked for.
 Directory installationFoundFrom(Directory start) => _foundFrom(start, _installation);
 
+/// The client tree found by searching from [start] upward, or a refusal saying what was looked for.
+Directory clientFoundFrom(Directory start) => _foundFrom(start, _client);
+
 /// The tree of [kind], as its own variable names it or as found from where the suite runs.
 Directory _rootOf(_Kind kind) {
   if (Platform.environment[kind.variable] case final String named) {
-    if (!Directory('$named/${kind.marker}').existsSync()) {
+    if (!_holds(named, kind.marker)) {
       throw StateError(
         'nothing at $named/${kind.marker} — ${kind.variable} names a tree that does not hold '
         '${kind.subject}.',
@@ -145,6 +181,14 @@ Directory _foundFrom(Directory start, _Kind kind) {
   }
 }
 
+/// Whether [directory] holds [marker], whichever of a file and a directory the marker is.
+///
+/// Asked of the file system's answer for the path rather than of one kind of entity, because two of
+/// the three markers are directories and the client's is a file — and a search that tested only for
+/// a directory would pass over the tree it was looking for and report that none exists.
+bool _holds(String directory, String marker) =>
+    FileSystemEntity.typeSync('$directory/$marker') != FileSystemEntityType.notFound;
+
 /// Every tree at [above], or up to [_searchDepth] directories below it, that holds [marker], sorted
 /// so the answer does not move with the order a directory is listed in.
 ///
@@ -154,7 +198,7 @@ Directory _foundFrom(Directory start, _Kind kind) {
 List<String> _treesUnder(Directory above, String marker) {
   final List<String> found = <String>[];
   void look(Directory directory, int depth) {
-    if (Directory('${directory.path}/$marker').existsSync()) {
+    if (_holds(directory.path, marker)) {
       found.add(directory.path);
       return;
     }

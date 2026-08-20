@@ -458,11 +458,29 @@ toolchains:
   # pin and invite a downgrade. The report answers "?" with the reason instead,
   # which is a finding about the report and not about the pin.
   #
-  # NOTHING CARRIES THIS PIN YET: no tree this file stamps into builds the
-  # client, so the report says "(stamped nowhere)" and it is right. The site
-  # WILL BE the workflow ansiwise-client#17 creates in the client's own
-  # repository, which is a fourth tree label beyond the three the sync-versions
-  # row maps.
+  # THE SITE IS ansiwise-client/tool/ci.dart, and this entry stamps nowhere, so
+  # the report says "(stamped nowhere)" and it is right. The workflow of
+  # ansiwise-client#17 is NOT the site: .github/workflows/release.yml states no
+  # version at all — its `read the pinned Flutter version` step reads
+  # `const String flutterVersion` out of tool/ci.dart and hands it to the Flutter
+  # action — so the client has ONE spelling and that Dart constant is it.
+  #
+  # A `stamps:` site for it needs two things that are not this file's to decide,
+  # and until both stand the entry carries none: the stamp is whole or nothing
+  # (sync-versions states `on_failure: exit`), so ONE site nothing can write
+  # stops every other pin in this file from being written at all.
+  #   * a stamp kind that writes a Dart constant. The grammar has five —
+  #     yaml_value, chart_dependency, list_pin, dockerfile_from, dockerfile_arg —
+  #     and the ansiwise-versions plugin switches over exactly those, so a
+  #     `dart_constant` kind is a plugin change.
+  #   * a fourth tree label. The sync-versions row maps platform, deploy and
+  #     manager; the client is a fourth checkout, and a stamp into a label the row
+  #     does not map is refused rather than skipped.
+  #
+  # Until then BOTH sides refuse a drift rather than one: ansiwise-client's
+  # tool/flutter_pin.dart stops the client's gate, and this repository's
+  # checks/lib/src/client_flutter_pin.dart stops this one — which is the side a
+  # raise is made on, and the side a person who edits the line below runs.
   flutter:
     version: "3.47.0"
     note: |
