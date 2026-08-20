@@ -61,7 +61,7 @@ spec:
       type: string
       description: >-
         The cluster's values chain as JSON — platform/values-common.yaml,
-        platform/values-<stage>.yaml and cluster/profile.yaml, each with its path
+        platform/values-<stage>.yaml and installation/profile.yaml, each with its path
         and its verbatim content (gate CLI CLUSTER_VALUE_FILES). The render gate
         layers these with -f, so it renders the chart exactly as ArgoCD will.
       default: "[]"

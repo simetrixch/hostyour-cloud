@@ -518,19 +518,19 @@ spec:
               # slave — an installation is free to arrange that, and this chart
               # deploys wherever the build plane sits — whose branch StampRole
               # has pruned every registration off. StampClusterProfile writes
-              # booksBranch into cluster/profile.yaml from the same role rule
+              # booksBranch into installation/profile.yaml from the same role rule
               # that decides vaultUrl. Not the trunk either
               # — a registration names one real unit of one installation, and
               # the trunk is what every future installation is cut from.
               - name: BOOKS_BRANCH
-                value: {{ required "consumer-build: global.booksBranch is required (cluster/profile.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
+                value: {{ required "consumer-build: global.booksBranch is required (installation/profile.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
               # The tenant catalog this installation deploys from — one repository
               # per installation, composed once by StampClusterProfile into
-              # cluster/profile.yaml. Required, never defaulted: a bump that
+              # installation/profile.yaml. Required, never defaulted: a bump that
               # pushed the tenant pins to a repository picked by this chart would
               # write into somebody else's catalog.
               - name: DEPLOY_URL
-                value: {{ required "consumer-build: global.catalogUrl is required (cluster/profile.yaml, rendered per install branch from the cluster map's catalog-repo — the repository holding this installation's tenant charts)" .Values.global.catalogUrl | quote }}
+                value: {{ required "consumer-build: global.catalogUrl is required (installation/profile.yaml, rendered per install branch from the cluster map's catalog-repo — the repository holding this installation's tenant charts)" .Values.global.catalogUrl | quote }}
               # toJson for the same newline-preserving reason as in gate-stage.
               - name: CHANNEL_STAGES
                 value: {{ $channelTable | toJson }}

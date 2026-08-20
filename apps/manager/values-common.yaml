@@ -8,8 +8,8 @@
 #
 # PROVIDER-ONLY: like the build plane (registry/tekton/image-builder), the
 # manager runs only where the registry runs locally. master default is
-# cluster/apps/manager.yaml deploy:"false"; the control-host install branch
-# flips it to "true" (same toggle pattern — see cluster/README.md).
+# installation/apps/manager.yaml deploy:"false"; the control-host install branch
+# flips it to "true", the same toggle pattern every provider-only app carries.
 #
 # The manager image pin lives in values-{dev,test,prod}.yaml as the ONE pin
 # grammar builds[]{name,image,tag} — `image` is the FLAT build name
@@ -75,7 +75,7 @@ github:
   repo: "simetrixch/hostyour-cloud"
   # The tenant CATALOG the registry-reaper's floor also searches
   # (reaper-cronjob.yaml CATALOG_REPO). EMPTY here on purpose: which
-  # repository it is, is installation state — cluster/profile.yaml carries it as
+  # repository it is, is installation state — installation/profile.yaml carries it as
   # global.catalogRepo and loads LAST, and the template falls back to that with a
   # `required` on it, so a branch naming no catalog fails its render instead of
   # starting a reaper whose floor cannot see the catalog's pins.
@@ -84,7 +84,7 @@ github:
   # render check never reaches the line at all: the CronJob stands behind
   # master.sshUser, which is on an install branch only. What the key states is
   # where the override goes — an installation pointing THIS app at another
-  # catalog sets deployRepo in cluster/values/manager.yaml, which
+  # catalog sets deployRepo in installation/values/manager.yaml, which
   # argocd/<stage>/apps/applicationset.yaml loads after this file.
   deployRepo: ""
 
@@ -95,7 +95,7 @@ github:
 #
 # The gate's product settings. The two keys that name THIS machine —
 # gatemanagerAddr (whose emptiness switches consumer onboarding off entirely) and
-# gateFenceMustFail — are NOT here: they stand in cluster/values/manager.yaml, which the
+# gateFenceMustFail — are NOT here: they stand in installation/values/manager.yaml, which the
 # operator edits on the install branch. Kube access is IN-CLUSTER via the pod ServiceAccount
 # (grants shipped with this chart, templates/rbac.yaml — no Vault kubeconfig, nothing to seed).
 onboarding:
@@ -113,7 +113,7 @@ onboarding:
 # key (materialized by ESO from Vault, where the installer provisions it) so it
 # can SSH to its own host — zero manual SQL.
 #
-# sshUser and lanHost name ONE machine and stand in cluster/values/manager.yaml, which the
+# sshUser and lanHost name ONE machine and stand in installation/values/manager.yaml, which the
 # operator edits on the install branch. Empty sshUser means a plain install does NOT
 # self-register: none of the MASTER_* env, the key ExternalSecret or the key mount is rendered.
 # Only the port is product — every sshd this reaches listens where sshd listens.

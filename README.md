@@ -26,8 +26,8 @@ slaves/        the chart rendered once per slave cluster, on the master
 charts/        the library charts they are built from
 argocd/        the ApplicationSets and projects
 bootstrap/     what is applied before ArgoCD exists
-cluster/       what ONE cluster is: its application toggles and its profile
-clusters/      an installation's cluster maps
+installation/  what THIS installation is: its profile, its per-app values and its toggles
+clusters/      the map of every cluster of this installation
 platform/      the version pins and the platform's own grammar
 ```
 

@@ -29,7 +29,7 @@ global:
   # the install-branch sync had to `git show` the file off master to read
   # releaseTagFilter below out of a file the branch rewrites.
   #
-  # StampClusterProfile writes it into cluster/profile.yaml from the branch's
+  # StampClusterProfile writes it into installation/profile.yaml from the branch's
   # own fqdn, beside the other globals it derives from the cluster map. That
   # file is LAST in every app's valueFiles chain, so `{{ .Values.global.domain }}`
   # resolves exactly as before — the value simply comes from the installation's
@@ -56,7 +56,7 @@ global:
 
   # The ONE Vault KV-v2 mount every SecretStore reads. Word-identical on every
   # cluster and every role — what differs per cluster is only the Kubernetes
-  # auth mount (global.vaultKubernetesAuthPath, cluster/profile.yaml).
+  # auth mount (global.vaultKubernetesAuthPath, installation/profile.yaml).
   vaultKvMount: secret
 
   # Name of the per-namespace ESO SecretStore that every app's ExternalSecret
@@ -72,7 +72,7 @@ global:
   # file is the trunk every future installation is cut from. The value arrives
   # from the operator: the answer is written as alert-recipients into
   # clusters/active/<fqdn>.yaml, and StampClusterProfile renders it into
-  # cluster/profile.yaml, which loads last and replaces this list.
+  # installation/profile.yaml, which loads last and replaces this list.
   # charts/monitoring refuses to render an enabled route that resolves to no
   # recipient, so an installation that never set it is stopped rather than
   # dropping its alerts in silence.
@@ -119,7 +119,7 @@ global:
       # Empty ONLY on the trunk: the map's post-url is a mandatory field
       # (an install is refused without it, because every tenant's auth and
       # report chart hard-requires this value), and StampClusterProfile writes
-      # it into cluster/profile.yaml on every branch.
+      # it into installation/profile.yaml on every branch.
       url: ""
   # Whether a shared service is deployed LOCALLY on this cluster — gates the
   # CoreDNS hairpin rewrites (a chart can't see the deploy toggle). All false

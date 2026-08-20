@@ -309,7 +309,7 @@ void main() {
             'argocd/apps/one.yaml': manifest(
               entries: <String>[
                 'values-size-{{ .size }}.yaml',
-                r'$values/cluster/{{ .name }}.yaml',
+                r'$values/installation/values/{{ .name }}.yaml',
               ],
             ),
           },

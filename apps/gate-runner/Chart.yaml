@@ -12,7 +12,7 @@ description: >-
   gate-report-<run-id>. The sandbox boundary is the Calico `gate-egress-fence`
   NetworkPolicy (DNS + public internet only, no cluster LAN / Controller /
   cluster services), proven fail-closed from inside by the CLI's own fence
-  self-probe. PROVIDER-ONLY like the build plane: cluster/apps/gate-runner.yaml
+  self-probe. PROVIDER-ONLY like the build plane: installation/apps/gate-runner.yaml
   is master-default "false"; the control host's install branch flips it "true".
 type: application
 

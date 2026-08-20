@@ -40,7 +40,7 @@ description: |
   Per-slave inputs (slave.*) are injected by the slaves ApplicationSet from the
   slave's cluster map (clusters/active/<fqdn>.yaml) via helm valuesObject; the
   platform globals arrive through the same $values chain every platform app
-  uses (platform/values-*.yaml + cluster/profile.yaml).
+  uses (platform/values-*.yaml + installation/profile.yaml).
 type: application
 dependencies:
   # The namespaced ArgoCD instance. Version pinned to the SAME chart the

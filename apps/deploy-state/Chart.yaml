@@ -6,7 +6,7 @@ description: >-
   GitOps-owned deploy-state/identity record (domain/stage/role/generation/
   writtenAt). The Controller's onboarding preflight reads it and FAILS CLOSED
   when it is missing or its domain does not match the cluster's. Always-on on
-  every cluster (no cluster/apps toggle) so it exists everywhere and self-heals
+  every cluster (no installation/apps toggle) so it exists everywhere and self-heals
   after a wipe.
 type: application
 

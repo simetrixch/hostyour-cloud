@@ -17,7 +17,7 @@ mail:
       # per-env keys never collide on one selector. d= stays the apex domain below.
       # ALLOWED_SENDER_DOMAINS is NOT here — it names one installation's sending
       # domains, and this file is shipped to every installation. It stands in
-      # cluster/values/postfix.yaml, rendered per install branch from the cluster map.
+      # installation/values/postfix.yaml, rendered per install branch from the cluster map.
       # The bokysan chart consumes it without tpl (charts/mail statefulset.yaml
       # renders the env verbatim), so it cannot read a global either — an
       # installation-class file is the only place it fits.

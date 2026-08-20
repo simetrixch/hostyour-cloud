@@ -21,7 +21,7 @@
 # Every stage defines the same 6 projects (core / data / services /
 # observability / cicd / consumers). The build plane
 # (tekton / registry / image-builder) is centralized on ONE build cluster and
-# stays off elsewhere via cluster/apps, but the `cicd` project exists in every
+# stays off elsewhere via installation/apps, but the `cicd` project exists in every
 # catalog for symmetry.
 #
 # Cluster-resource whitelists below were derived from the ACTUAL rendered
@@ -196,7 +196,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Build plane — Tekton, Zot registry, image-builder, gate-runner. Centralized on ONE build cluster (promote test->prod reuses the same image); off unless cluster/apps enables it. Privileged (Tekton CRDs, buildah).
+  description: Build plane — Tekton, Zot registry, image-builder, gate-runner. Centralized on ONE build cluster (promote test->prod reuses the same image); off unless installation/apps enables it. Privileged (Tekton CRDs, buildah).
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
   # cicd destinations are static.

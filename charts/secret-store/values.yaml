@@ -32,6 +32,6 @@ kvVersion: v2
 # list plus whatever extra ESO namespaces that installation declares.
 # The KV mount and the auth mount carry no defaults here: the template
 # requires global.vaultKvMount (platform/values-common.yaml) and
-# global.vaultKubernetesAuthPath (cluster/profile.yaml).
+# global.vaultKubernetesAuthPath (installation/profile.yaml).
 role: external-secrets
 serviceAccountName: external-secrets-sa

@@ -1,5 +1,5 @@
 # DEV-specific image-builder config. The build plane runs on the ONE build
-# cluster (cluster/apps gated); this file wires DEV's Vault path for the
+# cluster (installation/apps gated); this file wires DEV's Vault path for the
 # webhook HMAC secret.
 externalsecret-webhooks:
   externalSecret:

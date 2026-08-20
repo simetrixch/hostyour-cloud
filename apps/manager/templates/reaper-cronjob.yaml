@@ -28,7 +28,7 @@
 #       the FULL manager env schema, so this required-no-default field must be present even though
 #       the reaper never serves HTTP.
 # The manager app is provider-only gated to the SAME one build/control cluster as the registry
-# (cluster/apps/manager.yaml + master.sshUser), so the reaper rides an equivalent gate. It reaches
+# (installation/apps/manager.yaml + master.sshUser), so the reaper rides an equivalent gate. It reaches
 # zot cross-namespace over common.registryHost — exactly as the manager's own ensure-images
 # registry probe (HttpRegistryProbe) already does.
 #
@@ -127,7 +127,7 @@ spec:
                 # secret/build/catalog/repo-pat). Addressed by owner/name because
                 # the reaper goes through the GitHub API, not by clone.
                 - name: CATALOG_REPO
-                  value: {{ .Values.github.deployRepo | default (required "manager: global.catalogRepo is required (cluster/profile.yaml, rendered per install branch from the cluster map's catalog-repo)" .Values.global.catalogRepo) | quote }}
+                  value: {{ .Values.github.deployRepo | default (required "manager: global.catalogRepo is required (installation/profile.yaml, rendered per install branch from the cluster map's catalog-repo)" .Values.global.catalogRepo) | quote }}
                 - name: CATALOG_WRITE_PAT
                   valueFrom:
                     secretKeyRef:
@@ -144,12 +144,12 @@ spec:
                 #
                 # MASTER_FQDN carries it because in THIS process it reaches exactly one consumer, the
                 # books-branch resolution: the reaper never seeds a master row. So it is rendered from
-                # global.booksBranch — the role-derived value in cluster/profile.yaml, which names the
+                # global.booksBranch — the role-derived value in installation/profile.yaml, which names the
                 # cluster holding the master role whatever cluster this build plane is. MASTER_SSH_USER
                 # and MASTER_STAGE ride along because the config schema requires the three together
                 # (server/kernel/config.ts refines); the reaper opens no ssh session.
                 - name: MASTER_FQDN
-                  value: {{ required "global.booksBranch must be set (cluster/profile.yaml via the $values chain) — the registry reaper cannot say where this installation's registrations stand without it" .Values.global.booksBranch | quote }}
+                  value: {{ required "global.booksBranch must be set (installation/profile.yaml via the $values chain) — the registry reaper cannot say where this installation's registrations stand without it" .Values.global.booksBranch | quote }}
                 - name: MASTER_SSH_USER
                   value: {{ .Values.master.sshUser | quote }}
                 - name: MASTER_STAGE

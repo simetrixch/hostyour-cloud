@@ -128,7 +128,7 @@ resourceNames — only relocated):
     delete-only; the read it pairs with comes from manager-smoke-reader.
 
 Build-plane-only, like the whole manager app: renders wherever the app
-deploys (cluster/apps/manager.yaml, flipped "true" only on the build plane
+deploys (installation/apps/manager.yaml, flipped "true" only on the build plane
 by StampAppToggles) — no separate toggle, exactly like serviceaccount.yaml /
 deployment.yaml.
 */ -}}

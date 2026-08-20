@@ -243,7 +243,7 @@ monitoring:
   # alert not already null-routed by the global config (Watchdog / InfoInhibitor
   # / severity=info). With `emails:` omitted, the chart template falls back to
   # .Values.global.alertRecipients, which StampClusterProfile renders into
-  # cluster/profile.yaml from the operator's alert_recipients ANSWER while the
+  # installation/profile.yaml from the operator's alert_recipients ANSWER while the
   # install branch is generated — the installation's own mailboxes, since
   # platform/values-common.yaml is the trunk and a mailbox names one
   # installation. clusters/active/<fqdn>.yaml states the same answer as
@@ -315,10 +315,10 @@ kube-prometheus-stack:
       # global.servicesLocal.observabilityCentral the way the push Ingresses in
       # Chart.yaml are: it is a kube-prometheus-stack value, not a chart of ours.
       #
-      # NOTHING IN THIS TREE TURNS IT ON. cluster/profile.yaml carries global.*
+      # NOTHING IN THIS TREE TURNS IT ON. installation/profile.yaml carries global.*
       # keys only and StampClusterProfile writes no such key, so the profile is
       # not the surface it was once set from. The only place an installation can
-      # set it today is its own cluster/values/observability.yaml, which the
+      # set it today is its own installation/values/observability.yaml, which the
       # ApplicationSet loads just before the profile. Until one does, the master
       # serves no /api/v1/write and the prom-push Ingress below leads to an
       # endpoint Prometheus never registered.
@@ -571,7 +571,7 @@ grafana-oidc-secret:
 # prometheusSpec.enableRemoteWriteReceiver stands at false above, which is also
 # the chart's own default, and nothing in this tree sets it — so this route
 # reaches a Prometheus that never registered /api/v1/write. An installation that
-# wants it sets the value in its own cluster/values/observability.yaml, which the
+# wants it sets the value in its own installation/values/observability.yaml, which the
 # ApplicationSet loads just before the profile.
 ingress-prom-push:
   ingress:

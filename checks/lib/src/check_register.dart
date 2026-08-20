@@ -30,9 +30,13 @@
 ///
 /// **WHAT IS READ IS THE FILE SYSTEM, NOT `git ls-files`.** This one judges what `dart test`
 /// discovers, and `dart test` discovers from disk — an untracked library is still a library the
-/// suite would run. Four of the checks beside it read the tracked tree because what they judge is
-/// what a cluster clones (`app-manifest-keys`, `chart-paths`, `channel-table-single`,
-/// `release-pin-tags`); the other five read the file system as this one does.
+/// suite would run.
+///
+/// Which of the two a check beside it reads follows from its subject rather than from a habit: one
+/// that judges what a CLUSTER renders reads the tracked tree, because a cluster clones and an
+/// untracked file is not in the clone. Five do — `app-manifest-keys`, `chart-paths`,
+/// `channel-table-single`, `external-secret-keys` and `release-pin-tags`, each running
+/// `git ls-files` in its own suite. The rest read the file system, as this one does.
 ///
 /// **WHAT IT DOES NOT REACH.** It does not read what a check DOES: a library that names itself, is
 /// exported, has a suite of one empty test and states what it does not reach passes here, and the

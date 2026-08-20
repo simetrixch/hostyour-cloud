@@ -92,7 +92,7 @@ spec:
               - $values/platform/values-common.yaml
               - $values/platform/values-__STAGE__.yaml
               - values-common.yaml
-              - $values/cluster/profile.yaml
+              - $values/installation/profile.yaml
             valuesObject:
               unit:
                 name: "{{ .name }}"

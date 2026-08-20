@@ -1,7 +1,8 @@
 # PROD overrides for the observability push agent.
 
 # Push credentials ExternalSecret — reads mount-relative Vault path
-# prod/app/observability-agent (mount = global.vaultKvMount, the shared `secret`).
+# prod/app/observability (mount = global.vaultKvMount, the shared `secret`), which is
+# the entry the master's push middleware composes its htpasswd line from.
 observability-agent-push-secret:
   externalSecret:
-    vaultPath: prod/app/observability-agent
+    vaultPath: prod/app/observability

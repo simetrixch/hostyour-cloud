@@ -1,7 +1,7 @@
 # TEST-specific Zot registry config.
 #
 # The registry is in every stage's catalog (project cicd) but deploys ONLY
-# when THIS cluster is the build cluster (cluster/apps/registry.yaml
+# when THIS cluster is the build cluster (installation/apps/registry.yaml
 # deploy:true + global.servicesLocal.registry:true). Otherwise this chart is
 # not rendered and TEST workloads pull from the build cluster's registry
 # (global.endpoints.registry.host). This file wires TEST's Vault path so the

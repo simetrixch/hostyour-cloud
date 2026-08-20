@@ -46,7 +46,7 @@ kube-prometheus-stack:
       # summary, description, all labels, and quick Grafana links per alert.
       # templateFiles is a MAP, and helm merges maps — so the three URL defines this
       # template calls (alert.loki_url / alert_url / silence_url) stand in a SECOND
-      # file, cluster/values/observability.yaml, written per installation. They are
+      # file, installation/values/observability.yaml, written per installation. They are
       # the only lines of this ~100-line template that name one installation, and
       # Alertmanager renders it, not helm — so `{{ .Values.global.domain }}` could
       # never resolve here, and duplicating the whole template to move three lines
@@ -150,7 +150,7 @@ kube-prometheus-stack:
         # `platform-default` AlertmanagerConfig CR (see
         # apps/observability/values-common.yaml.monitoring.alertmanagerConfigs),
         # whose recipients come from .Values.global.alertRecipients, rendered into
-        # cluster/profile.yaml by StampClusterProfile from the alert_recipients
+        # installation/profile.yaml by StampClusterProfile from the alert_recipients
         # answer the generating run was given — ONE place to change the mailbox of
         # every entry that carries no `emails` of its own.
         route:

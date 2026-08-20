@@ -1,7 +1,8 @@
 # TEST overrides for the observability push agent.
 
 # Push credentials ExternalSecret — reads mount-relative Vault path
-# test/app/observability-agent (mount = global.vaultKvMount, the shared `secret`).
+# test/app/observability (mount = global.vaultKvMount, the shared `secret`), which is
+# the entry the master's push middleware composes its htpasswd line from.
 observability-agent-push-secret:
   externalSecret:
-    vaultPath: test/app/observability-agent
+    vaultPath: test/app/observability

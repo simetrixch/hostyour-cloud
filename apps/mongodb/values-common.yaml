@@ -153,7 +153,7 @@ prometheus-mongodb-exporter:
 
 # Per-namespace SecretStore (the Vault backend the ExternalSecret below reads).
 # vaultUrl falls back to global.vaultUrl, which StampClusterProfile writes into
-# cluster/profile.yaml as https://vault.<the cluster holding the master role> —
+# installation/profile.yaml as https://vault.<the cluster holding the master role> —
 # so it names one installation and cannot be stated here. No per-env override
 # needed (dbgate pattern).
 secret-store: {}

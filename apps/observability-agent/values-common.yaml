@@ -4,7 +4,7 @@
 
 # ---------------------------------------------------------------------------
 # Push endpoints + cluster label come from GLOBALS. On a pure slave they are
-# STAMPED by StampClusterProfile into cluster/profile.yaml (loaded LAST, wins):
+# STAMPED by StampClusterProfile into installation/profile.yaml (loaded LAST, wins):
 #   global.endpoints.observability.prometheusPush: https://prom-push.<master-fqdn>
 #   global.endpoints.observability.lokiPush:       https://loki-push.<master-fqdn>
 #   global.domain:                                 <slave-fqdn>   (the cluster label)
@@ -106,10 +106,11 @@ kube-state-metrics:
 
 # ---------------------------------------------------------------------------
 # Per-namespace SecretStore — the Vault backend the push-cred ExternalSecret
-# reads. global.vaultUrl / global.vaultKubernetesAuthPath (cluster/
-# profile.yaml) point it at the master's Vault over this cluster's own auth
-# mount; the KV mount is the shared global.vaultKvMount. vaultUrl falls back
-# to global.vaultUrl — no per-env override needed (dbgate/mongodb pattern).
+# reads. global.vaultUrl / global.vaultKubernetesAuthPath
+# (installation/profile.yaml) point it at the master's Vault over this
+# cluster's own auth mount; the KV mount is the shared global.vaultKvMount.
+# vaultUrl falls back to global.vaultUrl — no per-env override needed
+# (dbgate/mongodb pattern).
 # ---------------------------------------------------------------------------
 secret-store: {}
 
@@ -117,10 +118,16 @@ secret-store: {}
 # Push credentials ExternalSecret — materializes the K8s Secret
 # `observability-agent-push-credentials` (keys username/password) that Alloy's
 # remote_write + loki.write reference via remote.kubernetes.secret. Read from
-# the mount-relative Vault path <stage>/app/observability-agent (vaultPath set
-# per-env below); the mount (`secret`) comes from the SecretStore's
-# global.vaultKvMount. The MASTER seeds matching creds for its push Ingress
-# basic-auth middleware (I6 / D5).
+# the mount-relative Vault path <stage>/app/observability (vaultPath set per-env
+# below); the mount (`secret`) comes from the SecretStore's global.vaultKvMount.
+#
+# ONE ENTRY AND ONE ACCOUNT, the same rule the mongodb and redis passwords carry.
+# The push Ingresses on the master are guarded by a basic-auth Middleware whose
+# htpasswd line apps/observability composes from push-user + push-password at
+# <stage>/app/observability, and this agent is what presents that account. Read
+# out of a second entry the two could differ, and a differing password is a push
+# the middleware rejects. This used to name <stage>/app/observability-agent, an
+# entry no vault_kv_entry row of any program writes.
 # ---------------------------------------------------------------------------
 observability-agent-push-secret:
   externalSecret:
@@ -131,6 +138,6 @@ observability-agent-push-secret:
     targetSecretName: observability-agent-push-credentials
     data:
       - secretKey: username
-        property: push-username
+        property: push-user
       - secretKey: password
         property: push-password

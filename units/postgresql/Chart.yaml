@@ -19,7 +19,7 @@ description: |
   Retiring the app and deleting the chart are different things; only the first
   happened. There is therefore deliberately no `postgresql` element in
   argocd/{dev,test,prod}/apps/applicationset.yaml and no
-  cluster/apps/postgresql.yaml toggle, and re-adding either would resurrect the
+  installation/apps/postgresql.yaml toggle, and re-adding either would resurrect the
   singleton this chart no longer models.
 
   WHAT MAKES IT RENDERABLE PER CONSUMER. Every cluster-singleton assumption is

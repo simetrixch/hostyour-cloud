@@ -2,7 +2,7 @@
 headscale's own config file. It lives in a template rather than in a values
 blob because of ONE line: server_url must be the same address a host's client
 is pointed at with `tailscale up --login-server`. That address is
-global.tailnetUrl — written into cluster/profile.yaml by StampClusterProfile
+global.tailnetUrl — written into installation/profile.yaml by StampClusterProfile
 from the cluster map (own fqdn when the role has the master part, else the
 master's) —
 so the coordinator and its clients read one value or they never meet.
@@ -22,7 +22,7 @@ data:
     # The public address hosts log in to. Traefik terminates TLS at the
     # Ingress and forwards plain HTTP to listen_addr, so headscale serves no
     # certificate of its own.
-    server_url: {{ required "global.tailnetUrl must be set (cluster/profile.yaml, rendered per install branch from the cluster map)" .Values.global.tailnetUrl | quote }}
+    server_url: {{ required "global.tailnetUrl must be set (installation/profile.yaml, rendered per install branch from the cluster map)" .Values.global.tailnetUrl | quote }}
     listen_addr: 0.0.0.0:8080
     # Both stay on loopback: nothing scrapes the metrics endpoint (this chart
     # ships no ServiceMonitor), and the CLI reaches the server over the unix

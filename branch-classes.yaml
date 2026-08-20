@@ -162,17 +162,17 @@ classes:
   # Same mechanism as slaves/*/values-dev.yaml.
   "slaves/*/values-prod.yaml": product
 
-  # The Controller's own settings. The four keys that name one machine (gateControllerAddr, gateFenceMustFail, master.sshUser, master.lanHost) moved to cluster/values/manager.yaml.
+  # The Controller's own settings. The four keys that name one machine (gateControllerAddr, gateFenceMustFail, master.sshUser, master.lanHost) moved to installation/values/manager.yaml.
   "apps/manager/values-common.yaml": product
-  # The relay's tuning, ~90 keys the software's own. ALLOWED_SENDER_DOMAINS moved to cluster/values/postfix.yaml, rendered per branch from the cluster map.
+  # The relay's tuning, ~90 keys the software's own. ALLOWED_SENDER_DOMAINS moved to installation/values/postfix.yaml, rendered per branch from the cluster map.
   "apps/postfix/values-common.yaml": product
-  # Stage overrides of the relay's own defaults. myhostname moved to cluster/values/postfix.yaml; the DKIM filename is composed from global.domain inside extraInitContainers, which the chart renders through tpl.
+  # Stage overrides of the relay's own defaults. myhostname moved to installation/values/postfix.yaml; the DKIM filename is composed from global.domain inside extraInitContainers, which the chart renders through tpl.
   "apps/postfix/values-dev.yaml": product
   # Same shape as apps/postfix/values-dev.yaml.
   "apps/postfix/values-test.yaml": product
   # Same shape as apps/postfix/values-dev.yaml.
   "apps/postfix/values-prod.yaml": product
-  # The stack's own ~250 lines. The eleven URLs that named one installation moved to cluster/values/observability.yaml, the three alert-mail links as a SECOND templateFiles entry so the ~100-line template stays here.
+  # The stack's own ~250 lines. The eleven URLs that named one installation moved to installation/values/observability.yaml, the three alert-mail links as a SECOND templateFiles entry so the ~100-line template stays here.
   "apps/observability/values-dev.yaml": product
   # Same shape as apps/observability/values-dev.yaml.
   "apps/observability/values-test.yaml": product
@@ -189,19 +189,19 @@ classes:
   "apps/*/values-prod.yaml": product
 
   # The 16 deploy toggles: on a branch `deploy:` states what runs on ONE cluster. StampAppToggles rewrites nine of them from what this cluster is — the build plane, the master part, and the one agent that runs where the master part is not; the other seven carry an operator's own decision, which is why derived: below names the nine and not the directory.
-  "cluster/apps/*.yaml": install
+  "installation/apps/*.yaml": install
   # Rendered whole by StampClusterProfile from the run's answers: domain, clusterName, unitApex, platformDomain, booksBranch, vaultUrl, tailnetUrl and the registry host all name one cluster.
-  "cluster/profile.yaml": install
-  # Per-APP installation values, one level below cluster/profile.yaml: keys that name one machine or one installation and belong to a SINGLE app, so they cannot ride in global.*. The ApplicationSet loads $values/cluster/values/<app>.yaml after that app's own values-<stage>.yaml. The Controller's four machine keys — nothing derives them, so the installer scaffolds the file EMPTY on the branch and never rewrites it; it is absent from the trunk, which is not a machine.
-  "cluster/values/manager.yaml": install
+  "installation/profile.yaml": install
+  # Per-APP installation values, one level below installation/profile.yaml: keys that name one machine or one installation and belong to a SINGLE app, so they cannot ride in global.*. The ApplicationSet loads $values/installation/values/<app>.yaml after that app's own values-<stage>.yaml. The Controller's four machine keys — nothing derives them, so the installer scaffolds the file EMPTY on the branch and never rewrites it; it is absent from the trunk, which is not a machine.
+  "installation/values/manager.yaml": install
   # The relay's hostname and sender allowlist, rendered in full from the cluster map by the deploy-branch pipeline.
-  "cluster/values/postfix.yaml": install
+  "installation/values/postfix.yaml": install
   # Every URL that names this cluster — Grafana's ingress and OIDC endpoints, the three alert-mail links. Rendered in full from the map.
-  "cluster/values/observability.yaml": install
+  "installation/values/observability.yaml": install
   # ArgoCD retargeted to track THIS branch, with the __CLUSTER__ and __BOOKS_BRANCH__ markers stamped in, and on a pure slave the whole tree moved into namespace <name>.
   "argocd/*": install
 
-  # The platform's own grammar and nothing else: releaseTagFilter, channelStages, the timezone, the storage class. global.domain used to sit here and made the file two classes at once; it is one installation's fqdn, and StampClusterProfile writes it into cluster/profile.yaml.
+  # The platform's own grammar and nothing else: releaseTagFilter, channelStages, the timezone, the storage class. global.domain used to sit here and made the file two classes at once; it is one installation's fqdn, and StampClusterProfile writes it into installation/profile.yaml.
   "platform/values-common.yaml": product
 
   # The empty-directory marker that lets the trunk carry clusters/active/ with no map in it — the state the installer asserts the trunk must be in.
@@ -305,25 +305,25 @@ derived:
   "argocd/*": always
 
   # Rendered whole out of the run's own answers by StampClusterProfile on every run: the trunk carries `global: {}`, so every byte a branch holds here came out of that render.
-  "cluster/profile.yaml": always
+  "installation/profile.yaml": always
   # StampAppToggles rewrites the deploy line of this toggle from what the cluster IS — one of the six that run on the build plane and nowhere else. The rest of the file is the trunk's, so the deploy line is all a branch owns in it and a run writes it again.
-  "cluster/apps/consumer-build.yaml": always
-  # Same as cluster/apps/consumer-build.yaml.
-  "cluster/apps/gate-runner.yaml": always
-  # Same as cluster/apps/consumer-build.yaml.
-  "cluster/apps/image-builder.yaml": always
-  # Same as cluster/apps/consumer-build.yaml.
-  "cluster/apps/manager.yaml": always
-  # Same as cluster/apps/consumer-build.yaml.
-  "cluster/apps/registry.yaml": always
-  # Same as cluster/apps/consumer-build.yaml.
-  "cluster/apps/tekton.yaml": always
+  "installation/apps/consumer-build.yaml": always
+  # Same as installation/apps/consumer-build.yaml.
+  "installation/apps/gate-runner.yaml": always
+  # Same as installation/apps/consumer-build.yaml.
+  "installation/apps/image-builder.yaml": always
+  # Same as installation/apps/consumer-build.yaml.
+  "installation/apps/manager.yaml": always
+  # Same as installation/apps/consumer-build.yaml.
+  "installation/apps/registry.yaml": always
+  # Same as installation/apps/consumer-build.yaml.
+  "installation/apps/tekton.yaml": always
   # One of the two provided once per installation, by the cluster holding the master part; StampAppToggles rewrites its deploy line from the role.
-  "cluster/apps/tailnet-coordinator.yaml": always
-  # Same as cluster/apps/tailnet-coordinator.yaml.
-  "cluster/apps/observability.yaml": always
-  # The mirror of cluster/apps/observability.yaml: StampAppToggles turns it on exactly where the master part is NOT, so a cluster runs the light push agent instead of the full stack.
-  "cluster/apps/observability-agent.yaml": always
+  "installation/apps/tailnet-coordinator.yaml": always
+  # Same as installation/apps/tailnet-coordinator.yaml.
+  "installation/apps/observability.yaml": always
+  # The mirror of installation/apps/observability.yaml: StampAppToggles turns it on exactly where the master part is NOT, so a cluster runs the light push agent instead of the full stack.
+  "installation/apps/observability-agent.yaml": always
   # NO ROW FOR THE OTHER SEVEN TOGGLES, and their absence is the decision. StampAppToggles decides nine of the sixteen and leaves the rest saying whatever the trunk says, because whether an installation wants a database browser, a mail relay, coredns, redis, mongodb, external-secrets or the service-provisioner is an operator's choice made ON the branch. A conflict there must stop the sync: nothing would write that choice back.
 
   # One key, global.env — kept on a dev-stage installation and pruned by StampRole on a test- or prod-stage one.
@@ -365,12 +365,12 @@ derived:
 # -----------------------------------------------------------------------------
 trunk-absent:
 
-  # cluster/values/ does not exist on master at all: the trunk is not a machine and not an installation, so it has no answers for any of these. the installer scaffolds controller.yaml EMPTY on the branch (operator decisions, so a rendered file would overwrite them), and the other two are rendered in full from the cluster map. The ApplicationSet tolerates all three being absent (ignoreMissingValueFiles), which is what the trunk render relies on.
-  "cluster/values/manager.yaml": install-branch
-  # Rendered in full from the cluster map, like cluster/profile.yaml.
-  "cluster/values/postfix.yaml": install-branch
-  # Same as cluster/values/postfix.yaml.
-  "cluster/values/observability.yaml": install-branch
+  # installation/values/ does not exist on master at all: the trunk is not a machine and not an installation, so it has no answers for any of these. the installer scaffolds controller.yaml EMPTY on the branch (operator decisions, so a rendered file would overwrite them), and the other two are rendered in full from the cluster map. The ApplicationSet tolerates all three being absent (ignoreMissingValueFiles), which is what the trunk render relies on.
+  "installation/values/manager.yaml": install-branch
+  # Rendered in full from the cluster map, like installation/profile.yaml.
+  "installation/values/postfix.yaml": install-branch
+  # Same as installation/values/postfix.yaml.
+  "installation/values/observability.yaml": install-branch
 
   # A map is one installation's identity; the trunk holds only clusters/active/.gitkeep, which the installer asserts.
   "clusters/active/*.yaml": books-branch

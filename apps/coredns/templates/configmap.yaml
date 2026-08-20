@@ -36,7 +36,7 @@ data:
         appears twice):
           1. .Values.rewrites      — every-env values-driven rewrites
           2. the service hairpins below, each gated on global.servicesLocal.*
-             (the SERVICE being local, cluster/profile.yaml) — a rewrite for a
+             (the SERVICE being local, installation/profile.yaml) — a rewrite for a
              service this cluster does not host would resolve the public name
              to a Service that does not exist here, or bounce a lookup meant
              for another cluster into the local Traefik.

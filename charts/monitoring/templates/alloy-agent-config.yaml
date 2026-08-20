@@ -48,8 +48,10 @@ data:
     // loki.write to the master (global.endpoints.observability.*).
     // ========================================================================
 
-    // Basic-auth push credentials, materialized by ESO from the master's
-    // per-slave Vault mount (<mount>/<stage>/app/observability-agent/*).
+    // Basic-auth push credentials, materialized by ESO out of
+    // <mount>/<stage>/app/observability — the one entry apps/observability
+    // composes the push Middleware's htpasswd line from, so what this presents
+    // and what that checks are one account.
     remote.kubernetes.secret "push_creds" {
       namespace = "{{ .Release.Namespace }}"
       name      = "observability-agent-push-credentials"

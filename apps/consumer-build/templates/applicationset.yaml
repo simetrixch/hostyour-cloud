@@ -10,7 +10,7 @@ substitutions, and the two branches are DIFFERENT branches:
              this chart from.
   __BOOKS__  global.booksBranch — the install branch of the cluster holding
              the MASTER role, which is where the registrations the generator
-             globs over stand (cluster/profile.yaml, written by StampClusterProfile).
+             globs over stand (installation/profile.yaml, written by StampClusterProfile).
 
 They are the same value whenever the build plane sits on the cluster holding
 the master role, and they are not when it sits on a pure slave — an arrangement
@@ -18,8 +18,8 @@ an installation is free to choose, and a branch run then deploys this chart
 where the build plane sits.
 
 Build-cluster only: this app is deployed via the platform catalog and gated by
-cluster/apps/consumer-build.yaml (master default deploy:"false").
+installation/apps/consumer-build.yaml (master default deploy:"false").
 */ -}}
 {{- if not .Values.unit }}
-{{- .Files.Get "files/applicationset.yaml" | replace "__STAGE__" .Values.global.env | replace "__BRANCH__" .Values.global.domain | replace "__BOOKS__" (required "consumer-build: global.booksBranch is required (cluster/profile.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch) }}
+{{- .Files.Get "files/applicationset.yaml" | replace "__STAGE__" .Values.global.env | replace "__BRANCH__" .Values.global.domain | replace "__BOOKS__" (required "consumer-build: global.booksBranch is required (installation/profile.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch) }}
 {{- end }}

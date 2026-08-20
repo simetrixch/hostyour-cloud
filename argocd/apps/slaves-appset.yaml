@@ -50,7 +50,7 @@ spec:
               - $values/platform/values-__STAGE__.yaml
               - values-common.yaml
               - values-__STAGE__.yaml
-              - $values/cluster/profile.yaml
+              - $values/installation/profile.yaml
             valuesObject:
               slave:
                 name: "{{ .values.cluster }}"
@@ -82,7 +82,7 @@ spec:
             valueFiles:
               - $values/platform/values-common.yaml
               - $values/platform/values-__STAGE__.yaml
-              - $values/cluster/profile.yaml
+              - $values/installation/profile.yaml
             valuesObject:
               global:
                 # Under `global` because the library sub-charts this chart is

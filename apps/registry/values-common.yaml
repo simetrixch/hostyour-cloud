@@ -1,7 +1,7 @@
 # Zot OCI registry — shared values across all stages.
 #
 # In every stage's catalog; deployed on exactly ONE build cluster (gated by
-# cluster/apps/registry.yaml, master default deploy:"false"), because promote
+# installation/apps/registry.yaml, master default deploy:"false"), because promote
 # test->prod reuses the SAME built image. Its own hostname is zot.<domain>;
 # every OTHER cluster addresses it via global.endpoints.registry.host.
 #
@@ -119,7 +119,7 @@ pvc:
 # `host` + service name + TLS secret name use Helm tpl to pull
 # .Values.global.env and .Values.global.domain at render time — so the build
 # cluster serves its registry at its own zot.<domain>. Deployed only where
-# cluster/apps/registry.yaml enables it (the ONE build cluster).
+# installation/apps/registry.yaml enables it (the ONE build cluster).
 #
 # Zot's bundled web UI is served from the SAME hostname (extensions.ui.enable
 # = true in config.json below); no second hostname needed.
@@ -182,7 +182,7 @@ ingress:
 # WHO MAY READ AND WHO MAY PUSH, BY NAME. accessControl below grants by account name, so the two it
 # lists must be the same names the credentials carry — and the credentials get theirs out of the
 # secret store, where the installer seeded them. Both sides therefore read ONE per-installation
-# value: global.registryPullUser and global.registryPushUser in cluster/profile.yaml, written from
+# value: global.registryPullUser and global.registryPushUser in installation/profile.yaml, written from
 # the same answer that seeded the credential. charts/configmap runs tpl over this data, so the two
 # expressions resolve before the file reaches zot — and they must stay Helm expressions rather than
 # JSON comments, because what is below becomes config.json literally and JSON has no comments.

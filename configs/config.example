@@ -47,7 +47,7 @@ DEPLOY_ENV=
 
 # The domain name this cluster answers on, as it is reached from outside. The same answer names the
 # git branch this installation is generated on and its cluster map, clusters/active/<domain>.yaml,
-# and is stamped into cluster/profile.yaml as `global.domain`, which every platform hostname of this
+# and is stamped into installation/profile.yaml as `global.domain`, which every platform hostname of this
 # cluster hangs off.
 #
 # THIS IS ONE OF THE FIVE VALUES IN THIS FILE THAT A LATER RUN REALLY READS BACK OUT OF IT: this
@@ -82,7 +82,7 @@ CLUSTER_NAME=
 # domain name is refused when the map is written, where the generator records the same answer as
 # `unit-apex`.
 #
-# Nothing reads this line. The same answer is also stamped into cluster/profile.yaml as
+# Nothing reads this line. The same answer is also stamped into installation/profile.yaml as
 # `global.unitApex`, the file every application loads LAST in its values chain, and no chart in this
 # repository reads that key today.
 UNIT_APEX=
@@ -92,7 +92,7 @@ UNIT_APEX=
 # name is refused when the map is written, where the generator records the same answer as
 # `platform-domain`.
 #
-# Nothing reads this line. The same answer is also stamped into cluster/profile.yaml as
+# Nothing reads this line. The same answer is also stamped into installation/profile.yaml as
 # `global.platformDomain`, and no chart in this repository reads that key today.
 PLATFORM_DOMAIN=
 
@@ -105,7 +105,7 @@ PLATFORM_DOMAIN=
 # tier's read policies and its secret-reader role exist only on the cluster that carries the plane,
 # because a build is stage-free and can authenticate only against the one store standing beside it.
 # The registry address every cluster of this installation pulls through is composed from the same
-# answer, as zot.<build-plane> in cluster/profile.yaml. An installation has exactly ONE build plane,
+# answer, as zot.<build-plane> in installation/profile.yaml. An installation has exactly ONE build plane,
 # so every cluster of it is given the SAME value here: two clusters that both named themselves would
 # each build their own copy of what is meant to be one image promoted from stage to stage. Nothing
 # derives this value from anything else.

@@ -3,12 +3,15 @@ library;
 
 export 'src/app_manifest_keys.dart';
 export 'src/appset_cluster_map_keys.dart';
+export 'src/appset_read_paths.dart';
+export 'src/appset_written_paths.dart';
 export 'src/channel_table_single.dart';
 export 'src/chart_paths.dart';
 export 'src/check_register.dart';
 export 'src/cluster_role_values.dart';
 export 'src/credentialed_readers.dart';
 export 'src/external_secret_keys.dart';
+export 'src/external_secret_reach.dart';
 export 'src/installation_tree.dart';
 export 'src/published_databases.dart';
 export 'src/release_pin_tags.dart';

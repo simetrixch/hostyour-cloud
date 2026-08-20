@@ -3,7 +3,7 @@
 Tekton Dashboard upstream release-full.yaml (v0.69.0) vendored verbatim.
 Gated on `.Values.dashboard.enabled OR .Values.global.servicesLocal.registry`
 so the Dashboard follows the ONE build cluster to ANY stage: the build cluster
-sets global.servicesLocal.registry (cluster/profile.yaml) and gets the UI;
+sets global.servicesLocal.registry (installation/profile.yaml) and gets the UI;
 every other cluster leaves both off and renders none of these resources.
 Refresh by re-downloading the upstream release-full.yaml over this file; the
 version it carries is recorded in values-common.yaml.

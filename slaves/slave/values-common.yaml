@@ -9,7 +9,7 @@
 # The stage (global.env), the master's Vault URL (global.vaultUrl) and the ESO
 # SecretStore name (global.secretStoreName) come from the standard $values
 # chain (platform/values-common.yaml + platform/values-<stage>.yaml +
-# cluster/profile.yaml) — same as every platform app.
+# installation/profile.yaml) — same as every platform app.
 
 # ---------------------------------------------------------------------------
 # TYPE-COLLISION NEUTRALIZATION — load-bearing, do not remove.
@@ -70,11 +70,11 @@ repo:
   # <name>/deploy-repo-pat (seeded when the slave is added).
   #
   # WHICH repository the catalog is, is installation state and is not settable
-  # here: cluster/profile.yaml carries it as global.catalogUrl, and
+  # here: installation/profile.yaml carries it as global.catalogUrl, and
   # templates/externalsecret-repo-catalog.yaml requires it — a branch naming no
   # catalog fails its render instead of materializing a credential for no
   # repository. There is no per-slave override to write it into: the generator
-  # argocd/<stage>/apps/slaves-appset.yaml names no cluster/values/<app>.yaml
+  # argocd/<stage>/apps/slaves-appset.yaml names no installation/values/<app>.yaml
   # for this chart, and this file is product, byte-identical everywhere.
   deployUsername: hostyour-cloud
 
@@ -221,7 +221,7 @@ argo-cd:
 # Per-namespace ESO SecretStore (vault-backend) in ns <name>, reading the
 # MASTER's own Vault: slaves/slave syncs on the master, so the master's own
 # chain feeds it — global.vaultUrl + global.vaultKubernetesAuthPath
-# (kubernetes-<master-name>) from the master's cluster/profile.yaml, the
+# (kubernetes-<master-name>) from the master's installation/profile.yaml, the
 # shared KV mount `secret` from global.vaultKvMount.
 # ---------------------------------------------------------------------------
 secret-store: {}
