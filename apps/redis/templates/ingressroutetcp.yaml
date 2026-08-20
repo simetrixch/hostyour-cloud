@@ -1,0 +1,35 @@
+# The path from outside this cluster to :6379, and it is one of TWO halves.
+#
+# This object is the ROUTE: it tells the ingress controller that whatever
+# arrives on the plain-TCP entry point named in values-common.yaml
+# (tailnetEntryPoint) belongs to the Service below. The other half is the entry
+# point itself, which is static configuration of the controller and which
+# nothing in this repository can create — see that value for who writes it, to
+# which address it is bound, and what reaching this port is worth on a cache
+# that runs without authentication.
+#
+# HostSNI(`*`) IS THE ONLY MATCH A PLAIN-TCP ROUTER CAN CARRY HERE. A TCP router
+# matches on the server name a client offers in a TLS handshake, and a client
+# speaking the Redis protocol offers no handshake at all. `*` is what Traefik
+# requires to be written for a router that reads no SNI, so exactly one route
+# may stand on this entry point: every connection that arrives on it matches
+# this one.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: redis-{{ .Values.global.env }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  entryPoints:
+    - {{ .Values.tailnetEntryPoint }}
+  routes:
+    - match: HostSNI(`*`)
+      services:
+        # The ClusterIP Service charts/deployment renders for the redis
+        # dependency — `<release>` where the release name already contains the
+        # chart name, which is redis-<env> (charts/common `common.fullname`).
+        - name: redis-{{ .Values.global.env }}
+          port: {{ .Values.redis.service.port }}

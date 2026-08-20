@@ -1,13 +1,15 @@
 # MongoDB — the official `mongo` image on a StatefulSet (templates/): a replica
 # set needs stable per-pod identity/DNS so each member self-identifies across
 # restarts. Replica set `rs0` for multi-doc transactions, SCRAM auth on
-# (--auth + --keyFile, see args below) — the
-# NetworkPolicy (templates/networkpolicy.yaml) admits only approved DB consumers
-# (global.dbConsumerNamespaces by name + add-ons by global.dbConsumerLabel) plus
-# same-namespace pods (DB is cluster-internal only, no Ingress). replicas: 3 here
-# is the default for ALL envs — a 3-member HA replica set on every stage (rs0
-# membership is reconciled by templates/rs-init-job.yaml; templates/pdb.yaml keeps
-# minAvailable = replicas-1). Per-env storage / resources in values-{dev,test,prod}.yaml.
+# (--auth + --keyFile, see args below) — the NetworkPolicy
+# (templates/networkpolicy.yaml) admits only approved DB consumers
+# (global.dbConsumerNamespaces by name + add-ons by global.dbConsumerLabel), the
+# ingress controller and same-namespace pods; :27017 is routed from a plain-TCP
+# entry point (templates/ingressroutetcp.yaml, and tailnetEntryPoint below) and
+# there is no HTTP Ingress. replicas: 3 here is the default for ALL envs — a
+# 3-member HA replica set on every stage (rs0 membership is reconciled by
+# templates/rs-init-job.yaml; templates/pdb.yaml keeps minAvailable =
+# replicas-1). Per-env storage / resources in values-{dev,test,prod}.yaml.
 mongodb:
   image:
     repository: mongo
@@ -61,6 +63,25 @@ mongodb:
     initialDelaySeconds: 10
     periodSeconds: 10
     timeoutSeconds: 10
+
+# HOW THIS DATABASE IS REACHED FROM OUTSIDE THE CLUSTER IT RUNS IN, and the
+# name is the whole of what this repository can say about it.
+#
+# templates/ingressroutetcp.yaml binds the Service below to the ingress
+# controller's plain-TCP entry point of this name. An entry point is STATIC
+# configuration of the controller — an argument on the controller's own
+# container, plus the port the address in that argument names, published on the
+# machine — so NOTHING in this repository can create one. The deploy program's
+# patch_container_arguments_and_ports row over daemonset/traefik
+# (ansiwise/programs/deploy-cluster.yaml in the installation repository) is the
+# only writer of either half, and the address it binds is what decides which of
+# the machine's addresses the port answers on.
+#
+# A route naming an entry point the controller does not carry is dropped by the
+# controller with one line in its own log. The object exists, ArgoCD reports it
+# synced, and the port answers nothing.
+tailnetEntryPoint: mongodb
+
 # Per-pod data volume (volumeClaimTemplate → /data/db). Each member gets its own
 # PVC (data-mongodb-<env>-<ordinal>), owned by the StatefulSet controller (not
 # ArgoCD-pruned), so data survives a chart re-sync. storageSize per env below.

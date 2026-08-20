@@ -1,14 +1,17 @@
-# Redis is no-auth + cluster-internal (no Ingress), so REACH IS THE GRANT:
-# any pod that can open :6379 can read every key and FLUSHALL. This
-# NetworkPolicy is therefore the isolation, and it must not admit the blanket
+# Redis is no-auth, so REACH IS THE GRANT: any pod that can open :6379 can read
+# every key and FLUSHALL. Inside this cluster this NetworkPolicy is the whole of
+# the isolation; from outside it, what decides who can reach the port is the
+# address the entry point of templates/ingressroutetcp.yaml is bound to and the
+# machine's own firewall, and neither of those is stated in this repository.
+# Being the whole of the isolation is why it must not admit the blanket
 # db-consumer label every unit namespace carries (that label only says "may
 # dial the credentialed DBs", where a per-unit credential still gates).
 # Admitted instead: platform namespaces by name (global.dbConsumerNamespaces),
 # namespaces carrying the REDIS-specific global.redisConsumerLabel=true —
 # stamped only where the registration claims `redis` in services[]
 # (consumers-appset templatePatch) or where a tenant member's own registration
-# carries the label — and same-namespace pods (metrics exporter).
-# Any other workload is denied. Calico-enforced.
+# carries the label — the ingress controller (below), and same-namespace pods
+# (metrics exporter). Any other workload is denied. Calico-enforced.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -32,6 +35,15 @@ spec:
             matchLabels:
               {{ . }}: "true"
         {{- end }}
+        # THE INGRESS CONTROLLER, and it is the second half of
+        # templates/ingressroutetcp.yaml. Every connection that arrives from
+        # outside this cluster is opened by a Traefik pod in this namespace, so
+        # without this rule the route is admitted by the controller and refused
+        # by Calico — which, from the client's side, is indistinguishable from
+        # an entry point nobody ever declared.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace | quote }}
         - podSelector: {}
       ports:
         - protocol: TCP

@@ -1,10 +1,10 @@
-# MongoDB is no-auth + cluster-internal (no Ingress). This NetworkPolicy is the
-# isolation that replaces the root user: only approved DB consumers may reach
-# :27017 — platform namespaces by name (global.dbConsumerNamespaces), any
-# namespace self-labelled global.dbConsumerLabel=true where that key is set (so
-# external add-ons admit themselves without the platform hardcoding their
-# namespace name), and same-namespace pods (metrics exporter, rs-init Job). Any
-# other workload is denied. Enforced by Calico.
+# MongoDB runs with SCRAM authentication (values-common.yaml, `--auth` in
+# mongodb.args), and this NetworkPolicy narrows who may even open :27017:
+# platform namespaces by name (global.dbConsumerNamespaces), any namespace
+# self-labelled global.dbConsumerLabel=true where that key is set (so external
+# add-ons admit themselves without the platform hardcoding their namespace
+# name), the ingress controller (below), and same-namespace pods (metrics
+# exporter, rs-init Job). Any other workload is denied. Enforced by Calico.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -28,6 +28,15 @@ spec:
             matchLabels:
               {{ . }}: "true"
         {{- end }}
+        # THE INGRESS CONTROLLER, and it is the second half of
+        # templates/ingressroutetcp.yaml. Every connection that arrives from
+        # outside this cluster is opened by a Traefik pod in this namespace, so
+        # without this rule the route is admitted by the controller and refused
+        # by Calico — which, from the client's side, is indistinguishable from
+        # an entry point nobody ever declared.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace | quote }}
         - podSelector: {}
       ports:
         - protocol: TCP

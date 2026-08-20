@@ -3,7 +3,13 @@ name: redis
 version: 1.0.0
 description: |
   Redis cache — the OFFICIAL `redis` image on our own charts/deployment (no
-  Bitnami, no operator). Standalone, AOF-persistent, no auth (cluster-internal).
+  Bitnami, no operator). Standalone, AOF-persistent, no auth — a NetworkPolicy
+  (templates/networkpolicy.yaml) is what says who may open :6379, and
+  templates/ingressroutetcp.yaml names a plain-TCP entry point of the ingress
+  controller for it. The entry point itself is NOT carried yet: digita-deploy
+  ansiwise/programs/deploy-cluster.yaml:413-421 patches the controller with
+  `ports: []`, so the route is dropped with one line in the controller's own log
+  — the object exists, ArgoCD reports it synced, and the port answers nothing.
 
   The image tag is managed centrally in platform/versions.yaml (images.redis)
   and stamped by the version sync. A single ReadWriteOnce data PVC (Recreate

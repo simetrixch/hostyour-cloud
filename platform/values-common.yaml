@@ -137,6 +137,18 @@ global:
   dbConsumerLabel: platform/db-consumer
   redisConsumerLabel: platform/redis-consumer
 
+  # The namespace the ingress controller runs in. It is the MicroK8s ingress
+  # addon's own name, not one this platform chooses, and the deploy program
+  # patches the controller there (ansiwise/programs/deploy-cluster.yaml, the
+  # patch_container_arguments_and_ports row over daemonset/traefik).
+  # apps/{mongodb,redis}/templates/networkpolicy.yaml admit it by name, because
+  # a client outside this cluster reaches those two ports through Traefik and
+  # through nothing else. The rule and the IngressRouteTCP beside it are one
+  # statement in two halves: a route whose port Calico refuses answers exactly
+  # like an entry point nobody declared, and neither half says anything is
+  # wrong.
+  ingressNamespace: ingress
+
   # ── Release-tag grammar — the ONE build-plane copy ─────────────────────────
   # The shell/CEL-side MIRROR of hostyour-manager shared/release.ts
   # RELEASE_TAG_RE, kept here (a `global.*` key) so every build-plane chart that

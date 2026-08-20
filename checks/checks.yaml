@@ -57,3 +57,17 @@ appset-cluster-map-keys: test/appset_cluster_map_keys_test.dart
 # which IS stated at platform/values-common.yaml:173-176 and read by the Controller, but needs the
 # stage a pin serves held against the channel its tag names. That is hostyour-cloud#60's subject.
 release-pin-tags: test/release_pin_tags_test.dart
+
+# Every database published outside its own cluster on a plain-TCP entry point of the ingress
+# controller is admitted through by a NetworkPolicy of its own chart, on the port its route sends
+# to, and no two of them stand on one entry point. The route and the policy do not reference each
+# other, and three different faults present to a client as the same closed port: a policy that names
+# the controller's namespace nowhere, a route that resolves to nothing, and no route at all. The
+# fourth — no policy at all — presents as a working database reachable from every pod in the cluster.
+# WHAT IT DOES NOT REACH: the entry point itself. It is static configuration of the ingress
+# controller, written by the installation's deploy program, so nothing here can say that the entry
+# point a route names exists, that its address is the machine's tailnet address, or that the port
+# stays closed on the machine's public address. Nor whether the admitted namespace is the RIGHT one:
+# a policy admitting global.ingressNamespace passes whatever that value holds, so a MISNAMED
+# namespace is invisible where a MISSING one is reported.
+published-databases: test/published_databases_test.dart

@@ -83,7 +83,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ingress
+              kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace | quote }}
       ports:
         - { protocol: TCP, port: 8443 } # Traefik `websecure` container port (Service 443 → 8443)
         - { protocol: TCP, port: 443 } # belt: an ingress that terminates on 443 directly
