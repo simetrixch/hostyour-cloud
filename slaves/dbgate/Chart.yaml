@@ -29,11 +29,17 @@ description: |
   is gated by the Traefik forwardAuth Middleware `forwardauth` in namespace
   `idp`, and the program that installs bootstrap/idp declares `roles: [master]`.
 
-  WHAT IT TAKES FROM ITS SIBLING SOURCE. The ExternalSecret names no SecretStore
-  of its own: it takes global.secretStoreName, which is the `vault-backend`
+  WHAT IT TAKES FROM ITS SIBLING SOURCE. Neither ExternalSecret names a SecretStore
+  of its own: both take global.secretStoreName, which is the `vault-backend`
   store slaves/slave renders into this same namespace. The two charts are
   sources of ONE Application, so a second SecretStore of that name here would be
   the same object rendered twice.
+
+  BOTH CONNECTIONS AUTHENTICATE. The slave's mongod runs with SCRAM (--auth) and
+  its redis with --requirepass, so dbgate dials each as that service's own admin
+  user — `root` on mongo, `default` on redis — out of the two Secrets below. It has
+  to be the admin user on both: a browser shows every database and every key, which
+  is exactly what a per-claim credential is bounded away from.
 type: application
 dependencies:
   - name: deployment
@@ -43,10 +49,19 @@ dependencies:
   - name: ingress
     version: 1.0.0
     repository: file://../../charts/ingress
+  # The mongod root password, out of Vault <stage>/app/mongodb.
   - name: external-secret
     version: 1.0.0
     repository: file://../../charts/external-secret
     alias: externalsecret-db
+  # The redis `default` user's password, out of Vault <stage>/app/redis. A SECOND
+  # ExternalSecret rather than a second data entry on the one above: the two stand
+  # at different Vault paths, and argocd/apps/slaves-appset.yaml stamps one path per
+  # ExternalSecret as a per-stage literal. Same shape apps/registry uses for its two.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-redis
   - name: pvc
     version: 1.0.0
     repository: file://../../charts/pvc

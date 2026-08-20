@@ -432,6 +432,47 @@ baseImages:
         file: docker/dbtools.Dockerfile
         image: library/debian
 
+# The SDKs our own source is BUILT with. Neither an image nor a tool on a host:
+# a toolchain is what a build machine compiles against, and the binary that
+# comes out is whatever that toolchain made of the same commit.
+toolchains:
+  # The client's own pubspec states `flutter: ^3.44.0` under `environment:`, and
+  # that is the LOWEST SDK the package accepts, not a pin — every Flutter at or
+  # above it satisfies the constraint, so two machines building one commit
+  # produce two different binaries and neither is wrong. This key is what
+  # decides which one.
+  #
+  # 3.47.1 is the stable release of 2026-08-19, and it ships Dart 3.13.1, which
+  # the client's `sdk: ^3.12.0` accepts. MEASURED on 2026-08-20 from the channel
+  # Flutter publishes to, never recalled:
+  # https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
+  # — its `current_release.stable` names a commit hash, and the entry in its
+  # `releases` list carrying that hash states the version, the release date and
+  # the Dart SDK inside it.
+  #
+  # NO `upstream:`, because none of the grammar's kinds can ask that channel and
+  # the near miss would lie. Measured the same day: `github_release` over
+  # flutter/flutter answers "3.19.0-0.1.pre" of 11 January 2024 — the newest of
+  # the seven releases that feed carries, since the project stopped publishing
+  # there — so declaring it would print an upstream 28 minor versions BEHIND the
+  # pin and invite a downgrade. The report answers "?" with the reason instead,
+  # which is a finding about the report and not about the pin.
+  #
+  # NOTHING CARRIES THIS PIN YET: no tree this file stamps into builds the
+  # client, so the report says "(stamped nowhere)" and it is right. The site
+  # WILL BE the workflow ansiwise-client#17 creates in the client's own
+  # repository, which is a fourth tree label beyond the three the sync-versions
+  # row maps.
+  flutter:
+    version: "3.47.0"
+    note: |
+      Read by hand from the Flutter release channel — no upstream kind can ask it.
+      3.47.0 and not the newer 3.47.1, because a pin is for reproducing a build and
+      not for being current: ansiwise-client/tool/ci.dart refuses every SDK but the
+      pinned one, so a version nobody has installed turns that gate red everywhere.
+      3.47.0 is the one the client was built and tested with. versions-upstream
+      reports 3.47.1 standing beside it and never fails on it.
+
 # CLI tools installed to /usr/local/bin on every host. They were fetched as
 # "latest" until they were pinned here: two hosts installed a month apart got
 # different tools and neither could be reproduced. Each pin is stamped into

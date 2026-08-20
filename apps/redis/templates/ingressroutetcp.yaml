@@ -5,8 +5,8 @@
 # (tailnetEntryPoint) belongs to the Service below. The other half is the entry
 # point itself, which is static configuration of the controller and which
 # nothing in this repository can create — see that value for who writes it, to
-# which address it is bound, and what reaching this port is worth on a cache
-# that runs without authentication.
+# which address it is bound, and what reaching this port is worth now that the
+# cache requires a password.
 #
 # HostSNI(`*`) IS THE ONLY MATCH A PLAIN-TCP ROUTER CAN CARRY HERE. A TCP router
 # matches on the server name a client offers in a TLS handshake, and a client

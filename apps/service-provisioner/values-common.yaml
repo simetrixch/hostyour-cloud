@@ -1,5 +1,5 @@
 # service-provisioner — env-agnostic defaults. Per-env values-{dev,test,prod}.yaml
-# set the mongo + postgres hosts (their env-suffixed Service DNS). global.env +
+# set the mongo + redis hosts (their env-suffixed Service DNS). global.env +
 # global.dbConsumerLabel come from platform/values-<env>.yaml. Each backend's
 # admin credential is read at runtime from that backend's own Secret via the
 # controller's cluster-wide secret-read RBAC — no ESO/Vault wiring here.
@@ -40,6 +40,20 @@ controller:
     adminUser: postgres
     credentialsSecret: postgresql-credentials
     credentialsKey: postgres-password
+
+  redis:
+    # ONE instance per cluster (apps/redis), so unlike postgresql there IS a shared
+    # instance to point at and the host is a per-env value (values-{dev,test,prod}).
+    # The admin credential is the `default` user's password — the same value
+    # apps/redis boots the server with as `--requirepass`, materialized by that
+    # chart's ExternalSecret from Vault <env>/app/redis into the Secret below, and
+    # read here through the controller's cluster-wide secret-read RBAC.
+    host: ""                              # per-env (redis-<env>.redis.svc...)
+    port: "6379"
+    adminUser: default
+    credentialsNamespace: redis
+    credentialsSecret: redis-credentials
+    credentialsKey: redis-password
 
   registry:
     # Build-cluster identity (the ONE cluster running apps/registry, i.e.

@@ -100,6 +100,13 @@ spec:
                   # render that forgets it fails instead of reading another
                   # cluster's credential.
                   vaultPath: "__STAGE__/app/mongodb"
+              # The slave's redis requires a password too (apps/redis boots with
+              # --requirepass), and it stands at its own KV entry — hence a second
+              # ExternalSecret with its own stamped literal rather than a second data
+              # entry under the path above.
+              externalsecret-redis:
+                externalSecret:
+                  vaultPath: "__STAGE__/app/redis"
       destination:
         server: https://kubernetes.default.svc
         namespace: "{{ .values.cluster }}"

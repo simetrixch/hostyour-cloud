@@ -5,12 +5,13 @@ separate image-build pipeline, the platform owns the code in git). A
 ServiceClaim-driven controller with one handler per backing service — it
 replaced (and retired) the annotation-driven mongodb-provisioner.
 
-Reconcile loop: list every ServiceClaim cluster-wide; dispatch by .spec.service
+Reconcile loop (mongodb, postgresql, redis, registry):
+list every ServiceClaim cluster-wide; dispatch by .spec.service
 to a handler; write a namespace-local credentials Secret (generate-once
 password — read back from the Secret, never rotated); record .status. Every
 per-claim action is wrapped in try/except so one bad claim never stalls the loop.
 
-ISOLATION: the mongo USER is named from a
+ISOLATION: the mongo and redis USER is named from a
 NAMESPACE-anchored identity `<namespace>_<claim>` (see sanitize), so a claim can
 NEVER name — and thus gain access to — another tenant's (or the platform's) user.
 DATABASE names, by contrast, are taken VERBATIM from .spec.databases:
@@ -22,6 +23,8 @@ a foreign database is the platform (onboard-time validation + the
 ApplicationSet-injected mongodb.databases value), not a provisioner prefix; the
 provisioner trusts the literal names. The consumer still reads the names back from
 the Secret (MONGODB_DATABASES / the MONGODB_URI path) rather than re-deriving them.
+A redis claim's .spec.keyPatterns is that same contract in redis' own words: the ACL
+user is granted EXACTLY those patterns and reads them back as REDIS_KEY_PATTERNS.
 */ -}}
 apiVersion: v1
 kind: ConfigMap
@@ -136,6 +139,17 @@ data:
     PG_CRED_SECRET = os.environ.get("PG_CREDENTIALS_SECRET", "postgresql-credentials")
     PG_CRED_KEY = os.environ.get("PG_CREDENTIALS_KEY", "postgres-password")
 
+    # Redis is ONE instance per cluster (apps/redis), so its coordinates are read from
+    # the deployment env the way mongo's shared replica set is — a host per stage, and
+    # the `default` user's password out of the admin Secret apps/redis materializes from
+    # Vault into its own namespace. There is no per-namespace variant to resolve: nothing
+    # in this tree renders a second redis, and a claim is always served by this one.
+    REDIS_HOST = os.environ.get("REDIS_HOST", "")
+    REDIS_PORT = os.environ.get("REDIS_PORT", "6379")
+    REDIS_ADMIN_USER = os.environ.get("REDIS_ADMIN_USER", "default")
+    REDIS_CRED_NS = os.environ.get("REDIS_CREDENTIALS_NAMESPACE", "redis")
+    REDIS_CRED_SECRET = os.environ.get("REDIS_CREDENTIALS_SECRET", "redis-credentials")
+    REDIS_CRED_KEY = os.environ.get("REDIS_CREDENTIALS_KEY", "redis-password")
 
     REG_SOURCE_NS = os.environ.get("REGISTRY_SOURCE_NAMESPACE", "")
     REG_SOURCE_SECRET = os.environ.get("REGISTRY_SOURCE_SECRET", "")
@@ -323,6 +337,13 @@ data:
         the same spec on create and teardown, so deprovision targets exactly what
         create made. Never raises — the postgresql path guards the empty case."""
         return [d for d in (spec.get("databases") or []) if d]
+
+    def _key_patterns(spec):
+        """The LITERAL redis key patterns a claim asks for — spec.keyPatterns used
+        VERBATIM, the same contract _databases carries. Empty ⇒ [] and handle_redis
+        refuses the claim: a redis ACL user must be told which keys it may touch, and
+        the answer for a claim that named none is an Error rather than every key."""
+        return [p for p in (spec.get("keyPatterns") or []) if p]
 
     # EXTRA `role@db` grants a mongodb claim may request WITHOUT owning a
     # database (spec.roles). STRICT WHITELIST — mirrors the CRD enum: a claim
@@ -538,6 +559,92 @@ data:
             "POSTGRES_DATABASES": ",".join(dbs),
             "DATABASE_URL": uri,
         }, "Opaque")
+    # THE ACL RULE EVERY REDIS CLAIM'S USER IS WRITTEN WITH, in redis' own ACL words
+    # and stated once. The `~<pattern>` entries are the claim's LITERAL
+    # spec.keyPatterns, prefixed one by one in _redis_acl_rules below.
+    #
+    #   reset          — the whole rule is re-stated on every reconcile pass, so what the
+    #                    server holds is what this line says and not what some earlier
+    #                    version of this file left behind.
+    #   on >password   — enabled, with the generate-once password read back out of the
+    #                    namespace-local Secret (reconcile, get_existing_password).
+    #   ~<pattern>     — the keys the user may touch, VERBATIM from the claim.
+    #   resetchannels  — no pub/sub channel at all. A claim that needs one is refused
+    #                    with redis' own NOPERM rather than served silently, because a
+    #                    channel is not a key and no field of this CRD asks for one.
+    #   +@all          — every command, minus the two categories below.
+    #   -@dangerous    — FLUSHALL, FLUSHDB, KEYS and the rest of that category.
+    #                    FLUSHALL takes NO key argument, so the key patterns above
+    #                    cannot stop it and only a command rule can: this is the line
+    #                    that answers "any pod there can open redis and issue FLUSHALL".
+    #   -@admin        — CONFIG, SHUTDOWN, ACL, REPLICAOF and the rest of that category.
+    REDIS_ACL_TAIL = ["resetchannels", "+@all", "-@dangerous", "-@admin"]
+
+    def _redis_acl_rules(password, patterns):
+        """The full `ACL SETUSER` argument list for a claim, in the order the rule above
+        states it. Built in one place so create and any later reader see one rule."""
+        return ["reset", "on", ">" + password] + ["~" + p for p in patterns] + REDIS_ACL_TAIL
+
+    def _redis_admin(core):
+        """WHERE a redis claim is served from: (host, port, the `default` user's password).
+
+        One instance per cluster, so both coordinates come from the deployment env and
+        the password from the admin Secret apps/redis materializes into REDIS_CRED_NS.
+        A missing password is an Error the claim reports, not a connection attempted
+        without one."""
+        if not REDIS_HOST:
+            raise RuntimeError("REDIS_HOST not configured")
+        admin_pw = read_secret_key(core, REDIS_CRED_NS, REDIS_CRED_SECRET, REDIS_CRED_KEY)
+        if admin_pw is None:
+            raise RuntimeError("redis admin credentials not available yet")
+        return REDIS_HOST, int(REDIS_PORT), admin_pw
+
+    def _redis_uri(user, password, host, port):
+        """The URI a redis claim pastes into its client. Both credential parts are
+        quote_plus'd for the same reason _mongo_uri quotes its own: a generated password
+        that carries a URL-reserved character is otherwise parsed as part of the host."""
+        return "redis://%s:%s@%s:%s" % (quote_plus(user), quote_plus(password), host, port)
+
+    def handle_redis(core, spec, ns, claim, user, password, prefix):
+        """A per-claim redis ACL user, the shape handle_mongodb has for a mongo user.
+
+        WHAT PERSISTS THIS USER, and it is worth knowing before reading the rule above.
+        Redis holds ACL users in memory; apps/redis carries no `aclfile`, so a restart of
+        the server empties the list. What restores it is this handler: reconcile runs it
+        for every claim on every pass, and the password it re-states is the one already in
+        the namespace-local Secret — so the passwords the platform issued are the durable
+        copy and the server's ACL list is derived from them. What that costs is bounded and
+        real: for up to POLL_INTERVAL seconds after a redis restart, the claim's ACL user is
+        gone and its credential is refused with WRONGPASS — redis' answer for a username it
+        does not know — while the `default` user (whose password IS in the server's config)
+        already answers."""
+        import redis as redis_client
+        host, port, admin_pw = _redis_admin(core)
+        patterns = _key_patterns(spec)
+        if not patterns:
+            raise RuntimeError(
+                "claim needs at least one key pattern (spec.keyPatterns) — a redis ACL "
+                "user must be told which keys it may touch")
+        conn = redis_client.Redis(
+            host=host, port=port, username=REDIS_ADMIN_USER, password=admin_pw,
+            socket_connect_timeout=10, socket_timeout=10, decode_responses=True)
+        try:
+            # ACL SETUSER applies every rule atomically or none of them, so the user is
+            # never left half-written by a rule the server rejects.
+            conn.execute_command("ACL", "SETUSER", user, *_redis_acl_rules(password, patterns))
+            log.info("set redis acl user %s on %s", user, ", ".join(patterns))
+        finally:
+            conn.close()
+        return ({
+            "PASSWORD": password,
+            "REDIS_USER": user,
+            "REDIS_PASSWORD": password,
+            "REDIS_HOST": host,
+            "REDIS_PORT": str(port),
+            "REDIS_KEY_PATTERNS": ",".join(patterns),
+            "REDIS_URI": _redis_uri(user, password, host, port),
+        }, "Opaque")
+
     def handle_registry(core, spec, ns, claim, user, password, prefix):
         """Deliver the shared pull dockerconfigjson into the claiming namespace."""
         if not (REG_SOURCE_NS and REG_SOURCE_SECRET):
@@ -550,6 +657,7 @@ data:
     HANDLERS = {
         "mongodb": handle_mongodb,
         "postgresql": handle_postgresql,
+        "redis": handle_redis,
         "registry": handle_registry,
     }
 
@@ -623,6 +731,34 @@ data:
         re-mintable while the data is not. Same shape as deprovision_registry:
         nothing for this handler to tear down."""
         return
+    def deprovision_redis(core, spec, ns, claim, user, prefix):
+        """Drop the claim's ACL user, and ONLY that.
+
+        THE KEYS STAY, and that is a decision rather than an omission. A mongo database is
+        a container this controller created, so deprovision_mongodb drops it; a redis key
+        pattern is a name shape inside ONE shared keyspace, and deleting by pattern on the
+        instance every other claim is using is the destructive act hostyour-cloud#64 exists
+        to prevent — a claim whose pattern reads wider than its author meant would take
+        another claim's keys with it. What is left behind is cache material reachable by no
+        credential this platform hands out afterwards, except a re-claim of the SAME
+        namespace and claim name, which gets the same patterns back on purpose.
+
+        A relocation hold (RELOCATING_ANNOTATION) therefore changes nothing here, the same
+        as deprovision_postgresql: this path drops no data, so there is nothing to hold.
+
+        Idempotent: ACL DELUSER on an absent user deletes 0 users and returns 0."""
+        import redis as redis_client
+        host, port, admin_pw = _redis_admin(core)
+        conn = redis_client.Redis(
+            host=host, port=port, username=REDIS_ADMIN_USER, password=admin_pw,
+            socket_connect_timeout=10, socket_timeout=10, decode_responses=True)
+        try:
+            removed = conn.execute_command("ACL", "DELUSER", user)
+            log.info("dropped redis acl user %s (%s)", user,
+                     "removed" if removed else "already absent")
+        finally:
+            conn.close()
+
     def deprovision_registry(core, spec, ns, claim, user, prefix):
         """No backend resource exists for registry — the only artifact is the
         namespace-local dockerconfigjson Secret, and that is deleted by the common
@@ -632,6 +768,7 @@ data:
     DEPROVISIONERS = {
         "mongodb": deprovision_mongodb,
         "postgresql": deprovision_postgresql,
+        "redis": deprovision_redis,
         "registry": deprovision_registry,
     }
 
@@ -658,6 +795,10 @@ data:
             out.append("pg:role:%s" % user)
             for d in _databases(spec):
                 out.append("pg:db:%s" % d)
+        elif service == "redis":
+            # The user only: deprovision_redis leaves the keys standing on purpose, so
+            # they are not handarbeit an operator is being told to do.
+            out.append("redis:user:%s" % user)
         out.append("secret:%s/%s" % (ns, secret_name))
         return out
 

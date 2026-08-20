@@ -102,13 +102,26 @@ app:
     # on the master, so every connection after the handshake would go nowhere.
     - name: URL_mongo
       value: "mongodb://root:$(MONGO_ROOT_PW)@$(SLAVE_ADDRESS):27017/?directConnection=true&authSource=admin"
-    # --- Redis (no password: apps/redis runs without auth) ---
+    # --- Redis ---
     - name: LABEL_redis
       value: 'Redis ({{ include "dbgate.slaveName" $ }})'
     - name: ENGINE_redis
       value: "redis@dbgate-plugin-redis"
+    # The slave's redis runs with --requirepass (apps/redis values-common.yaml), so
+    # dbgate connects as the `default` user — the one credential that reaches every
+    # key, which is what a browser needs and what a per-claim ServiceClaim user is
+    # deliberately bounded away from. Same $(VAR) rule as MONGO_ROOT_PW above:
+    # REDIS_DEFAULT_PW MUST be declared BEFORE URL_redis or Kubernetes' expansion
+    # does not resolve. The password is whatever <stage>/app/redis carries
+    # (externalsecret-redis below); if it carries URL-reserved characters it must
+    # be percent-encoded here.
+    - name: REDIS_DEFAULT_PW
+      valueFrom:
+        secretKeyRef:
+          name: dbgate-redis-credentials
+          key: redis-password
     - name: URL_redis
-      value: "redis://$(SLAVE_ADDRESS):6379"
+      value: "redis://default:$(REDIS_DEFAULT_PW)@$(SLAVE_ADDRESS):6379"
   # DBGate's data dir — saved queries and last-opened tabs across pod restarts.
   volumeMounts:
     - name: dbgate-data
@@ -200,3 +213,22 @@ externalsecret-db:
     data:
       - secretKey: mongodb-password
         property: mongodb-root-password
+
+# ExternalSecret — the redis `default` user's password, injected into URL_redis
+# above through the dbgate-redis-credentials Secret. Same store, same tier and the
+# same one-value rule as the mongod password beside it: what this reads out of
+# <stage>/app/redis is the entry apps/redis on the slave boots its server with as
+# --requirepass, so the password here and the password there cannot drift.
+externalsecret-redis:
+  externalSecret:
+    enabled: true
+    name: dbgate-redis-credentials
+    secretStoreKind: SecretStore
+    targetSecretName: dbgate-redis-credentials
+    # The remoteRef key — <stage>/app/redis. Left empty and `required`ed by
+    # charts/external-secret, for the same reason the one above is: the stage is
+    # not a fact this chart holds, and the ApplicationSet injects it as a literal.
+    vaultPath: ""
+    data:
+      - secretKey: redis-password
+        property: redis-password

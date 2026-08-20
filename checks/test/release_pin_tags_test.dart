@@ -5,16 +5,27 @@ import 'package:test/test.dart';
 
 /// release-pin-tags — over the real trees, and over planted ones.
 ///
-/// **What this is guarding.** A `builds[]` entry states which image a stage runs, and nothing on
-/// either side of the repository boundary refuses a tag no release ever minted: the chart renders
-/// whatever string stands there into an image ref, the release bump only overwrites an entry it
-/// already finds, and the Controller's pin schema types the tag as a non-empty string. A stage no
-/// release has reached therefore keeps the string a person typed, and the first thing that says so
-/// is a pull failure on a cluster.
+/// **What this is guarding.** A `builds[]` entry states which image a stage runs, and apart from the
+/// one value named below nothing on either side of the repository boundary refuses a tag no release
+/// ever minted: the chart renders whatever string stands there into an image ref, the release bump
+/// only overwrites an entry it already finds, and the Controller's pin schema types the tag as a
+/// non-empty string. A stage no release has reached therefore keeps the string a person typed, and
+/// the first thing that says so is a pull failure on a cluster.
+///
+/// **The one value that is not a release tag.** An entry has to stand in the file before the release
+/// that writes its tag, so a stage no release has reached carries the placeholder
+/// `platform/values-common.yaml` states under `global.placeholderTag`, and this check admits it.
+/// `charts/common` `common.buildTag` refuses to render it, so the value deploys nothing while it
+/// stands. The last group drives `pinnedTagsIn` and `auditPinTags` over the pin file of one planted
+/// application: the tag it is added with, the tag the first release leaves behind, and what is
+/// refused in between. That is the reach of this suite — the render half (`charts/common`
+/// `common.buildTag`) and the bump half (`apps/consumer-build` `pipeline-release.yaml` `bump_file`)
+/// are the other two readers of the same value and neither is executed anywhere here.
 ///
 /// **Why nothing here restates the grammar.** A pattern written into this suite would be a second
 /// spelling of the release grammar, and the drift being watched for could then happen inside the
-/// guard. Both halves are read out of the Controller tree, where they are decided.
+/// guard. Both halves are read out of the Controller tree, where they are decided, and the
+/// placeholder out of the values file both readers of it take it from.
 void main() {
   final Directory repository = Directory.current.parent;
 
@@ -44,6 +55,15 @@ void main() {
             'the Controller\'s $controllerImageSuffix states no $imageSuffixConstant — '
             'it was not read',
       );
+      final String? placeholder = _statedPlaceholderIn(repository);
+      expect(
+        placeholder,
+        isNotNull,
+        reason:
+            'this tree\'s $platformValues states no global.$placeholderTagKey — the value the '
+            'chart refuses and this check admits was not read, and the two cannot agree on a '
+            'string neither of them has',
+      );
 
       final Map<String, List<PinnedTag>> pins = _pinsOf(repository);
       expect(
@@ -57,6 +77,7 @@ void main() {
           pins: pins,
           releaseTag: releaseTag!,
           imageTag: imageTag!,
+          placeholder: placeholder!,
         ).map((OffGrammarPin each) => each.toString()),
         isEmpty,
       );
@@ -70,7 +91,15 @@ void main() {
       final int stated = pins.values.fold(0, (int sum, List<PinnedTag> each) => sum + each.length);
       expect(stated, greaterThan(0), reason: 'a check over nothing reads like a pass');
 
-      expect(auditPinTags(pins: pins, releaseTag: _never, imageTag: _never), hasLength(stated));
+      expect(
+        auditPinTags(
+          pins: pins,
+          releaseTag: _never,
+          imageTag: _never,
+          placeholder: _noPinCarriesThis,
+        ),
+        hasLength(stated),
+      );
     });
   });
 
@@ -109,8 +138,21 @@ void main() {
     test('the pins are read out of the builds list, in the order the file states them', () {
       expect(
         pinnedTagsIn('planted', _carrier(<String, String>{'manager': '1.2.3', 'dbtools': '4.5.6'})),
-        <PinnedTag>[(name: 'manager', tag: '1.2.3'), (name: 'dbtools', tag: '4.5.6')],
+        <PinnedTag>[
+          (name: 'manager', image: 'manager', tag: '1.2.3'),
+          (name: 'dbtools', image: 'dbtools', tag: '4.5.6'),
+        ],
       );
+    });
+
+    test('the placeholder is read out of this tree\'s own values file', () {
+      expect(placeholderTagIn('global:\n  $placeholderTagKey: "0.0.0-planted"\n'), '0.0.0-planted');
+    });
+
+    test('a values file stating no placeholder reads as absent, never as an empty admission', () {
+      expect(placeholderTagIn('global:\n  timezone: Europe/Amsterdam\n'), isNull);
+      expect(placeholderTagIn('$placeholderTagKey: "0.0.0-planted"\n'), isNull);
+      expect(placeholderTagIn('# ${placeholderTagKey}s are discussed here\n'), isNull);
     });
 
     test('a builds that is no list is a refusal naming the file, never an empty answer', () {
@@ -130,6 +172,19 @@ void main() {
         ),
       );
     });
+
+    test('an entry with no image is a refusal — no release bump ever writes that one', () {
+      expect(
+        () => pinnedTagsIn('planted', 'builds:\n  - name: manager\n    tag: "0.0.0"\n'),
+        throwsA(
+          isA<StateError>().having(
+            (StateError e) => e.message,
+            'message',
+            allOf(contains('"manager"'), contains('by its image')),
+          ),
+        ),
+      );
+    });
   });
 
   group('what it reports', () {
@@ -140,16 +195,27 @@ void main() {
       File('${controllerRoot().path}/$controllerImageSuffix').readAsStringSync(),
     )!;
 
+    final String placeholder = _placeholderOf(Directory.current.parent);
+
     List<OffGrammarPin> judge(String tag) => auditPinTags(
       pins: <String, List<PinnedTag>>{
-        'planted': <PinnedTag>[(name: 'manager', tag: tag)],
+        'planted': <PinnedTag>[(name: 'manager', image: 'manager', tag: tag)],
       },
       releaseTag: releaseTag,
       imageTag: imageTag,
+      placeholder: placeholder,
     );
 
-    test('THE PLANTED DEFECT: the placeholder a stage carries before its first release', () {
+    test('THE PLANTED DEFECT: the version a first pin reaches for, which names no release', () {
       expect(judge('0.0.0').single.toString(), contains('"0.0.0"'));
+    });
+
+    test('THE PLANTED DEFECT: the placeholder with anything appended to it', () {
+      expect(judge('$placeholder-1'), hasLength(1));
+    });
+
+    test('a refusal names the placeholder, so it says what to write instead', () {
+      expect(judge('0.0.0').single.toString(), contains(placeholder));
     });
 
     test('THE PLANTED DEFECT: a bare version, with no channel and no stamp', () {
@@ -184,10 +250,82 @@ void main() {
       expect(found.toString(), contains(releaseTag.pattern));
     });
   });
+
+  group(
+    'THE COUNTER-PROBE: an application added to this tree, before and after its first release',
+    () {
+      // hostyour-cloud#63's admission rule, driven over ONE planted carrier: the entry a person
+      // writes when they add `apps/<app>/`, the same entry after the release bump has written the
+      // minted tag into the one it found by `image`, and the values that are still refused in
+      // between. What runs is `pinnedTagsIn` and `auditPinTags` over the string `_carrier` builds —
+      // no file is written, no chart is rendered and the bump task is not executed. The "after" half
+      // carries the same minted tag the tree's own pins carry, so a release grammar that stopped
+      // matching it turns this probe red.
+      final RegExp releaseTag = releaseTagPatternIn(
+        File('${controllerRoot().path}/$controllerReleaseGrammar').readAsStringSync(),
+      )!;
+      final RegExp imageTag = imageSuffixPatternIn(
+        File('${controllerRoot().path}/$controllerImageSuffix').readAsStringSync(),
+      )!;
+      final String placeholder = _placeholderOf(Directory.current.parent);
+
+      List<OffGrammarPin> judgeNewApp(String tag) => auditPinTags(
+        pins: <String, List<PinnedTag>>{
+          'apps/planted/values-dev.yaml': pinnedTagsIn(
+            'apps/planted/values-dev.yaml',
+            _carrier(<String, String>{'planted': tag}),
+          ),
+        },
+        releaseTag: releaseTag,
+        imageTag: imageTag,
+        placeholder: placeholder,
+      );
+
+      test('BEFORE ANY RELEASE: the placeholder pin a new application is added with passes', () {
+        expect(judgeNewApp(placeholder), isEmpty);
+      });
+
+      test(
+        'AFTER THE FIRST RELEASE: the same application carrying the minted image tag passes',
+        () {
+          expect(judgeNewApp('0.41.0-stable-20260818095821-beeae7f'), isEmpty);
+        },
+      );
+
+      test('IN BETWEEN: every other value a first pin could reach for is still refused', () {
+        for (final String tag in <String>['0.0.0', '0.1.0', 'latest', 'placeholder', 'dev']) {
+          expect(judgeNewApp(tag), hasLength(1), reason: '$tag was admitted');
+        }
+      });
+    },
+  );
 }
 
 /// A pattern that matches nothing, so a probe measures the reach and not a grammar.
 final RegExp _never = RegExp(r'(?!)');
+
+/// A placeholder no pin can carry, so the reach probe measures the reach and not the admission.
+///
+/// The empty string: the chart's `common.buildTag` `required`s the key and the Controller's own pin
+/// schema types it `min(1)`, so no carrier of this tree can state it.
+const String _noPinCarriesThis = '';
+
+/// The tag [repository] states that a stage carries before its first release, or null where its
+/// values file states none.
+String? _statedPlaceholderIn(Directory repository) =>
+    placeholderTagIn(File('${repository.path}/$platformValues').readAsStringSync());
+
+/// The same value, refused BY NAME where the file states none.
+///
+/// A group that judges tags needs it while it is being DECLARED, where no expectation can run and a
+/// bare null check reports that a null was used and names neither the file nor the key.
+String _placeholderOf(Directory repository) =>
+    _statedPlaceholderIn(repository) ??
+    (throw StateError(
+      '$platformValues states no global.$placeholderTagKey — the value charts/common '
+      'common.buildTag refuses and this check admits cannot be read, so neither side has a string '
+      'to agree on.',
+    ));
 
 /// A planted carrier stating one `builds[]` entry per name/tag pair.
 String _carrier(Map<String, String> pins) => <String>[

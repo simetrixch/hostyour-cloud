@@ -49,7 +49,7 @@ spec:
             # pre-baked image is the harder follow-up; pinning closes the risk.
             - >-
               pip install --no-cache-dir --quiet
-              kubernetes==31.0.0 pymongo==4.10.1 psycopg2-binary==2.9.10 &&
+              kubernetes==31.0.0 pymongo==4.10.1 psycopg2-binary==2.9.10 redis==5.2.1 &&
               exec python /app/provisioner.py
           env:
             # Non-root pip → --user install; HOME points at the writable emptyDir.
@@ -92,6 +92,22 @@ spec:
               value: {{ .Values.controller.postgres.credentialsSecret | quote }}
             - name: PG_CREDENTIALS_KEY
               value: {{ .Values.controller.postgres.credentialsKey | quote }}
+            # --- Redis backend ---
+            # ONE instance per cluster (apps/redis), so the host is a per-stage value the
+            # way mongo's is, and the `default` user's password is read at runtime from
+            # the admin Secret apps/redis materializes from Vault into its own namespace.
+            - name: REDIS_HOST
+              value: {{ .Values.controller.redis.host | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.controller.redis.port | quote }}
+            - name: REDIS_ADMIN_USER
+              value: {{ .Values.controller.redis.adminUser | quote }}
+            - name: REDIS_CREDENTIALS_NAMESPACE
+              value: {{ .Values.controller.redis.credentialsNamespace | quote }}
+            - name: REDIS_CREDENTIALS_SECRET
+              value: {{ .Values.controller.redis.credentialsSecret | quote }}
+            - name: REDIS_CREDENTIALS_KEY
+              value: {{ .Values.controller.redis.credentialsKey | quote }}
             # --- Registry backend — source wired on the build cluster (global.servicesLocal.registry), optional elsewhere ---
             - name: REGISTRY_SOURCE_NAMESPACE
               value: {{ .Values.controller.registry.sourceNamespace | quote }}

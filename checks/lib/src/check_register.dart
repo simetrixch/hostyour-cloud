@@ -32,7 +32,7 @@
 /// discovers, and `dart test` discovers from disk — an untracked library is still a library the
 /// suite would run. Four of the checks beside it read the tracked tree because what they judge is
 /// what a cluster clones (`app-manifest-keys`, `chart-paths`, `channel-table-single`,
-/// `release-pin-tags`); the other four read the file system as this one does.
+/// `release-pin-tags`); the other five read the file system as this one does.
 ///
 /// **WHAT IT DOES NOT REACH.** It does not read what a check DOES: a library that names itself, is
 /// exported, has a suite of one empty test and states what it does not reach passes here, and the

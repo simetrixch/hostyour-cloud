@@ -3,12 +3,14 @@
 ///
 /// **WHY A PIN'S TAG IS DANGEROUS AND NOT MERELY UNTIDY.** A `builds[]` entry in
 /// `values-<stage>.yaml` is what says which image a stage runs FOR AN IMAGE THIS PLATFORM BUILDS,
-/// and three mechanisms read it, none of which refuses a tag no release ever minted:
+/// and three mechanisms read it, none of which refuses a tag no release ever minted — apart from
+/// the ONE value the section below names:
 ///
 ///   * the chart renders `<registryHost>/<image>:<tag>` from it (`charts/common`
-///     `common.buildImage`), and `common.buildTag` only `required`s the key's PRESENCE
-///     (`_helpers.tpl:101-105`) — so any non-empty string produces a syntactically valid image ref
-///     and the defect surfaces as a pull failure on a cluster, never here;
+///     `common.buildImage`), and beyond the one value named below `common.buildTag` only
+///     `required`s the key's PRESENCE (`_helpers.tpl:108-115`) — so any other non-empty string
+///     produces a syntactically valid image ref and the defect surfaces as a pull failure on a
+///     cluster, never here;
 ///   * the release pipeline's bump WRITES the tag into an entry it finds by `image`
 ///     (`apps/consumer-build` `pipeline-release.yaml`, `bump_file`), so whatever stands there
 ///     survives until a release of that stage overwrites it — a stage no release has reached keeps
@@ -29,17 +31,40 @@
 ///     [imageSuffixConstant] in [controllerImageSuffix], the same strip the retention classifier
 ///     makes before it parses a tag.
 ///
+/// **THE ONE TAG THAT IS NOT A RELEASE TAG, AND WHY IT IS ADMITTED.** An entry has to STAND in the
+/// file before the release that writes its tag: `bump_file` rewrites the tag of an entry it finds by
+/// `image` and creates none, and the reach check closing that same task fails a release whose
+/// declared image no pin carries at all. So an application is added with its entries already
+/// written, each pinned at the placeholder [platformValues] states under `global.` +
+/// [placeholderTagKey] — [placeholderTagIn] reads it — and the first release writes the minted image
+/// tag over it. This check admits that ONE string, and nothing else off the grammar.
+///
+/// Admitting it costs no deployment against an image that does not exist: `charts/common`
+/// `common.buildTag` stops the render while the placeholder stands in the pin, so the value is legal
+/// in the file and deploys nothing. Both readers take the string out of the same key for the reason
+/// the grammar is read rather than restated — a second spelling here and the chart would refuse what
+/// this admits.
+///
 /// **What is judged.** Every `builds[]` entry of every tracked file of this repository that states
 /// pins.
 ///
 /// **WHAT IT DOES NOT REACH, each with the reason it is not judged.**
 ///
-///   * A tag that is not a `builds[]` pin. `apps/redis/values-common.yaml:8` states `tag: "8.8"`
+///   * A tag that is not a `builds[]` pin. `apps/redis/values-common.yaml:12` states `tag: "8.8"`
 ///     and `apps/registry/values-common.yaml:18` states `tag: "v2.1.18"`, both under `image:`, and
 ///     both are correct: a vendor's own version is not a release this platform minted, so the
 ///     grammar here would refuse a true value.
+///   * HOW LONG a pin stands at the placeholder. A stage left there forever is silent here by
+///     construction — the value is admitted, and this check reads a file and not a history. What
+///     answers it is the render: `charts/common` `common.buildTag` refuses while it stands, so the
+///     app deploys nothing until a release writes the tag, and nothing measures the gap.
+///   * Whether the `image` an entry carries names a build any unit DECLARES. An entry carrying no
+///     `image` at all is refused, because that is the key `bump_file` selects by and an entry
+///     without it is one no release can ever write; an `image` naming a build no
+///     `deploy/platform.yaml` declares reads exactly like a declared one. What reports that is the
+///     bump's own reach check, on the release, in the other tree.
 ///   * The channel CEILING — which channel may write which stage. It IS stated:
-///     `platform/values-common.yaml:173-176` holds the table as a literal, the Controller reads it
+///     `platform/values-common.yaml:220-223` holds the table as a literal, the Controller reads it
 ///     at `server/domains/inventory/channel-stages.ts:53-60` and enforces it at
 ///     `server/domains/runs/defs/release.ts:106-107`. It could be read here the same way the
 ///     grammar is. It is not, because judging it needs the STAGE a pin belongs to held against the
@@ -62,8 +87,38 @@ const String controllerImageSuffix = 'shared/registry-retention.ts';
 /// The Controller's own name for the `-<sha7>` suffix a pushed image tag carries.
 const String imageSuffixConstant = 'SHA7_SUFFIX';
 
-/// One `builds[]` entry as a carrier states it: the name that keys it, and the tag it pins.
-typedef PinnedTag = ({String name, String tag});
+/// Where this repository states the platform's own grammar, relative to its root.
+const String platformValues = 'platform/values-common.yaml';
+
+/// The key [platformValues] carries the placeholder pin under, inside its `global` map.
+const String placeholderTagKey = 'placeholderTag';
+
+/// The tag a stage carries before its first release, as [values] states it under `global`, or null
+/// where it states none.
+///
+/// Null is a refusal for every caller and never a licence to judge without it: an audit driven by a
+/// placeholder it could not read reports every first pin of the tree as an off-grammar tag, and the
+/// sentence it prints names a value the file does not state.
+String? placeholderTagIn(String values) {
+  final Object? loaded = loadYaml(values);
+  if (loaded is! YamlMap) {
+    return null;
+  }
+  final Object? global = loaded['global'];
+  if (global is! YamlMap) {
+    return null;
+  }
+  final Object? tag = global[placeholderTagKey];
+  return tag is String ? tag : null;
+}
+
+/// One `builds[]` entry as a carrier states it: the name that keys it, the image it names, and the
+/// tag it pins.
+///
+/// The image is read because it is the key the release bump SELECTS by (`bump_file` in
+/// `apps/consumer-build` `pipeline-release.yaml`): an entry carrying none is an entry no release
+/// writes, whatever its tag says.
+typedef PinnedTag = ({String name, String image, String tag});
 
 /// One pin whose tag is no tag a release minted, and why it is not.
 final class OffGrammarPin {
@@ -168,10 +223,17 @@ List<PinnedTag> pinnedTagsIn(String where, String values) {
       throw StateError('$where states a builds[] entry that is no mapping.');
     }
     if (entry['name'] case final String name) {
-      if (entry['tag'] case final String tag) {
-        pins.add((name: name, tag: tag));
+      if (entry['image'] case final String image) {
+        if (entry['tag'] case final String tag) {
+          pins.add((name: name, image: image, tag: tag));
+        } else {
+          throw StateError('$where states a builds[] entry "$name" with no tag.');
+        }
       } else {
-        throw StateError('$where states a builds[] entry "$name" with no tag.');
+        throw StateError(
+          '$where states a builds[] entry "$name" with no image — the release bump finds an entry '
+          'by its image and would never write this one.',
+        );
       }
     } else {
       throw StateError('$where states a builds[] entry with no name.');
@@ -180,20 +242,24 @@ List<PinnedTag> pinnedTagsIn(String where, String values) {
   return pins;
 }
 
-/// Every pin in [pins] whose tag is no tag a release minted.
+/// Every pin in [pins] whose tag is neither a tag a release minted nor [placeholder].
 ///
 /// [pins] is keyed by the file the entries stand in, so a report names the place to go. [imageTag]
 /// is stripped off before [releaseTag] is applied — a pushed image tag carries it and a tag a
 /// carrier states is usually a pushed one, which is the only difference between the two forms.
+/// [placeholder] is the value [platformValues] states under `global.` + [placeholderTagKey], read by
+/// [placeholderTagIn] and never spelled here: it is what a stage carries before its first release,
+/// and the refusal names it so whoever wrote an off-grammar tag reads what to write instead.
 List<OffGrammarPin> auditPinTags({
   required Map<String, List<PinnedTag>> pins,
   required RegExp releaseTag,
   required RegExp imageTag,
+  required String placeholder,
 }) {
   return <OffGrammarPin>[
     for (final MapEntry<String, List<PinnedTag>> carrier in pins.entries)
       for (final PinnedTag each in carrier.value)
-        if (!releaseTag.hasMatch(each.tag.replaceFirst(imageTag, '')))
+        if (each.tag != placeholder && !releaseTag.hasMatch(each.tag.replaceFirst(imageTag, '')))
           OffGrammarPin(
             where: carrier.key,
             name: each.name,
@@ -201,7 +267,11 @@ List<OffGrammarPin> auditPinTags({
             because:
                 'is no tag a release minted — with the image suffix ${imageTag.pattern} taken off '
                 'it must match ${releaseTag.pattern}, the grammar the Controller states in '
-                '$controllerReleaseGrammar, and only the release bump writes one',
+                '$controllerReleaseGrammar, and only the release bump writes one. A stage no '
+                'release has reached yet carries "$placeholder", the one other value admitted here: '
+                '$platformValues states it under global.$placeholderTagKey, charts/common '
+                'common.buildTag refuses to render it, and the first release writes the minted '
+                'image tag over it',
           ),
   ];
 }

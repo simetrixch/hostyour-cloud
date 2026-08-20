@@ -83,20 +83,25 @@ global:
   # components are admitted by NAME (dbConsumerNamespaces); unit namespaces
   # admit themselves by LABEL. The name list is EMPTY: dbgate was its one entry
   # and no longer runs on the cluster its databases do — it is a per-slave
-  # instance on the master now (slaves/dbgate). Two labels, because the services
-  # differ in what reach MEANS:
-  #   dbConsumerLabel    — the credentialed DBs (mongodb, postgresql): reach
-  #                        alone grants nothing, a provisioned per-unit
-  #                        credential is still required, so the label is
-  #                        stamped on every unit namespace.
-  #   redisConsumerLabel — redis runs WITHOUT auth, so reach IS the grant.
-  #                        The label is stamped ONLY where the registration
-  #                        claims `redis` in services[] (consumers-appset
-  #                        templatePatch) and on the tenant member whose own
-  #                        registration carries the label (the tenant appset
-  #                        stamps a member's namespaceLabels and names none
-  #                        itself); every other namespace cannot reach redis
-  #                        at all.
+  # instance on the master now (slaves/dbgate). Every one of the three services
+  # requires a credential now that apps/redis boots with --requirepass, so the two
+  # labels no longer differ in what reach MEANS — they differ in HOW WIDELY reach is
+  # handed out, and that difference is deliberate:
+  #   dbConsumerLabel    — mongodb + postgresql, stamped on EVERY unit namespace.
+  #                        A provisioned per-unit credential still gates, so a
+  #                        namespace that never claimed one gains nothing by
+  #                        carrying it.
+  #   redisConsumerLabel — redis, stamped ONLY where the registration claims
+  #                        `redis` in services[] (consumers-appset templatePatch),
+  #                        on the tenant member whose own registration carries the
+  #                        label (the tenant appset stamps a member's
+  #                        namespaceLabels and names none itself), and on
+  #                        apps/service-provisioner's own namespace, which has to
+  #                        reach :6379 to write each claim's ACL user. It stays
+  #                        narrower than dbConsumerLabel on purpose: the password
+  #                        is a SECOND boundary, never a replacement for the
+  #                        first, so the policy is not widened because one now
+  #                        exists.
   # Same-namespace pods are always allowed by the template.
   # ── Shared-service endpoints — the ONLY cross-cluster surface ──────────────
   # Where THIS cluster consumes a shared service. Empty = self-hosted default
@@ -167,6 +172,26 @@ global:
   # not depend on the other, and a check here could only read it where somebody
   # happened to have it cloned.
   releaseTagFilter: '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(alpha|beta|stable)-([0-9]{14})'
+
+  # ── The pin a stage carries before its first release ───────────────────────
+  # WHAT TO WRITE WHEN AN APPLICATION IS ADDED. Every image this platform builds
+  # is pinned per stage as a builds[] entry — {name, image, tag} in
+  # apps/<app>/values-<stage>.yaml — and the entry has to EXIST before the
+  # release that writes its tag: the bump task rewrites the tag of an entry it
+  # finds by `image` and creates none
+  # (apps/consumer-build/templates/pipeline-release.yaml, bump_file), and the
+  # reach check at the end of that same task FAILS the release when a declared
+  # image is carried by no pin at all. So a new application is added with its
+  # entry already written in every values-<stage>.yaml, its tag THIS value, and
+  # the first release of the unit that builds it writes the minted image tag
+  # over it.
+  # Until that release has run the value is refused where it would otherwise be
+  # believed: charts/common common.buildTag stops the render naming the entry,
+  # so nothing is scheduled against an image tag no release minted, and
+  # checks/lib/src/release_pin_tags.dart admits this ONE string and no other tag
+  # off the release grammar — reading the string here rather than stating a
+  # second one.
+  placeholderTag: "0.0.0-placeholder"
 
   # ── Channel ceiling — the ONE literal table ────────────────────────────────
   # Which stages a release channel may reach. The channel is read FROM THE TAG

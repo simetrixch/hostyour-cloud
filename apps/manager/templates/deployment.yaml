@@ -65,7 +65,7 @@ spec:
             # truth), never typed twice. Required by the app (config.ts) — no
             # silent default, so a forgotten value fails the pod at boot.
             - name: CONTROLLER_VERSION
-              value: {{ include "common.buildTag" (dict "builds" .Values.builds "name" "manager") | quote }}
+              value: {{ include "common.buildTag" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
             - name: PUBLIC_URL
               value: {{ printf "https://manager.%s" .Values.global.domain | quote }}
             - name: OIDC_ISSUER

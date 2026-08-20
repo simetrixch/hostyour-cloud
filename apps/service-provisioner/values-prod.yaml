@@ -2,5 +2,7 @@
 controller:
   mongo:
     host: mongodb-prod-headless.mongodb.svc.cluster.local
+  redis:
+    host: redis-prod.redis.svc.cluster.local
   # No postgres.host — postgresql is per-consumer (per-consumer-postgres.md §5.4,
   # §6); the provisioner resolves the host from the claim's own namespace.

@@ -13,3 +13,12 @@ redis:
 
 prometheus-redis-exporter:
   redisAddress: redis://redis-prod.redis.svc.cluster.local:6379
+
+# Per-namespace SecretStore — Vault URL falls back to global.vaultUrl, written
+# by StampClusterProfile into cluster/profile.yaml from the cluster map.
+secret-store: {}
+
+# redis-credentials ExternalSecret — reads Vault path prod/app/redis.
+externalsecret-redis:
+  externalSecret:
+    vaultPath: prod/app/redis

@@ -4,12 +4,12 @@ version: 1.0.0
 description: >-
   Generic, ServiceClaim-driven credential provisioner. Watches ServiceClaim CRs
   cluster-wide and, per claim, provisions the backing resource (a MongoDB /
-  PostgreSQL database+user, or a registry pull secret)
+  PostgreSQL database+user, a Redis ACL user, or a registry pull secret)
   idempotently, then writes a namespace-local credentials Secret with a
   generate-once (never-rotating) password and records .status. Replaced (and
   retired) the annotation-driven mongodb-provisioner. The controller reads each backend's
   admin credential at runtime from that backend's own Secret via its cluster-wide
-  secret-read RBAC — no ESO/Vault wiring of its own for mongo/postgres.
+  secret-read RBAC — no ESO/Vault wiring of its own for mongo/postgres/redis.
 type: application
 appVersion: "1.0.0"
 dependencies:

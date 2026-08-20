@@ -7,6 +7,8 @@ export 'src/channel_table_single.dart';
 export 'src/chart_paths.dart';
 export 'src/check_register.dart';
 export 'src/cluster_role_values.dart';
+export 'src/credentialed_readers.dart';
+export 'src/external_secret_keys.dart';
 export 'src/installation_tree.dart';
 export 'src/published_databases.dart';
 export 'src/release_pin_tags.dart';

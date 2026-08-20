@@ -33,7 +33,7 @@ spec:
               properties:
                 service:
                   type: string
-                  enum: [mongodb, postgresql, registry]
+                  enum: [mongodb, postgresql, redis, registry]
                   description: which backing service to provision credentials for
                 databases:
                   type: array
@@ -62,6 +62,21 @@ spec:
                   items:
                     type: string
                     enum: [clusterMonitor@admin]
+                keyPatterns:
+                  type: array
+                  items: { type: string }
+                  minItems: 1
+                  description: >-
+                    redis — the LITERAL key patterns the claim's ACL user may touch,
+                    each written as redis writes one after `~` (`digita:auth:*`).
+                    Used VERBATIM, the same contract spec.databases carries for
+                    mongodb/postgresql: the provisioner grants EXACTLY these, with no
+                    prefix and no composition, and the platform is what controls the
+                    value (the consumer's deploy/platform.yaml, injected into this
+                    ServiceClaim as a chart value). REQUIRED for a redis claim and
+                    fail-closed — a claim naming none is an Error, never a user that
+                    reaches every key. Read back out of the credentials Secret as
+                    REDIS_KEY_PATTERNS rather than re-derived by the reader.
                 secretName:
                   type: string
                   description: name of the credentials Secret to write (default "<claim>-<service>")
@@ -85,7 +100,7 @@ spec:
                 deletionAttempts: { type: integer }
                 # Machine-readable record of resources a failed teardown left behind,
                 # e.g. "mongo:user:sp_<prefix>", "pg:db:<prefix>_<db>",
-                # "secret:<ns>/<name>". Survives only as long as
+                # "redis:user:sp_<prefix>", "secret:<ns>/<name>". Survives only as long as
                 # the object does — the LOUD log banner is the durable copy.
                 orphanedResources:
                   type: array

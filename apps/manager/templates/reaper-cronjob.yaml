@@ -104,7 +104,7 @@ spec:
                       name: manager-app
                       key: oidc-client-secret
                 - name: CONTROLLER_VERSION
-                  value: {{ include "common.buildTag" (dict "builds" .Values.builds "name" "manager") | quote }}
+                  value: {{ include "common.buildTag" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
                 - name: DATA_DIR
                   value: /data
                 - name: LOG_LEVEL

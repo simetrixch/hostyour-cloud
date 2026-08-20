@@ -90,7 +90,14 @@ missing pin must never render an empty image ref.
 {{/*
 common.buildImageName / common.buildTag — the two halves of the same pin, for
 templates that need one of them alone (e.g. a version env). Same call shape
-as common.buildImage.
+as common.buildImage, `root` included: common.buildTag reads
+global.placeholderTag through it.
+A stage no release has reached carries that value as its tag
+(platform/values-common.yaml states it, and the release bump writes the minted
+image tag over it). common.buildTag STOPS THE RENDER while it stands there:
+the pin says which image the stage runs, and before the first release there is
+no such image — a rendered ref would put the app in ImagePullBackOff instead of
+naming what is missing.
 */}}
 {{- define "common.buildImageName" -}}
 {{- $found := dict -}}
@@ -101,6 +108,9 @@ as common.buildImage.
 {{- define "common.buildTag" -}}
 {{- $found := dict -}}
 {{- range .builds }}{{- if eq .name $.name }}{{- $found = . -}}{{- end }}{{- end -}}
-{{- $found.tag | required (printf "builds[] carries no entry named %q with a tag — the values-<stage>.yaml pin is missing" .name) -}}
+{{- $tag := $found.tag | required (printf "builds[] carries no entry named %q with a tag — the values-<stage>.yaml pin is missing" .name) -}}
+{{- $placeholder := .root.Values.global.placeholderTag | required "global.placeholderTag is not in this chart's values chain — platform/values-common.yaml states it, and every ApplicationSet loads that file first" -}}
+{{- if eq $tag $placeholder }}{{- fail (printf "builds[] entry %q is pinned at %q, the tag a stage carries before its first release: no release has written this stage's pin, so there is no image to run. The bump task of the <unit>-release Pipeline writes the minted image tag over it (apps/consumer-build/templates/pipeline-release.yaml)." .name $placeholder) }}{{- end -}}
+{{- $tag -}}
 {{- end }}
 
