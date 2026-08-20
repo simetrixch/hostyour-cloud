@@ -66,9 +66,17 @@ images:
     stamps:
       - kind: yaml_value
         tree: platform
-        file: apps/dbgate/values-common.yaml
+        file: slaves/dbgate/values.yaml
         key: tag
         anchor: 'repository: dbgate/dbgate'
+      # Chart.yaml's own appVersion, stamped so it cannot contradict the image
+      # this chart runs — it said 7.2.1 while the pin was 7.2.3. It reaches no
+      # rendered object: this chart has templates of its own only for helpers,
+      # and the charts it composes declare their own appVersion.
+      - kind: yaml_value
+        tree: platform
+        file: slaves/dbgate/Chart.yaml
+        key: appVersion
   # Tailnet coordination server. Only this half of the tailnet is an image —
   # the client on each host is a CLI tool the installer places, pinned under
   # cliTools below.

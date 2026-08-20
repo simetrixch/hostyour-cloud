@@ -3,8 +3,7 @@ kind: Service
 metadata:
   # Stable ClusterIP Service = the client SEED endpoint. Clients connect here
   # with ?replicaSet=rs0; the driver discovers the members and is redirected to
-  # their per-pod headless FQDNs (templates/headless-service.yaml). dbgate + the
-  # metrics exporter use directConnection=true against this Service.
+  # their per-pod headless FQDNs (templates/headless-service.yaml).
   name: mongodb-{{ .Values.global.env }}
   namespace: {{ .Release.Namespace }}
   labels:

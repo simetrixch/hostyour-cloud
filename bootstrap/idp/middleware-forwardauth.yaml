@@ -1,8 +1,8 @@
 # Traefik forwardAuth Middleware → Authentik's embedded Outpost.
-# Consumer Ingresses (apps/tekton, apps/dbgate) reference this
-# cross-namespace as `idp-forwardauth@kubernetescrd`. Traefik is patched
-# (configure_traefik_addon in lib/install-microk8s.sh) to allow cross-
-# namespace middleware refs.
+# Consumer Ingresses (apps/tekton, slaves/dbgate) reference this
+# cross-namespace as `idp-forwardauth@kubernetescrd`. Traefik carries
+# --providers.kubernetescrd.allowCrossNamespace=true for that, written by
+# digita-deploy ansiwise/programs/deploy-cluster.yaml:420.
 #
 # Authentik's `/outpost.goauthentik.io/auth/traefik` endpoint speaks the
 # Traefik forwardAuth protocol natively — returns 2xx with X-authentik-*

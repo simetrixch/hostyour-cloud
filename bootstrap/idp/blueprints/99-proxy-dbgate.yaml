@@ -18,6 +18,10 @@ entries:
       name: dbgate
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # The gated hosts are gate-<slave>.<IDP_DOMAIN>, one per registered slave
+      # (slaves/dbgate) — cookie_domain below is what covers them all. NOTHING
+      # SERVES THE HOST NAMED HERE: gate.<IDP_DOMAIN> was the single instance
+      # this provider was written for, and there is no single instance any more.
       external_host: !Format ["https://gate.%s", !Env IDP_DOMAIN]
       mode: forward_domain
       cookie_domain: !Format [".%s", !Env IDP_DOMAIN]
@@ -34,6 +38,8 @@ entries:
       name: dbgate
       slug: dbgate
       provider: !Find [authentik_providers_proxy.proxyprovider, [name, dbgate]]
-      meta_launch_url: !Format ["https://gate.%s/", !Env IDP_DOMAIN]
+      # No single launch URL — the instances live at per-slave gate-<name> hosts,
+      # the same as the per-slave ArgoCD application in 99-argo-slave.yaml.
+      meta_launch_url: ""
       open_in_new_tab: true
       group: Platform

@@ -1,7 +1,0 @@
-name: dbgate
-project: services
-syncWave: "30"
-namespace: dbgate
-prune: "true"
-createNamespace: "true"
-runsOn: slave

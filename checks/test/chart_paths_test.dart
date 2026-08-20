@@ -97,9 +97,10 @@ void main() {
           'units/networkpolicy',
           'units/quota',
           'slaves/slave',
+          'slaves/dbgate',
         ]),
         reason:
-            'the five charts that are not applications are rendered by path alone, so a scan that '
+            'the six charts that are not applications are rendered by path alone, so a scan that '
             'stopped reaching them would go on reporting nothing after one of them moved',
       );
     });

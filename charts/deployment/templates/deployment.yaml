@@ -92,10 +92,11 @@ spec:
           as well is the one thing that must not be added back: that key carries
           the platform-wide `global.env: dev|test|prod` string, not a list.
 
-          Apply Helm `tpl` to the env YAML so values can reference
-          .Values.global.env / .Values.global.domain — used by dbgate's
-          SERVER_postgres / SERVER_mongo / URL_redis env vars to compose
-          cluster-internal FQDNs from a single source of truth.
+          Apply Helm `tpl` to the env YAML so a value can compose itself from
+          `.Values.global.*` instead of being written out per stage or per
+          cluster. Only `global` is reachable from here: `$` is the root of THIS
+          sub-chart's render, so its `.Values` is the consuming chart's block for
+          this dependency plus the globals, and never that chart's other keys.
           */}}
           {{- with .Values.env }}
           env:

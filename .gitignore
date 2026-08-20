@@ -2,7 +2,7 @@
 # under every chart that declares a file:// dependency, and ArgoCD does its own dependency fetch
 # when rendering — so tracking them would only add drift the moment a Chart.yaml is bumped without
 # a rebuild. Three directories carry charts, so three pairs of rules: the platform applications,
-# the per-unit charts and the per-slave chart.
+# the per-unit charts and the per-slave charts.
 apps/*/charts/
 apps/*/Chart.lock
 units/*/charts/

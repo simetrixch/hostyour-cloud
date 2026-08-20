@@ -81,8 +81,10 @@ global:
   # DB NetworkPolicy consumers — who may reach the in-house data services, see
   # apps/{mongodb,postgresql,redis}/templates/networkpolicy.yaml. Platform
   # components are admitted by NAME (dbConsumerNamespaces); unit namespaces
-  # admit themselves by LABEL. Two labels, because the services differ in what
-  # reach MEANS:
+  # admit themselves by LABEL. The name list is EMPTY: dbgate was its one entry
+  # and no longer runs on the cluster its databases do — it is a per-slave
+  # instance on the master now (slaves/dbgate). Two labels, because the services
+  # differ in what reach MEANS:
   #   dbConsumerLabel    — the credentialed DBs (mongodb, postgresql): reach
   #                        alone grants nothing, a provisioned per-unit
   #                        credential is still required, so the label is
@@ -132,8 +134,7 @@ global:
     # profile additionally enables Prometheus' remote_write receiver (D4b/I6).
     observabilityCentral: false
 
-  dbConsumerNamespaces:
-    - dbgate
+  dbConsumerNamespaces: []
   dbConsumerLabel: platform/db-consumer
   redisConsumerLabel: platform/redis-consumer
 

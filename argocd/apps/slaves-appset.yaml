@@ -64,6 +64,42 @@ spec:
                   cm:
                     installationID: "{{ .values.cluster }}"
                     url: "https://argo-{{ .values.cluster }}.{{ .master }}"
+        # This slave's database browser (slaves/dbgate), in the same namespace on
+        # the master as the reconciler above and reached at gate-<name>.<master>.
+        # A further source rather than an application of its own, exactly like the
+        # unit charts a consumer's Application carries: what decides that an
+        # instance exists is that a slave is registered, and this generator is the
+        # only place that knows it. A master with no slave therefore renders none,
+        # which is what its own dbgate would have had nothing to browse for.
+        #
+        # No values-common.yaml / values-<stage>.yaml pair: the chart has one
+        # values file, because everything that used to differ per stage is a
+        # platform global or one of the per-slave fields below.
+        - repoURL: *repo
+          targetRevision: *branch
+          path: slaves/dbgate
+          helm:
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-__STAGE__.yaml
+              - $values/cluster/profile.yaml
+            valuesObject:
+              global:
+                # Under `global` because the library sub-charts this chart is
+                # built from read them, and helm shows a sub-chart nothing of a
+                # parent's root keys.
+                slave:
+                  name: "{{ .values.cluster }}"
+                  masterFqdn: "{{ .master }}"
+                  apiHost: "{{ .apiHost }}"
+              externalsecret-db:
+                externalSecret:
+                  # The remoteRef KEY — the entry inside the KV mount, not the
+                  # mount. A per-stage LITERAL, like every other stamped value in
+                  # this file. The chart leaves it empty and `required`s it, so a
+                  # render that forgets it fails instead of reading another
+                  # cluster's credential.
+                  vaultPath: "__STAGE__/app/mongodb"
       destination:
         server: https://kubernetes.default.svc
         namespace: "{{ .values.cluster }}"
