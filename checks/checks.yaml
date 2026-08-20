@@ -71,3 +71,25 @@ release-pin-tags: test/release_pin_tags_test.dart
 # a policy admitting global.ingressNamespace passes whatever that value holds, so a MISNAMED
 # namespace is invisible where a MISSING one is reported.
 published-databases: test/published_databases_test.dart
+
+# The stages a release channel may reach are stated ONCE — global.channelStages in
+# platform/values-common.yaml — and the three points that enforce the ceiling reach it by two
+# routes: gate-stage and bump read the CHANNEL_STAGES env var that
+# apps/consumer-build/templates/pipeline-release.yaml renders from .Values.global.channelStages,
+# while a cluster release reads that same file off the trunk (readChannelStages, hostyour-manager)
+# before its set-pin step. What is reported is a second statement of that ceiling in any tracked
+# file OTHER THAN the one that states it: a channel of the table standing with a stage of the
+# table — on one line, over the
+# lines indented below it, or over the block-sequence items at a mapping key's own column, the
+# second spelling of a list this tree's YAML also uses; and the table written the other way round, a
+# stage as the key with the channels in its block. Two statements do not disagree the day the second
+# is written, they disagree the day either one is edited, and the permissive direction is silent — an
+# alpha release gated, pinned and deployed to prod with every side reporting success.
+# WHAT IT DOES NOT REACH: this checks package, which nothing on a cluster reads and whose probes
+# state the table on purpose; a restatement written in words the table does not use; a spelling in a
+# case the table does not use, the words being matched exactly as it spells them; the reader on the
+# Controller side, hostyour-manager/server/domains/inventory/channel-stages.ts, which is another
+# repository's file and reads this one rather than copying it; the file the table is stated in, so a
+# second table appended to platform/values-common.yaml itself passes; and YAML's explicit-key
+# spelling (? alpha / : [dev]), which loads to the identical table and appears in no file here.
+channel-table-single: test/channel_table_single_test.dart

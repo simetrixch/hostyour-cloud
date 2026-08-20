@@ -170,19 +170,33 @@ global:
 
   # ── Channel ceiling — the ONE literal table ────────────────────────────────
   # Which stages a release channel may reach. The channel is read FROM THE TAG
-  # (the tag is the truth, not a parameter), and the rule is enforced at the
-  # ONE point that writes: the gate-stage task of every <unit>-release
-  # Pipeline (apps/consumer-build/templates/pipeline-release.yaml) checks the
+  # (the tag is the truth, not a parameter), and the rule is enforced at three
+  # points. The gate-stage task of every <unit>-release Pipeline
+  # (apps/consumer-build/templates/pipeline-release.yaml) checks the
   # requested stage against this table BEFORE any clone, and the bump task
-  # re-checks it before every pin write. A cluster release enforces the same
-  # ceiling at ITS writing point — the set-pin step that commits `release:`
-  # into a cluster map — reading this table over the controller's config
-  # route, never a copy. Nothing else carries a copy — a release script may
-  # check it locally as a courtesy, but nothing relies on that.
-  # tools/lib/src/channel/channel_table_audit.dart asserts this table is stated
-  # as a literal in exactly one file — this one. It measures this repository
-  # only; the controller side that reads it is
-  # hostyour-manager/server/domains/inventory/channel-stages.ts.
+  # re-checks it before every pin write; both read it as the CHANNEL_STAGES
+  # env var that same template renders from .Values.global.channelStages —
+  # the values chain. A cluster release does NOT come that way, and it
+  # enforces the ceiling BEFORE its writing point: the ceilingCheck of the
+  # release run kind
+  # (hostyour-manager/server/domains/runs/defs/release.ts) runs as
+  # attest-target's own check and refuses the run before the set-pin step
+  # commits `release:` into a cluster map. It reads this file off the trunk
+  # through the controller's platform-repo git port — readChannelStages in
+  # hostyour-manager/server/domains/inventory/channel-stages.ts — never a copy.
+  # Nothing else carries a copy — a release script may check it locally as a
+  # courtesy, but nothing relies on that.
+  # checks/lib/src/channel_table_single.dart, registered as channel-table-single
+  # in checks/checks.yaml, turns the gate red where a second place states this
+  # ceiling: a channel of this table standing with a stage of this table — on
+  # one line, over the lines indented below it, or over the block-sequence
+  # items at a mapping key's own column; and the table written the other way
+  # round, a stage as the key with the channels in its block. What it does NOT
+  # reach: the checks package itself, a restatement written in words this table
+  # does not use, a spelling in a case this table does not use, and THIS FILE —
+  # a second table appended below leaves the check green.
+  # It measures this repository only — the controller side named above is
+  # another repository's file and is held to nothing from here.
   channelStages:
     alpha: [dev]
     beta: [dev, test]
