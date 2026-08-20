@@ -211,7 +211,7 @@ spec:
               {{- end }}
         {{- end }}
         # LAST. The platform's own ingress policy for this member namespace
-        #    (apps/unit-networkpolicy on the trunk, one NetworkPolicy and nothing else):
+        #    (units/networkpolicy on the trunk, one NetworkPolicy and nothing else):
         #    the namespace is deny-by-default inbound, with same-namespace pods, the
         #    tenant's SIBLING members, Traefik and Prometheus open. It rides in the
         #    member's OWN Application on purpose — created, healed and pruned with the
@@ -220,12 +220,12 @@ spec:
         #    what makes the sibling rule this tenant's and not every tenant's.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: master
-          path: apps/unit-networkpolicy
+          path: units/networkpolicy
           helm:
             valuesObject:
               tenant:
                 guid: "{{ .values.guid }}"
-        # AND LAST. The platform's own resource ceiling for this member namespace (apps/unit-quota on
+        # AND LAST. The platform's own resource ceiling for this member namespace (units/quota on
         #    the trunk: a ResourceQuota and the LimitRange that keeps it from rejecting a pod which
         #    declares no resources of its own). Rides in the member's OWN Application for the same
         #    reason the policy above does — created, healed and pruned with the namespace it bounds.
@@ -235,7 +235,7 @@ spec:
         #    room.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: master
-          path: apps/unit-quota
+          path: units/quota
           helm:
             valuesObject:
               quota:

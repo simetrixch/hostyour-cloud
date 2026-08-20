@@ -63,7 +63,7 @@ adminsGroup: admins
 
 # GitHub access for the Branches view + the Reset wizard (config.ts GITHUB_REPO +
 # GITHUB_WRITE_PAT). `repo` is the "owner/repo" of THIS GitOps monorepo — the same
-# repo apps/slave/values-common.yaml `repo.url` points at, just in owner/repo form
+# repo slaves/slave/values-common.yaml `repo.url` points at, just in owner/repo form
 # (not a secret). The write-capable token is GITOPS_REPO_PAT (Contents:RW), placed on the
 # isolated manager-host Vault tier and materialized by manager-host-secret.yaml as
 # the pod env GITHUB_WRITE_PAT — NEVER a Helm value. Both render only where master.sshUser

@@ -38,6 +38,19 @@ void main() {
         isEmpty,
       );
     });
+
+    test('every directory under apps/ carries an app.yaml, with no exception list', () {
+      final Set<String> tracked =
+          Process.runSync('git', <String>['ls-files'], workingDirectory: repository.path).stdout
+              .toString()
+              .split('\n')
+              .map((String each) => each.trim())
+              .where((String each) => each.isNotEmpty)
+              .toSet();
+      expect(tracked, isNotEmpty, reason: 'a check over nothing reads like a pass');
+
+      expect(appDirectoriesWithoutManifest(tracked), isEmpty);
+    });
   });
 
   group('what makes a key required', () {
@@ -102,6 +115,37 @@ void main() {
         'apps/one/app.yaml',
         'apps/two/app.yaml',
       ]);
+    });
+  });
+
+  group('what makes a directory an application', () {
+    test('the planted defect: a directory under apps/ with no app.yaml', () {
+      expect(
+        appDirectoriesWithoutManifest(<String>{
+          'apps/one/app.yaml',
+          'apps/one/Chart.yaml',
+          'apps/two/Chart.yaml',
+        }),
+        <String>['apps/two'],
+      );
+    });
+
+    test('THE INNOCENT NEIGHBOUR: the same chart one directory out is not judged at all', () {
+      // What the defect above is fixed BY: the chart moves out of apps/ rather than being carried
+      // as a name the check has to know about.
+      expect(
+        appDirectoriesWithoutManifest(<String>{
+          'apps/one/app.yaml',
+          'apps/one/Chart.yaml',
+          'units/two/Chart.yaml',
+          'slaves/three/Chart.yaml',
+        }),
+        isEmpty,
+      );
+    });
+
+    test('a file directly under apps/ names no directory', () {
+      expect(appDirectoriesWithoutManifest(<String>{'apps/README.md'}), isEmpty);
     });
   });
 }

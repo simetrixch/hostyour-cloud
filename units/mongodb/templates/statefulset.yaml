@@ -13,7 +13,7 @@ metadata:
   # per namespace is a hard invariant here (the credential Secret, the SecretStore
   # and both Services carry fixed names too), and the service-provisioner resolves
   # a claim to `mongodb.<namespace>.svc.cluster.local` without being told where it
-  # is. Same discipline as apps/postgresql pinning `postgres`.
+  # is. Same discipline as units/postgresql pinning `postgres`.
   name: mongodb
   namespace: {{ .Release.Namespace }}
   labels:

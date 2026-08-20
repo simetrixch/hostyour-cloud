@@ -19,7 +19,7 @@
 #     -f values-size-<size>.yaml
 #
 # for all three sizes, instead of carrying a conditional for the one size that
-# has no file. Layering it changes nothing: `helm template apps/postgresql` and
-# `helm template apps/postgresql -f values-size-small.yaml` render identically.
+# has no file. Layering it changes nothing: `helm template units/postgresql` and
+# `helm template units/postgresql -f values-size-small.yaml` render identically.
 #
 # Where the numbers come from is documented once, in the values.yaml header.

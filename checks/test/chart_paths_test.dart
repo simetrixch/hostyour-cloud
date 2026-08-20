@@ -53,6 +53,56 @@ void main() {
         isEmpty,
       );
     });
+
+    test('every generator glob this tree can answer selects at least one tracked file', () {
+      final Map<String, String> manifests = _argocdMaterial(repository, tracked);
+      expect(manifests, isNotEmpty, reason: 'a check over nothing reads like a pass');
+
+      expect(
+        auditGeneratorFiles(
+          manifests: manifests,
+          tracked: tracked,
+          repository: slug,
+        ).map((UnresolvedPath each) => each.toString()),
+        isEmpty,
+      );
+      expect(
+        auditGeneratorFiles(manifests: manifests, tracked: <String>{}, repository: slug),
+        isNotEmpty,
+        reason: 'against an empty tree every judged glob must report, or nothing was being judged',
+      );
+    });
+
+    test('every source directory this tree can answer carries at least one tracked file', () {
+      final Map<String, String> manifests = _argocdMaterial(repository, tracked);
+      expect(manifests, isNotEmpty, reason: 'a check over nothing reads like a pass');
+
+      expect(
+        auditSourcePaths(
+          manifests: manifests,
+          tracked: tracked,
+          repository: slug,
+        ).map((UnresolvedPath each) => each.toString()),
+        isEmpty,
+      );
+      expect(
+        auditSourcePaths(
+          manifests: manifests,
+          tracked: <String>{},
+          repository: slug,
+        ).map((UnresolvedPath each) => each.named),
+        containsAll(<String>[
+          'units/postgresql',
+          'units/mongodb',
+          'units/networkpolicy',
+          'units/quota',
+          'slaves/slave',
+        ]),
+        reason:
+            'the five charts that are not applications are rendered by path alone, so a scan that '
+            'stopped reaching them would go on reporting nothing after one of them moved',
+      );
+    });
   });
 
   group('what makes a dependency resolve', () {
@@ -289,7 +339,223 @@ void main() {
       );
     });
   });
+
+  group('what makes a generator glob resolve', () {
+    // The shape argocd/apps/applicationset.yaml has: a git generator naming this repository, a
+    // revision, and the globs it selects files by.
+    const String product = 'example/product';
+    String generator({
+      required List<String> globs,
+      String url = 'https://github.com/example/product.git',
+      String revision = 'master',
+    }) =>
+        '  generators:\n'
+        '    - git:\n'
+        '        repoURL: $url\n'
+        '        revision: $revision\n'
+        '        files:\n'
+        '${globs.map((String each) => '          - path: "$each"\n').join()}';
+
+    test('the planted defect: a glob no tracked file matches', () {
+      final List<UnresolvedPath> found = auditGeneratorFiles(
+        manifests: <String, String>{
+          'argocd/apps/one.yaml': generator(globs: <String>['apps/*/app.yaml']),
+        },
+        tracked: <String>{'apps/one/Chart.yaml'},
+        repository: product,
+      );
+
+      expect(found, hasLength(1));
+      expect(found.single.named, 'apps/*/app.yaml');
+      expect(found.single.toString(), contains('produces zero Applications'));
+    });
+
+    test('THE INNOCENT NEIGHBOUR: one tracked file of the shape is enough', () {
+      expect(
+        auditGeneratorFiles(
+          manifests: <String, String>{
+            'argocd/apps/one.yaml': generator(globs: <String>['apps/*/app.yaml']),
+          },
+          tracked: <String>{'apps/one/app.yaml'},
+          repository: product,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a single star stops at a slash and a double star crosses it', () {
+      expect(
+        auditGeneratorFiles(
+          manifests: <String, String>{
+            'argocd/apps/one.yaml': generator(globs: <String>['apps/*/app.yaml']),
+          },
+          tracked: <String>{'apps/one/nested/app.yaml'},
+          repository: product,
+        ),
+        hasLength(1),
+      );
+      expect(
+        auditGeneratorFiles(
+          manifests: <String, String>{
+            'argocd/apps/one.yaml': generator(globs: <String>['apps/**/app.yaml']),
+          },
+          tracked: <String>{'apps/one/nested/app.yaml'},
+          repository: product,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('another repository\'s files are not this tree\'s to answer', () {
+      expect(
+        auditGeneratorFiles(
+          manifests: <String, String>{
+            'argocd/apps/one.yaml': generator(
+              globs: <String>['apps/*/app.yaml'],
+              url: 'https://github.com/customer/catalog.git',
+            ),
+          },
+          tracked: <String>{},
+          repository: product,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a revision this tree is not carries files this tree cannot answer', () {
+      // The slaves generator reads clusters/active/*.yaml on __BOOKS_BRANCH__: nothing of that
+      // shape is tracked on master, and reporting it would demand a books file on the trunk.
+      expect(
+        auditGeneratorFiles(
+          manifests: <String, String>{
+            'argocd/apps/one.yaml': generator(
+              globs: <String>['clusters/active/*.yaml'],
+              revision: '__BOOKS_BRANCH__',
+            ),
+          },
+          tracked: <String>{},
+          repository: product,
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  group('what makes a source directory resolve', () {
+    // The shape the appsets have: a values-only ref source, then a chart source naming a directory.
+    const String product = 'example/product';
+    String sources({required String path, String revision = 'master'}) =>
+        '      sources:\n'
+        '        - repoURL: &repo "https://github.com/example/product.git"\n'
+        '          targetRevision: master\n'
+        '          ref: values\n'
+        '        - repoURL: *repo\n'
+        '          targetRevision: $revision\n'
+        '          path: $path\n';
+
+    test('the planted defect: a directory no tracked file stands under', () {
+      final List<UnresolvedPath> found = auditSourcePaths(
+        manifests: <String, String>{'argocd/apps/one.yaml': sources(path: 'units/quota')},
+        tracked: <String>{'units/mongodb/Chart.yaml'},
+        repository: product,
+      );
+
+      expect(found, hasLength(1));
+      expect(found.single.named, 'units/quota');
+      expect(found.single.toString(), contains('empty manifest set'));
+    });
+
+    test('THE INNOCENT NEIGHBOUR: one tracked file under it is enough', () {
+      expect(
+        auditSourcePaths(
+          manifests: <String, String>{'argocd/apps/one.yaml': sources(path: 'units/quota')},
+          tracked: <String>{'units/quota/Chart.yaml'},
+          repository: product,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a directory whose name only PREFIXES a tracked one answers nothing', () {
+      // units/quo is not units/quota, and a prefix comparison would have called it resolved.
+      expect(
+        auditSourcePaths(
+          manifests: <String, String>{'argocd/apps/one.yaml': sources(path: 'units/quo')},
+          tracked: <String>{'units/quota/Chart.yaml'},
+          repository: product,
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('a values-only source names no directory and is passed over', () {
+      expect(
+        auditSourcePaths(
+          manifests: <String, String>{
+            'argocd/apps/one.yaml':
+                '      sources:\n'
+                '        - repoURL: "https://github.com/example/product.git"\n'
+                '          targetRevision: master\n'
+                '          ref: values\n',
+          },
+          tracked: <String>{},
+          repository: product,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a path composed at render time cannot be resolved by reading files', () {
+      expect(
+        auditSourcePaths(
+          manifests: <String, String>{'argocd/apps/one.yaml': sources(path: '"{{ .chartPath }}"')},
+          tracked: <String>{},
+          repository: product,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a revision this tree is not carries a directory this tree cannot answer', () {
+      expect(
+        auditSourcePaths(
+          manifests: <String, String>{
+            'argocd/apps/one.yaml': sources(path: 'charts/member', revision: '__BOOKS_BRANCH__'),
+          },
+          tracked: <String>{},
+          repository: product,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a source under the singular source: key is judged like a list item', () {
+      // argocd/root-app.yaml is written that way, and it is the one that points ArgoCD at the
+      // directory every other manifest of this tree stands in.
+      final List<UnresolvedPath> found = auditSourcePaths(
+        manifests: <String, String>{
+          'argocd/root-app.yaml':
+              '  source:\n'
+              '    repoURL: https://github.com/example/product.git\n'
+              '    targetRevision: master\n'
+              '    path: argocd/apps\n',
+        },
+        tracked: <String>{'argocd/root-app.yaml'},
+        repository: product,
+      );
+
+      expect(found, hasLength(1));
+      expect(found.single.named, 'argocd/apps');
+    });
+  });
 }
+
+/// The ArgoCD material of [repository]: every tracked file under argocd/ by the path it stands at.
+Map<String, String> _argocdMaterial(Directory repository, Set<String> tracked) => <String, String>{
+  for (final String path in tracked)
+    if (path.startsWith('argocd/') && path.endsWith('.yaml'))
+      path: File('${repository.path}/$path').readAsStringSync(),
+};
 
 /// Runs git with [arguments] in [repository] and answers its stdout lines.
 List<String> _git(Directory repository, List<String> arguments) {

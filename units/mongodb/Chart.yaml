@@ -5,7 +5,7 @@ description: |
   MongoDB — PER-UNIT TEMPLATE (one instance, one namespace), the official `mongo`
   image on a StatefulSet. Rendered as an extra source of a consumer's own
   Application when its registration says `mongodb: standalone` or
-  `mongodb: replicaset`, exactly as apps/postgresql is rendered when the
+  `mongodb: replicaset`, exactly as units/postgresql is rendered when the
   registration claims the postgresql service.
 
   WHY A SECOND CHART BESIDE apps/mongodb. apps/mongodb is the CLUSTER's own
@@ -52,7 +52,7 @@ dependencies:
   # and an ExternalSecret pointed at a store that does not exist yet never
   # materializes the credential in time — the pod then deadlocks in
   # CreateContainerConfigError. Same reasoning and the same wave as
-  # apps/postgresql's credential trio.
+  # units/postgresql's credential trio.
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store

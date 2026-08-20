@@ -219,7 +219,7 @@ argo-cd:
 
 # ---------------------------------------------------------------------------
 # Per-namespace ESO SecretStore (vault-backend) in ns <name>, reading the
-# MASTER's own Vault: apps/slave syncs on the master, so the master's own
+# MASTER's own Vault: slaves/slave syncs on the master, so the master's own
 # chain feeds it — global.vaultUrl + global.vaultKubernetesAuthPath
 # (kubernetes-<master-name>) from the master's cluster/profile.yaml, the
 # shared KV mount `secret` from global.vaultKvMount.

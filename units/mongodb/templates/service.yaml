@@ -5,7 +5,7 @@ metadata:
   # needs: it resolves a mongodb claim to `mongodb.<claim's namespace>.svc.
   # cluster.local` without being told the instance is there. The name is pinned
   # for that reason — one instance per namespace, addressed by a fixed name, the
-  # same discipline apps/postgresql applies to `postgres`.
+  # same discipline units/postgresql applies to `postgres`.
   #
   # In replicaset mode a driver connecting here with ?replicaSet=<name> discovers
   # the members and is redirected to their per-pod headless FQDNs. In standalone

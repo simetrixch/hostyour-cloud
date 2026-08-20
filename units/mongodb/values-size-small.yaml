@@ -4,7 +4,7 @@
 # render that names no size gets the frugal one. This file exists only so every
 # renderer can name its size uniformly (-f values-size-<size>.yaml) for all three
 # sizes, instead of carrying a conditional for the one size that has no file.
-# Layering it changes nothing: `helm template apps/unit-mongodb` and
-# `helm template apps/unit-mongodb -f values-size-small.yaml` render identically.
+# Layering it changes nothing: `helm template units/mongodb` and
+# `helm template units/mongodb -f values-size-small.yaml` render identically.
 #
 # Where the numbers come from is documented once, in the values.yaml header.

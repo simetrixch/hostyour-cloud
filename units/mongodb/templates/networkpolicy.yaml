@@ -1,7 +1,7 @@
 {{- /*
 WHO MAY REACH THIS DATABASE ON 27017.
 
-The unit's namespace is already deny-by-default inbound: apps/unit-networkpolicy
+The unit's namespace is already deny-by-default inbound: units/networkpolicy
 renders `unit-ingress`, which selects every pod and admits same-namespace pods
 plus the platform namespaces `ingress` and `observability` BY NAME. That covers
 the unit's own application, the rs-init Job and the members talking to each
@@ -18,7 +18,7 @@ so admitting by it would open this database to every OTHER consumer, which is th
 whole reason a unit brings a database of its own.
 
 The policy is authored here rather than routed through a shared library chart for
-the same reason apps/postgresql authors its own: it carries its own sync-wave, and
+the same reason units/postgresql authors its own: it carries its own sync-wave, and
 it must land with the workload it protects rather than at a library's wave.
 */ -}}
 apiVersion: networking.k8s.io/v1

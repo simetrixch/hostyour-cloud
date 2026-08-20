@@ -95,7 +95,7 @@ app:
 
 # ----- Coordinator state ----------------------------------------------------
 # Prune/Delete protection, like every other state-bearing PVC here
-# (apps/manager, apps/postgresql). /var/lib/headscale
+# (apps/manager, units/postgresql). /var/lib/headscale
 # holds the noise private key that identifies THIS coordinator to every joined
 # host, and the node database that IS the record of which hosts have joined.
 # Neither can be rebuilt from git: a coordinator that comes back on a fresh

@@ -8,7 +8,7 @@
 #                   unit by its public FQDN and CoreDNS hairpins that name back to
 #                   the Traefik ClusterIP.
 #   observability   Prometheus. It scrapes the postgres exporter on :9187 inside
-#                   the consumer's OWN namespace (apps/postgresql/templates/networkpolicy.yaml
+#                   the consumer's OWN namespace (units/postgresql/templates/networkpolicy.yaml
 #                   leaves that pod unpoliced on purpose) and whatever a unit
 #                   declares through charts/monitoring.
 #

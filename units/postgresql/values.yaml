@@ -6,7 +6,7 @@
 # whose valueFiles chain names `values-common.yaml` + `values-<stage>.yaml`
 # EXPLICITLY. A chart rendered into a CONSUMER namespace is not in that chain:
 # it is an extra source of the consumer's Application
-# (argocd/*/apps/consumers-appset.yaml), i.e. `path: apps/postgresql` plus the
+# (argocd/*/apps/consumers-appset.yaml), i.e. `path: units/postgresql` plus the
 # platform globals from $values, and
 # Helm loads only the chart's own implicit `values.yaml` as the base. So the
 # base values must live in a file called exactly values.yaml, and the per-stage

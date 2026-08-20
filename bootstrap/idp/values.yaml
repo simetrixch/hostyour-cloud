@@ -40,8 +40,8 @@ authentik:
     enabled: false
 
 # Bundled PostgreSQL → keeps Authentik self-contained; NOT dependent on
-# apps/postgresql which is GitOps-managed (would create a bootstrap cycle:
-# ArgoCD reconciles apps/postgresql, but ArgoCD itself authenticates via
+# units/postgresql which is GitOps-managed (would create a bootstrap cycle:
+# ArgoCD reconciles units/postgresql, but ArgoCD itself authenticates via
 # Authentik — so Authentik must come up first, with its own datastore).
 postgresql:
   enabled: true

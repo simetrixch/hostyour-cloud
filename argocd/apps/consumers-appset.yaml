@@ -204,7 +204,7 @@ spec:
                   {{- range .databases }}
                   - "{{ . }}"
                   {{- end }}
-        # 2. Per-consumer PostgreSQL instance (apps/postgresql), rendered ONLY
+        # 2. Per-consumer PostgreSQL instance (units/postgresql), rendered ONLY
         #    when the registration's services[] includes "postgresql": a
         #    consumer that claims postgresql gets its OWN instance in its OWN
         #    namespace, as a source of its single Application. The
@@ -215,13 +215,13 @@ spec:
         {{- if has "postgresql" .services }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: master
-          path: apps/postgresql
+          path: units/postgresql
           helm:
             # Platform globals only — the SAME $values chain source 1 reads.
             # The chart's own values.yaml (the small-preset per-consumer
             # template) is Helm's implicit base; a template has no stage
             # identity of its own, so there is deliberately no
-            # values-<stage>.yaml for it (apps/postgresql/Chart.yaml
+            # values-<stage>.yaml for it (units/postgresql/Chart.yaml
             # description).
             valueFiles:
               - $values/platform/values-common.yaml
@@ -247,7 +247,7 @@ spec:
                   # credential.
                   vaultPath: "__STAGE__/consumer/{{ .name }}/postgres"
         {{- end }}
-        # 2b. Per-consumer MongoDB instance (apps/unit-mongodb), rendered ONLY
+        # 2b. Per-consumer MongoDB instance (units/mongodb), rendered ONLY
         #    when the registration's `mongodb` is not "shared". `shared` means the
         #    CLUSTER's own replica set in namespace `mongodb` — the one every
         #    tenant runs on — and a unit on it renders no instance of its own. The
@@ -266,7 +266,7 @@ spec:
         {{- if ne .mongodb "shared" }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: master
-          path: apps/unit-mongodb
+          path: units/mongodb
           helm:
             # Platform globals only — the SAME $values chain source 1 reads. The
             # chart's own values.yaml (the small-preset per-unit template) is
@@ -296,7 +296,7 @@ spec:
                   vaultPath: "__STAGE__/consumer/{{ .name }}/mongodb"
         {{- end }}
         # 3. The platform's own ingress policy for this consumer's namespace
-        #    (apps/unit-networkpolicy on the trunk, one NetworkPolicy and nothing else):
+        #    (units/networkpolicy on the trunk, one NetworkPolicy and nothing else):
         #    the namespace is deny-by-default inbound, with same-namespace pods, Traefik
         #    and Prometheus open. UNCONDITIONAL, unlike source 2 — a namespace with no
         #    policy is the gap this closes, so a consumer that claims no service is
@@ -307,9 +307,9 @@ spec:
         #    is one namespace with no siblings.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: master
-          path: apps/unit-networkpolicy
+          path: units/networkpolicy
         # 4. The platform's own resource ceiling for this consumer's namespace
-        #    (apps/unit-quota on the trunk: a ResourceQuota and the LimitRange that keeps it from
+        #    (units/quota on the trunk: a ResourceQuota and the LimitRange that keeps it from
         #    rejecting a pod which declares no resources of its own). UNCONDITIONAL, like the policy
         #    above and for the same reason — a namespace with no ceiling is the gap this closes, so a
         #    consumer that claims no service is exactly the case that must not be skipped.
@@ -318,7 +318,7 @@ spec:
         #    in the Controller's database and no cluster can read it.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: master
-          path: apps/unit-quota
+          path: units/quota
           helm:
             valuesObject:
               quota:

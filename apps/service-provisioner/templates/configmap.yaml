@@ -381,7 +381,7 @@ data:
         if ns != MONGO_CRED_NS:
             own_pw = read_secret_key(core, ns, MONGO_CRED_SECRET, MONGO_CRED_KEY)
             if own_pw is not None:
-                # apps/unit-mongodb pins the Service name, so the host follows from the
+                # units/mongodb pins the Service name, so the host follows from the
                 # namespace alone — nothing has to be told the instance is there.
                 host = "mongodb.%s.svc.cluster.local" % ns
                 return host, own_pw, _replica_set_of(host, own_pw)
@@ -473,7 +473,7 @@ data:
         # PER-CONSUMER INSTANCE (per-consumer-postgres.md §5.4, §6). A postgresql
         # claim is served by the PostgreSQL instance that lives in the CLAIM'S OWN
         # namespace — never a shared server. Both coordinates come from `ns`:
-        #   • host  — the in-namespace Service `postgres` (apps/postgresql pins that
+        #   • host  — the in-namespace Service `postgres` (units/postgresql pins that
         #     name via fullnameOverride), reachable at the stable namespace-anchored
         #     DNS below;
         #   • admin — the per-consumer superuser password ESO materializes from Vault

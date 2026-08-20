@@ -20,14 +20,15 @@ tree is the software's own.
 ## The shape of it
 
 ```
-apps/          the 22 platform applications, each a chart
+apps/          the 18 platform applications, each a chart with an app.yaml
+units/         the four charts rendered once per unit namespace
+slaves/        the chart rendered once per slave cluster, on the master
 charts/        the library charts they are built from
-argocd/        the ApplicationSets and projects, per stage
+argocd/        the ApplicationSets and projects
 bootstrap/     what is applied before ArgoCD exists
 cluster/       what ONE cluster is: its application toggles and its profile
 clusters/      an installation's cluster maps
 platform/      the version pins and the platform's own grammar
-templates/     the scaffold copied into a customer's repository at onboarding
 ```
 
 **And nothing else.** No configuration, no secrets, no executable and no code that runs — this is

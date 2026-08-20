@@ -18,8 +18,22 @@
 ///   source carrying that `ref`, a bare path against its own source's `path`. A file in another
 ///   repository is not this tree's to answer, and a path composed at render time (`{{ ... }}`)
 ///   cannot be resolved by reading files — both are left alone rather than guessed at.
+/// - A git generator's `files: - path:` is a GLOB, and what must exist is at least one tracked file
+///   matching it. A generator that matches nothing produces zero Applications and reports no error
+///   at all — the reconcile succeeds and the cluster is empty.
+/// - A source's `path:` is a DIRECTORY, and what must exist is at least one tracked file inside it.
+///   ArgoCD renders an absent directory as an empty manifest set, so the Application syncs green
+///   with nothing in it.
 /// - A stamp marker (`__STAGE__`, `__CLUSTER__`, ...) is a value this check cannot know, so it
 ///   stands as a wildcard: the path resolves when ANY tracked file matches the shape.
+///
+/// **What this tree can answer for a generator, and what it cannot.** A generator names a repository
+/// and a revision. Where either is another repository's, or a revision this tree is not — every
+/// `revision: __BOOKS_BRANCH__`, which reads the books branch — the files it selects are not tracked
+/// on master and their absence here says nothing. Those generators are left alone, so
+/// `argocd/apps/slaves-appset.yaml`'s `clusters/active/*.yaml` and the two
+/// `registrations/*/__STAGE__.yaml` generators are NOT covered by this check and moving what they
+/// select is not caught by anything.
 ///
 /// **What `ignoreMissingValueFiles` makes deliberate — and what it cannot.** The flag exists for
 /// files whose presence this repository does not control: a chart-relative overlay another
@@ -225,6 +239,28 @@ final RegExp _anchor = RegExp(r'&([A-Za-z0-9_-]+)\s+(.+)$');
 /// `repoURL:` carries no dash, which is what keeps generators out of this scan.
 final RegExp _source = RegExp(r'^\s*-\s+repoURL:\s*(.+)$');
 
+/// Every `&name value` of [lines], so an alias further down answers what the anchor holds.
+Map<String, String> _anchorsIn(List<String> lines) {
+  final Map<String, String> anchors = <String, String>{};
+  for (final String line in lines) {
+    final RegExpMatch? match = _anchor.firstMatch(line);
+    if (match != null) {
+      anchors[match.group(1)!] = _plain(match.group(2)!);
+    }
+  }
+  return anchors;
+}
+
+/// [raw] with its alias or its own anchor resolved, so `*repo` and `&repo "url"` both answer the URL.
+String _valueOf(String raw, Map<String, String> anchors) {
+  final String plain = _plain(raw);
+  if (plain.startsWith('*')) {
+    return anchors[plain.substring(1)] ?? plain;
+  }
+  final RegExpMatch? definition = _anchor.firstMatch(plain);
+  return definition != null ? _plain(definition.group(2)!) : plain;
+}
+
 /// Reads every `valueFiles:` list of [text] by shape and appends what does not resolve to [found].
 void _scanManifest(
   String origin,
@@ -235,23 +271,8 @@ void _scanManifest(
 ) {
   final List<String> lines = text.split('\n');
 
-  final Map<String, String> anchors = <String, String>{};
-  for (final String line in lines) {
-    final RegExpMatch? match = _anchor.firstMatch(line);
-    if (match != null) {
-      anchors[match.group(1)!] = _plain(match.group(2)!);
-    }
-  }
-
-  // A scalar with its alias or anchor resolved, so `*repo` and `&repo "url"` both answer the URL.
-  String value(String raw) {
-    final String plain = _plain(raw);
-    if (plain.startsWith('*')) {
-      return anchors[plain.substring(1)] ?? plain;
-    }
-    final RegExpMatch? definition = _anchor.firstMatch(plain);
-    return definition != null ? _plain(definition.group(2)!) : plain;
-  }
+  final Map<String, String> anchors = _anchorsIn(lines);
+  String value(String raw) => _valueOf(raw, anchors);
 
   // Which repository each `ref:` name stands for — what `$<ref>/` paths resolve against.
   final Map<String, String> refs = <String, String>{};
@@ -422,4 +443,215 @@ void _scanManifest(
       }
     }
   }
+}
+
+/// Every git generator `files: - path:` glob of [manifests] that this tree must answer and does not.
+///
+/// [manifests] is the raw text of the ArgoCD material by the path it stands at, read by shape for
+/// the same reason [auditValueFiles] reads it that way. [repository] is the `owner/name` of the tree
+/// under audit.
+///
+/// **What a glob matching nothing costs.** The ApplicationSet controller treats a git generator that
+/// selects no file as a generator with no parameters: it produces zero Applications, records no
+/// condition and reports success. Whatever those Applications were is simply not on the cluster, and
+/// nothing anywhere says so — which is why a moved path has to be caught in this tree.
+///
+/// **Which generators this tree can answer.** Only one that reads THIS repository at a revision this
+/// check can hold against the tracked tree. A `repoURL` of another repository, and a `revision`
+/// carrying a stamp marker or a template, both name material that is not tracked here; their globs
+/// are left alone rather than reported, and the library comment names the three that fall out that
+/// way.
+List<UnresolvedPath> auditGeneratorFiles({
+  required Map<String, String> manifests,
+  required Set<String> tracked,
+  required String repository,
+}) {
+  final List<UnresolvedPath> found = <UnresolvedPath>[];
+  for (final String origin in manifests.keys.toList()..sort()) {
+    final List<String> lines = manifests[origin]!.split('\n');
+    final Map<String, String> anchors = _anchorsIn(lines);
+    for (int i = 0; i < lines.length; i++) {
+      if (lines[i].trim() != 'files:') {
+        continue;
+      }
+      final int listIndent = _indent(lines[i]);
+      final String? repoUrl = _siblingScalar(lines, i, listIndent, 'repoURL', anchors);
+      final String? revision = _siblingScalar(lines, i, listIndent, 'revision', anchors);
+      if (repoUrl == null || repositorySlug(repoUrl) != repository) {
+        continue; // another repository's files are not this tree's to answer
+      }
+      if (revision == null || _marker.hasMatch(revision) || revision.contains('{{')) {
+        continue; // another branch's files are not this tree's to answer either
+      }
+      for (final String glob in _listEntries(lines, i, listIndent, 'path')) {
+        if (glob.contains('{{')) {
+          continue; // composed at render time — not resolvable by reading files
+        }
+        if (_matchesAny(glob, tracked)) {
+          continue;
+        }
+        found.add(
+          UnresolvedPath(
+            origin,
+            glob,
+            'no tracked file matches it on $revision, so the generator selects nothing — an '
+            'ApplicationSet whose generator finds nothing produces zero Applications and reports '
+            'no error at all',
+          ),
+        );
+      }
+    }
+  }
+  return found;
+}
+
+/// Every source `path:` of [manifests] that names a directory of this repository and finds none.
+///
+/// The same three arguments and the same contract as [auditGeneratorFiles]: a source pointing at
+/// another repository, or at a revision carrying a stamp marker, names material this tree cannot
+/// answer, and a `path` composed at render time cannot be resolved by reading files.
+///
+/// **What an absent directory costs.** ArgoCD renders a source whose `path` holds nothing as an
+/// empty manifest set. The Application is created, syncs, and reports Healthy and Synced with no
+/// resource in it — the same silence a generator matching nothing gives, one level down.
+List<UnresolvedPath> auditSourcePaths({
+  required Map<String, String> manifests,
+  required Set<String> tracked,
+  required String repository,
+}) {
+  final List<UnresolvedPath> found = <UnresolvedPath>[];
+  final RegExp opening = RegExp(r'^(\s*)(-\s+)?repoURL:\s*(.+)$');
+  for (final String origin in manifests.keys.toList()..sort()) {
+    final List<String> lines = manifests[origin]!.split('\n');
+    final Map<String, String> anchors = _anchorsIn(lines);
+    for (int i = 0; i < lines.length; i++) {
+      final RegExpMatch? source = opening.firstMatch(lines[i]);
+      if (source == null) {
+        continue;
+      }
+      final int keyIndent = source.group(1)!.length + (source.group(2)?.length ?? 0);
+      final String repoUrl = _valueOf(source.group(3)!, anchors);
+      final String? path = _siblingScalar(lines, i, keyIndent, 'path', anchors);
+      if (path == null) {
+        continue; // a values-only source names no directory at all
+      }
+      final String? revision =
+          _siblingScalar(lines, i, keyIndent, 'targetRevision', anchors) ??
+          _siblingScalar(lines, i, keyIndent, 'revision', anchors);
+      if (repositorySlug(repoUrl) != repository) {
+        continue; // another repository's directory is not this tree's to answer
+      }
+      if (revision == null || _marker.hasMatch(revision) || revision.contains('{{')) {
+        continue; // another branch's directory is not this tree's to answer either
+      }
+      if (path.contains('{{')) {
+        continue; // composed at render time — not resolvable by reading files
+      }
+      if (_matchesAny('$path/**', tracked)) {
+        continue;
+      }
+      found.add(
+        UnresolvedPath(
+          origin,
+          path,
+          'no tracked file stands under it on $revision, so the source renders an empty manifest '
+          'set — the Application is created and reports Synced with nothing in it',
+        ),
+      );
+    }
+  }
+  return found;
+}
+
+/// The scalar under [key] among the direct children of the block the line at [line] belongs to.
+///
+/// [keyIndent] is the indentation the block's own keys stand at, so the search reads exactly the
+/// siblings of that line and stops where the block does — at the first line indented less than they
+/// are, which is either the parent's next key or the next item of the list this one is in. Both
+/// directions are walked because a source states its `repoURL` before its `path` and a generator
+/// states its `files` before neither, after both, or in between.
+String? _siblingScalar(
+  List<String> lines,
+  int line,
+  int keyIndent,
+  String key,
+  Map<String, String> anchors,
+) {
+  final RegExp wanted = RegExp('^$key:\\s*(.+)\$');
+  for (final int direction in <int>[1, -1]) {
+    for (int j = line + direction; j >= 0 && j < lines.length; j += direction) {
+      final String trimmed = lines[j].trim();
+      if (trimmed.isEmpty || trimmed.startsWith('#')) {
+        continue;
+      }
+      if (_indent(lines[j]) < keyIndent) {
+        break;
+      }
+      if (_indent(lines[j]) != keyIndent) {
+        continue;
+      }
+      final RegExpMatch? match = wanted.firstMatch(trimmed);
+      if (match != null) {
+        return _valueOf(match.group(1)!, anchors);
+      }
+    }
+  }
+  return null;
+}
+
+/// Every `- <key>: <scalar>` of the list opened at [line], whose entries stand deeper than
+/// [listIndent].
+List<String> _listEntries(List<String> lines, int line, int listIndent, String key) {
+  final List<String> entries = <String>[];
+  final RegExp wanted = RegExp('^-\\s+$key:\\s*(.+)\$');
+  for (int j = line + 1; j < lines.length; j++) {
+    final String trimmed = lines[j].trim();
+    if (trimmed.isEmpty || trimmed.startsWith('#')) {
+      continue;
+    }
+    if (_indent(lines[j]) <= listIndent) {
+      break;
+    }
+    final RegExpMatch? match = wanted.firstMatch(trimmed);
+    if (match == null) {
+      break;
+    }
+    entries.add(_plain(match.group(1)!));
+  }
+  return entries;
+}
+
+/// Whether any path in [tracked] matches [glob], with `*` stopping at a `/`, `**` crossing them and
+/// every stamp marker standing as a wildcard the way [_resolves] lets it.
+bool _matchesAny(String glob, Set<String> tracked) {
+  final StringBuffer pattern = StringBuffer();
+  int at = 0;
+  while (at < glob.length) {
+    final Match? marker = _marker.matchAsPrefix(glob, at);
+    if (marker != null) {
+      pattern.write('[^/]*');
+      at = marker.end;
+      continue;
+    }
+    final String character = glob[at];
+    if (character == '*') {
+      if (at + 1 < glob.length && glob[at + 1] == '*') {
+        pattern.write('.*');
+        at += 2;
+        continue;
+      }
+      pattern.write('[^/]*');
+      at += 1;
+      continue;
+    }
+    if (character == '?') {
+      pattern.write('[^/]');
+      at += 1;
+      continue;
+    }
+    pattern.write(RegExp.escape(character));
+    at += 1;
+  }
+  final RegExp shape = RegExp('^$pattern\$');
+  return tracked.any(shape.hasMatch);
 }

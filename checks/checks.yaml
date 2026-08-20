@@ -8,15 +8,22 @@
 # FORMAT. `<check>: <file, relative to this file>`, one per line, the reason on the comment line
 # directly above it.
 
-# Every apps/<name>/app.yaml carries every key the ApplicationSet generator reads bare. One that does
-# not ends the WHOLE reconcile under missingkey=error, so no Application is created at all.
+# Every directory under apps/ carries an app.yaml, and every apps/<name>/app.yaml carries every key
+# the ApplicationSet generator reads bare. A directory without the file is never rendered by the
+# generator and nothing says so; a file missing one key ends the WHOLE reconcile under
+# missingkey=error, so no Application is created at all.
 app-manifest-keys: test/app_manifest_keys_test.dart
 
 # Every path the chart material names resolves in the TRACKED tree: a file:// dependency to a
-# Chart.yaml of the matching name, a valueFile to a tracked file — except where absence is another
-# repository's to answer, composed at render time, or declared deliberate with
-# ignoreMissingValueFiles. The defect surfaces only on a cluster's fresh clone, never on a
+# Chart.yaml of the matching name, a valueFile to a tracked file, a git generator's files: glob to at
+# least one tracked file, a source's path: to a directory at least one tracked file stands under —
+# except where absence is another repository's to answer, another branch's, composed at render time,
+# or declared deliberate with ignoreMissingValueFiles. A generator or a source that finds nothing
+# reports no error at all, and the defect surfaces only on a cluster's fresh clone, never on a
 # case-insensitive checkout, which is why the paths are judged against git, not the file system.
+# WHAT IT DOES NOT REACH: the three generators reading a books branch — clusters/active/*.yaml in
+# slaves-appset.yaml and registrations/*/__STAGE__.yaml in the consumers and tenants appsets. Their
+# files are not tracked on master, so moving what they select is caught by nothing.
 chart-paths: test/chart_paths_test.dart
 
 # Every label key the deploy programs' Vault namespace selectors match is one this repository's
@@ -28,3 +35,13 @@ vault-selector-labels: test/vault_selector_labels_test.dart
 # or a role the installation's own answer allows. A value neither side admits matches nothing, and an
 # ApplicationSet that matches nothing produces zero Applications and no error at all.
 cluster-role-values: test/cluster_role_values_test.dart
+
+# Every appset whose generator reads clusters/active/*.yaml reads only keys a writer of a cluster map
+# writes — the deploy programs' map template and the Controller's strict schema — and selects on
+# values a map can hold: a literal only under an answer closed to a list of words, otherwise a marker
+# a branch program stamps FROM THE SAME ANSWER the map's key is written from. An unknown key ends the
+# whole reconcile under missingkey=error and no Application is created; a selector matching nothing
+# produces zero Applications and reports no error at all.
+# WHAT IT DOES NOT REACH: the consumers and tenants appsets, whose generators read the registrations
+# and not the cluster maps — another file, with another writer.
+appset-cluster-map-keys: test/appset_cluster_map_keys_test.dart

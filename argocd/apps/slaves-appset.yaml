@@ -19,10 +19,14 @@ spec:
         matchLabels:
           role: slave
           stage: __STAGE__
-          # The field the cluster maps actually carry. It was `master` until the answer behind it
-          # was renamed, and the maps stopped carrying that word — a selector matching nothing
-          # produces zero Applications and reports nothing, so this cannot be left to be noticed.
-          books-cluster: example.invalid
+          # THE CLUSTER THAT KEEPS THE BOOKS, in the marker the branch programs stamp from the
+          # `books_cluster` answer — the same answer the map's own `books-cluster` is written from,
+          # so the two sides of this comparison can never be answered apart. It is the same value
+          # the generator's revision above carries, because a books branch is named for the cluster
+          # whose books it holds. A literal here would be one installation's domain in a file every
+          # installation is cut from, and a selector matching nothing produces zero Applications and
+          # reports no error at all.
+          books-cluster: __BOOKS_BRANCH__
   template:
     metadata:
       name: "{{ .values.cluster }}-apps"
@@ -39,7 +43,7 @@ spec:
           ref: values
         - repoURL: *repo
           targetRevision: *branch
-          path: apps/slave
+          path: slaves/slave
           helm:
             valueFiles:
               - $values/platform/values-common.yaml

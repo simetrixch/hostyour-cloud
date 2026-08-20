@@ -131,18 +131,36 @@ classes:
   "apps/consumer-build/files/applicationset.yaml": product
   # Helm packaging directive for the image-builder chart; no writer of any kind.
   "apps/image-builder/.helmignore": product
+
+  # Chart metadata and dependency version pins of the four per-unit charts, written by the same version sync as apps/*/Chart.yaml.
+  "units/*/Chart.yaml": product
+  # Chart templates of the per-unit charts: every name they emit is the software's own or arrives per unit through valuesObject, so the file names no installation.
+  "units/*/templates/*": product
   # The per-consumer PostgreSQL template's base values — values.yaml and not values-common.yaml because Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml:207).
-  "apps/postgresql/values.yaml": product
+  "units/postgresql/values.yaml": product
   # The three workload sizing presets a renderer selects with -f values-size-<size>.yaml; a sizing table is the software's own.
-  "apps/postgresql/values-size-*.yaml": product
-  # The per-unit MongoDB template's base values — values.yaml and not values-common.yaml for the same reason as apps/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml). It carries the small preset and the `standalone` default, both the software's own.
-  "apps/unit-mongodb/values.yaml": product
-  # Its three sizing presets, selected with -f values-size-<size>.yaml, exactly as apps/postgresql's are.
-  "apps/unit-mongodb/values-size-*.yaml": product
-  # The unit ingress policy's base values — values.yaml and not values-common.yaml for the same reason as apps/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml). The two names it carries, `ingress` and `observability`, are platform namespaces out of argocd/apps/applicationset.yaml, so they are the same on every installation.
-  "apps/unit-networkpolicy/values.yaml": product
+  "units/postgresql/values-size-*.yaml": product
+  # The per-unit MongoDB template's base values — values.yaml and not values-common.yaml for the same reason as units/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml). It carries the small preset and the `standalone` default, both the software's own.
+  "units/mongodb/values.yaml": product
+  # Its three sizing presets, selected with -f values-size-<size>.yaml, exactly as units/postgresql's are.
+  "units/mongodb/values-size-*.yaml": product
+  # The unit ingress policy's base values — values.yaml and not values-common.yaml for the same reason as units/postgresql above: Helm loads only the implicit file when the chart is an extra source (argocd/apps/consumers-appset.yaml). The two names it carries, `ingress` and `observability`, are platform namespaces out of argocd/apps/applicationset.yaml, so they are the same on every installation.
+  "units/networkpolicy/values.yaml": product
   # The unit quota chart's base values — values.yaml for the same reason as the sibling above (Helm loads only the implicit file when the chart is an extra source). It carries NO figures: the six numbers are empty and `required`, because the Controller resolves them per unit from its size table and the ApplicationSet passes them in. What does stand here is the LimitRange defaults, which are the same on every installation.
-  "apps/unit-quota/values.yaml": product
+  "units/quota/values.yaml": product
+
+  # The per-slave chart's metadata and its argo-cd dependency pin, written by the same version sync as apps/*/Chart.yaml.
+  "slaves/*/Chart.yaml": product
+  # The per-slave chart's templates: the slave's name, branch and API address arrive through the slaves generator's valuesObject, so the files themselves name no cluster.
+  "slaves/*/templates/*": product
+  # The per-slave chart's own cross-stage defaults, written on master only by the version sync — the same shape as apps/*/values-common.yaml.
+  "slaves/*/values-common.yaml": product
+  # Stage overrides of the per-slave chart's own defaults, pruned on the branches whose stage this is not, exactly as apps/*/values-dev.yaml is.
+  "slaves/*/values-dev.yaml": product
+  # Same mechanism as slaves/*/values-dev.yaml.
+  "slaves/*/values-test.yaml": product
+  # Same mechanism as slaves/*/values-dev.yaml.
+  "slaves/*/values-prod.yaml": product
 
   # The Controller's own settings. The four keys that name one machine (gateControllerAddr, gateFenceMustFail, master.sshUser, master.lanHost) moved to cluster/values/manager.yaml.
   "apps/manager/values-common.yaml": product
@@ -320,6 +338,12 @@ derived:
   "apps/*/values-test.yaml": other-stages
   # Same as apps/*/values-dev.yaml, kept on a prod-stage installation.
   "apps/*/values-prod.yaml": other-stages
+  # The per-slave chart's dev overrides: the same stage pruning as apps/*/values-dev.yaml, and it needs its own rows because the chart no longer stands under apps/.
+  "slaves/*/values-dev.yaml": other-stages
+  # Same as slaves/*/values-dev.yaml, kept on a test-stage installation.
+  "slaves/*/values-test.yaml": other-stages
+  # Same as slaves/*/values-dev.yaml, kept on a prod-stage installation.
+  "slaves/*/values-prod.yaml": other-stages
   # A unit's build declaration. On the branch that holds the books an operator's suspended:/quiesced: flip is branch-side content, so a conflict must stop the sync; on any other branch StampRole deletes the file a moment later.
   "registrations/*/build.yaml": books-branch-only
   # Same as registrations/*/build.yaml — pruned on a branch without the master role, and never regenerated on the branch that holds the books.
@@ -378,7 +402,15 @@ uncertain:
 # -----------------------------------------------------------------------------
 outside:
 
-  # Vendored Helm dependency archives, fetched by `helm dependency build` and ignored by .gitignore:45; ArgoCD does its own dependency fetch when rendering.
+  # Vendored Helm dependency archives, fetched by `helm dependency build` and ignored by .gitignore:4; ArgoCD does its own dependency fetch when rendering.
   "apps/*/charts/*": product
-  # The lockfile of that same dependency fetch, ignored beside it at .gitignore:46.
+  # The lockfile of that same dependency fetch, ignored beside it at .gitignore:5.
   "apps/*/Chart.lock": product
+  # The same archives under the per-unit charts, ignored at .gitignore:6.
+  "units/*/charts/*": product
+  # The same lockfile under the per-unit charts, ignored at .gitignore:7.
+  "units/*/Chart.lock": product
+  # The same archives under the per-slave chart, ignored at .gitignore:8.
+  "slaves/*/charts/*": product
+  # The same lockfile under the per-slave chart, ignored at .gitignore:9.
+  "slaves/*/Chart.lock": product

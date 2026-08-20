@@ -113,7 +113,7 @@ images:
     stamps:
       - kind: yaml_value
         tree: platform
-        file: apps/postgresql/values.yaml
+        file: units/postgresql/values.yaml
         key: tag
         anchor: 'repository: postgres'
       - kind: dockerfile_arg
@@ -163,7 +163,7 @@ images:
         anchor: 'repository: mongo'
       - kind: yaml_value
         tree: platform
-        file: apps/unit-mongodb/values.yaml
+        file: units/mongodb/values.yaml
         key: tag
         anchor: 'repository: mongo'
       - kind: dockerfile_arg
@@ -275,7 +275,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: apps/postgresql/Chart.yaml
+        file: units/postgresql/Chart.yaml
         dependency: prometheus-postgres-exporter
   prometheus-mongodb-exporter:
     version: "3.20.0"
@@ -313,7 +313,7 @@ charts:
 # fingerprint of the program changes with the pin, which is exactly what makes
 # a re-run of a changed program need a fresh dry run.
 bootstrap:
-  # argo-cd is installed by the bootstrap AND declared in apps/slave/Chart.yaml
+  # argo-cd is installed by the bootstrap AND declared in slaves/slave/Chart.yaml
   # (the namespaced instance a cluster without the master part runs). Both
   # sites are stamped from this one key, so master + slave stay on one chart
   # version and ONE set of CRDs fits both. The report reads the repository out
@@ -326,7 +326,7 @@ bootstrap:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: apps/slave/Chart.yaml
+        file: slaves/slave/Chart.yaml
         dependency: argo-cd
       - kind: yaml_value
         tree: deploy

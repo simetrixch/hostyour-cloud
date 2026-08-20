@@ -11,7 +11,7 @@
 #
 # On a PURE SLAVE branch this file has to GO: the slave's ArgoCD instance
 # already registers the slave under that same name with the slave's real
-# apiserver (apps/slave/templates/externalsecret-cluster-slave.yaml), and a
+# apiserver (slaves/slave/templates/externalsecret-cluster-slave.yaml), and a
 # second Secret claiming the same cluster name with server
 # kubernetes.default.svc — the MASTER's apiserver from the instance's point
 # of view — would point the tenant Applications at the wrong apiserver.

@@ -1,4 +1,5 @@
-/// app-manifest-keys — every `apps/<name>/app.yaml` carries every key the ApplicationSet reads bare.
+/// app-manifest-keys — every directory under `apps/` carries an `app.yaml`, and every one of those
+/// carries every key the ApplicationSet reads bare.
 ///
 /// **What one missing key costs, which is why this is checked at all.** The generator renders its
 /// template under `goTemplateOptions: [missingkey=error]`. Under that option a `{{ .key }}` against a
@@ -67,5 +68,28 @@ List<MissingKey> auditAppManifestKeys({
     for (final MapEntry<String, Map<String, Object?>> each in manifests.entries)
       for (final String key in required)
         if (!each.value.containsKey(key)) MissingKey(each.key, key),
+  ];
+}
+
+/// Every directory under `apps/` that no tracked `apps/<name>/app.yaml` answers.
+///
+/// **Why an app.yaml is the rule and not a habit.** The generator selects `apps/*/app.yaml`
+/// (`argocd/apps/applicationset.yaml`), so a directory without one is never rendered by it. From the
+/// directory alone the two cases are indistinguishable: a chart somebody added and forgot to
+/// declare, which is then silently absent from every cluster, and a chart that is not a platform
+/// application at all and stands in the wrong place. Requiring the file of every one of them is what
+/// makes the difference readable, and it is why the four per-unit charts and the per-slave chart
+/// stand under `units/` and `slaves/` instead of being carried here as named exceptions.
+///
+/// [tracked] comes from `git ls-files`, never from the file system: an untracked directory is not on
+/// the cluster's clone, and a directory whose files are all untracked is not a chart yet.
+List<String> appDirectoriesWithoutManifest(Set<String> tracked) {
+  final Set<String> directories = <String>{
+    for (final String path in tracked)
+      if (path.startsWith('apps/') && path.split('/').length > 2) path.split('/')[1],
+  };
+  return <String>[
+    for (final String directory in directories.toList()..sort())
+      if (!tracked.contains('apps/$directory/app.yaml')) 'apps/$directory',
   ];
 }

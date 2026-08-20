@@ -6,7 +6,7 @@
 # whose valueFiles chain names `values-common.yaml` + `values-<stage>.yaml`
 # EXPLICITLY. A chart rendered into a UNIT namespace is not in that chain: it is
 # an extra source of the unit's Application (argocd/*/apps/consumers-appset.yaml),
-# i.e. `path: apps/unit-mongodb` plus the platform globals from $values, and Helm
+# i.e. `path: units/mongodb` plus the platform globals from $values, and Helm
 # loads only the chart's own implicit `values.yaml` as the base. So the base
 # values live in a file called exactly values.yaml, and there are no per-stage
 # files beside it: a TEMPLATE has no stage identity of its own. Everything
@@ -116,7 +116,7 @@ mongodb:
 # =============================================================================
 # NetworkPolicy — the ONE cross-namespace client this database has.
 #
-# The unit's namespace is already deny-by-default inbound (apps/unit-networkpolicy
+# The unit's namespace is already deny-by-default inbound (units/networkpolicy
 # admits same-namespace pods plus `ingress` and `observability`), which covers the
 # unit's own application, the rs-init Job and the members talking to each other.
 # The service-provisioner is the exception: it mints the consumer's users and
@@ -137,7 +137,7 @@ networkPolicy:
 # The credential trio — ExternalSecret + SecretStore + its ServiceAccount.
 #
 # WAVES. Both sit at -21/-20, ahead of the consumer's own chart (wave -3), for
-# the reason apps/postgresql states at length: the consumer's own SecretStore
+# the reason units/postgresql states at length: the consumer's own SecretStore
 # `vault-backend` does not exist until its chart syncs, and an ExternalSecret
 # pointed at a store that is not there yet never materializes its Secret in time.
 # The workload then deadlocks in CreateContainerConfigError.

@@ -8,7 +8,7 @@
 # "Repository not found" — the message a private repository gives an unauthenticated caller, which
 # reads like a wrong URL and is a missing credential.
 #
-# THE SLAVE HAD THIS AND THE MASTER DID NOT. apps/slave/templates/externalsecret-repo-catalog.yaml
+# THE SLAVE HAD THIS AND THE MASTER DID NOT. slaves/slave/templates/externalsecret-repo-catalog.yaml
 # does exactly this for a slave's own ArgoCD instance, for exactly this reason. The master's instance
 # reads the same catalog through the same generator and had nothing — so tenants-<stage> failed
 # parameter generation on every installation from the first minute, and the root application it hangs
