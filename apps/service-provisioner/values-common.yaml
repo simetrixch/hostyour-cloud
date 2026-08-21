@@ -76,7 +76,12 @@ controller:
     # registrySource below, gated on the build cluster — into consumer
     # namespaces. Harmless on non-build clusters: registrySource is off there, so
     # the source Secret doesn't exist and a `registry` claim reports a clear
-    # "not available" / "not configured" Error instead of provisioning. See README.
+    # "not available" / "not configured" Error instead of provisioning — both
+    # phrasings come from handle_registry in templates/configmap.yaml, which raises
+    # "registry source secret not configured" when the two keys below are empty
+    # and "registry pull dockerconfigjson not available yet" when the Secret they
+    # name is absent or holds no sourceKey. What materialises that Secret is
+    # templates/externalsecret-registry-pull.yaml.
     sourceNamespace: service-provisioner
     sourceSecret: registry-pull-source
     sourceKey: .dockerconfigjson

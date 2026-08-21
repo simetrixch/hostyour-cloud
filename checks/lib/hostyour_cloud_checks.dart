@@ -13,6 +13,7 @@ export 'src/cluster_role_values.dart';
 export 'src/credentialed_readers.dart';
 export 'src/external_secret_keys.dart';
 export 'src/external_secret_reach.dart';
+export 'src/gated_ingress.dart';
 export 'src/installation_tree.dart';
 export 'src/named_paths.dart';
 export 'src/published_databases.dart';

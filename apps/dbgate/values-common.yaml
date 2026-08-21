@@ -158,7 +158,10 @@ pvc:
 #
 # TURNING IT ON is `enabled: true` and nothing else, once the annotation below
 # names a middleware that exists in THIS cluster. Turning it on while it names
-# one that does not is the change this block exists to stop.
+# one that does not — or with no annotation at all, which SKIP_ALL_AUTH above
+# makes the same thing — is refused by checks/lib/src/gated_ingress.dart, which
+# holds the annotation against the Middlewares charts/middleware and bootstrap/
+# render into the cluster `runsOn` places this app in.
 ingress:
   ingress:
     enabled: false
