@@ -17,5 +17,6 @@ export 'src/installation_tree.dart';
 export 'src/named_paths.dart';
 export 'src/published_databases.dart';
 export 'src/registration_selectors.dart';
+export 'src/rendered_registrations.dart';
 export 'src/release_pin_tags.dart';
 export 'src/vault_selector_labels.dart';
