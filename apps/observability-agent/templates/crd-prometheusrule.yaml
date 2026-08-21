@@ -1,5 +1,5 @@
 # Vendored CRD — static manifest (NOT the upstream chart's CRD install).
-# Source: kube-prometheus-stack 87.2.1 → charts/crds/crds/crd-prometheusrules.yaml
+# Source: kube-prometheus-stack 87.2.1 → its crds subchart, crd-prometheusrules.yaml
 #         (prometheus-operator v0.92.0). Shipped so workload apps that emit
 #         PrometheusRule CRs via charts/monitoring can sync on a slave that runs
 #         NO prometheus-operator. Same static-CRD pattern as apps/external-secrets.

@@ -5,9 +5,8 @@ description: >-
   hostyour-deploy-state marker ConfigMap in kube-system — the cluster's
   GitOps-owned deploy-state/identity record (domain/stage/role/generation/
   writtenAt). The Controller's onboarding preflight reads it and FAILS CLOSED
-  when it is missing or its domain does not match the cluster's. Always-on on
-  every cluster (no installation/apps toggle) so it exists everywhere and self-heals
-  after a wipe.
+  when it is missing or its domain does not match the cluster's. app.yaml says
+  runsOn: every-cluster, so it exists everywhere and self-heals after a wipe.
 type: application
 
 dependencies:

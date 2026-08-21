@@ -11,7 +11,7 @@ Recipient fallback chain:
   $cfg.emails (explicit list per entry, optional)
     → .Values.global.alertRecipients (the installation's own: the operator
       answers alert_recipients when the install branch is generated, and
-      StampClusterProfile renders THAT ANSWER into installation/profile.yaml, which
+      The branch program renders THAT ANSWER into installation/profile.yaml, which
       every app loads last. clusters/active/<fqdn>.yaml states the same answer as
       alert-recipients — it is a second rendering of it, not the file the profile
       is read out of. platform/values-common.yaml holds an empty list because a

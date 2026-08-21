@@ -5,7 +5,7 @@
 # always the same build) and invokes the run-once entrypoint server/jobs/registry-reaper.ts. Its
 # referenced safety floor IS the release bump's search space: (a) every registration's
 # chartPath values-<stage>.yaml on the unit's deploy/<stage> branch, (b) the catalog's
-# charts/<chart>/values-<stage>.yaml on every branch, (c) hostyour-cloud's apps/<app>/values-<stage>.yaml
+# per-chart values-<stage>.yaml on every branch, (c) hostyour-cloud's apps/<app>/values-<stage>.yaml
 # on every branch — every builds[]{name,image,tag} pin found there is kept; only aged, unreferenced
 # tags fall. zot's own retention deliberately NEVER touches the single-segment repos (the ["*"]
 # keep-all policy in apps/registry/values-common.yaml) — the reaper is the SOLE cleaner there;
@@ -28,7 +28,8 @@
 #       the FULL manager env schema, so this required-no-default field must be present even though
 #       the reaper never serves HTTP.
 # The manager app is provider-only gated to the SAME one build/control cluster as the registry
-# (installation/apps/manager.yaml + master.sshUser), so the reaper rides an equivalent gate. It reaches
+# (apps/manager/app.yaml says runsOn: master, plus master.sshUser), so the reaper rides an
+# equivalent gate. It reaches
 # zot cross-namespace over common.registryHost — exactly as the manager's own ensure-images
 # registry probe (HttpRegistryProbe) already does.
 #
@@ -121,7 +122,7 @@ spec:
                       name: manager-github
                       key: write-pat
                 # The catalog repo — the floor's second carrier class is
-                # the CATALOG's charts/<chart>/values-<stage>.yaml on every
+                # the CATALOG's per-chart values-<stage>.yaml on every
                 # branch, read with that repository's own PAT
                 # (externalsecret-deploy-repo-pat.yaml, from the stage-free
                 # secret/build/catalog/repo-pat). Addressed by owner/name because

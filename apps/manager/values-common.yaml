@@ -7,9 +7,10 @@
 # chart), so there is nothing env-specific here.
 #
 # PROVIDER-ONLY: like the build plane (registry/tekton/image-builder), the
-# manager runs only where the registry runs locally. master default is
-# installation/apps/manager.yaml deploy:"false"; the control-host install branch
-# flips it to "true", the same toggle pattern every provider-only app carries.
+# manager runs only where the registry runs locally. app.yaml says
+# runsOn: master, and the app generator admits every-cluster plus the role
+# stamped over __CLUSTER_ROLE__ — the same placement every provider-only app
+# carries.
 #
 # The manager image pin lives in values-{dev,test,prod}.yaml as the ONE pin
 # grammar builds[]{name,image,tag} — `image` is the FLAT build name
@@ -85,7 +86,7 @@ github:
   # master.sshUser, which is on an install branch only. What the key states is
   # where the override goes — an installation pointing THIS app at another
   # catalog sets deployRepo in installation/values/manager.yaml, which
-  # argocd/<stage>/apps/applicationset.yaml loads after this file.
+  # argocd/apps/applicationset.yaml loads after this file.
   deployRepo: ""
 
 # Consumer onboarding (config.ts, onboarding.md §6). Chart validation runs as an in-cluster

@@ -1,7 +1,7 @@
 # slave (D5) — shared across DEV / TEST / PROD.
 #
 # Per-slave inputs live under `slave:` and are REQUIRED — the slaves
-# ApplicationSet (argocd/<stage>/apps/slaves-appset.yaml) injects them from the
+# ApplicationSet (argocd/apps/slaves-appset.yaml) injects them from the
 # slave's cluster map (clusters/active/<fqdn>.yaml) via helm valuesObject. The
 # empty defaults below only document the shape; templates `required`-fail
 # loudly if any is missing.
@@ -63,7 +63,7 @@ repo:
   # Read by the repo credential ESO twin
   # (templates/externalsecret-repo-catalog.yaml): the tenant
   # ApplicationSets live in the slave branch's argocd tree
-  # (argocd/<stage>/apps/tenants-appset.yaml, synced by the handoff root
+  # (argocd/apps/tenants-appset.yaml, synced by the handoff root
   # Application) and read the catalog through this instance's repo-server, so
   # the instance needs the credential even though no template here renders
   # them. The username pairs with the org PAT at secret/<stage>/slaves/
@@ -74,7 +74,7 @@ repo:
   # templates/externalsecret-repo-catalog.yaml requires it — a branch naming no
   # catalog fails its render instead of materializing a credential for no
   # repository. There is no per-slave override to write it into: the generator
-  # argocd/<stage>/apps/slaves-appset.yaml names no installation/values/<app>.yaml
+  # argocd/apps/slaves-appset.yaml names no installation/values/<app>.yaml
   # for this chart, and this file is product, byte-identical everywhere.
   deployUsername: hostyour-cloud
 

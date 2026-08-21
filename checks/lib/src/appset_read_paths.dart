@@ -35,10 +35,9 @@
 ///
 /// **WHAT IT DOES NOT REACH.** A read path no rule of `branch-classes.yaml` owns is left alone
 /// rather than reported, because a path with no class is a gap in that declaration and not a
-/// statement that nothing writes it. Two paths are unowned today, for opposite reasons:
-/// `apps/*/app.yaml`, which seventeen tracked files answer and no rule of the `classes:` section
-/// names — the declaration's own gap — and `$pins/{{ .chart }}/pins-__STAGE__.yaml`, which stands on
-/// the catalog's books branch and is no path of this repository at all.
+/// statement that nothing writes it. One path is unowned today:
+/// `$pins/{{ .chart }}/pins-__STAGE__.yaml`, which stands on the catalog's books branch and is no
+/// path of this repository at all, so no rule of the `classes:` section can own it.
 ///
 /// It inherits the narrowing of [writtenPathsIn], which reads a write off [writeFileStep] rows
 /// alone. A path an `install` entry reads and `fill_key_value_file` or `copy_branch_file` writes

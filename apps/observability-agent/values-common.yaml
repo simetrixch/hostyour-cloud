@@ -4,7 +4,7 @@
 
 # ---------------------------------------------------------------------------
 # Push endpoints + cluster label come from GLOBALS. On a pure slave they are
-# STAMPED by StampClusterProfile into installation/profile.yaml (loaded LAST, wins):
+# STAMPED by the branch program into installation/profile.yaml (loaded LAST, wins):
 #   global.endpoints.observability.prometheusPush: https://prom-push.<master-fqdn>
 #   global.endpoints.observability.lokiPush:       https://loki-push.<master-fqdn>
 #   global.domain:                                 <slave-fqdn>   (the cluster label)

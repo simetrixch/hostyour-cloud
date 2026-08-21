@@ -14,6 +14,7 @@ export 'src/credentialed_readers.dart';
 export 'src/external_secret_keys.dart';
 export 'src/external_secret_reach.dart';
 export 'src/installation_tree.dart';
+export 'src/named_paths.dart';
 export 'src/published_databases.dart';
 export 'src/release_pin_tags.dart';
 export 'src/vault_selector_labels.dart';

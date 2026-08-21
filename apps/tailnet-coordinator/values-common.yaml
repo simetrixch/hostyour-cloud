@@ -1,12 +1,11 @@
 # Tailnet coordinator (headscale) — shared values across all stages.
 #
 # In every stage's catalog; deployed on the cluster with the master part
-# (gated by installation/apps/tailnet-coordinator.yaml, master default
-# deploy:"false"), because the coordinator is provided once, by the same
-# cluster that provides Vault — every other cluster's hosts log in to it.
+# (app.yaml says runsOn: master), because the coordinator is provided once, by
+# the same cluster that provides Vault — every other cluster's hosts log in to it.
 #
 # Its address is global.tailnetUrl (installation/profile.yaml, written by
-# StampClusterProfile from the cluster map). The Ingress host below and server_url in
+# the branch program from the cluster map). The Ingress host below and server_url in
 # templates/configmap-config.yaml both derive from that one value: headscale
 # composes its login and registration URLs from server_url, so a client sent
 # to any other address ends up somewhere this Ingress does not serve.
@@ -100,9 +99,9 @@ app:
 # host, and the node database that IS the record of which hosts have joined.
 # Neither can be rebuilt from git: a coordinator that comes back on a fresh
 # volume has a new identity and an empty member list, so every host has to
-# join again by hand. Without the annotation, flipping
-# installation/apps/tailnet-coordinator.yaml to deploy:"false" drops the element
-# from the catalog and ArgoCD prunes the volume with the Application.
+# join again by hand. Without the annotation, an app.yaml that stopped naming
+# this cluster's role drops the element from the catalog and ArgoCD prunes the
+# volume with the Application.
 # Deleting it is an explicit opt-in:
 #   microk8s kubectl -n tailnet-coordinator delete pvc headscale-data
 pvc:

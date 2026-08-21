@@ -15,9 +15,11 @@
 # second Secret claiming the same cluster name with server
 # kubernetes.default.svc — the MASTER's apiserver from the instance's point
 # of view — would point the tenant Applications at the wrong apiserver.
-# NOTHING removes it today: StampRole prunes the two stages this branch is not,
-# the registrations and the foreign cluster maps, and this file is none of the
-# three.
+# NOTHING removes it today, and nothing is meant to: no step of any branch
+# program deletes a path from a branch. A branch is the trunk plus what the
+# program WRITES into it, so a file the trunk carries stands on every branch cut
+# from it, this one included. Removing it on a pure slave is work nobody has
+# built.
 apiVersion: v1
 kind: Secret
 metadata:

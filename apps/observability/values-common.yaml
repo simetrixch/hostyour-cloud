@@ -242,7 +242,7 @@ monitoring:
   # `platform-default` has no matchers — it's the catch-all that delivers any
   # alert not already null-routed by the global config (Watchdog / InfoInhibitor
   # / severity=info). With `emails:` omitted, the chart template falls back to
-  # .Values.global.alertRecipients, which StampClusterProfile renders into
+  # .Values.global.alertRecipients, which the branch program renders into
   # installation/profile.yaml from the operator's alert_recipients ANSWER while the
   # install branch is generated — the installation's own mailboxes, since
   # platform/values-common.yaml is the trunk and a mailbox names one
@@ -316,7 +316,7 @@ kube-prometheus-stack:
       # Chart.yaml are: it is a kube-prometheus-stack value, not a chart of ours.
       #
       # NOTHING IN THIS TREE TURNS IT ON. installation/profile.yaml carries global.*
-      # keys only and StampClusterProfile writes no such key, so the profile is
+      # keys only and the branch program writes no such key, so the profile is
       # not the surface it was once set from. The only place an installation can
       # set it today is its own installation/values/observability.yaml, which the
       # ApplicationSet loads just before the profile. Until one does, the master
@@ -559,7 +559,7 @@ grafana-oidc-secret:
 # push agents (apps/observability-agent, I5). Traffic is TLS (LE cert via the
 # platform ClusterIssuer, added automatically by charts/ingress) and gated by a
 # Traefik basic-auth Middleware. Hosts compose from global.domain (= the
-# master's FQDN), matching StampClusterProfile, which points a pure slave's
+# master's FQDN), matching the branch program, which points a pure slave's
 # agents at prom-push./loki-push.<master-fqdn>.
 # ============================================================================
 

@@ -5,7 +5,7 @@
 # ONE SHARED client `argo-slave` serves EVERY per-slave ArgoCD: its redirect URI
 # is a REGEX that matches any argo-<name> callback, so onboarding a new slave needs
 # NO new IdP client — the slave's argocd-cm just points its oidc.config at this
-# provider (injected by argocd/<stage>/apps/slaves-appset.yaml). PUBLIC client +
+# provider (injected by argocd/apps/slaves-appset.yaml). PUBLIC client +
 # PKCE: there is NO client_secret to seal/rotate per slave (the browser performs
 # PKCE); authorization is per-instance ArgoCD RBAC by group, not by the OIDC client.
 #

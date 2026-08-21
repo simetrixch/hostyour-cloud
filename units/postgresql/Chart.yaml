@@ -17,10 +17,9 @@ description: |
   PostgreSQL now gets its OWN instance in its OWN namespace — and the CHART is
   what survived it: the template each per-consumer instance is rendered from.
   Retiring the app and deleting the chart are different things; only the first
-  happened. There is therefore deliberately no `postgresql` element in
-  argocd/{dev,test,prod}/apps/applicationset.yaml and no
-  installation/apps/postgresql.yaml toggle, and re-adding either would resurrect the
-  singleton this chart no longer models.
+  happened. There is therefore deliberately no apps/postgresql/ directory for
+  argocd/apps/applicationset.yaml to glob an app.yaml out of, and re-adding one
+  would resurrect the singleton this chart no longer models.
 
   WHAT MAKES IT RENDERABLE PER CONSUMER. Every cluster-singleton assumption is
   gone: no hardcoded namespace (the ExternalSecret and the SecretStore follow
@@ -102,7 +101,7 @@ dependencies:
   # prometheus-community, and ArgoCD fetches it at render time (the vendored
   # charts/ are gitignored). ArgoCD gates dependency repos by the Application's
   # AppProject.sourceRepos — the platform already lists this repo in the `data` and
-  # `observability` projects for exactly this reason (argocd/*/apps/projects.yaml).
+  # `observability` projects for exactly this reason (argocd/apps/projects.yaml).
   # The PER-CONSUMER project (hostyour-manager appproject.ts renderConsumerAppProject)
   # currently permits only [consumerRepo, platformRepo], so a per-consumer render
   # with metrics.enabled would be REJECTED until that project also allows

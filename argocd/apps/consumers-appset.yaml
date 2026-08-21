@@ -14,23 +14,23 @@
 # follows the consumer's delivery branch deploy/__STAGE__ as a LITERAL. What that
 # branch points at is decided in the consumer's repo, not here.
 #
-# THE TWO MARKERS IN THIS FILE HAVE NO WRITER. The post-selector pins
+# THE TWO MARKERS IN THIS FILE ARE BOTH STAMPED. The post-selector pins
 # cluster=__CLUSTER__ — the install branch's cluster short name, which is the
 # fqdn's first DNS label and the name the Controller writes into a
-# registration's `cluster:` field. The generator revision is __BOOKS_BRANCH__
-# and deliberately not this branch: the registrations stand on the install
-# branch of the cluster holding the master role, which on a pure slave is
-# another branch. Neither value is an answer the branch program holds, and the
-# shell that used to write them is gone — so a branch cut today carries both
-# markers exactly as they stand, reads its registrations from a ref that does
-# not exist, and admits none of them.
+# registration's `cluster:` field; the branch program derives that label from
+# the fqdn it was answered rather than asking for it twice, and stamps it over
+# this whole tree. The generator revision is __BOOKS_BRANCH__ and deliberately
+# not this branch: the registrations stand on the install branch of the cluster
+# holding the master role, which on a pure slave is another branch, and the
+# branch program stamps it from the books_cluster answer — the same answer the
+# cluster map's own `books-cluster` is written from.
 #
-# What DOES happen on a branch: StampRole keeps registrations/ on the branch of
-# the cluster holding the master role and prunes them off a pure slave's, so a
-# slave reading its own branch would generate nothing for the consumers placed
-# on it, and a files generator matching nothing is not an error. Filling the two
-# markers is what would let one slave's ArgoCD instance deliver its own
-# consumers out of its master's books.
+# SO WHAT THIS BRANCH CARRIES IS NOT WHAT THIS SELECTS. The generator names the
+# ref it reads, so registrations/ standing on this branch, or absent from it,
+# changes nothing here. Nothing takes them off a branch either: no step of any
+# branch program deletes a path, and the trunk every branch is cut from carries
+# no customer registration at all — so a pure slave's branch has none to begin
+# with.
 #
 # suspended and quiesced are NOT selectors and never prune: both reach the
 # chart as values (source 1 below) and the chart renders the off state —

@@ -1,6 +1,6 @@
 # DEV-specific image-builder config. The build plane runs on the ONE build
-# cluster (installation/apps gated); this file wires DEV's Vault path for the
-# webhook HMAC secret.
+# cluster (app.yaml says runsOn: master); this file wires DEV's Vault path for
+# the webhook HMAC secret.
 externalsecret-webhooks:
   externalSecret:
     vaultPath: dev/app/image-builder

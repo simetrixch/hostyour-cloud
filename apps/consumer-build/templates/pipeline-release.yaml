@@ -29,7 +29,7 @@ looked up in a list. For each declared image P and the requested stage S the
 bump searches every carrier of the one pin grammar builds[]{name,image,tag} —
 (a) every registration with a chartPath on hostyour-cloud master, read at
 <repoURL>@deploy/<S>:<chartPath>/values-<S>.yaml, (b) the catalog's
-charts/<chart>/pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded from
+the catalog's per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded from
 the chart's product default on the trunk the first time and bumped in place
 after, (c) hostyour-cloud master apps/<app>/values-<S>.yaml — and bumps every
 hit. An image with NO hit anywhere fails the run loudly: a release nothing
@@ -516,16 +516,17 @@ spec:
               # NOT global.domain: global.domain is the branch of the cluster
               # this build plane runs ON, and the build plane may be a pure
               # slave — an installation is free to arrange that, and this chart
-              # deploys wherever the build plane sits — whose branch StampRole
-              # has pruned every registration off. StampClusterProfile writes
-              # booksBranch into installation/profile.yaml from the same role rule
-              # that decides vaultUrl. Not the trunk either
+              # deploys wherever the build plane sits — whose branch carries no
+              # registration at all, because the trunk it was cut from carries
+              # none and no step of any branch program writes one there. The
+              # branch program writes booksBranch into installation/profile.yaml
+              # from the same role rule that decides vaultUrl. Not the trunk either
               # — a registration names one real unit of one installation, and
               # the trunk is what every future installation is cut from.
               - name: BOOKS_BRANCH
                 value: {{ required "consumer-build: global.booksBranch is required (installation/profile.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
               # The tenant catalog this installation deploys from — one repository
-              # per installation, composed once by StampClusterProfile into
+              # per installation, composed once by the branch program into
               # installation/profile.yaml. Required, never defaulted: a bump that
               # pushed the tenant pins to a repository picked by this chart would
               # write into somebody else's catalog.
@@ -653,12 +654,12 @@ spec:
               # a class-(b) hit, and the platform image pins class (c) bumps and
               # pushes back. The install branch named by BOOKS_BRANCH carries
               # this installation's books: the consumer registrations class (a)
-              # searches, which the Controller writes there and StampRole keeps
-              # there. One clone cannot serve both: the trunk carries no
-              # customer registration at all, and StampRole prunes the other
-              # two stages' argocd trees off an install branch, so the tenant
-              # render below would find no ApplicationSet there for any stage
-              # but the branch's own.
+              # searches, which the Controller writes there and nothing takes
+              # away. One clone cannot serve both: the trunk carries no customer
+              # registration at all, and an install branch's argocd/ tree has
+              # already had __STAGE__, __CLUSTER__, __BOOKS_BRANCH__ and
+              # __CATALOG_REPO__ stamped into it for the one stage that branch
+              # is, so the tenant render below could not simulate any other.
               git clone -q --depth 1 --branch master "${CLOUD_URL}" "${WORK}/hostyour-cloud"
               # Fail-closed for the same reason the carrier clone below is: a
               # search whose source cannot be read is not a search that found
@@ -695,7 +696,7 @@ spec:
               # A tag says which version THIS installation runs, and a tag on a
               # branch every installation reads means one installation's build
               # decides another's version, with the next bump overwriting it. So
-              # the pin stands per stage in charts/<chart>/pins-<stage>.yaml on
+              # the pin stands per stage in the catalog's per-chart pins-<stage>.yaml on
               # this installation's books branch in the catalog, which the
               # tenants ApplicationSet layers over the chart's own values.yaml.
               #
@@ -755,13 +756,13 @@ spec:
                     rm -f "${pins}"
                   fi
                 done
-                commit_push "${WORK}/catalog-books" "${BOOKS_BRANCH}" "catalog charts/*/pins-${STAGE}.yaml"
+                commit_push "${WORK}/catalog-books" "${BOOKS_BRANCH}" "catalog per-chart pins-${STAGE}.yaml"
               fi
 
               # ── tenant hits: who renders a bumped catalog chart ────────────
               # A class-(b) hit changes a chart that tenant member Applications
               # render. WHICH ones is derived, never listed: the tenant
-              # ApplicationSets under argocd/<stage>/apps/ state which member
+              # ApplicationSets under argocd/apps/ state which member
               # sources which chart and how its Application is named, and the
               # tenant registrations state which tenants exist on which
               # cluster. Those registrations are NOT on the catalog's trunk —
@@ -798,6 +799,14 @@ spec:
                   } > "${SIM}/templates/patch.yaml"
                   helm template appset-sim "${SIM}" -f "$2"
                 }
+                # THIS GLOB MATCHES NOTHING AS THE TRUNK STANDS. The three
+                # per-stage argocd trees became one parameterized tree —
+                # argocd/apps/*.yaml, carrying __STAGE__ — so there is no
+                # argocd/ to walk, the [ -f ] guard below skips out, and
+                # the tenant reach is derived as empty with every side reporting
+                # success. Reading argocd/apps/*.yaml instead is not the whole
+                # fix: those files carry the markers unstamped, and the sim
+                # render needs them filled for the stage being bumped.
                 for as in "${WORK}"/hostyour-cloud/argocd/"${STAGE}"/apps/*.yaml; do
                   [ -f "${as}" ] || continue
                   [ "$(yq eval '.kind // ""' "${as}")" = "ApplicationSet" ] || continue

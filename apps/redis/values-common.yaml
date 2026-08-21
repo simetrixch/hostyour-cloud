@@ -180,7 +180,7 @@ prometheus-redis-exporter:
       memory: 256Mi
 
 # Per-namespace SecretStore (the Vault backend the ExternalSecret below reads).
-# vaultUrl falls back to global.vaultUrl, which StampClusterProfile writes into
+# vaultUrl falls back to global.vaultUrl, which the branch program writes into
 # installation/profile.yaml as https://vault.<the cluster holding the master role> — so
 # it names one installation and cannot be stated here. Same shape apps/mongodb has.
 secret-store: {}

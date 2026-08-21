@@ -1,9 +1,9 @@
 # Zot OCI registry — shared values across all stages.
 #
-# In every stage's catalog; deployed on exactly ONE build cluster (gated by
-# installation/apps/registry.yaml, master default deploy:"false"), because promote
-# test->prod reuses the SAME built image. Its own hostname is zot.<domain>;
-# every OTHER cluster addresses it via global.endpoints.registry.host.
+# In every stage's catalog; deployed on exactly ONE build cluster (app.yaml says
+# runsOn: master), because promote test->prod reuses the SAME built image. Its
+# own hostname is zot.<domain>; every OTHER cluster addresses it via
+# global.endpoints.registry.host.
 #
 # Push:  image-builder/buildah-build-push logs in with push-user from Vault.
 # Pull:  any workload that consumes a registry image gets an imagePullSecret
@@ -119,7 +119,7 @@ pvc:
 # `host` + service name + TLS secret name use Helm tpl to pull
 # .Values.global.env and .Values.global.domain at render time — so the build
 # cluster serves its registry at its own zot.<domain>. Deployed only where
-# installation/apps/registry.yaml enables it (the ONE build cluster).
+# app.yaml's runsOn: master admits it (the ONE build cluster).
 #
 # Zot's bundled web UI is served from the SAME hostname (extensions.ui.enable
 # = true in config.json below); no second hostname needed.

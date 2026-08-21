@@ -29,7 +29,7 @@ WHAT STAYS OPEN, and why each one has to:
      Every one of those calls crosses a namespace boundary, so they are the
      first thing this policy would break. The selector is the
      guid label the tenant ApplicationSet stamps on every member namespace
-     (argocd/<stage>/apps/tenants-appset.yaml, platform/tenant), so it admits
+     (argocd/apps/tenants-appset.yaml, platform/tenant), so it admits
      exactly the members of THIS tenant and no other tenant's.
 
 WHAT NEEDS NO RULE. The kubelet's liveness/readiness probes originate on the NODE,

@@ -128,9 +128,10 @@ resourceNames — only relocated):
     delete-only; the read it pairs with comes from manager-smoke-reader.
 
 Build-plane-only, like the whole manager app: renders wherever the app
-deploys (installation/apps/manager.yaml, flipped "true" only on the build plane
-by StampAppToggles) — no separate toggle, exactly like serviceaccount.yaml /
-deployment.yaml.
+deploys (apps/manager/app.yaml says runsOn: master, and the app generator in
+argocd/apps/applicationset.yaml admits every-cluster and the role stamped over
+__CLUSTER_ROLE__ and nothing else) — no separate toggle, exactly like
+serviceaccount.yaml / deployment.yaml.
 */ -}}
 {{- include "rbac.grants" (dict
     "root" $

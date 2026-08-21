@@ -2,7 +2,7 @@
 # On `master` this is empty (`global: {}`); every app's ArgoCD Application loads it
 # LAST in the valueFiles chain, so whatever global.* keys it sets win.
 #
-# Written per install branch by StampClusterProfile from the ANSWERS the run that
+# Written per install branch by the branch program from the ANSWERS the run that
 # generated the branch was given (not hand-edited normally, and not parsed back
 # out of clusters/active/<fqdn>.yaml — that map is a second rendering of the same
 # answers): one rule per key —

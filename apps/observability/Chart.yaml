@@ -47,7 +47,7 @@ dependencies:
 
   # ── Master receive path (D4b / I6) — gated on the observabilityCentral global ─
   # These render ONLY on the central observability cluster (the master),
-  # where StampClusterProfile stamps global.servicesLocal.observabilityCentral: true
+  # where the branch program stamps global.servicesLocal.observabilityCentral: true
   # into installation/profile.yaml. On every other cluster the `condition:` is
   # false → the sub-charts aren't loaded and nothing extra renders (byte-stable).
   #   • two public Ingresses — prom-push.<master-fqdn> → Prometheus :9090

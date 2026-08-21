@@ -22,7 +22,7 @@
 #            and no class is true of the whole of it. Every `mixed` entry has a
 #            row in `uncertain:` naming the values of the second class inside it
 #            and what would settle it. A mixed file is a defect, not a state to
-#            keep — the check reports every one of them.
+#            keep.
 #
 # WHY THIS FILE EXISTS. Which paths are installation state used to be decided
 # by two routines that never read this file: one greps file CONTENT for the
@@ -49,6 +49,40 @@
 # left to compare. That is what turning the stampers into configured steps is
 # for.
 #
+# WHAT DECIDES A BRANCH'S CONTENTS. An install branch is the trunk — at the cut,
+# or at the pinned release tag a regeneration merges in — PLUS what the branch
+# program writes into it. There is no third term. No step of deploy-branch,
+# deploy-slave-branch, regenerate-branch or regenerate-slave-branch DELETES a
+# path from a branch, so every file the trunk carries stands on every branch cut
+# from it, whatever its class here says. Twenty comments across five files used
+# to attribute a reduction to a stamper named nowhere in either tree — the two
+# stage trees a branch is not pruned away, `registrations/` taken off a branch
+# whose role lacks the master part, foreign cluster maps removed. No step has
+# ever done any of it (hostyour-cloud#69), and the class of a path is a
+# statement about what the path IS, never about which files a branch physically
+# carries.
+#
+# WHAT ITS ABSENCE COSTS, READ OFF THE THINGS THAT RENDER. Nothing reads a
+# branch more widely than it names:
+#
+#   * every value chain names `values-__STAGE__.yaml` outright — the two other
+#     stage files a branch carries are loaded by nothing
+#     (argocd/apps/applicationset.yaml). The `revision: master` that file carries
+#     is no part of this: on a branch it is not master any more, because the
+#     revision stamp retargets every revision/targetRevision under argocd/ to the
+#     branch, which is what the `argocd/*` row of the derived section below
+#     states.
+#   * the consumer and slave generators pin `revision: __BOOKS_BRANCH__` and add
+#     a label selector on top, so what stands under `registrations/` or
+#     `clusters/active/` on the LOCAL branch is not what either of them selects
+#     (argocd/apps/consumers-appset.yaml, argocd/apps/slaves-appset.yaml).
+#
+# And nothing puts the pruned material there to begin with: the trunk carries no
+# registration and no cluster map — `clusters/active/.gitkeep` and nothing else
+# — every branch is cut from the trunk, and a branch whose role lacks the master
+# part is written no map at all (regenerate-branch.yaml states it: "A slave's
+# branch carries no cluster map at all").
+#
 # FORMAT. Sections of `  "<pattern>": <value>` lines, each with its reason on
 # the ONE comment line directly above it — the shape platform/versions.yaml
 # already uses, plain enough that a rule and the reason for it read together
@@ -60,17 +94,16 @@
 # which is the sense a shell glob or a package:glob pattern would give it.
 #
 # ORDER. First match OWNS the path; later rules never see it, in EVERY section.
-# So a specific path stands ABOVE the glob it is an exception to — the seven
-# platform registrations above `registrations/*/build.yaml`,
+# So a specific path stands ABOVE the glob it is an exception to —
 # apps/postfix/values-*.yaml above `apps/*/values-*.yaml`. A rule that owns no
-# path is reported as dead, unless it is listed in `trunk-absent:` — that is how
-# a rule accidentally placed below its own glob makes itself visible.
+# path is DEAD, unless it is listed in `trunk-absent:` — that is how a rule
+# accidentally placed below its own glob makes itself visible.
 #
 # THIS FILE IS NOT ITSELF STAMPED. It explains the stamp, so it names the
 # placeholder literal, so a blind text substitution would rewrite it and leave
 # the one file an operator opens to learn which paths must never be stamped
-# saying the opposite. StampFqdn excludes it by name for that reason, and
-# `never-stamp:` below holds the row the check plants against.
+# saying the opposite. The domain stamp excludes it by name for that reason, and
+# `never-stamp:` below holds the row that says so.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -118,7 +151,7 @@ classes:
   # files at all.
   "bootstrap/*": product
 
-  # The ten library charts every app depends on: no writer at all — not in the placeholder list, not pruned by StampRole, not touched by the version sync.
+  # The ten library charts every app depends on: no writer at all — not in the placeholder list, not touched by the version sync.
   "charts/*": product
   # This file: the declaration itself, the same in every installation. Product because it describes the product's shape and names no cluster — and because a stamper must never rewrite the file that says what may be stamped.
   "branch-classes.yaml": product
@@ -155,7 +188,7 @@ classes:
   "slaves/*/templates/*": product
   # The per-slave chart's own cross-stage defaults, written on master only by the version sync — the same shape as apps/*/values-common.yaml.
   "slaves/*/values-common.yaml": product
-  # Stage overrides of the per-slave chart's own defaults, pruned on the branches whose stage this is not, exactly as apps/*/values-dev.yaml is.
+  # Stage overrides of the per-slave chart's own defaults, carried on every branch and loaded only where the branch's own stage names them, exactly as apps/*/values-dev.yaml is.
   "slaves/*/values-dev.yaml": product
   # Same mechanism as slaves/*/values-dev.yaml.
   "slaves/*/values-test.yaml": product
@@ -181,16 +214,16 @@ classes:
 
   # An app's own cross-stage defaults, written on master only by the version sync; no branch stamper writes any of them.
   "apps/*/values-common.yaml": product
-  # Stage overrides of the software's own defaults. A stage is not an installation: StampRole PRUNES the two stages the branch is not, and pruning is a selection, not a rewrite.
+  # Stage overrides of the software's own defaults. A stage is not an installation, and no branch stamper rewrites the file: an install branch carries all three, and the app generator's value chain names values-__STAGE__.yaml, so the two the branch is not are loaded by nothing.
   "apps/*/values-dev.yaml": product
-  # Same mechanism as values-dev.yaml: pruned on the branches whose stage this is not, never rewritten.
+  # Same as values-dev.yaml: carried on every branch, loaded only where its own name is the branch's stage.
   "apps/*/values-test.yaml": product
-  # Same mechanism as values-dev.yaml, and where the release bump writes: pipeline-release.yaml:806-810 commits builds[].tag to MASTER, and an install receives it when its pin moves.
+  # Same as values-dev.yaml, and where the release bump writes: the class-(c) loop of pipeline-release.yaml commits builds[].tag to MASTER, and an install receives it when its pin moves.
   "apps/*/values-prod.yaml": product
 
-  # The 16 deploy toggles: on a branch `deploy:` states what runs on ONE cluster. StampAppToggles rewrites nine of them from what this cluster is — the build plane, the master part, and the one agent that runs where the master part is not; the other seven carry an operator's own decision, which is why derived: below names the nine and not the directory.
-  "installation/apps/*.yaml": install
-  # Rendered whole by StampClusterProfile from the run's answers: domain, clusterName, unitApex, platformDomain, booksBranch, vaultUrl, tailnetUrl and the registry host all name one cluster.
+  # WHAT RUNS WHERE, one manifest per app on the TRUNK. `runsOn:` is the software's own statement — every-cluster, master or slave — and the app generator in argocd/apps/applicationset.yaml admits every-cluster plus the role stamped over __CLUSTER_ROLE__, so a cluster's role selects and no per-branch toggle file exists. It replaced the per-app toggle files this repository no longer carries, one per app under installation/apps/, whose `deploy:` line an install branch owned.
+  "apps/*/app.yaml": product
+  # Rendered whole by the branch program from the run's answers: domain, clusterName, unitApex, platformDomain, booksBranch, vaultUrl, tailnetUrl and the registry host all name one cluster.
   "installation/profile.yaml": install
   # Per-APP installation values, one level below installation/profile.yaml: keys that name one machine or one installation and belong to a SINGLE app, so they cannot ride in global.*. The ApplicationSet loads $values/installation/values/<app>.yaml after that app's own values-<stage>.yaml. The Controller's four machine keys — nothing derives them, so the installer scaffolds the file EMPTY on the branch and never rewrites it; it is absent from the trunk, which is not a machine.
   "installation/values/manager.yaml": install
@@ -201,14 +234,14 @@ classes:
   # ArgoCD retargeted to track THIS branch, with the __CLUSTER__ and __BOOKS_BRANCH__ markers stamped in, and on a pure slave the whole tree moved into namespace <name>.
   "argocd/*": install
 
-  # The platform's own grammar and nothing else: releaseTagFilter, channelStages, the timezone, the storage class. global.domain used to sit here and made the file two classes at once; it is one installation's fqdn, and StampClusterProfile writes it into installation/profile.yaml.
+  # The platform's own grammar and nothing else: releaseTagFilter, channelStages, the timezone, the storage class. global.domain used to sit here and made the file two classes at once; it is one installation's fqdn, and the branch program writes it into installation/profile.yaml.
   "platform/values-common.yaml": product
 
   # The empty-directory marker that lets the trunk carry clusters/active/ with no map in it — the state the installer asserts the trunk must be in.
   "clusters/active/.gitkeep": product
   # THE single source for every upstream component version, stamped into apps/*/Chart.yaml and apps/*/values-*.yaml by the version sync.
   "platform/versions.yaml": product
-  # One key, global.env: dev — identical in every installation of that stage. StampRole deletes it on a branch of another stage, which is a selection, not a rewrite.
+  # One key, global.env: dev — identical in every installation of that stage, and the same shape as apps/*/values-dev.yaml: carried on every branch, loaded only where dev is the branch's stage.
   "platform/values-dev.yaml": product
   # Same as platform/values-dev.yaml, for the test stage.
   "platform/values-test.yaml": product
@@ -221,19 +254,17 @@ classes:
   "registrations/*/dev.yaml": books
   # A unit's test registration, same writer and same branch as the dev file.
   "registrations/*/test.yaml": books
-  # A unit's prod registration, same writer and same branch; StampRole prunes it off any branch whose role lacks the master part.
+  # A unit's prod registration, same writer and same branch. A branch whose role lacks the master part carries none of the four: the trunk has no registration to bring along and nothing writes one there.
   "registrations/*/prod.yaml": books
-  # One cluster of this installation: the installer writes it once, and hostyour-manager/server/domains/inventory/cluster-marking.ts:317-320 writes it again, the second only on repo.booksBranch.
+  # One cluster of this installation: the installer writes it once, and hostyour-manager/server/domains/inventory/cluster-marking.ts:427-433 writes it again — commitMarking, through which every map write of that file goes, and it commits on repo.booksBranch only.
   "clusters/active/*.yaml": books
 
 # -----------------------------------------------------------------------------
 # stamped — the paths whose domain placeholder IS installation state, so the
-# stamp must rewrite it there. The value names the key that is stamped. The
-# check runs StampFqdn's real selection and reports both directions:
-# a path it returns that is not declared here, and a path declared here that it
-# does not return. A stamped path is installation state on the branch, so its
-# class must be install or mixed — never product, which is byte-identical
-# everywhere, and never books, which is not on the trunk at all.
+# stamp must rewrite it there. The value names the key that is stamped. A
+# stamped path is installation state on the branch, so its class must be install
+# or mixed — never product, which is byte-identical everywhere, and never books,
+# which is not on the trunk at all.
 # -----------------------------------------------------------------------------
 stamped:
 
@@ -255,15 +286,14 @@ stamped:
 # -----------------------------------------------------------------------------
 # never-stamp — the paths whose domain placeholder is a guard, a fixture, an
 # illustration or the documentation of the stamp itself, so the stamp must
-# never rewrite it. The check PLANTS the placeholder into each of these in a
-# scratch clone and runs StampFqdn's real selection: any of them that comes
-# back is reachable by the stamp. Planted and not searched for, because a guard
-# that does not carry the placeholder today would pass a search and still be
-# inside the stamp's reach tomorrow.
+# never rewrite it. What keeps the stamp off them is the excluded_names list the
+# branch programs hand every stamp row, and this section is the statement of
+# WHY each name is on it. A guard that does not carry the placeholder today is
+# still declared here, because it is inside the stamp's reach the day it does.
 # -----------------------------------------------------------------------------
 never-stamp:
 
-  # This file quotes the placeholder to explain the stamp; stamped, the one file naming the paths that must never be stamped would name a real FQDN instead. StampFqdn excludes it by name.
+  # This file quotes the placeholder to explain the stamp; stamped, the one file naming the paths that must never be stamped would name a real FQDN instead. The domain stamp excludes it by name.
   "branch-classes.yaml": documentation
 
 # -----------------------------------------------------------------------------
@@ -272,94 +302,79 @@ never-stamp:
 # a moment later. Everything not listed must NOT be derived where the branch
 # owns content in it.
 #
+# WHO READS THIS SECTION: the `toward_ref:` list of the git_merge_ref row in
+# regenerate-branch.yaml and in regenerate-slave-branch.yaml, which carries a
+# COPY of it. Only the `always` rows were copied — the three narrower values
+# below decide nothing on either side today, and each of them says under what
+# condition it would. Both copies still name nine per-app toggle files under
+# installation/apps/, which this repository no longer carries: the per-branch
+# deploy toggles were replaced by an app.yaml per app on the trunk, so those
+# nine entries resolve nothing and no row for them stands here.
+#
 # Two axes, because a branch is generated from two facts the cluster map states:
 # its STAGE and whether its role has the master part. The four values are the
 # only shapes those two axes produce:
 #
 #   always             every stage, both roles.
 #   other-stages       exactly on an installation whose stage is NOT this
-#                      file's own — StampRole prunes the other two stages, and
-#                      pruning is what makes the conflict moot.
+#                      file's own. The branch carries the file either way —
+#                      nothing prunes it — and no value chain loads it, so
+#                      whichever side a conflict resolves to changes no render.
 #                      Only for a pattern ending in values-<stage>.yaml.
 #   books-branch-only  exactly where the role LACKS the master part, at every
-#                      stage: StampRole prunes every registration there. On the
-#                      branch that HOLDS the books, resolving toward the pin
+#                      stage: such a branch carries no registration to conflict
+#                      over, because the trunk it was cut from carries none. On
+#                      the branch that HOLDS the books, resolving toward the pin
 #                      would delete this installation's ledger.
-#   foreign-map-only   books-branch-only with the one exception StampRole makes
-#                      by name — the branch's OWN map is kept even on a role
-#                      without the master part, because it is what the pruning
-#                      was decided from, so nothing regenerates it and it is
-#                      never derived.
-#
-# The check drives a mirror of StampRole over every tracked path at all three
-# stages in both role scenarios, and over the books paths the trunk does not
-# carry, which it plants by name. `always` is measured in BOTH directions
-# against mirrors of the three steps that write a path again — StampRevision,
-# StampClusterProfile and StampAppToggles: a row over a path none of them
-# writes is a licence to throw away what only the branch had, and a path one of
-# them does write and no row covers stops a sync nothing needed stopped.
+#   foreign-map-only   the same, one file class narrower. A branch whose role
+#                      lacks the master part is written no cluster map at all,
+#                      so it has none to conflict over; on the books branch
+#                      regenerate-branch writes THIS cluster's own map again
+#                      every run, while a FOREIGN map is the Controller's write
+#                      and nothing here rewrites it.
 # -----------------------------------------------------------------------------
 derived:
 
-  # StampRevision retargets every revision/targetRevision under it and its undo restores the whole directory, and StampRole removes the two stage trees this installation is not — the tree is regenerated either way.
+  # Every revision/targetRevision under it is retargeted by the revision stamp, and the markers over it by the cluster, books, catalog, stage and role stamps — a run writes the whole tree again, so a conflict anywhere in it may resolve toward the pin.
   "argocd/*": always
 
-  # Rendered whole out of the run's own answers by StampClusterProfile on every run: the trunk carries `global: {}`, so every byte a branch holds here came out of that render.
+  # Rendered whole out of the run's own answers by the branch program on every run: the trunk carries `global: {}`, so every byte a branch holds here came out of that render.
   "installation/profile.yaml": always
-  # StampAppToggles rewrites the deploy line of this toggle from what the cluster IS — one of the six that run on the build plane and nowhere else. The rest of the file is the trunk's, so the deploy line is all a branch owns in it and a run writes it again.
-  "installation/apps/consumer-build.yaml": always
-  # Same as installation/apps/consumer-build.yaml.
-  "installation/apps/gate-runner.yaml": always
-  # Same as installation/apps/consumer-build.yaml.
-  "installation/apps/image-builder.yaml": always
-  # Same as installation/apps/consumer-build.yaml.
-  "installation/apps/manager.yaml": always
-  # Same as installation/apps/consumer-build.yaml.
-  "installation/apps/registry.yaml": always
-  # Same as installation/apps/consumer-build.yaml.
-  "installation/apps/tekton.yaml": always
-  # One of the two provided once per installation, by the cluster holding the master part; StampAppToggles rewrites its deploy line from the role.
-  "installation/apps/tailnet-coordinator.yaml": always
-  # Same as installation/apps/tailnet-coordinator.yaml.
-  "installation/apps/observability.yaml": always
-  # The mirror of installation/apps/observability.yaml: StampAppToggles turns it on exactly where the master part is NOT, so a cluster runs the light push agent instead of the full stack.
-  "installation/apps/observability-agent.yaml": always
-  # NO ROW FOR THE OTHER SEVEN TOGGLES, and their absence is the decision. StampAppToggles decides nine of the sixteen and leaves the rest saying whatever the trunk says, because whether an installation wants a database browser, a mail relay, coredns, redis, mongodb, external-secrets or the service-provisioner is an operator's choice made ON the branch. A conflict there must stop the sync: nothing would write that choice back.
 
-  # One key, global.env — kept on a dev-stage installation and pruned by StampRole on a test- or prod-stage one.
+  # One key, global.env — the same shape as apps/*/values-dev.yaml: an installation of another stage never loads it, so which side a conflict resolves to changes no render.
   "platform/values-dev.yaml": other-stages
   # Same as platform/values-dev.yaml, kept on a test-stage installation.
   "platform/values-test.yaml": other-stages
   # Same as platform/values-dev.yaml, kept on a prod-stage installation.
   "platform/values-prod.yaml": other-stages
-  # An app's dev overrides: kept on a dev-stage installation, pruned by StampRole on the other two.
+  # An app's dev overrides: loaded on a dev-stage installation and by nothing on the other two, whose value chains name their own stage.
   "apps/*/values-dev.yaml": other-stages
   # Same as apps/*/values-dev.yaml, kept on a test-stage installation.
   "apps/*/values-test.yaml": other-stages
   # Same as apps/*/values-dev.yaml, kept on a prod-stage installation.
   "apps/*/values-prod.yaml": other-stages
-  # The per-slave chart's dev overrides: the same stage pruning as apps/*/values-dev.yaml, and it needs its own rows because the chart no longer stands under apps/.
+  # The per-slave chart's dev overrides: the same shape as apps/*/values-dev.yaml, and it needs its own rows because the chart no longer stands under apps/.
   "slaves/*/values-dev.yaml": other-stages
   # Same as slaves/*/values-dev.yaml, kept on a test-stage installation.
   "slaves/*/values-test.yaml": other-stages
   # Same as slaves/*/values-dev.yaml, kept on a prod-stage installation.
   "slaves/*/values-prod.yaml": other-stages
-  # A unit's build declaration. On the branch that holds the books an operator's suspended:/quiesced: flip is branch-side content, so a conflict must stop the sync; on any other branch StampRole deletes the file a moment later.
+  # A unit's build declaration. On the branch that holds the books an operator's suspended:/quiesced: flip is branch-side content, so a conflict must stop the sync; on any other branch there is no such file to conflict over.
   "registrations/*/build.yaml": books-branch-only
-  # Same as registrations/*/build.yaml — pruned on a branch without the master role, and never regenerated on the branch that holds the books.
+  # Same as registrations/*/build.yaml — absent from a branch without the master role, and never regenerated on the branch that holds the books.
   "registrations/*/dev.yaml": books-branch-only
   # Same as registrations/*/dev.yaml.
   "registrations/*/test.yaml": books-branch-only
   # Same as registrations/*/dev.yaml.
   "registrations/*/prod.yaml": books-branch-only
-  # A FOREIGN cluster's map: StampRole prunes it on a branch without the master role. That branch's OWN map is kept there — StampRole excludes it by name — so it is never derived.
+  # A FOREIGN cluster's map: the Controller writes it onto the books branch and nothing here rewrites it, so resolving it toward the pin would throw away a write only that branch had. This cluster's OWN map is not covered by this row — regenerate-branch renders it again every run.
   "clusters/active/*.yaml": foreign-map-only
 
 # -----------------------------------------------------------------------------
 # trunk-absent — rules that legitimately own no tracked path on master, because
 # what they describe stands on an install branch or on the books branch. A rule
-# NOT listed here that owns nothing is dead and is reported. A rule listed here
-# that DOES own a tracked path on master is reported too: a books file or a
+# NOT listed here that owns nothing is dead. A rule listed here that DOES own a
+# tracked path on master is a defect of the other sign: a books file or a
 # machine setting has landed on the trunk. The value also fixes the class the
 # rule must carry — `install-branch` means install, `books-branch` means books.
 # -----------------------------------------------------------------------------
@@ -374,7 +389,7 @@ trunk-absent:
 
   # A map is one installation's identity; the trunk holds only clusters/active/.gitkeep, which the installer asserts.
   "clusters/active/*.yaml": books-branch
-  # The Controller writes an onboarded unit's build declaration onto the books branch; the trunk carries only the seven platform ones, which are named above them.
+  # The Controller writes an onboarded unit's build declaration onto the books branch, and the branch program writes ONE of them itself — registrations/hostyour-manager/build.yaml, so that the platform's own Controller image is built the way every other unit's is. The trunk carries none.
   "registrations/*/build.yaml": books-branch
   # A stage registration exists only where the Controller wrote it, on the books branch.
   "registrations/*/dev.yaml": books-branch
@@ -386,18 +401,17 @@ trunk-absent:
 # -----------------------------------------------------------------------------
 # uncertain — what the classification could not settle. Written down as
 # uncertain rather than guessed: each row says what is unresolved and what
-# would resolve it. The check reports every `mixed` path, so none of these can
-# go quiet.
+# would resolve it.
 # -----------------------------------------------------------------------------
 uncertain:
 
-  # A slave's own map stands on its install branch AND on the books branch, with two writers and nothing reconciling them. Whether the Controller may write a slave's own-branch copy, or whether that copy is a read-only cache of one books row, would settle it.
+  # The map of the cluster holding the master part has TWO writers on the one branch that carries it: the branch program renders clusters/active/<fqdn>.yaml from the run's answers on every regeneration, and hostyour-manager/server/domains/inventory/cluster-marking.ts writes into the same directory on repo.booksBranch. Nothing reconciles them. Whether a map is the run's render with the Controller amending it, or the Controller's row with the run seeding it, would settle it.
   "clusters/active/*.yaml": books-row-on-an-install-branch
 
 # -----------------------------------------------------------------------------
 # outside — held deliberately outside git, so no rule above can own it. Named
 # here because a declaration that promises every tracked path its class must say
-# what it does NOT cover. A rule here owning a TRACKED path is reported; owning
+# what it does NOT cover. A rule here owning a TRACKED path is a defect; owning
 # nothing is the normal state and is not a dead rule.
 # -----------------------------------------------------------------------------
 outside:

@@ -29,7 +29,7 @@ global:
   # the install-branch sync had to `git show` the file off master to read
   # releaseTagFilter below out of a file the branch rewrites.
   #
-  # StampClusterProfile writes it into installation/profile.yaml from the branch's
+  # The branch program writes it into installation/profile.yaml from the branch's
   # own fqdn, beside the other globals it derives from the cluster map. That
   # file is LAST in every app's valueFiles chain, so `{{ .Values.global.domain }}`
   # resolves exactly as before — the value simply comes from the installation's
@@ -71,7 +71,7 @@ global:
   # EMPTY HERE, AND IT STAYS EMPTY. A mailbox names one installation, and this
   # file is the trunk every future installation is cut from. The value arrives
   # from the operator: the answer is written as alert-recipients into
-  # clusters/active/<fqdn>.yaml, and StampClusterProfile renders it into
+  # clusters/active/<fqdn>.yaml, and the branch program renders it into
   # installation/profile.yaml, which loads last and replaces this list.
   # charts/monitoring refuses to render an enabled route that resolves to no
   # recipient, so an installation that never set it is stopped rather than
@@ -118,12 +118,12 @@ global:
       # Where units on this cluster reach the installation's shared mail service.
       # Empty ONLY on the trunk: the map's post-url is a mandatory field
       # (an install is refused without it, because every tenant's auth and
-      # report chart hard-requires this value), and StampClusterProfile writes
+      # report chart hard-requires this value), and the branch program writes
       # it into installation/profile.yaml on every branch.
       url: ""
   # Whether a shared service is deployed LOCALLY on this cluster — gates the
   # CoreDNS hairpin rewrites (a chart can't see the deploy toggle). All false
-  # on the trunk; StampClusterProfile writes each key from the cluster map's
+  # on the trunk; the branch program writes each key from the cluster map's
   # predicates: registry follows the build plane (the ONE cluster running
   # apps/registry); vault follows the master part (the base layer stands it up
   # there).
@@ -132,7 +132,7 @@ global:
     vault: false
     # observabilityCentral — is THIS cluster the central observability
     # receiver (the "master")? Default false on the trunk.
-    # StampClusterProfile flips it true wherever the role has the master part (a
+    # The branch program flips it true wherever the role has the master part (a
     # master receives its slaves' push). Gates apps/observability's slave receive-path: the prom-push. /
     # loki-push. Ingresses + the basic-auth Middleware + its htpasswd
     # ExternalSecret (apps/observability Chart.yaml `condition:`), and the master

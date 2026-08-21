@@ -155,8 +155,9 @@ kube-prometheus-stack:
       # kube-prometheus-stack runs Helm `tpl` on this entire config block —
       # template expressions inside string values are resolved at render time.
       # smtp_from uses bare mail.<domain> (no env subdomain) — the same mail
-      # host for every env now; see apps/postfix/README.md for the brand/DNS
-      # rationale.
+      # host for every env, so one MX and one SPF record serve all three
+      # stages; the relay's own myhostname follows it
+      # (installation/values/postfix.yaml, rendered per install branch).
       global:
         smtp_from: "alertmanager-prod@mail.{{ .Values.global.domain }}"
         smtp_smarthost: "postfix-{{ .Values.global.env }}-mail.postfix.svc.cluster.local:587"
@@ -169,7 +170,7 @@ kube-prometheus-stack:
       # `platform-default` AlertmanagerConfig CR (see
       # apps/observability/values-common.yaml.monitoring.alertmanagerConfigs),
       # whose recipients come from .Values.global.alertRecipients, rendered into
-      # installation/profile.yaml by StampClusterProfile from the alert_recipients
+      # installation/profile.yaml by the branch program from the alert_recipients
       # answer the generating run was given — ONE place to change the mailbox of
       # every entry that carries no `emails` of its own.
       route:

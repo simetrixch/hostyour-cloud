@@ -2,10 +2,10 @@
 # MongoDB — PER-UNIT TEMPLATE (one instance, one namespace).
 #
 # WHY THIS FILE IS values.yaml AND NOT values-common.yaml
-# A stage-deployed cluster app is rendered by argocd/*/apps/applicationset.yaml,
+# A stage-deployed cluster app is rendered by argocd/apps/applicationset.yaml,
 # whose valueFiles chain names `values-common.yaml` + `values-<stage>.yaml`
 # EXPLICITLY. A chart rendered into a UNIT namespace is not in that chain: it is
-# an extra source of the unit's Application (argocd/*/apps/consumers-appset.yaml),
+# an extra source of the unit's Application (argocd/apps/consumers-appset.yaml),
 # i.e. `path: units/mongodb` plus the platform globals from $values, and Helm
 # loads only the chart's own implicit `values.yaml` as the base. So the base
 # values live in a file called exactly values.yaml, and there are no per-stage
@@ -130,7 +130,7 @@ networkPolicy:
   # this database to every OTHER consumer.
   allowedNamespaces:
     # Verified against the platform catalog: the provisioner runs in namespace
-    # `service-provisioner` (argocd/*/apps/applicationset.yaml).
+    # `service-provisioner` (argocd/apps/applicationset.yaml).
     - service-provisioner
 
 # =============================================================================

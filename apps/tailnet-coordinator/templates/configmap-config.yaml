@@ -2,7 +2,7 @@
 headscale's own config file. It lives in a template rather than in a values
 blob because of ONE line: server_url must be the same address a host's client
 is pointed at with `tailscale up --login-server`. That address is
-global.tailnetUrl — written into installation/profile.yaml by StampClusterProfile
+global.tailnetUrl — written into installation/profile.yaml by the branch program
 from the cluster map (own fqdn when the role has the master part, else the
 master's) —
 so the coordinator and its clients read one value or they never meet.

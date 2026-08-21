@@ -2,11 +2,11 @@
 # PostgreSQL — PER-CONSUMER TEMPLATE (one instance, one namespace).
 #
 # WHY THIS FILE IS values.yaml AND NOT values-common.yaml
-# A stage-deployed cluster app is rendered by argocd/*/apps/applicationset.yaml,
+# A stage-deployed cluster app is rendered by argocd/apps/applicationset.yaml,
 # whose valueFiles chain names `values-common.yaml` + `values-<stage>.yaml`
 # EXPLICITLY. A chart rendered into a CONSUMER namespace is not in that chain:
 # it is an extra source of the consumer's Application
-# (argocd/*/apps/consumers-appset.yaml), i.e. `path: units/postgresql` plus the
+# (argocd/apps/consumers-appset.yaml), i.e. `path: units/postgresql` plus the
 # platform globals from $values, and
 # Helm loads only the chart's own implicit `values.yaml` as the base. So the
 # base values must live in a file called exactly values.yaml, and the per-stage
@@ -293,7 +293,7 @@ postgres-data:
 #
 # ── APPSET ANCHOR ────────────────────────────────────────────────────────────
 # The renderer (the platform's PostgreSQL source in
-# argocd/*/apps/consumers-appset.yaml) MUST SET this per consumer on its
+# argocd/apps/consumers-appset.yaml) MUST SET this per consumer on its
 # valuesObject, a per-stage LITERAL in each per-stage appset file:
 #     externalsecret-postgres:
 #       externalSecret:
@@ -415,7 +415,7 @@ networkPolicy:
     # service-provisioner connects cross-namespace to create databases[1..] and
     # to mint / re-mint the consumer role (§5.4). Verified live: the provisioner
     # runs in namespace `service-provisioner`
-    # (argocd/*/apps/applicationset.yaml element namespace: service-provisioner).
+    # (argocd/apps/applicationset.yaml element namespace: service-provisioner).
     - service-provisioner
     # backup runs the nightly pg_dumpall once apps/backup exists (§9.1, §11).
     # Harmless before then — the namespace simply does not exist, so the

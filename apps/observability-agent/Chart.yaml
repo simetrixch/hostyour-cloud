@@ -28,9 +28,9 @@ description: |
       credentials, materialized by ESO from the master's per-slave Vault mount at
       <mount>/<stage>/app/observability-agent/*.
 
-  Toggle: installation/apps/observability-agent.yaml — master default deploy:"false"
-  (StampAppToggles flips it "true" wherever the role lacks the master part). Catalog entry in
-  argocd/<stage>/apps/applicationset.yaml (project observability, wave 30),
+  Placed by apps/observability-agent/app.yaml — runsOn: slave, so the app generator
+  creates it exactly where the role lacks the master part. Catalog entry in
+  argocd/apps/applicationset.yaml (project observability, wave 30),
   deployed into the `observability` namespace — the observability plane on this
   cluster; mutually exclusive with the full apps/observability (D2), so they
   never coexist and the observability AppProject's existing destination /

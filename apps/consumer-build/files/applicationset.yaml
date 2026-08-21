@@ -19,12 +19,13 @@
 #
 # The generator revision is __BOOKS__ and NOT __BRANCH__: a registration is
 # this installation's book entry, written by the Controller onto the install
-# branch of the cluster holding the MASTER role and kept there by StampRole,
-# while __BRANCH__ names the cluster this build plane runs on — a different
-# branch whenever the build plane sits on a pure slave, and one StampRole has
-# pruned every registration off. Reading it there would produce no <unit>-build
-# Application for any consumer, and a files generator that matches fewer files
-# is not an error, so nothing would say so.
+# branch of the cluster holding the MASTER role and standing there alone, while
+# __BRANCH__ names the cluster this build plane runs on — a different branch
+# whenever the build plane sits on a pure slave, and one that carries no
+# registration at all, because the trunk it was cut from carries none and no
+# step of any branch program writes one there. Reading it there would produce no
+# <unit>-build Application for any consumer, and a files generator that matches
+# fewer files is not an error, so nothing would say so.
 #
 # `suspended` acts through the post-selector: a suspended unit gets no
 # <unit>-build Application, so the deploy-request webhook runs into nothing

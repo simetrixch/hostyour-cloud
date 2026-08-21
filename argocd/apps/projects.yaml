@@ -8,8 +8,9 @@
 #   • only the cluster-scoped resource kinds it legitimately creates
 #     (data / services create NONE → clusterResourceWhitelist: [])
 #
-# Lifecycle: this file lives in argocd/__STAGE__/apps/ next to applicationset.yaml,
-# so root-app.yaml's directory sync applies it. The sync-wave -1 annotation
+# Lifecycle: this file lives in argocd/apps/ next to applicationset.yaml, and
+# argocd/root-app.yaml syncs that directory (`path: argocd/apps`), so it is
+# applied by the same Application. The sync-wave -1 annotation
 # guarantees the AppProjects exist before the ApplicationSet's generated
 # Applications (which reference them by name) attempt their first sync.
 #
@@ -21,8 +22,8 @@
 # Every stage defines the same 6 projects (core / data / services /
 # observability / cicd / consumers). The build plane
 # (tekton / registry / image-builder) is centralized on ONE build cluster and
-# stays off elsewhere via installation/apps, but the `cicd` project exists in every
-# catalog for symmetry.
+# stays off elsewhere because each of those app.yaml files says runsOn: master,
+# but the `cicd` project exists in every catalog for symmetry.
 #
 # Cluster-resource whitelists below were derived from the ACTUAL rendered
 # manifests, not assumptions:
@@ -196,7 +197,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Build plane — Tekton, Zot registry, image-builder, gate-runner. Centralized on ONE build cluster (promote test->prod reuses the same image); off unless installation/apps enables it. Privileged (Tekton CRDs, buildah).
+  description: Build plane — Tekton, Zot registry, image-builder, gate-runner. Centralized on ONE build cluster (promote test->prod reuses the same image); off unless this cluster's role is the one their app.yaml names. Privileged (Tekton CRDs, buildah).
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
   # cicd destinations are static.
