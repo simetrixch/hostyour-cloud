@@ -574,3 +574,32 @@ cliTools:
         file: ansiwise/programs/deploy-cluster.yaml
         anchor: 'tools:'
         entry: tailscale
+  # The deployment engine itself, and the one entry here that stamps NOTHING.
+  #
+  # Every other tool of this block is fetched onto a machine by an
+  # install_pinned_tool row, so its pin is stamped into that row and into the
+  # list the assert holds. This one is not fetched by a program at all, because
+  # a program cannot install what is already running it: deploy-cluster.yaml IS
+  # an ansiwise program.
+  #
+  # WHO PUTS IT ON A MACHINE, and it is one mechanism in two callers
+  # (hostyour-manager#14): the client places it on a master over SSH, and
+  # place-ansiwise places it on a slave. Both write
+  # /usr/local/bin/ansiwise-<version> and link /usr/local/bin/ansiwise at it, so
+  # what says which version stands on a machine is the NAME of the file the link
+  # points at — which is why the binary answers no --version and why no row here
+  # asks it one.
+  #
+  # WHO READS THIS PIN: hostyour-manager
+  # server/domains/inventory/ansiwise-pin.ts:28 reads cliTools.ansiwise.version
+  # off this repository over git, with NO default, before it touches a machine.
+  #
+  # The version is a whole release tag and not three numbers, because the
+  # grammar is the platform's own — hostyour-manager/shared/release.ts:22,
+  # <major>.<minor>.<patch>-<channel>-<ts14> — and the release, the artefact and
+  # the download address are all named by it.
+  ansiwise:
+    version: "0.1.0-alpha-20260821190604"
+    upstream:
+      kind: github_release
+      project: simetrixch/ansiwise-cli
