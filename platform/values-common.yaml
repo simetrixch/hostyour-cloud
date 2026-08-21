@@ -81,9 +81,11 @@ global:
   # DB NetworkPolicy consumers — who may reach the in-house data services, see
   # apps/{mongodb,postgresql,redis}/templates/networkpolicy.yaml. Platform
   # components are admitted by NAME (dbConsumerNamespaces); unit namespaces
-  # admit themselves by LABEL. The name list is EMPTY: dbgate was its one entry
-  # and no longer runs on the cluster its databases do — it is a per-slave
-  # instance on the master now (slaves/dbgate). Every one of the three services
+  # admit themselves by LABEL. The name list carries one entry, `dbgate`: the
+  # database browser runs on the cluster its databases do (apps/dbgate/app.yaml
+  # carries the `runsOn: slave` apps/mongodb and apps/redis carry), so it is
+  # admitted by name like any other platform namespace and needs no route out of
+  # the cluster to reach either port. Every one of the three services
   # requires a credential now that apps/redis boots with --requirepass, so the two
   # labels no longer differ in what reach MEANS — they differ in HOW WIDELY reach is
   # handed out, and that difference is deliberate:
@@ -139,7 +141,8 @@ global:
     # profile additionally enables Prometheus' remote_write receiver (D4b/I6).
     observabilityCentral: false
 
-  dbConsumerNamespaces: []
+  dbConsumerNamespaces:
+    - dbgate
   dbConsumerLabel: platform/db-consumer
   redisConsumerLabel: platform/redis-consumer
 
@@ -147,12 +150,14 @@ global:
   # addon's own name, not one this platform chooses, and the deploy program
   # patches the controller there (ansiwise/programs/deploy-cluster.yaml, the
   # patch_container_arguments_and_ports row over daemonset/traefik).
-  # apps/{mongodb,redis}/templates/networkpolicy.yaml admit it by name, because
-  # a client outside this cluster reaches those two ports through Traefik and
-  # through nothing else. The rule and the IngressRouteTCP beside it are one
-  # statement in two halves: a route whose port Calico refuses answers exactly
-  # like an entry point nobody declared, and neither half says anything is
-  # wrong.
+  #
+  # ONE READER, and it reads it as an EGRESS destination:
+  # apps/consumer-build/templates/networkpolicy.yaml lets a build pod out to
+  # Traefik on 8443/443. NO DATABASE POLICY NAMES IT ANY MORE. The two that did
+  # were the second half of an IngressRouteTCP publishing mongodb and redis
+  # outside their own cluster, and hostyour-cloud#66 removed route and rule
+  # together — a database this platform runs is reached from its own cluster, so
+  # the controller has no part in reaching it.
   ingressNamespace: ingress
 
   # ── Release-tag grammar — the ONE build-plane copy ─────────────────────────

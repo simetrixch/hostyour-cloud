@@ -3,13 +3,13 @@
 # restarts. Replica set `rs0` for multi-doc transactions, SCRAM auth on
 # (--auth + --keyFile, see args below) — the NetworkPolicy
 # (templates/networkpolicy.yaml) admits only approved DB consumers
-# (global.dbConsumerNamespaces by name + add-ons by global.dbConsumerLabel), the
-# ingress controller and same-namespace pods; :27017 is routed from a plain-TCP
-# entry point (templates/ingressroutetcp.yaml, and tailnetEntryPoint below) and
-# there is no HTTP Ingress. replicas: 3 here is the default for ALL envs — a
-# 3-member HA replica set on every stage (rs0 membership is reconciled by
-# templates/rs-init-job.yaml; templates/pdb.yaml keeps minAvailable =
-# replicas-1). Per-env storage / resources in values-{dev,test,prod}.yaml.
+# (global.dbConsumerNamespaces by name + add-ons by global.dbConsumerLabel) and
+# same-namespace pods; :27017 answers inside this cluster and nowhere else, and
+# there is neither an HTTP Ingress nor a plain-TCP route. replicas: 3 here is the
+# default for ALL envs — a 3-member HA replica set on every stage (rs0 membership
+# is reconciled by templates/rs-init-job.yaml; templates/pdb.yaml keeps
+# minAvailable = replicas-1). Per-env storage / resources in
+# values-{dev,test,prod}.yaml.
 mongodb:
   image:
     repository: mongo
@@ -64,23 +64,21 @@ mongodb:
     periodSeconds: 10
     timeoutSeconds: 10
 
-# HOW THIS DATABASE IS REACHED FROM OUTSIDE THE CLUSTER IT RUNS IN, and the
-# name is the whole of what this repository can say about it.
+# WHERE THIS DATABASE ANSWERS, and the answer is one cluster.
 #
-# templates/ingressroutetcp.yaml binds the Service below to the ingress
-# controller's plain-TCP entry point of this name. An entry point is STATIC
-# configuration of the controller — an argument on the controller's own
-# container, plus the port the address in that argument names, published on the
-# machine — so NOTHING in this repository can create one. The deploy program's
-# patch_container_arguments_and_ports row over daemonset/traefik
-# (ansiwise/programs/deploy-cluster.yaml in the installation repository) is the
-# only writer of either half, and the address it binds is what decides which of
-# the machine's addresses the port answers on.
+# There is no key here naming an entry point of the ingress controller and no
+# templates/ingressroutetcp.yaml beside this file. Both stood here until
+# hostyour-cloud#66: they published :27017 on a plain-TCP entry point so that a
+# dbgate running on the MASTER could dial a SLAVE's database. A master and a
+# slave are one cluster when the slave stands on the master's own server and two
+# when it stands on a machine of its own, and both cases happen — so publishing
+# the port was pointless in the first and forbidden by the co-location law in the
+# second.
 #
-# A route naming an entry point the controller does not carry is dropped by the
-# controller with one line in its own log. The object exists, ArgoCD reports it
-# synced, and the port answers nothing.
-tailnetEntryPoint: mongodb
+# What reads this database therefore stands in this same cluster. apps/dbgate
+# carries `runsOn: slave`, exactly as apps/mongodb/app.yaml does, so the app
+# generator (argocd/apps/applicationset.yaml) places both wherever the cluster's
+# role is `slave`, and dbgate dials mongodb-<env>-headless.mongodb.svc.cluster.local.
 
 # Per-pod data volume (volumeClaimTemplate → /data/db). Each member gets its own
 # PVC (data-mongodb-<env>-<ordinal>), owned by the StatefulSet controller (not

@@ -6,8 +6,8 @@
 /// keys of a Kubernetes Secret: one `- secretKey: <name>` entry per key, under `spec.data` in a
 /// template such as `apps/manager/templates/externalsecret-app.yaml`, or under
 /// `externalSecret.data` in a values file that `charts/external-secret` renders, such as
-/// `slaves/dbgate/values.yaml`. A workload then reaches into that Secret. Nothing connects the two
-/// halves: ESO writes every key it was told to write whether or not anything reads it, and a
+/// `apps/dbgate/values-common.yaml`. A workload then reaches into that Secret. Nothing connects the
+/// two halves: ESO writes every key it was told to write whether or not anything reads it, and a
 /// container that names a key nobody wrote never starts.
 ///
 /// **Both halves fail silently, in opposite directions.** A key nothing reads is a credential at

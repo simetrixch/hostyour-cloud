@@ -2,11 +2,10 @@
 # AUTHENTICATED: the server boots with --requirepass (redis.args below), so who a
 # connection IS decides what it may do. templates/networkpolicy.yaml still says who
 # may open :6379 at all — the password is the second boundary, never a replacement
-# for the first — and templates/ingressroutetcp.yaml NAMES a plain-TCP entry point
-# for that port (tailnetEntryPoint below). No such entry point is carried yet —
-# deploy-cluster.yaml patches the controller with `ports: []` — so the route is
-# dropped by the controller and the port answers nothing. Per-env storage /
-# resources in values-{dev,test,prod}, per-env Vault path in the same three files.
+# for the first — and every rule it carries admits a namespace of THIS cluster.
+# There is no route out of the cluster: no templates/ingressroutetcp.yaml stands
+# beside this file. Per-env storage / resources in values-{dev,test,prod}, per-env
+# Vault path in the same three files.
 redis:
   image:
     repository: redis
@@ -90,27 +89,25 @@ redis:
     type: ClusterIP
     port: 6379
 
-# HOW THIS CACHE IS REACHED FROM OUTSIDE THE CLUSTER IT RUNS IN, and the name
-# is the whole of what this repository can say about it.
+# WHERE THIS CACHE ANSWERS, and the answer is one cluster.
 #
-# templates/ingressroutetcp.yaml binds the Service above to the ingress
-# controller's plain-TCP entry point of this name. An entry point is STATIC
-# configuration of the controller — an argument on the controller's own
-# container, plus the port the address in that argument names, published on the
-# machine — so NOTHING in this repository can create one. The deploy program's
-# patch_container_arguments_and_ports row over daemonset/traefik
-# (ansiwise/programs/deploy-cluster.yaml in the installation repository) is the
-# only writer of either half, and the address it binds is what decides which of
-# the machine's addresses the port answers on.
+# No key here names an entry point of the ingress controller, and no
+# templates/ingressroutetcp.yaml stands beside this file. Both were here until
+# hostyour-cloud#66: they published :6379 on a plain-TCP entry point so a dbgate
+# running on the MASTER could dial a SLAVE's cache. A slave standing on the
+# master's own server is ONE cluster, where publishing changes nothing; a slave on
+# a machine of its own is TWO, where publishing is what the co-location law
+# forbids. Both cases happen, so the route went.
+#
+# What reads this cache stands in the same cluster. apps/dbgate carries
+# `runsOn: slave`, exactly as apps/redis/app.yaml does, so the app generator
+# (argocd/apps/applicationset.yaml) places both on the same cluster and dbgate
+# dials redis-<env>.redis.svc.cluster.local:6379 as the `default` user.
 #
 # WHAT REACHING THIS PORT IS WORTH, now that the args above carry --requirepass:
 # a connection, and nothing more. Whoever arrives still has to be `default` or one
 # of the ACL users apps/service-provisioner minted per ServiceClaim, and each of
-# those is bounded by the key patterns its claim declared. What decides who can
-# reach the port at all is unchanged and still stated in two places this repository
-# does not hold: the address the entry point is bound to, and the machine's own
-# firewall.
-tailnetEntryPoint: redis
+# those is bounded by the key patterns its claim declared.
 
 # Data PVC. Redis is a cache — toggle-off is ALLOWED to delete it (operator
 # decision: only postgresql + mongodb keep delete-protection).

@@ -1,0 +1,20 @@
+# dbgate — the two Vault paths of the dev stage, written as literals for the
+# reason every other application writes them as literals: the stage is not a fact
+# a chart holds, and a path composed at render time is a path no check can hold to
+# the entries the installation's programs actually write.
+externalsecret-db:
+  externalSecret:
+    vaultPath: dev/app/mongodb
+
+externalsecret-redis:
+  externalSecret:
+    vaultPath: dev/app/redis
+
+app:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi

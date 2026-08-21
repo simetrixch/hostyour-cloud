@@ -54,21 +54,20 @@
 ///     `units/`, `argocd/` and `bootstrap/` are read by nothing here, and the two halves are out of
 ///     reach there for different reasons — one of them a reason, the other only a gap.
 ///
-///     The NAMESPACE half genuinely could not be held: `slaves/slave` and `slaves/dbgate` render
-///     into a namespace named after the slave, admitted by a row that widens the master's role with
-///     [slavePlaceholder] at registration time, and `units/` reads under `consumer-eso`, which
-///     selects by label. Neither is a namespace this repository writes, so neither is a name this
-///     check could hold to a list.
+///     The NAMESPACE half genuinely could not be held: `slaves/slave` renders into a namespace named
+///     after the slave, admitted by a row that widens the master's role with [slavePlaceholder] at
+///     registration time, and `units/` reads under `consumer-eso`, which selects by label. Neither
+///     is a namespace this repository writes, so neither is a name this check could hold to a list.
 ///
-///     The PATH half is not like that, and for `slaves/dbgate` it is simply open. Its two
-///     ExternalSecrets leave `vaultPath: ""` in `slaves/dbgate/values.yaml` (under
-///     `externalsecret-db` and `externalsecret-redis`) and `argocd/apps/slaves-appset.yaml` stamps
-///     `__STAGE__/app/mongodb` and `__STAGE__/app/redis` into them — two names as literal as the
-///     `dev/app/redis` [vaultPathOf] already reduces, written in a spelling of the stage this
-///     library does not read, and held to the written set by nothing. Misspell either entry and
-///     this check stays green. `units/` is out of reach on this half for the stated reason instead:
+///     The PATH half is out of reach in `units/` alone, and for a stated reason:
 ///     `units/mongodb/values.yaml` and `units/postgresql/values.yaml` leave `vaultPath` empty and
-///     the path is composed per consumer, when that consumer is onboarded.
+///     the path is composed per consumer, when that consumer is onboarded. It used to be open for
+///     `slaves/dbgate` as well — that chart left `vaultPath: ""` and `argocd/apps/slaves-appset.yaml`
+///     stamped `__STAGE__/app/mongodb` and `__STAGE__/app/redis` into it, a spelling of the stage
+///     this library does not read. hostyour-cloud#66 moved the database browser to the cluster its
+///     databases run in, so it is `apps/dbgate` now, with `dev/app/mongodb` and `dev/app/redis`
+///     written as literals in its per-stage values files — and both halves of it are judged here
+///     like any other application's.
 ///   * WHAT A ROW ADMITS AND NOTHING READS. The direction held is one way: every reader is admitted.
 ///     A namespace listed that no application of this tree reads through is reported by nothing —
 ///     the list carries names `preserve_list` keeps alive from earlier installations, and a check

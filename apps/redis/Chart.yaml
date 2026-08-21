@@ -13,7 +13,7 @@ description: |
 
     * `default`, whose password is `--requirepass` — the platform's own
       credential. apps/service-provisioner reads it to write the users below,
-      the metrics exporter reads it to scrape, and slaves/dbgate reads it out of
+      the metrics exporter reads it to scrape, and apps/dbgate reads it out of
       Vault to browse. All three take it from a Secret, never a literal.
     * `sp_<namespace>_<claim>` — one ACL user per redis ServiceClaim, minted by
       apps/service-provisioner with a generate-once password, the LITERAL key
@@ -45,11 +45,10 @@ description: |
   interval (apps/service-provisioner controller.pollIntervalSeconds, 15s) while
   `default` — whose password is in the server's own config — already answers.
 
-  templates/ingressroutetcp.yaml names a plain-TCP entry point of the ingress
-  controller for :6379. The entry point itself is NOT carried yet: digita-deploy
-  ansiwise/programs/deploy-cluster.yaml:413-421 patches the controller with
-  `ports: []`, so the route is dropped with one line in the controller's own log
-  — the object exists, ArgoCD reports it synced, and the port answers nothing.
+  THE CACHE IS CLUSTER-INTERNAL. There is no Ingress and no IngressRouteTCP, and
+  the NetworkPolicy admits no ingress controller, so :6379 answers inside this
+  cluster and nowhere else. apps/dbgate, which browses it, carries the same
+  `runsOn: slave` this chart's app.yaml carries and dials it in-cluster.
 
   The image tag is managed centrally in platform/versions.yaml (images.redis)
   and stamped by the version sync. A single ReadWriteOnce data PVC (Recreate

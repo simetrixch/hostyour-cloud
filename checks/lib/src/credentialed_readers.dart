@@ -3,7 +3,7 @@
 ///
 /// **What a reader is, and why the environment is where they are found.** A pod that talks to one of
 /// this platform's backing services is handed the address as an environment variable holding a
-/// connection URI — `URL_mongo`, `URL_redis` in `slaves/dbgate/values.yaml`. The credential cannot
+/// connection URI — `URL_mongo`, `URL_redis` in `apps/dbgate/values-common.yaml`. The credential cannot
 /// stand in that URI as text, because the URI is written in a values file that is read by everyone
 /// who can read the repository. So the URI names a variable, `$(VAR)`, and a second entry of the
 /// SAME env list fills that variable from a `secretKeyRef`. Kubernetes substitutes it in the
@@ -27,7 +27,7 @@
 ///   * A VARIABLE DECLARED TOO LATE — Kubernetes expands a variable only from entries BEFORE it in
 ///     the list. An entry that fills VAR *after* the URI that reads it leaves the same text
 ///     standing, and the two entries look right beside each other in a diff. The tree states this
-///     rule twice in `slaves/dbgate/values.yaml` prose; nothing read it until now.
+///     rule twice in `apps/dbgate/values-common.yaml` prose; nothing read it until now.
 ///   * A VARIABLE FILLED FROM THIS FILE — the entry declaring VAR carries a plain `value:` rather
 ///     than a `secretKeyRef`. The pod works, and the credential is in git exactly as in the literal
 ///     above, one indirection further along.

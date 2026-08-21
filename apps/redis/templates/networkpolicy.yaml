@@ -8,12 +8,16 @@
 # where the registration claims `redis` in services[] (consumers-appset
 # templatePatch), where a tenant member's own registration carries the label, and on
 # the service-provisioner's own namespace, which has to reach the port to write each
-# claim's ACL user — the ingress controller (below), and same-namespace pods (metrics
-# exporter). Any other workload is denied. Calico-enforced.
+# claim's ACL user — and same-namespace pods (metrics exporter). Any other workload
+# is denied. Calico-enforced.
 #
-# From OUTSIDE this cluster, what decides who can reach the port is the address the
-# entry point of templates/ingressroutetcp.yaml is bound to and the machine's own
-# firewall, and neither of those is stated in this repository.
+# FROM OUTSIDE THIS CLUSTER THERE IS NO PATH TO :6379. This chart writes no
+# IngressRouteTCP, so no entry point of the ingress controller carries this port and
+# no rule below admits that controller's namespace. Every admitted name and every
+# admitted label is a namespace of this cluster. What browses this cache runs beside
+# it: apps/dbgate carries `runsOn: slave`, the same value apps/redis/app.yaml carries,
+# so the app generator places both on the same cluster and dbgate dials the Service by
+# its in-cluster name.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -37,15 +41,6 @@ spec:
             matchLabels:
               {{ . }}: "true"
         {{- end }}
-        # THE INGRESS CONTROLLER, and it is the second half of
-        # templates/ingressroutetcp.yaml. Every connection that arrives from
-        # outside this cluster is opened by a Traefik pod in this namespace, so
-        # without this rule the route is admitted by the controller and refused
-        # by Calico — which, from the client's side, is indistinguishable from
-        # an entry point nobody ever declared.
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace | quote }}
         - podSelector: {}
       ports:
         - protocol: TCP

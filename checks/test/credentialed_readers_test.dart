@@ -63,8 +63,8 @@ void main() {
       };
 
       expect(found, <String>{
-        'slaves/dbgate/values.yaml URL_mongo',
-        'slaves/dbgate/values.yaml URL_redis',
+        'apps/dbgate/values-common.yaml URL_mongo',
+        'apps/dbgate/values-common.yaml URL_redis',
       }, reason: 'these are the connection URIs this repository writes into a pod environment');
     });
   });
@@ -247,7 +247,7 @@ app:
     });
 
     test('THE PLANTED DEFECT: the variable declared AFTER the URI that reads it', () {
-      // The one the tree already knew about — slaves/dbgate/values.yaml says it twice in prose —
+      // The one the tree already knew about — apps/dbgate/values-common.yaml says it twice in prose —
       // and the one no diff shows, because both entries are present and correct.
       final List<CredentialFinding> found = auditCredentialedReaders(
         lists: <EnvList>[

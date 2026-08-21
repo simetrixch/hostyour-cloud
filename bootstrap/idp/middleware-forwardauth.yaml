@@ -1,8 +1,16 @@
 # Traefik forwardAuth Middleware → Authentik's embedded Outpost.
-# Consumer Ingresses (apps/tekton, slaves/dbgate) reference this
-# cross-namespace as `idp-forwardauth@kubernetescrd`. Traefik carries
+# apps/tekton's Ingress references this cross-namespace as
+# `idp-forwardauth@kubernetescrd`. Traefik carries
 # --providers.kubernetescrd.allowCrossNamespace=true for that, written by
 # digita-deploy ansiwise/programs/deploy-cluster.yaml:420.
+#
+# THIS MIDDLEWARE REACHES ONLY THE CLUSTER IT STANDS IN. Its address is the
+# in-cluster Service idp-authentik-server.idp.svc.cluster.local, and the program
+# that installs this directory declares `roles: [master]` (digita-deploy
+# ansiwise/programs/deploy-gitops.yaml:48) — so an Ingress on a cluster whose
+# role is `slave` names a middleware that is not there. That is why
+# apps/dbgate, which stands beside the databases it browses, renders its Ingress
+# off rather than gated by a reference that resolves to nothing.
 #
 # Authentik's `/outpost.goauthentik.io/auth/traefik` endpoint speaks the
 # Traefik forwardAuth protocol natively — returns 2xx with X-authentik-*

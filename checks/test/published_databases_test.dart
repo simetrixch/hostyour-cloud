@@ -6,11 +6,14 @@ import 'package:yaml/yaml.dart';
 
 /// published-databases — over the real tree, and over planted ones.
 ///
-/// **Why every probe plants BOTH halves.** The subject of this check is a pair of objects that do
-/// not reference each other: a route that says where a database is reached from, and a policy that
-/// says whether the connection may arrive. A probe that planted only one of them would prove the
-/// reader finds a file, not that the check holds the two together — so each defect below plants a
-/// complete app and changes exactly one thing about it.
+/// **Why the real-tree test states the databases by name.** The subject is derived from
+/// `apps/<name>/app.yaml`, so a database moved out of the `data` project leaves the audit silently
+/// and the run stays green with nothing looking. Naming them is what makes that move red.
+///
+/// **Why each planted defect changes exactly one thing.** Four different faults put a database
+/// outside its cluster and none of them fails a render, so each probe below starts from the same
+/// innocent app and alters one of the four — otherwise a green run would only prove that a defective
+/// app is defective in some way, not that this check reports the fault it names.
 void main() {
   final Directory repository = Directory.current.parent;
 
@@ -23,78 +26,75 @@ void main() {
     return global is Map ? Map<String, Object?>.from(global) : <String, Object?>{};
   }
 
+  /// Every application under `apps/` whose manifest names the database project, read off disk.
+  List<DatabaseApp> treeDatabases(Map<String, Object?> global) {
+    final List<DatabaseApp> apps = <DatabaseApp>[];
+    for (final FileSystemEntity each in Directory('${repository.path}/apps').listSync()) {
+      final File manifest = File('${each.path}/app.yaml');
+      if (!manifest.existsSync()) {
+        continue;
+      }
+      final Object? declared = loadYaml(manifest.readAsStringSync());
+      if (declared is! Map || declared['project'] != databaseProject) {
+        continue;
+      }
+      final String name = each.uri.pathSegments[each.uri.pathSegments.length - 2];
+
+      final Object? parsed = loadYaml(File('${each.path}/values-common.yaml').readAsStringSync());
+      final Map<String, Object?> values = <String, Object?>{
+        if (parsed is Map) ...Map<String, Object?>.from(parsed),
+        'global': global,
+      };
+
+      final List<RouteDocument> routes = <RouteDocument>[];
+      final List<PolicyDocument> policies = <PolicyDocument>[];
+      for (final FileSystemEntity file in Directory('${each.path}/templates').listSync()) {
+        if (file is! File || !file.path.endsWith('.yaml')) {
+          continue;
+        }
+        final String template = file.readAsStringSync();
+        final String where = 'apps/$name/templates/${file.uri.pathSegments.last}';
+        routes.addAll(routeDocumentsIn(where: where, template: template));
+        if (policyIn(template: template, values: values) case final PolicyDocument policy) {
+          policies.add(policy);
+        }
+      }
+
+      apps.add(
+        DatabaseApp(
+          app: name,
+          routes: routes,
+          dependencies: fileDependenciesIn(
+            base: 'apps/$name',
+            chart: File('${each.path}/Chart.yaml').readAsStringSync(),
+          ),
+          policies: policies,
+        ),
+      );
+    }
+    return apps;
+  }
+
   group('the tree as it stands', () {
-    test('every database published on an entry point is admitted through by its own policy', () {
+    test('no database of this repository is reachable from outside the cluster it runs in', () {
       final Map<String, Object?> global = platformGlobal();
       final Object? ingressNamespace = global['ingressNamespace'];
       expect(
         ingressNamespace,
         isA<String>().having((String each) => each.isNotEmpty, 'is named', isTrue),
-        reason: 'the namespace the two DB policies admit is what this check holds them to',
+        reason: 'the namespace this check refuses a database policy to admit has to be named',
       );
 
-      final List<PublishedApp> apps = <PublishedApp>[];
-      for (final FileSystemEntity each in Directory('${repository.path}/apps').listSync()) {
-        final Directory templates = Directory('${each.path}/templates');
-        final File declared = File('${each.path}/values-common.yaml');
-        if (!templates.existsSync() || !declared.existsSync()) {
-          continue;
-        }
-        final Object? parsed = loadYaml(declared.readAsStringSync());
-        final Map<String, Object?> values = <String, Object?>{
-          if (parsed is Map) ...Map<String, Object?>.from(parsed),
-          'global': global,
-        };
+      final List<DatabaseApp> apps = treeDatabases(global);
 
-        final String name = each.uri.pathSegments[each.uri.pathSegments.length - 2];
-        final List<PublishedRoute> routes = <PublishedRoute>[];
-        final List<PolicyDocument> policies = <PolicyDocument>[];
-        int routeFiles = 0;
-        for (final FileSystemEntity file in templates.listSync()) {
-          if (file is! File || !file.path.endsWith('.yaml')) {
-            continue;
-          }
-          final String template = file.readAsStringSync();
-          if (file.path.endsWith('ingressroutetcp.yaml')) {
-            routeFiles++;
-          }
-          if (routeIn(template: template, values: values) case final PublishedRoute route) {
-            routes.add(route);
-          }
-          if (policyIn(template: template, values: values) case final PolicyDocument policy) {
-            policies.add(policy);
-          }
-        }
-        // A file the reader stopped recognising would take its route out of the audit and leave the
-        // run green, which is the one way this check could quietly stop covering its subject.
-        expect(
-          routes,
-          hasLength(routeFiles),
-          reason:
-              'apps/$name carries $routeFiles route files and the reader found ${routes.length}',
-        );
+      // WHAT THIS RUN COVERED, written out rather than counted. A database moved out of the `data`
+      // project leaves this audit with nothing saying so, and a green run would then mean nobody was
+      // looking. A database added here makes this line red until somebody says so on purpose.
+      expect(apps.map((DatabaseApp each) => each.app).toSet(), <String>{
+        'mongodb',
+        'redis',
+      }, reason: 'these are the applications this repository runs a database in');
 
-        if (routes.isEmpty) {
-          apps.add(PublishedApp(app: name, route: null, policies: policies));
-          continue;
-        }
-        for (final PublishedRoute route in routes) {
-          apps.add(PublishedApp(app: name, route: route, policies: policies));
-        }
-      }
-
-      // WHAT THIS RUN COVERED, written out rather than counted. A check that only asserted "some
-      // app publishes something" would go on passing after the last route left the tree, and a
-      // green run would then mean nobody was looking. A database added here makes this line red
-      // until somebody says so on purpose.
-      expect(
-        apps
-            .where((PublishedApp each) => each.route != null)
-            .map((PublishedApp each) => each.app)
-            .toSet(),
-        <String>{'mongodb', 'redis'},
-        reason: 'these are the databases this repository publishes outside their own cluster',
-      );
       expect(
         auditPublishedDatabases(
           apps: apps,
@@ -103,235 +103,127 @@ void main() {
         isEmpty,
       );
     });
-  });
 
-  group('what a route says', () {
-    const String template = '''
-apiVersion: traefik.io/v1alpha1
-kind: IngressRouteTCP
-spec:
-  entryPoints:
-    - {{ .Values.tailnetEntryPoint }}
-  routes:
-    - match: HostSNI(`*`)
-      services:
-        # A comment naming a port: 1 that is not one.
-        - name: mongodb-{{ .Values.global.env }}
-          port: {{ .Values.mongodb.containerPort }}
-''';
+    test('THE COUNTER-PROBE: a route added to the real material turns this check red', () {
+      // Not a planted app but the tree's own, with one object added — so what is proven is that the
+      // reader that walked these very files would have reported it.
+      final Map<String, Object?> global = platformGlobal();
+      final List<DatabaseApp> apps = treeDatabases(global);
+      final DatabaseApp subject = apps.firstWhere((DatabaseApp each) => each.app == 'mongodb');
 
-    test('the entry point and the port are read out of the values that fill them', () {
-      final PublishedRoute? route = routeIn(
-        template: template,
-        values: <String, Object?>{
-          'tailnetEntryPoint': 'mongodb',
-          'mongodb': <String, Object?>{'containerPort': 27017},
-          'global': <String, Object?>{'env': 'dev'},
-        },
+      final List<ExposureFinding> found = auditPublishedDatabases(
+        apps: <DatabaseApp>[
+          DatabaseApp(
+            app: subject.app,
+            routes: <RouteDocument>[
+              ...subject.routes,
+              ...routeDocumentsIn(
+                where: 'apps/mongodb/templates/ingressroutetcp.yaml',
+                template: _plantedRoute,
+              ),
+            ],
+            dependencies: subject.dependencies,
+            policies: subject.policies,
+          ),
+        ],
+        ingressNamespace: global['ingressNamespace']! as String,
       );
 
-      expect(route?.entryPoint, 'mongodb');
-      expect(route?.port, 27017);
-      expect(route?.service, 'mongodb-{{ .Values.global.env }}');
-    });
-
-    test('a value the template names and the values do not resolves to nothing', () {
-      // What a text match would miss: the template is unchanged and the value under it is gone.
-      final PublishedRoute? route = routeIn(
-        template: template,
-        values: <String, Object?>{
-          'mongodb': <String, Object?>{'containerPort': 27017},
-          'global': <String, Object?>{'env': 'dev'},
-        },
-      );
-
-      expect(route?.entryPoint, isNull);
-      expect(route?.port, 27017);
-    });
-
-    test('THE INNOCENT NEIGHBOUR: a template that is not an IngressRouteTCP declares no route', () {
-      expect(
-        routeIn(
-          template: 'kind: Service\nspec:\n  ports:\n    - port: 27017\n',
-          values: <String, Object?>{},
-        ),
-        isNull,
-      );
+      expect(found.single, isA<PublishedDatabase>());
+      expect(found.single.toString(), contains('apps/mongodb/templates/ingressroutetcp.yaml'));
+      expect(found.single.toString(), contains('IngressRouteTCP'));
     });
   });
 
-  group('what a policy admits', () {
-    const String template = '''
-kind: NetworkPolicy
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: mongodb
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        {{- range .Values.global.dbConsumerNamespaces }}
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ . | quote }}
-        {{- end }}
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace | quote }}
-        - podSelector: {}
-      ports:
-        - protocol: TCP
-          port: 27017
-''';
-
-    final Map<String, Object?> values = <String, Object?>{
-      'global': <String, Object?>{
-        'dbConsumerNamespaces': <String>['dbgate'],
-        'ingressNamespace': 'ingress',
-      },
-    };
-
-    test('the workload it selects, the namespaces it admits and the port it admits them on', () {
-      final PolicyDocument? policy = policyIn(template: template, values: values);
-
-      expect(policy?.selects, 'mongodb');
-      expect(policy?.rules, hasLength(1));
-      expect(policy?.rules.single.namespaces, <String>{'dbgate', 'ingress'});
-      expect(policy?.rules.single.ports, <int>{27017});
-      expect(policy?.rules.single.allPorts, isFalse);
-      expect(policy?.covers('mongodb'), isTrue);
-      expect(policy?.covers('redis'), isFalse);
-    });
-
-    test('a namespace admitted through a range is admitted, not passed over', () {
-      // A reader that only understood a literal would call this policy empty and refuse a chart
-      // that is correct — a false refusal costs the same trust as a false pass.
-      final PolicyDocument? policy = policyIn(
-        template: template,
-        values: <String, Object?>{
-          'global': <String, Object?>{
-            'dbConsumerNamespaces': <String>['dbgate', 'ingress'],
-            'ingressNamespace': 'somewhere-else',
-          },
-        },
-      );
-
-      expect(policy?.rules.single.admits('ingress', 27017), isTrue);
-    });
-
-    test('a rule that names no ports admits every port', () {
-      final PolicyDocument? policy = policyIn(
-        template:
-            'kind: NetworkPolicy\nspec:\n'
-            '  podSelector: {}\n'
-            '  ingress:\n'
-            '    - from:\n'
-            '        - namespaceSelector:\n'
-            '            matchLabels:\n'
-            '              kubernetes.io/metadata.name: "ingress"\n',
-        values: <String, Object?>{},
-      );
-
-      expect(policy?.selects, isNull);
-      expect(policy?.covers('anything'), isTrue);
-      expect(policy?.rules.single.allPorts, isTrue);
-      expect(policy?.rules.single.admits('ingress', 6379), isTrue);
-    });
-
-    test('two rules are two rules, and each carries its own ports', () {
-      final PolicyDocument? policy = policyIn(
-        template:
-            'kind: NetworkPolicy\nspec:\n'
-            '  podSelector: {}\n'
-            '  ingress:\n'
-            '    - from:\n'
-            '        - namespaceSelector:\n'
-            '            matchLabels:\n'
-            '              kubernetes.io/metadata.name: "observability"\n'
-            '      ports:\n'
-            '        - port: 9216\n'
-            '    - from:\n'
-            '        - namespaceSelector:\n'
-            '            matchLabels:\n'
-            '              kubernetes.io/metadata.name: "ingress"\n'
-            '      ports:\n'
-            '        - port: 27017\n',
-        values: <String, Object?>{},
-      );
-
-      expect(policy?.rules, hasLength(2));
-      expect(policy?.rules.first.admits('ingress', 27017), isFalse);
-      expect(policy?.rules.last.admits('ingress', 27017), isTrue);
-    });
-
-    test('THE INNOCENT NEIGHBOUR: a template that is not a NetworkPolicy declares no policy', () {
-      expect(
-        policyIn(template: 'kind: Deployment\nspec: {}\n', values: <String, Object?>{}),
-        isNull,
-      );
-    });
-  });
-
-  group('what it reports', () {
-    PublishedApp planted({
-      required String app,
-      String? entryPoint = 'mongodb',
-      int? port = 27017,
-      List<PolicyDocument> policies = const <PolicyDocument>[],
-    }) => PublishedApp(
-      app: app,
-      route: PublishedRoute(entryPoint: entryPoint, service: '$app-dev', port: port),
-      policies: policies,
-    );
-
-    PolicyDocument admitting(String app, Set<String> namespaces, Set<int> ports) => PolicyDocument(
-      selects: app,
-      rules: <PolicyRule>[
-        PolicyRule(namespaces: namespaces, ports: ports, allPorts: ports.isEmpty),
-      ],
-    );
-
-    test('THE INNOCENT: a route whose policy admits the controller on the routed port', () {
-      expect(
-        auditPublishedDatabases(
-          apps: <PublishedApp>[
-            planted(
-              app: 'mongodb',
-              policies: <PolicyDocument>[
-                admitting('mongodb', <String>{'dbgate', 'ingress'}, <int>{27017}),
+  group('what the audit reports', () {
+    DatabaseApp planted({
+      List<RouteDocument> routes = const <RouteDocument>[],
+      Set<String> dependencies = const <String>{'charts/common'},
+      List<PolicyDocument>? policies,
+    }) => DatabaseApp(
+      app: 'one',
+      routes: routes,
+      dependencies: dependencies,
+      policies:
+          policies ??
+          <PolicyDocument>[
+            const PolicyDocument(
+              selects: 'one',
+              rules: <PolicyRule>[
+                PolicyRule(namespaces: <String>{'dbgate'}, ports: <int>{27017}, allPorts: false),
               ],
             ),
           ],
-          ingressNamespace: 'ingress',
-        ),
-        isEmpty,
-      );
-    });
+    );
 
-    test('THE INNOCENT NEIGHBOUR: an app that publishes nothing is judged on nothing', () {
-      // An app with no route has no second half to be missing, and reporting its missing policy
-      // would demand a NetworkPolicy of every chart in the tree.
+    test('THE PLANTED INNOCENT: a database admitting its own cluster and publishing nothing', () {
       expect(
-        auditPublishedDatabases(
-          apps: <PublishedApp>[
-            const PublishedApp(app: 'coredns', route: null, policies: <PolicyDocument>[]),
-          ],
-          ingressNamespace: 'ingress',
-        ),
+        auditPublishedDatabases(apps: <DatabaseApp>[planted()], ingressNamespace: 'ingress'),
         isEmpty,
       );
     });
 
-    test('the planted defect: a published database with no policy covering its workload', () {
+    test('THE PLANTED DEFECT: a route out of the cluster', () {
       final List<ExposureFinding> found = auditPublishedDatabases(
-        apps: <PublishedApp>[
+        apps: <DatabaseApp>[
           planted(
-            app: 'redis',
-            entryPoint: 'redis',
-            port: 6379,
-            policies: <PolicyDocument>[
-              admitting('mongodb', <String>{'ingress'}, <int>{27017}),
+            routes: const <RouteDocument>[
+              RouteDocument(
+                kind: 'IngressRouteTCP',
+                where: 'apps/one/templates/ingressroutetcp.yaml',
+                sendsTo: 'one-dev',
+              ),
+            ],
+          ),
+        ],
+        ingressNamespace: 'ingress',
+      );
+
+      expect(found.single, isA<PublishedDatabase>());
+      expect(found.single.toString(), contains('publishes apps/one outside the cluster'));
+    });
+
+    test('THE PLANTED DEFECT: the ingress chart embedded as a dependency', () {
+      final List<ExposureFinding> found = auditPublishedDatabases(
+        apps: <DatabaseApp>[
+          planted(dependencies: const <String>{'charts/common', 'charts/ingress'}),
+        ],
+        ingressNamespace: 'ingress',
+      );
+
+      expect(found.single, isA<EmbeddedIngressChart>());
+      expect(found.single.toString(), contains('ingress.enabled: true'));
+    });
+
+    test('THE PLANTED DEFECT: a policy rule admitting the ingress controller', () {
+      final List<ExposureFinding> found = auditPublishedDatabases(
+        apps: <DatabaseApp>[
+          planted(
+            policies: const <PolicyDocument>[
+              PolicyDocument(
+                selects: 'one',
+                rules: <PolicyRule>[
+                  PolicyRule(namespaces: <String>{'dbgate'}, ports: <int>{27017}, allPorts: false),
+                  PolicyRule(namespaces: <String>{'ingress'}, ports: <int>{27017}, allPorts: false),
+                ],
+              ),
+            ],
+          ),
+        ],
+        ingressNamespace: 'ingress',
+      );
+
+      expect(found.single, isA<AdmittedController>());
+      expect(found.single.toString(), contains('on 27017'));
+      expect(found.single.toString(), contains('half of a publication'));
+    });
+
+    test('THE PLANTED DEFECT: no policy covers the workload at all', () {
+      final List<ExposureFinding> found = auditPublishedDatabases(
+        apps: <DatabaseApp>[
+          planted(
+            policies: const <PolicyDocument>[
+              PolicyDocument(selects: 'another', rules: <PolicyRule>[]),
             ],
           ),
         ],
@@ -339,115 +231,245 @@ spec:
       );
 
       expect(found.single, isA<UnpolicedDatabase>());
-      expect(found.single.toString(), contains('every pod of the cluster'));
+      expect(found.single.toString(), contains('presents as a database that works'));
     });
 
-    test('the planted defect: a policy that admits everyone except the controller', () {
+    test('a rule naming no port at all is reported as reaching every one of them', () {
       final List<ExposureFinding> found = auditPublishedDatabases(
-        apps: <PublishedApp>[
+        apps: <DatabaseApp>[
           planted(
-            app: 'mongodb',
-            policies: <PolicyDocument>[
-              admitting('mongodb', <String>{'dbgate'}, <int>{27017}),
+            policies: const <PolicyDocument>[
+              PolicyDocument(
+                selects: null,
+                rules: <PolicyRule>[
+                  PolicyRule(namespaces: <String>{'ingress'}, ports: <int>{}, allPorts: true),
+                ],
+              ),
             ],
           ),
         ],
         ingressNamespace: 'ingress',
       );
 
-      expect(found.single, isA<UnadmittedController>());
-      expect(found.single.toString(), contains('dropped by Calico'));
+      expect(found.single.toString(), contains('every port'));
     });
+  });
 
-    test('the planted defect: the controller admitted, but on another port', () {
-      // The two objects agree that the controller may come in and disagree about where to, which
-      // reads as a working policy in a diff and as a closed port on the machine.
-      final List<ExposureFinding> found = auditPublishedDatabases(
-        apps: <PublishedApp>[
-          planted(
-            app: 'mongodb',
-            policies: <PolicyDocument>[
-              admitting('mongodb', <String>{'ingress'}, <int>{9216}),
-            ],
-          ),
-        ],
-        ingressNamespace: 'ingress',
+  group('what a template renders', () {
+    test('an IngressRouteTCP is read as a route, and the object it names is printed', () {
+      final List<RouteDocument> found = routeDocumentsIn(
+        where: 'apps/one/templates/route.yaml',
+        template: _plantedRoute,
       );
 
-      expect(found.single, isA<UnadmittedController>());
-      expect(found.single.toString(), contains('port 27017'));
+      expect(found, hasLength(1));
+      expect(found.single.kind, 'IngressRouteTCP');
+      expect(found.single.sendsTo, 'mongodb-{{ .Values.global.env }}');
     });
 
-    test('the planted defect: a route whose entry point resolves to nothing', () {
-      final List<ExposureFinding> found = auditPublishedDatabases(
-        apps: <PublishedApp>[
-          planted(
-            app: 'mongodb',
-            entryPoint: null,
-            policies: <PolicyDocument>[
-              admitting('mongodb', <String>{'ingress'}, <int>{27017}),
-            ],
-          ),
-        ],
-        ingressNamespace: 'ingress',
+    test('an Ingress is a route too — a database is published by a host as well as by a port', () {
+      final List<RouteDocument> found = routeDocumentsIn(
+        where: 'apps/one/templates/ingress.yaml',
+        template:
+            'apiVersion: networking.k8s.io/v1\n'
+            'kind: Ingress\n'
+            'spec:\n'
+            '  rules:\n'
+            '    - host: db.example.invalid\n',
       );
 
-      expect(found.single, isA<UnresolvedRoute>());
-      expect(found.single.toString(), contains('entry point'));
+      expect(found.single.kind, 'Ingress');
+      expect(found.single.sendsTo, 'db.example.invalid');
     });
 
-    test('the planted defect: two databases on one entry point', () {
-      final List<ExposureFinding> found = auditPublishedDatabases(
-        apps: <PublishedApp>[
-          planted(
-            app: 'mongodb',
-            policies: <PolicyDocument>[
-              admitting('mongodb', <String>{'ingress'}, <int>{27017}),
-            ],
-          ),
-          planted(
-            app: 'redis',
-            policies: <PolicyDocument>[
-              admitting('redis', <String>{'ingress'}, <int>{27017}),
-            ],
-          ),
-        ],
-        ingressNamespace: 'ingress',
+    test('THE INNOCENT NEIGHBOUR: a Service naming a port is not a route', () {
+      expect(
+        routeDocumentsIn(
+          where: 'apps/one/templates/service.yaml',
+          template:
+              'apiVersion: v1\n'
+              'kind: Service\n'
+              'metadata:\n'
+              '  name: one-dev\n'
+              'spec:\n'
+              '  ports:\n'
+              '    - port: 27017\n',
+        ),
+        isEmpty,
       );
-
-      expect(found.single, isA<SharedEntryPoint>());
-      expect(found.single.toString(), contains('one port on the machine'));
     });
 
-    test('the three failures are three findings, not one', () {
-      // The whole reason this check exists: from the client's side an unpoliced database, an
-      // unadmitted controller and a route that resolves to nothing are one symptom.
-      final List<ExposureFinding> found = auditPublishedDatabases(
-        apps: <PublishedApp>[
-          planted(app: 'one', entryPoint: 'one'),
-          planted(
-            app: 'two',
-            entryPoint: 'two',
-            policies: <PolicyDocument>[
-              admitting('two', <String>{'dbgate'}, <int>{27017}),
-            ],
-          ),
-          planted(
-            app: 'three',
-            entryPoint: null,
-            policies: <PolicyDocument>[
-              admitting('three', <String>{'ingress'}, <int>{27017}),
-            ],
-          ),
-        ],
-        ingressNamespace: 'ingress',
+    test('a file rendering two documents is read as two', () {
+      final List<RouteDocument> found = routeDocumentsIn(
+        where: 'apps/one/templates/both.yaml',
+        template:
+            'kind: Service\n'
+            'metadata:\n'
+            '  name: one-dev\n'
+            '---\n'
+            'kind: IngressRouteTCP\n'
+            'spec:\n'
+            '  routes:\n'
+            '    - services:\n'
+            '        - name: one-dev\n',
       );
 
-      expect(found.map((ExposureFinding each) => each.runtimeType.toString()), <String>[
-        'UnpolicedDatabase',
-        'UnadmittedController',
-        'UnresolvedRoute',
-      ]);
+      expect(found.single.kind, 'IngressRouteTCP');
+    });
+  });
+
+  group('what a chart depends on', () {
+    test('a file:// dependency is resolved against the chart it stands in', () {
+      expect(
+        fileDependenciesIn(
+          base: 'apps/mongodb',
+          chart:
+              'dependencies:\n'
+              '  - name: ingress\n'
+              '    repository: file://../../charts/ingress\n',
+        ),
+        <String>{ingressChart},
+      );
+    });
+
+    test('THE INNOCENT NEIGHBOUR: the library charts a database legitimately embeds', () {
+      expect(
+        fileDependenciesIn(
+          base: 'apps/redis',
+          chart:
+              'dependencies:\n'
+              '  - name: common\n'
+              '    repository: file://../../charts/common\n'
+              '  - name: deployment\n'
+              '    repository: file://../../charts/deployment\n',
+        ),
+        <String>{'charts/common', 'charts/deployment'},
+      );
+    });
+
+    test('a dependency pulled from a chart repository names no directory of this tree', () {
+      expect(
+        fileDependenciesIn(
+          base: 'apps/redis',
+          chart:
+              'dependencies:\n'
+              '  - name: prometheus-redis-exporter\n'
+              '    repository: https://prometheus-community.github.io/helm-charts\n',
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  group('what a policy admits', () {
+    const String template = '''
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb
+  ingress:
+    - from:
+        {{- range .Values.global.dbConsumerNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 27017
+''';
+
+    Map<String, Object?> values(List<String> named) => <String, Object?>{
+      'global': <String, Object?>{'dbConsumerNamespaces': named},
+    };
+
+    test('a namespace admitted through a range is resolved through the range', () {
+      final PolicyDocument? policy = policyIn(
+        template: template,
+        values: values(<String>['dbgate']),
+      );
+
+      expect(policy?.selects, 'mongodb');
+      expect(policy?.rules.single.namespaces, <String>{'dbgate'});
+      expect(policy?.rules.single.ports, <int>{27017});
+      expect(policy?.rules.single.allPorts, isFalse);
+    });
+
+    test('THE COUNTER-PROBE: the same range holding the controller is read as admitting it', () {
+      // What proves the range reader is not merely returning an empty set: put the controller's
+      // own namespace in the list the template iterates, and the rule has to admit it.
+      final PolicyDocument? policy = policyIn(
+        template: template,
+        values: values(<String>['dbgate', 'ingress']),
+      );
+
+      expect(policy?.rules.single.admits('ingress'), isTrue);
+    });
+
+    test('THE INNOCENT NEIGHBOUR: a document of another kind declares no policy', () {
+      expect(
+        policyIn(template: 'apiVersion: v1\nkind: Service\n', values: <String, Object?>{}),
+        isNull,
+      );
+    });
+
+    test('a podSelector matching every pod covers whatever app is asked about', () {
+      final PolicyDocument? policy = policyIn(
+        template:
+            'kind: NetworkPolicy\n'
+            'spec:\n'
+            '  podSelector: {}\n'
+            '  ingress:\n'
+            '    - from:\n'
+            '        - podSelector: {}\n',
+        values: <String, Object?>{},
+      );
+
+      expect(policy?.selects, isNull);
+      expect(policy?.covers('anything'), isTrue);
+    });
+  });
+
+  group('what a value stands for', () {
+    test('a reference is looked up in the values that fill it', () {
+      expect(
+        resolveValue('{{ .Values.global.ingressNamespace | quote }}', <String, Object?>{
+          'global': <String, Object?>{'ingressNamespace': 'ingress'},
+        }),
+        'ingress',
+      );
+    });
+
+    test('a reference the values do not answer resolves to nothing rather than to itself', () {
+      expect(resolveValue('{{ .Values.missing }}', <String, Object?>{}), isNull);
+    });
+
+    test('a composed string is not guessed at', () {
+      expect(resolveValue('gate-{{ .Values.name }}.example.invalid', <String, Object?>{}), isNull);
+    });
+
+    test('THE INNOCENT NEIGHBOUR: a literal passes through as written', () {
+      expect(resolveValue('"ingress"', <String, Object?>{}), 'ingress');
     });
   });
 }
+
+/// One IngressRouteTCP, as apps/mongodb carried it until hostyour-cloud#66 removed it.
+const String _plantedRoute = '''
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: mongodb-{{ .Values.global.env }}
+spec:
+  entryPoints:
+    - {{ .Values.tailnetEntryPoint }}
+  routes:
+    - match: HostSNI(`*`)
+      services:
+        # A comment naming a name: that is not one.
+        - name: mongodb-{{ .Values.global.env }}
+          port: {{ .Values.mongodb.containerPort }}
+''';

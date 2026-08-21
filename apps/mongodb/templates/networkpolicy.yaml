@@ -3,8 +3,16 @@
 # platform namespaces by name (global.dbConsumerNamespaces), any namespace
 # self-labelled global.dbConsumerLabel=true where that key is set (so external
 # add-ons admit themselves without the platform hardcoding their namespace
-# name), the ingress controller (below), and same-namespace pods (metrics
-# exporter, rs-init Job). Any other workload is denied. Enforced by Calico.
+# name), and same-namespace pods (metrics exporter, rs-init Job). Any other
+# workload is denied. Enforced by Calico.
+#
+# EVERY RULE BELOW ADMITS A NAMESPACE OF THIS CLUSTER, AND THAT IS THE WHOLE
+# REACH OF THIS DATABASE. No rule admits the ingress controller, because there
+# is no route for it to carry: this chart writes no IngressRouteTCP, so :27017
+# answers inside this cluster and nowhere else. Whatever browses these
+# databases runs beside them — apps/dbgate carries `runsOn: slave`, the same
+# value apps/mongodb/app.yaml carries, so it is placed by the same generator on
+# the same cluster and dials the Service above by its in-cluster name.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -28,15 +36,6 @@ spec:
             matchLabels:
               {{ . }}: "true"
         {{- end }}
-        # THE INGRESS CONTROLLER, and it is the second half of
-        # templates/ingressroutetcp.yaml. Every connection that arrives from
-        # outside this cluster is opened by a Traefik pod in this namespace, so
-        # without this rule the route is admitted by the controller and refused
-        # by Calico — which, from the client's side, is indistinguishable from
-        # an entry point nobody ever declared.
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace | quote }}
         - podSelector: {}
       ports:
         - protocol: TCP

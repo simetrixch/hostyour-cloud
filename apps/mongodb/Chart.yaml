@@ -5,11 +5,11 @@ description: |
   MongoDB — the OFFICIAL `mongo` image on a StatefulSet (no Bitnami, no operator,
   no charts/deployment). Replica set `rs0` for transactions, SCRAM auth; a
   NetworkPolicy (templates/networkpolicy.yaml) admits only approved DB consumers
-  (platform namespaces by name + add-ons by the dbConsumerLabel), the ingress
-  controller and same-namespace pods. templates/ingressroutetcp.yaml NAMES a
-  plain-TCP entry point of that controller for :27017; no such entry point is
-  carried yet (deploy-cluster.yaml patches the controller with `ports: []`), so
-  the route is dropped and the port answers nothing. There is no HTTP Ingress.
+  (platform namespaces by name + add-ons by the dbConsumerLabel) and
+  same-namespace pods. THE DATABASE IS CLUSTER-INTERNAL: no Ingress, no
+  IngressRouteTCP, and no rule admitting the ingress controller — :27017 answers
+  inside this cluster and nowhere else. What browses it (apps/dbgate) carries the
+  same `runsOn: slave` this chart's app.yaml carries and stands beside it.
 
   The image tag is managed centrally in platform/versions.yaml (images.mongodb)
   and stamped by the version sync. Per-pod data via volumeClaimTemplate;
