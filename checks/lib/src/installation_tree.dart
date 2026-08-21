@@ -45,6 +45,14 @@ const String controllerVariable = 'HOSTYOUR_CONTROLLER';
 /// map may carry is answerable only with both trees in hand.
 const String controllerInventory = 'server/domains/inventory';
 
+/// Where the modules the Controller and its web share stand inside the Controller tree.
+///
+/// The registration schemas live here — `ConsumerRegistrationSchema` in `shared/consumer.ts`,
+/// `TenantRegistrationSchema` in `shared/tenant.ts` — and they are the OTHER reader of a
+/// registration: an ApplicationSet selects the file by the printed form of a field, and this is
+/// where that field's type is decided.
+const String controllerShared = 'shared';
+
 /// The environment variable that names the client tree, overriding the search.
 const String clientVariable = 'ANSIWISE_CLIENT';
 

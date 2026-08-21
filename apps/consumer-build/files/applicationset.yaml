@@ -62,6 +62,14 @@ spec:
         revision: __BOOKS__  # global.booksBranch — where this installation's registrations stand, never the trunk and never this build plane's own branch
         files:
           - path: "registrations/*/build.yaml"
+      # THE FIELD IS A BOOLEAN AND THE SELECTOR VALUE IS A STRING, and both are right.
+      # hostyour-manager/shared/consumer.ts declares suspended: z.boolean() and
+      # Registry.flip writes it unquoted; matchLabels is map[string]string, so an
+      # unquoted false HERE is a manifest the API server refuses. The two meet
+      # because ArgoCD prints the parameter before it matches — fmt.Sprintf("%v", v)
+      # in applicationset/generators/generator_spec_processor.go:134 at v3.4.5, the
+      # appVersion slaves/slave/Chart.yaml:4 pins — and a Go bool(false) prints as
+      # false. The pair is held by checks/lib/src/registration_selectors.dart.
       selector:
         matchLabels:
           suspended: "false"
