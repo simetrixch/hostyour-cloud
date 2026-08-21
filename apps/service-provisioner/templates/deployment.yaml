@@ -93,7 +93,7 @@ spec:
             - name: PG_CREDENTIALS_KEY
               value: {{ .Values.controller.postgres.credentialsKey | quote }}
             # --- Redis backend ---
-            # ONE instance per cluster (apps/redis), so the host is a per-stage value the
+            # ONE instance per cluster that runs apps/redis, so the host is a per-stage value the
             # way mongo's is, and the `default` user's password is read at runtime from
             # the admin Secret apps/redis materializes from Vault into its own namespace.
             - name: REDIS_HOST

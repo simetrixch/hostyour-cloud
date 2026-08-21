@@ -4,4 +4,4 @@ syncWave: "16"
 namespace: service-provisioner
 prune: "true"
 createNamespace: "true"
-runsOn: slave
+runsOn: every-cluster

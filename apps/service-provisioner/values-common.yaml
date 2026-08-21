@@ -3,6 +3,18 @@
 # global.dbConsumerLabel come from platform/values-<env>.yaml. Each backend's
 # admin credential is read at runtime from that backend's own Secret via the
 # controller's cluster-wide secret-read RBAC — no ESO/Vault wiring here.
+#
+# THE SAME VALUES ON EVERY CLUSTER. app.yaml says runsOn: every-cluster, and a
+# values file cannot see the cluster's role — apps/deploy-state/values-common.yaml
+# states that rule. apps/mongodb/app.yaml and apps/redis/app.yaml say
+# runsOn: slave, so on a cluster running neither, the two hosts below name
+# Services that cluster has not got. A redis claim there ends in an Error on
+# .status, the way a `registry` claim does off the build cluster. A mongodb claim
+# does NOT, when the claim's own namespace carries a mongodb-credentials Secret:
+# templates/configmap.yaml resolves that case namespace-locally and never reads
+# MONGO_HOST. What serves there in every case is postgresql — no host at all,
+# resolved from the claim's own namespace — and registry wherever
+# global.servicesLocal.registry.
 
 controller:
   serviceAccountName: service-provisioner
@@ -42,8 +54,9 @@ controller:
     credentialsKey: postgres-password
 
   redis:
-    # ONE instance per cluster (apps/redis), so unlike postgresql there IS a shared
-    # instance to point at and the host is a per-env value (values-{dev,test,prod}).
+    # ONE instance per cluster that runs apps/redis, so unlike postgresql there IS
+    # a shared instance to point at and the host is a per-env value
+    # (values-{dev,test,prod}).
     # The admin credential is the `default` user's password — the same value
     # apps/redis boots the server with as `--requirepass`, materialized by that
     # chart's ExternalSecret from Vault <env>/app/redis into the Secret below, and

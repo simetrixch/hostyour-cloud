@@ -139,7 +139,7 @@ data:
     PG_CRED_SECRET = os.environ.get("PG_CREDENTIALS_SECRET", "postgresql-credentials")
     PG_CRED_KEY = os.environ.get("PG_CREDENTIALS_KEY", "postgres-password")
 
-    # Redis is ONE instance per cluster (apps/redis), so its coordinates are read from
+    # Redis is ONE instance per cluster that runs apps/redis, so its coordinates are read from
     # the deployment env the way mongo's shared replica set is — a host per stage, and
     # the `default` user's password out of the admin Secret apps/redis materializes from
     # Vault into its own namespace. There is no per-namespace variant to resolve: nothing
@@ -588,7 +588,8 @@ data:
     def _redis_admin(core):
         """WHERE a redis claim is served from: (host, port, the `default` user's password).
 
-        One instance per cluster, so both coordinates come from the deployment env and
+        One instance per cluster that runs apps/redis, so both coordinates come from the
+        deployment env and
         the password from the admin Secret apps/redis materializes into REDIS_CRED_NS.
         A missing password is an Error the claim reports, not a connection attempted
         without one."""
