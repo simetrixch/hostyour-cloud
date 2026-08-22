@@ -20,4 +20,5 @@ export 'src/published_databases.dart';
 export 'src/registration_selectors.dart';
 export 'src/rendered_registrations.dart';
 export 'src/release_pin_tags.dart';
+export 'src/run_status_waits.dart';
 export 'src/vault_selector_labels.dart';
