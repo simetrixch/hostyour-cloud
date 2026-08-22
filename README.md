@@ -58,12 +58,17 @@ Every unit of the platform is built inside the installation that runs it, by a p
 from a registration that `hostyour-manager` writes. Its own three images cannot come from there: on
 a machine where nothing is installed yet, there is no manager to write that registration.
 
-They come from `ghcr.io/simetrixch/manager`, `.../gate-runner` and `.../dbtools`, published public
-by the `seed-images` workflow of `hostyour-manager` on every release tag, under the same
+They come from `ghcr.io/simetrixch/manager`, `.../gate-runner` and `.../dbtools`, pushed by the
+`seed-images` workflow of `hostyour-manager` when a release tag is pushed, under the same
 `<release-tag>-<sha7>` image tag the in-cluster pipeline composes. The registry in
 `apps/registry/values-common.yaml` fetches them on the first pull and stores them under their flat
 build name, so nothing downstream can tell where a given tag came from — and from the installation's
 own first build onwards it never asks again, because a tag it already holds is a local hit.
+
+**Those three packages have to be public, and nothing makes them so.** GHCR sets visibility per
+package, a package pushed for the first time is private, and no workflow token changes that — a
+person turns each of the three public once. Until that is done, a fresh installation's pull is
+refused, and what an operator sees is an `ImagePullBackOff` naming no cause.
 
 ## License
 
