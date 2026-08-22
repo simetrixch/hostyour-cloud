@@ -43,7 +43,7 @@ so a second installation can take the same tree and be a different company.
 
 ## What deploys it
 
-[ansiwise](https://github.com/simetrixch/ansiwise-api) — a framework that runs a declared program of
+[ansiwise](https://github.com/simetrixch/ansiwise-core) — a framework that runs a declared program of
 steps against a machine, with three modes that gate each other: a test that measures, a dry run that
 cannot mutate, and a real run that refuses without a green dry run for the same input.
 
@@ -51,6 +51,19 @@ cannot mutate, and a real run that refuses without a green dry run for the same 
 
 `hostyour-manager` — it creates consumers and tenants: the namespace, the Vault path, the databases,
 the build pipeline and the registrations, in an order that can be undone if a step fails.
+
+## Where the first images come from
+
+Every unit of the platform is built inside the installation that runs it, by a pipeline rendered
+from a registration that `hostyour-manager` writes. Its own three images cannot come from there: on
+a machine where nothing is installed yet, there is no manager to write that registration.
+
+They come from `ghcr.io/simetrixch/manager`, `.../gate-runner` and `.../dbtools`, published public
+by the `seed-images` workflow of `hostyour-manager` on every release tag, under the same
+`<release-tag>-<sha7>` image tag the in-cluster pipeline composes. The registry in
+`apps/registry/values-common.yaml` fetches them on the first pull and stores them under their flat
+build name, so nothing downstream can tell where a given tag came from — and from the installation's
+own first build onwards it never asks again, because a tag it already holds is a local hit.
 
 ## License
 

@@ -162,6 +162,44 @@ ingress:
 # upstream tags. Requires a Zot image built with the sync extension (the
 # official ghcr.io/project-zot/zot images bundle it).
 #
+# ghcr.io SEED (extensions.sync, onDemand, listed FIRST): where the images of
+# THIS platform come from on an installation that has never built one. The
+# builds[] pins name a tag a release minted, the release pipeline pushes that
+# tag here — and the pipeline exists only once a Controller has written the
+# registration it is rendered from. So the Controller's own image, and the two
+# images that ship with it, cannot come out of this registry the first time.
+# They are published to ghcr.io/simetrixch/<build name> by the release of the
+# repository they build from, and this entry fetches them on the first pull.
+#
+# THE LOCAL REPO NAME STAYS FLAT, which is what makes the rest of the file keep
+# working: `content` maps the upstream namespace away rather than caching under
+# it. zot's on-demand path inverts the rule to find the remote name of a repo it
+# was asked for (GetRepoSource, pkg/extensions/sync/content.go): with
+# stripPrefix true and destination "/", a pull of `manager` resolves upstream to
+# `simetrixch/manager` and is stored back as `manager`. Without stripPrefix the
+# repo would be `simetrixch/manager` — two segments, which is a docker.io cache
+# path to the retention policy below and a name no builds[] pin can compose.
+#
+# The prefix MUST carry a glob. GetContentByLocalRepo matches the local name
+# against the meta-character part of the prefix, so a prefix naming one repo
+# outright matches the empty pattern and never fires on demand. The glob is also
+# what lets one entry serve every image this platform seeds instead of one entry
+# per image — and the price of that is stated plainly: any single-segment repo
+# missing locally is attempted against ghcr.io/simetrixch/<name> before the pull
+# fails.
+#
+# Listed BEFORE docker.io because on demand zot walks the registries in order
+# and moves to the next one when a repo is absent there (pkg/extensions/sync/
+# on_demand.go). Our flat names are not on Docker Hub, so the other order buys
+# every seed pull a failed round trip first.
+#
+# NO CREDENTIAL, and that is a property of the packages rather than an omission:
+# they are published public, so this entry pulls anonymously the way the cluster
+# already pulls Tekton and headscale from the same host. credentialsFile below
+# holds Docker Hub alone. Publishing them private is possible and costs a token
+# in the store plus a second key in that file — and it puts the first image of
+# an installation behind a credential that installation does not yet have.
+#
 # RETENTION POLICIES (below) — ORDER MATTERS: zot applies the FIRST policy whose
 # `repositories` glob matches a repo, so the single-segment ["*"] policy is
 # listed BEFORE the ["**"] catch-all.
@@ -282,6 +320,20 @@ configmap:
               "enable": true,
               "credentialsFile": "/sync/credentials.json",
               "registries": [
+                {
+                  "urls": ["https://ghcr.io"],
+                  "onDemand": true,
+                  "tlsVerify": true,
+                  "maxRetries": 3,
+                  "retryDelay": "5m",
+                  "content": [
+                    {
+                      "prefix": "/simetrixch/*",
+                      "destination": "/",
+                      "stripPrefix": true
+                    }
+                  ]
+                },
                 {
                   "urls": ["https://registry-1.docker.io"],
                   "onDemand": true,
