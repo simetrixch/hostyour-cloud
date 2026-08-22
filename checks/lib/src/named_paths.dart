@@ -14,10 +14,12 @@
 ///     against the role stamped over `__CLUSTER_ROLE__`.
 ///   * `argocd/<stage>/apps/*.yaml`, named in twenty-five places. The three per-stage argocd trees
 ///     became ONE parameterized tree at `argocd/apps/`, and one of the twenty-five was not a comment
-///     at all — `apps/consumer-build/templates/pipeline-release.yaml` walks
-///     `argocd/${STAGE}/apps/*.yaml` to derive which tenants a release reaches, the glob matches
-///     nothing, the loop's own `[ -f ]` guard steps over it, and the reach comes out EMPTY with the
-///     pipeline green.
+///     at all — `apps/consumer-build/templates/pipeline-release.yaml` walked
+///     `argocd/${STAGE}/apps/*.yaml` to derive which tenants a release reaches, the glob matched
+///     nothing, the loop's own `[ -f ]` guard stepped over it, and the reach came out EMPTY with the
+///     pipeline green. That glob has since been repointed and the derivation fills the stage itself;
+///     what stands here is the shape the defect had, because it is the founding case of this check
+///     and the one the counter-probe is written against.
 ///
 /// **BOTH SIDES ARE READ WHERE THEY ARE DECIDED.** What the repository carries is `git ls-files` —
 /// the tree a cluster clones, so an untracked file on somebody's disk is not an answer. What it
@@ -60,11 +62,12 @@
 /// `installation/apps/` at `branch-classes.yaml:224` and `:310` is invisible here, and so was the
 /// twenty-fifth `argocd/__STAGE__/apps/` in `argocd/apps/projects.yaml`: it walked past this check
 /// and was found by a person reading the file, as the other twenty-four had been. A `"` ends a run,
-/// because it is outside the character class, so the glob at
-/// `apps/consumer-build/templates/pipeline-release.yaml:810` —
-/// `"${WORK}"/hostyour-cloud/argocd/"${STAGE}"/apps/*.yaml` — restarts after the quote at a first
+/// because it is outside the character class, so a glob written as
+/// `"${WORK}"/hostyour-cloud/argocd/"${STAGE}"/apps/*.yaml` restarts after the quote at a first
 /// segment this repository does not track and is dropped; the founding defect of this check is a
-/// shape the check cannot read. And a root-level file name carries no `/` at all, so a sentence
+/// shape the check cannot read. That one has been repaired in the pipeline since — the line is
+/// quoted here for its SHAPE and no longer stands anywhere in the tree, so no line number is given
+/// for it. And a root-level file name carries no `/` at all, so a sentence
 /// naming `branch-classes.yml` where the tree carries `branch-classes.yaml` is not held either.
 /// All three were planted into the real tree and the suite stayed green. Widening [_candidate] to
 /// take a trailing-slash directory reference is the first of the three worth doing, and it is not

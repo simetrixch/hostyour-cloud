@@ -455,6 +455,11 @@ spec:
     # runs no unit code.
     - name: bump
       runAfter:
+        # scan is named directly, not left to the build tasks to imply. A unit
+        # with NO attested build renders none of them, and the list below would
+        # then be empty — the bump would start beside the credential scan
+        # instead of after it.
+        - scan
         {{- range $b := $builds }}
         - {{ printf "build-%s" $b }}
         {{- end }}
@@ -587,7 +592,39 @@ spec:
               # The declared images of this release — the manifest in the
               # tagged workspace, already attested by the builds task.
               IMAGES="$(yq eval '.builds[].name' "${SRC}/deploy/platform.yaml")"
-              [ -n "${IMAGES}" ] || { echo "bump: FAIL — no builds declared in ${SRC}/deploy/platform.yaml" >&2; exit 1; }
+
+              # A MANIFEST WITH NO builds[] IS VALID, in two shapes: a
+              # self-contained unit that declares a chart and nothing to build,
+              # and a fan-out repo that declares a tenant: block. The manifest
+              # schema requires ONE of chart / builds / tenant, not builds
+              # (hostyour-manager/shared/consumer.ts, ConsumerManifestSchema C1).
+              #
+              # Such a release ships no image, and all three carrier classes
+              # below are keyed on a declared image, so the search has no
+              # subject. Running it anyway would clone every registered carrier
+              # and the catalog to bump nothing, and would fail the run closed on
+              # a carrier branch this release does not touch. The empty hits file
+              # is what argo-sync reads.
+              if [ -z "${IMAGES}" ]; then
+                # NO BUILDS IS ONLY VALID WHEN THE MANIFEST DEPLOYS SOMETHING ELSE,
+                # and this is where that is decided rather than assumed. C1 names
+                # three arms — chart, builds, tenant — and nothing enforces it at
+                # a release tag: the gate that reads it runs at onboarding, and
+                # the builds task above judges only names and attestation. So an
+                # empty builds[] with no chart and no tenant: block is the inert
+                # manifest C1 exists to reject, and a unit whose tag simply LOST
+                # its builds list looks exactly like one. Exiting 0 over either
+                # would report a release that shipped nothing as done.
+                CHART="$(yq eval '.chart // ""' "${SRC}/deploy/platform.yaml")"
+                TENANT="$(yq eval '.tenant // ""' "${SRC}/deploy/platform.yaml")"
+                if [ -z "${CHART}" ] && [ -z "${TENANT}" ]; then
+                  echo "bump: FAIL — ${SRC}/deploy/platform.yaml declares no builds, no chart and no tenant: block, so this tag deploys nothing and builds nothing. A manifest states at least one of the three (ConsumerManifestSchema C1); a tag that reached here without one either lost its builds list on the way or was never a unit this pipeline can release" >&2
+                  exit 1
+                fi
+                : > "${HITS_FILE}"
+                echo "bump: ${SRC}/deploy/platform.yaml declares no builds — this release ships no image, so there is no pin to write and no Application this run can derive; what this unit deploys reaches the cluster on ArgoCD's next poll of the ref it follows"
+                exit 0
+              fi
 
               WORK="$(mktemp -d)"
               : > "${HITS_FILE}"
@@ -799,16 +836,23 @@ spec:
                   } > "${SIM}/templates/patch.yaml"
                   helm template appset-sim "${SIM}" -f "$2"
                 }
-                # THIS GLOB MATCHES NOTHING AS THE TRUNK STANDS. The three
-                # per-stage argocd trees became one parameterized tree —
-                # argocd/apps/*.yaml, carrying __STAGE__ — so there is no
-                # argocd/ to walk, the [ -f ] guard below skips out, and
-                # the tenant reach is derived as empty with every side reporting
-                # success. Reading argocd/apps/*.yaml instead is not the whole
-                # fix: those files carry the markers unstamped, and the sim
-                # render needs them filled for the stage being bumped.
-                for as in "${WORK}"/hostyour-cloud/argocd/"${STAGE}"/apps/*.yaml; do
-                  [ -f "${as}" ] || continue
+                # ONE parameterized argocd tree, not three per-stage ones: the
+                # appsets stand at argocd/apps/*.yaml and carry the stage as the
+                # marker __STAGE__, which the branch program fills when an
+                # installation's branch is cut. This is the trunk clone, so the
+                # marker is still standing, and the sim fills it for the stage
+                # being bumped before reading anything out of the file — the
+                # Application name is "<guid>-<member>-__STAGE__", and an
+                # unfilled marker there fails the shape check on every member.
+                # The other three markers of this tree (__CLUSTER__,
+                # __BOOKS_BRANCH__, __CATALOG_REPO__) stand in the generator, the
+                # selector and the source repoURLs, none of which this
+                # derivation reads.
+                for src in "${WORK}"/hostyour-cloud/argocd/apps/*.yaml; do
+                  [ -f "${src}" ] || continue
+                  asname="$(basename "${src}")"
+                  as="${WORK}/filled-${asname}"
+                  sed "s/__STAGE__/${STAGE}/g" "${src}" > "${as}"
                   [ "$(yq eval '.kind // ""' "${as}")" = "ApplicationSet" ] || continue
                   # Only the tenant fan-out labels its Applications
                   # platform/tenant; every other appset in the directory is
@@ -821,7 +865,7 @@ spec:
                   if [ "${matrix}" = "true" ]; then
                     LEG="$(yq eval '.spec.generators[0].matrix.generators[1].list.elementsYaml // ""' "${as}" \
                            | sed -nE 's/^.*\{\{[[:space:]]*\.([A-Za-z0-9_]+)[[:space:]]*\|.*$/\1/p')"
-                    [ -n "${LEG}" ] || { echo "bump: FAIL — $(basename "${as}") is a matrix whose list leg names no registration field; the tenant reach cannot be derived" >&2; exit 1; }
+                    [ -n "${LEG}" ] || { echo "bump: FAIL — ${asname} is a matrix whose list leg names no registration field; the tenant reach cannot be derived" >&2; exit 1; }
                   fi
                   [ -n "${TENANT_REGS}" ] || continue
                   for reg in "${TENANT_REGS}"/*/"${STAGE}.yaml"; do
@@ -843,27 +887,40 @@ spec:
                           "${reg}" > "${PARAMS}"
                       fi
                       RENDERED="$(render_member "${as}" "${PARAMS}")"
-                      # Two resolution checks guard the sync decision (the
-                      # name and the source paths are all it consumes). An
-                      # unconsumed action would leave braces behind; a param
-                      # helm could not resolve leaves a GAP, because helm
-                      # strips the missing-key marker from every render — so
-                      # the name's <guid>-<member>-<stage> shape is checked,
-                      # not marker text.
+                      # Three resolution checks guard the sync decision, and the
+                      # Application name plus the source paths are all of the
+                      # render it consumes. An unconsumed template action would
+                      # leave braces behind; a stamp marker would leave its own
+                      # text; and a param helm could not resolve leaves a GAP,
+                      # because helm strips the missing-key marker from every
+                      # render — which is why the third check is the name's
+                      # <guid>-<member>-<stage> shape and not marker text.
                       if printf '%s' "${RENDERED}" | grep -qE '[{][{]'; then
-                        echo "bump: FAIL — $(basename "${as}") left unrendered template actions against ${reg#"${WORK}/"} — the tenant sync cannot be derived:" >&2
+                        echo "bump: FAIL — ${asname} left unrendered template actions against ${reg#"${WORK}/"} — the tenant sync cannot be derived:" >&2
                         printf '%s\n' "${RENDERED}" | grep -nE '[{][{]' >&2
                         exit 1
                       fi
                       ANAME="$(printf '%s\n' "${RENDERED}" | yq eval-all 'select(.metadata != null) | .metadata.name')"
+                      APATHS="$(printf '%s\n' "${RENDERED}" | yq eval-all 'select(.spec.sources != null) | .spec.sources[].path // ""')"
+                      # A marker still standing in one of those two values is an
+                      # unanswered value rather than a mismatch: the name would
+                      # name no Application and the path would match no chart,
+                      # and either takes the reach to empty with nothing said.
+                      # The markers in the source repoURLs and targetRevisions
+                      # are not read here and are left where they are.
+                      if printf '%s\n%s\n' "${ANAME}" "${APATHS}" | grep -q '__[A-Z][A-Z_]*__'; then
+                        echo "bump: FAIL — ${asname} rendered an unfilled __MARKER__ into a value the tenant reach reads against ${reg#"${WORK}/"} — name '${ANAME}', source paths:" >&2
+                        printf '%s\n' "${APATHS}" >&2
+                        exit 1
+                      fi
                       case "${ANAME}" in
                         "${guid}"-?*-"${STAGE}") ;;
                         *)
-                          echo "bump: FAIL — $(basename "${as}") derived Application name '${ANAME}' against ${reg#"${WORK}/"}, not <guid>-<member>-<stage> — a generator param did not resolve" >&2
+                          echo "bump: FAIL — ${asname} derived Application name '${ANAME}' against ${reg#"${WORK}/"}, not <guid>-<member>-<stage> — a generator param did not resolve" >&2
                           exit 1 ;;
                       esac
                       for C in ${BUMPED_CHARTS}; do
-                        if printf '%s\n' "${RENDERED}" | yq eval-all 'select(.spec.sources != null) | .spec.sources[].path // ""' | grep -qx "charts/${C}"; then
+                        if printf '%s\n' "${APATHS}" | grep -qx "charts/${C}"; then
                           grep -qxF "tenant ${ANAME} ${rcluster}" "${HITS_FILE}" \
                             || echo "tenant ${ANAME} ${rcluster}" >> "${HITS_FILE}"
                         fi
