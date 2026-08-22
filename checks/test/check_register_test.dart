@@ -10,28 +10,30 @@ import 'package:test/test.dart';
 /// exports. A probe that planted one file would prove a reader finds a string; each probe below
 /// plants a complete package of two libraries and one suite and changes exactly one thing about it.
 void main() {
-  /// The basename of [path], whichever separator the platform answered with.
-  String basename(String path) => path.split(RegExp(r'[/\\]')).last;
+  /// Where [entity] stands, relative to the package root, written the way the register reads a path.
+  ///
+  /// A listing answers with the separator the platform uses and with the directory it was given
+  /// already on the front, so the whole of the work is turning a backslash into a slash.
+  String pathOf(FileSystemEntity entity) => entity.path.replaceAll(r'\', '/');
 
   group('the package as it stands', () {
     test('every check is exported, has a suite beside it, and states what it does not reach', () {
-      // RECURSIVE. A non-recursive listing sees only the top level, and a library one directory
-      // down is then exempt from every rule below — unexported, without a suite, without a paragraph
-      // saying what it does not reach, and reported by nothing. On the one check whose subject is
-      // stating its own reach honestly, that hole is the worst place for it.
+      // RECURSIVE, AND KEYED ON THE REAL PATH. A non-recursive listing sees only the top level, and
+      // a file one directory down is then exempt from every rule below. Keying a recursive listing
+      // on the file name is worse than that: lib/src/sub/chart_paths.dart and
+      // lib/src/chart_paths.dart collapse onto one entry, the second read overwrites the first, and
+      // the check that was overwritten is reported by nothing at all.
       final Map<String, String> libraries = <String, String>{
         for (final FileSystemEntity each in Directory(
           checkLibraryDirectory,
         ).listSync(recursive: true))
-          if (each is File && each.path.endsWith('.dart'))
-            '$checkLibraryDirectory/${basename(each.path)}': each.readAsStringSync(),
+          if (each is File && each.path.endsWith('.dart')) pathOf(each): each.readAsStringSync(),
       };
       expect(libraries, isNotEmpty, reason: 'a check over nothing reads like a pass');
 
       final Set<String> tests = <String>{
-        for (final FileSystemEntity each in Directory(checkTestDirectory).listSync())
-          if (each is File && each.path.endsWith('_test.dart'))
-            '$checkTestDirectory/${basename(each.path)}',
+        for (final FileSystemEntity each in Directory(checkTestDirectory).listSync(recursive: true))
+          if (each is File && each.path.endsWith('_test.dart')) pathOf(each),
       };
       expect(tests, isNotEmpty, reason: 'a check over nothing reads like a pass');
 
@@ -66,12 +68,21 @@ void main() {
             '/// The sibling checkouts.\n'
             'library;\n'
             '\n'
-            '/// chart-paths — $limitsHeading is stated down here.\n'
+            '/// chart-paths — $limitsHeading and $noCheckHeading are stated down here.\n'
             'const String path = "";\n';
         expect(checkNameIn(source), isNull);
         expect(statesLimitsIn(source), isFalse);
+        expect(declaresNoCheckIn(source), isFalse);
       },
     );
+
+    test('a library carrying no check says so in its own doc comment', () {
+      expect(
+        declaresNoCheckIn('/// The sibling checkouts.\n/// **$noCheckHeading.** It finds them.\n'),
+        isTrue,
+      );
+      expect(declaresNoCheckIn('/// The sibling checkouts these checks read.\nlibrary;'), isFalse);
+    });
 
     test('the name a file stands in is derived from the file name alone', () {
       expect(checkNameOf('$checkLibraryDirectory/chart_paths.dart'), 'chart-paths');
@@ -103,7 +114,10 @@ void main() {
             '/// **$limitsHeading.** Another repository\'s files.\n'
             'library;\n',
         '$checkLibraryDirectory/installation_tree.dart':
-            '/// The sibling checkouts these checks read.\nlibrary;\n',
+            '/// The sibling checkouts these checks read.\n'
+            '///\n'
+            '/// **$noCheckHeading.** It finds them and judges nothing.\n'
+            'library;\n',
       },
       tests: <String>{'$checkTestDirectory/chart_paths_test.dart'},
       packageLibrary: "export 'src/chart_paths.dart';\nexport 'src/installation_tree.dart';\n",
@@ -207,12 +221,80 @@ void main() {
       ]);
     });
 
+    test('the planted defect: a check demoted to a helper by having its name deleted', () {
+      final ({Map<String, String> libraries, Set<String> tests, String packageLibrary}) package =
+          whole();
+      final Map<String, String> unnamed = <String, String>{
+        ...package.libraries,
+        '$checkLibraryDirectory/chart_paths.dart':
+            '/// The paths the chart material names.\n'
+            '///\n'
+            '/// **$limitsHeading.** Another repository\'s files.\n'
+            'library;\n',
+      };
+      expect(report(libraries: unnamed, tests: const <String>{}), <Matcher>[
+        allOf(
+          contains('$checkLibraryDirectory/chart_paths.dart'),
+          contains('opens by naming no check and says "$noCheckHeading" nowhere'),
+        ),
+      ]);
+    });
+
+    test('the planted defect: a second library of one name, standing one directory down', () {
+      final ({Map<String, String> libraries, Set<String> tests, String packageLibrary}) package =
+          whole();
+      final Map<String, String> shadowed = <String, String>{
+        ...package.libraries,
+        '$checkLibraryDirectory/sub/chart_paths.dart': '/// A nameless neighbour.\nlibrary;\n',
+      };
+      expect(report(libraries: shadowed), <Matcher>[
+        allOf(
+          contains('$checkLibraryDirectory/sub/chart_paths.dart'),
+          contains('stands below a subdirectory of $checkLibraryDirectory'),
+        ),
+      ]);
+    });
+
+    test('the planted defect: a suite standing one directory down', () {
+      expect(
+        report(
+          tests: <String>{
+            '$checkTestDirectory/chart_paths_test.dart',
+            '$checkTestDirectory/sub/orphan_test.dart',
+          },
+        ),
+        <Matcher>[
+          allOf(
+            contains('$checkTestDirectory/sub/orphan_test.dart'),
+            contains('stands below a subdirectory of $checkTestDirectory'),
+          ),
+        ],
+      );
+    });
+
+    test('the planted defect: a check whose only suite was moved one directory down', () {
+      expect(report(tests: <String>{'$checkTestDirectory/sub/chart_paths_test.dart'}), <Matcher>[
+        allOf(
+          contains('$checkLibraryDirectory/chart_paths.dart'),
+          contains('$checkTestDirectory/chart_paths_test.dart stands beside it'),
+        ),
+        allOf(
+          contains('$checkTestDirectory/sub/chart_paths_test.dart'),
+          contains('stands below a subdirectory of $checkTestDirectory'),
+        ),
+      ]);
+    });
+
     test('THE INNOCENT NEIGHBOUR: a helper needs no suite and no name of its own', () {
       final ({Map<String, String> libraries, Set<String> tests, String packageLibrary}) package =
           whole();
       final Map<String, String> second = <String, String>{
         ...package.libraries,
-        '$checkLibraryDirectory/tree_search.dart': '/// A second helper.\nlibrary;\n',
+        '$checkLibraryDirectory/tree_search.dart':
+            '/// A second helper.\n'
+            '///\n'
+            '/// **$noCheckHeading.** It searches and judges nothing.\n'
+            'library;\n',
       };
       expect(
         report(

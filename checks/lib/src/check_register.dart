@@ -13,13 +13,22 @@
 /// the same way. A register nothing reads reports neither the check somebody deleted nor the one
 /// somebody added.
 ///
-/// **WHAT IS HELD, AND WHY EACH HALF IS NEEDED.** A check of this package is a library under
-/// `lib/src/` whose library doc comment opens by naming it — `/// <check-name> — ...` — and the name
-/// it states is its own file name with the underscores written as hyphens. Around that:
+/// **WHAT IS HELD, AND WHY EACH HALF IS NEEDED.** A library under `lib/src/` is one of two things
+/// and has to SAY which. A check names itself in the first line of its library doc comment —
+/// `/// <check-name> — ...` — and the name it states is its own file name with the underscores
+/// written as hyphens. A library that carries no check says so under the words `CARRIES NO CHECK`.
+/// A library that says neither is reported: un-naming a check's first line reads as a helper, and a
+/// check may not stop being one by a deletion nobody had to write down. Around that:
 ///
 ///   * every library under `lib/src/`, check or helper, is exported by
 ///     `lib/hostyour_cloud_checks.dart`. An unexported library is read by nothing outside this
 ///     package, and it is the export that makes the analyzer report the day the file is deleted.
+///   * every library stands DIRECTLY under `lib/src/`, and every suite DIRECTLY under `test/`. A
+///     check's name is derived from its file name alone, so a second file of that name one
+///     directory down would take the first one's place and the check it displaced would then be
+///     held by nothing; and `dart test` discovers a suite below a subdirectory and runs it, so a
+///     suite the register never lists is a check nobody agreed to, or a declared one moved out of
+///     sight.
 ///   * every check library has `test/<library>_test.dart` beside it, and every suite under `test/`
 ///     has a check library of the matching name. The first direction is the deleted suite; the
 ///     second is a suite whose subject is not a check this package declares.
@@ -34,21 +43,30 @@
 ///
 /// Which of the two a check beside it reads follows from its subject rather than from a habit: one
 /// that judges what a CLUSTER renders reads the tracked tree, because a cluster clones and an
-/// untracked file is not in the clone. Five do — `app-manifest-keys`, `chart-paths`,
-/// `channel-table-single`, `external-secret-keys` and `release-pin-tags`, each running
-/// `git ls-files` in its own suite. The rest read the file system, as this one does.
+/// untracked file is not in the clone. Which suites do it is read from the suites themselves; a
+/// list of their names here would be a second statement of what the `git ls-files` call already
+/// stands in the suite to say.
 ///
 /// **WHAT IT DOES NOT REACH.** It does not read what a check DOES: a library that names itself, is
 /// exported, has a suite of one empty test and states what it does not reach passes here, and the
 /// only thing that judges the check itself is the check's own counter-probes. It does not read the
-/// truth of the paragraph either — the words `WHAT IT DOES NOT REACH` standing over a stale
-/// paragraph pass exactly as the true one does, so what is held is that the paragraph is THERE, in
-/// the file that goes when the check goes. It does not see a check whose library doc comment opens
-/// with no name AND that has no suite: nothing distinguishes that file from a helper like
-/// `installation_tree.dart`, which is a library of this package with no check of its own. And it does
-/// not read a Dart file standing anywhere else in this package: `tool/ci.dart` and `bin_probe.dart`
-/// are held by the analyzer and the formatter alone, and whether `tool/ci.dart` still runs the suite
-/// at all is not readable from here.
+/// truth of a paragraph either — the words `WHAT IT DOES NOT REACH` standing over a stale paragraph
+/// pass exactly as the true one does, and `CARRIES NO CHECK` written into a library that still
+/// carries one passes exactly as a helper's does. What is held is that the statement is THERE, in
+/// the file that goes when the check goes: demoting a check to a helper is still one commit's work,
+/// but it has to WRITE a sentence that is untrue rather than delete a word. And it does not read a
+/// Dart file standing anywhere else in this package: `tool/ci.dart` and `bin_probe.dart` are held
+/// by the analyzer and the formatter alone, and whether `tool/ci.dart` still runs the suite at all
+/// is not readable from here.
+///
+/// **AND IT CANNOT SEE ITS OWN SUITE GO.** This library is reached from exactly one place — the
+/// suite beside it — so deleting that one file takes the whole register with it and leaves nothing
+/// red: the library still compiles, is still exported, and every other suite still passes. From
+/// then on none of the rules above is held by anything, and a green run looks the same as it did
+/// the day before. That is inherent to a register that judges the package it stands in, and it is
+/// written here because the alternative is a reader consulting this paragraph and concluding the
+/// opposite. What can hold it is `tool/ci.dart`, which names the suites it runs, or a person
+/// reading the diff.
 library;
 
 /// One place the checks package does not hold itself to its own shape.
@@ -79,6 +97,9 @@ const String packageLibraryPath = 'lib/hostyour_cloud_checks.dart';
 /// The words a check library states what a green run of it says nothing about under.
 const String limitsHeading = 'WHAT IT DOES NOT REACH';
 
+/// The words a library carrying no check of its own declares that under.
+const String noCheckHeading = 'CARRIES NO CHECK';
+
 /// A library doc comment's first line, naming the check the library carries.
 ///
 /// The name is written the way the tree names a check everywhere else — lower case words joined by
@@ -108,6 +129,13 @@ String? checkNameIn(String source) => _namedCheck.firstMatch(libraryDocCommentIn
 
 /// Whether the library doc comment of [source] states what the check does not reach.
 bool statesLimitsIn(String source) => libraryDocCommentIn(source).contains(limitsHeading);
+
+/// Whether the library doc comment of [source] declares that it carries no check of its own.
+bool declaresNoCheckIn(String source) => libraryDocCommentIn(source).contains(noCheckHeading);
+
+/// Whether [path] stands directly under [directory], rather than below a subdirectory of it.
+bool _standsDirectlyUnder(String path, String directory) =>
+    path.startsWith('$directory/') && !path.substring(directory.length + 1).contains('/');
 
 /// The check name a library standing at [path] must state, derived from the file name alone.
 ///
@@ -140,6 +168,10 @@ Set<String> exportedLibrariesIn(String packageLibrary) => <String>{
 /// the path of every suite under `test/`. [packageLibrary] is the source of
 /// [packageLibraryPath]. Every path is relative to the package root, so a finding names the file
 /// somebody has to open.
+///
+/// Both listings reach into subdirectories, and each path is the REAL one rather than the file name
+/// pinned back onto the directory. Two files of one name collapse onto one entry the moment a
+/// caller keys by the file name, and the one that vanishes is the one nothing then reports.
 List<RegisterFinding> auditCheckRegister({
   required Map<String, String> libraries,
   required Set<String> tests,
@@ -150,6 +182,18 @@ List<RegisterFinding> auditCheckRegister({
 
   for (final String path in libraries.keys.toList()..sort()) {
     final String source = libraries[path]!;
+    if (!_standsDirectlyUnder(path, checkLibraryDirectory)) {
+      found.add(
+        RegisterFinding(
+          where: path,
+          because:
+              'stands below a subdirectory of $checkLibraryDirectory, and every rule here is keyed '
+              'on the file name alone — a second file of this name one directory down takes the '
+              "first one's place, and the check it displaced is then held by nothing",
+        ),
+      );
+      continue;
+    }
     if (!exported.contains(path)) {
       found.add(
         RegisterFinding(
@@ -162,6 +206,17 @@ List<RegisterFinding> auditCheckRegister({
     }
     final String? named = checkNameIn(source);
     if (named == null) {
+      if (!declaresNoCheckIn(source)) {
+        found.add(
+          RegisterFinding(
+            where: path,
+            because:
+                'opens by naming no check and says "$noCheckHeading" nowhere — a library carrying '
+                'no check declares that, so a check cannot stop being one by having its name '
+                'deleted from a line nobody reads',
+          ),
+        );
+      }
       continue;
     }
     final String expected = checkNameOf(path);
@@ -199,6 +254,18 @@ List<RegisterFinding> auditCheckRegister({
   }
 
   for (final String path in tests.toList()..sort()) {
+    if (!_standsDirectlyUnder(path, checkTestDirectory)) {
+      found.add(
+        RegisterFinding(
+          where: path,
+          because:
+              'stands below a subdirectory of $checkTestDirectory — dart test discovers it and runs '
+              'it, and a suite this register never lists is a check nobody agreed to, or a declared '
+              'one moved out of sight',
+        ),
+      );
+      continue;
+    }
     final String library = libraryPathOf(path);
     final String? source = libraries[library];
     if (source == null) {

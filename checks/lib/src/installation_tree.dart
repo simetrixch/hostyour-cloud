@@ -21,6 +21,11 @@
 /// marker: `tool/` is a directory this repository's own checks package carries as well, one level
 /// below this tree's root, and a search for it would answer with `checks/`.
 ///
+/// **CARRIES NO CHECK.** This library is read BY the checks and is not one of them: it finds a
+/// checkout and answers where it stands, and it judges nothing about this repository. So no suite
+/// stands beside it, and `check-register` holds it to its export and to this declaration — delete
+/// these two words and the register goes red for a library that names no check and has no suite.
+///
 /// **Absent REFUSES, and the refusal says what to do.** A comparison that can see only one side and
 /// passes is precisely the defect these checks exist for — a guard standing where the material it
 /// judges is not. So where no tree is findable the search throws instead of letting the suite skip,
