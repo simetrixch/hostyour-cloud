@@ -62,6 +62,25 @@ hostNetwork: true
 # OIDC group required for access (config.ts ADMINS_GROUP, default "admins").
 adminsGroup: admins
 
+# The permission bits the manager puts on its admin socket, $DATA_DIR/admin.sock
+# (config.ts ADMIN_SOCKET_MODE), written as an octal file mode.
+#
+# WHAT IT DECIDES. That socket answers one thing: an operator session, minted with
+# no password and no identity provider. It has no address off the machine, so the
+# file's permissions are the entire boundary in front of it — connect(2) on a unix
+# socket needs the write bit and nothing else. Three sets are inside: the pod's own
+# uid 65532, every account in gid 65532 (the deployment's runAsGroup, which is the
+# group the socket is created in), and root.
+#
+# WHY 0770 AND NOT 0700. The account that operates the master onboards this manager
+# by asking that socket for a session, and it runs on the host, not in the pod —
+# 0700 leaves it with an empty triad and connect() answers EACCES. 0770 opens the
+# GROUP, which by itself admits nobody: no host account is in gid 65532 until one is
+# deliberately put there. Narrow it to "0700" on an installation that does no such
+# onboarding; nothing else on this platform opens the socket.
+adminSocket:
+  mode: "0770"
+
 # GitHub access for the Branches view + the Reset wizard (config.ts GITHUB_REPO +
 # GITHUB_WRITE_PAT). `repo` is the "owner/repo" of THIS GitOps monorepo — the same
 # repo slaves/slave/values-common.yaml `repo.url` points at, just in owner/repo form

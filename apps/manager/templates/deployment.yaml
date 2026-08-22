@@ -43,9 +43,21 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
-        # Make the PVC group-writable for the non-root uid (storage classes that
-        # honour fsGroup chown /data on mount; microk8s-hostpath dirs are
-        # world-writable anyway, so this is belt-and-braces).
+        # The process's PRIMARY group, and with it the group of every inode it
+        # creates under /data. The one that matters is $DATA_DIR/admin.sock: a
+        # caller that is not a browser takes an operator session off that socket
+        # (hostyour-manager server/domains/access/emergency.ts), connect(2) on it
+        # needs the write bit, and ADMIN_SOCKET_MODE below opens that bit to the
+        # GROUP. Without runAsGroup the primary gid is whatever the runtime
+        # derives from the image and the uid override, so the socket lands in a
+        # group no host account can be put in and the group bit grants nobody.
+        # fsGroup does NOT do this job: it lands on the volume, and a
+        # hostPath-backed volume (microk8s-hostpath) is left alone by the kubelet.
+        runAsGroup: 65532
+        # Make the PVC group-writable for the non-root uid, where the storage class
+        # manages ownership (microk8s-hostpath dirs are world-writable anyway, so
+        # this is belt-and-braces there). It is also added to the process's
+        # supplementary groups, which happens on every storage class.
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
@@ -76,6 +88,16 @@ spec:
               value: {{ .Values.adminsGroup | quote }}
             - name: DATA_DIR
               value: /data
+            # The permission bits the manager puts on $DATA_DIR/admin.sock
+            # (config.ts ADMIN_SOCKET_MODE). That socket mints an operator session
+            # with NO password, and connect(2) on a unix socket needs only the write
+            # bit — so this value is the whole boundary in front of it, and it is
+            # stated here rather than left to the code, because who has to reach the
+            # socket is a fact of the machine and not of the product. 0770 admits the
+            # pod's own uid 65532 and the gid 65532 above; an account on the host is
+            # inside it only once somebody puts that account in that gid.
+            - name: ADMIN_SOCKET_MODE
+              value: {{ .Values.adminSocket.mode | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
             # Vault secrets backend (config.ts: VAULT_ADDR set => credential
