@@ -22,14 +22,20 @@
 # its own Secret rather than writing as an empty variable. So what the pod reads for those two comes
 # from here and from nowhere else.
 #
-# AUTHENTIK_BOOTSTRAP_PASSWORD IS THE FIRST ADMINISTRATOR'S, and it is a variable authentik reads
-# directly rather than a field of this chart. Without it a fresh install comes up with the
-# out-of-box flow still open on a public address, and whoever reaches that address first sets the
-# password and becomes the administrator of this whole installation. With it, authentik seeds the
-# `akadmin` account on the first start of an empty database, marks itself set up, and the flow is
-# refused from then on. It has to be in `global` and not in `server`: the startup hook that seeds
-# the account runs in the server AND in the worker, whichever gets there first, and `global.envFrom`
-# is the one field this chart puts on both deployments.
+# AUTHENTIK_BOOTSTRAP_PASSWORD IS DELIBERATELY NOT SET, and the consequence is the first screen of
+# this whole installation. Set, authentik seeds the `akadmin` account on the first start of an empty
+# database, marks itself set up, and refuses the out-of-box flow from then on — which leaves an
+# operator in front of a login asking for a password they were never told was minted. Unset, that
+# flow is what the address answers with, and the first person to reach it chooses their own.
+#
+# WHAT THAT COSTS IS A WINDOW AND IT IS REAL: between the end of deploy-gitops and the moment
+# somebody completes the flow, the address is public and the flow asks nothing only the operator
+# could know. Whoever reaches it first becomes the administrator of this installation. The product
+# owner decided the window is the operator's to close, on 2026-08-23.
+#
+# The variable, when an installation does set one, has to be in `global` and not in `server`: the
+# startup hook that seeds the account runs in the server AND in the worker, whichever gets there
+# first, and `global.envFrom` is the one field this chart puts on both deployments.
 global:
   envFrom:
     - secretRef:
