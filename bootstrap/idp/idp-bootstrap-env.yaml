@@ -5,8 +5,7 @@
 # reads is a setting somebody will one day change expecting it to do something.
 #
 # IT CARRIES THE DOMAIN STAND-IN, which makes this file installation state and not product,
-# whatever directory it sits in. branch-classes.yaml classifies it as install for that reason,
-# above the rule that would otherwise own the whole of bootstrap/.
+# whatever directory it sits in — the one file under bootstrap/ that is stamped per installation.
 apiVersion: v1
 kind: ConfigMap
 metadata:

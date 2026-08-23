@@ -37,10 +37,9 @@ structure, and it is the same structure for everybody who clones it. What belong
 installation comes from outside: that company's own repository, carrying its configuration in the
 clear and its secrets encrypted, handed to the deployer along with the key that opens them.
 
-`branch-classes.yaml` states what every path here IS — **product** (byte-identical in every
-installation), **install** (one cluster's own settings) or **books** (what one installation knows
-about itself) — and why. That distinction is what keeps an installation's own state off the trunk,
-so a second installation can take the same tree and be a different company.
+Nothing on the trunk names one installation. A cluster's own settings and what it knows about
+itself stand on its install branch, never here — which is what lets a second installation take the
+same tree and be a different company.
 
 ## What deploys it
 
