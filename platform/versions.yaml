@@ -613,13 +613,13 @@ cliTools:
   # comparing, and a tag that begins with a digit loses nothing, so the whole tag
   # is what the machine's own --version is held against.
   #
-  # THE PIN CANNOT GO BELOW 0.1.0-alpha-20260823000709, which is the first release
+  # THE PIN CANNOT GO BELOW 0.1.0-alpha-20260823002740, which is the first release
   # whose executables answer --version at all. Everything holding a machine to this
   # pin does so by ASKING the binary, so an earlier release is one nothing can read
   # a version out of — a machine carrying it can never be reported as at the pin or
   # off it, only as absent.
   ansiwise:
-    version: "0.1.0-alpha-20260823000709"
+    version: "0.1.0-alpha-20260823002740"
     upstream:
       kind: github_release
       project: simetrixch/ansiwise-cli
