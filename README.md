@@ -27,7 +27,8 @@ charts/        the library charts they are built from
 argocd/        the ApplicationSets and projects
 bootstrap/     what is applied before ArgoCD exists
 installation/  what THIS installation is: its profile, its per-app values and its toggles
-clusters/      the map of every cluster of this installation
+clusters/      the map of every cluster of this installation — filled only on the install
+               branch of the cluster holding the master role, empty on the trunk
 platform/      the version pins and the platform's own grammar
 ```
 
