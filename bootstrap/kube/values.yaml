@@ -104,3 +104,31 @@ volumeMounts:
   - name: kube-slaves-kubeconfig
     mountPath: /etc/kube-slaves
     readOnly: true
+
+# SINGLE SIGN-ON, and the reason the four values arrive by two different roads.
+#
+# `externalSecret` is the only one of this chart's three OIDC shapes that loads a Secret it did not
+# make: the deployment takes the whole Secret with envFrom, so what stands in it must be spelled with
+# the variable names the binary reads. Only ONE of the four is a credential, so only that one comes
+# out of the store - deploy-gitops writes the Secret named below into this namespace from
+# secret/<stage>/idp/bootstrap. The other three are facts about this installation and stand here in
+# the open, in the same `env` block the chart keeps beside envFrom for exactly that.
+#
+# The issuer is the identity provider's own address for THIS application, and the callback is the
+# one its client is registered with - bootstrap/idp/blueprints/99-headlamp.yaml states both, and a
+# character between them is a login that ends in a redirect_uri refusal.
+config:
+  oidc:
+    externalSecret:
+      enabled: true
+      name: headlamp-oidc
+
+env:
+  - name: OIDC_CLIENT_ID
+    value: headlamp
+  - name: OIDC_ISSUER_URL
+    value: https://idp.example.invalid/application/o/headlamp/
+  - name: OIDC_CALLBACK_URL
+    value: https://kube.example.invalid/oidc-callback
+  - name: OIDC_SCOPES
+    value: openid,profile,email,groups
