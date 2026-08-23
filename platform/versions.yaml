@@ -477,10 +477,8 @@ toolchains:
   #     manager; the client is a fourth checkout, and a stamp into a label the row
   #     does not map is refused rather than skipped.
   #
-  # Until then BOTH sides refuse a drift rather than one: ansiwise-client's
-  # tool/flutter_pin.dart stops the client's gate, and this repository's
-  # checks/lib/src/client_flutter_pin.dart stops this one — which is the side a
-  # raise is made on, and the side a person who edits the line below runs.
+  # Until then ansiwise-client's tool/flutter_pin.dart is what refuses a drift,
+  # on the client's side; this line is stated here and held nowhere.
   flutter:
     version: "3.47.0"
     note: |

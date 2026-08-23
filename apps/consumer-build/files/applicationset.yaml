@@ -69,7 +69,7 @@ spec:
       # because ArgoCD prints the parameter before it matches — fmt.Sprintf("%v", v)
       # in applicationset/generators/generator_spec_processor.go:134 at v3.4.5, the
       # appVersion slaves/slave/Chart.yaml:4 pins — and a Go bool(false) prints as
-      # false. The pair is held by checks/lib/src/registration_selectors.dart.
+      # false.
       selector:
         matchLabels:
           suspended: "false"

@@ -7,7 +7,7 @@
 # Authentik blueprint — Forward-Auth ProxyProvider + Application for the
 # Tekton Dashboard. Tekton has no native OIDC support, so the upstream
 # pod itself stays unauth'd and the embedded Outpost gates the Ingress
-# in front via Traefik's forwardAuth Middleware (manifests/idp/middleware-
+# in front via Traefik's forwardAuth Middleware (bootstrap/idp/middleware-
 # forwardauth.yaml).
 #
 # mode: forward_domain → the session cookie is scoped to the env apex

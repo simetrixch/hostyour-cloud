@@ -52,6 +52,3 @@ AGENTS.md
 *.log
 *.tmp
 
-# What the checks package resolves for itself. The lockfile travels so a clone gates on the same
-# versions; the resolution artefacts do not.
-checks/.dart_tool/

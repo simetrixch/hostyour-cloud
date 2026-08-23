@@ -1,7 +1,7 @@
 # Public Certificate + IngressRoute for ArgoCD UI/CLI.
 # Replaces the chart-bundled k8s Ingress so the routing layer is consistent
 # across all four base-layer-installed apps (idp, kube, argocd, vault).
-# Auth is handled by ArgoCD's own OIDC client (manifests/argocd/values.yaml
+# Auth is handled by ArgoCD's own OIDC client (bootstrap/argocd/values.yaml
 # configs.cm.oidc.config) talking directly to the IdP — no Traefik
 # forwardAuth Middleware needed.
 apiVersion: cert-manager.io/v1

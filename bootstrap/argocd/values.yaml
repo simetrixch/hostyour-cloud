@@ -10,7 +10,7 @@ server:
     type: ClusterIP
 
   # Chart-bundled k8s Ingress disabled — we ship our own Traefik IngressRoute
-  # (manifests/argocd/ingressroute.yaml) for consistency with Vault and the
+  # (bootstrap/argocd/ingressroute.yaml) for consistency with Vault and the
   # IdP. Middlewares + native TLS lives in the IngressRoute spec.
   ingress:
     enabled: false
