@@ -23,11 +23,26 @@
 # applied as plain manifests, not rendered by helm. The two addresses are composed from the same
 # placeholders every file here uses: the auth mount is always the word kubernetes and the cluster's
 # short name, and Vault always serves at vault. plus the FQDN of the cluster keeping the books.
+# THE CRD THIS FILE USES IS INSTALLED BY A CHILD OF THE APPLICATION THAT APPLIES THIS FILE, and
+# without the two annotations below that circle never closes. ArgoCD validates every resource of a
+# sync against the cluster BEFORE applying any of them, so one kind the API server does not know
+# makes the whole sync invalid — not this file, the whole of it. On a first installation nothing was
+# created at all: no ApplicationSet, no projects, no external-secrets, and therefore no CRD, and
+# therefore the same refusal on every retry. What the run reported was
+# "one or more synchronization tasks are not valid", which names nothing.
+#
+# SkipDryRunOnMissingResource lets the validation pass for a kind that is not there yet; the apply
+# still fails until the CRD arrives, and the root application's own retry — five attempts backing
+# off to three minutes — is what covers the gap. The wave puts these last, after the applications
+# that install what they need.
 apiVersion: external-secrets.io/v1
 kind: SecretStore
 metadata:
   name: vault-backend
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "60"
 spec:
   provider:
     vault:
@@ -53,6 +68,9 @@ kind: ExternalSecret
 metadata:
   name: repo-catalog
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "60"
 spec:
   # Read when it is deployed and when its target Secret is deleted, never on a timer — the platform's
   # own admission policy refuses anything else, and refuses an ExternalSecret that leaves it unset.
