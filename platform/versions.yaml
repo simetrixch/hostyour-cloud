@@ -614,21 +614,22 @@ cliTools:
   # is what the machine's own --version is held against.
   #
   # THE PIN CANNOT GO BELOW 0.1.0-alpha-20260823000709, which is the first release
-  # whose executables answer --version at all. The install row decides its skip on
-  # what the machine answers, so an earlier release is one it can never read a
-  # version out of: it would fetch both files again on every run, for ever, and
-  # every fetch would succeed.
+  # whose executables answer --version at all. Everything holding a machine to this
+  # pin does so by ASKING the binary, so an earlier release is one nothing can read
+  # a version out of — a machine carrying it can never be reported as at the pin or
+  # off it, only as absent.
   ansiwise:
     version: "0.1.0-alpha-20260823000709"
     upstream:
       kind: github_release
       project: simetrixch/ansiwise-cli
+    # ONE SITE, AND IT IS AN ASSERTION RATHER THAN AN INSTALL. deploy-cluster names this
+    # version in its assert row and fetches the binary nowhere: /usr/local/bin/ansiwise has a
+    # single writer and it is the placement (simetrixch/hostyour-manager#14), so an
+    # install_pinned_tool row there would be a second one writing a plain file over the link
+    # that placement maintains. The pin still has to reach the program, because the assert is
+    # what tells an operator the engine drifted — it just reaches one row and not two.
     stamps:
-      - kind: yaml_value
-        tree: deploy
-        file: ansiwise/programs/deploy-cluster.yaml
-        key: version
-        anchor: 'tool: ansiwise'
       - kind: list_pin
         tree: deploy
         file: ansiwise/programs/deploy-cluster.yaml
