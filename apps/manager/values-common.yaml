@@ -146,6 +146,67 @@ master:
   # until the keystore is hardened. Promotion to "real" is a one-way audited step (R-13).
   tier: "rehearsal"
 
+# The ansiwise deployment engine, as this manager reaches it on a machine
+# (config.ts ANSIWISE_DOWNLOAD_URL + ANSIWISE_SERVE_COMMAND). Both are PRODUCT
+# and not installation state, which is why they stand here and not in
+# installation/values/manager.yaml beside master.sshUser: the release surface is
+# this organisation's own, and the paths named below are the ones the manager's
+# OWN placement writes, so an installation that chose either differently would be
+# choosing against the code in this same platform. Absent, each of them stops its
+# step with errNotConfigured — the download address stops deploy-slave's
+# placement, the serve command stops every step that reaches a machine's
+# programs, and neither has a default in config.ts.
+#
+# WHAT HOLDS EITHER KEY IN PLACE. Both halves below were rendered to see it.
+# Taking this whole block away fails the render, because the Deployment reads
+# `.Values.ansiwise.downloadUrl` bare: helm answers "nil pointer evaluating
+# interface {}.downloadUrl" and no manifest is produced. Taking away ONE of the
+# two lines does NOT — `quote` passes an absent value through as nothing, so the
+# Deployment renders `value:` with no value after it and the container is handed
+# the variable empty. What refuses that is the manager's own config.ts, whose
+# schema is `.min(1)` on both: it prints the field and exits 1 before the logger
+# exists. So the single-line deletion is caught at BOOT and not at render, and
+# nothing in this repository's gate reads these two lines at all.
+ansiwise:
+  # WHERE a machine's executables are fetched from. The two markers are filled in
+  # by the placement, never here: `<version>` from cliTools.ansiwise.version in
+  # platform/versions.yaml — the ONE pin, read off this repository's trunk by
+  # hostyour-manager server/domains/inventory/ansiwise-pin.ts with no default —
+  # and `<name>` from the binary being fetched, `ansiwise` or `ansiwise-rest`.
+  #
+  # ONE ADDRESS REACHES BOTH FILES, which is why the binary is a marker and not a
+  # second setting. The release carries ansiwise-<tag>-linux-x64 and
+  # ansiwise-rest-<tag>-linux-x64; two settings could name two releases, and a
+  # machine would then carry a pair that no pin describes and nothing could name
+  # afterwards. A pin that stands in this address instead of a marker would be the
+  # same defect one step earlier — config.ts refuses an address without
+  # `<version>` for exactly that reason.
+  downloadUrl: "https://github.com/simetrixch/ansiwise-cli/releases/download/<version>/<name>-<version>-linux-x64"
+  # The command that serves a machine's programs over the run's own SSH session,
+  # started on the session's stdio and speaking HTTP over it.
+  #
+  # ansiwise-rest AND NOT ansiwise. `serve` and `service` are the two programs of
+  # the REST binary (ansiwise-cli lib/src/rest/resident_service.dart:48,52); the
+  # deployment tool answers "no program is called serve" — measured, not read off
+  # a help text. The REST binary in turn starts each run by invoking the ansiwise
+  # standing in its own directory, so this command works only on a machine
+  # carrying both halves of the release above.
+  #
+  # IT READS THE CATALOGUE THE PLACEMENT WROTE. /srv/ansiwise-catalog is
+  # CATALOG_CHECKOUT in hostyour-manager server/domains/runs/defs/place-ansiwise.ts
+  # — the checkout that placement clones the installation repository into, and the
+  # one path a command reading anywhere else would serve different programs than
+  # were placed. It is CHANGED INTO rather than merely named, because the working
+  # directory is what every relative path of a program resolves against: the
+  # `ansiwise.yaml` naming the active plugins, and each `template:` a step renders.
+  # `--programs` is named on top of that because its default is `programs` beside
+  # the working directory, and the catalogue keeps them under `ansiwise/programs`.
+  # The resident service the same placement installs is started with exactly these
+  # two facts (ansiwise-cli lib/service_installation.dart composes its ExecStart
+  # and WorkingDirectory from them), so the session door and the address door
+  # serve one catalogue rather than two that agree by accident.
+  serveCommand: "cd /srv/ansiwise-catalog && ansiwise-rest serve --programs /srv/ansiwise-catalog/ansiwise/programs"
+
 # pino log level (config.ts LOG_LEVEL): fatal|error|warn|info|debug|trace|silent.
 logLevel: info
 

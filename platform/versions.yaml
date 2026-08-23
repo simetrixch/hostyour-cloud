@@ -574,32 +574,63 @@ cliTools:
         file: ansiwise/programs/deploy-cluster.yaml
         anchor: 'tools:'
         entry: tailscale
-  # The deployment engine itself, and the one entry here that stamps NOTHING.
+  # The deployment engine itself — the binary that is executing deploy-cluster
+  # while deploy-cluster fetches the tools of this block, now held to a pin like
+  # every one of them.
   #
-  # Every other tool of this block is fetched onto a machine by an
-  # install_pinned_tool row, so its pin is stamped into that row and into the
-  # list the assert holds. This one is not fetched by a program at all, because
-  # a program cannot install what is already running it: deploy-cluster.yaml IS
-  # an ansiwise program.
-  #
-  # WHO PUTS IT ON A MACHINE, and it is one mechanism in two callers
+  # WHO PUTS IT ON A MACHINE FIRST, and it is one mechanism in two callers
   # (hostyour-manager#14): the client places it on a master over SSH, and
   # place-ansiwise places it on a slave. Both write
-  # /usr/local/bin/ansiwise-<version> and link /usr/local/bin/ansiwise at it, so
-  # what says which version stands on a machine is the NAME of the file the link
-  # points at — which is why the binary answers no --version and why no row here
-  # asks it one.
+  # /usr/local/bin/ansiwise-<version> and link /usr/local/bin/ansiwise at it. The
+  # install row the stamps below write is what keeps it AT the pin afterwards; it
+  # replaces the file the link points at while a run of this very program is in
+  # flight, which is safe because a running process keeps the inode it started
+  # from and the next invocation is the new binary.
   #
-  # WHO READS THIS PIN: hostyour-manager
+  # THE RELEASE CARRIES TWO EXECUTABLES and one pin names both:
+  # ansiwise-<tag>-linux-x64 and ansiwise-rest-<tag>-linux-x64 are built from one
+  # tag, and ansiwise-rest starts a run by invoking the ansiwise standing in its
+  # own directory — with none there it exits 78 at start rather than at the first
+  # request (ansiwise-cli bin/ansiwise_rest.dart, deploymentToolBesideThis). Only
+  # ansiwise is stamped, because only ansiwise has a site: the install row for the
+  # REST binary is deliberately absent, since replacing the file a service was
+  # started from leaves that service on the old code until its unit is restarted
+  # and no step of the framework restarts one (simetrixch/ansiwise-plugins#141).
+  # The install row states that in full.
+  #
+  # WHO ELSE READS THIS PIN, with no stamp between them and it: hostyour-manager
   # server/domains/inventory/ansiwise-pin.ts:28 reads cliTools.ansiwise.version
-  # off this repository over git, with NO default, before it touches a machine.
+  # off this repository over git before it touches a machine, and ansiwise-client
+  # reads the same key over the GitHub API before it places anything on a master.
+  # Neither has a default — a placement that guessed a version would put one on a
+  # machine that no file states.
   #
   # The version is a whole release tag and not three numbers, because the
   # grammar is the platform's own — hostyour-manager/shared/release.ts:22,
   # <major>.<minor>.<patch>-<channel>-<ts14> — and the release, the artefact and
-  # the download address are all named by it.
+  # the download address are all named by it. Nothing takes a prefix off it:
+  # deploy-cluster's `pin_prefixes` strips at most one of `v` or `jq-` before
+  # comparing, and a tag that begins with a digit loses nothing, so the whole tag
+  # is what the machine's own --version is held against.
+  #
+  # THE PIN CANNOT GO BELOW 0.1.0-alpha-20260823000709, which is the first release
+  # whose executables answer --version at all. The install row decides its skip on
+  # what the machine answers, so an earlier release is one it can never read a
+  # version out of: it would fetch both files again on every run, for ever, and
+  # every fetch would succeed.
   ansiwise:
-    version: "0.1.0-alpha-20260821190604"
+    version: "0.1.0-alpha-20260823000709"
     upstream:
       kind: github_release
       project: simetrixch/ansiwise-cli
+    stamps:
+      - kind: yaml_value
+        tree: deploy
+        file: ansiwise/programs/deploy-cluster.yaml
+        key: version
+        anchor: 'tool: ansiwise'
+      - kind: list_pin
+        tree: deploy
+        file: ansiwise/programs/deploy-cluster.yaml
+        anchor: 'tools:'
+        entry: ansiwise

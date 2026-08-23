@@ -191,6 +191,28 @@ spec:
                   key: write-pat
             {{- end }}
             {{- end }}
+            # How this manager reaches the ansiwise deployment engine on a machine
+            # (config.ts ANSIWISE_DOWNLOAD_URL + ANSIWISE_SERVE_COMMAND, neither with a
+            # default). UNCONDITIONAL, unlike the MASTER_* block above: those name one
+            # machine and stand on an install branch, while these two are the same on
+            # every installation this platform ships — the release surface and the
+            # catalogue path are the manager's own code, not an operator's choice.
+            #
+            # The download address carries `<version>` and `<name>` as MARKERS. The
+            # placement fills them in from the one pin (platform/versions.yaml
+            # cliTools.ansiwise.version) and from the binary it is fetching, so the pin
+            # and the file that lands on the machine cannot state different versions.
+            # Nothing here may resolve them: a rendered version would be a second pin,
+            # written by a chart that never reads the first.
+            - name: ANSIWISE_DOWNLOAD_URL
+              value: {{ .Values.ansiwise.downloadUrl | quote }}
+            # The command that serves the machine's programs over the run's SSH session.
+            # It names ansiwise-rest, which is where `serve` lives, and reads the
+            # catalogue checkout the placement writes — both stated in values-common.yaml
+            # beside the value, because both are facts of the machine rather than of this
+            # rendering.
+            - name: ANSIWISE_SERVE_COMMAND
+              value: {{ .Values.ansiwise.serveCommand | quote }}
             {{- if .Values.onboarding.gatemanagerAddr }}
             # Consumer onboarding (config.ts, onboarding.md §6). Validation runs as an in-cluster
             # `gate-run` Tekton PipelineRun (NOT a host Quadlet). Set gatemanagerAddr ⇒ the onboarding
