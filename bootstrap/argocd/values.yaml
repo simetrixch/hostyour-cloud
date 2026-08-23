@@ -2,7 +2,7 @@
 
 # Global Configuration
 global:
-  domain: argocd.example.invalid
+  domain: argo.example.invalid
 
 # Server Configuration
 server:
@@ -46,7 +46,7 @@ configs:
   # `argocd-cm` ConfigMap directly via kubectl.
   cm:
     admin.enabled: "false"
-    url: https://argocd.example.invalid
+    url: https://argo.example.invalid
     # Which Application manages an object is written into the annotation
     # argocd.argoproj.io/tracking-id, and ArgoCD overwrites it on every apply —
     # which is what makes it evidence rather than a claim. Two admission
