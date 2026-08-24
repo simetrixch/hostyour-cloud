@@ -166,7 +166,7 @@ kube-prometheus-stack:
       # `platform-default` AlertmanagerConfig CR (see
       # clusters/inventories/observability/values-common.yaml.monitoring.alertmanagerConfigs),
       # whose recipients come from .Values.global.alertRecipients, rendered into
-      # installation/profile.yaml by the branch program from the alert_recipients
+      # clusters/active/<fqdn>.yaml by the branch program from the alert_recipients
       # answer the generating run was given — ONE place to change the mailbox of
       # every entry that carries no `emails` of its own.
       route:

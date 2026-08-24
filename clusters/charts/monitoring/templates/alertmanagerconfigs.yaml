@@ -11,7 +11,7 @@ Recipient fallback chain:
   $cfg.emails (explicit list per entry, optional)
     → .Values.global.alertRecipients (the installation's own: the operator
       answers alert_recipients when the install branch is generated, and
-      The branch program renders THAT ANSWER into installation/profile.yaml, which
+      The branch program renders THAT ANSWER into clusters/active/<fqdn>.yaml, which
       every app loads last. clusters/active/<fqdn>.yaml states the same answer as
       alert-recipients — it is a second rendering of it, not the file the profile
       is read out of. clusters/platform/values-common.yaml holds an empty list because a
@@ -37,7 +37,7 @@ and fail.
 {{- if $cfg.enabled }}
 {{- $emails := $cfg.emails | default $.Values.global.alertRecipients -}}
 {{- if not $emails }}
-{{- fail (printf "monitoring: alertmanagerConfigs.%s is enabled and resolves to no recipient. Set this installation's global.alertRecipients — it is rendered into installation/profile.yaml from the alert_recipients answer when the install branch is generated, so generate the branch again with a mailbox in that answer — or give the entry its own `emails`, or set `enabled: false` to mean the silence." $name) }}
+{{- fail (printf "monitoring: alertmanagerConfigs.%s is enabled and resolves to no recipient. Set this installation's global.alertRecipients — it is rendered into clusters/active/<fqdn>.yaml from the alert_recipients answer when the install branch is generated, so generate the branch again with a mailbox in that answer — or give the entry its own `emails`, or set `enabled: false` to mean the silence." $name) }}
 {{- end }}
 ---
 apiVersion: monitoring.coreos.com/v1alpha1

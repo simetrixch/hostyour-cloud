@@ -4,7 +4,7 @@
 # (app.yaml says runsOn: master), because the coordinator is provided once, by
 # the same cluster that provides Vault — every other cluster's hosts log in to it.
 #
-# Its address is global.endpoints.tailnet.url (installation/profile.yaml, written by
+# Its address is global.endpoints.tailnet.url (clusters/active/<fqdn>.yaml, written by
 # the branch program from the cluster map). The Ingress host below and server_url in
 # templates/configmap-config.yaml both derive from that one value: headscale
 # composes its login and registration URLs from server_url, so a client sent
@@ -132,7 +132,7 @@ ingress:
     className: public
     annotations:
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    host: '{{ required "global.endpoints.tailnet.url must be set (installation/profile.yaml, rendered per install branch from the cluster map)" .Values.global.endpoints.tailnet.url | trimPrefix "https://" }}'
+    host: '{{ required "global.endpoints.tailnet.url must be set (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.endpoints.tailnet.url | trimPrefix "https://" }}'
     paths:
       - path: /
         pathType: Prefix

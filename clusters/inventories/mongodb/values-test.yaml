@@ -22,7 +22,7 @@ mongodb:
 # service-provisioner's own per-env mongoHost.
 
 # Per-namespace SecretStore — Vault URL falls back to global.endpoints.vault.url, written
-# by the branch program into installation/profile.yaml from the cluster map.
+# by the branch program into clusters/active/<fqdn>.yaml from the cluster map.
 secret-store: {}
 
 # mongodb-credentials ExternalSecret — reads Vault path test/app/mongodb.

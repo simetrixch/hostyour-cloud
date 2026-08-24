@@ -104,14 +104,14 @@ spec:
             # VALUES live in Vault KV; auth = kubernetes-auth with the projected
             # SA token above). VAULT_KV_MOUNT/PREFIX keep their config.ts
             # defaults (secret / manager/cred); the auth mount is this
-            # cluster's own kubernetes-<name> (installation/profile.yaml) — an
+            # cluster's own kubernetes-<name> (clusters/active/<fqdn>.yaml) — an
             # unnamed `kubernetes` mount does not exist.
             - name: VAULT_ADDR
               value: {{ .Values.global.endpoints.vault.url | quote }}
             - name: VAULT_K8S_ROLE
               value: "manager"
             - name: VAULT_K8S_AUTH_MOUNT
-              value: {{ required "global.vaultKubernetesAuthPath must be set (installation/profile.yaml via the $values chain)" .Values.global.vaultKubernetesAuthPath | quote }}
+              value: {{ required "global.vaultKubernetesAuthPath must be set (clusters/active/<fqdn>.yaml via the $values chain)" .Values.global.vaultKubernetesAuthPath | quote }}
             {{- if .Values.master.sshUser }}
             # Master self-registration (server config.ts + boot/seed-master.ts):
             # on the control host, seed the one role=master server row (this host)

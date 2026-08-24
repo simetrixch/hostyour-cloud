@@ -13,7 +13,7 @@
 # files that used to sit next to it are gone: a TEMPLATE has no stage identity
 # of its own. Everything stage-dependent (domain, endpoints.vault.url, storageClass,
 # timezone, secretStoreName) already arrives through global.* from
-# $values/clusters/platform/values-common.yaml + values-<stage>.yaml + installation/profile.yaml.
+# $values/clusters/platform/values-common.yaml + values-<stage>.yaml + clusters/active/<fqdn>.yaml.
 #
 # =============================================================================
 # SIZE PRESETS — pick by WORKLOAD, not by optimism

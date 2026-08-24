@@ -18,7 +18,7 @@ annotations: {}
 name: vault-backend
 
 # Vault provider configuration. Left empty here, the template falls back to
-# global.endpoints.vault.url (installation/profile.yaml, via the $values chain);
+# global.endpoints.vault.url (clusters/active/<fqdn>.yaml, via the $values chain);
 # one of the two MUST carry an address:
 #   https://vault.<master>
 vaultUrl: ""
@@ -33,6 +33,6 @@ kvVersion: v2
 # list plus whatever extra ESO namespaces that installation declares.
 # The KV mount and the auth mount carry no defaults here: the template
 # requires global.vaultKvMount (clusters/platform/values-common.yaml) and
-# global.vaultKubernetesAuthPath (installation/profile.yaml).
+# global.vaultKubernetesAuthPath (clusters/active/<fqdn>.yaml).
 role: external-secrets
 serviceAccountName: external-secrets-sa

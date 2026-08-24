@@ -10,7 +10,7 @@ substitutions, and the two branches are DIFFERENT branches:
              this chart from.
   __BOOKS__  global.booksBranch — the install branch of the cluster holding
              the MASTER role, which is where the registrations the generator
-             globs over stand (installation/profile.yaml, written by the branch program).
+             globs over stand (clusters/active/<fqdn>.yaml, written by the branch program).
 
 They are the same value whenever the build plane sits on the cluster holding
 the master role, and they are not when it sits on a pure slave — an arrangement
@@ -22,5 +22,5 @@ clusters/inventories/consumer-build/app.yaml says runsOn: master, so the app gen
 it on the build plane and nowhere else.
 */ -}}
 {{- if not .Values.unit }}
-{{- .Files.Get "files/applicationset.yaml" | replace "__STAGE__" .Values.global.env | replace "__BRANCH__" .Values.global.domain | replace "__BOOKS__" (required "consumer-build: global.booksBranch is required (installation/profile.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch) }}
+{{- .Files.Get "files/applicationset.yaml" | replace "__STAGE__" .Values.global.env | replace "__BRANCH__" .Values.global.domain | replace "__BOOKS__" (required "consumer-build: global.booksBranch is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch) }}
 {{- end }}

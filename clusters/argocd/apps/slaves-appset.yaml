@@ -14,7 +14,7 @@ spec:
         files:
           - path: "clusters/active/*.yaml"
         values:
-          cluster: '{{ index (splitList "." .fqdn) 0 }}'
+          cluster: '{{ index (splitList "." .global.domain) 0 }}'
       selector:
         matchLabels:
           role: slave
@@ -26,7 +26,7 @@ spec:
           # whose books it holds. A literal here would be one installation's domain in a file every
           # installation is cut from, and a selector matching nothing produces zero Applications and
           # reports no error at all.
-          books-cluster: __BOOKS_BRANCH__
+          booksCluster: __BOOKS_BRANCH__
   template:
     metadata:
       name: "{{ .values.cluster }}-apps"
@@ -50,20 +50,20 @@ spec:
               - $values/clusters/platform/values-__STAGE__.yaml
               - values-common.yaml
               - values-__STAGE__.yaml
-              - $values/installation/profile.yaml
+              - $values/clusters/active/__FQDN__.yaml
             valuesObject:
               slave:
                 name: "{{ .values.cluster }}"
                 branch: "{{ .fqdn }}"
-                apiHost: "{{ .apiHost }}"
-                apiPort: "{{ .apiPort }}"
-                masterFqdn: "{{ .master }}"
+                apiHost: "{{ .global.apiHost }}"
+                apiPort: "{{ .global.apiPort }}"
+                masterFqdn: "{{ .global.master }}"
                 stage: "{{ .stage }}"
               argo-cd:
                 configs:
                   cm:
                     installationID: "{{ .values.cluster }}"
-                    url: "https://argo-{{ .values.cluster }}.{{ .master }}"
+                    url: "https://argo-{{ .values.cluster }}.{{ .global.master }}"
       destination:
         server: https://kubernetes.default.svc
         namespace: "{{ .values.cluster }}"

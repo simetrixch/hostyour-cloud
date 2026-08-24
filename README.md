@@ -30,15 +30,17 @@ clusters/      EVERYTHING A CLUSTER IS MADE OF, gathered in one place
   argocd/        the ApplicationSets and projects
   bootstrap/     what is applied before ArgoCD exists
   platform/      the version pins and the platform's own grammar
-installation/  what THIS installation is: its profile, its per-app values and its toggles
+installation/  the per-app values and toggles of THIS installation, written per install branch
 configs/       the hand-filled input of one installation, in the clear
 secrets/       the same, encrypted
 ```
 
 **Four directories and not eleven.** Everything that a cluster is made of stands under `clusters/`,
 so the question "what does a cluster consist of" has one place to look instead of seven. What stays
-outside is what is NOT a cluster: what one installation was told (`configs/`, `secrets/`) and what it
-turned out to be (`installation/`).
+outside is what is NOT a cluster: what one installation was told (`configs/`, `secrets/`) and the
+per-app values it was given (`installation/`). What the installation IS stands in its own cluster
+map under `clusters/active/` — one file, read as parameters by the reconciler's generators and as
+values by Helm, so nothing about an installation is written down twice.
 
 The arrangement inside `clusters/` is deliberately the one it always had, because every chart names
 its libraries relatively — `file://../../charts/common`, nineteen times over. Moving the siblings

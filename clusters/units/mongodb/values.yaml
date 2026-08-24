@@ -12,7 +12,7 @@
 # files beside it: a TEMPLATE has no stage identity of its own. Everything
 # stage-dependent (endpoints.vault.url, storageClass, timezone, secretStoreName) arrives
 # through global.* from $values/clusters/platform/values-common.yaml + values-<stage>.yaml
-# + installation/profile.yaml.
+# + clusters/active/<fqdn>.yaml.
 #
 # =============================================================================
 # SIZE PRESETS — the UNIT's size, not a size of its own

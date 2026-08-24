@@ -4,13 +4,27 @@ this unit's PipelineRun pods, so the selector is the whole namespace.
 
 SHAPE: "open outward, segment inside". A build pod may reach the PUBLIC
 internet on 443/80 (npmjs, PyPI, crates.io, GitHub, …), but NOT the
-private/cluster ranges — so it cannot touch Vault, a sibling unit's build
-namespace, the API server, or any in-cluster service other than the few
-explicitly allowed below. Isolation of the build does not come from fencing
-where it may talk to: it comes from the BUILD/PUSH SPLIT
+private/cluster ranges — so it cannot touch a sibling unit's build namespace,
+the API server, or any in-cluster service other than the few explicitly allowed
+below. Isolation of the build does not come from fencing where it may talk to:
+it comes from the BUILD/PUSH SPLIT
 (clusters/inventories/image-builder/templates/tasks/buildah-build-push.yaml — the push
 credential is never in the step that runs untrusted code) plus this
 outward-only egress, which stops a pivot INTO the cluster.
+
+VAULT IS REACHABLE FROM THIS NAMESPACE AND ALWAYS WAS, which is why it is not
+in the list above. Every cluster dials the ONE Vault at its public address
+(global.endpoints.vault.url, vault.<master>), and that address takes one of two
+routes, both already open: where this build plane is the cluster Vault runs on,
+global.servicesLocal.vault turns on the CoreDNS hairpin and the connection lands
+on Traefik through the ingress rule below — the same path the registry probe
+takes; where it is not, public DNS answers with the master's public address and
+the internet rule carries it. What stands between a pod here and a secret is the
+LOGIN and not the route: Vault admits a kubernetes-auth login only against a
+ServiceAccount token, pipeline-sa mounts none by default
+(templates/serviceaccount.yaml), and the one step given a projected token is the
+release bump's search-and-write, which runs no unit code
+(templates/pipeline-release.yaml).
 
 The `except` list covers every private range this cluster uses: pods are
 POD_CIDR=10.244.0.0/16, Services are MicroK8s' fixed 10.152.183.0/24, and the
@@ -46,8 +60,9 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     # The PUBLIC internet on 443/80 — git clone + npm/PyPI/… dependency
-    # installs. `except` carves the private + cluster ranges back OUT, so this
-    # rule can never be what reaches Vault, the API server or a peer namespace.
+    # installs, and the bump's Vault login where that Vault is on another
+    # cluster. `except` carves the private + cluster ranges back OUT, so this
+    # rule can never be what reaches the API server or a peer namespace.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

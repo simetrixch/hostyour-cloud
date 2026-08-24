@@ -173,7 +173,7 @@ spec:
         #    LITERAL, never a pin. The platform values reach the chart as
         #    global.* over the SAME $values chain every platform app loads:
         #    platform files first, the chart's own values in between,
-        #    installation/profile.yaml LAST (highest precedence).
+        #    this cluster's own map LAST (highest precedence).
         - repoURL: "{{ .repoURL }}"
           targetRevision: deploy/__STAGE__
           path: "{{ .chartPath }}"
@@ -183,7 +183,7 @@ spec:
               - $values/clusters/platform/values-__STAGE__.yaml
               - values.yaml
               - values-__STAGE__.yaml
-              - $values/installation/profile.yaml
+              - $values/clusters/active/__FQDN__.yaml
             valuesObject:
               # suspended pauses the unit; quiesced closes it for a move or
               # backup. The chart renders the off state from these two values
@@ -236,7 +236,7 @@ spec:
               # literal on every commit ("small" when the manifest expressed no preference, which is
               # what the chart's values.yaml carries anyway).
               - values-size-{{ .size }}.yaml
-              - $values/installation/profile.yaml
+              - $values/clusters/active/__FQDN__.yaml
             valuesObject:
               externalsecret-postgres:
                 externalSecret:
@@ -281,7 +281,7 @@ spec:
               # The unit's ONE size, naming the preset — the same word that bounds
               # its namespace and sizes its PostgreSQL.
               - values-size-{{ .size }}.yaml
-              - $values/installation/profile.yaml
+              - $values/clusters/active/__FQDN__.yaml
             valuesObject:
               mongodb:
                 # The word itself, passed through. The chart derives the member

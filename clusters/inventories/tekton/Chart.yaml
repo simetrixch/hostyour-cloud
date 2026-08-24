@@ -36,7 +36,7 @@ dependencies:
   #
   # `condition` gates the WHOLE sub-chart on the build-cluster flag: this
   # Ingress renders only where global.servicesLocal.registry is true (the ONE
-  # build cluster, installation/profile.yaml) — the same gate as the Dashboard it
+  # build cluster, clusters/active/<fqdn>.yaml) — the same gate as the Dashboard it
   # fronts. We gate via `condition` here rather than the sub-chart's own
   # `ingress.enabled` because a static values file can't express "on iff a
   # global flag", and we must not teach the shared clusters/charts/ingress library about

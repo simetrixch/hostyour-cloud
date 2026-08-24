@@ -220,7 +220,7 @@ ingress:
 # WHO MAY READ AND WHO MAY PUSH, BY NAME. accessControl below grants by account name, so the two it
 # lists must be the same names the credentials carry — and the credentials get theirs out of the
 # secret store, where the installer seeded them. Both sides therefore read ONE per-installation
-# value: global.registryPullUser and global.registryPushUser in installation/profile.yaml, written from
+# value: global.registryPullUser and global.registryPushUser in clusters/active/<fqdn>.yaml, written from
 # the same answer that seeded the credential. clusters/charts/configmap runs tpl over this data, so the two
 # expressions resolve before the file reaches zot — and they must stay Helm expressions rather than
 # JSON comments, because what is below becomes config.json literally and JSON has no comments.
@@ -432,7 +432,7 @@ secret-store:
   enabled: true
   name: vault-backend
   # vaultUrl is left empty here: the template falls back to
-  # global.endpoints.vault.url (installation/profile.yaml via the $values chain).
+  # global.endpoints.vault.url (clusters/active/<fqdn>.yaml via the $values chain).
 
 # ----- ServiceMonitor + alerts ----------------------------------------------
 monitoring:

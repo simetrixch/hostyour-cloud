@@ -95,7 +95,7 @@ github:
   repo: "simetrixch/hostyour-cloud"
   # The tenant CATALOG the registry-reaper's floor also searches
   # (reaper-cronjob.yaml CATALOG_REPO). EMPTY here on purpose: which
-  # repository it is, is installation state — installation/profile.yaml carries it as
+  # repository it is, is installation state — clusters/active/<fqdn>.yaml carries it as
   # global.catalogUrl and loads LAST, and the template falls back to that with a
   # `required` on it and trims the owner/name off the address, so a branch naming no
   # catalog fails its render instead of starting a reaper whose floor cannot see the

@@ -101,7 +101,7 @@ spec:
               - $values/clusters/platform/values-common.yaml
               - $values/clusters/platform/values-__STAGE__.yaml
               - values-common.yaml
-              - $values/installation/profile.yaml
+              - $values/clusters/active/<fqdn>.yaml
             valuesObject:
               unit:
                 name: "{{ .name }}"

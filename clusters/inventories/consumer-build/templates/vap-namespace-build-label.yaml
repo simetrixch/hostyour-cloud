@@ -2,14 +2,22 @@
 CATALOG mode only — ONE cluster-scoped policy on the build plane, not one per
 unit.
 
-The label `hostyour.cloud/build` is the whole binding of the Vault role
-build-eso, seeded with the cluster: a ServiceAccount named external-secrets-sa
-in ANY namespace carrying it logs in and reads the two platform GitOps PATs
-(build/hostyour-cloud/repo-pat, build/catalog/repo-pat) plus the build tier
-of whatever unit its own alias-metadata annotation names. A unit's chart
-renders Namespace objects of its own (the per-unit AppProject whitelists that
-cluster-scoped kind), so without this policy the label — and with it the role —
-is a unit's to claim.
+The label `hostyour.cloud/build` is the whole binding of TWO Vault roles, both
+seeded with the cluster:
+
+  - build-eso, which a ServiceAccount named external-secrets-sa in ANY namespace
+    carrying the label assumes to read the two platform GitOps PATs
+    (build/hostyour-cloud/repo-pat, build/catalog/repo-pat) plus the build tier
+    of whatever unit its own alias-metadata annotation names;
+  - build-bump, which a ServiceAccount named pipeline-sa in such a namespace
+    assumes to read build/<any unit>/repo-pat — the per-registration carrier
+    credentials the release bump's class-(a) search clones and pushes under
+    (templates/pipeline-release.yaml). That one is templated on nothing, so the
+    label is the ONLY thing between a namespace and every unit's repo PAT.
+
+A unit's chart renders Namespace objects of its own (the per-unit AppProject
+whitelists that cluster-scoped kind), so without this policy the label — and
+with it both roles — is a unit's to claim.
 
 Two facts about a build namespace that a unit's chart cannot reproduce:
 
@@ -64,7 +72,7 @@ spec:
           ? object.metadata.annotations['argocd.argoproj.io/tracking-id'] : ''
   validations:
     - expression: "!variables.claimsBuild || object.metadata.name.endsWith('-build')"
-      message: "the label hostyour.cloud/build binds the Vault role that holds the platform GitOps PATs — only a <unit>-build namespace may carry it."
+      message: "the label hostyour.cloud/build binds the Vault roles that hold the platform GitOps PATs and every unit's repo PAT — only a <unit>-build namespace may carry it."
       reason: Forbidden
     - expression: "!variables.claimsBuild || variables.trackingId.startsWith(object.metadata.name + ':')"
       message: "a namespace labelled hostyour.cloud/build must be the one the build fan-out Application of the same name manages — its ArgoCD tracking id names another writer."

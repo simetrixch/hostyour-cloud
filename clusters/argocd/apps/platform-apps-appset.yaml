@@ -46,7 +46,7 @@ spec:
               - values-common.yaml
               - values-__STAGE__.yaml
               - $values/installation/values/{{ .name }}.yaml
-              - $values/installation/profile.yaml
+              - $values/clusters/active/__FQDN__.yaml
             ignoreMissingValueFiles: true
       destination:
         server: "https://kubernetes.default.svc"

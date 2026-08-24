@@ -29,7 +29,7 @@ global:
   # the install-branch sync had to `git show` the file off master to read
   # releaseTagFilter below out of a file the branch rewrites.
   #
-  # The branch program writes it into installation/profile.yaml from the branch's
+  # The branch program writes it into clusters/active/<fqdn>.yaml from the branch's
   # own fqdn, beside the other globals it derives from the cluster map. That
   # file is LAST in every app's valueFiles chain, so `{{ .Values.global.domain }}`
   # resolves exactly as before — the value simply comes from the installation's
@@ -65,7 +65,7 @@ global:
 
   # The ONE Vault KV-v2 mount every SecretStore reads. Word-identical on every
   # cluster and every role — what differs per cluster is only the Kubernetes
-  # auth mount (global.vaultKubernetesAuthPath, installation/profile.yaml).
+  # auth mount (global.vaultKubernetesAuthPath, clusters/active/<fqdn>.yaml).
   vaultKvMount: secret
 
   # Name of the per-namespace ESO SecretStore that every app's ExternalSecret
@@ -81,7 +81,7 @@ global:
   # file is the trunk every future installation is cut from. The value arrives
   # from the operator: the answer is written as alert-recipients into
   # clusters/active/<fqdn>.yaml, and the branch program renders it into
-  # installation/profile.yaml, which loads last and replaces this list.
+  # clusters/active/<fqdn>.yaml, which loads last and replaces this list.
   # clusters/charts/monitoring refuses to render an enabled route that resolves to no
   # recipient, so an installation that never set it is stopped rather than
   # dropping its alerts in silence.
@@ -91,7 +91,7 @@ global:
   # Every address at which THIS cluster reaches a service that ONE cluster of
   # the installation runs. One sub-map per service, one field name per address.
   # Empty on the trunk; the branch program writes each key into
-  # installation/profile.yaml, which loads LAST in every app's valueFiles chain,
+  # clusters/active/<fqdn>.yaml, which loads LAST in every app's valueFiles chain,
   # from the cluster map's own predicates.
   endpoints:
     registry:

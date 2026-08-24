@@ -31,7 +31,7 @@
 
 # ----- Tekton Dashboard (build-cluster only) -------------------------------
 # The Dashboard UI + its Ingress render only on the ONE build cluster (the
-# cluster with global.servicesLocal.registry: true, set in installation/profile.yaml)
+# cluster with global.servicesLocal.registry: true, set in clusters/active/<fqdn>.yaml)
 # — on ANY stage, since that flag follows the build cluster and survives the
 # prod stage-prune that deletes values-dev.yaml.
 #   - dashboard resources: gated in templates/release-dashboard.yaml on

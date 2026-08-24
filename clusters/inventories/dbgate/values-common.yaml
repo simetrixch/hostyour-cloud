@@ -166,7 +166,7 @@ ingress:
     annotations:
       traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
     # gate.<this cluster's own fqdn> — global.domain is the install branch's fqdn,
-    # written into installation/profile.yaml by the branch program, so on a slave
+    # written into clusters/active/<fqdn>.yaml by the branch program, so on a slave
     # this is the slave's own public name and on a master the master's.
     host: 'gate.{{ .Values.global.domain }}'
     paths:

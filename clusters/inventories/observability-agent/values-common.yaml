@@ -4,7 +4,7 @@
 
 # ---------------------------------------------------------------------------
 # Push endpoints + cluster label come from GLOBALS. On a pure slave they are
-# STAMPED by the branch program into installation/profile.yaml (loaded LAST, wins):
+# STAMPED by the branch program into clusters/active/<fqdn>.yaml (loaded LAST, wins):
 #   global.endpoints.observability.prometheusPush: https://prom-push.<master-fqdn>
 #   global.endpoints.observability.lokiPush:       https://loki-push.<master-fqdn>
 #   global.domain:                                 <slave-fqdn>   (the cluster label)
@@ -108,7 +108,7 @@ kube-state-metrics:
 # ---------------------------------------------------------------------------
 # Per-namespace SecretStore — the Vault backend the push-cred ExternalSecret
 # reads. global.endpoints.vault.url / global.vaultKubernetesAuthPath
-# (installation/profile.yaml) point it at the master's Vault over this
+# (clusters/active/<fqdn>.yaml) point it at the master's Vault over this
 # cluster's own auth mount; the KV mount is the shared global.vaultKvMount.
 # vaultUrl falls back to global.endpoints.vault.url — no per-env override needed
 # (dbgate/mongodb pattern).

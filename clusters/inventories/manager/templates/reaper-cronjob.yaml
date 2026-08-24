@@ -129,7 +129,7 @@ spec:
                 # the reaper goes through the GitHub API, not by clone.
                 #
                 # READ OFF global.catalogUrl, WHICH IS THE KEY THE INSTALLATION ACTUALLY WRITES.
-                # installation/profile.yaml carries the catalog as `catalogUrl`, the clone address,
+                # clusters/active/<fqdn>.yaml carries the catalog as `catalogUrl`, the clone address,
                 # and clusters/inventories/consumer-build and clusters/slaves/slave read it under
                 # that name. This line read `global.catalogRepo`, which no file of this repository
                 # and no template of the deployment catalogue writes — so the `required` behind it
@@ -138,7 +138,7 @@ spec:
                 # wants is trimmed off the address here rather than carried a second time, because
                 # one installation naming its catalog twice is two spellings that can disagree.
                 - name: CATALOG_REPO
-                  value: {{ .Values.github.deployRepo | default (required "manager: global.catalogUrl is required (installation/profile.yaml, rendered per install branch from the cluster map's catalog-repo)" .Values.global.catalogUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
+                  value: {{ .Values.github.deployRepo | default (required "manager: global.catalogUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map's catalog-repo)" .Values.global.catalogUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
                 - name: CATALOG_WRITE_PAT
                   valueFrom:
                     secretKeyRef:
@@ -155,12 +155,12 @@ spec:
                 #
                 # MASTER_FQDN carries it because in THIS process it reaches exactly one consumer, the
                 # books-branch resolution: the reaper never seeds a master row. So it is rendered from
-                # global.booksBranch — the role-derived value in installation/profile.yaml, which names the
+                # global.booksBranch — the role-derived value in clusters/active/<fqdn>.yaml, which names the
                 # cluster holding the master role whatever cluster this build plane is. MASTER_SSH_USER
                 # and MASTER_STAGE ride along because the config schema requires the three together
                 # (server/kernel/config.ts refines); the reaper opens no ssh session.
                 - name: MASTER_FQDN
-                  value: {{ required "global.booksBranch must be set (installation/profile.yaml via the $values chain) — the registry reaper cannot say where this installation's registrations stand without it" .Values.global.booksBranch | quote }}
+                  value: {{ required "global.booksBranch must be set (clusters/active/<fqdn>.yaml via the $values chain) — the registry reaper cannot say where this installation's registrations stand without it" .Values.global.booksBranch | quote }}
                 - name: MASTER_SSH_USER
                   value: {{ .Values.master.sshUser | quote }}
                 - name: MASTER_STAGE

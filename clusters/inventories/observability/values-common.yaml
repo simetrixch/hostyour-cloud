@@ -243,7 +243,7 @@ monitoring:
   # alert not already null-routed by the global config (Watchdog / InfoInhibitor
   # / severity=info). With `emails:` omitted, the chart template falls back to
   # .Values.global.alertRecipients, which the branch program renders into
-  # installation/profile.yaml from the operator's alert_recipients ANSWER while the
+  # clusters/active/<fqdn>.yaml from the operator's alert_recipients ANSWER while the
   # install branch is generated — the installation's own mailboxes, since
   # clusters/platform/values-common.yaml is the trunk and a mailbox names one
   # installation. clusters/active/<fqdn>.yaml states the same answer as
@@ -315,7 +315,7 @@ kube-prometheus-stack:
       # global.servicesLocal.observability the way the push Ingresses in
       # Chart.yaml are: it is a kube-prometheus-stack value, not a chart of ours.
       #
-      # NOTHING IN THIS TREE TURNS IT ON. installation/profile.yaml carries global.*
+      # NOTHING IN THIS TREE TURNS IT ON. clusters/active/<fqdn>.yaml carries global.*
       # keys only and the branch program writes no such key, so the profile is
       # not the surface it was once set from. The only place an installation can
       # set it today is its own installation/values/observability.yaml, which the

@@ -31,11 +31,10 @@ at the tag, every declared build whose probe says absent is built.
 THE BUMP IS THE REACH SEARCH: which units consume an image is FOUND, never
 looked up in a list. For each declared image P and the requested stage S the
 bump searches every carrier of the one pin grammar builds[]{name,image,tag} —
-(a) every registration with a chartPath on hostyour-cloud master, read at
-<repoURL>@deploy/<S>:<chartPath>/values-<S>.yaml — a carrier that is not THIS
-unit is reachable only while its repository is public, because the bump holds
-one credential set and it is not per registration (see the class-(a) note in
-the search below), (b) the catalog's
+(a) every registration with a chartPath on THIS INSTALLATION'S books branch of
+hostyour-cloud, read at <repoURL>@deploy/<S>:<chartPath>/values-<S>.yaml under
+THAT registration's OWN credential, which the bump reads out of Vault at run
+time (see the class-(a) note in the search below), (b) the catalog's
 per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded from
 the chart's product default on the trunk the first time and bumped in place
 after, (c) hostyour-cloud master apps/<app>/values-<S>.yaml — and bumps every
@@ -563,6 +562,18 @@ spec:
         volumes:
           - name: bump-scratch
             emptyDir: {}
+          # The Vault credential of the search-and-write step, and of nothing
+          # else: the JWT it presents at the kubernetes-auth login that opens
+          # the per-registration carrier PATs. Vault reads the account and the
+          # namespace out of the reviewed token itself and dials no API server
+          # of ours, so this projection carries the token alone — no cluster CA
+          # and no namespace file, unlike the kubectl one below.
+          - name: vault-token
+            projected:
+              sources:
+                - serviceAccountToken:
+                    path: token
+                    expirationSeconds: 3600
           # The API credential of the argo-sync step, and of nothing else.
           # pipeline-sa carries automountServiceAccountToken: false
           # (templates/serviceaccount.yaml), so no run pod holds a token by
@@ -591,8 +602,6 @@ spec:
             env:
               - name: UNIT
                 value: {{ $unit | quote }}
-              - name: REPO_URL
-                value: {{ $repoURL | quote }}
               - name: CLOUD_URL
                 value: https://github.com/simetrixch/hostyour-cloud.git
               # The branch of hostyour-cloud and of the catalog that carries
@@ -605,19 +614,19 @@ spec:
               # deploys wherever the build plane sits — whose branch carries no
               # registration at all, because the trunk it was cut from carries
               # none and no step of any branch program writes one there. The
-              # branch program writes booksBranch into installation/profile.yaml
+              # branch program writes booksBranch into clusters/active/<fqdn>.yaml
               # from the same role rule that decides global.endpoints.vault.url. Not the trunk either
               # — a registration names one real unit of one installation, and
               # the trunk is what every future installation is cut from.
               - name: BOOKS_BRANCH
-                value: {{ required "consumer-build: global.booksBranch is required (installation/profile.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
+                value: {{ required "consumer-build: global.booksBranch is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
               # The tenant catalog this installation deploys from — one repository
               # per installation, composed once by the branch program into
-              # installation/profile.yaml. Required, never defaulted: a bump that
+              # clusters/active/<fqdn>.yaml. Required, never defaulted: a bump that
               # pushed the tenant pins to a repository picked by this chart would
               # write into somebody else's catalog.
               - name: DEPLOY_URL
-                value: {{ required "consumer-build: global.catalogUrl is required (installation/profile.yaml, rendered per install branch from the cluster map's catalog-repo — the repository holding this installation's tenant charts)" .Values.global.catalogUrl | quote }}
+                value: {{ required "consumer-build: global.catalogUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map's catalog-repo — the repository holding this installation's tenant charts)" .Values.global.catalogUrl | quote }}
               # toJson for the same newline-preserving reason as in gate-stage.
               - name: CHANNEL_STAGES
                 value: {{ $channelTable | toJson }}
@@ -635,6 +644,45 @@ spec:
                 value: /bump/hits
               - name: HOME
                 value: /tmp
+              # ── the bump's OWN Vault identity ──────────────────────────────
+              # The class-(a) search clones and pushes one OTHER unit's
+              # repository per registration, and which units are registered
+              # changes without this chart being re-rendered — so their
+              # credentials cannot be delivered by an ExternalSecret the way the
+              # three fixed ones are (templates/externalsecret-bump.yaml). This
+              # task logs in to Vault itself, under a role of its own, and reads
+              # each carrier's PAT at the moment it needs it.
+              #
+              # THE ROLE IS `build-bump` AND IT IS NOT `build-eso`. build-eso is
+              # the per-namespace ExternalSecrets identity, and its policy
+              # templates every path on the ONE unit the account is annotated
+              # with (templates/secretstore.yaml) — that templating is what stops
+              # a unit's secret reader from reaching a sibling's, and widening it
+              # would take the isolation away from every ExternalSecret in the
+              # namespace to serve one step. build-bump is bound to pipeline-sa
+              # instead, and grants read on secret/data/build/+/repo-pat and
+              # nothing else. Both are seeded with the cluster
+              # (digita-deploy ansiwise/programs/deploy-gitops.yaml).
+              #
+              # WHAT THIS COSTS, stated rather than implied: an account that can
+              # read every registered unit's repo PAT now exists in every build
+              # namespace. It is reachable only from a pod that HOLDS a
+              # pipeline-sa token, and the only pod of this pipeline that holds
+              # one is this task's — pipeline-sa carries
+              # automountServiceAccountToken: false and the buildah task that
+              # runs the unit's own code mounts no token at all. The blast radius
+              # is that pod, and it is the price of a class-(a) search that
+              # actually covers what it says it covers.
+              - name: VAULT_ADDR
+                value: {{ required "consumer-build: global.endpoints.vault.url is required (clusters/active/<fqdn>.yaml — the bump reads each registration's carrier PAT from it, and a search that cannot open a foreign carrier covers less than it reports)" .Values.global.endpoints.vault.url | quote }}
+              - name: VAULT_AUTH_MOUNT
+                value: {{ required "consumer-build: global.vaultKubernetesAuthPath is required (clusters/active/<fqdn>.yaml — every cluster logs in at its own named kubernetes mount)" .Values.global.vaultKubernetesAuthPath | quote }}
+              - name: VAULT_KV_MOUNT
+                value: {{ required "consumer-build: global.vaultKvMount is required (clusters/platform/values-common.yaml via the $values chain)" .Values.global.vaultKvMount | quote }}
+              - name: VAULT_ROLE
+                value: build-bump
+              - name: VAULT_TOKEN_FILE
+                value: /var/run/secrets/vault/token
             envFrom:
               # The path-qualified git-write records (templates/
               # externalsecret-bump.yaml) — the ONLY task that may hold them.
@@ -642,13 +690,15 @@ spec:
                   name: bump-git-https
             volumeMounts:
               - { name: bump-scratch, mountPath: /bump }
+              - { name: vault-token, mountPath: /var/run/secrets/vault, readOnly: true }
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
               # ── the §9.3 search: derive the reach, bump every hit ──────────
-              # Inputs (env): UNIT REPO_URL CLOUD_URL BOOKS_BRANCH DEPLOY_URL
+              # Inputs (env): UNIT CLOUD_URL BOOKS_BRANCH DEPLOY_URL
               # CHANNEL_STAGES SRC STAGE RELEASE_TAG IMAGE_TAG CLUSTER_NAME
-              # HITS_FILE [GITCREDENTIALS].
+              # HITS_FILE VAULT_ADDR VAULT_AUTH_MOUNT VAULT_KV_MOUNT VAULT_ROLE
+              # VAULT_TOKEN_FILE [GITCREDENTIALS].
 
               # Ceiling, re-checked at the point that writes: the channel from
               # the tag must admit the stage, or NOTHING is written.
@@ -664,10 +714,18 @@ spec:
               # All carriers live on the same git host, so the credential
               # records are PATH-qualified and git must select by repo path.
               git config --global credential.useHttpPath true
+              # The store is armed UNCONDITIONALLY, because the three records
+              # ESO delivers are no longer the only ones that reach it: the
+              # class-(a) loop appends one per private registration as it goes.
+              # An arm that hung off GITCREDENTIALS would leave those appended
+              # records in a file no helper reads, and every foreign carrier
+              # would then be refused as if it had no credential at all.
+              CREDENTIALS_FILE=/tmp/git-credentials
+              : > "${CREDENTIALS_FILE}"
+              chmod 600 "${CREDENTIALS_FILE}"
+              git config --global credential.helper "store --file=${CREDENTIALS_FILE}"
               if [ -n "${GITCREDENTIALS:-}" ]; then
-                printf '%s\n' "${GITCREDENTIALS}" > /tmp/git-credentials
-                chmod 600 /tmp/git-credentials
-                git config --global credential.helper "store --file=/tmp/git-credentials"
+                printf '%s\n' "${GITCREDENTIALS}" > "${CREDENTIALS_FILE}"
               fi
 
               # The declared images of this release — the manifest in the
@@ -810,35 +868,127 @@ spec:
               git clone -q --depth 1 --branch "${BOOKS_BRANCH}" "${CLOUD_URL}" "${WORK}/books" \
                 || { echo "bump: FAIL — cannot read ${CLOUD_URL}@${BOOKS_BRANCH}, this installation's books; the search over the consumer registrations is impossible" >&2; exit 1; }
 
+              # ── the carrier credentials: ONE PER REGISTRATION ──────────────
+              # The Controller's own copy of this search opens each carrier
+              # under THAT registration's credential and under no other
+              # (hostyour-manager server/domains/registry-cleanup/search.ts,
+              # readUnitChart: cloneAtRef with entry.repoCredentialId when the
+              # registration carries one, unauthenticated when it does not).
+              # This is the same shape read from the other end: the Controller
+              # holds a sealed credential store, this pod holds a Vault login,
+              # and both resolve to the ONE PAT per unit that onboarding seeds
+              # at secret/build/<unit>/repo-pat (hostyour-manager
+              # server/domains/onboarding/onboard-seed-repo-pat.ts) — the same
+              # entry templates/externalsecret-bump.yaml reads for THIS unit.
+              #
+              # It cannot be an ExternalSecret like the three fixed records:
+              # WHICH units are registered changes with every onboarding, and
+              # this chart is not re-rendered when it does. A render-time list
+              # would be stale exactly when a new consumer appears, which is the
+              # case that matters.
+              #
+              # ONE login, taken on first need and given back when the loop is
+              # done — login, use, revoke-self, the close the Controller's own
+              # Vault client makes after every call (adapters/vault/
+              # vault-self-seeder.ts). A release on an installation whose only
+              # chart-carrying registration is this unit's own public repo never
+              # dials Vault at all.
+              VAULT_CLIENT_TOKEN=""
+              vault_login() {
+                local req body code rc
+                [ -z "${VAULT_CLIENT_TOKEN}" ] || return 0
+                req="$(mktemp)"
+                body="$(mktemp)"
+                # The JWT goes in through a FILE, never on the command line:
+                # /proc/<pid>/cmdline is readable by every process in this pod.
+                printf '{"role":"%s","jwt":"%s"}' "${VAULT_ROLE}" "$(cat "${VAULT_TOKEN_FILE}")" > "${req}"
+                chmod 600 "${req}"
+                set +e
+                code="$(curl -sS --connect-timeout 10 --max-time 60 -o "${body}" -w '%{http_code}' \
+                        -X POST -H 'content-type: application/json' --data-binary "@${req}" \
+                        "${VAULT_ADDR}/v1/auth/${VAULT_AUTH_MOUNT}/login")"
+                rc=$?
+                set -e
+                rm -f "${req}"
+                if [ "${rc}" != "0" ]; then
+                  echo "bump: FAIL — ${VAULT_ADDR}: curl exited ${rc} on the kubernetes-auth login; the carrier credentials cannot be read, so the class-(a) search cannot be made" >&2
+                  return 1
+                fi
+                if [ "${code}" != "200" ]; then
+                  echo "bump: FAIL — Vault answered ${code} to a login as role ${VAULT_ROLE} at auth/${VAULT_AUTH_MOUNT}. That role is seeded with the cluster (digita-deploy ansiwise/programs/deploy-gitops.yaml) and binds the ServiceAccount pipeline-sa in a namespace labelled hostyour.cloud/build; a 403 here means the role, the label or the account does not match this pod." >&2
+                  return 1
+                fi
+                VAULT_CLIENT_TOKEN="$(yq -p=json -o=y '.auth.client_token // ""' "${body}")"
+                rm -f "${body}"
+                if [ -z "${VAULT_CLIENT_TOKEN}" ]; then
+                  echo "bump: FAIL — the Vault login answered 200 and carried no auth.client_token; nothing can be read with it" >&2
+                  return 1
+                fi
+              }
+
+              # carrier_credential <unit> <repoURL> — put THAT unit's own PAT,
+              # path-qualified to THAT repository, in front of git for the clone
+              # and the push below. Fail-closed at every arm: a registration
+              # states this unit deploys at this stage, so a credential that
+              # cannot be read is a search that cannot be made, never one that
+              # found nothing.
+              carrier_credential() {
+                local cname="$1" crepo="$2" body code rc pat
+                vault_login
+                body="$(mktemp)"
+                set +e
+                code="$(curl -sS --connect-timeout 10 --max-time 60 -o "${body}" -w '%{http_code}' \
+                        -H "x-vault-token: ${VAULT_CLIENT_TOKEN}" \
+                        "${VAULT_ADDR}/v1/${VAULT_KV_MOUNT}/data/build/${cname}/repo-pat")"
+                rc=$?
+                set -e
+                if [ "${rc}" != "0" ]; then
+                  echo "bump: FAIL — ${VAULT_ADDR}: curl exited ${rc} reading ${VAULT_KV_MOUNT}/build/${cname}/repo-pat" >&2
+                  return 1
+                fi
+                if [ "${code}" != "200" ]; then
+                  echo "bump: FAIL — Vault answered ${code} for ${VAULT_KV_MOUNT}/build/${cname}/repo-pat. The registration of ${cname} names a repo credential, so that entry is what onboarding seeded for it; 404 means it is gone and 403 means role ${VAULT_ROLE} may not read it." >&2
+                  return 1
+                fi
+                pat="$(yq -p=json -o=y '.data.data.pat // ""' "${body}")"
+                rm -f "${body}"
+                if [ -z "${pat}" ]; then
+                  echo "bump: FAIL — ${VAULT_KV_MOUNT}/build/${cname}/repo-pat carries no property 'pat'; that is the one property every reader of this entry takes" >&2
+                  return 1
+                fi
+                printf 'https://x-access-token:%s@%s\n' "${pat}" "${crepo#https://}" >> "${CREDENTIALS_FILE}"
+              }
+
               # ── class (a): every registration with a chartPath ─────────────
-              # ONE CREDENTIAL SET REACHES THIS LOOP AND IT IS NOT PER
-              # REGISTRATION. templates/externalsecret-bump.yaml writes three
-              # path-qualified records — this unit's PAT, the catalog's and
-              # hostyour-cloud's — and credential.useHttpPath is on, so git
-              # matches by full repo path and finds nothing for any OTHER
-              # unit's repository. A second private consumer on the same
-              # installation therefore fails every unit's release here, at the
-              # clone, and the failure below says so rather than blaming the
-              # carrier's branch. The Controller's own copy of this search
-              # (hostyour-manager server/domains/registry-cleanup/search.ts)
-              # clones each carrier under that registration's own
-              # credentialId; giving this task the same reach means handing one
-              # unit's build namespace the PAT of every registered unit, which
-              # is a decision about blast radius and not a defect to patch here.
+              # Each carrier is cloned and pushed under ITS OWN credential, so a
+              # foreign PRIVATE repository is inside this search instead of
+              # refusing it. What the three ESO records cover is the set of
+              # repositories every run writes — this unit's own, the catalog's
+              # and hostyour-cloud's; a carrier's record is added here, for the
+              # one registration being read.
               for reg in "${WORK}"/books/registrations/*/"${STAGE}.yaml"; do
                 [ -f "${reg}" ] || continue
                 rname="$(yq eval '.name' "${reg}")"
                 rrepo="$(yq eval '.repoURL' "${reg}")"
                 rchart="$(yq eval '.chartPath // ""' "${reg}")"
                 rcluster="$(yq eval '.cluster // ""' "${reg}")"
+                # The registration's own answer to "is this repository private":
+                # ConsumerRegistrationSchema (hostyour-manager shared/consumer.ts)
+                # carries repoCredentialId for a private repo and omits it for a
+                # public one, and the Controller's search branches on exactly
+                # this field.
+                rcred="$(yq eval '.repoCredentialId // ""' "${reg}")"
                 [ -n "${rchart}" ] || continue
+                [ -z "${rcred}" ] || carrier_credential "${rname}" "${rrepo}"
                 dest="${WORK}/carrier-${rname}"
                 # Fail-closed: a registered stage whose delivery branch cannot
                 # be read is a search we cannot complete — not completed-ok.
                 git clone -q --depth 1 --branch "deploy/${STAGE}" "${rrepo}" "${dest}" \
                   || { echo "bump: FAIL — cannot read ${rrepo}@deploy/${STAGE} (registration ${rname}); the search over its pins is impossible." >&2
-                       if [ "${rname}" != "${UNIT}" ]; then
-                         echo "  This task holds a credential for ${REPO_URL}, ${DEPLOY_URL} and ${CLOUD_URL} and for nothing else, so a PRIVATE carrier that is not ${UNIT} is refused here before its branch is read — see the note above this loop." >&2
+                       if [ -n "${rcred}" ]; then
+                         echo "  This run presented ${rname}'s OWN PAT, read from ${VAULT_KV_MOUNT}/build/${rname}/repo-pat, so what was refused is the branch or that PAT — not the choice of credential." >&2
+                       else
+                         echo "  ${rname}'s registration carries no repoCredentialId, so it was cloned unauthenticated; a repository that has become private since it was registered is refused here." >&2
                        fi
                        exit 1; }
                 vf="${dest}/${rchart}/values-${STAGE}.yaml"
@@ -850,6 +1000,17 @@ spec:
                   echo "consumer ${rname} ${rcluster}" >> "${HITS_FILE}"
                 fi
               done
+
+              # The carriers are read and written; the login has no further use.
+              # Handing it back beats letting it stand for its whole TTL, and it
+              # is the same close the Controller makes after every Vault call.
+              if [ -n "${VAULT_CLIENT_TOKEN}" ]; then
+                curl -sS --connect-timeout 10 --max-time 60 -o /dev/null \
+                  -X POST -H "x-vault-token: ${VAULT_CLIENT_TOKEN}" \
+                  "${VAULT_ADDR}/v1/auth/token/revoke-self" \
+                  || echo "bump: the Vault token could not be revoked and stands until its own TTL expires; every pin of this release is unaffected" >&2
+                VAULT_CLIENT_TOKEN=""
+              fi
 
               # ── class (b): this installation's tenant pins ─────────────────
               # The charts are read off the catalog's trunk — they are product,
@@ -1119,9 +1280,9 @@ spec:
               # the cluster holding the master role. Equal exactly when this
               # build plane IS that cluster.
               - name: DOMAIN
-                value: {{ required "consumer-build: global.domain is required (installation/profile.yaml, the fqdn of the cluster this build plane runs on — the argo-sync cannot say whether the Applications are on this API server without it)" .Values.global.domain | quote }}
+                value: {{ required "consumer-build: global.domain is required (clusters/active/<fqdn>.yaml, the fqdn of the cluster this build plane runs on — the argo-sync cannot say whether the Applications are on this API server without it)" .Values.global.domain | quote }}
               - name: BOOKS_BRANCH
-                value: {{ required "consumer-build: global.booksBranch is required (installation/profile.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
+                value: {{ required "consumer-build: global.booksBranch is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
               - name: HITS_FILE
                 value: /bump/hits
             volumeMounts:
