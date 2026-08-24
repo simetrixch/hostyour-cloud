@@ -338,7 +338,7 @@ bootstrap:
         dependency: argo-cd
       - kind: yaml_value
         tree: deploy
-        file: ansiwise/programs/deploy-gitops.yaml
+        file: ansiwise/programs/deploy-platform-services.yaml
         key: chart_version
         anchor: 'release: argocd'
   vault:
@@ -350,7 +350,7 @@ bootstrap:
     stamps:
       - kind: yaml_value
         tree: deploy
-        file: ansiwise/programs/deploy-gitops.yaml
+        file: ansiwise/programs/deploy-platform-services.yaml
         key: chart_version
         anchor: 'release: vault'
   # The release is named `idp` in the program, the chart is authentik
@@ -364,7 +364,7 @@ bootstrap:
     stamps:
       - kind: yaml_value
         tree: deploy
-        file: ansiwise/programs/deploy-gitops.yaml
+        file: ansiwise/programs/deploy-platform-services.yaml
         key: chart_version
         anchor: 'release: idp'
   # The cluster UI the bootstrap installs beside the reconciler. Its pin stood
@@ -379,7 +379,7 @@ bootstrap:
     stamps:
       - kind: yaml_value
         tree: deploy
-        file: ansiwise/programs/deploy-gitops.yaml
+        file: ansiwise/programs/deploy-platform-services.yaml
         key: chart_version
         anchor: 'release: headlamp'
   # 1.35, NOT the newest channel. Owner, 2026-07-29: 1.36 broke on Ubuntu 26.04
