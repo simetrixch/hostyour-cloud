@@ -5,7 +5,7 @@ description: |
   MongoDB — the OFFICIAL `mongo` image on a StatefulSet (no Bitnami, no operator,
   no clusters/charts/deployment). Replica set `rs0` for transactions, SCRAM auth; a
   NetworkPolicy (templates/networkpolicy.yaml) admits only approved DB consumers
-  (platform namespaces by name + add-ons by the dbConsumerLabel) and
+  (platform namespaces by name + add-ons by global.consumerLabels.mongodb) and
   same-namespace pods. THE DATABASE IS CLUSTER-INTERNAL: no Ingress, no
   IngressRouteTCP, and no rule admitting the ingress controller — :27017 answers
   inside this cluster and nowhere else. What browses it (clusters/inventories/dbgate) carries the

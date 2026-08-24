@@ -17,9 +17,10 @@ annotations: {}
 # the app's release namespace, which is the intended behaviour.
 name: vault-backend
 
-# Vault provider configuration. `vaultUrl` MUST be provided by the platform
-# globals / app values:
-#   https://vault.<domain>
+# Vault provider configuration. Left empty here, the template falls back to
+# global.endpoints.vault.url (installation/profile.yaml, via the $values chain);
+# one of the two MUST carry an address:
+#   https://vault.<master>
 vaultUrl: ""
 vaultNamespace: vault
 kvVersion: v2

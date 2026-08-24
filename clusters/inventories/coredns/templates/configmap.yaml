@@ -48,7 +48,7 @@ data:
         {{- /* Vault hairpin — emitted ONLY where Vault runs locally (a cluster
              with the master part, global.servicesLocal.vault). In-cluster
              https:// lookups of this cluster's own Vault hostname (every ESO
-             SecretStore dials global.vaultUrl) bounce through Traefik instead of
+             SecretStore dials global.endpoints.vault.url) bounce through Traefik instead of
              resolving to the host's public IPv4 and NAT-hairpinning. A pure
              slave dials the MASTER's vault hostname, which this rewrite never
              matches.

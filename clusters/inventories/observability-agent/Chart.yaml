@@ -30,7 +30,7 @@ description: |
 
   Placed by clusters/inventories/observability-agent/app.yaml — runsOn: slave, so the app generator
   creates it exactly where the role lacks the master part. Catalog entry in
-  clusters/argocd/apps/applicationset.yaml (project observability, wave 30),
+  clusters/argocd/apps/platform-apps-appset.yaml (project observability, wave 30),
   deployed into the `observability` namespace — the observability plane on this
   cluster; mutually exclusive with the full clusters/inventories/observability (D2), so they
   never coexist and the observability AppProject's existing destination /
@@ -69,7 +69,7 @@ dependencies:
   - name: external-secret
     version: 1.0.0
     repository: file://../../charts/external-secret
-    alias: observability-agent-push-secret
+    alias: externalsecret-agent-push
 
   # Shared named templates (common.labels etc.) used by the library charts above.
   - name: common

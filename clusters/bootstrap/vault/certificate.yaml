@@ -29,7 +29,7 @@ metadata:
 spec:
   secretName: platform-tls
   issuerRef:
-    name: letsencrypt-prod
+    name: platform-acme
     kind: ClusterIssuer
   dnsNames:
   - argo.example.invalid

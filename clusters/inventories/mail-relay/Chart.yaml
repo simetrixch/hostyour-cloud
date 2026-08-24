@@ -1,5 +1,5 @@
 apiVersion: v2
-name: postfix
+name: mail-relay
 version: 1.0.0
 description: Send-only SMTP for cluster-internal email delivery
 type: application

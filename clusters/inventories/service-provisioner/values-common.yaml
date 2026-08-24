@@ -1,6 +1,7 @@
 # service-provisioner — env-agnostic defaults. Per-env values-{dev,test,prod}.yaml
-# set the mongo + redis hosts (their env-suffixed Service DNS). global.env +
-# global.dbConsumerLabel come from platform/values-<env>.yaml. Each backend's
+# set the mongo + redis hosts (their env-suffixed Service DNS). global.env comes
+# from clusters/platform/values-<env>.yaml, global.consumerLabels.{mongodb,redis}
+# from clusters/platform/values-common.yaml. Each backend's
 # admin credential is read at runtime from that backend's own Secret via the
 # controller's cluster-wide secret-read RBAC — no ESO/Vault wiring here.
 #

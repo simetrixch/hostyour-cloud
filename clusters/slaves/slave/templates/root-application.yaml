@@ -5,7 +5,7 @@ This Application CR lands in ns <name>. The MASTER's ArgoCD (which deploys
 this chart) only watches Applications in ns `argocd`, so for the master it is
 an inert managed resource; the slave's own ArgoCD controller watches its OWN
 namespace, picks it up, and syncs the SLAVE branch's clusters/argocd/apps
-directory (projects.yaml + applicationset.yaml + consumers-appset.yaml +
+directory (projects.yaml + platform-apps-appset.yaml + consumers-appset.yaml +
 slaves-appset.yaml, all stamped on the slave branch to ns <name> / destination
 name:<name>) into ns <name>. From there the slave branch drives everything —
 the exact per-cluster mechanism clusters/argocd/root-app.yaml implements on a

@@ -4,7 +4,7 @@
 # (app.yaml says runsOn: master), because the coordinator is provided once, by
 # the same cluster that provides Vault — every other cluster's hosts log in to it.
 #
-# Its address is global.tailnetUrl (installation/profile.yaml, written by
+# Its address is global.endpoints.tailnet.url (installation/profile.yaml, written by
 # the branch program from the cluster map). The Ingress host below and server_url in
 # templates/configmap-config.yaml both derive from that one value: headscale
 # composes its login and registration URLs from server_url, so a client sent
@@ -122,7 +122,7 @@ pvc:
 # middleware — headscale authenticates every client itself, by join credential
 # and node key.
 #
-# The host is the host half of global.tailnetUrl, not a second composition of
+# The host is the host half of global.endpoints.tailnet.url, not a second composition of
 # the same name: the Ingress must serve exactly the name the clients dial.
 # Service name and TLS secret name use Helm tpl to pull .Values.global.env at
 # render time — see clusters/charts/ingress/templates/ingress.yaml.
@@ -132,7 +132,7 @@ ingress:
     className: public
     annotations:
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    host: '{{ required "global.tailnetUrl must be set (installation/profile.yaml, rendered per install branch from the cluster map)" .Values.global.tailnetUrl | trimPrefix "https://" }}'
+    host: '{{ required "global.endpoints.tailnet.url must be set (installation/profile.yaml, rendered per install branch from the cluster map)" .Values.global.endpoints.tailnet.url | trimPrefix "https://" }}'
     paths:
       - path: /
         pathType: Prefix

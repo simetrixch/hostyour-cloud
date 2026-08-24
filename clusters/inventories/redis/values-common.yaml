@@ -101,7 +101,7 @@ redis:
 #
 # What reads this cache stands in the same cluster. clusters/inventories/dbgate carries
 # `runsOn: slave`, exactly as clusters/inventories/redis/app.yaml does, so the app generator
-# (clusters/argocd/apps/applicationset.yaml) places both on the same cluster and dbgate
+# (clusters/argocd/apps/platform-apps-appset.yaml) places both on the same cluster and dbgate
 # dials redis-<env>.redis.svc.cluster.local:6379 as the `default` user.
 #
 # WHAT REACHING THIS PORT IS WORTH, now that the args above carry --requirepass:
@@ -177,7 +177,7 @@ prometheus-redis-exporter:
       memory: 256Mi
 
 # Per-namespace SecretStore (the Vault backend the ExternalSecret below reads).
-# vaultUrl falls back to global.vaultUrl, which the branch program writes into
+# vaultUrl falls back to global.endpoints.vault.url, which the branch program writes into
 # installation/profile.yaml as https://vault.<the cluster holding the master role> — so
 # it names one installation and cannot be stated here. Same shape clusters/inventories/mongodb has.
 secret-store: {}

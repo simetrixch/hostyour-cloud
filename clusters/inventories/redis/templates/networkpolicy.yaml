@@ -3,8 +3,8 @@
 # longer the grant it was — but a password is a second boundary and never a
 # replacement for the first, so THIS POLICY IS UNCHANGED and stays as narrow as it
 # was written: it must not admit the blanket db-consumer label every unit namespace
-# carries. Admitted: platform namespaces by name (global.dbConsumerNamespaces),
-# namespaces carrying the REDIS-specific global.redisConsumerLabel=true — stamped
+# carries. Admitted: platform namespaces by name (global.dataConsumerNamespaces),
+# namespaces carrying the REDIS-specific global.consumerLabels.redis=true — stamped
 # where the registration claims `redis` in services[] (consumers-appset
 # templatePatch), where a tenant member's own registration carries the label, and on
 # the service-provisioner's own namespace, which has to reach the port to write each
@@ -31,12 +31,12 @@ spec:
     - Ingress
   ingress:
     - from:
-        {{- range .Values.global.dbConsumerNamespaces }}
+        {{- range .Values.global.dataConsumerNamespaces }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ . | quote }}
         {{- end }}
-        {{- with .Values.global.redisConsumerLabel }}
+        {{- with .Values.global.consumerLabels.redis }}
         - namespaceSelector:
             matchLabels:
               {{ . }}: "true"

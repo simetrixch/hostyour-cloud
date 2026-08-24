@@ -8,7 +8,7 @@
 # into the consumer's namespace does NOT isolate it by itself — this policy does.
 #
 # HOW IT DIFFERS FROM clusters/inventories/mongodb + clusters/inventories/redis, DELIBERATELY. Those admit their
-# clients by `global.dbConsumerLabel` (platform/db-consumer=true) because they
+# clients by a `global.consumerLabels.*` label (platform/db-consumer=true) because they
 # are SHARED databases that many namespaces legitimately reach. This one must NOT
 # use that label: the consumers ApplicationSet stamps platform/db-consumer=true on
 # EVERY consumer namespace (managedNamespaceMetadata), so admitting by it would

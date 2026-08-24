@@ -1,4 +1,4 @@
 # PROD — no per-env overrides: the coordinator's address comes from
-# global.tailnetUrl and its stage-scoped resource names from global.env, both
+# global.endpoints.tailnet.url and its stage-scoped resource names from global.env, both
 # tpl'd in values-common.yaml. The file stays because every generated
 # Application names values-<stage>.yaml in its valueFiles chain unconditionally.

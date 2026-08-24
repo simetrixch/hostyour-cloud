@@ -525,7 +525,7 @@ spec:
               # registration at all, because the trunk it was cut from carries
               # none and no step of any branch program writes one there. The
               # branch program writes booksBranch into installation/profile.yaml
-              # from the same role rule that decides vaultUrl. Not the trunk either
+              # from the same role rule that decides global.endpoints.vault.url. Not the trunk either
               # — a registration names one real unit of one installation, and
               # the trunk is what every future installation is cut from.
               - name: BOOKS_BRANCH

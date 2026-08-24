@@ -47,12 +47,21 @@ global:
   # need invasive wrapper templates to fully dedupe. See plan note on Step 3.
   storageClass: microk8s-hostpath
 
-  # cert-manager ClusterIssuer used by every public Ingress for LE certs.
-  # MUST match the name created by the base layer (CLUSTER_ISSUER_NAME in
-  # configs/config.<env>, defaults to `letsencrypt-prod`). Mismatch causes
-  # every GitOps-deployed Certificate to sit in "ClusterIssuer not found"
-  # Pending forever.
-  clusterIssuer: letsencrypt-prod
+  # The cert-manager ClusterIssuer every public Ingress and every Certificate of
+  # this platform is issued by, written as the name that object carries.
+  #
+  # WHAT CREATES IT: the cluster-issuer rows of deploy-cluster (digita-deploy
+  # ansiwise/programs/deploy-cluster.yaml), which write this same name. No key of
+  # configs/config.<stage> holds it and nothing composes it — the two places are
+  # held together by being spelled alike, and a name here that the cluster does
+  # not carry leaves every GitOps-deployed Certificate Pending forever on
+  # "ClusterIssuer not found".
+  #
+  # IT SAYS NOTHING ABOUT WHICH AUTHORITY. That is the `letsencrypt_server`
+  # answer of that same program, and it varies per installation while this name
+  # may not: every manifest that asks for a certificate references it by this
+  # exact string.
+  clusterIssuer: platform-acme
 
   # The ONE Vault KV-v2 mount every SecretStore reads. Word-identical on every
   # cluster and every role — what differs per cluster is only the Kubernetes
@@ -78,73 +87,97 @@ global:
   # dropping its alerts in silence.
   alertRecipients: []
 
-  # DB NetworkPolicy consumers — who may reach the in-house data services, see
-  # apps/{mongodb,postgresql,redis}/templates/networkpolicy.yaml. Platform
-  # components are admitted by NAME (dbConsumerNamespaces); unit namespaces
-  # admit themselves by LABEL. The name list carries one entry, `dbgate`: the
-  # database browser runs on the cluster its databases do (clusters/inventories/dbgate/app.yaml
-  # carries the `runsOn: slave` clusters/inventories/mongodb and clusters/inventories/redis carry), so it is
-  # admitted by name like any other platform namespace and needs no route out of
-  # the cluster to reach either port. Every one of the three services
-  # requires a credential now that clusters/inventories/redis boots with --requirepass, so the two
-  # labels no longer differ in what reach MEANS — they differ in HOW WIDELY reach is
-  # handed out, and that difference is deliberate:
-  #   dbConsumerLabel    — mongodb + postgresql, stamped on EVERY unit namespace.
-  #                        A provisioned per-unit credential still gates, so a
-  #                        namespace that never claimed one gains nothing by
-  #                        carrying it.
-  #   redisConsumerLabel — redis, stamped ONLY where the registration claims
-  #                        `redis` in services[] (consumers-appset templatePatch),
-  #                        on the tenant member whose own registration carries the
-  #                        label (the tenant appset stamps a member's
-  #                        namespaceLabels and names none itself), and on
-  #                        clusters/inventories/service-provisioner's own namespace, which has to
-  #                        reach :6379 to write each claim's ACL user. It stays
-  #                        narrower than dbConsumerLabel on purpose: the password
-  #                        is a SECOND boundary, never a replacement for the
-  #                        first, so the policy is not widened because one now
-  #                        exists.
-  # Same-namespace pods are always allowed by the template.
   # ── Shared-service endpoints — the ONLY cross-cluster surface ──────────────
-  # Where THIS cluster consumes a shared service. Empty = self-hosted default
-  # (composed from env+domain), so a plain install renders exactly today's
-  # output. Stamped per install branch when this cluster PULLS from a central
-  # cluster. Read via the `common.registryHost` helper (clusters/charts/common).
+  # Every address at which THIS cluster reaches a service that ONE cluster of
+  # the installation runs. One sub-map per service, one field name per address.
+  # Empty on the trunk; the branch program writes each key into
+  # installation/profile.yaml, which loads LAST in every app's valueFiles chain,
+  # from the cluster map's own predicates.
   endpoints:
     registry:
-      # Empty -> zot.<domain> (this cluster's own registry). On a
-      # NON-build cluster set to the build cluster's host, e.g.
-      # zot.m1.example.com.
+      # Empty -> zot.<domain> (this cluster's own registry), composed by the
+      # `common.registryHost` helper (clusters/charts/common). On a NON-build
+      # cluster this is the build cluster's host, e.g. zot.m1.example.com.
       host: ""
-    post:
-      # Where units on this cluster reach the installation's shared mail service.
-      # Empty ONLY on the trunk: the map's post-url is a mandatory field
+    mail:
+      # Where units on this cluster reach the installation's shared mail
+      # service. Empty ONLY on the trunk: the post_url answer is mandatory
       # (an install is refused without it, because every tenant's auth and
       # report chart hard-requires this value), and the branch program writes
-      # it into installation/profile.yaml on every branch.
+      # it on every branch.
       url: ""
+    vault:
+      # The ONE Vault of this installation, as vault.<master>: it stands on the
+      # cluster carrying the master part and every cluster's SecretStores dial
+      # it over that public address. What differs per cluster is only the
+      # Kubernetes auth mount (global.vaultKubernetesAuthPath). Empty ONLY on
+      # the trunk — every reader wraps it in `required`, so a cluster that was
+      # given no address is stopped rather than dialling nothing.
+      url: ""
+    tailnet:
+      # The coordination server of the private tailnet every host of this
+      # installation logs in to, as tale.<master> — one coordinator per
+      # installation, on the same cluster as Vault, reached over a public
+      # Ingress because a host that has not joined yet has no other path to it.
+      # Empty ONLY on the trunk.
+      url: ""
+
   # Whether a shared service is deployed LOCALLY on this cluster — gates the
   # CoreDNS hairpin rewrites (a chart can't see the deploy toggle). All false
   # on the trunk; the branch program writes each key from the cluster map's
   # predicates: registry follows the build plane (the ONE cluster running
-  # clusters/inventories/registry); vault follows the master part (the base layer stands it up
-  # there).
+  # clusters/inventories/registry); vault and observability follow the master
+  # part (the base layer stands Vault up there, and the master is the cluster
+  # its slaves push to).
   servicesLocal:
     registry: false
     vault: false
-    # observabilityCentral — is THIS cluster the central observability
-    # receiver (the "master")? Default false on the trunk.
-    # The branch program flips it true wherever the role has the master part (a
-    # master receives its slaves' push). Gates clusters/inventories/observability's slave receive-path: the prom-push. /
+    # Gates clusters/inventories/observability's receive path: the prom-push. /
     # loki-push. Ingresses + the basic-auth Middleware + its htpasswd
-    # ExternalSecret (clusters/inventories/observability Chart.yaml `condition:`), and the master
-    # profile additionally enables Prometheus' remote_write receiver (D4b/I6).
-    observabilityCentral: false
+    # ExternalSecret (clusters/inventories/observability Chart.yaml
+    # `condition:`), and the master profile additionally enables Prometheus'
+    # remote_write receiver (D4b/I6).
+    observability: false
 
-  dbConsumerNamespaces:
+  # Data-service NetworkPolicy consumers — who may reach the in-house data
+  # services, see clusters/inventories/{mongodb,redis}/templates/networkpolicy.yaml.
+  # Platform components are admitted by NAME (dataConsumerNamespaces); unit
+  # namespaces admit themselves by LABEL (consumerLabels). Same-namespace pods
+  # are always allowed by the template.
+  #
+  # The name list carries one entry, `dbgate`: the database browser runs on the
+  # cluster its databases do (clusters/inventories/dbgate/app.yaml carries the
+  # `runsOn: slave` that clusters/inventories/mongodb and
+  # clusters/inventories/redis carry), so it is admitted by name like any other
+  # platform namespace and needs no route out of the cluster to reach either
+  # port.
+  #
+  # consumerLabels is keyed by the SERVICE the label opens, and the two labels
+  # are handed out to different widths on purpose. Both services require a
+  # credential now that clusters/inventories/redis boots with --requirepass, so
+  # they no longer differ in what reach MEANS:
+  #   mongodb — stamped on EVERY unit namespace. A provisioned per-unit
+  #             credential still gates, so a namespace that never claimed one
+  #             gains nothing by carrying it.
+  #   redis   — stamped ONLY where the registration claims `redis` in
+  #             services[] (consumers-appset templatePatch), on the tenant
+  #             member whose own registration carries the label (the tenant
+  #             appset stamps a member's namespaceLabels and names none
+  #             itself), and on clusters/inventories/service-provisioner's own
+  #             namespace, which has to reach :6379 to write each claim's ACL
+  #             user. The password is a SECOND boundary, never a replacement
+  #             for the first, so the policy is not widened because one exists.
+  # clusters/units/postgresql carries no key here: it admits by namespace NAME
+  # only (networkPolicy.allowedNamespaces), because a label every unit namespace
+  # wears would open one unit's database to every other unit.
+  # The label VALUES are stamped on live namespaces by the ApplicationSets in
+  # clusters/argocd/apps and by hostyour-manager, both of which carry them as
+  # literals.
+  dataConsumerNamespaces:
     - dbgate
-  dbConsumerLabel: platform/db-consumer
-  redisConsumerLabel: platform/redis-consumer
+  consumerLabels:
+    mongodb: platform/db-consumer
+    redis: platform/redis-consumer
 
   # The namespace the ingress controller runs in. It is the MicroK8s ingress
   # addon's own name, not one this platform chooses, and the deploy program

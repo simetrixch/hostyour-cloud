@@ -129,7 +129,7 @@ resourceNames — only relocated):
 
 Build-plane-only, like the whole manager app: renders wherever the app
 deploys (clusters/inventories/manager/app.yaml says runsOn: master, and the app generator in
-clusters/argocd/apps/applicationset.yaml admits every-cluster and the role stamped over
+clusters/argocd/apps/platform-apps-appset.yaml admits every-cluster and the role stamped over
 __CLUSTER_ROLE__ and nothing else) — no separate toggle, exactly like
 serviceaccount.yaml / deployment.yaml.
 */ -}}

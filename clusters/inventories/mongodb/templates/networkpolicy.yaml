@@ -1,7 +1,7 @@
 # MongoDB runs with SCRAM authentication (values-common.yaml, `--auth` in
 # mongodb.args), and this NetworkPolicy narrows who may even open :27017:
-# platform namespaces by name (global.dbConsumerNamespaces), any namespace
-# self-labelled global.dbConsumerLabel=true where that key is set (so external
+# platform namespaces by name (global.dataConsumerNamespaces), any namespace
+# self-labelled global.consumerLabels.mongodb=true where that key is set (so external
 # add-ons admit themselves without the platform hardcoding their namespace
 # name), and same-namespace pods (metrics exporter, rs-init Job). Any other
 # workload is denied. Enforced by Calico.
@@ -26,12 +26,12 @@ spec:
     - Ingress
   ingress:
     - from:
-        {{- range .Values.global.dbConsumerNamespaces }}
+        {{- range .Values.global.dataConsumerNamespaces }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ . | quote }}
         {{- end }}
-        {{- with .Values.global.dbConsumerLabel }}
+        {{- with .Values.global.consumerLabels.mongodb }}
         - namespaceSelector:
             matchLabels:
               {{ . }}: "true"

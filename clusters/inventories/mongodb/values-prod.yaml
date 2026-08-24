@@ -23,7 +23,7 @@ mongodb:
 # templates/serviceclaim-exporter.yaml). The URI's host comes from the
 # service-provisioner's own per-env mongoHost.
 
-# Per-namespace SecretStore — Vault URL falls back to global.vaultUrl, written
+# Per-namespace SecretStore — Vault URL falls back to global.endpoints.vault.url, written
 # by the branch program into installation/profile.yaml from the cluster map.
 secret-store: {}
 

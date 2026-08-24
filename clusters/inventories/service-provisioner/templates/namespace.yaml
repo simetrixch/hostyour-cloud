@@ -16,5 +16,5 @@ kind: Namespace
 metadata:
   name: {{ .Release.Namespace }}
   labels:
-    {{ .Values.global.dbConsumerLabel }}: "true"
-    {{ .Values.global.redisConsumerLabel }}: "true"
+    {{ .Values.global.consumerLabels.mongodb }}: "true"
+    {{ .Values.global.consumerLabels.redis }}: "true"

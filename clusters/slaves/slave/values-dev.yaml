@@ -1,6 +1,7 @@
 # slave — DEV overrides. Empty on purpose: everything per-stage already
-# arrives via the platform $values chain (global.env/vaultUrl from
-# clusters/platform/values-dev.yaml) and everything per-slave via the cluster map
+# arrives via the platform $values chain (global.env from
+# clusters/platform/values-dev.yaml, global.endpoints.vault.url from
+# installation/profile.yaml) and everything per-slave via the cluster map
 # (clusters/active/*.yaml on master -> the slaves ApplicationSet's valuesObject).
 # Kept because the ApplicationSet's valueFiles chain lists it (same
 # values-common + values-<stage> convention as every platform app).

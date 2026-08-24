@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: postfix-smtp-access
+  name: mail-relay-access
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
@@ -9,7 +9,7 @@ spec:
       app.kubernetes.io/name: mail
   policyTypes: [Ingress, Egress]
   ingress:
-    # Namespaces allowed to talk to postfix on port 587 (no auth — restricted by
+    # Namespaces allowed to talk to the mail relay on port 587 (no auth — restricted by
     # network policy only). Add your application namespaces below.
     - from:
         - namespaceSelector:
@@ -24,7 +24,7 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: vpn-monitoring
-        # Any consumer that ATTESTED `smtp-relay` in services[]: its queue worker
+        # Any consumer that ATTESTED `mail-relay` in services[]: its queue worker
         # relays here on 587. Selected by the label the consumers ApplicationSet
         # stamps on exactly those namespaces, so this base admits "a relay client"
         # without knowing which unit of which installation that is.
@@ -37,7 +37,7 @@ spec:
         # unit cannot label itself into this selector.
         - namespaceSelector:
             matchLabels:
-              platform/smtp-relay-consumer: "true"
+              platform/mail-relay-consumer: "true"
       ports:
         - protocol: TCP
           port: 587

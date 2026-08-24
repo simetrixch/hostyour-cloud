@@ -144,7 +144,7 @@ kube-prometheus-stack:
         # avoid duplicating the platform domain in every env file.
         global:
           smtp_from: "alertmanager-{{ .Values.global.env }}@mail.{{ .Values.global.domain }}"
-          smtp_smarthost: "postfix-{{ .Values.global.env }}-mail.postfix.svc.cluster.local:587"
+          smtp_smarthost: "mail-relay-{{ .Values.global.env }}.mail-relay.svc.cluster.local:587"
           smtp_require_tls: false
         # Default route receiver is now "null". Actual delivery is handled by the
         # `platform-default` AlertmanagerConfig CR (see
@@ -234,16 +234,16 @@ tempo:
 # ============================================================================
 # Vault paths — DEV
 # ============================================================================
-grafana-admin-secret:
+externalsecret-grafana-admin:
   externalSecret:
     vaultPath: dev/app/observability
 
 # Master receive path (D4b/I6) — htpasswd for the push Ingresses' basic-auth
-# Middleware. Only materialized where observabilityCentral is true.
-push-htpasswd-secret:
+# Middleware. Only materialized where global.servicesLocal.observability is true.
+externalsecret-push-htpasswd:
   externalSecret:
     vaultPath: dev/app/observability
 
-grafana-oidc-secret:
+externalsecret-grafana-oidc:
   externalSecret:
     vaultPath: dev/app/idp

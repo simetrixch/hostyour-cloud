@@ -3,7 +3,7 @@
 # restarts. Replica set `rs0` for multi-doc transactions, SCRAM auth on
 # (--auth + --keyFile, see args below) — the NetworkPolicy
 # (templates/networkpolicy.yaml) admits only approved DB consumers
-# (global.dbConsumerNamespaces by name + add-ons by global.dbConsumerLabel) and
+# (global.dataConsumerNamespaces by name + add-ons by global.consumerLabels.mongodb) and
 # same-namespace pods; :27017 answers inside this cluster and nowhere else, and
 # there is neither an HTTP Ingress nor a plain-TCP route. replicas: 3 here is the
 # default for ALL envs — a 3-member HA replica set on every stage (rs0 membership
@@ -77,7 +77,7 @@ mongodb:
 #
 # What reads this database therefore stands in this same cluster. clusters/inventories/dbgate
 # carries `runsOn: slave`, exactly as clusters/inventories/mongodb/app.yaml does, so the app
-# generator (clusters/argocd/apps/applicationset.yaml) places both wherever the cluster's
+# generator (clusters/argocd/apps/platform-apps-appset.yaml) places both wherever the cluster's
 # role is `slave`, and dbgate dials mongodb-<env>-headless.mongodb.svc.cluster.local.
 
 # Per-pod data volume (volumeClaimTemplate → /data/db). Each member gets its own
@@ -150,7 +150,7 @@ prometheus-mongodb-exporter:
       memory: 256Mi
 
 # Per-namespace SecretStore (the Vault backend the ExternalSecret below reads).
-# vaultUrl falls back to global.vaultUrl, which the branch program writes into
+# vaultUrl falls back to global.endpoints.vault.url, which the branch program writes into
 # installation/profile.yaml as https://vault.<the cluster holding the master role> —
 # so it names one installation and cannot be stated here. No per-env override
 # needed (dbgate pattern).

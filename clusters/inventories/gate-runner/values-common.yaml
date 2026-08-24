@@ -73,7 +73,7 @@ reportWriter:
       - 16443
 
 # Per-namespace SecretStore (library chart). vaultUrl falls back to
-# .Values.global.vaultUrl; role is the app-tier `external-secrets`. NOTE:
+# .Values.global.endpoints.vault.url; role is the app-tier `external-secrets`. NOTE:
 # Vault's role must bind ns gate-runner (it stands on the cross-tier consumer
 # list the cluster is seeded with) or the registry-pull ExternalSecret cannot
 # authenticate.

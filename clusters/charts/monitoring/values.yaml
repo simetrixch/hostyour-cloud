@@ -1,5 +1,5 @@
 # Defaults for the monitoring chart. Every consumer (clusters/inventories/observability/, clusters/inventories/mongodb/,
-# clusters/inventories/redis/, clusters/inventories/postfix/, ...) overrides these from its own values-*.yaml.
+# clusters/inventories/redis/, clusters/inventories/mail-relay/, ...) overrides these from its own values-*.yaml.
 #
 # Each consumer adds this chart as a Helm dependency:
 #   dependencies:

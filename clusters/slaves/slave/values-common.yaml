@@ -6,7 +6,7 @@
 # empty defaults below only document the shape; templates `required`-fail
 # loudly if any is missing.
 #
-# The stage (global.env), the master's Vault URL (global.vaultUrl) and the ESO
+# The stage (global.env), the master's Vault URL (global.endpoints.vault.url) and the ESO
 # SecretStore name (global.secretStoreName) come from the standard $values
 # chain (clusters/platform/values-common.yaml + platform/values-<stage>.yaml +
 # installation/profile.yaml) — same as every platform app.
@@ -220,7 +220,7 @@ argo-cd:
 # ---------------------------------------------------------------------------
 # Per-namespace ESO SecretStore (vault-backend) in ns <name>, reading the
 # MASTER's own Vault: clusters/slaves/slave syncs on the master, so the master's own
-# chain feeds it — global.vaultUrl + global.vaultKubernetesAuthPath
+# chain feeds it — global.endpoints.vault.url + global.vaultKubernetesAuthPath
 # (kubernetes-<master-name>) from the master's installation/profile.yaml, the
 # shared KV mount `secret` from global.vaultKvMount.
 # ---------------------------------------------------------------------------

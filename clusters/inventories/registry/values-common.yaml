@@ -431,7 +431,8 @@ externalsecret-sync-credentials:
 secret-store:
   enabled: true
   name: vault-backend
-  # vaultUrl supplied per-env in values-{dev,test,prod}.yaml.
+  # vaultUrl is left empty here: the template falls back to
+  # global.endpoints.vault.url (installation/profile.yaml via the $values chain).
 
 # ----- ServiceMonitor + alerts ----------------------------------------------
 monitoring:

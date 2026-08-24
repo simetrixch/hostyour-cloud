@@ -85,7 +85,7 @@ adminSocket:
 # GITHUB_WRITE_PAT). `repo` is the "owner/repo" of THIS GitOps monorepo — the same
 # repo clusters/slaves/slave/values-common.yaml `repo.url` points at, just in owner/repo form
 # (not a secret). The write-capable token is GITOPS_REPO_PAT (Contents:RW), placed on the
-# isolated manager-host Vault tier and materialized by manager-host-secret.yaml as
+# isolated manager-host Vault tier and materialized by externalsecret-github.yaml as
 # the pod env GITHUB_WRITE_PAT — NEVER a Helm value. Both render only where master.sshUser
 # is set (the control host,
 # the only place the manager runs) AND repo is non-empty. Blank `repo` ⇒ the feature
@@ -105,7 +105,7 @@ github:
   # master.sshUser, which is on an install branch only. What the key states is
   # where the override goes — an installation pointing THIS app at another
   # catalog sets deployRepo in installation/values/manager.yaml, which
-  # clusters/argocd/apps/applicationset.yaml loads after this file.
+  # clusters/argocd/apps/platform-apps-appset.yaml loads after this file.
   deployRepo: ""
 
 # Consumer onboarding (config.ts, onboarding.md §6). Chart validation runs as an in-cluster
@@ -252,5 +252,5 @@ manager-data:
     storageSize: "2Gi"
 
 # Per-namespace SecretStore (library chart). vaultUrl falls back to
-# .Values.global.vaultUrl; role is the app-tier `external-secrets`.
+# .Values.global.endpoints.vault.url; role is the app-tier `external-secrets`.
 secret-store: {}

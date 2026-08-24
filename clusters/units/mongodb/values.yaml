@@ -2,7 +2,7 @@
 # MongoDB — PER-UNIT TEMPLATE (one instance, one namespace).
 #
 # WHY THIS FILE IS values.yaml AND NOT values-common.yaml
-# A stage-deployed cluster app is rendered by clusters/argocd/apps/applicationset.yaml,
+# A stage-deployed cluster app is rendered by clusters/argocd/apps/platform-apps-appset.yaml,
 # whose valueFiles chain names `values-common.yaml` + `values-<stage>.yaml`
 # EXPLICITLY. A chart rendered into a UNIT namespace is not in that chain: it is
 # an extra source of the unit's Application (clusters/argocd/apps/consumers-appset.yaml),
@@ -10,7 +10,7 @@
 # loads only the chart's own implicit `values.yaml` as the base. So the base
 # values live in a file called exactly values.yaml, and there are no per-stage
 # files beside it: a TEMPLATE has no stage identity of its own. Everything
-# stage-dependent (vaultUrl, storageClass, timezone, secretStoreName) arrives
+# stage-dependent (endpoints.vault.url, storageClass, timezone, secretStoreName) arrives
 # through global.* from $values/clusters/platform/values-common.yaml + values-<stage>.yaml
 # + installation/profile.yaml.
 #
@@ -125,12 +125,12 @@ mongodb:
 # =============================================================================
 networkPolicy:
   # Namespaces admitted to :27017 BY NAME (namespaceSelector on
-  # kubernetes.io/metadata.name), deliberately NOT by global.dbConsumerLabel —
+  # kubernetes.io/metadata.name), deliberately NOT by global.consumerLabels.mongodb —
   # every consumer namespace carries that label, so admitting by it would open
   # this database to every OTHER consumer.
   allowedNamespaces:
     # Verified against the platform catalog: the provisioner runs in namespace
-    # `service-provisioner` (clusters/argocd/apps/applicationset.yaml).
+    # `service-provisioner` (clusters/argocd/apps/platform-apps-appset.yaml).
     - service-provisioner
 
 # =============================================================================

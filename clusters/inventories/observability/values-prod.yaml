@@ -157,10 +157,10 @@ kube-prometheus-stack:
       # smtp_from uses bare mail.<domain> (no env subdomain) — the same mail
       # host for every env, so one MX and one SPF record serve all three
       # stages; the relay's own myhostname follows it
-      # (installation/values/postfix.yaml, rendered per install branch).
+      # (installation/values/mail-relay.yaml, rendered per install branch).
       global:
         smtp_from: "alertmanager-prod@mail.{{ .Values.global.domain }}"
-        smtp_smarthost: "postfix-{{ .Values.global.env }}-mail.postfix.svc.cluster.local:587"
+        smtp_smarthost: "mail-relay-{{ .Values.global.env }}.mail-relay.svc.cluster.local:587"
         smtp_require_tls: false
       # Side-channel sentinels emitted by kube-prometheus-stack to verify the
       # pipeline is alive — they are NOT real problems. Route them straight to
@@ -239,17 +239,17 @@ tempo:
 # ============================================================================
 # Vault paths — PROD
 # ============================================================================
-grafana-admin-secret:
+externalsecret-grafana-admin:
   externalSecret:
     vaultPath: prod/app/observability
 
 # Master receive path (D4b/I6) — htpasswd for the push Ingresses' basic-auth
-# Middleware. Only materialized where observabilityCentral is true.
-push-htpasswd-secret:
+# Middleware. Only materialized where global.servicesLocal.observability is true.
+externalsecret-push-htpasswd:
   externalSecret:
     vaultPath: prod/app/observability
 
-grafana-oidc-secret:
+externalsecret-grafana-oidc:
   externalSecret:
     # Enabled with the OIDC config block above (D7). Requires
     # prod/app/idp/grafana-client-secret seeded in Vault.

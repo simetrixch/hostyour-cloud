@@ -121,8 +121,8 @@ spec:
             pod-security.kubernetes.io/enforce: restricted
             hostyour.cloud/consumer: "true"
             hostyour.cloud/consumer-name: "{{ .name }}"
-            # DB-consumer label (global.dbConsumerLabel): admits this namespace through
-            # the CREDENTIALED backing-service NetworkPolicies (mongodb, postgresql).
+            # The mongodb consumer label (global.consumerLabels.mongodb): admits this
+            # namespace through the CREDENTIALED backing-service NetworkPolicy of mongodb.
             # Harmless without a claim — those services still require a provisioned
             # per-unit credential. Redis requires one too (clusters/inventories/redis boots with
             # --requirepass), and is STILL not admitted by this label: its
@@ -145,9 +145,9 @@ spec:
   # so the retarget never touches it.
   templatePatch: |
     spec:
-      {{- if or (has "redis" .services) (has "smtp-relay" .services) }}
+      {{- if or (has "redis" .services) (has "mail-relay" .services) }}
       # Namespace labels the platform grants on an ATTESTED claim, and only then.
-      # smtp-relay answers without authenticating the caller, so there REACH is the
+      # The mail relay answers without authenticating the caller, so there REACH is the
       # grant; redis requires a password now, and its policy stays this narrow
       # anyway, because a credential is a second boundary and not a reason to widen
       # the first. Either way a unit that never claimed the service must not be able
@@ -160,8 +160,8 @@ spec:
             {{- if has "redis" .services }}
             platform/redis-consumer: "true"
             {{- end }}
-            {{- if has "smtp-relay" .services }}
-            platform/smtp-relay-consumer: "true"
+            {{- if has "mail-relay" .services }}
+            platform/mail-relay-consumer: "true"
             {{- end }}
       {{- end }}
       sources:

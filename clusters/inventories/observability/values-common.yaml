@@ -312,7 +312,7 @@ kube-prometheus-stack:
       # the chart default → the CR field is omitted entirely. The master needs it
       # ON to accept the slave observability agents' remote_write, and it cannot
       # be gated by a Helm sub-chart `condition:` on
-      # global.servicesLocal.observabilityCentral the way the push Ingresses in
+      # global.servicesLocal.observability the way the push Ingresses in
       # Chart.yaml are: it is a kube-prometheus-stack value, not a chart of ours.
       #
       # NOTHING IN THIS TREE TURNS IT ON. installation/profile.yaml carries global.*
@@ -520,7 +520,7 @@ alloy:
 # Per-env vaultPath overrides go in values-{test,prod}.yaml.
 # Per-app exporter secrets live in each app's chart, not here.
 # ============================================================================
-grafana-admin-secret:
+externalsecret-grafana-admin:
   externalSecret:
     enabled: true
     name: grafana-admin-credentials
@@ -537,7 +537,7 @@ grafana-admin-secret:
 # Grafana pod mounts the resulting K8s Secret via `envFromSecret:
 # idp-oidc-grafana` — `GRAFANA_OAUTH_CLIENT_SECRET` env becomes available
 # to the grafana.ini.auth.generic_oauth.client_secret reference.
-grafana-oidc-secret:
+externalsecret-grafana-oidc:
   externalSecret:
     enabled: true
     name: idp-oidc-grafana
@@ -551,8 +551,8 @@ grafana-oidc-secret:
 # ============================================================================
 # Master receive path (D4b / I6) — rendered ONLY on the central observability
 # cluster (the master). Every block below belongs to a sub-chart gated by
-# `condition: global.servicesLocal.observabilityCentral` in Chart.yaml, so on a
-# normal full cluster (observabilityCentral:false) these sub-charts are not
+# `condition: global.servicesLocal.observability` in Chart.yaml, so on a
+# normal full cluster (servicesLocal.observability:false) these sub-charts are not
 # loaded and none of this renders — the config sits here inertly.
 #
 # The two Ingresses expose the master's existing Prometheus + Loki to the slave
@@ -635,7 +635,7 @@ push-auth-middleware:
 # into the ExternalSecret where ESO evaluates it. `bcrypt` and not `htpasswd`: the
 # engine's htpasswd takes three arguments, and this is the two-argument shape spelled
 # out, which is what an htpasswd line is.
-push-htpasswd-secret:
+externalsecret-push-htpasswd:
   externalSecret:
     enabled: true
     name: obs-push-htpasswd
@@ -653,6 +653,6 @@ push-htpasswd-secret:
       - secretKey: password
         property: push-password
 
-# Alertmanager sends mail directly via Postfix (in-cluster, no auth required)
+# Alertmanager sends mail directly via the mail relay (in-cluster, no auth required)
 # — no SMTP credentials secret needed.
 

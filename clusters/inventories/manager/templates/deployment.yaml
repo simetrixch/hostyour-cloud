@@ -107,7 +107,7 @@ spec:
             # cluster's own kubernetes-<name> (installation/profile.yaml) — an
             # unnamed `kubernetes` mount does not exist.
             - name: VAULT_ADDR
-              value: {{ .Values.global.vaultUrl | quote }}
+              value: {{ .Values.global.endpoints.vault.url | quote }}
             - name: VAULT_K8S_ROLE
               value: "manager"
             - name: VAULT_K8S_AUTH_MOUNT
@@ -223,7 +223,14 @@ spec:
             # gatemanagerAddr is the manager's OWN host:port the fenced gate pod must PROVE it
             # cannot reach; the extra must-fail targets + the one must-pass egress + the kubeconform
             # version complete the CLI's fail-closed fence self-probe.
-            - name: ONBOARD_GATE_MANAGER_ADDR
+            #
+            # THE VARIABLE'S NAME IS THE READER'S AND NOT THIS TREE'S. config.ts calls it
+            # ONBOARD_GATE_CONTROLLER_ADDR, and it is the sole discriminator that registers the
+            # onboarding Run family: a name this chart chose for itself is a value the process never
+            # reads, and the routes then answer 501 while everything here says they are configured.
+            # The three below it were never renamed and already agree; this one is the only name in
+            # this Deployment that has to be spelled the way the process spells it.
+            - name: ONBOARD_GATE_CONTROLLER_ADDR
               value: {{ .Values.onboarding.gatemanagerAddr | quote }}
             - name: ONBOARD_GATE_FENCE_MUST_FAIL
               value: {{ .Values.onboarding.gateFenceMustFail | quote }}

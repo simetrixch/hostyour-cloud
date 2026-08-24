@@ -8,14 +8,14 @@
 #   • only the cluster-scoped resource kinds it legitimately creates
 #     (data / services create NONE → clusterResourceWhitelist: [])
 #
-# Lifecycle: this file lives in clusters/argocd/apps/ next to applicationset.yaml, and
+# Lifecycle: this file lives in clusters/argocd/apps/ next to platform-apps-appset.yaml, and
 # clusters/argocd/root-app.yaml syncs that directory (`path: clusters/argocd/apps`), so it is
 # applied by the same Application. The sync-wave -1 annotation
 # guarantees the AppProjects exist before the ApplicationSet's generated
 # Applications (which reference them by name) attempt their first sync.
 #
 # The generated Applications pick their project via the `project:` field added
-# to each element in applicationset.yaml. The root-app itself stays in
+# to each element in platform-apps-appset.yaml. The root-app itself stays in
 # `default` on purpose: it CREATES these projects, so it can't depend on one
 # existing first (chicken-and-egg).
 #
@@ -128,13 +128,13 @@ spec:
   # The sentence above used to stand in `description`, which the API caps at 255 bytes: over the cap
   # the object is refused, the whole sync fails, and NO application below the root is created at all.
   # A comment carries the same words with no limit and reaches the same reader.
-  description: Supporting platform services — Postfix, DBGate, the tailnet coordinator. Namespaced only.
+  description: Supporting platform services — the mail relay, DBGate, the tailnet coordinator. Namespaced only.
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
     - https://bokysan.github.io/docker-postfix/
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: postfix
+      namespace: mail-relay
     # The database browser's own namespace. It stands on the clusters whose role
     # is `slave` — the clusters mongodb and redis run on — because no application
     # of this platform reaches a database in another cluster.

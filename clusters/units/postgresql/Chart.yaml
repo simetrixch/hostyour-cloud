@@ -1,5 +1,5 @@
 apiVersion: v2
-name: postgresql
+name: unit-postgresql
 # 2.0.0 — BREAKING vs 1.0.0 on purpose. 1.0.0 was a stage-deployed CLUSTER app
 # (one singleton in namespace `postgresql`, per-stage values files, a hardcoded
 # stage-suffixed Service FQDN). 2.0.0 is a per-consumer TEMPLATE: the values file
@@ -18,7 +18,7 @@ description: |
   what survived it: the template each per-consumer instance is rendered from.
   Retiring the app and deleting the chart are different things; only the first
   happened. There is therefore deliberately no apps/postgresql/ directory for
-  clusters/argocd/apps/applicationset.yaml to glob an app.yaml out of, and re-adding one
+  clusters/argocd/apps/platform-apps-appset.yaml to glob an app.yaml out of, and re-adding one
   would resurrect the singleton this chart no longer models.
 
   WHAT MAKES IT RENDERABLE PER CONSUMER. Every cluster-singleton assumption is

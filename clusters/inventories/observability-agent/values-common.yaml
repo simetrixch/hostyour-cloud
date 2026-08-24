@@ -9,7 +9,8 @@
 #   global.endpoints.observability.lokiPush:       https://loki-push.<master-fqdn>
 #   global.domain:                                 <slave-fqdn>   (the cluster label)
 # The empty defaults below only let `helm template` render without a profile;
-# they deep-merge with platform's global.endpoints.registry (never clobber it).
+# they deep-merge with platform's global.endpoints.{registry,mail,vault,tailnet}
+# (never clobber them).
 # ---------------------------------------------------------------------------
 global:
   endpoints:
@@ -106,10 +107,10 @@ kube-state-metrics:
 
 # ---------------------------------------------------------------------------
 # Per-namespace SecretStore — the Vault backend the push-cred ExternalSecret
-# reads. global.vaultUrl / global.vaultKubernetesAuthPath
+# reads. global.endpoints.vault.url / global.vaultKubernetesAuthPath
 # (installation/profile.yaml) point it at the master's Vault over this
 # cluster's own auth mount; the KV mount is the shared global.vaultKvMount.
-# vaultUrl falls back to global.vaultUrl — no per-env override needed
+# vaultUrl falls back to global.endpoints.vault.url — no per-env override needed
 # (dbgate/mongodb pattern).
 # ---------------------------------------------------------------------------
 secret-store: {}
@@ -129,7 +130,7 @@ secret-store: {}
 # the middleware rejects. This used to name <stage>/app/observability-agent, an
 # entry no vault_kv_entry row of any program writes.
 # ---------------------------------------------------------------------------
-observability-agent-push-secret:
+externalsecret-agent-push:
   externalSecret:
     enabled: true
     name: observability-agent-push-credentials

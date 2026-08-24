@@ -274,7 +274,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/inventories/postfix/Chart.yaml
+        file: clusters/inventories/mail-relay/Chart.yaml
         dependency: mail
   prometheus-postgres-exporter:
     version: "8.2.0"

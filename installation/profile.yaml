@@ -24,13 +24,15 @@
 # provides Vault, and every other cluster's hosts log in to that one;
 # vaultKubernetesAuthPath is always kubernetes-<name>; endpoints.registry.host is
 # always zot.<build-plane>;
-# endpoints.post.url is the post_url answer and stands here ONLY when that answer
+# endpoints.mail.url is the post_url answer and stands here ONLY when that answer
 # was given: it is optional, and an installation that runs no mail service has
 # none. A tenant's auth and report charts require it in tenant mode and stop
-# their render naming global.endpoints.post.url when it is absent, which is why
+# their render naming global.endpoints.mail.url when it is absent, which is why
 # the key is left out rather than written empty;
+# endpoints.{vault,idp,tailnet}.url are always that service plus the books
+# cluster's domain;
 # servicesLocal.registry follows the build plane,
-# servicesLocal.{vault,observabilityCentral} the master part.
+# servicesLocal.{vault,observability} the master part.
 #
 # Only global.* keys belong here — they propagate to every subchart via Helm's
 # `global:` convention. App-specific values stay in each app's values-<stage>.yaml.

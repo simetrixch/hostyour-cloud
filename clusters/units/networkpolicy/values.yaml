@@ -1,7 +1,7 @@
 # The platform namespaces admitted to every pod of the unit namespace, BY NAME
 # (namespaceSelector on kubernetes.io/metadata.name, the label the API server
 # sets on every namespace). Both names are fixed by the platform catalog
-# clusters/argocd/apps/applicationset.yaml, not per installation:
+# clusters/argocd/apps/platform-apps-appset.yaml, not per installation:
 #
 #   ingress         Traefik. THE public path into the unit — and also the path
 #                   every cross-unit call takes, because a unit addresses another

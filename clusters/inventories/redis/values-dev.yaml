@@ -14,7 +14,7 @@ redis:
 prometheus-redis-exporter:
   redisAddress: redis://redis-dev.redis.svc.cluster.local:6379
 
-# Per-namespace SecretStore — Vault URL falls back to global.vaultUrl, written
+# Per-namespace SecretStore — Vault URL falls back to global.endpoints.vault.url, written
 # by the branch program into installation/profile.yaml from the cluster map.
 secret-store: {}
 

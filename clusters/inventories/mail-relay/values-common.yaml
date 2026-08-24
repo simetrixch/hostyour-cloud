@@ -1,6 +1,11 @@
 mail:
   recreateOnRedeploy: false
   replicaCount: 1
+  # THE SERVICE IS NAMED FOR THE RELEASE ALONE — mail-relay-<env>, with no `-mail`
+  # suffix. boky's `mail.fullname` (charts/mail _helpers.tpl) appends the subchart
+  # name only when the release name does not already contain it, and `mail-relay-<env>`
+  # does. Every caller spells the host that way: Alertmanager's smtp_smarthost in
+  # clusters/inventories/observability/values-{dev,test,prod}.yaml is the one in this tree.
   service:
     type: ClusterIP
     port: 587
@@ -17,7 +22,7 @@ mail:
       # per-env keys never collide on one selector. d= stays the apex domain below.
       # ALLOWED_SENDER_DOMAINS is NOT here — it names one installation's sending
       # domains, and this file is shipped to every installation. It stands in
-      # installation/values/postfix.yaml, rendered per install branch from the cluster map.
+      # installation/values/mail-relay.yaml, rendered per install branch from the cluster map.
       # The bokysan chart consumes it without tpl (charts/mail statefulset.yaml
       # renders the env verbatim), so it cannot read a global either — an
       # installation-class file is the only place it fits.
@@ -81,31 +86,31 @@ mail:
         type: RuntimeDefault
   terminationGracePeriodSeconds: 120
 
-# Monitoring chart — postfix alert rules are pre-written but disabled because
+# Monitoring chart — the relay's alert rules are pre-written but disabled because
 # this chart doesn't ship a postfix-exporter yet (the postfix_* metrics they
 # reference don't exist). Flip `enabled: true` after wiring up an exporter
 # Deployment + ServiceMonitor that produces postfix_* metrics.
 monitoring:
   prometheusRules:
-    postfix:
+    mail-relay:
       enabled: false
       groups:
-        - name: postfix
+        - name: mail-relay
           interval: 60s
           rules:
-            - alert: PostfixQueueBackup
+            - alert: MailRelayQueueBackup
               expr: postfix_showq_message_size_bytes > 50e6
               for: 15m
               labels:
                 severity: warning
               annotations:
-                summary: "Postfix mail queue > 50 MB"
+                summary: "Mail relay queue > 50 MB"
 
-            - alert: PostfixDeferredQueueGrowing
+            - alert: MailRelayDeferredQueueGrowing
               expr: rate(postfix_queue_message_size_bytes{queue="deferred"}[10m]) > 0
               for: 30m
               labels:
                 severity: warning
               annotations:
-                summary: "Postfix deferred queue growing for 30 minutes"
+                summary: "Mail relay deferred queue growing for 30 minutes"
 
