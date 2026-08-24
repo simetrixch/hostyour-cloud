@@ -37,7 +37,7 @@ THAT registration's OWN credential, which the bump reads out of Vault at run
 time (see the class-(a) note in the search below), (b) the catalog's
 per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded from
 the chart's product default on the trunk the first time and bumped in place
-after, (c) hostyour-cloud master apps/<app>/values-<S>.yaml — and bumps every
+after, (c) hostyour-cloud master clusters/inventories/<app>/values-<S>.yaml — and bumps every
 hit. An image with NO hit anywhere fails the run loudly: a release nothing
 pins deploys nowhere, and silently succeeding would hide exactly the rot the
 derived reach exists to prevent.
@@ -966,6 +966,13 @@ spec:
               # repositories every run writes — this unit's own, the catalog's
               # and hostyour-cloud's; a carrier's record is added here, for the
               # one registration being read.
+              #
+              # THIS UNIT'S OWN REGISTRATION IS READ LIKE ANY OTHER, with no arm
+              # of its own: its record is appended after the ESO one, git's store
+              # answers with the FIRST match, and both name the same repository
+              # and the same secret/build/<unit>/repo-pat entry. A special case
+              # here would be a second rule to keep true against the first, for a
+              # saving of one read.
               for reg in "${WORK}"/books/registrations/*/"${STAGE}.yaml"; do
                 [ -f "${reg}" ] || continue
                 rname="$(yq eval '.name' "${reg}")"
@@ -979,7 +986,14 @@ spec:
                 # this field.
                 rcred="$(yq eval '.repoCredentialId // ""' "${reg}")"
                 [ -n "${rchart}" ] || continue
-                [ -z "${rcred}" ] || carrier_credential "${rname}" "${rrepo}"
+                # An `if`, not a `||` list: a command on the right of `||` runs
+                # in a condition context, where set -e does NOT fire, so a
+                # carrier whose credential Vault refused would fall through to
+                # the clone as though it had none — the exact silence this
+                # change exists to end.
+                if [ -n "${rcred}" ]; then
+                  carrier_credential "${rname}" "${rrepo}"
+                fi
                 dest="${WORK}/carrier-${rname}"
                 # Fail-closed: a registered stage whose delivery branch cannot
                 # be read is a search we cannot complete — not completed-ok.
@@ -1222,7 +1236,7 @@ spec:
                 [ -f "${vf}" ] || continue
                 bump_file "${vf}"
               done
-              commit_push "${WORK}/hostyour-cloud" master "hostyour-cloud apps/*/values-${STAGE}.yaml"
+              commit_push "${WORK}/hostyour-cloud" master "hostyour-cloud clusters/inventories/*/values-${STAGE}.yaml"
 
               # ── the reach must exist: an image nothing pins is a defect ────
               MISSING=""
@@ -1234,7 +1248,7 @@ spec:
                 echo "bump: FAIL — no pin found for builds[].image ==${MISSING}:" >&2
                 echo "  searched (a) registrations with chartPath on ${CLOUD_URL} ${BOOKS_BRANCH}," >&2
                 echo "           (b) ${DEPLOY_URL} charts/*/ declaring the image, pinned on ${BOOKS_BRANCH}," >&2
-                echo "           (c) ${CLOUD_URL} master apps/*/values-${STAGE}.yaml." >&2
+                echo "           (c) ${CLOUD_URL} master clusters/inventories/*/values-${STAGE}.yaml." >&2
                 echo "  A release nothing pins deploys nowhere — add the pin or drop the build." >&2
                 echo "  With (b): a catalog image is pinned only once this installation has registered" >&2
                 echo "  a tenant, because the pin stands on the books branch beside the registrations." >&2
