@@ -617,7 +617,7 @@ cliTools:
   # a version out of — a machine carrying it can never be reported as at the pin or
   # off it, only as absent.
   ansiwise:
-    version: "0.1.0-alpha-20260824131002"
+    version: "0.1.0-alpha-20260824142828"
     upstream:
       kind: github_release
       project: simetrixch/ansiwise-cli
