@@ -235,6 +235,9 @@ configmap:
     name: zot-config
     data:
       config.json: |-
+        {{- if eq .Values.global.registryPullUser .Values.global.registryPushUser }}
+        {{- fail (printf "global.registryPullUser and global.registryPushUser are both %q, and they are two accounts distinguished by nothing else. The password file gets two lines under one name, the matcher takes the first, and the second password authenticates nothing at all — measured: the reading credential answered 401 while the writing one answered 200, so every image pull from this registry was refused and no manifest anywhere said why. Answer them differently." .Values.global.registryPullUser) }}
+        {{- end }}
         {
           "distSpecVersion": "1.1.0",
           "storage": {
