@@ -96,8 +96,13 @@ env:
     value: "headlamp"
   - name: OIDC_ISSUER_URL
     value: "https://idp.example.invalid/application/o/headlamp/"
+  # THE FOUR THE CLIENT IS GRANTED, and no other. bootstrap/idp/blueprints/99-headlamp.yaml gives
+  # this client openid, profile, email and groups; asking for a scope it was not granted ends the
+  # flow without a session and the browser lands back on the sign-in dialog, which reads as a login
+  # that simply did not happen. `groups` is the one the platform's own admission is decided on, and
+  # it was granted and never asked for.
   - name: OIDC_SCOPES
-    value: "openid,profile,email,goauthentik.io/api"
+    value: "openid,profile,email,groups"
 
 # The shared slaves kubeconfig mount. `optional: true`: the pod must stay
 # schedulable even if the Secret is ever deleted — the LIVE master dashboard
