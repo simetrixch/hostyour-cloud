@@ -36,7 +36,7 @@
 # out anywhere else in this file: the stamp rewrites every occurrence of it on any line it reaches,
 # so a sentence quoting it would come out of a run stating a repository instead of explaining one.
 #
-# __BOOKS_BRANCH__ and __CLUSTER__ have NO writer at all. The shell that used to fill them is gone,
+# __BOOKS_FQDN__ and __CLUSTER_NAME__ have NO writer at all. The shell that used to fill them is gone,
 # and neither value is an answer the branch program holds: the books branch is this cluster's own
 # domain where it holds the master role and the named master's domain where it does not, and the
 # cluster is the first DNS label of this cluster's domain — the name the Controller writes into a
@@ -78,7 +78,7 @@ spec:
         generators:
           - git:
               repoURL: https://github.com/__CATALOG_REPO__.git  # the catalog stamp writes the owner and the name of this installation's tenant catalog into the marker — the repository holding the member charts, named in the cluster map
-              revision: __BOOKS_BRANCH__  # the books stamp fills it — the tenant registrations in the catalog stand on the books branch (the CHARTS below stay on the trunk)
+              revision: __BOOKS_FQDN__  # the books stamp fills it — the tenant registrations in the catalog stand on the books branch (the CHARTS below stay on the trunk)
               files:
                 - path: "registrations/*/__STAGE__.yaml"
               values:
@@ -87,7 +87,7 @@ spec:
               elementsYaml: "{{ .members | toJson }}"
       selector:
         matchLabels:
-          cluster: __CLUSTER__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
+          cluster: __CLUSTER_NAME__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
   template:
     metadata:
       name: "{{ .values.guid }}-{{ .name }}-__STAGE__"
@@ -145,7 +145,7 @@ spec:
         #    writes <chart>/pins-__STAGE__.yaml here; until it has, the chart's own values.yaml carries
         #    the product default and the file is simply absent (ignoreMissingValueFiles).
         - repoURL: https://github.com/__CATALOG_REPO__.git  # filled by the catalog stamp, as the generator above is
-          targetRevision: __BOOKS_BRANCH__  # the books stamp fills it from the answer naming the cluster that keeps this installation's books — the pins stand on that branch, the CHARTS below on the trunk
+          targetRevision: __BOOKS_FQDN__  # the books stamp fills it from the answer naming the cluster that keeps this installation's books — the pins stand on that branch, the CHARTS below on the trunk
           ref: pins
         # 1..n. The member's own charts on the catalog's trunk, in the order the registration lists
         #    them. The platform values reach every one of them as global.* over the SAME $values chain

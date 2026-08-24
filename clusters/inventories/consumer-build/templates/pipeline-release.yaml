@@ -858,7 +858,7 @@ spec:
               # searches, which the Controller writes there and nothing takes
               # away. One clone cannot serve both: the trunk carries no customer
               # registration at all, and an install branch's argocd/ tree has
-              # already had __STAGE__, __CLUSTER__, __BOOKS_BRANCH__ and
+              # already had __STAGE__, __CLUSTER_NAME__, __BOOKS_FQDN__ and
               # __CATALOG_REPO__ stamped into it for the one stage that branch
               # is, so the tenant render below could not simulate any other.
               git clone -q --depth 1 --branch master "${CLOUD_URL}" "${WORK}/hostyour-cloud"
@@ -1143,8 +1143,8 @@ spec:
                 # being bumped before reading anything out of the file — the
                 # Application name is "<guid>-<member>-__STAGE__", and an
                 # unfilled marker there fails the shape check on every member.
-                # The other three markers of this tree (__CLUSTER__,
-                # __BOOKS_BRANCH__, __CATALOG_REPO__) stand in the generator, the
+                # The other three markers of this tree (__CLUSTER_NAME__,
+                # __BOOKS_FQDN__, __CATALOG_REPO__) stand in the generator, the
                 # selector and the source repoURLs, none of which this
                 # derivation reads.
                 for src in "${WORK}"/hostyour-cloud/clusters/argocd/apps/*.yaml; do

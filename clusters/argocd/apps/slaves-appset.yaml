@@ -10,7 +10,7 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: __BOOKS_BRANCH__
+        revision: __BOOKS_FQDN__
         files:
           - path: "clusters/active/*.yaml"
         values:
@@ -26,7 +26,7 @@ spec:
           # whose books it holds. A literal here would be one installation's domain in a file every
           # installation is cut from, and a selector matching nothing produces zero Applications and
           # reports no error at all.
-          booksCluster: __BOOKS_BRANCH__
+          booksCluster: __BOOKS_FQDN__
   template:
     metadata:
       name: "{{ .values.cluster }}-apps"

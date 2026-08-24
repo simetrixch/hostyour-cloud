@@ -15,7 +15,7 @@ description: |
   Dashboard auth is delegated to the platform IdP (Authentik) via the
   Traefik forwardAuth Middleware `idp-forwardauth@kubernetescrd`. No
   per-app oauth2-proxy, no per-app htpasswd, no per-app Vault entry — one
-  login at idp.dev.<DOMAIN_SUFFIX> carries to every gated subdomain via
+  login at idp.dev.<CLUSTER_FQDN> carries to every gated subdomain via
   the apex session cookie.
 type: application
 
@@ -28,7 +28,7 @@ dependencies:
     version: 2.0.0
     repository: file://../../charts/monitoring
 
-  # Public Ingress at tekton.<DOMAIN_SUFFIX>. cert-manager LE cert.
+  # Public Ingress at tekton.<CLUSTER_FQDN>. cert-manager LE cert.
   # Backend = tekton-dashboard Service directly. Auth is gated by a
   # Traefik forwardAuth Middleware annotation pointing at the
   # `forwardauth` Middleware in the `idp` namespace (cross-namespace ref

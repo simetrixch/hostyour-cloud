@@ -4,7 +4,7 @@
 # The built-in in-cluster entry carries no NAME, but the tenant
 # ApplicationSets pin their destination by name — the registration's cluster
 # field — so on a master that name must resolve to the master's OWN
-# apiserver, or a master cannot carry tenants. __CLUSTER__ is the install
+# apiserver, or a master cannot carry tenants. __CLUSTER_NAME__ is the install
 # branch's cluster short name — the fqdn's first DNS label, the same value the
 # tenant appset selectors admit — and the branch program fills it, deriving the
 # label from the FQDN it was answered rather than asking for it twice.
@@ -28,5 +28,5 @@ metadata:
   labels:
     argocd.argoproj.io/secret-type: cluster
 stringData:
-  name: __CLUSTER__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
+  name: __CLUSTER_NAME__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
   server: https://kubernetes.default.svc

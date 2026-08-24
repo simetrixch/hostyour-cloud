@@ -51,13 +51,13 @@ metadata:
 spec:
   provider:
     vault:
-      server: https://vault.__BOOKS_BRANCH__
+      server: https://vault.__BOOKS_FQDN__
       path: secret
       version: v2
       namespace: vault
       auth:
         kubernetes:
-          mountPath: kubernetes-__CLUSTER__
+          mountPath: kubernetes-__CLUSTER_NAME__
           role: external-secrets
           serviceAccountRef:
             name: external-secrets-sa

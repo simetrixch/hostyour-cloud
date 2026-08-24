@@ -15,11 +15,11 @@
 # branch points at is decided in the consumer's repo, not here.
 #
 # THE TWO MARKERS IN THIS FILE ARE BOTH STAMPED. The post-selector pins
-# cluster=__CLUSTER__ — the install branch's cluster short name, which is the
+# cluster=__CLUSTER_NAME__ — the install branch's cluster short name, which is the
 # fqdn's first DNS label and the name the Controller writes into a
 # registration's `cluster:` field; the branch program derives that label from
 # the fqdn it was answered rather than asking for it twice, and stamps it over
-# this whole tree. The generator revision is __BOOKS_BRANCH__ and deliberately
+# this whole tree. The generator revision is __BOOKS_FQDN__ and deliberately
 # not this branch: the registrations stand on the install branch of the cluster
 # holding the master role, which on a pure slave is another branch, and the
 # branch program stamps it from the books_cluster answer — the same answer the
@@ -62,12 +62,12 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: __BOOKS_BRANCH__  # the books stamp fills it — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
+        revision: __BOOKS_FQDN__  # the books stamp fills it — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
         files:
           - path: "registrations/*/__STAGE__.yaml"
       selector:
         matchLabels:
-          cluster: __CLUSTER__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
+          cluster: __CLUSTER_NAME__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
   template:
     metadata:
       name: "{{ .name }}-__STAGE__"

@@ -19,7 +19,7 @@
 # HOW THE CONDITIONS READ IT BACK. Shell assignment syntax, one KEY=value per line: everything after
 # the first `=` is the value, an `export ` prefix is stripped, surrounding quotes are taken off, and
 # blank lines and lines starting with `#` are ignored. Nothing strips a comment from the END of a
-# value line, so `ENABLE_VAULT=true # switched on` is the value `true # switched on` and not `true`,
+# value line, so `ENABLE_SECRET_STORE=true # switched on` is the value `true # switched on` and not `true`,
 # and the phase behind it stays off — put a remark of your own on a line of its own. A value cannot
 # carry a double quote or a line break: the run refuses such an answer instead of writing a file the
 # next reader would misparse.
@@ -65,13 +65,7 @@ DEPLOY_ENV=
 # last part is the one that hurts. A cluster left in that state carries no manager policy and no
 # platform reader role at all, so every platform secret store on it is refused at login; only the
 # consumer and tenant roles, which hang off neither condition, are still written.
-DOMAIN_SUFFIX=
-
-# This cluster's full domain again, written unchanged — NOT a short name. The short name the charts
-# use, `global.clusterName`, is the first label of that domain and is derived where the cluster
-# profile is stamped, from the same answer; the cluster's own map is filed under the full domain.
-# Nothing reads this line.
-CLUSTER_NAME=
+CLUSTER_FQDN=
 
 # ── where this installation's units and its mail live ────────────────────────────────────────────
 
@@ -100,7 +94,7 @@ PLATFORM_DOMAIN=
 
 # The domain of the cluster whose image registry and builders this installation pulls from: this
 # cluster's own domain where it carries the build plane itself, another machine's domain where it
-# does not. Read back out of the filled file and compared with DOMAIN_SUFFIX above, and that
+# does not. Read back out of the filled file and compared with CLUSTER_FQDN above, and that
 # comparison alone decides which shape the grants in the secret store are written in — the build
 # tier's read policies and its secret-reader role exist only on the cluster that carries the plane,
 # because a build is stage-free and can authenticate only against the one store standing beside it.
@@ -162,7 +156,7 @@ ALERT_RECIPIENTS=
 # key that holds nothing at all, because bringing up the platform's only secret store, minting its
 # quorum and writing the one file that holds it is not something a machine should get, or lose, by
 # somebody leaving a line alone.
-ENABLE_VAULT=true
+ENABLE_SECRET_STORE=true
 
 # Whether this installation runs an identity provider — the one every cluster of the installation
 # authenticates against, and the one the reconciler logs its users in through. A cluster without one
@@ -180,4 +174,4 @@ ENABLE_IDP=true
 # every object of every platform application, and taking that one application away again takes all
 # of them with it. An installation that does not want to hand over writes false here, and until it
 # does the platform applications of this branch simply do not exist on its cluster.
-ENABLE_ARGOCD=true
+ENABLE_RECONCILER=true

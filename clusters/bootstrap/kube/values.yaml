@@ -64,13 +64,13 @@ config:
   inCluster: true
   # Name the in-cluster (master) context after the master's short name — e.g.
   # "m1", matching how the slave contexts are named (s1, s2) — instead
-  # of the chart default "main". Shown in the cluster picker. __MASTER_NAME__ is
+  # of the chart default "main". Shown in the cluster picker. __BOOKS_NAME__ is
   # the first DNS label of the domain of the cluster holding the master role —
   # this cluster's own domain where it holds the role and the named master's
   # where it does not — and the branch program stamps it over the bootstrap tree
   # from the books_name answer, which it derives from the books_cluster answer
   # the same way it derives cluster_name from the fqdn.
-  inClusterContextName: "__MASTER_NAME__"
+  inClusterContextName: "__BOOKS_NAME__"
   extraArgs:
     - -kubeconfig=/etc/kube-slaves/kubeconfig
   # THE ONE CREDENTIAL COMES IN AS A WHOLE SECRET, and the other three stand below in the open.

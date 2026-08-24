@@ -115,7 +115,7 @@ pvc:
     # .Values.global.storageClass (microk8s-hostpath on the platform default).
     storageSize: "50Gi"
 
-# ----- Public Ingress (zot.<DOMAIN_SUFFIX>) ---------------------------------
+# ----- Public Ingress (zot.<CLUSTER_FQDN>) ---------------------------------
 # `host` + service name + TLS secret name use Helm tpl to pull
 # .Values.global.env and .Values.global.domain at render time — so the build
 # cluster serves its registry at its own zot.<domain>. Deployed only where

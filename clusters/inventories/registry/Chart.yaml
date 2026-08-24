@@ -22,7 +22,7 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/pvc
 
-  # Public Ingress at zot.<DOMAIN_SUFFIX>. cert-manager issues a LE
+  # Public Ingress at zot.<CLUSTER_FQDN>. cert-manager issues a LE
   # cert via the platform-global ClusterIssuer; no basic-auth middleware
   # because Zot enforces htpasswd auth itself on /v2/ + /.
   - name: ingress
