@@ -96,9 +96,10 @@ github:
   # The tenant CATALOG the registry-reaper's floor also searches
   # (reaper-cronjob.yaml CATALOG_REPO). EMPTY here on purpose: which
   # repository it is, is installation state — installation/profile.yaml carries it as
-  # global.catalogRepo and loads LAST, and the template falls back to that with a
-  # `required` on it, so a branch naming no catalog fails its render instead of
-  # starting a reaper whose floor cannot see the catalog's pins.
+  # global.catalogUrl and loads LAST, and the template falls back to that with a
+  # `required` on it and trims the owner/name off the address, so a branch naming no
+  # catalog fails its render instead of starting a reaper whose floor cannot see the
+  # catalog's pins.
   # NOTHING HOLDS THIS KEY IN PLACE. `default` reads an absent key and an empty
   # string alike, so removing the line renders the identical CronJob, and the
   # render check never reaches the line at all: the CronJob stands behind
@@ -116,7 +117,9 @@ github:
 # The gate's product settings. The two keys that name THIS machine —
 # gatemanagerAddr (whose emptiness switches consumer onboarding off entirely) and
 # gateFenceMustFail — are NOT here: they stand in installation/values/manager.yaml, which the
-# operator edits on the install branch. Kube access is IN-CLUSTER via the pod ServiceAccount
+# branch program writes when it cuts the install branch, from the address that machine answers on
+# inside the cluster network (digita-deploy ansiwise/programs/deploy-branch.yaml renders
+# ansiwise/templates/manager-values.tpl). Kube access is IN-CLUSTER via the pod ServiceAccount
 # (grants shipped with this chart, templates/rbac.yaml — no Vault kubeconfig, nothing to seed).
 onboarding:
   # The one egress the gate pod MUST reach (the pipeline clones from github through the fence).
@@ -134,7 +137,9 @@ onboarding:
 # can SSH to its own host — zero manual SQL.
 #
 # sshUser and lanHost name ONE machine and stand in installation/values/manager.yaml, which the
-# operator edits on the install branch. Empty sshUser means a plain install does NOT
+# branch program writes when it cuts the install branch, from the account that operates the machine
+# and the address it answers on inside the cluster network (the same file and template as the
+# onboarding pair above). Empty sshUser means a plain install does NOT
 # self-register: none of the MASTER_* env, the key ExternalSecret or the key mount is rendered.
 # Only the port is product — every sshd this reaches listens where sshd listens.
 master:

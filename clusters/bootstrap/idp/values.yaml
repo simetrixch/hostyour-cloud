@@ -33,6 +33,11 @@
 # could know. Whoever reaches it first becomes the administrator of this installation. The product
 # owner decided the window is the operator's to close, on 2026-08-23.
 #
+# AN OPERATOR CANNOT CLOSE A WINDOW NOBODY TOLD THEM ABOUT, so deploy-gitops ends with a row that
+# asks this provider whether it is still standing on that flow and says the answer with the address
+# in it — `report_out_of_box_flow`, the last row of that program. It measures rather than repeating
+# this paragraph: a run on an installation somebody already took says so instead.
+#
 # The variable, when an installation does set one, has to be in `global` and not in `server`: the
 # startup hook that seeds the account runs in the server AND in the worker, whichever gets there
 # first, and `global.envFrom` is the one field this chart puts on both deployments.

@@ -18,18 +18,25 @@ The trust split:
   git-url is the webhook's own claim of the repo and is compared fail-closed
   against the pinned repoURL before anything else happens.
 
-BUILD ONLY WHEN THE IMAGE IS MISSING: the probe against the registry is
-authoritative — 200 means use the existing image (promoting a release to a
-further stage costs one probe and one pin commit, and provably ships the SAME
-image), 404 means build, anything else fails the run. There is no change
-detection: at the tag, every declared build whose probe says absent is built.
+BUILD ONLY WHEN THIS COMMIT'S IMAGE IS MISSING: the probe asks the registry,
+and then asks the IMAGE whether it is ours — a 200 alone proves nothing,
+because the registry answers a local miss by fetching from its sync upstreams
+on demand. Reuse needs the image's own org.opencontainers.image.revision to be
+the commit this run cloned and its .source to be the pinned repoURL; that makes
+promoting a release to a further stage one probe and one pin commit over an
+image built from the same commit of the same repository. 404 means build; a tag
+that exists and cannot be proven fails the run. There is no change detection:
+at the tag, every declared build whose probe says absent is built.
 
 THE BUMP IS THE REACH SEARCH: which units consume an image is FOUND, never
 looked up in a list. For each declared image P and the requested stage S the
 bump searches every carrier of the one pin grammar builds[]{name,image,tag} —
 (a) every registration with a chartPath on hostyour-cloud master, read at
-<repoURL>@deploy/<S>:<chartPath>/values-<S>.yaml, (b) the catalog's
-the catalog's per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded from
+<repoURL>@deploy/<S>:<chartPath>/values-<S>.yaml — a carrier that is not THIS
+unit is reachable only while its repository is public, because the bump holds
+one credential set and it is not per registration (see the class-(a) note in
+the search below), (b) the catalog's
+per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded from
 the chart's product default on the trunk the first time and bumped in place
 after, (c) hostyour-cloud master apps/<app>/values-<S>.yaml — and bumps every
 hit. An image with NO hit anywhere fails the run loudly: a release nothing
@@ -116,9 +123,6 @@ spec:
             type: string
           - name: git-url
             type: string
-        results:
-          - name: channel
-            description: The channel parsed out of the release tag.
         steps:
           - name: gate
             image: alpine/git:2.45.2
@@ -169,7 +173,6 @@ spec:
                 exit 1
               fi
               echo "gate-stage: ok — ${TAG} (channel ${CHANNEL}) may reach ${STAGE}"
-              printf '%s' "${CHANNEL}" > $(results.channel.path)
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
@@ -243,9 +246,9 @@ spec:
     # but is not attested FAILS here — before anything is built or pushed;
     # adding a build therefore means running the onboard verb again, which
     # re-attests. Per attested build the task emits the manifest's
-    # containerfile / context / buildArgs as results the build tasks consume;
-    # an attested build the manifest no longer declares is marked undeclared
-    # and skipped downstream.
+    # containerfile / context as results the build tasks consume; an attested
+    # build the manifest no longer declares is marked undeclared and skipped
+    # downstream.
     #
     # containerfile and context are the only manifest fields that become a
     # PATH the build plane resolves, and the manifest is written by whoever
@@ -264,8 +267,6 @@ spec:
           - name: {{ printf "%s-declared" $b }}
           - name: {{ printf "%s-containerfile" $b }}
           - name: {{ printf "%s-context" $b }}
-          - name: {{ printf "%s-buildargs" $b }}
-            type: array
           {{- end }}
         steps:
           - name: check
@@ -322,19 +323,16 @@ spec:
                   printf 'false' > "/tekton/results/${b}-declared"
                   printf '' > "/tekton/results/${b}-containerfile"
                   printf '.' > "/tekton/results/${b}-context"
-                  printf '[]' > "/tekton/results/${b}-buildargs"
                   continue
                 fi
                 cf="$(yq eval ".builds[] | select(.name == \"${b}\") | .containerfile // \"\"" "${MANIFEST}")"
                 ctx="$(yq eval ".builds[] | select(.name == \"${b}\") | .context // \".\"" "${MANIFEST}")"
-                args="$(yq eval -o=json -I=0 ".builds[] | select(.name == \"${b}\") | .buildArgs // []" "${MANIFEST}")"
                 relpath containerfile "${b}" "${cf}"
                 relpath context "${b}" "${ctx}"
-                echo "builds: ${b} — containerfile ${cf}, context ${ctx}, buildArgs ${args}"
+                echo "builds: ${b} — containerfile ${cf}, context ${ctx}"
                 printf 'true' > "/tekton/results/${b}-declared"
                 printf '%s' "${cf}"  > "/tekton/results/${b}-containerfile"
                 printf '%s' "${ctx}" > "/tekton/results/${b}-context"
-                printf '%s' "${args}" > "/tekton/results/${b}-buildargs"
               done
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
@@ -356,10 +354,31 @@ spec:
       workspaces:
         - { name: source, workspace: source }
 {{ range $b := $builds }}
-    # ── probe: {{ $b }} — build only when the image is missing ───────────────
-    # The probe is authoritative: 200 = the image exists, use it (NO build —
-    # promoting the same release to a further stage provably ships the same
-    # image); 404 = build it; anything else fails the run rather than guessing.
+    # ── probe: {{ $b }} — build only when THIS COMMIT's image is missing ─────
+    # A 200 IS NOT PROOF THE PLATFORM BUILT THE IMAGE. The registry answers a
+    # local miss by fetching from its sync upstreams on demand
+    # (clusters/inventories/registry/values-common.yaml, extensions.sync: ghcr.io
+    # with content prefix /simetrixch/* stripped to /, then registry-1.docker.io
+    # unfiltered), so a repo this installation has never pushed to still answers
+    # 200 with whatever an upstream publishes under that name and tag. Taking
+    # that for "already built" would skip the build and pin an image nobody
+    # here made from a commit nobody here verified.
+    #
+    # So the probe reads the image's PROVENANCE back out of it: buildah stamps
+    # org.opencontainers.image.revision and .source on every build
+    # (clusters/inventories/image-builder/templates/tasks/buildah-build-push.yaml),
+    # and this step reuses the image only when .revision is the commit this run
+    # cloned and .source is the repoURL its registration pins. That is the whole
+    # of what the pin needs: the tag names an image built from this commit of
+    # this repository. It is NOT a claim about bytes — two builds of one commit
+    # differ — so an image reused across stages is the same image, and an image
+    # the seed workflow published for the same commit is the same source.
+    #
+    # A tag that exists but cannot be proven is neither present nor absent: the
+    # run fails rather than build over bytes another installation may already be
+    # running under that same version.
+    #
+    # 404 = build. Anything else, including a timeout, fails the run.
     - name: {{ printf "probe-%s" $b }}
       when:
         - input: "$(tasks.builds.results.{{ $b }}-declared)"
@@ -367,13 +386,16 @@ spec:
           values: ["true"]
       params:
         - { name: image-tag, value: "$(tasks.verify.results.image-tag)" }
+        - { name: commit, value: "$(tasks.clone.results.commit)" }
       taskSpec:
         params:
           - name: image-tag
             type: string
+          - name: commit
+            type: string
         results:
           - name: exists
-            description: present (200) or absent (404) — the build/reuse decision.
+            description: present (this commit's image is in the registry) or absent (build it).
         steps:
           - name: probe
             image: alpine/k8s:1.35.6
@@ -382,8 +404,10 @@ spec:
                 value: {{ $registry | quote }}
               - name: IMAGE
                 value: {{ $b | quote }}
-              # Read-only pull identity — enough for a manifest HEAD, and the
-              # only credential this step may hold.
+              - name: REPO_URL
+                value: {{ $repoURL | quote }}
+              # Read-only pull identity — enough for a manifest and a config
+              # blob, and the only credential this step may hold.
               - name: RESULT_PATH
                 value: /tekton/results/exists
             envFrom:
@@ -393,22 +417,76 @@ spec:
               #!/usr/bin/env bash
               set -euo pipefail
               TAG="$(params.image-tag)"
-              URL="https://${REGISTRY}/v2/${IMAGE}/manifests/${TAG}"
-              CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
-                -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" \
-                -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
-                "${URL}")"
+              COMMIT="$(params.commit)"
+              ACCEPT='application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json'
+              BASE="https://${REGISTRY}/v2/${IMAGE}"
+
+              # EVERY registry call is bounded. Without a ceiling a miss can
+              # hold the connection open for as long as the registry's own sync
+              # takes — maxRetries 3 at retryDelay 5m against two upstreams —
+              # and the only limit left is the PipelineRun's 1h timeout, which
+              # names no cause. 600s is far above a local answer (milliseconds)
+              # and far below that timeout, so a step that hits it says so.
+              CURL=(curl -sS --connect-timeout 10 --max-time 600
+                    -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" -H "Accept: ${ACCEPT}")
+
+              # fetch <url> <outfile> — echoes the HTTP status, or fails the
+              # step naming the transport error. curl's own non-zero exit is
+              # caught here rather than left to set -e, which would abort with
+              # no message at all.
+              fetch() {
+                local url="$1" out="$2" code rc
+                set +e
+                code="$("${CURL[@]}" -o "${out}" -w '%{http_code}' "${url}")"
+                rc=$?
+                set -e
+                if [ "${rc}" != "0" ]; then
+                  echo "probe: FAIL — ${url}: curl exited ${rc} (28 is the 600s ceiling above, reached when the registry is still fetching from an upstream); neither present nor absent is proven" >&2
+                  exit 1
+                fi
+                printf '%s' "${code}"
+              }
+
+              CODE="$(fetch "${BASE}/manifests/${TAG}" /tmp/manifest.json)"
               case "${CODE}" in
-                200)
-                  echo "probe: ${IMAGE}:${TAG} present — reuse, no build"
-                  printf 'present' > "${RESULT_PATH}" ;;
+                200) ;;
                 404)
                   echo "probe: ${IMAGE}:${TAG} absent — build"
-                  printf 'absent' > "${RESULT_PATH}" ;;
+                  printf 'absent' > "${RESULT_PATH}"
+                  exit 0 ;;
                 *)
-                  echo "probe: FAIL — ${URL} answered ${CODE}; neither present nor absent is proven, refusing to guess" >&2
+                  echo "probe: FAIL — ${BASE}/manifests/${TAG} answered ${CODE}; neither present nor absent is proven, refusing to guess" >&2
                   exit 1 ;;
               esac
+
+              # An index carries no config of its own — descend to the first
+              # manifest it lists, which is the whole of what this platform
+              # pushes (buildah builds one architecture per build).
+              if [ "$(yq -p=json -o=y '.manifests // "" | length' /tmp/manifest.json)" != "0" ]; then
+                CHILD="$(yq -p=json -o=y '.manifests[0].digest' /tmp/manifest.json)"
+                CODE="$(fetch "${BASE}/manifests/${CHILD}" /tmp/manifest.json)"
+                [ "${CODE}" = "200" ] || { echo "probe: FAIL — ${BASE}/manifests/${CHILD}, named by the index at ${TAG}, answered ${CODE}" >&2; exit 1; }
+              fi
+
+              CFG="$(yq -p=json -o=y '.config.digest // ""' /tmp/manifest.json)"
+              [ -n "${CFG}" ] || { echo "probe: FAIL — the manifest at ${IMAGE}:${TAG} names no config blob, so its provenance cannot be read" >&2; exit 1; }
+              CODE="$(fetch "${BASE}/blobs/${CFG}" /tmp/config.json)"
+              [ "${CODE}" = "200" ] || { echo "probe: FAIL — the config blob ${CFG} of ${IMAGE}:${TAG} answered ${CODE}" >&2; exit 1; }
+
+              REV="$(yq -p=json -o=y '.config.Labels."org.opencontainers.image.revision" // ""' /tmp/config.json)"
+              SRC="$(yq -p=json -o=y '.config.Labels."org.opencontainers.image.source" // ""' /tmp/config.json)"
+              if [ "${REV}" = "${COMMIT}" ] && [ "${SRC}" = "${REPO_URL}" ]; then
+                echo "probe: ${IMAGE}:${TAG} present and built from ${COMMIT} of ${REPO_URL} — reuse, no build"
+                printf 'present' > "${RESULT_PATH}"
+                exit 0
+              fi
+              echo "probe: FAIL — ${REGISTRY}/${IMAGE}:${TAG} exists but is not a build of this release." >&2
+              echo "  this run cloned ${REPO_URL} at ${COMMIT}" >&2
+              echo "  the image says source '${SRC:-<no org.opencontainers.image.source label>}', revision '${REV:-<no org.opencontainers.image.revision label>}'" >&2
+              echo "  The registry answers a local miss from its sync upstreams, so this is what a tag" >&2
+              echo "  fetched from ghcr.io or docker.io under the same name looks like. Building over it" >&2
+              echo "  would leave two sets of bytes under one version, so the run stops here." >&2
+              exit 1
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
@@ -439,10 +517,6 @@ spec:
         - { name: git-revision, value: "$(tasks.clone.results.commit)" }
         - { name: build-timestamp, value: "$(tasks.verify.results.build-timestamp)" }
         - { name: version, value: "$(params.release-tag)" }
-        # The build's own declaration from deploy/platform.yaml — where a
-        # Dockerfile ARG belongs (the repo declares its build, the platform
-        # runs it).
-        - { name: build-args, value: "$(tasks.builds.results.{{ $b }}-buildargs[*])" }
       workspaces:
         - { name: source, workspace: source }
 {{ end }}
@@ -455,10 +529,17 @@ spec:
     # runs no unit code.
     - name: bump
       runAfter:
-        # scan is named directly, not left to the build tasks to imply. A unit
-        # with NO attested build renders none of them, and the list below would
-        # then be empty — the bump would start beside the credential scan
-        # instead of after it.
+        # builds and scan are named directly, not left to the build tasks to
+        # imply. A unit with NO attested build renders none of them, and the
+        # list below would then be empty — the bump would start BESIDE the two
+        # tasks that judge what it is about to write. It reads .builds[].name
+        # straight off the pushed manifest and pushes pins for it, so it must
+        # not begin until `builds` has held that manifest against the attested
+        # names and `scan` has read the tree for credentials. A registration
+        # with an empty builds[] and a manifest that grew one is exactly the
+        # state where the pins would otherwise be pushed while the attestation
+        # check that fails the run is still running.
+        - builds
         - scan
         {{- range $b := $builds }}
         - {{ printf "build-%s" $b }}
@@ -658,8 +739,19 @@ spec:
               # distinct pin lines, so the rebase merges cleanly. A genuine
               # conflict (two runs writing the SAME pin line) aborts the
               # rebase and fails the task with nothing pushed to this branch.
+              #
+              # A RACE IS ONE REASON A PUSH IS REFUSED AND NOT THE LIKELY ONE
+              # ON A FIRST INSTALLATION, where branch protection on the target
+              # branch and a PAT seeded into the store without contents:write
+              # both refuse in exactly the same place. Retrying a rebase five
+              # times against either changes nothing and prints five lines
+              # asserting a race that was never established — the sentence an
+              # operator reads first and acts on. So git's own refusal is
+              # captured and read: only a non-fast-forward is retried, and
+              # every other refusal fails at once with what git said.
               commit_push() {
-                local dir="$1" branch="$2" what="$3" attempt
+                local dir="$1" branch="$2" what="$3" attempt err
+                err="$(mktemp)"
                 ( cd "${dir}"
                   # Staged FIRST, then asked. A pins file written for the first
                   # time is untracked, and `git diff` does not see an untracked
@@ -669,19 +761,33 @@ spec:
                   if git diff --cached --quiet; then exit 0; fi
                   git commit -q -m "release: ${UNIT} ${RELEASE_TAG} — pin ${IMAGE_TAG} (${STAGE})"
                   for attempt in 1 2 3 4 5; do
-                    if git push -q origin "HEAD:${branch}"; then
+                    if git push -q origin "HEAD:${branch}" 2>"${err}"; then
                       echo "bump: pushed ${what} (${branch})"
                       exit 0
                     fi
-                    echo "bump: push of ${what} (${branch}) rejected (attempt ${attempt}/5) — rebasing onto the remote tip and retrying" >&2
-                    git fetch -q origin "${branch}"
+                    # git names a non-fast-forward in its own words; anything
+                    # else — a protected branch, a credential without
+                    # contents:write, a repository that is not there — is not a
+                    # race and is not retried.
+                    if ! grep -qEi 'non-fast-forward|fetch first|behind its remote' "${err}"; then
+                      echo "bump: FAIL — ${what} (${branch}): the push was refused, and not as a concurrent release. git said:" >&2
+                      cat "${err}" >&2
+                      echo "  A first installation refuses here for two reasons before it ever races: branch protection on ${branch}, and a PAT in the store without contents:write on this repository." >&2
+                      exit 1
+                    fi
+                    echo "bump: push of ${what} (${branch}) rejected as non-fast-forward (attempt ${attempt}/5) — rebasing onto the remote tip and retrying" >&2
+                    if ! git fetch -q origin "${branch}" 2>"${err}"; then
+                      echo "bump: FAIL — ${what} (${branch}): the push was rejected and the branch cannot be fetched either, so it cannot be rebased. git said:" >&2
+                      cat "${err}" >&2
+                      exit 1
+                    fi
                     if ! git rebase -q FETCH_HEAD; then
                       git rebase --abort
                       echo "bump: FAIL — ${what} (${branch}): a concurrent release wrote the same pin lines (rebase conflict); nothing pushed to this branch" >&2
                       exit 1
                     fi
                   done
-                  echo "bump: FAIL — ${what} (${branch}): push still rejected after 5 rebase retries" >&2
+                  echo "bump: FAIL — ${what} (${branch}): push still rejected as non-fast-forward after 5 rebase retries" >&2
                   exit 1 )
               }
 
@@ -705,6 +811,20 @@ spec:
                 || { echo "bump: FAIL — cannot read ${CLOUD_URL}@${BOOKS_BRANCH}, this installation's books; the search over the consumer registrations is impossible" >&2; exit 1; }
 
               # ── class (a): every registration with a chartPath ─────────────
+              # ONE CREDENTIAL SET REACHES THIS LOOP AND IT IS NOT PER
+              # REGISTRATION. templates/externalsecret-bump.yaml writes three
+              # path-qualified records — this unit's PAT, the catalog's and
+              # hostyour-cloud's — and credential.useHttpPath is on, so git
+              # matches by full repo path and finds nothing for any OTHER
+              # unit's repository. A second private consumer on the same
+              # installation therefore fails every unit's release here, at the
+              # clone, and the failure below says so rather than blaming the
+              # carrier's branch. The Controller's own copy of this search
+              # (hostyour-manager server/domains/registry-cleanup/search.ts)
+              # clones each carrier under that registration's own
+              # credentialId; giving this task the same reach means handing one
+              # unit's build namespace the PAT of every registered unit, which
+              # is a decision about blast radius and not a defect to patch here.
               for reg in "${WORK}"/books/registrations/*/"${STAGE}.yaml"; do
                 [ -f "${reg}" ] || continue
                 rname="$(yq eval '.name' "${reg}")"
@@ -716,7 +836,11 @@ spec:
                 # Fail-closed: a registered stage whose delivery branch cannot
                 # be read is a search we cannot complete — not completed-ok.
                 git clone -q --depth 1 --branch "deploy/${STAGE}" "${rrepo}" "${dest}" \
-                  || { echo "bump: FAIL — cannot read ${rrepo}@deploy/${STAGE} (registration ${rname}); the search over its pins is impossible" >&2; exit 1; }
+                  || { echo "bump: FAIL — cannot read ${rrepo}@deploy/${STAGE} (registration ${rname}); the search over its pins is impossible." >&2
+                       if [ "${rname}" != "${UNIT}" ]; then
+                         echo "  This task holds a credential for ${REPO_URL}, ${DEPLOY_URL} and ${CLOUD_URL} and for nothing else, so a PRIVATE carrier that is not ${UNIT} is refused here before its branch is read — see the note above this loop." >&2
+                       fi
+                       exit 1; }
                 vf="${dest}/${rchart}/values-${STAGE}.yaml"
                 [ -f "${vf}" ] || { echo "bump: ${rname} has no ${rchart}/values-${STAGE}.yaml — no pin surface, skipping"; continue; }
                 BUMPED=0
@@ -969,6 +1093,19 @@ spec:
           # <guid>-<member>-<stage>: the create-tenant run put it in the
           # tenant grant's resourceNames, so the patch reaches exactly that
           # one Application — "sync that one namespace only".
+          #
+          # THIS STEP RUNS AFTER EVERY PIN IS COMMITTED AND PUSHED, and kubectl
+          # here reads the in-cluster config of the cluster the BUILD PLANE runs
+          # on, which is not necessarily the cluster the Applications stand on.
+          # Every Application of an installation lives on the cluster holding
+          # the master role: ns argocd for that cluster's own units, ns <slave>
+          # for a slave, because a slave's ArgoCD instance is deployed INTO the
+          # master (clusters/slaves/slave/Chart.yaml). The build plane may be a
+          # pure slave, and then this API server holds none of them. That is
+          # derived from the two branch names — global.domain is this cluster's
+          # install branch, global.booksBranch is the master's — and stated
+          # BEFORE any call, instead of discovered as a NotFound that fails a
+          # release whose pins already landed.
           - name: argo-sync
             image: alpine/k8s:1.35.6
             env:
@@ -978,6 +1115,13 @@ spec:
                 value: $(params.stage)
               - name: CLUSTER_NAME
                 value: {{ .Values.global.clusterName | default "" | quote }}
+              # This build plane's own install branch, and the install branch of
+              # the cluster holding the master role. Equal exactly when this
+              # build plane IS that cluster.
+              - name: DOMAIN
+                value: {{ required "consumer-build: global.domain is required (installation/profile.yaml, the fqdn of the cluster this build plane runs on — the argo-sync cannot say whether the Applications are on this API server without it)" .Values.global.domain | quote }}
+              - name: BOOKS_BRANCH
+                value: {{ required "consumer-build: global.booksBranch is required (installation/profile.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
               - name: HITS_FILE
                 value: /bump/hits
             volumeMounts:
@@ -988,6 +1132,11 @@ spec:
               set -euo pipefail
               if [ ! -s "${HITS_FILE}" ]; then
                 echo "argo-sync: no Application hits — nothing to sync"
+                exit 0
+              fi
+              if [ "${DOMAIN}" != "${BOOKS_BRANCH}" ]; then
+                echo "argo-sync: this build plane runs on ${DOMAIN}; every Application of this installation stands on ${BOOKS_BRANCH}, the cluster holding the master role, whose API server is not this one. The pins ARE committed and pushed — the hits below reach the cluster on ArgoCD's own poll of the branches they were written to:"
+                cat "${HITS_FILE}"
                 exit 0
               fi
               while read -r kind rname rcluster; do
@@ -1014,8 +1163,11 @@ spec:
                   ns="${rcluster}"
                 fi
                 echo "argo-sync: refreshing application ${app} in ns ${ns}"
-                kubectl annotate application.argoproj.io "${app}" -n "${ns}" \
-                  argocd.argoproj.io/refresh=normal --overwrite
+                if ! kubectl annotate application.argoproj.io "${app}" -n "${ns}" \
+                     argocd.argoproj.io/refresh=normal --overwrite; then
+                  echo "argo-sync: FAIL — ${app} in ns ${ns} could not be refreshed. THE PINS OF THIS RELEASE ARE ALREADY COMMITTED AND PUSHED; re-running this release re-derives the same pins and writes nothing new, so the thing to fix is the reach — the argo-sync Role in ns ${ns}, or an Application of another name — and then to refresh it by hand." >&2
+                  exit 1
+                fi
               done < "${HITS_FILE}"
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }

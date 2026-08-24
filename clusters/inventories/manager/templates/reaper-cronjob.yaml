@@ -127,8 +127,18 @@ spec:
                 # (externalsecret-deploy-repo-pat.yaml, from the stage-free
                 # secret/build/catalog/repo-pat). Addressed by owner/name because
                 # the reaper goes through the GitHub API, not by clone.
+                #
+                # READ OFF global.catalogUrl, WHICH IS THE KEY THE INSTALLATION ACTUALLY WRITES.
+                # installation/profile.yaml carries the catalog as `catalogUrl`, the clone address,
+                # and clusters/inventories/consumer-build and clusters/slaves/slave read it under
+                # that name. This line read `global.catalogRepo`, which no file of this repository
+                # and no template of the deployment catalogue writes — so the `required` behind it
+                # was not a guard but a render failure waiting for the first install branch to set
+                # master.sshUser, which is what turns this CronJob on. The owner/name the GitHub API
+                # wants is trimmed off the address here rather than carried a second time, because
+                # one installation naming its catalog twice is two spellings that can disagree.
                 - name: CATALOG_REPO
-                  value: {{ .Values.github.deployRepo | default (required "manager: global.catalogRepo is required (installation/profile.yaml, rendered per install branch from the cluster map's catalog-repo)" .Values.global.catalogRepo) | quote }}
+                  value: {{ .Values.github.deployRepo | default (required "manager: global.catalogUrl is required (installation/profile.yaml, rendered per install branch from the cluster map's catalog-repo)" .Values.global.catalogUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
                 - name: CATALOG_WRITE_PAT
                   valueFrom:
                     secretKeyRef:
