@@ -20,8 +20,8 @@ server:
         tls_disable = 0
         address = "[::]:8200"
         cluster_address = "[::]:8201"
-        tls_cert_file = "/vault/userconfig/vault-tls/tls.crt"
-        tls_key_file  = "/vault/userconfig/vault-tls/tls.key"
+        tls_cert_file = "/vault/userconfig/platform-tls/tls.crt"
+        tls_key_file  = "/vault/userconfig/platform-tls/tls.key"
 
         # /v1/sys/metrics needs a token unless this is set — and a sealed Vault
         # can issue none, which is exactly the state the platform must be able to
@@ -76,9 +76,9 @@ server:
 
   # Volume for TLS cert
   volumes:
-    - name: vault-tls
+    - name: platform-tls
       secret:
-        secretName: vault-tls
+        secretName: platform-tls
         # 256 IS 0400, AND IT IS WRITTEN AS THE NUMBER ON PURPOSE. Two readers read this file: helm,
         # which follows YAML 1.1 and reads a leading zero as octal, and the deploy step that compares
         # the file against what the release actually holds, which follows YAML 1.2 and has no bare
@@ -89,8 +89,8 @@ server:
         defaultMode: 256
 
   volumeMounts:
-    - name: vault-tls
-      mountPath: /vault/userconfig/vault-tls
+    - name: platform-tls
+      mountPath: /vault/userconfig/platform-tls
       readOnly: true
 
   # Resources

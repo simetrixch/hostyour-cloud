@@ -41,4 +41,6 @@ spec:
           port: 8200
           serversTransport: vault-transport
   tls:
-    secretName: vault-tls
+    store:
+      name: default
+      namespace: vault
