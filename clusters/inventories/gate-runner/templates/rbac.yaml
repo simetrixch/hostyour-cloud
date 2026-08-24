@@ -12,7 +12,7 @@ one step further because the sandbox runs partially tenant-authored code):
     the PipelineRun's volumeClaimTemplate — no PVC verbs needed here either.
 
   gate-report-writer (reportWriter.serviceAccountName)
-    Bound by the Controller's PipelineRun (taskRunSpecs) to EXACTLY the
+    Bound by the Manager's PipelineRun (taskRunSpecs) to EXACTLY the
     publish-report finally task. The only token in the namespace, and it can
     only write the report ConfigMap here — worthless for lateral movement.
     Its API-server egress is the gate-report-writer-apiserver pinhole in
@@ -27,7 +27,7 @@ metadata:
     app.kubernetes.io/name: gate-runner
     app.kubernetes.io/component: pipeline-sa
 # No token ever mounts into clone/gate pods — the sandbox stays
-# credential-free even though Tekton's podTemplate is Controller-supplied.
+# credential-free even though Tekton's podTemplate is Manager-supplied.
 automountServiceAccountToken: false
 imagePullSecrets:
   # Zot requires pull auth; materialized by ESO from the shared app-tier
@@ -54,7 +54,7 @@ rules:
   # Exactly the report hand-off, nothing else. kubectl's create --dry-run |
   # label | apply flow needs get+create+patch; update covers the
   # last-applied fallback. Deliberately NO list/watch (can't enumerate other
-  # runs' reports) and NO delete — the Controller reads the ConfigMap by NAME
+  # runs' reports) and NO delete — the Manager reads the ConfigMap by NAME
   # (gate-report-<run-id>) and deletes it with its own RBAC after the poll.
   - apiGroups: [""]
     resources: ["configmaps"]

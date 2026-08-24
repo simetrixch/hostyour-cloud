@@ -90,7 +90,7 @@ server:
   replicas: 1
   # The chart auto-creates an internal Secret from the `authentik.*` values above and envFroms it
   # into the pod. These two are ours, and they carry what the blueprints read with !Env:
-  #   - idp-bootstrap-secrets: IDP_{ARGOCD,CONTROLLER,GRAFANA,HEADLAMP,VAULT}_CLIENT_SECRET
+  #   - idp-bootstrap-secrets: IDP_{ARGOCD,MANAGER,GRAFANA,HEADLAMP,VAULT}_CLIENT_SECRET
   #   - idp-bootstrap-env: IDP_DOMAIN, which every blueprint builds its addresses on with !Format.
   envFrom:
     - secretRef:

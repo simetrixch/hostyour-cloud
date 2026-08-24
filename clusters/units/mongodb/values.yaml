@@ -23,7 +23,7 @@
 #   large               500m      2Gi       4       8Gi      100Gi
 #
 # These are PER MEMBER. A `replicaset` runs three of them, which is why the
-# Controller's quota table multiplies the mongodb row by the member count
+# Manager's quota table multiplies the mongodb row by the member count
 # (hostyour-manager/shared/unit-size.ts, MONGODB_MEMBERS) — the ceiling and the
 # render are summed from the same two facts.
 #
@@ -56,7 +56,7 @@ mongodb:
   #                quorum through a voluntary disruption.
   #
   # The member count each word means is stated once, in templates/_members.tpl,
-  # and it is the same count the Controller's quota table multiplies by.
+  # and it is the same count the Manager's quota table multiplies by.
   mode: standalone
 
   image:
@@ -161,7 +161,7 @@ externalsecret-mongodb:
     vaultPath: ""
     # BOTH properties in BOTH modes, and the mode decides only what is MOUNTED.
     # The keyfile authenticates traffic between replica-set members, so a
-    # standalone never mounts it — but the Controller seeds both at onboarding
+    # standalone never mounts it — but the Manager seeds both at onboarding
     # (one create-only Vault write), and a sub-chart's values cannot be made
     # conditional from a parent template anyway. Requesting a property the entry
     # does not carry is what would deadlock the sync, so the entry carries both.
@@ -181,6 +181,6 @@ secret-store:
   serviceAccountName: mongodb-eso
   # The same namespace-templated read policy the consumer's own store uses, which
   # already covers <stage>/consumer/<namespace>/* — so this path needs no grant
-  # of its own to be READ. Writing it is the Controller's seed-mongodb-instance
+  # of its own to be READ. Writing it is the Manager's seed-mongodb-instance
   # step, which has its own narrow policy.
   role: consumer-eso

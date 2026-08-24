@@ -41,7 +41,7 @@ spec:
       type: string
     - name: cluster-value-files
       type: string
-    # Report metadata + the fence the CLI proves fail-closed — all Controller-supplied per run
+    # Report metadata + the fence the CLI proves fail-closed — all Manager-supplied per run
     # (confirmed-listening is a per-run attestation, so none of these can be a static value).
     - { name: repo-url, type: string }
     - { name: resolved-sha, type: string }
@@ -76,7 +76,7 @@ spec:
         # finally task can hand it off without any pod-to-pod path.
         - name: REPORT_OUT
           value: $(workspaces.source.path)/.gate-report.json
-        # Report metadata (the report the Controller commits verbatim carries these).
+        # Report metadata (the report the Manager commits verbatim carries these).
         - name: REPO_URL
           value: $(params.repo-url)
         - name: RESOLVED_SHA
@@ -90,7 +90,7 @@ spec:
         - name: JOB_BUDGET_MS
           value: $(params.job-budget-ms)
         # Fence self-probe targets — prove the egress fence from inside before validating anything
-        # (fail-closed). Controller-supplied per run; CONFIRMED_LISTENING gates the whole probe.
+        # (fail-closed). Manager-supplied per run; CONFIRMED_LISTENING gates the whole probe.
         - name: MUST_FAIL_TARGETS
           value: $(params.must-fail-targets)
         - name: MANAGER_ADDR

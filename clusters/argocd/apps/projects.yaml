@@ -314,7 +314,7 @@ spec:
     # Cross-namespace onboarding grants (Role + RoleBinding only in each):
     #   gate-runner   — gate-run PipelineRun dispatch + report;
     #   kube-system   — the hostyour-deploy-state ConfigMap reader.
-    # The Applications read and the Controller-owned AppProjects are NOT here: that
+    # The Applications read and the Manager-owned AppProjects are NOT here: that
     # grant is cluster-scoped (rbac.yaml, "Cluster scope (was ns argocd)"), so it is
     # a ClusterRole + ClusterRoleBinding, which ArgoCD validates against
     # clusterResourceWhitelist below and never against a destination.

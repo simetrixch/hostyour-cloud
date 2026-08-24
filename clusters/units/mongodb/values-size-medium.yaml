@@ -2,7 +2,7 @@
 #
 #   cpu req 250m · mem req 1Gi · cpu lim 2 · mem lim 4Gi · data volume 40Gi
 #
-# PER MEMBER. A replicaset runs three of these; the Controller's quota table
+# PER MEMBER. A replicaset runs three of these; the Manager's quota table
 # multiplies the mongodb row by the same member count.
 #
 # FOR: a working set that no longer fits the small preset's cache. The MEMORY

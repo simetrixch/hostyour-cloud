@@ -1,6 +1,6 @@
 {{- if and .Values.reaper.enabled .Values.master.sshUser .Values.github.repo }}
 # Registry-reaper — the in-cluster PERIODIC cleaner for the central zot registry's own images
-# (flat, single-segment repos — one segment, no owner prefix). It runs the CONTROLLER image (same
+# (flat, single-segment repos — one segment, no owner prefix). It runs the MANAGER image (same
 # image pin as the Deployment — ONE source of truth, so the reaper and the running manager are
 # always the same build) and invokes the run-once entrypoint server/jobs/registry-reaper.ts. Its
 # referenced safety floor IS the release bump's search space: (a) every registration's
@@ -17,7 +17,7 @@
 # run, so a missing or garbled flag can never delete by accident. ARM it later (owner) by flipping
 # reaper.dryRun to "false" once the dry-run logs confirm the keep/delete plan is correct.
 #
-# ── WHY THE CONTROLLER NAMESPACE (not registry) ────────────────────────────────────────────────
+# ── WHY THE MANAGER NAMESPACE (not registry) ────────────────────────────────────────────────
 # The reaper needs, all ALREADY materialized in THIS namespace and nowhere else:
 #   (a) GITHUB_WRITE_PAT — the write-capable GITOPS_REPO_PAT lives ONLY here, on the isolated
 #       manager-host Vault tier (the role manager-host is bound to ns manager ALONE);
@@ -104,7 +104,7 @@ spec:
                     secretKeyRef:
                       name: manager-app
                       key: oidc-client-secret
-                - name: CONTROLLER_VERSION
+                - name: MANAGER_VERSION
                   value: {{ include "common.buildTag" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
                 - name: DATA_DIR
                   value: /data

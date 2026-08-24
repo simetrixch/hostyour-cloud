@@ -46,14 +46,14 @@ metadata:
     app.kubernetes.io/part-of: tekton
 rules:
   - apiGroups: [""]
-    # Controller needs to watch Pods created by TaskRuns to see them progress.
+    # Manager needs to watch Pods created by TaskRuns to see them progress.
     resources: ["pods"]
     verbs: ["list", "watch"]
   - apiGroups: [""]
-    # Controller needs to get the list of cordoned nodes over the course of a single run
+    # Manager needs to get the list of cordoned nodes over the course of a single run
     resources: ["nodes"]
     verbs: ["list"]
-    # Controller needs cluster access to all of the CRDs that it is responsible for
+    # Manager needs cluster access to all of the CRDs that it is responsible for
     # managing.
   - apiGroups: ["tekton.dev"]
     resources: ["tasks", "taskruns", "pipelines", "pipelineruns", "customruns", "stepactions"]

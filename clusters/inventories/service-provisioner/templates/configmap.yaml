@@ -70,8 +70,8 @@ data:
 
     # ---- Deprovision / finalizer -------------------------------------------------
     # A k8s finalizer stamped on every ServiceClaim we provision, so teardown runs
-    # HOWEVER the claim dies (ArgoCD prune, `kubectl delete`, Controller offboard) —
-    # not only on a Controller-driven path. On deletionTimestamp we destroy exactly
+    # HOWEVER the claim dies (ArgoCD prune, `kubectl delete`, Manager offboard) —
+    # not only on a Manager-driven path. On deletionTimestamp we destroy exactly
     # what the create handler made, THEN strip this string so the object (and, on a
     # namespace teardown, the namespace) can be garbage-collected. Without the
     # finalizer a delete just drops the claim from the next list and the backend
@@ -83,7 +83,7 @@ data:
     FORCE_RELEASE_ANNOTATION = "platform.hostyour.cloud/force-release"
     # Bounded escape: after this many FAILED teardown passes we record the orphan
     # and release the finalizer anyway. A permanently-failing finalizer wedges the
-    # namespace forever AND stalls the Controller offboard for its full 10-min watch
+    # namespace forever AND stalls the Manager offboard for its full 10-min watch
     # timeout (leaking the Vault secrets too) — strictly WORSE than a VISIBLE
     # leftover. Small on purpose (~5 polls of retries before releasing LOUD).
     MAX_DELETION_ATTEMPTS = 5
@@ -94,7 +94,7 @@ data:
     # reaches MAX_DELETION_ATTEMPTS → finalizer kept forever → namespace wedged. So
     # we ALSO release once the claim has been Deleting longer than this, measured
     # from metadata.deletionTimestamp — core k8s metadata that can never be pruned.
-    MAX_DELETION_SECONDS = 900   # 15 min — beyond the Controller's 10-min offboard watch
+    MAX_DELETION_SECONDS = 900   # 15 min — beyond the Manager's 10-min offboard watch
     # A unit that is MOVING to another cluster loses its claims to this very teardown, and
     # loses them FIRST: the move repoints the registration, the source appset stops
     # selecting the unit, and the Application's resources-finalizer deletes the Application
@@ -721,7 +721,7 @@ data:
           • Liveness — on a real removal the host this would connect to is a
             Deployment ArgoCD is pruning at the same moment. The connection fails and
             the finalizer retries up to MAX_DELETION_SECONDS=900s — past the
-            Controller's 10-min offboard watch — so `watch-removal` times out and
+            Manager's 10-min offboard watch — so `watch-removal` times out and
             fails the offboard run. A no-op finalizer releases immediately.
         A relocation hold (RELOCATING_ANNOTATION) therefore changes nothing here — this path
         already drops no data, so there is nothing for a hold to hold back.
@@ -826,7 +826,7 @@ data:
         survive): a finalizer that keeps FAILING blocks the ServiceClaim AND its
         namespace from EVER terminating, and — because the consumer's ArgoCD
         Application carries the resources-finalizer cascade — it also stalls the
-        Controller's offboard run for the full 10-minute watch timeout, which then
+        Manager's offboard run for the full 10-minute watch timeout, which then
         leaks the Vault secrets too. A permanently-wedged namespace is STRICTLY WORSE
         than a recorded leftover. So this does NOT retry forever: after
         MAX_DELETION_ATTEMPTS failed passes (or an operator-set force-release

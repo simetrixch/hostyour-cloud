@@ -76,7 +76,7 @@ spec:
             # deployed image tag (the builds[] pin = the single GitOps source of
             # truth), never typed twice. Required by the app (config.ts) — no
             # silent default, so a forgotten value fails the pod at boot.
-            - name: CONTROLLER_VERSION
+            - name: MANAGER_VERSION
               value: {{ include "common.buildTag" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
             - name: PUBLIC_URL
               value: {{ printf "https://manager.%s" .Values.global.domain | quote }}
@@ -225,12 +225,12 @@ spec:
             # version complete the CLI's fail-closed fence self-probe.
             #
             # THE VARIABLE'S NAME IS THE READER'S AND NOT THIS TREE'S. config.ts calls it
-            # ONBOARD_GATE_CONTROLLER_ADDR, and it is the sole discriminator that registers the
+            # ONBOARD_GATE_MANAGER_ADDR, and it is the sole discriminator that registers the
             # onboarding Run family: a name this chart chose for itself is a value the process never
             # reads, and the routes then answer 501 while everything here says they are configured.
             # The three below it were never renamed and already agree; this one is the only name in
             # this Deployment that has to be spelled the way the process spells it.
-            - name: ONBOARD_GATE_CONTROLLER_ADDR
+            - name: ONBOARD_GATE_MANAGER_ADDR
               value: {{ .Values.onboarding.gatemanagerAddr | quote }}
             - name: ONBOARD_GATE_FENCE_MUST_FAIL
               value: {{ .Values.onboarding.gateFenceMustFail | quote }}

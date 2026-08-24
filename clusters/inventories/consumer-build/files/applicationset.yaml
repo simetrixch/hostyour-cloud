@@ -18,7 +18,7 @@
 # name.)
 #
 # The generator revision is __BOOKS__ and NOT __BRANCH__: a registration is
-# this installation's book entry, written by the Controller onto the install
+# this installation's book entry, written by the Manager onto the install
 # branch of the cluster holding the MASTER role and standing there alone, while
 # __BRANCH__ names the cluster this build plane runs on — a different branch
 # whenever the build plane sits on a pure slave, and one that carries no
@@ -35,7 +35,7 @@
 #
 # The field read here is build.yaml's, and build.yaml is the UNIT's while suspend
 # is per STAGE — so it means "suspended EVERYWHERE", not "suspended somewhere".
-# The Controller keeps it that way (Registry.flip): it turns true once every stage
+# The Manager keeps it that way (Registry.flip): it turns true once every stage
 # the unit stands at is suspended, and false again the moment one resumes. Pausing
 # dev must not stop prod's releases, and a unit that runs nowhere must not keep a
 # build surface.

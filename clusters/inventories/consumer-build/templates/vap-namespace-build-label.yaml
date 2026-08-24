@@ -40,7 +40,7 @@ A hand-applied label is refused too (kubectl carries no tracking id). Granting
 the platform's GitOps PATs to a namespace is a fan-out decision; it is made in
 registrations/<unit>/build.yaml and nowhere else.
 
-NOT the same policy as the per-consumer one the Controller applies at onboard
+NOT the same policy as the per-consumer one the Manager applies at onboard
 (hostyour-manager/server/domains/onboarding/admission-policy.ts), and neither
 makes the other redundant. That one is scoped to the namespaces of ONE unit's
 Application and holds every platform label prefix there. This one is scoped to

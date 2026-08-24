@@ -32,7 +32,7 @@ spec:
         # Deliberately NOT platform/db-consumer, which every onboarded namespace
         # carries and would open this no-auth relay to all of them; and no longer
         # a namespace NAME, which was one installation's consumer written into the
-        # product. The claim is the grant: the Controller's admission policy admits
+        # product. The claim is the grant: the Manager's admission policy admits
         # this label only where the stage registration attests the service, so a
         # unit cannot label itself into this selector.
         - namespaceSelector:

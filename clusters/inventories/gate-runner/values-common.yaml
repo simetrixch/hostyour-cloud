@@ -1,6 +1,6 @@
 # gate-runner — shared values across DEV / TEST / PROD. There is nothing
 # stage-specific here: the stage a gate run validates AGAINST arrives per run
-# as the `stage` PipelineRun param from the Controller, and all hostnames are
+# as the `stage` PipelineRun param from the Manager, and all hostnames are
 # composed from the platform globals at render time.
 
 pipeline:
@@ -39,7 +39,7 @@ namespace:
 
 gate:
   # UID the gate step runs as. node-base images ship the `node` user as 1000;
-  # the Controller's PipelineRun podTemplate fsGroup (1000) makes the
+  # the Manager's PipelineRun podTemplate fsGroup (1000) makes the
   # clone-written workspace writable for this uid (REPORT_OUT lives there).
   runAsUser: 1000
   # Bounded: a render+gate pass over one consumer chart. Raise limits only if

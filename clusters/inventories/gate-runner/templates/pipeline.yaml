@@ -1,5 +1,5 @@
 {{- /*
-gate-run — the onboarding gate Pipeline the Controller dispatches (one
+gate-run — the onboarding gate Pipeline the Manager dispatches (one
 PipelineRun per gate job; replaces the host-podman Quadlet gate-runner). Flow:
 
   clone           the SHARED image-builder git-clone Task via the cluster
@@ -14,9 +14,9 @@ PipelineRun per gate job; replaces the host-podman Quadlet gate-runner). Flow:
                   fails" (finally cannot declare runAfter). Hands the report
                   back as ConfigMap gate-report-<run-id>; synthesizes a FAIL
                   report if the gate crashed before writing one, so the
-                  Controller's poll never hangs.
+                  Manager's poll never hangs.
 
-RUNTIME WIRING — the Controller's PipelineRun MUST set:
+RUNTIME WIRING — the Manager's PipelineRun MUST set:
   - workspaces[source]: volumeClaimTemplate, accessModes [ReadWriteOnce]
     (single-node clusters; on multi-node use RWX or expect co-scheduling — same
     note as image-builder's pipeline-validate-gates.yaml), ~2Gi,
@@ -68,25 +68,25 @@ spec:
     - name: run-id
       type: string
       description: >-
-        Controller-issued run id; names the report ConfigMap
+        Manager-issued run id; names the report ConfigMap
         gate-report-<run-id>, so it must be a valid DNS-1123 name fragment
         (lowercase alphanumerics + dashes).
     - name: repo-credential-secret
       type: string
       description: >-
-        Name of the per-run Secret the Controller creates in this namespace;
+        Name of the per-run Secret the Manager creates in this namespace;
         its GITCREDENTIALS key is empty for a public repo and carries a read
         credential for a private one. No default: the clone step envFroms this
         name non-optionally, so an unset param would name no Secret at all and
         the clone pod would never start.
-    # The Controller owns the run's identity + the fence it must prove: it is the
+    # The Manager owns the run's identity + the fence it must prove: it is the
     # dispatcher (its config lives in clusters/inventories/manager values, GitOps-reproducible),
     # and confirmed-listening is a PER-RUN attestation that cannot be a static value.
     - { name: requested-ref, type: string, description: "The ref the operator submitted (report metadata; gate CLI REQUESTED_REF)." }
     - { name: must-fail-targets, type: string, description: "CSV of internal host:port the fenced pod MUST NOT reach (gate CLI MUST_FAIL_TARGETS)." }
-    - { name: manager-addr, type: string, description: "The Controller's own host:port the pod MUST NOT reach (gate CLI MANAGER_ADDR)." }
+    - { name: manager-addr, type: string, description: "The Manager's own host:port the pod MUST NOT reach (gate CLI MANAGER_ADDR)." }
     - { name: must-pass-target, type: string, description: "The one egress the pod MUST reach — github (gate CLI MUST_PASS_TARGET)." }
-    - { name: confirmed-listening, type: string, description: "Controller attestation the must-fail targets are up (gate CLI CONFIRMED_LISTENING; fail-closed unless \"true\")." }
+    - { name: confirmed-listening, type: string, description: "Manager attestation the must-fail targets are up (gate CLI CONFIRMED_LISTENING; fail-closed unless \"true\")." }
     - { name: runner-version, type: string, description: "runnerVersion stamped into the report." }
     - { name: kube-version, type: string, description: "kubeconform target minor, e.g. 1.30.0 (gate CLI KUBE_VERSION)." }
     - { name: job-budget-ms, type: string, description: "Whole-job ceiling in ms (gate CLI JOB_BUDGET_MS)." }
@@ -107,7 +107,7 @@ spec:
       params:
         - { name: url, value: $(params.git-url) }
         - { name: revision, value: $(params.git-revision) }
-        # The Controller always creates a per-run credential Secret (empty
+        # The Manager always creates a per-run credential Secret (empty
         # GITCREDENTIALS for a public repo, a real read credential for a
         # private one), so the clone uses THIS run's credential and no other.
         - { name: credentials-secret, value: $(params.repo-credential-secret) }

@@ -1,10 +1,10 @@
 # Tenant fan-out — ONE Application "<guid>-<member>-__STAGE__" per (tenant, member), from the tenant
 # registrations registrations/<guid>/__STAGE__.yaml IN THIS INSTALLATION'S BOOKS, in the tenant catalog. A
-# tenant's stage file there IS the deployment for this stage; the Controller writes and removes it,
+# tenant's stage file there IS the deployment for this stage; the Manager writes and removes it,
 # and removing it offboards the whole fan-out.
 #
 # THE MEMBER SET IS DATA. `members` in the registration lists every member the tenant has, each with
-# the charts it deploys into its own namespace <guid>-<member>. The Controller resolved that list
+# the charts it deploys into its own namespace <guid>-<member>. The Manager resolved that list
 # from the tenant product's own manifest — its standing services and one member per app the tenant
 # selected — so this file names no member, no chart and no app. It used to be FOUR files per stage,
 # one per member family, each carrying a chart path and a values block of one particular product;
@@ -21,7 +21,7 @@
 # The two catalog sources part ways here. The chart source's targetRevision KEEPS master (the
 # set-domain:keep marker): the member charts are PRODUCT, shared by every installation. The generator
 # revision names the BOOKS branch — the install branch of the cluster holding the master role, in
-# the catalog — because that is where the Controller writes the tenant registrations, and a second
+# the catalog — because that is where the Manager writes the tenant registrations, and a second
 # installation must be able to hold its own without colliding. A tenant only ever lands on a slave,
 # whose own branch does not exist in the catalog at all, so a generator pointed at this branch would
 # evaluate against a ref that is not there. The $values source is the ONE hostyour-cloud line: the
@@ -39,7 +39,7 @@
 # __BOOKS_FQDN__ and __CLUSTER_NAME__ have NO writer at all. The shell that used to fill them is gone,
 # and neither value is an answer the branch program holds: the books branch is this cluster's own
 # domain where it holds the master role and the named master's domain where it does not, and the
-# cluster is the first DNS label of this cluster's domain — the name the Controller writes into a
+# cluster is the first DNS label of this cluster's domain — the name the Manager writes into a
 # registration's `cluster:` field and the name the destination below resolves (on a master from the
 # cluster Secret in cluster-self.yaml, on a slave from the instance's ESO-materialized one). A branch
 # cut today carries both markers exactly as they stand, so this ApplicationSet reads registrations
@@ -62,7 +62,7 @@
 # `namespaceLabels` out of the registration — the data behind what used to be an `if member == auth`
 # in one of the four files, granting reach to a no-auth service that only that member uses. The
 # per-member AppProject <guid>-<member> (name == the destination namespace, destinations pinned to
-# exactly that namespace) is the isolation — the Controller renders it BEFORE it writes the
+# exactly that namespace) is the isolation — the Manager renders it BEFORE it writes the
 # registration, so this template's project: always resolves.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -181,7 +181,7 @@ spec:
             valuesObject:
               # THE TENANT'S OWN FACTS, handed to every source of every member. Bare access is safe
               # under goTemplateOptions missingkey=error: every field read here is mandatory in the
-              # registration, written explicitly by the Controller on every commit. A chart takes
+              # registration, written explicitly by the Manager on every commit. A chart takes
               # what it needs and ignores the rest — which is what keeps this block the same for all
               # of them, and keeps every member-specific value out of this file.
               tenant:
@@ -204,7 +204,7 @@ spec:
                 seedUsers: {{ $.seedUsers }}
                 apps: {{ $.apps | toJson }}
               # The member's own values, out of the registration — the product's keys, resolved by
-              # the Controller from the product's manifest. Rendered LAST so a product may override
+              # the Manager from the product's manifest. Rendered LAST so a product may override
               # anything above for one member.
               {{- with .values }}
               {{- toYaml . | nindent 10 }}
@@ -229,7 +229,7 @@ spec:
         #    the trunk: a ResourceQuota and the LimitRange that keeps it from rejecting a pod which
         #    declares no resources of its own). Rides in the member's OWN Application for the same
         #    reason the policy above does — created, healed and pruned with the namespace it bounds.
-        #    The figures come from the tenant REGISTRATION, resolved there by the Controller from its
+        #    The figures come from the tenant REGISTRATION, resolved there by the Manager from its
         #    size table. PER MEMBER, not per tenant: a tenant owns one namespace for each of its
         #    members, so each gets this ceiling and one member filling its own cannot take another's
         #    room.

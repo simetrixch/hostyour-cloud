@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=
 # Authentik blueprint — OAuth2 provider + Application for the PER-SLAVE ArgoCD
-# instances (argo-<name>.<controller-fqdn>, e.g. argo-s1.m1.example.com).
+# instances (argo-<name>.<manager-fqdn>, e.g. argo-s1.m1.example.com).
 #
 # ONE SHARED client `argo-slave` serves EVERY per-slave ArgoCD: its redirect URI
 # is a REGEX that matches any argo-<name> callback, so onboarding a new slave needs
@@ -36,7 +36,7 @@ entries:
       # PUBLIC client → no client_secret; ArgoCD uses PKCE (enablePKCEAuthentication).
       client_type: public
       client_id: argo-slave
-      # ONE regex covers every per-slave callback argo-<name>.<controller-fqdn>.
+      # ONE regex covers every per-slave callback argo-<name>.<manager-fqdn>.
       # The controller fqdn's own dots stay unescaped `.` (regex any-char) — the
       # `argo-` prefix + `/auth/callback` anchors make that harmless.
       redirect_uris:

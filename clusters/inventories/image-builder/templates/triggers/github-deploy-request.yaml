@@ -130,7 +130,7 @@ spec:
         namespace: $(tt.params.unit)-build
         labels:
           # The ownership key every consumer-build resource carries; the
-          # Controller's release watch selects runs by it.
+          # Manager's release watch selects runs by it.
           image-builder.io/consumer: $(tt.params.unit)
       spec:
         pipelineRef:

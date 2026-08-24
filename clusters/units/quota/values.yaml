@@ -1,5 +1,5 @@
 # The four numbers and the two counts that bound ONE unit namespace. They arrive
-# from the unit's REGISTRATION, resolved there by the Controller from the one size
+# from the unit's REGISTRATION, resolved there by the Manager from the one size
 # table it holds — so a registration states literally what its unit gets, and this
 # chart carries no table and no preset of its own.
 #

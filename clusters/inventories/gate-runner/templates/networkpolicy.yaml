@@ -6,12 +6,12 @@ clusters/inventories/redis/templates/networkpolicy.yaml.
 
 A gate run legitimately needs exactly two things: (a) DNS and (b) the public
 internet — the github clone and the chart-dependency fetch. Everything else —
-the cluster LAN (10.1.1.x), the Controller, the cluster's own pod/service CIDRs
+the cluster LAN (10.1.1.x), the Manager, the cluster's own pod/service CIDRs
 (microk8s defaults: pods 10.1.0.0/16, services 10.152.183.0/24, both inside
 10.0.0.0/8), cloud metadata (169.254.x) — is denied by carving the private and
 special-use ranges out of the allow-all-egress rule. The gate CLI's own
 fail-closed self-probe (fence.ts) verifies this fence from INSIDE before
-running any gate: the must-fail targets (Controller, API server, cluster LAN)
+running any gate: the must-fail targets (Manager, API server, cluster LAN)
 must be unreachable and the must-pass target (github.com) reachable, otherwise
 the run refuses to validate anything.
 */ -}}
@@ -57,7 +57,7 @@ spec:
     # (2) Public internet ONLY. The except list removes every private and
     # special-use range, so the partially tenant-authored chart code under
     # validation can reach github + public dependency registries but never:
-    #   10.0.0.0/8     — cluster LAN (10.1.1.x), the Controller, microk8s pod +
+    #   10.0.0.0/8     — cluster LAN (10.1.1.x), the Manager, microk8s pod +
     #                    service CIDRs, every in-cluster service
     #   172.16.0.0/12  — private range (docker bridges etc.)
     #   192.168.0.0/16 — private range (office/home LANs)

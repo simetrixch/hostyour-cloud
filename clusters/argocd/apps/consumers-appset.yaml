@@ -1,6 +1,6 @@
 # Consumer delivery — one ApplicationSet driven by the registrations
 # registrations/<unit>/__STAGE__.yaml IN THIS INSTALLATION'S BOOKS. A unit's stage file there IS the
-# deployment for this stage; the Controller writes and removes it, and
+# deployment for this stage; the Manager writes and removes it, and
 # removing it offboards. The generator matches __STAGE__.yaml ONLY: the stage-free
 # build declaration registrations/<unit>/build.yaml never reaches this
 # ApplicationSet, so a build-only unit generates nothing here.
@@ -16,7 +16,7 @@
 #
 # THE TWO MARKERS IN THIS FILE ARE BOTH STAMPED. The post-selector pins
 # cluster=__CLUSTER_NAME__ — the install branch's cluster short name, which is the
-# fqdn's first DNS label and the name the Controller writes into a
+# fqdn's first DNS label and the name the Manager writes into a
 # registration's `cluster:` field; the branch program derives that label from
 # the fqdn it was answered rather than asking for it twice, and stamps it over
 # this whole tree. The generator revision is __BOOKS_FQDN__ and deliberately
@@ -47,7 +47,7 @@
 # consumer; Application/AppProject/Role/RoleBinding blacklisted; sourceRepos
 # pinned to the consumer's repo + this hostyour-cloud repo for the $values
 # source; destination pinned to the consumer's namespace) is the isolation —
-# the Controller renders it (renderConsumerAppProject) BEFORE it writes the
+# the Manager renders it (renderConsumerAppProject) BEFORE it writes the
 # registration, so this template's `project: {{ .name }}` always resolves.
 # No app-of-apps, no floating child. See docs/consumer-contract/.
 apiVersion: argoproj.io/v1alpha1
@@ -106,7 +106,7 @@ spec:
         # Delete=false is the consumer.s responsibility for data survival).
         #
         # What makes these NOT the consumer's to change is a separate object: the
-        # per-consumer ValidatingAdmissionPolicy the Controller applies at onboard
+        # per-consumer ValidatingAdmissionPolicy the Manager applies at onboard
         # (hostyour-manager/server/domains/onboarding/admission-policy.ts) admits,
         # on a Namespace this unit's Application owns, only the exact label pairs
         # listed below under hostyour.cloud/, platform/ and
@@ -190,7 +190,7 @@ spec:
               # (replicas 0, no Ingress) — see the prune note in the header.
               # Bare access is safe under goTemplateOptions missingkey=error:
               # both fields are mandatory in the registration, written
-              # explicitly by the Controller every time.
+              # explicitly by the Manager every time.
               suspended: {{ .suspended }}
               quiesced: {{ .quiesced }}
               # DB-name contract: the registration's `databases` (copied
@@ -232,7 +232,7 @@ spec:
               # The size preset, named by the consumer's OWN size — the same word that bounds its
               # namespace, because a unit has exactly one. Relative to the chart path above, so it is
               # the chart's OWN file — not a $values reference. Bare access is safe under
-              # missingkey=error: `size` is part of the deploy group and the Controller writes a
+              # missingkey=error: `size` is part of the deploy group and the Manager writes a
               # literal on every commit ("small" when the manifest expressed no preference, which is
               # what the chart's values.yaml carries anyway).
               - values-size-{{ .size }}.yaml
@@ -264,7 +264,7 @@ spec:
         #    mongodb claim to the Service `mongodb` in the claim's OWN namespace
         #    when the instance credential is there, exactly as it does for
         #    postgresql. Bare access to `mongodb` is safe under missingkey=error —
-        #    it is part of the deploy group, so the Controller writes a literal on
+        #    it is part of the deploy group, so the Manager writes a literal on
         #    every commit.
         {{- if ne .mongodb "shared" }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
@@ -285,7 +285,7 @@ spec:
             valuesObject:
               mongodb:
                 # The word itself, passed through. The chart derives the member
-                # count from it, and the Controller's quota table multiplied the
+                # count from it, and the Manager's quota table multiplied the
                 # mongodb row by the same count when it priced the unit.
                 mode: "{{ .mongodb }}"
               externalsecret-mongodb:
@@ -316,9 +316,9 @@ spec:
         #    rejecting a pod which declares no resources of its own). UNCONDITIONAL, like the policy
         #    above and for the same reason — a namespace with no ceiling is the gap this closes, so a
         #    consumer that claims no service is exactly the case that must not be skipped.
-        #    The figures come from the REGISTRATION, where the Controller resolved them from its size
+        #    The figures come from the REGISTRATION, where the Manager resolved them from its size
         #    table when it wrote the file; no $values file and no preset name, because the table lives
-        #    in the Controller's database and no cluster can read it.
+        #    in the Manager's database and no cluster can read it.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: master
           path: clusters/units/quota

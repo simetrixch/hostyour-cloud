@@ -2,12 +2,12 @@
 publish-report — the report hand-off. A small kubectl step that reads
 <workspace>/.gate-report.json and applies it as ConfigMap
 gate-report-<run-id> (key report.json) in THIS namespace, where the
-Controller's poll picks it up (and later deletes it with its own RBAC). If
+Manager's poll picks it up (and later deletes it with its own RBAC). If
 the gate task crashed before writing a report, a SYNTHETIC fail report is
-published instead — the Controller must never hang on a missing report.
+published instead — the Manager must never hang on a missing report.
 
 Runs as the pipeline's `finally` task under SA gate-report-writer (bound by
-the Controller's PipelineRun taskRunSpecs — see pipeline.yaml): the ONLY pod
+the Manager's PipelineRun taskRunSpecs — see pipeline.yaml): the ONLY pod
 in the sandbox holding an API token, and that token can only write ConfigMaps
 here (rbac.yaml). Its API-server egress comes from the additive
 gate-report-writer-apiserver NetworkPolicy pinhole.
@@ -30,7 +30,7 @@ spec:
   params:
     - name: run-id
       type: string
-      description: Controller-issued run id — names the ConfigMap gate-report-<run-id>.
+      description: Manager-issued run id — names the ConfigMap gate-report-<run-id>.
   steps:
     - name: publish
       image: {{ .Values.reportWriter.image }}
@@ -51,7 +51,7 @@ spec:
         else
           # The gate task died before writing REPORT_OUT (internal error /
           # OOM / image pull failure upstream). Publish a synthetic FAIL so
-          # the Controller's poll resolves to a verdict instead of hanging.
+          # the Manager's poll resolves to a verdict instead of hanging.
           NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           cat > "$OUT" <<EOF
         {
@@ -66,7 +66,7 @@ spec:
 
         # create-or-update (idempotent across ArgoCD/Tekton retries of this
         # finally task). The hostyour.cloud/gate-report label lets operators
-        # GC orphaned reports in bulk; the Controller itself deletes by name.
+        # GC orphaned reports in bulk; the Manager itself deletes by name.
         kubectl create configmap "gate-report-$(params.run-id)" \
           --from-file=report.json="$OUT" \
           --namespace {{ .Release.Namespace }} \

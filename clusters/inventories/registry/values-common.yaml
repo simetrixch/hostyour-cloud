@@ -165,8 +165,8 @@ ingress:
 # ghcr.io SEED (extensions.sync, onDemand, listed FIRST): where the images of
 # THIS platform come from on an installation that has never built one. The
 # builds[] pins name a tag a release minted, the release pipeline pushes that
-# tag here — and the pipeline exists only once a Controller has written the
-# registration it is rendered from. So the Controller's own image, and the two
+# tag here — and the pipeline exists only once a Manager has written the
+# registration it is rendered from. So the Manager's own image, and the two
 # images that ship with it, cannot come out of this registry the first time.
 # They are published to ghcr.io/simetrixch/<build name> by the release of the
 # repository they build from, and this entry fetches them on the first pull.

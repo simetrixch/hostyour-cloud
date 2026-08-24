@@ -6,11 +6,11 @@ description: >-
   G2 determinism, G3 render, then G6/G7/G8/G22 over the rendered chart) as a
   Tekton PipelineRun in the locked-down, egress-fenced `gate-runner`
   namespace. Replaces the host-podman Quadlet gate-runner:
-  the Controller dispatches a `gate-run` PipelineRun (clone -> gate ->
+  the Manager dispatches a `gate-run` PipelineRun (clone -> gate ->
   publish-report), the gate step runs the gate-runner image's one-shot
   CLI over the cloned workspace, and the verdict comes back as ConfigMap
   gate-report-<run-id>. The sandbox boundary is the Calico `gate-egress-fence`
-  NetworkPolicy (DNS + public internet only, no cluster LAN / Controller /
+  NetworkPolicy (DNS + public internet only, no cluster LAN / Manager /
   cluster services), proven fail-closed from inside by the CLI's own fence
   self-probe. PROVIDER-ONLY like the build plane: app.yaml says runsOn: master,
   so the app generator creates it on the control host and nowhere else.

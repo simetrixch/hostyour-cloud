@@ -855,7 +855,7 @@ spec:
               # a class-(b) hit, and the platform image pins class (c) bumps and
               # pushes back. The install branch named by BOOKS_BRANCH carries
               # this installation's books: the consumer registrations class (a)
-              # searches, which the Controller writes there and nothing takes
+              # searches, which the Manager writes there and nothing takes
               # away. One clone cannot serve both: the trunk carries no customer
               # registration at all, and an install branch's argocd/ tree has
               # already had __STAGE__, __CLUSTER_NAME__, __BOOKS_FQDN__ and
@@ -869,12 +869,12 @@ spec:
                 || { echo "bump: FAIL — cannot read ${CLOUD_URL}@${BOOKS_BRANCH}, this installation's books; the search over the consumer registrations is impossible" >&2; exit 1; }
 
               # ── the carrier credentials: ONE PER REGISTRATION ──────────────
-              # The Controller's own copy of this search opens each carrier
+              # The Manager's own copy of this search opens each carrier
               # under THAT registration's credential and under no other
               # (hostyour-manager server/domains/registry-cleanup/search.ts,
               # readUnitChart: cloneAtRef with entry.repoCredentialId when the
               # registration carries one, unauthenticated when it does not).
-              # This is the same shape read from the other end: the Controller
+              # This is the same shape read from the other end: the Manager
               # holds a sealed credential store, this pod holds a Vault login,
               # and both resolve to the ONE PAT per unit that onboarding seeds
               # at secret/build/<unit>/repo-pat (hostyour-manager
@@ -888,7 +888,7 @@ spec:
               # case that matters.
               #
               # ONE login, taken on first need and given back when the loop is
-              # done — login, use, revoke-self, the close the Controller's own
+              # done — login, use, revoke-self, the close the Manager's own
               # Vault client makes after every call (adapters/vault/
               # vault-self-seeder.ts). A release on an installation whose only
               # chart-carrying registration is this unit's own public repo never
@@ -982,7 +982,7 @@ spec:
                 # The registration's own answer to "is this repository private":
                 # ConsumerRegistrationSchema (hostyour-manager shared/consumer.ts)
                 # carries repoCredentialId for a private repo and omits it for a
-                # public one, and the Controller's search branches on exactly
+                # public one, and the Manager's search branches on exactly
                 # this field.
                 rcred="$(yq eval '.repoCredentialId // ""' "${reg}")"
                 [ -n "${rchart}" ] || continue
@@ -1017,7 +1017,7 @@ spec:
 
               # The carriers are read and written; the login has no further use.
               # Handing it back beats letting it stand for its whole TTL, and it
-              # is the same close the Controller makes after every Vault call.
+              # is the same close the Manager makes after every Vault call.
               if [ -n "${VAULT_CLIENT_TOKEN}" ]; then
                 curl -sS --connect-timeout 10 --max-time 60 -o /dev/null \
                   -X POST -H "x-vault-token: ${VAULT_CLIENT_TOKEN}" \
@@ -1102,7 +1102,7 @@ spec:
               # sources which chart and how its Application is named, and the
               # tenant registrations state which tenants exist on which
               # cluster. Those registrations are NOT on the catalog's trunk —
-              # the Controller writes them onto this installation's books
+              # the Manager writes them onto this installation's books
               # branch there, the same name hostyour-cloud's books carry, and the
               # pin written above stands beside them. TENANT_REGS points into
               # that clone and is empty exactly when the branch does not exist,

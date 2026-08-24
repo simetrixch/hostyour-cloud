@@ -2,7 +2,7 @@
 WHAT EACH MODE MEANS, stated ONCE for every template in this chart.
 
 `unit-mongodb.replicas` — the member count. This is not a free number: it is part
-of what the word means, and the Controller's quota table multiplies the mongodb
+of what the word means, and the Manager's quota table multiplies the mongodb
 row by the SAME count when it prices the unit
 (hostyour-manager/shared/unit-size.ts, MONGODB_MEMBERS). A render and a ceiling
 that disagreed would let a unit start more members than its namespace admits, and
