@@ -4,7 +4,7 @@ Routes alerts matching `matchers` to the listed email recipients.
 
 The Subject / text / html bodies all reference Go templates named
 "alert.subject" / "alert.text" / "alert.html" — those are defined globally in
-clusters/apps/observability/values-{env}.yaml under alertmanagerSpec.templateFiles and
+clusters/inventories/observability/values-{env}.yaml under alertmanagerSpec.templateFiles and
 are available to every AlertmanagerConfig in the cluster.
 
 Recipient fallback chain:
@@ -23,9 +23,9 @@ Recipient fallback chain:
 
 Route matching:
   - Omit `matchers` entirely to catch every alert (used by the
-    `platform-default` entry in clusters/apps/observability/values-common.yaml).
+    `platform-default` entry in clusters/inventories/observability/values-common.yaml).
   - The operator does NOT inject a namespace= matcher because
-    clusters/apps/observability/values-{env}.yaml sets
+    clusters/inventories/observability/values-{env}.yaml sets
     alertmanagerConfigMatcherStrategy.type: None.
 
 The `{{`{{ template ... }}`}}` escaping is mandatory: the AlertmanagerConfig

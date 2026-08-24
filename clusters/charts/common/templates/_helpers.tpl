@@ -110,7 +110,7 @@ naming what is missing.
 {{- range .builds }}{{- if eq .name $.name }}{{- $found = . -}}{{- end }}{{- end -}}
 {{- $tag := $found.tag | required (printf "builds[] carries no entry named %q with a tag — the values-<stage>.yaml pin is missing" .name) -}}
 {{- $placeholder := .root.Values.global.placeholderTag | required "global.placeholderTag is not in this chart's values chain — clusters/platform/values-common.yaml states it, and every ApplicationSet loads that file first" -}}
-{{- if eq $tag $placeholder }}{{- fail (printf "builds[] entry %q is pinned at %q, the tag a stage carries before its first release: no release has written this stage's pin, so there is no image to run. The bump task of the <unit>-release Pipeline writes the minted image tag over it (clusters/apps/consumer-build/templates/pipeline-release.yaml)." .name $placeholder) }}{{- end -}}
+{{- if eq $tag $placeholder }}{{- fail (printf "builds[] entry %q is pinned at %q, the tag a stage carries before its first release: no release has written this stage's pin, so there is no image to run. The bump task of the <unit>-release Pipeline writes the minted image tag over it (clusters/inventories/consumer-build/templates/pipeline-release.yaml)." .name $placeholder) }}{{- end -}}
 {{- $tag -}}
 {{- end }}
 

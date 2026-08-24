@@ -1,0 +1,33 @@
+apiVersion: v2
+name: manager
+version: 1.0.0
+appVersion: "0.1.0"
+description: The hostyour-cloud manager — standalone provisioning/ops product (Hono server + React SPA, native OIDC). Provider-only platform app; installs LAST (Application sync-wave 40).
+type: application
+dependencies:
+  # Ingress (native OIDC — no forwardAuth). host/serviceName/tls tpl'd from globals.
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+  # Persistent DATA_DIR (/data): SQLite manager.db + session/credstore.
+  # Prune=false,Delete=false via pvc.annotations so the data survives ArgoCD
+  # prune / Application deletion (same protection as postgresql/mongodb).
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+    alias: manager-data
+  # Per-namespace ESO SecretStore (app-tier `external-secrets` role).
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  # Shared named templates (common.labels etc.) used by the library charts above.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common
+  # RBAC library — the `rbac.grants` helper renders the manager's four
+  # cross-cutting onboarding grants (templates/rbac.yaml) WITH the workload,
+  # Model A (like clusters/inventories/service-provisioner). Replaces the dissolved satellite
+  # RBAC app that used to carry these grants under a privileged project.
+  - name: rbac
+    version: 1.0.0
+    repository: file://../../charts/rbac

@@ -1,0 +1,28 @@
+# hostyour-deploy-state — the ONE ConfigMap the Controller's onboarding
+# preflight reads (kube-system; the Controller's access is resourceNames-scoped
+# to exactly this name — see manager-deploy-state-reader in
+# clusters/inventories/manager/templates/rbac.yaml). The reader requires ALL FOUR keys
+# present and NON-EMPTY, with `generation` an integer string.
+#
+# Key semantics (grounded in the Controller reader — do not deviate):
+#   domain     MUST equal the cluster's global.domain — the Controller compares
+#              it against the cluster's domain and fails closed on mismatch.
+#              tpl'd from the same source of truth, so it can never drift.
+#   stage      the env label (dev/test/prod), tpl'd from global.env.
+#   generation static "1" — the Controller only requires a non-empty integer
+#              string, it does not compare generations.
+#   writtenAt  static RFC3339 timestamp — not compared either. A GitOps-owned
+#              marker is "written" whenever ArgoCD syncs it; a moving timestamp
+#              would only create permanent drift against git.
+#
+# The cluster's ROLE is deliberately NOT here. An app may not see it, and the one
+# writable place that states it is clusters/active/<fqdn>.yaml on master.
+configmap:
+  configmap:
+    enabled: true
+    name: hostyour-deploy-state
+    data:
+      domain: '{{ .Values.global.domain }}'
+      stage: '{{ .Values.global.env }}'
+      generation: "1"
+      writtenAt: "2026-01-01T00:00:00Z"

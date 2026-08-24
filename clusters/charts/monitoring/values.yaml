@@ -1,5 +1,5 @@
-# Defaults for the monitoring chart. Every consumer (clusters/apps/observability/, clusters/apps/mongodb/,
-# clusters/apps/redis/, clusters/apps/postfix/, ...) overrides these from its own values-*.yaml.
+# Defaults for the monitoring chart. Every consumer (clusters/inventories/observability/, clusters/inventories/mongodb/,
+# clusters/inventories/redis/, clusters/inventories/postfix/, ...) overrides these from its own values-*.yaml.
 #
 # Each consumer adds this chart as a Helm dependency:
 #   dependencies:
@@ -11,7 +11,7 @@
 
 # Release label tying our CRs to the central kube-prometheus-stack Prometheus / Alertmanager.
 # Prometheus and Alertmanager are configured with cluster-wide selectors (see
-# clusters/apps/observability/values-common.yaml), so this label is purely informational — Prometheus
+# clusters/inventories/observability/values-common.yaml), so this label is purely informational — Prometheus
 # picks up every monitor/rule in the cluster regardless of label. We still set it consistently
 # in case the selectors are tightened later.
 prometheusReleaseLabel: observability
@@ -48,7 +48,7 @@ prometheusRules: {}
 # Map of AlertmanagerConfig entries. Each entry routes alerts matching `matchers` to the
 # listed email recipients. See clusters/charts/monitoring/templates/alertmanagerconfigs.yaml.
 # Alerts that match no AlertmanagerConfig fall through to the global default route
-# configured in clusters/apps/observability/values-{env}.yaml.
+# configured in clusters/inventories/observability/values-{env}.yaml.
 # Example:
 #   alertmanagerConfigs:
 #     mongodb:
@@ -59,7 +59,7 @@ prometheusRules: {}
 alertmanagerConfigs: {}
 
 # -----------------------------------------------------------------------------
-# Platform-only resources. Only clusters/apps/observability/ sets these to true.
+# Platform-only resources. Only clusters/inventories/observability/ sets these to true.
 # -----------------------------------------------------------------------------
 
 # Alloy DaemonSet config (log shipper + OTLP trace receiver). Cluster-wide pod-log discovery
@@ -73,8 +73,8 @@ alloy:
 # that runs no Prometheus/Loki/Grafana: discovers ServiceMonitors/PodMonitors +
 # scrapes kubelet/cAdvisor/node → remote_write to the master; tails pod (+ journald)
 # logs → loki.write to the master. Rendered by templates/alloy-agent-config.yaml.
-# OFF by default so ONLY clusters/apps/observability-agent enables it — every other
-# consumer (redis, mongodb, clusters/apps/observability, …) emits nothing here.
+# OFF by default so ONLY clusters/inventories/observability-agent enables it — every other
+# consumer (redis, mongodb, clusters/inventories/observability, …) emits nothing here.
 alloyAgent:
   enabled: false
   # Ship host systemd/journald logs too (needs persistent journald + host mounts).

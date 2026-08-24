@@ -51,7 +51,7 @@ configs:
     # argocd.argoproj.io/tracking-id, and ArgoCD overwrites it on every apply —
     # which is what makes it evidence rather than a claim. Two admission
     # policies decide on it: the build-namespace guard
-    # (clusters/apps/consumer-build/templates/vap-namespace-build-label.yaml) and the
+    # (clusters/inventories/consumer-build/templates/vap-namespace-build-label.yaml) and the
     # per-consumer policy the Controller renders. Stated here rather than left
     # to the version default, because the alternative (`label`) carries the
     # tracking mark in app.kubernetes.io/instance, which any chart may set —

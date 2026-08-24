@@ -8,6 +8,6 @@ description: >-
   when the entry's namespace is empty), all bound to one shared (possibly
   cross-namespace) ServiceAccount subject. Lets a workload chart ship its OWN
   RBAC alongside itself (RBAC with the workload) instead of a satellite app —
-  e.g. clusters/apps/manager emits its four onboarding grants from this one building
+  e.g. clusters/inventories/manager emits its four onboarding grants from this one building
   block. type:library ⇒ nothing renders on its own; parents `include` the helper.
 type: library

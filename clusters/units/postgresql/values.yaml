@@ -300,7 +300,7 @@ postgres-data:
 #         vaultPath: "<stage>/consumer/{{ .name }}/postgres"
 # → remoteRef.key = "<stage>/consumer/<name>/postgres". Same shape as the manager's
 # own app ExternalSecret, which builds "<env>/app/manager" from
-# `printf "%s/app/manager" .Values.global.env` (clusters/apps/manager/templates/
+# `printf "%s/app/manager" .Values.global.env` (clusters/inventories/manager/templates/
 # externalsecret-app.yaml) — a leaf under a tier, composed from the stage.
 # =============================================================================
 externalsecret-postgres:

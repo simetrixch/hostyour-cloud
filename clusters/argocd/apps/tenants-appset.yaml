@@ -49,7 +49,7 @@
 # never prune — both reach the chart as values and the chart renders the off state (replicas 0, no
 # Ingress). The reason prune is off the table sits in the service-provisioner: its finalizer
 # platform.hostyour.cloud/deprovision runs on EVERY ServiceClaim deletion, an ArgoCD prune included
-# (clusters/apps/service-provisioner/templates/configmap.yaml), and drops the user AND the databases — a
+# (clusters/inventories/service-provisioner/templates/configmap.yaml), and drops the user AND the databases — a
 # prune-based suspend would be destructive by construction. Destructive is only offboard
 # (registration removal), where the ServiceClaim finalizers and the Tenant CR cascade are SUPPOSED to
 # run.

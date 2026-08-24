@@ -1,0 +1,25 @@
+apiVersion: v2
+name: deploy-state
+version: 1.0.0
+description: >-
+  hostyour-deploy-state marker ConfigMap in kube-system — the cluster's
+  GitOps-owned deploy-state/identity record (domain/stage/role/generation/
+  writtenAt). The Controller's onboarding preflight reads it and FAILS CLOSED
+  when it is missing or its domain does not match the cluster's. app.yaml says
+  runsOn: every-cluster, so it exists everywhere and self-heals after a wipe.
+type: application
+
+dependencies:
+  # The ConfigMap itself — clusters/charts/configmap tpl's its data values, so the
+  # global.{domain,env} references in values-common.yaml resolve to the
+  # platform globals at chart-render time (same mechanism as clusters/inventories/registry).
+  - name: configmap
+    version: 1.0.0
+    repository: file://../../charts/configmap
+
+  # Shared named templates (common.labels etc.) used by the configmap chart.
+  # Declared at APP level because Helm doesn't vendor nested file:// deps —
+  # see clusters/charts/common/Chart.yaml for the consumption rule.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

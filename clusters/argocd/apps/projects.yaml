@@ -27,13 +27,13 @@
 #
 # Cluster-resource whitelists below were derived from the ACTUAL rendered
 # manifests, not assumptions:
-#   • external-secrets: vendored CRDs (clusters/apps/external-secrets/templates/) +
+#   • external-secrets: vendored CRDs (clusters/inventories/external-secrets/templates/) +
 #     the operator's ClusterRole/Binding. Webhook + cert-controller disabled.
 #   • observability: kube-prometheus-stack CRDs + ClusterRole/Binding +
 #     prometheus-operator admission webhooks.
 #   • cicd/tekton: the vendored release-*.yaml create Namespace objects
 #     (tekton, tekton-resolvers), CRDs, ClusterRole/Binding and Validating/
-#     Mutating webhooks — confirmed by grep over clusters/apps/tekton/templates/.
+#     Mutating webhooks — confirmed by grep over clusters/inventories/tekton/templates/.
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -243,7 +243,7 @@ spec:
       kind: ValidatingWebhookConfiguration
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
-    # PipelineRun admission guard (clusters/apps/image-builder/templates/
+    # PipelineRun admission guard (clusters/inventories/image-builder/templates/
     # vap-pipelinerun-guard.yaml) — both cluster-scoped kinds.
     - group: admissionregistration.k8s.io
       kind: ValidatingAdmissionPolicy

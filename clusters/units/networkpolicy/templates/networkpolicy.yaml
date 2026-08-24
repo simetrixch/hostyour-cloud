@@ -5,7 +5,7 @@ WHAT IT CLOSES. A consumer namespace and a tenant member namespace were created
 with labels and nothing else, so a pod in one could open a socket on a pod in
 any other: the platform is rented to other companies, and a licensee's consumer
 sits in the same cluster as ours. Every backing SERVICE was already fenced by its
-own policy (clusters/apps/mongodb, clusters/apps/redis, clusters/units/postgresql); what had no policy at all
+own policy (clusters/inventories/mongodb, clusters/inventories/redis, clusters/units/postgresql); what had no policy at all
 was the unit's own workload.
 
 HOW IT WORKS. A NetworkPolicy that selects a pod makes that pod deny-by-default

@@ -3,7 +3,7 @@ Grafana Alloy configuration: tails pod logs, parses JSON (e.g. Pino-style struct
 logs from Node apps), and forwards to Loki. Also receives OTLP traces from instrumented
 apps and forwards to Tempo.
 
-This ConfigMap is referenced from clusters/apps/observability/values-*.yaml under the `alloy` sub-chart
+This ConfigMap is referenced from clusters/inventories/observability/values-*.yaml under the `alloy` sub-chart
 key: alloy.configMap.create=false, alloy.configMap.name=alloy-config.
 */ -}}
 {{- if .Values.alloy.logsEnabled }}
@@ -115,7 +115,7 @@ data:
 
     // --- Host journald (systemd units) -> Loki, job="journald" (B2) ---
     // Requires persistent journald (/var/log/journal) + the host mounts
-    // (varlog + /etc/machine-id) in clusters/apps/observability/values-common.yaml.
+    // (varlog + /etc/machine-id) in clusters/inventories/observability/values-common.yaml.
     // Grafana/Loki consumers query {job="journald"} / {unit="..."}.
     loki.source.journal "host" {
       max_age       = "12h"

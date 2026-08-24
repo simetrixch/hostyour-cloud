@@ -27,7 +27,7 @@
 # (hostyour-manager/shared/unit-size.ts, MONGODB_MEMBERS) — the ceiling and the
 # render are summed from the same two facts.
 #
-# The figures are the shared instance's own, per member: clusters/apps/mongodb requests
+# The figures are the shared instance's own, per member: clusters/inventories/mongodb requests
 # 250m/512Mi and limits 4 CPU/4Gi per member on every stage, on a set that
 # carries every tenant. A per-unit instance carries one application, so small
 # requests less memory than that and large is where the shared set stands. The

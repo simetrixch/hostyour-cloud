@@ -1,0 +1,20 @@
+{{- /*
+The controller's own namespace, carrying the two labels the backing services'
+NetworkPolicies admit it through. ArgoCD's CreateNamespace=true also creates the
+namespace, but rendering it here lets us attach the labels up front.
+
+  db-consumer    — clusters/inventories/mongodb admits :27017 by this label (postgresql ships no
+                   NetworkPolicy, so it is reachable without one).
+  redis-consumer — clusters/inventories/redis admits :6379 by ITS OWN label and deliberately not
+                   by db-consumer, so the controller has to carry both. Reaching
+                   the port is what lets this controller write a claim's ACL user
+                   (handle_redis); the `default` user's password still gates what
+                   happens once the connection is open.
+*/ -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    {{ .Values.global.dbConsumerLabel }}: "true"
+    {{ .Values.global.redisConsumerLabel }}: "true"

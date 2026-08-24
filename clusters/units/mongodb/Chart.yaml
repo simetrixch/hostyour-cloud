@@ -8,7 +8,7 @@ description: |
   `mongodb: replicaset`, exactly as clusters/units/postgresql is rendered when the
   registration claims the postgresql service.
 
-  WHY A SECOND CHART BESIDE clusters/apps/mongodb. clusters/apps/mongodb is the CLUSTER's own
+  WHY A SECOND CHART BESIDE clusters/inventories/mongodb. clusters/inventories/mongodb is the CLUSTER's own
   replica set — one stage-deployed release in namespace `mongodb`, three members,
   a NetworkPolicy naming the platform's database consumers, the metrics
   exporter's ServiceClaim and the rs-ensure CronJob. It stays: every tenant runs

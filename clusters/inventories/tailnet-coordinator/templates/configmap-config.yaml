@@ -1,0 +1,119 @@
+{{- /*
+headscale's own config file. It lives in a template rather than in a values
+blob because of ONE line: server_url must be the same address a host's client
+is pointed at with `tailscale up --login-server`. That address is
+global.tailnetUrl — written into installation/profile.yaml by the branch program
+from the cluster map (own fqdn when the role has the master part, else the
+master's) —
+so the coordinator and its clients read one value or they never meet.
+
+Mounted at /etc/headscale, headscale's default config directory. headscale
+reads the file ONCE at startup: app.podAnnotations carries the config revision
+that rolls the pod when this template changes.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: headscale-config
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+data:
+  config.yaml: |-
+    # The public address hosts log in to. Traefik terminates TLS at the
+    # Ingress and forwards plain HTTP to listen_addr, so headscale serves no
+    # certificate of its own.
+    server_url: {{ required "global.tailnetUrl must be set (installation/profile.yaml, rendered per install branch from the cluster map)" .Values.global.tailnetUrl | quote }}
+    listen_addr: 0.0.0.0:8080
+    # Both stay on loopback: nothing scrapes the metrics endpoint (this chart
+    # ships no ServiceMonitor), and the CLI reaches the server over the unix
+    # socket below rather than over gRPC.
+    metrics_listen_addr: 127.0.0.1:9090
+    grpc_listen_addr: 127.0.0.1:50443
+
+    # Everything under /var/lib/headscale is the PVC. The noise key identifies
+    # THIS coordinator to every joined host — replacing it invalidates the
+    # whole tailnet, so it must not live in the container filesystem.
+    noise:
+      private_key_path: /var/lib/headscale/noise_private.key
+    database:
+      type: sqlite
+      sqlite:
+        path: /var/lib/headscale/db.sqlite
+        write_ahead_log: true
+
+    # The address range handed out to joined hosts: the CGNAT range, which the
+    # gate-runner NetworkPolicy already names as the tailnet range
+    # (clusters/inventories/gate-runner/templates/networkpolicy.yaml).
+    prefixes:
+      v4: 100.64.0.0/10
+      v6: fd7a:115c:a1e0::/48
+      allocation: sequential
+
+    # No relay. The upstream default points every client at the hosted control
+    # plane's relay map — the third party a self-hosted coordinator exists to
+    # remove — and the embedded relay needs its own UDP entrypoint on the node,
+    # which the Traefik addon does not open. Hosts carry public addresses and
+    # connect directly.
+    derp:
+      server:
+        enabled: false
+      # ONE RELAY MAP, BECAUSE THE COORDINATOR REFUSES TO START WITHOUT ONE, and the
+      # paragraph above says why neither of the other two doors is open:
+      #
+      #   headscale ran into an error and had to shut down: initial DERPMap is empty,
+      #   Headscale requires at least one entry
+      #
+      # The embedded relay is the one that would keep everything inside this
+      # installation, and it needs a UDP entrypoint for STUN that this platform's
+      # ingress does not open and its firewall does not carry — 443, 80 and 22 and
+      # nothing else, on purpose.
+      #
+      # WHAT THIS COSTS, said plainly rather than left in the word "urls": a host that
+      # cannot reach another directly relays through a third party's servers. What
+      # that party sees is ciphertext — the relay carries a tunnel it holds no key to,
+      # and it is used only when a direct connection cannot be made. What a
+      # self-hosted coordinator is actually for is the CONTROL plane: who may join,
+      # what they may reach, and where that is recorded. That stays here.
+      urls:
+        - https://controlplane.tailscale.com/derpmap/default
+      paths: []
+      auto_update_enabled: false
+
+    # No MagicDNS: hosts address each other by tailnet address, and a base
+    # domain here would be a name the installation does not own.
+    #
+    # AND THE HOSTS KEEP THEIR OWN RESOLVERS, which is what the empty list above
+    # meant and did not say. The coordinator defaults to taking the resolver
+    # configuration of every host that joins, and it then requires a global list to
+    # hand them — so an empty list with the default left alone is refused at
+    # startup, and the pod restarts for ever:
+    #
+    #   Fatal config error: dns.nameservers.global must be set when
+    #   dns.override_local_dns is true
+    #
+    # Saying it plainly is also the safer half: a coordinator that rewrote the
+    # resolvers of every machine on the tailnet would undo the one this
+    # installation measured and wrote itself.
+    dns:
+      magic_dns: false
+      base_domain: ""
+      override_local_dns: false
+      nameservers:
+        global: []
+
+    # No ACL file — every joined host may reach every other. Membership is the
+    # boundary: a host is on the tailnet only after it has been given a join
+    # credential.
+    policy:
+      mode: file
+      path: ""
+
+    # The CLI socket, on the emptyDir the Deployment mounts. `headscale` run
+    # inside the pod talks to the running server through it; that is how a
+    # join credential is minted.
+    unix_socket: /var/run/headscale/headscale.sock
+
+    log:
+      level: info
+    # No phone-home version check.
+    disable_check_updates: true

@@ -25,7 +25,7 @@ server:
 
         # /v1/sys/metrics needs a token unless this is set — and a sealed Vault
         # can issue none, which is exactly the state the platform must be able to
-        # see. The ServiceMonitor in clusters/apps/observability scrapes this endpoint
+        # see. The ServiceMonitor in clusters/inventories/observability scrapes this endpoint
         # anonymously, so without this flag Vault answers 400 and the platform
         # collects no Vault metric at all: no vault_core_unsealed, nothing for the
         # VaultSealed alert to fire on.

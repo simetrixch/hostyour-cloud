@@ -9,7 +9,7 @@
 #
 # ONE PROVIDER, AND IT USED TO BE TWO. The second was dbgate, back when the
 # database browser stood on the master at gate-<slave>.<master>. It stands beside
-# its databases now (clusters/apps/dbgate, `runsOn: slave`), on a cluster this identity
+# its databases now (clusters/inventories/dbgate, `runsOn: slave`), on a cluster this identity
 # provider is not installed on, so its Ingress is off and there is no host here
 # to bind. hostyour-cloud#66 carries what has to exist before a provider for it
 # comes back.

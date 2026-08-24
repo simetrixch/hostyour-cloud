@@ -1,5 +1,5 @@
 {{- /*
-Grafana Alloy configuration — SLAVE AGENT mode (D4b, clusters/apps/observability-agent).
+Grafana Alloy configuration — SLAVE AGENT mode (D4b, clusters/inventories/observability-agent).
 
 Unlike the master's alloy-config.yaml (which only tails logs + receives OTLP,
 because the master's kube-prometheus-stack does the scraping), this config makes
@@ -21,8 +21,8 @@ a template can; this is why the agent config lives here as a templated ConfigMap
 rather than under the alloy sub-chart's `configMap.content`.
 
 Gated on .Values.alloyAgent.enabled (default false in values.yaml) so it renders
-ONLY for clusters/apps/observability-agent — every other monitoring-chart consumer
-(redis, mongodb, clusters/apps/observability, …) leaves it off and emits nothing here.
+ONLY for clusters/inventories/observability-agent — every other monitoring-chart consumer
+(redis, mongodb, clusters/inventories/observability, …) leaves it off and emits nothing here.
 
 The alloy sub-chart references this ConfigMap via:
   alloy.configMap.create=false, alloy.configMap.name=alloy-config, key=config.alloy
@@ -49,7 +49,7 @@ data:
     // ========================================================================
 
     // Basic-auth push credentials, materialized by ESO out of
-    // <mount>/<stage>/app/observability — the one entry clusters/apps/observability
+    // <mount>/<stage>/app/observability — the one entry clusters/inventories/observability
     // composes the push Middleware's htpasswd line from, so what this presents
     // and what that checks are one account.
     remote.kubernetes.secret "push_creds" {
@@ -136,7 +136,7 @@ data:
 
     // node_* metrics (node-exporter equivalent, in-process). Replaces
     // kube-prometheus-stack's node-exporter DaemonSet on the slave. Needs host
-    // /, /proc, /sys mounted — see clusters/apps/observability-agent/values-common.yaml
+    // /, /proc, /sys mounted — see clusters/inventories/observability-agent/values-common.yaml
     // (alloy.controller.volumes + alloy.mounts).
     prometheus.exporter.unix "node" {
       rootfs_path = "/host/root"
@@ -150,7 +150,7 @@ data:
     }
 
     // ========================================================================
-    // LOGS  (mirrors clusters/apps/observability's Alloy loki pipeline)
+    // LOGS  (mirrors clusters/inventories/observability's Alloy loki pipeline)
     // ========================================================================
 
     loki.write "default" {
@@ -247,7 +247,7 @@ data:
 
     // --- Host journald (systemd units) → Loki, job="journald" ---
     // Requires persistent journald (/var/log/journal) + host mounts (varlog +
-    // /etc/machine-id) in clusters/apps/observability-agent/values-common.yaml.
+    // /etc/machine-id) in clusters/inventories/observability-agent/values-common.yaml.
     loki.source.journal "host" {
       max_age       = "12h"
       path          = "/var/log/journal"

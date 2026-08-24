@@ -1,0 +1,86 @@
+{{- /*
+RBAC for the EventListener identity alone. The PipelineRun pods run in the
+per-unit <unit>-build namespaces under their own pipeline-sa
+(clusters/inventories/consumer-build) and hold no API access in this namespace.
+
+  eventlistener-sa (pipeline.eventListenerServiceAccountName)
+    Runs the EventListener pod only. Its access is split so CLUSTER-scoped reads
+    never drag in cluster-wide Secret access:
+      - tekton-triggers-eventlistener-roles (RoleBinding, this ns): read Trigger*
+        CRs + configmaps, create PipelineRuns, impersonate ServiceAccounts
+      - tekton-triggers-eventlistener-clusterroles (RoleBinding, this ns): grants
+        ONLY this namespace's Secrets read — the secretRef the github/HMAC
+        interceptor resolves. A RoleBinding keeps it namespace-scoped (the same
+        ClusterRole also carries cluster rules, but those are inert via a
+        RoleBinding — that is what the ClusterRoleBinding below is for).
+      - <ns>-eventlistener-clusterinterceptors (ClusterRoleBinding, cluster):
+        read ClusterTriggerBindings / ClusterInterceptors. These are CLUSTER-scoped
+        and thus UNREACHABLE via a RoleBinding (a RoleBinding to a ClusterRole
+        grants only its NAMESPACED rules) — a ClusterRoleBinding is REQUIRED, or
+        the EventListener logs "clusterinterceptors ... forbidden ... at the
+        cluster scope" and never processes a webhook. This ClusterRole is
+        cluster-resources-ONLY (no Secrets), so binding it cluster-wide leaks no
+        Secret access across namespaces (hostyour-cloud#22).
+    The create-pipelineruns grant for each <unit>-build namespace is NOT here:
+    it is provisioned imperatively at onboarding, scoped to that unit's
+    namespace, so an unregistered repo's webhook has nothing to land on.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.pipeline.eventListenerServiceAccountName }}-triggers
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.pipeline.eventListenerServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-roles
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  # RoleBinding (not ClusterRoleBinding) on purpose: pins the ClusterRole's
+  # `secrets` rule to THIS namespace (the github/HMAC secretRef lives here). The
+  # ClusterRole's cluster-scoped rules are inert through a RoleBinding — the
+  # ClusterRoleBinding below carries those (hostyour-cloud#22).
+  name: {{ .Values.pipeline.eventListenerServiceAccountName }}-triggers-secrets
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.pipeline.eventListenerServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-clusterroles
+---
+# Cluster-scoped read the EventListener actually needs: ClusterTriggerBindings +
+# ClusterInterceptors (the cel/github interceptors the triggers reference) are
+# CLUSTER-scoped, so a RoleBinding can NEVER grant them — that was the bug that
+# stopped every webhook/release build (hostyour-cloud#22). This ClusterRole is
+# cluster-resources-ONLY (no secrets), so the ClusterRoleBinding does not hand
+# eventlistener-sa cluster-wide Secret access.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-eventlistener-clusterinterceptors
+rules:
+  - apiGroups: ["triggers.tekton.dev"]
+    resources: ["clustertriggerbindings", "clusterinterceptors"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-{{ .Values.pipeline.eventListenerServiceAccountName }}-clusterinterceptors
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.pipeline.eventListenerServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Namespace }}-eventlistener-clusterinterceptors

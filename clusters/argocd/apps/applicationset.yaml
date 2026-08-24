@@ -13,7 +13,7 @@ spec:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
         revision: master
         files:
-          - path: "clusters/apps/*/app.yaml"
+          - path: "clusters/inventories/*/app.yaml"
       selector:
         matchExpressions:
           - key: runsOn
@@ -38,7 +38,7 @@ spec:
           ref: values
         - repoURL: *repo
           targetRevision: *branch
-          path: "clusters/apps/{{ .name }}"
+          path: "clusters/inventories/{{ .name }}"
           helm:
             valueFiles:
               - $values/clusters/platform/values-common.yaml

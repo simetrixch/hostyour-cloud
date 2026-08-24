@@ -23,7 +23,7 @@ tree is the software's own.
 clusters/      EVERYTHING A CLUSTER IS MADE OF, gathered in one place
   active/        the map of every cluster of this installation — filled only on the install
                  branch of the cluster holding the master role, empty on the trunk
-  apps/          the 18 platform applications, each a chart with an app.yaml
+  inventories/   the 18 platform applications, each a chart with an app.yaml
   units/         the four charts rendered once per unit namespace
   slaves/        the chart rendered once per slave cluster, on the master
   charts/        the library charts they are all built from
@@ -73,7 +73,7 @@ a machine where nothing is installed yet, there is no manager to write that regi
 They come from `ghcr.io/simetrixch/manager`, `.../gate-runner` and `.../dbtools`, pushed by the
 `seed-images` workflow of `hostyour-manager` when a release tag is pushed, under the same
 `<release-tag>-<sha7>` image tag the in-cluster pipeline composes. The registry in
-`clusters/apps/registry/values-common.yaml` fetches them on the first pull and stores them under their flat
+`clusters/inventories/registry/values-common.yaml` fetches them on the first pull and stores them under their flat
 build name, so nothing downstream can tell where a given tag came from — and from the installation's
 own first build onwards it never asks again, because a tag it already holds is a local hit.
 

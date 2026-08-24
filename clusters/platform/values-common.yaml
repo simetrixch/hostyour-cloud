@@ -7,7 +7,7 @@
 #         targetRevision: <branch>
 #         ref: values
 #       - repoURL: <repo>
-#         path: clusters/apps/<app>
+#         path: clusters/inventories/<app>
 #         helm:
 #           valueFiles:
 #             - $values/clusters/platform/values-common.yaml   # ← this file
@@ -82,11 +82,11 @@ global:
   # apps/{mongodb,postgresql,redis}/templates/networkpolicy.yaml. Platform
   # components are admitted by NAME (dbConsumerNamespaces); unit namespaces
   # admit themselves by LABEL. The name list carries one entry, `dbgate`: the
-  # database browser runs on the cluster its databases do (clusters/apps/dbgate/app.yaml
-  # carries the `runsOn: slave` clusters/apps/mongodb and clusters/apps/redis carry), so it is
+  # database browser runs on the cluster its databases do (clusters/inventories/dbgate/app.yaml
+  # carries the `runsOn: slave` clusters/inventories/mongodb and clusters/inventories/redis carry), so it is
   # admitted by name like any other platform namespace and needs no route out of
   # the cluster to reach either port. Every one of the three services
-  # requires a credential now that clusters/apps/redis boots with --requirepass, so the two
+  # requires a credential now that clusters/inventories/redis boots with --requirepass, so the two
   # labels no longer differ in what reach MEANS — they differ in HOW WIDELY reach is
   # handed out, and that difference is deliberate:
   #   dbConsumerLabel    — mongodb + postgresql, stamped on EVERY unit namespace.
@@ -98,7 +98,7 @@ global:
   #                        on the tenant member whose own registration carries the
   #                        label (the tenant appset stamps a member's
   #                        namespaceLabels and names none itself), and on
-  #                        clusters/apps/service-provisioner's own namespace, which has to
+  #                        clusters/inventories/service-provisioner's own namespace, which has to
   #                        reach :6379 to write each claim's ACL user. It stays
   #                        narrower than dbConsumerLabel on purpose: the password
   #                        is a SECOND boundary, never a replacement for the
@@ -127,7 +127,7 @@ global:
   # CoreDNS hairpin rewrites (a chart can't see the deploy toggle). All false
   # on the trunk; the branch program writes each key from the cluster map's
   # predicates: registry follows the build plane (the ONE cluster running
-  # clusters/apps/registry); vault follows the master part (the base layer stands it up
+  # clusters/inventories/registry); vault follows the master part (the base layer stands it up
   # there).
   servicesLocal:
     registry: false
@@ -135,9 +135,9 @@ global:
     # observabilityCentral — is THIS cluster the central observability
     # receiver (the "master")? Default false on the trunk.
     # The branch program flips it true wherever the role has the master part (a
-    # master receives its slaves' push). Gates clusters/apps/observability's slave receive-path: the prom-push. /
+    # master receives its slaves' push). Gates clusters/inventories/observability's slave receive-path: the prom-push. /
     # loki-push. Ingresses + the basic-auth Middleware + its htpasswd
-    # ExternalSecret (clusters/apps/observability Chart.yaml `condition:`), and the master
+    # ExternalSecret (clusters/inventories/observability Chart.yaml `condition:`), and the master
     # profile additionally enables Prometheus' remote_write receiver (D4b/I6).
     observabilityCentral: false
 
@@ -152,7 +152,7 @@ global:
   # patch_container_arguments_and_ports row over daemonset/traefik).
   #
   # ONE READER, and it reads it as an EGRESS destination:
-  # clusters/apps/consumer-build/templates/networkpolicy.yaml lets a build pod out to
+  # clusters/inventories/consumer-build/templates/networkpolicy.yaml lets a build pod out to
   # Traefik on 8443/443. NO DATABASE POLICY NAMES IT ANY MORE. The two that did
   # were the second half of an IngressRouteTCP publishing mongodb and redis
   # outside their own cluster, and hostyour-cloud#66 removed route and rule
@@ -164,9 +164,9 @@ global:
   # The shell/CEL-side MIRROR of hostyour-manager shared/release.ts
   # RELEASE_TAG_RE, kept here (a `global.*` key) so every build-plane chart that
   # needs it reads the SAME literal through the shared $values chain:
-  #   - clusters/apps/image-builder github-deploy-request Trigger CEL
+  #   - clusters/inventories/image-builder github-deploy-request Trigger CEL
   #     (^refs/tags/deploy/(dev|test|prod)/<filter>$),
-  #   - clusters/apps/consumer-build pipeline-release gate-stage re-verify.
+  #   - clusters/inventories/consumer-build pipeline-release gate-stage re-verify.
   # It is the INNER pattern only (no ^/$ anchors) so it composes as above (CEL)
   # and as `^<filter>$` (shell / release.ts source).
   # Numeric segments reject leading zeros (a lone 0 excepted). The other side of
@@ -184,7 +184,7 @@ global:
   # apps/<app>/values-<stage>.yaml — and the entry has to EXIST before the
   # release that writes its tag: the bump task rewrites the tag of an entry it
   # finds by `image` and creates none
-  # (clusters/apps/consumer-build/templates/pipeline-release.yaml, bump_file), and the
+  # (clusters/inventories/consumer-build/templates/pipeline-release.yaml, bump_file), and the
   # reach check at the end of that same task FAILS the release when a declared
   # image is carried by no pin at all. So a new application is added with its
   # entry already written in every values-<stage>.yaml, its tag THIS value, and
@@ -199,7 +199,7 @@ global:
   # Which stages a release channel may reach. The channel is read FROM THE TAG
   # (the tag is the truth, not a parameter), and the rule is enforced at three
   # points. The gate-stage task of every <unit>-release Pipeline
-  # (clusters/apps/consumer-build/templates/pipeline-release.yaml) checks the
+  # (clusters/inventories/consumer-build/templates/pipeline-release.yaml) checks the
   # requested stage against this table BEFORE any clone, and the bump task
   # re-checks it before every pin write; both read it as the CHANNEL_STAGES
   # env var that same template renders from .Values.global.channelStages —

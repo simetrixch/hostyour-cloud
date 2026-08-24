@@ -50,12 +50,12 @@ images:
     stamps:
       - kind: yaml_value
         tree: platform
-        file: clusters/apps/registry/values-common.yaml
+        file: clusters/inventories/registry/values-common.yaml
         key: tag
         anchor: 'repository: ghcr.io/project-zot/zot-linux-amd64'
       - kind: yaml_value
         tree: platform
-        file: clusters/apps/registry/Chart.yaml
+        file: clusters/inventories/registry/Chart.yaml
         key: appVersion
   dbgate:
     version: "7.2.3"
@@ -66,7 +66,7 @@ images:
     stamps:
       - kind: yaml_value
         tree: platform
-        file: clusters/apps/dbgate/values-common.yaml
+        file: clusters/inventories/dbgate/values-common.yaml
         key: tag
         anchor: 'repository: dbgate/dbgate'
       # Chart.yaml's own appVersion, stamped so it cannot contradict the image
@@ -75,7 +75,7 @@ images:
       # composes declare their own appVersion.
       - kind: yaml_value
         tree: platform
-        file: clusters/apps/dbgate/Chart.yaml
+        file: clusters/inventories/dbgate/Chart.yaml
         key: appVersion
   # Tailnet coordination server. Only this half of the tailnet is an image —
   # the client on each host is a CLI tool the installer places, pinned under
@@ -90,12 +90,12 @@ images:
     stamps:
       - kind: yaml_value
         tree: platform
-        file: clusters/apps/tailnet-coordinator/values-common.yaml
+        file: clusters/inventories/tailnet-coordinator/values-common.yaml
         key: tag
         anchor: 'repository: ghcr.io/juanfont/headscale'
       - kind: yaml_value
         tree: platform
-        file: clusters/apps/tailnet-coordinator/Chart.yaml
+        file: clusters/inventories/tailnet-coordinator/Chart.yaml
         key: appVersion
   # In-house datastores — official images via clusters/charts/deployment (mongodb:
   # own StatefulSet templates); the Bitnami-chart era is fully migrated out.
@@ -149,11 +149,11 @@ images:
   # both on 7.0, and the next bump arrives with 26.04.2 — so a kernel of 7.0.14
   # or later means a mainline one. The cheaper mitigation is
   # GLIBC_TUNABLES=glibc.pthread.rseq=1 on the Deployment, reported to stop the
-  # segfault at the cost of allocation performance; it belongs in clusters/apps/mongodb,
+  # segfault at the cost of allocation performance; it belongs in clusters/inventories/mongodb,
   # not here, and it comes out when the kernel moves.
   #
   # Watch mongod by hand for two minutes on the first install. Nothing here does
-  # it: the probes in clusters/apps/mongodb are ordinary 10- and 15-second ones, and a
+  # it: the probes in clusters/inventories/mongodb are ordinary 10- and 15-second ones, and a
   # process that serves for half a minute and then segfaults passes them on the
   # way past. A restart count climbing on its own IS this defect.
   mongodb:
@@ -166,7 +166,7 @@ images:
     stamps:
       - kind: yaml_value
         tree: platform
-        file: clusters/apps/mongodb/values-common.yaml
+        file: clusters/inventories/mongodb/values-common.yaml
         key: tag
         anchor: 'repository: mongo'
       - kind: yaml_value
@@ -188,10 +188,10 @@ images:
     stamps:
       - kind: yaml_value
         tree: platform
-        file: clusters/apps/redis/values-common.yaml
+        file: clusters/inventories/redis/values-common.yaml
         key: tag
         anchor: 'repository: redis'
-  # The interpreter clusters/apps/service-provisioner runs its reconciler on. Not a
+  # The interpreter clusters/inventories/service-provisioner runs its reconciler on. Not a
   # product of its own: the chart mounts the reconciler as a ConfigMap and the
   # container pip-installs the client libraries at boot, so this pin decides
   # which Python every ServiceClaim on this platform is resolved by.
@@ -204,7 +204,7 @@ images:
     stamps:
       - kind: yaml_value
         tree: platform
-        file: clusters/apps/service-provisioner/values-common.yaml
+        file: clusters/inventories/service-provisioner/values-common.yaml
         key: tag
         anchor: 'repository: python'
 
@@ -220,7 +220,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/external-secrets/Chart.yaml
+        file: clusters/inventories/external-secrets/Chart.yaml
         dependency: external-secrets
   kube-prometheus-stack:
     version: "87.21.0"
@@ -229,7 +229,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/observability/Chart.yaml
+        file: clusters/inventories/observability/Chart.yaml
         dependency: kube-prometheus-stack
   loki:
     version: "18.7.0"
@@ -238,7 +238,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/observability/Chart.yaml
+        file: clusters/inventories/observability/Chart.yaml
         dependency: loki
   tempo:
     version: "2.2.3"
@@ -247,7 +247,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/observability/Chart.yaml
+        file: clusters/inventories/observability/Chart.yaml
         dependency: tempo
   # alloy is declared in TWO charts. Both sites are stamped from the one key,
   # or a raise moves one and strands the other.
@@ -258,11 +258,11 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/observability/Chart.yaml
+        file: clusters/inventories/observability/Chart.yaml
         dependency: alloy
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/observability-agent/Chart.yaml
+        file: clusters/inventories/observability-agent/Chart.yaml
         dependency: alloy
   # The upstream chart is named `mail` in the Chart.yaml that wraps it — the
   # dependency below is what couples this key to that name, for the stamp and
@@ -274,7 +274,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/postfix/Chart.yaml
+        file: clusters/inventories/postfix/Chart.yaml
         dependency: mail
   prometheus-postgres-exporter:
     version: "8.2.0"
@@ -292,7 +292,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/mongodb/Chart.yaml
+        file: clusters/inventories/mongodb/Chart.yaml
         dependency: prometheus-mongodb-exporter
   prometheus-redis-exporter:
     version: "6.28.0"
@@ -301,7 +301,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/redis/Chart.yaml
+        file: clusters/inventories/redis/Chart.yaml
         dependency: prometheus-redis-exporter
   # The push agent a cluster without the master part runs; the receiving
   # side is kube-prometheus-stack above, which carries its own copy.
@@ -312,7 +312,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/apps/observability-agent/Chart.yaml
+        file: clusters/inventories/observability-agent/Chart.yaml
         dependency: kube-state-metrics
 
 # Bootstrap components installed by the deploy programs (NOT ArgoCD-managed).

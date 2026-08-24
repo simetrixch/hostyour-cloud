@@ -2,7 +2,7 @@
 # Merged with clusters/platform/values-common.yaml by every Application via $values ref.
 global:
   env: dev
-  # DEV is the build cluster today — it runs clusters/apps/registry, so the registry is
+  # DEV is the build cluster today — it runs clusters/inventories/registry, so the registry is
   # LOCAL here (enables the CoreDNS hairpin). Across the
   # multi-VM clusters, only the ONE build cluster sets this true.
   servicesLocal:

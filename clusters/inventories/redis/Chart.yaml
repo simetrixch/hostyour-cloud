@@ -1,0 +1,105 @@
+apiVersion: v2
+name: redis
+version: 1.0.0
+description: |
+  Redis cache — the OFFICIAL `redis` image on our own clusters/charts/deployment (no
+  Bitnami, no operator). Standalone, AOF-persistent, and AUTHENTICATED: the
+  server boots with `--requirepass` (values-common.yaml, redis.args), so opening
+  :6379 is no longer the grant it was.
+
+  TWO BOUNDARIES, and the second never replaces the first. The NetworkPolicy
+  (templates/networkpolicy.yaml) still says who may open :6379 at all, and it is
+  unchanged. Behind it, WHO a connection is decides what it may do:
+
+    * `default`, whose password is `--requirepass` — the platform's own
+      credential. clusters/inventories/service-provisioner reads it to write the users below,
+      the metrics exporter reads it to scrape, and clusters/inventories/dbgate reads it out of
+      Vault to browse. All three take it from a Secret, never a literal.
+    * `sp_<namespace>_<claim>` — one ACL user per redis ServiceClaim, minted by
+      clusters/inventories/service-provisioner with a generate-once password, the LITERAL key
+      patterns the claim declared, no pub/sub channel, and every command except
+      @dangerous and @admin. FLUSHALL takes no key argument, so that command rule
+      is what refuses it.
+
+  WHERE THE PASSWORD COMES FROM, and what has to be true elsewhere for it to
+  arrive. The external-secret dependency below materializes the
+  `redis-credentials` Secret from Vault `<env>/app/redis`, property
+  `redis-password`, through the SecretStore the secret-store dependency renders
+  into this namespace. TWO THINGS OUTSIDE THIS REPOSITORY have to hold for that
+  read to succeed, and neither of them fails in a way that names itself:
+
+    * the entry `<env>/app/redis` exists, with a `redis-password` property;
+    * `redis` stands in Vault's `external-secrets` role
+      bound_service_account_namespaces, where the cluster's Vault is seeded.
+      A namespace left out of that list is refused at LOGIN, before any policy
+      is consulted, so the seed reports success and the entry is unreadable.
+
+  Where either is missing, no `redis-credentials` Secret is written and the pod
+  does not start at all — the kubelet holds it in CreateContainerConfigError,
+  naming the Secret. It self-heals the moment the Secret appears.
+
+  ACL USERS DO NOT SURVIVE A RESTART OF THIS POD. There is no `aclfile`: the
+  durable copy of every claim's password is the namespace-local Secret the
+  provisioner wrote, and its reconcile pass re-states each ACL user from that
+  Secret. So after a restart a claim's credential is refused for up to one poll
+  interval (clusters/inventories/service-provisioner controller.pollIntervalSeconds, 15s) while
+  `default` — whose password is in the server's own config — already answers.
+
+  THE CACHE IS CLUSTER-INTERNAL. There is no Ingress and no IngressRouteTCP, and
+  the NetworkPolicy admits no ingress controller, so :6379 answers inside this
+  cluster and nowhere else. clusters/inventories/dbgate, which browses it, carries the same
+  `runsOn: slave` this chart's app.yaml carries and dials it in-cluster.
+
+  The image tag is managed centrally in clusters/platform/versions.yaml (images.redis)
+  and stamped by the version sync. A single ReadWriteOnce data PVC (Recreate
+  strategy).
+type: application
+dependencies:
+  # Redis pod — Deployment + ClusterIP Service via the shared library chart.
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: redis
+
+  # AOF + RDB data (/data). Prune=false,Delete=false survives ArgoCD prune.
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+    alias: redis-data
+
+  # Redis alert rules. Metrics come from the redis exporter (wired as a follow-up).
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring
+
+  # Metrics exporter — emits redis_* metrics that the alert rules above watch.
+  # Authenticates as `default` out of the redis-credentials Secret below
+  # (values-common.yaml, prometheus-redis-exporter.auth), because what it reads is
+  # the server itself — CONFIG GET among it, and CONFIG is in the @admin category
+  # the ACL rule refuses a claim's own user.
+  - name: prometheus-redis-exporter
+    version: 6.28.0
+    repository: https://prometheus-community.github.io/helm-charts
+
+  # ExternalSecret — materializes the `redis-credentials` K8s Secret (the
+  # `default` user's password) from Vault path `<env>/app/redis`. The Deployment
+  # boots the server with it (--requirepass), the exporter authenticates with it,
+  # and clusters/inventories/service-provisioner reads it to write per-claim ACL users.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-redis
+
+  # Per-namespace ESO SecretStore (vault-backend) — required so the
+  # externalsecret-redis above can authenticate to Vault from THIS namespace.
+  # Requires `redis` in Vault's external-secrets role
+  # bound_service_account_namespaces — it is set where the cluster's Vault is
+  # seeded, from the platform's own app list, and this chart does not add it.
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # Shared named templates used by the library charts above.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

@@ -37,7 +37,7 @@
 # replicas 0, no Ingress. The reason prune is off the table sits in the
 # service-provisioner: its finalizer platform.hostyour.cloud/deprovision
 # runs on EVERY ServiceClaim deletion, an ArgoCD prune included
-# (clusters/apps/service-provisioner/templates/configmap.yaml), and drops the user
+# (clusters/inventories/service-provisioner/templates/configmap.yaml), and drops the user
 # AND the databases — a prune-based suspend would be destructive by
 # construction.
 #
@@ -124,7 +124,7 @@ spec:
             # DB-consumer label (global.dbConsumerLabel): admits this namespace through
             # the CREDENTIALED backing-service NetworkPolicies (mongodb, postgresql).
             # Harmless without a claim — those services still require a provisioned
-            # per-unit credential. Redis requires one too (clusters/apps/redis boots with
+            # per-unit credential. Redis requires one too (clusters/inventories/redis boots with
             # --requirepass), and is STILL not admitted by this label: its
             # NetworkPolicy is deliberately narrower than the credentialed pair's and
             # admits only the redis-consumer label the templatePatch below stamps when
