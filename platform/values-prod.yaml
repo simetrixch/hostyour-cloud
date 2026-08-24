@@ -1,4 +1,0 @@
-# PROD-specific platform globals.
-# Merged with platform/values-common.yaml by every Application via $values ref.
-global:
-  env: prod

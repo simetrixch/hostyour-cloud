@@ -1,0 +1,141 @@
+# The Helm values authentik is installed with. Nothing in this file is substituted at install time:
+# no value here belongs to one installation, and the ones that do arrive from the secret store
+# through the Secrets named below.
+#
+# Authentik is deployed under release name "idp" in namespace "idp", and the chart names its
+# objects "{release}-authentik-{component}" — so the Service the ingress route and the forward-auth
+# middleware address is "idp-authentik-server", and the bundled database is "idp-postgresql".
+# Upstream chart 2026.5.6, which clusters/platform/versions.yaml pins — note the major restructure: all
+# `replicas`, `resources`, `envFrom`, `volumes`, `volumeMounts`, `ingress`, `service`
+# fields moved INSIDE `server:` and `worker:` blocks (top-level ones are
+# now hard-deprecated and the chart refuses to install if any are set).
+
+# The three values this release cannot be given here. A file in this tree is committed, so a secret
+# written into it would be the same on every installation of the product — in the one component
+# every other component authenticates against. They are minted per installation into the Secret
+# idp-credentials and arrive through the envFrom below, which the chart appends AFTER its own
+# configuration secret, so for any key that stands in both this one is the last word.
+#
+# AUTHENTIK_SECRET_KEY and AUTHENTIK_POSTGRESQL__PASSWORD are the signing key and the password
+# authentik connects to its database with. The chart has a values field for each — `secret_key` and
+# `postgresql.password` — and both are left at their empty default, which the chart leaves out of
+# its own Secret rather than writing as an empty variable. So what the pod reads for those two comes
+# from here and from nowhere else.
+#
+# AUTHENTIK_BOOTSTRAP_PASSWORD IS DELIBERATELY NOT SET, and the consequence is the first screen of
+# this whole installation. Set, authentik seeds the `akadmin` account on the first start of an empty
+# database, marks itself set up, and refuses the out-of-box flow from then on — which leaves an
+# operator in front of a login asking for a password they were never told was minted. Unset, that
+# flow is what the address answers with, and the first person to reach it chooses their own.
+#
+# WHAT THAT COSTS IS A WINDOW AND IT IS REAL: between the end of deploy-gitops and the moment
+# somebody completes the flow, the address is public and the flow asks nothing only the operator
+# could know. Whoever reaches it first becomes the administrator of this installation. The product
+# owner decided the window is the operator's to close, on 2026-08-23.
+#
+# The variable, when an installation does set one, has to be in `global` and not in `server`: the
+# startup hook that seeds the account runs in the server AND in the worker, whichever gets there
+# first, and `global.envFrom` is the one field this chart puts on both deployments.
+global:
+  envFrom:
+    - secretRef:
+        name: idp-credentials
+
+authentik:
+  error_reporting:
+    enabled: false
+
+# Bundled PostgreSQL → keeps Authentik self-contained; NOT dependent on
+# clusters/units/postgresql which is GitOps-managed (would create a bootstrap cycle:
+# ArgoCD reconciles clusters/units/postgresql, but ArgoCD itself authenticates via
+# Authentik — so Authentik must come up first, with its own datastore).
+postgresql:
+  enabled: true
+  auth:
+    # The same Secret, under the two key names this database decided on: one for the user authentik
+    # connects as, one for the superuser the image creates at first init. Both hold the value the
+    # mint wrote, so the password authentik is given and the password the database was created with
+    # cannot drift apart.
+    existingSecret: idp-credentials
+    secretKeys:
+      userPasswordKey: password
+      adminPasswordKey: postgres-password
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# Authentik 2026 uses PostgreSQL for cache + queue + sessions — no Redis
+# dependency. (Previous chart bundled Bitnami redis; the 2026 chart
+# removed it entirely.)
+
+# Blueprints are mounted manually via `server.volumes` + `server.volumeMounts`
+# below (same for worker), so they land at /blueprints/local/*.yaml which
+# Authentik's worker auto-discovers on startup.
+#
+# We deliberately do NOT use the chart's `blueprints.configMaps` field — it
+# registers the same ConfigMap as a blueprint source, which causes Authentik
+# to try to insert each blueprint TWICE (once from the volume mount, once
+# from the chart's auto-registration) → duplicate-key IntegrityError on
+# `authentik_blueprints_blueprintinstance_name_*_uniq` and the workers
+# crash-loop until the second insert is removed.
+
+server:
+  enabled: true
+  replicas: 1
+  # The chart auto-creates an internal Secret from the `authentik.*` values above and envFroms it
+  # into the pod. These two are ours, and they carry what the blueprints read with !Env:
+  #   - idp-bootstrap-secrets: IDP_{ARGOCD,CONTROLLER,GRAFANA,HEADLAMP,VAULT}_CLIENT_SECRET
+  #   - idp-bootstrap-env: IDP_DOMAIN, which every blueprint builds its addresses on with !Format.
+  envFrom:
+    - secretRef:
+        name: idp-bootstrap-secrets
+    - configMapRef:
+        name: idp-bootstrap-env
+  volumes:
+    - name: blueprints-overlay
+      configMap:
+        name: idp-blueprints
+  volumeMounts:
+    - name: blueprints-overlay
+      mountPath: /blueprints/local
+      readOnly: true
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 100m
+    limits:
+      # Authentik's Python/gunicorn server spikes during blueprint import +
+      # concurrent auth; 1Gi OOMKilled it (exit 137). Burstable: low request, 2Gi cap.
+      memory: 2Gi
+      cpu: 1000m
+  # Disable the chart-bundled Ingress — we ship our own IngressRoute
+  # (manifests/idp/ingressroute.yaml) for consistency with Vault/ArgoCD/
+  # Headlamp + native Traefik CRD support.
+  ingress:
+    enabled: false
+
+worker:
+  enabled: true
+  replicas: 1
+  envFrom:
+    - secretRef:
+        name: idp-bootstrap-secrets
+    - configMapRef:
+        name: idp-bootstrap-env
+  volumes:
+    - name: blueprints-overlay
+      configMap:
+        name: idp-blueprints
+  volumeMounts:
+    - name: blueprints-overlay
+      mountPath: /blueprints/local
+      readOnly: true
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 100m
+    limits:
+      # Worker runs blueprint apply + background tasks; same burstable 2Gi headroom.
+      memory: 2Gi
+      cpu: 1000m

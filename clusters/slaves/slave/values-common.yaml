@@ -1,0 +1,227 @@
+# slave (D5) — shared across DEV / TEST / PROD.
+#
+# Per-slave inputs live under `slave:` and are REQUIRED — the slaves
+# ApplicationSet (clusters/argocd/apps/slaves-appset.yaml) injects them from the
+# slave's cluster map (clusters/active/<fqdn>.yaml) via helm valuesObject. The
+# empty defaults below only document the shape; templates `required`-fail
+# loudly if any is missing.
+#
+# The stage (global.env), the master's Vault URL (global.vaultUrl) and the ESO
+# SecretStore name (global.secretStoreName) come from the standard $values
+# chain (clusters/platform/values-common.yaml + platform/values-<stage>.yaml +
+# installation/profile.yaml) — same as every platform app.
+
+# ---------------------------------------------------------------------------
+# TYPE-COLLISION NEUTRALIZATION — load-bearing, do not remove.
+# The platform $values chain sets `global.env` to the STAGE string
+# (platform/values-<stage>.yaml: env: prod), but the argo-cd sub-chart reads
+# `global.env` as a LIST of extra env vars for every component (its
+# templates `concat .Values.global.env ...`) — the string breaks the whole
+# render. This file loads AFTER platform/values-<stage>.yaml in the
+# ApplicationSet's valueFiles chain, so re-typing it here wins. THIS chart
+# therefore never reads global.env — the stage arrives as slave.stage instead
+# (a constant the per-stage slaves-appset injects via valuesObject).
+# ---------------------------------------------------------------------------
+global:
+  env: []
+
+# ---------------------------------------------------------------------------
+# Per-slave inputs (from the slave's cluster map clusters/active/<fqdn>.yaml).
+# All strings — the ApplicationSet's go-template renders every field as a
+# string.
+#   name       s1                        — the slave's short name (first label of the map's fqdn)
+#   branch     s1.example.com            — the SLAVE's install branch (== the map's fqdn)
+#   apiHost    100.64.0.11               — the address this master's in-cluster components dial the
+#                                          slave's kube-apiserver on: its tailnet address once the
+#                                          two share that private network, its LAN address on a
+#                                          slave that sits in the same network as the master
+#   apiPort    16443                     — the slave's kube-apiserver port (MicroK8s default)
+#   masterFqdn m1.example.com            — the master's FQDN (kube-<name>.<masterFqdn> ingress)
+#   stage      prod                      — the map's stage (global.env is unusable here,
+#                                          see the neutralization block above; the appset's
+#                                          per-stage selector pins it)
+# ---------------------------------------------------------------------------
+slave:
+  name: ""
+  branch: ""
+  apiHost: ""
+  apiPort: "16443"
+  masterFqdn: ""
+  stage: ""
+
+# ---------------------------------------------------------------------------
+# The GitOps monorepo. Used by the handoff root Application (source.repoURL)
+# and the ESO-materialized repo credential Secret. The username pairs with the
+# GITOPS_REPO_READ_PAT (Contents: read — this instance syncs and never commits)
+# exactly like the bootstrap's repo credential.
+# ---------------------------------------------------------------------------
+repo:
+  url: https://github.com/simetrixch/hostyour-cloud.git
+  username: hostyour-cloud
+  # The TENANT CATALOG — this installation's own repository, holding the tenant
+  # registrations (registrations/<guid>/<stage>.yaml) and the member charts.
+  # Read by the repo credential ESO twin
+  # (templates/externalsecret-repo-catalog.yaml): the tenant
+  # ApplicationSets live in the slave branch's argocd tree
+  # (clusters/argocd/apps/tenants-appset.yaml, synced by the handoff root
+  # Application) and read the catalog through this instance's repo-server, so
+  # the instance needs the credential even though no template here renders
+  # them. The username pairs with the org PAT at secret/<stage>/slaves/
+  # <name>/deploy-repo-pat (seeded when the slave is added).
+  #
+  # WHICH repository the catalog is, is installation state and is not settable
+  # here: installation/profile.yaml carries it as global.catalogUrl, and
+  # templates/externalsecret-repo-catalog.yaml requires it — a branch naming no
+  # catalog fails its render instead of materializing a credential for no
+  # repository. There is no per-slave override to write it into: the generator
+  # clusters/argocd/apps/slaves-appset.yaml names no installation/values/<app>.yaml
+  # for this chart, and this file is product, byte-identical everywhere.
+  deployUsername: hostyour-cloud
+
+# ---------------------------------------------------------------------------
+# kube (dashboard): deliberately NOT in this chart. ONE SHARED master Headlamp
+# (ns kubernetes-dashboard) serves the master and every slave via its cluster
+# picker — adding or removing a slave rebuilds its multi-context kubeconfig
+# Secret, and each slave's apiserver is configured to trust the master's
+# Authentik for the OIDC client `headlamp`. The former per-slave headlamp
+# sub-chart + kube-<name> ingress + ESO kubeconfig are gone.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# argo (per-slave ArgoCD ingress) — ON. Renders templates/argo-ingress.yaml:
+# the argo-<name>.<masterFqdn> Ingress in front of Service argocd-server. A
+# values toggle (default true) keeps rollback trivial. The argo-cd sub-chart
+# below must serve plaintext (configs.params.server.insecure) so Traefik can
+# terminate TLS in front of it. Auth = OIDC ONLY (the shared argo-slave
+# Authentik client; the local `admin` account is OFF — argo-cd.configs.cm
+# admin.enabled: false below). Reaching the slave API requires the pod-CIDR fix
+# (per-slave-trio design §3).
+# ---------------------------------------------------------------------------
+argo:
+  ingress:
+    enabled: true
+
+# ---------------------------------------------------------------------------
+# The namespaced ArgoCD instance (argo/argo-cd sub-chart, pinned in Chart.yaml
+# to the master's bootstrap version). The values below are the D5-specified
+# shape: shared CRDs, single replicas, no dex, ApplicationSet controller on,
+# cluster-wide RBAC OFF (namespaced install).
+# ---------------------------------------------------------------------------
+argo-cd:
+  # Constant resource names (argocd-server, argocd-repo-server, ...) in every
+  # slave namespace — instead of the release-derived <name>-argocd-*.
+  # Safe because each instance lives alone in its own namespace; keeps runbooks
+  # and `kubectl -n <name>` output identical across slaves.
+  fullnameOverride: argocd
+
+  # SHARED CRDs: the master's bootstrap ArgoCD already installed the argoproj.io
+  # CRDs cluster-wide. A second install per slave would fight over ownership —
+  # this instance must NEVER ship them.
+  crds:
+    install: false
+
+  # NAMESPACED install (upstream "namespace-scoped installation" pattern):
+  # no ClusterRoles/ClusterRoleBindings — every component gets namespace Roles
+  # in ns <name> only. Locally this ArgoCD manages nothing but its own namespace
+  # (the slave branch's argocd-tree CRs); the REMOTE slave is reached via the
+  # cluster Secret's bearerToken (cluster-admin SA on the slave), which needs no
+  # local RBAC at all. The in-cluster destination is namespace-restricted to
+  # ns <name> by templates/cluster-in-cluster.yaml.
+  createClusterRoles: false
+  createAggregateRoles: false
+
+  # Single-node master, one slave per instance — one replica of everything
+  # (chart defaults are already 1; pinned here so a chart-default change can
+  # never silently scale an instance out).
+  controller:
+    replicas: 1
+  server:
+    replicas: 1
+  repoServer:
+    replicas: 1
+
+  # No dex: v1 has no UI/SSO login path (access is `kubectl -n <name>` or a
+  # port-forward + the initial admin Secret; a <name>.<masterFqdn> ingress +
+  # OIDC is a hardening follow-up). Saves one deployment per instance.
+  dex:
+    enabled: false
+
+  # The ApplicationSet controller MUST run: the slave branch's tree uses two
+  # ApplicationSets (applicationset.yaml + consumers-appset.yaml). Chart 9.x
+  # always deploys it (no enabled toggle); replicas pinned like the rest.
+  applicationSet:
+    replicas: 1
+
+  # No notifications controller — nothing subscribes to notifications
+  # in v1; saves one deployment per instance (cluster RAM budget ~2-2.5 GB/slave).
+  notifications:
+    enabled: false
+
+  # TLS is terminated at the argo-<name>.<masterFqdn> Ingress
+  # (templates/argo-ingress.yaml); argocd-server must therefore talk plaintext,
+  # or it redirects to its own TLS and the Ingress 502s/loops. Same decision as
+  # the master's own ArgoCD (clusters/bootstrap/argocd/values.yaml server.insecure).
+  # NOTE: configs.cm is ALSO injected per-slave by slaves-appset.yaml's
+  # valuesObject (installationID + url); Helm deep-merges it with this block.
+  configs:
+    params:
+      server.insecure: true
+    cm:
+      # Local admin login is OFF — OIDC is the only way in. OIDC is wired
+      # per-slave (the shared argo-slave Authentik client + the RBAC below),
+      # verified on a live per-slave instance, so no static admin backdoor is needed (same as
+      # the master's own ArgoCD). Deep-merges with the installationID + url that
+      # slaves-appset injects into configs.cm per slave. Break-glass if Authentik
+      # is ever unreachable: kubectl -n <name> patch cm argocd-cm --type merge
+      # -p '{"data":{"admin.enabled":"true"}}' then restart argocd-server.
+      admin.enabled: "false"
+      # Traefik runs on the slaves as a hostPort DaemonSet, so it never populates
+      # an Ingress's .status.loadBalancer — ArgoCD's DEFAULT Ingress health check
+      # then sits Progressing forever, wedging every app that ships an Ingress
+      # (e.g. a tenant's auth member) at Progressing so create-tenant's
+      # watch-sync-set times out even though the workload is up. Treat Ingress as
+      # Healthy, exactly as the master's own ArgoCD does
+      # (clusters/bootstrap/argocd/values.yaml).
+      resource.customizations.health.networking.k8s.io_Ingress: |
+        hs = {}
+        hs.status = "Healthy"
+        hs.message = ""
+        return hs
+    # OIDC login via the controller's Authentik (the oidc.config itself is
+    # injected PER SLAVE by slaves-appset.yaml — it needs slave.masterFqdn for
+    # the issuer host). This RBAC is static, so it lives here: map Authentik's
+    # `authentik Admins` group (akadmin is a member from bootstrap) to ArgoCD
+    # admin on THIS slave's instance; everyone else read-only. The `groups`
+    # claim drives it — same shape as the master's own ArgoCD
+    # (clusters/bootstrap/argocd/values.yaml).
+    rbac:
+      policy.csv: |
+        g, "authentik Admins", role:admin
+      policy.default: role:readonly
+      scopes: '[groups]'
+
+  # NOTE (set elsewhere — do not add here):
+  #   - configs.cm.installationID: stamped PER SLAVE (= the slave's name) by
+  #     slaves-appset.yaml's valuesObject. Upstream's multiple-ArgoCD-
+  #     instances-per-cluster isolation: without it the MASTER's own
+  #     `root-applications` app (same name as this instance's handoff root,
+  #     same default annotation tracking) attributes the argocd-tree CRs this
+  #     instance syncs into ns <name> to ITSELF and auto-prunes them — the
+  #     instance's first sync then fails with "Resource ... is missing, it
+  #     might have been deleted". Cannot live in this file: values files are
+  #     static and the id must be per-slave.
+  #
+  # NOTE (deliberate non-overrides):
+  #   - redis: chart-bundled single replica in ns <name> — wanted as-is.
+  #   - global.domain: the platform $values chain leaks the MASTER's apex
+  #     domain into this sub-chart's global.domain (cosmetic only — it feeds
+  #     ingress/SSO/notification URL defaults, all disabled here).
+
+# ---------------------------------------------------------------------------
+# Per-namespace ESO SecretStore (vault-backend) in ns <name>, reading the
+# MASTER's own Vault: clusters/slaves/slave syncs on the master, so the master's own
+# chain feeds it — global.vaultUrl + global.vaultKubernetesAuthPath
+# (kubernetes-<master-name>) from the master's installation/profile.yaml, the
+# shared KV mount `secret` from global.vaultKvMount.
+# ---------------------------------------------------------------------------
+secret-store: {}

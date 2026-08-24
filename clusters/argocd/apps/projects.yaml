@@ -1,0 +1,344 @@
+# ArgoCD AppProjects for the __STAGE__ cluster.
+#
+# Why projects (not just `default`): the stock `default` project allows `*`
+# repos, `*` destinations and `*` cluster-scoped resources — i.e. no blast
+# radius at all. These projects pin each app group to:
+#   • the one source repo
+#   • exactly the namespaces it deploys to (destinations)
+#   • only the cluster-scoped resource kinds it legitimately creates
+#     (data / services create NONE → clusterResourceWhitelist: [])
+#
+# Lifecycle: this file lives in clusters/argocd/apps/ next to applicationset.yaml, and
+# clusters/argocd/root-app.yaml syncs that directory (`path: clusters/argocd/apps`), so it is
+# applied by the same Application. The sync-wave -1 annotation
+# guarantees the AppProjects exist before the ApplicationSet's generated
+# Applications (which reference them by name) attempt their first sync.
+#
+# The generated Applications pick their project via the `project:` field added
+# to each element in applicationset.yaml. The root-app itself stays in
+# `default` on purpose: it CREATES these projects, so it can't depend on one
+# existing first (chicken-and-egg).
+#
+# Every stage defines the same 6 projects (core / data / services /
+# observability / cicd / consumers). The build plane
+# (tekton / registry / image-builder) is centralized on ONE build cluster and
+# stays off elsewhere because each of those app.yaml files says runsOn: master,
+# but the `cicd` project exists in every catalog for symmetry.
+#
+# Cluster-resource whitelists below were derived from the ACTUAL rendered
+# manifests, not assumptions:
+#   • external-secrets: vendored CRDs (clusters/apps/external-secrets/templates/) +
+#     the operator's ClusterRole/Binding. Webhook + cert-controller disabled.
+#   • observability: kube-prometheus-stack CRDs + ClusterRole/Binding +
+#     prometheus-operator admission webhooks.
+#   • cicd/tekton: the vendored release-*.yaml create Namespace objects
+#     (tekton, tekton-resolvers), CRDs, ClusterRole/Binding and Validating/
+#     Mutating webhooks — confirmed by grep over clusters/apps/tekton/templates/.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: core
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Cluster foundation — External-Secrets operator + CoreDNS. Privileged (CRDs, kube-system).
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+    - oci://ghcr.io/external-secrets/charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: external-secrets
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
+    # service-provisioner controller's own namespace.
+    - server: https://kubernetes.default.svc
+      namespace: service-provisioner
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    # The two the operator's own chart renders to keep a malformed ExternalSecret from being
+    # accepted in the first place. Missing here, the operator does not install — and because its
+    # CRDs come with it, every application on this cluster that reads a credential out of the store
+    # then fails on a kind the API has never heard of, which reads as six unrelated problems.
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicy
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicyBinding
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: data
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Stateful data stores — MongoDB and Redis. Namespaced only; never creates cluster-scoped resources.
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+    - https://prometheus-community.github.io/helm-charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: mongodb
+    - server: https://kubernetes.default.svc
+      namespace: redis
+  # Namespace is the ONE permitted cluster-scoped kind: the ApplicationSet
+  # sets CreateNamespace=true and ArgoCD validates the auto-created Namespace
+  # against this whitelist whenever the namespace does NOT exist yet. The
+  # mongodb/redis namespaces predate the projects so the check never fired for
+  # them; the first data namespace created AFTER them hit it:
+  # "resource :Namespace is not permitted in project data". Everything else
+  # (ClusterRole, CRDs, webhooks, ...) stays blocked.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: services
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # The manager does NOT live here. It stands in its own dedicated `manager` project because it
+  # ships cross-namespace and cluster-scoped onboarding RBAC with the workload, and this project is
+  # restricted precisely so that it cannot permit that.
+  #
+  # The sentence above used to stand in `description`, which the API caps at 255 bytes: over the cap
+  # the object is refused, the whole sync fails, and NO application below the root is created at all.
+  # A comment carries the same words with no limit and reaches the same reader.
+  description: Supporting platform services — Postfix, DBGate, the tailnet coordinator. Namespaced only.
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+    - https://bokysan.github.io/docker-postfix/
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: postfix
+    # The database browser's own namespace. It stands on the clusters whose role
+    # is `slave` — the clusters mongodb and redis run on — because no application
+    # of this platform reaches a database in another cluster.
+    - server: https://kubernetes.default.svc
+      namespace: dbgate
+    # The coordinator's own namespace: Deployment/Service, the state PVC, its
+    # config ConfigMap and the public Ingress. Namespaced only — nothing
+    # cluster-scoped beyond the Namespace itself (createNamespace=true).
+    - server: https://kubernetes.default.svc
+      namespace: tailnet-coordinator
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: observability
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Monitoring plane — kube-prometheus-stack, Loki, Tempo, Alloy, Grafana. Cluster-wide scraper.
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+    - https://prometheus-community.github.io/helm-charts
+    - https://grafana.github.io/helm-charts
+    - https://grafana-community.github.io/helm-charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: observability
+    # kube-prometheus-stack places its CoreDNS + kubelet scrape-target
+    # Services in kube-system (observability-coredns / observability-kubelet).
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: cicd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Build plane — Tekton, Zot registry, image-builder, gate-runner. Centralized on ONE build cluster (promote test->prod reuses the same image); off unless this cluster's role is the one their app.yaml names. Privileged (Tekton CRDs, buildah).
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+  # cicd destinations are static.
+  # The single source of truth, so a NEW build-plane component's namespace is
+  # added there ONCE, not by hand in three per-stage files. The set follows the
+  # build-plane apps: each in its own namespace (registry, tekton,
+  # image-builder); tekton's vendored manifests add tekton-resolvers;
+  # gate-runner runs its gate PipelineRuns here.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: tekton
+    - server: https://kubernetes.default.svc
+      namespace: tekton-resolvers
+    - server: https://kubernetes.default.svc
+      namespace: registry
+    - server: https://kubernetes.default.svc
+      namespace: image-builder
+    - server: https://kubernetes.default.svc
+      namespace: gate-runner
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+  clusterResourceWhitelist:
+    # Tekton's release manifests create the Namespace objects themselves
+    # (release-pipelines.yaml:16 + :26038, release-dashboard.yaml:23).
+    - group: ""
+      kind: Namespace
+    # Tekton Triggers ships its core interceptors as cluster-scoped CRs
+    # (release-interceptors.yaml:163+ — github/gitlab/bitbucket/cel/slack).
+    - group: triggers.tekton.__STAGE__
+      kind: ClusterInterceptor
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+    # PipelineRun admission guard (clusters/apps/image-builder/templates/
+    # vap-pipelinerun-guard.yaml) — both cluster-scoped kinds.
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicy
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicyBinding
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: builds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # What one unit gets: a namespace `<unit>-build`, a SecretStore, the `<unit>-release` Pipeline, its
+  # credentials and a NetworkPolicy. ONE GLOB DESTINATION, because the fan-out creates units
+  # dynamically and a glob applies to every cluster. The Application carrying that fan-out
+  # ApplicationSet does not run here — it runs in `cicd`.
+  #
+  # Kept as a comment rather than in `description`, which the API caps at 255 bytes.
+  description: "Per-unit build namespaces, one per unit, created by the fan-out."
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: '*-build'
+  clusterResourceWhitelist:
+    # The chart renders each unit's Namespace itself (CreateNamespace=false),
+    # so the PSA level and the hostyour.cloud/build label stand up front.
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: manager
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Its own project, and a tight one, because it ships its OWN onboarding RBAC with the workload:
+  # cross-namespace Roles in gate-runner and kube-system, plus cluster-scoped roles for the
+  # namespaces it creates as it runs — smoke, the onboarding it does in argocd, the reapers. What is
+  # whitelisted below is exactly what the chart renders, and nothing wider.
+  #
+  # Kept as a comment rather than in `description`, which the API caps at 255 bytes.
+  description: "The manager, in a project of its own with its onboarding RBAC."
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+  destinations:
+    # The manager's own namespace: Deployment/Service/ServiceAccount, local
+    # configmap-reader Role/RoleBinding, ESO ExternalSecrets + SecretStore, the
+    # DATA_DIR PVC, the ingress, and (on the build cluster) the registry-reaper.
+    - server: https://kubernetes.default.svc
+      namespace: manager
+    # Cross-namespace onboarding grants (Role + RoleBinding only in each):
+    #   gate-runner   — gate-run PipelineRun dispatch + report;
+    #   kube-system   — the hostyour-deploy-state ConfigMap reader.
+    # The Applications read and the Controller-owned AppProjects are NOT here: that
+    # grant is cluster-scoped (rbac.yaml, "Cluster scope (was ns argocd)"), so it is
+    # a ClusterRole + ClusterRoleBinding, which ArgoCD validates against
+    # clusterResourceWhitelist below and never against a destination.
+    - server: https://kubernetes.default.svc
+      namespace: gate-runner
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
+  clusterResourceWhitelist:
+    # createNamespace=true on the manager Application: ArgoCD validates the
+    # auto-created `manager` Namespace against this list on a fresh cluster.
+    - group: ""
+      kind: Namespace
+    # The smoke ClusterRole + its binding — read-only smoke over DYNAMIC consumer
+    # namespaces (the one grant that cannot be namespaced).
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  # Broad namespaced whitelist ('*/*'), matching the core/data/services/observability
+  # sibling projects. ArgoCD's resource TREE only DISPLAYS kinds the project allows, so
+  # the previous curated list hid the running Pods/ReplicaSets from the UI. The manager
+  # is platform-trusted (its chart is authored in THIS repo, like its siblings), so '*/*'
+  # is consistent and makes the live tree fully visible. Cluster-scoped kinds stay tightly
+  # whitelisted above.
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

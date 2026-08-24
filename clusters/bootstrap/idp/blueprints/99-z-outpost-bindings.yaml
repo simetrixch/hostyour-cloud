@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — binds the ProxyProvider of the Tekton dashboard to
+# Authentik's built-in `authentik Embedded Outpost`. Without this, the Outpost's
+# `/outpost.goauthentik.io/auth/traefik` endpoint that Traefik's forwardauth
+# middleware hits has NO providers registered → it doesn't know how to
+# authenticate requests to tekton.<domain> → returns a redirect to a generic
+# login but the session cookie doesn't bind to a specific app → forwardauth loop
+# / 404 / etc.
+#
+# ONE PROVIDER, AND IT USED TO BE TWO. The second was dbgate, back when the
+# database browser stood on the master at gate-<slave>.<master>. It stands beside
+# its databases now (clusters/apps/dbgate, `runsOn: slave`), on a cluster this identity
+# provider is not installed on, so its Ingress is off and there is no host here
+# to bind. hostyour-cloud#66 carries what has to exist before a provider for it
+# comes back.
+#
+# File name `99-z-*` so this runs AFTER the `99-proxy-tekton.yaml` blueprint that
+# creates the ProxyProvider the !Find queries below look up. If parallel apply
+# enqueues this before the proxy blueprint completes, the conditions block fails
+# (None is falsy) and Authentik skips + retries on next discovery cycle.
+version: 1
+metadata:
+  name: Bind proxy providers to Embedded Outpost
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+conditions:
+  - !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]
+entries:
+  - model: authentik_outposts.outpost
+    identifiers:
+      name: authentik Embedded Outpost
+    attrs:
+      providers:
+        - !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]

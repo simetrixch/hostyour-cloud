@@ -1,0 +1,47 @@
+# WHO MAY OPEN :6379 AT ALL, and it is the FIRST of two boundaries. Redis now runs
+# with --requirepass (values-common.yaml, redis.args), so reaching the port is no
+# longer the grant it was — but a password is a second boundary and never a
+# replacement for the first, so THIS POLICY IS UNCHANGED and stays as narrow as it
+# was written: it must not admit the blanket db-consumer label every unit namespace
+# carries. Admitted: platform namespaces by name (global.dbConsumerNamespaces),
+# namespaces carrying the REDIS-specific global.redisConsumerLabel=true — stamped
+# where the registration claims `redis` in services[] (consumers-appset
+# templatePatch), where a tenant member's own registration carries the label, and on
+# the service-provisioner's own namespace, which has to reach the port to write each
+# claim's ACL user — and same-namespace pods (metrics exporter). Any other workload
+# is denied. Calico-enforced.
+#
+# FROM OUTSIDE THIS CLUSTER THERE IS NO PATH TO :6379. This chart writes no
+# IngressRouteTCP, so no entry point of the ingress controller carries this port and
+# no rule below admits that controller's namespace. Every admitted name and every
+# admitted label is a namespace of this cluster. What browses this cache runs beside
+# it: clusters/apps/dbgate carries `runsOn: slave`, the same value clusters/apps/redis/app.yaml carries,
+# so the app generator places both on the same cluster and dbgate dials the Service by
+# its in-cluster name.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-internal
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- range .Values.global.dbConsumerNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.redisConsumerLabel }}
+        - namespaceSelector:
+            matchLabels:
+              {{ . }}: "true"
+        {{- end }}
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 6379

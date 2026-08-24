@@ -1,0 +1,77 @@
+{{- /*
+Emit one AlertmanagerConfig CR per entry under .Values.alertmanagerConfigs.
+Routes alerts matching `matchers` to the listed email recipients.
+
+The Subject / text / html bodies all reference Go templates named
+"alert.subject" / "alert.text" / "alert.html" — those are defined globally in
+clusters/apps/observability/values-{env}.yaml under alertmanagerSpec.templateFiles and
+are available to every AlertmanagerConfig in the cluster.
+
+Recipient fallback chain:
+  $cfg.emails (explicit list per entry, optional)
+    → .Values.global.alertRecipients (the installation's own: the operator
+      answers alert_recipients when the install branch is generated, and
+      The branch program renders THAT ANSWER into installation/profile.yaml, which
+      every app loads last. clusters/active/<fqdn>.yaml states the same answer as
+      alert-recipients — it is a second rendering of it, not the file the profile
+      is read out of. clusters/platform/values-common.yaml holds an empty list because a
+      mailbox names one installation and the trunk names none)
+  An ENABLED route that resolves to neither STOPS THE RENDER. It used to emit an
+  AlertmanagerConfig with no emailConfigs, which fires nothing and looks healthy
+  in every view — a monitoring stack that reports its own silence as success.
+  Route off with `enabled: false` to say the silence is meant.
+
+Route matching:
+  - Omit `matchers` entirely to catch every alert (used by the
+    `platform-default` entry in clusters/apps/observability/values-common.yaml).
+  - The operator does NOT inject a namespace= matcher because
+    clusters/apps/observability/values-{env}.yaml sets
+    alertmanagerConfigMatcherStrategy.type: None.
+
+The `{{`{{ template ... }}`}}` escaping is mandatory: the AlertmanagerConfig
+spec stores these as literal strings that Alertmanager itself will template at
+fire time. Without the escape, Helm would try to evaluate them at render time
+and fail.
+*/ -}}
+{{- range $name, $cfg := .Values.alertmanagerConfigs }}
+{{- if $cfg.enabled }}
+{{- $emails := $cfg.emails | default $.Values.global.alertRecipients -}}
+{{- if not $emails }}
+{{- fail (printf "monitoring: alertmanagerConfigs.%s is enabled and resolves to no recipient. Set this installation's global.alertRecipients — it is rendered into installation/profile.yaml from the alert_recipients answer when the install branch is generated, so generate the branch again with a mailbox in that answer — or give the entry its own `emails`, or set `enabled: false` to mean the silence." $name) }}
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: {{ $name }}
+  namespace: {{ default $.Release.Namespace $cfg.namespace }}
+  labels:
+    release: {{ $.Values.prometheusReleaseLabel }}
+spec:
+  route:
+    receiver: {{ $cfg.receiverName | default $name }}
+    {{- with $cfg.matchers }}
+    matchers: {{ toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $cfg.groupBy }}
+    groupBy: {{ toYaml . | nindent 6 }}
+    {{- end }}
+    groupWait: {{ $cfg.groupWait | default "30s" | quote }}
+    groupInterval: {{ $cfg.groupInterval | default "5m" | quote }}
+    repeatInterval: {{ $cfg.repeatInterval | default "4h" | quote }}
+  receivers:
+    - name: {{ $cfg.receiverName | default $name }}
+      {{- with $emails }}
+      emailConfigs:
+        {{- range $email := . }}
+        - to: {{ $email | quote }}
+          sendResolved: true
+          headers:
+            - key: Subject
+              value: '{{`{{ template "alert.subject" . }}`}}'
+          text: '{{`{{ template "alert.text" . }}`}}'
+          html: '{{`{{ template "alert.html" . }}`}}'
+        {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}

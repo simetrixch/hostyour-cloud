@@ -20,17 +20,29 @@ tree is the software's own.
 ## The shape of it
 
 ```
-apps/          the 18 platform applications, each a chart with an app.yaml
-units/         the four charts rendered once per unit namespace
-slaves/        the chart rendered once per slave cluster, on the master
-charts/        the library charts they are built from
-argocd/        the ApplicationSets and projects
-bootstrap/     what is applied before ArgoCD exists
+clusters/      EVERYTHING A CLUSTER IS MADE OF, gathered in one place
+  active/        the map of every cluster of this installation — filled only on the install
+                 branch of the cluster holding the master role, empty on the trunk
+  apps/          the 18 platform applications, each a chart with an app.yaml
+  units/         the four charts rendered once per unit namespace
+  slaves/        the chart rendered once per slave cluster, on the master
+  charts/        the library charts they are all built from
+  argocd/        the ApplicationSets and projects
+  bootstrap/     what is applied before ArgoCD exists
+  platform/      the version pins and the platform's own grammar
 installation/  what THIS installation is: its profile, its per-app values and its toggles
-clusters/      the map of every cluster of this installation — filled only on the install
-               branch of the cluster holding the master role, empty on the trunk
-platform/      the version pins and the platform's own grammar
+configs/       the hand-filled input of one installation, in the clear
+secrets/       the same, encrypted
 ```
+
+**Four directories and not eleven.** Everything that a cluster is made of stands under `clusters/`,
+so the question "what does a cluster consist of" has one place to look instead of seven. What stays
+outside is what is NOT a cluster: what one installation was told (`configs/`, `secrets/`) and what it
+turned out to be (`installation/`).
+
+The arrangement inside `clusters/` is deliberately the one it always had, because every chart names
+its libraries relatively — `file://../../charts/common`, nineteen times over. Moving the siblings
+together left all of them true, and only the paths anchored at the root had to change.
 
 **And nothing else.** No configuration, no secrets, no executable and no code that runs — this is
 structure, and it is the same structure for everybody who clones it. What belongs to ONE
@@ -61,7 +73,7 @@ a machine where nothing is installed yet, there is no manager to write that regi
 They come from `ghcr.io/simetrixch/manager`, `.../gate-runner` and `.../dbtools`, pushed by the
 `seed-images` workflow of `hostyour-manager` when a release tag is pushed, under the same
 `<release-tag>-<sha7>` image tag the in-cluster pipeline composes. The registry in
-`apps/registry/values-common.yaml` fetches them on the first pull and stores them under their flat
+`clusters/apps/registry/values-common.yaml` fetches them on the first pull and stores them under their flat
 build name, so nothing downstream can tell where a given tag came from — and from the installation's
 own first build onwards it never asks again, because a tag it already holds is a local hit.
 

@@ -1,0 +1,22 @@
+# SIZE PRESET — large. Layer over values.yaml: -f values-size-large.yaml
+#
+#   cpu req 500m · mem req 2Gi · cpu lim 4 · mem lim 8Gi · data volume 100Gi
+#
+# PER MEMBER. A replicaset runs three of these.
+#
+# FOR: sustained write volume, many collections and connections, aggregations
+# over gigabytes. Its limits are twice what the SHARED instance is allowed per
+# member (4 CPU / 4Gi, clusters/apps/mongodb/values-prod.yaml) — that set carries every
+# tenant, so a single unit sitting above it is the ceiling the platform is still
+# willing to put on one node.
+#
+# Only the resource numbers and the data volume differ from the small default.
+mongodb:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  storageSize: 100Gi

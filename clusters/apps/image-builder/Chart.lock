@@ -1,0 +1,15 @@
+dependencies:
+- name: external-secret
+  repository: file://../../charts/external-secret
+  version: 1.0.0
+- name: secret-store
+  repository: file://../../charts/secret-store
+  version: 1.0.0
+- name: monitoring
+  repository: file://../../charts/monitoring
+  version: 2.0.0
+- name: common
+  repository: file://../../charts/common
+  version: 1.0.0
+digest: sha256:36b92c8d81a8eaf913d75c54dbcca2d99c98838be19235fae389b83ae9b62748
+generated: "2026-08-11T19:16:04.3279334+02:00"

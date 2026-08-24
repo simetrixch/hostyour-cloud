@@ -1,0 +1,42 @@
+# MongoDB runs with SCRAM authentication (values-common.yaml, `--auth` in
+# mongodb.args), and this NetworkPolicy narrows who may even open :27017:
+# platform namespaces by name (global.dbConsumerNamespaces), any namespace
+# self-labelled global.dbConsumerLabel=true where that key is set (so external
+# add-ons admit themselves without the platform hardcoding their namespace
+# name), and same-namespace pods (metrics exporter, rs-init Job). Any other
+# workload is denied. Enforced by Calico.
+#
+# EVERY RULE BELOW ADMITS A NAMESPACE OF THIS CLUSTER, AND THAT IS THE WHOLE
+# REACH OF THIS DATABASE. No rule admits the ingress controller, because there
+# is no route for it to carry: this chart writes no IngressRouteTCP, so :27017
+# answers inside this cluster and nowhere else. Whatever browses these
+# databases runs beside them — clusters/apps/dbgate carries `runsOn: slave`, the same
+# value clusters/apps/mongodb/app.yaml carries, so it is placed by the same generator on
+# the same cluster and dials the Service above by its in-cluster name.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mongodb-allow-internal
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- range .Values.global.dbConsumerNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.dbConsumerLabel }}
+        - namespaceSelector:
+            matchLabels:
+              {{ . }}: "true"
+        {{- end }}
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 27017

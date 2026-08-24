@@ -1,0 +1,177 @@
+# MongoDB — the official `mongo` image on a StatefulSet (templates/): a replica
+# set needs stable per-pod identity/DNS so each member self-identifies across
+# restarts. Replica set `rs0` for multi-doc transactions, SCRAM auth on
+# (--auth + --keyFile, see args below) — the NetworkPolicy
+# (templates/networkpolicy.yaml) admits only approved DB consumers
+# (global.dbConsumerNamespaces by name + add-ons by global.dbConsumerLabel) and
+# same-namespace pods; :27017 answers inside this cluster and nowhere else, and
+# there is neither an HTTP Ingress nor a plain-TCP route. replicas: 3 here is the
+# default for ALL envs — a 3-member HA replica set on every stage (rs0 membership
+# is reconciled by templates/rs-init-job.yaml; templates/pdb.yaml keeps
+# minAvailable = replicas-1). Per-env storage / resources in
+# values-{dev,test,prod}.yaml.
+mongodb:
+  image:
+    repository: mongo
+    # Managed centrally in clusters/platform/versions.yaml (images.mongodb) and stamped by
+    # the version sync — do not hand-edit this tag.
+    tag: "8.0.4"
+    pullPolicy: IfNotPresent
+  replicas: 3
+  # Self-healing rs0 guard: an idempotent CronJob that re-ensures the replica
+  # set is initiated. The PostSync rs-init Job only runs on an ArgoCD sync, so a
+  # manual data wipe (kubectl delete pvc) leaves mongod as RSGhost (no PRIMARY)
+  # until the next sync — which blocks the service-provisioner (no primary → no
+  # claimed users/Secrets, e.g. the exporter). This CronJob re-initiates rs0 within
+  # `schedule`, so any wipe self-heals regardless of how it happened. Same
+  # idempotent ensure logic as templates/rs-init-job.yaml; a no-op when rs0 is ok.
+  rsEnsure:
+    enabled: true
+    schedule: "*/5 * * * *"
+  containerPort: 27017
+  # The official mongo image runs as uid/gid 999 (the `mongodb` user).
+  podSecurityContext:
+    fsGroup: 999
+  containerSecurityContext:
+    runAsUser: 999
+    runAsNonRoot: true
+  # Replica set → multi-doc transactions. --auth enables SCRAM auth; the
+  # root user is created on first init from MONGO_INITDB_ROOT_* (set in
+  # templates/statefulset.yaml). --keyFile authenticates intra-replica-set
+  # traffic (mandatory once --auth is on for a replica set); the keyfile is
+  # the mongodb-replica-set-key materialized from Vault, mode-fixed to
+  # 0400/uid-999 by the keyfile-perms initContainer and mounted at
+  # /etc/mongo-keyfile/keyfile. TZ is set in templates/statefulset.yaml from
+  # global.timezone; rs0 is configured by the PostSync Job
+  # (templates/rs-init-job.yaml), which now authenticates as root.
+  args:
+    - --replSet
+    - rs0
+    - --bind_ip_all
+    - --auth
+    - --keyFile
+    - /etc/mongo-keyfile/keyfile
+  livenessProbe:
+    exec:
+      command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ping:1})"]
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 10
+  readinessProbe:
+    exec:
+      command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ping:1})"]
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 10
+
+# WHERE THIS DATABASE ANSWERS, and the answer is one cluster.
+#
+# There is no key here naming an entry point of the ingress controller and no
+# templates/ingressroutetcp.yaml beside this file. Both stood here until
+# hostyour-cloud#66: they published :27017 on a plain-TCP entry point so that a
+# dbgate running on the MASTER could dial a SLAVE's database. A master and a
+# slave are one cluster when the slave stands on the master's own server and two
+# when it stands on a machine of its own, and both cases happen — so publishing
+# the port was pointless in the first and forbidden by the co-location law in the
+# second.
+#
+# What reads this database therefore stands in this same cluster. clusters/apps/dbgate
+# carries `runsOn: slave`, exactly as clusters/apps/mongodb/app.yaml does, so the app
+# generator (clusters/argocd/apps/applicationset.yaml) places both wherever the cluster's
+# role is `slave`, and dbgate dials mongodb-<env>-headless.mongodb.svc.cluster.local.
+
+# Per-pod data volume (volumeClaimTemplate → /data/db). Each member gets its own
+# PVC (data-mongodb-<env>-<ordinal>), owned by the StatefulSet controller (not
+# ArgoCD-pruned), so data survives a chart re-sync. storageSize per env below.
+mongodb-data:
+  pvc:
+    accessModes:
+      - ReadWriteOnce
+    # storageSize set per-env in values-{dev,test,prod}.yaml.
+
+# MongoDB alert rules. Metrics (mongodb_*) come from the mongodb exporter, wired
+# as a follow-up; until then these rules stay dormant.
+monitoring:
+  prometheusRules:
+    mongodb:
+      enabled: true
+      groups:
+        - name: mongodb
+          interval: 60s
+          rules:
+            - alert: MongoDBDown
+              expr: mongodb_up == 0
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "MongoDB instance {{ $labels.instance }} is down"
+
+            - alert: MongoDBConnectionsSaturated
+              expr: mongodb_ss_connections{conn_type="current"} / (mongodb_ss_connections{conn_type="current"} + mongodb_ss_connections{conn_type="available"}) > 0.8
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "MongoDB connection pool > 80% utilised"
+
+# Metrics exporter — emits mongodb_* metrics (the alerts above need it).
+# Since mongod runs with --auth, the exporter needs a credentialed URI. It does
+# NOT carry static creds: templates/serviceclaim-exporter.yaml claims a
+# roles-only (clusterMonitor@admin) mongodb user from the generic
+# service-provisioner, which writes the `exporter-mongodb` Secret (key
+# MONGODB_URI) into this namespace. `existingSecret` points the exporter at
+# that Secret. On first deploy the exporter CrashLoops until the
+# service-provisioner (sync wave 16) creates the Secret, then heals — same
+# self-healing pattern as any provisioned consumer.
+prometheus-mongodb-exporter:
+  existingSecret:
+    name: exporter-mongodb
+    key: MONGODB_URI
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: observability
+  # Explicit collector list, omitting `profile` (panicked on older exporters).
+  extraArgs:
+    - --collector.diagnosticdata
+    - --collector.replicasetstatus
+    - --collector.dbstats
+    - --collector.topmetrics
+    - --collector.indexstats
+    - --collector.collstats
+    - --collector.currentopmetrics
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Per-namespace SecretStore (the Vault backend the ExternalSecret below reads).
+# vaultUrl falls back to global.vaultUrl, which the branch program writes into
+# installation/profile.yaml as https://vault.<the cluster holding the master role> —
+# so it names one installation and cannot be stated here. No per-env override
+# needed (dbgate pattern).
+secret-store: {}
+
+# ExternalSecret — materializes the `mongodb-credentials` K8s Secret from Vault
+# path `<env>/app/mongodb` (vaultPath set per-env in values-{dev,test,prod}.yaml).
+# Two keys:
+#   root-password ← Vault property `mongodb-root-password` — the SCRAM root
+#                   user's password (MONGO_INITDB_ROOT_PASSWORD + rs-init auth).
+#   keyfile       ← Vault property `mongodb-replica-set-key` — the shared
+#                   secret authenticating intra-replica-set traffic (--keyFile).
+externalsecret-mongodb:
+  externalSecret:
+    enabled: true
+    name: mongodb-credentials
+    namespace: mongodb
+    secretStoreKind: SecretStore
+    targetSecretName: mongodb-credentials
+    data:
+      - secretKey: root-password
+        property: mongodb-root-password
+      - secretKey: keyfile
+        property: mongodb-replica-set-key

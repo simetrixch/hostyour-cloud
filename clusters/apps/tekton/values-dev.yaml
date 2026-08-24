@@ -1,0 +1,8 @@
+# DEV-specific Tekton overrides.
+#
+# The Dashboard UI + its Ingress are NOT enabled here anymore: they follow the
+# ONE build cluster via global.servicesLocal.registry (clusters/platform/values-dev.yaml
+# sets it true for DEV, so the gates in templates/release-dashboard.yaml and the
+# ingress sub-chart `condition:` turn them on automatically). Keeping them here
+# would strand them on DEV — a prod build cluster (stage-pruned, values-dev.yaml
+# deleted) would lose the Dashboard. Nothing DEV-stage-specific remains.

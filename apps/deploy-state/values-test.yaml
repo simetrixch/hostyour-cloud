@@ -1,2 +1,0 @@
-# TEST — no per-env overrides. domain/stage are tpl'd from the platform globals
-# (platform/values-common.yaml + values-test.yaml) in values-common.yaml.

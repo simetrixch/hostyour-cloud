@@ -1,0 +1,88 @@
+apiVersion: v2
+name: observability
+version: 1.0.0
+description: Platform observability stack (Prometheus, Grafana, Alertmanager, Loki, Tempo, Alloy). Apps declare their own monitoring via the shared `monitoring` library chart (clusters/charts/monitoring); this app also depends on it for cluster-wide Alloy + cluster-level alerts + monitors for foreign infra (cert-manager, Traefik, Vault, ESO, ArgoCD).
+type: application
+
+dependencies:
+  # Per-app + cluster-wide monitoring resources (ServiceMonitor, PodMonitor,
+  # PrometheusRule, AlertmanagerConfig, Alloy DaemonSet config).
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring
+
+  # Core metrics + Grafana + Alertmanager
+  - name: kube-prometheus-stack
+    version: 87.21.0
+    repository: https://prometheus-community.github.io/helm-charts
+
+  # Logs
+  - name: loki
+    version: 18.7.0
+    repository: https://grafana-community.github.io/helm-charts
+
+  # Traces
+  - name: tempo
+    version: 2.2.3
+    repository: https://grafana-community.github.io/helm-charts
+
+  # Unified log shipper + OTLP receiver
+  - name: alloy
+    version: 1.11.0
+    repository: https://grafana.github.io/helm-charts
+
+  # Vault-backed secrets (one alias per credential)
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: grafana-admin-secret
+  # OIDC client_secret for Grafana auth.generic_oauth (Authentik). Pulled
+  # from secret/<env>/app/idp/grafana-client-secret → K8s Secret
+  # `idp-oidc-grafana` which the Grafana pod mounts via envFromSecret.
+  # (app tier, NOT system: the ESO policy reads secret/<env>/app/* only.)
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: grafana-oidc-secret
+
+  # ── Master receive path (D4b / I6) — gated on the observabilityCentral global ─
+  # These render ONLY on the central observability cluster (the master),
+  # where the branch program stamps global.servicesLocal.observabilityCentral: true
+  # into installation/profile.yaml. On every other cluster the `condition:` is
+  # false → the sub-charts aren't loaded and nothing extra renders (byte-stable).
+  #   • two public Ingresses — prom-push.<master-fqdn> → Prometheus :9090
+  #     /api/v1/write, loki-push.<master-fqdn> → loki-gateway :80 /loki/api/v1/push
+  #   • a Traefik basic-auth Middleware fronting both (secret obs-push-htpasswd)
+  #   • the ExternalSecret that materializes that htpasswd `users` secret from
+  #     Vault <env>/app/observability/push-htpasswd.
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+    alias: ingress-prom-push
+    condition: global.servicesLocal.observabilityCentral
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+    alias: ingress-loki-push
+    condition: global.servicesLocal.observabilityCentral
+  - name: middleware
+    version: 1.0.0
+    repository: file://../../charts/middleware
+    alias: push-auth-middleware
+    condition: global.servicesLocal.observabilityCentral
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: push-htpasswd-secret
+    condition: global.servicesLocal.observabilityCentral
+
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # Shared named templates (common.labels etc.) used by the external-secret
+  # library charts above. Declared at APP level because Helm doesn't vendor
+  # nested file:// deps — see clusters/charts/common/Chart.yaml.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

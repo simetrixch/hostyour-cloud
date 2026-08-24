@@ -14,7 +14,7 @@
 # domain — the sender identity a unit chart derives its mail from when its own
 # value is empty);
 # alertRecipients is the alert_recipients answer, the mailboxes an alert route
-# that carries no `emails` of its own is delivered to — charts/monitoring stops
+# that carries no `emails` of its own is delivered to — clusters/charts/monitoring stops
 # the render of an enabled route that resolves to neither;
 # booksBranch is the install branch of the cluster holding the MASTER role —
 # where this installation keeps its cluster maps and its registrations, which

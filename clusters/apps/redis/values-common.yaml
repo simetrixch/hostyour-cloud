@@ -1,0 +1,201 @@
+# Redis cache — official `redis` image on clusters/charts/deployment. Standalone, AOF, and
+# AUTHENTICATED: the server boots with --requirepass (redis.args below), so who a
+# connection IS decides what it may do. templates/networkpolicy.yaml still says who
+# may open :6379 at all — the password is the second boundary, never a replacement
+# for the first — and every rule it carries admits a namespace of THIS cluster.
+# There is no route out of the cluster: no templates/ingressroutetcp.yaml stands
+# beside this file. Per-env storage / resources in values-{dev,test,prod}, per-env
+# Vault path in the same three files.
+redis:
+  image:
+    repository: redis
+    # Managed centrally in clusters/platform/versions.yaml (images.redis) and stamped by
+    # the version sync — do not hand-edit this tag.
+    tag: "8.8"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  containerPort: 6379
+  # Single ReadWriteOnce data PVC → two pods must never coexist.
+  strategy:
+    type: Recreate
+  terminationGracePeriodSeconds: 30
+  # The official redis image runs as uid/gid 999 (the `redis` user).
+  podSecurityContext:
+    fsGroup: 999
+  containerSecurityContext:
+    runAsUser: 999
+    runAsNonRoot: true
+  # AOF durability (appendfsync everysec), data dir on the PVC, and the password of
+  # the `default` user.
+  #
+  # $(REDIS_PASSWORD) is KUBERNETES' OWN expansion over the env list below, not a
+  # Helm template and not a shell: the kubelet substitutes $(VAR) in args from the
+  # container's own env before exec, so the password never stands in this file, in
+  # the rendered manifest, or in a shell the pod runs. The env entry it names is
+  # declared below and comes from the ESO-materialized redis-credentials Secret.
+  args:
+    - redis-server
+    - --appendonly
+    - "yes"
+    - --appendfsync
+    - everysec
+    - --dir
+    - /data
+    - --requirepass
+    - $(REDIS_PASSWORD)
+  # REDIS_PASSWORD fills the arg above. REDISCLI_AUTH is redis-cli's own documented
+  # environment variable, and it is what lets the two probes below authenticate
+  # without the password appearing on a command line (where it would be visible in
+  # `ps` and in the pod spec).
+  env:
+    - name: REDIS_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: redis-credentials
+          key: redis-password
+    - name: REDISCLI_AUTH
+      valueFrom:
+        secretKeyRef:
+          name: redis-credentials
+          key: redis-password
+  volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: redis-data
+  # THE PROBES READ THE ANSWER, they do not merely run the client. Once the server
+  # requires a password, `redis-cli ping` against it prints "NOAUTH Authentication
+  # required." — a reply the probe has to be able to tell apart from PONG, or a redis
+  # that answers nobody is reported Ready and the pod that cannot use it looks like
+  # the fault. Matching the word PONG makes that distinction out of the reply itself
+  # rather than out of redis-cli's exit code. The exec form is a pipeline, so the
+  # status the kubelet reads is grep's.
+  livenessProbe:
+    exec:
+      command: ["sh", "-c", "redis-cli ping | grep -q PONG"]
+    initialDelaySeconds: 20
+    periodSeconds: 15
+    timeoutSeconds: 5
+  readinessProbe:
+    exec:
+      command: ["sh", "-c", "redis-cli ping | grep -q PONG"]
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 6379
+
+# WHERE THIS CACHE ANSWERS, and the answer is one cluster.
+#
+# No key here names an entry point of the ingress controller, and no
+# templates/ingressroutetcp.yaml stands beside this file. Both were here until
+# hostyour-cloud#66: they published :6379 on a plain-TCP entry point so a dbgate
+# running on the MASTER could dial a SLAVE's cache. A slave standing on the
+# master's own server is ONE cluster, where publishing changes nothing; a slave on
+# a machine of its own is TWO, where publishing is what the co-location law
+# forbids. Both cases happen, so the route went.
+#
+# What reads this cache stands in the same cluster. clusters/apps/dbgate carries
+# `runsOn: slave`, exactly as clusters/apps/redis/app.yaml does, so the app generator
+# (clusters/argocd/apps/applicationset.yaml) places both on the same cluster and dbgate
+# dials redis-<env>.redis.svc.cluster.local:6379 as the `default` user.
+#
+# WHAT REACHING THIS PORT IS WORTH, now that the args above carry --requirepass:
+# a connection, and nothing more. Whoever arrives still has to be `default` or one
+# of the ACL users clusters/apps/service-provisioner minted per ServiceClaim, and each of
+# those is bounded by the key patterns its claim declared.
+
+# Data PVC. Redis is a cache — toggle-off is ALLOWED to delete it (operator
+# decision: only postgresql + mongodb keep delete-protection).
+redis-data:
+  pvc:
+    enabled: true
+    name: redis-data
+    accessModes:
+      - ReadWriteOnce
+    # storageSize set per-env in values-{dev,test,prod}.yaml.
+
+# Redis alert rules. Metrics (redis_*) come from the redis exporter, wired as a
+# follow-up; until then these rules stay dormant.
+monitoring:
+  prometheusRules:
+    redis:
+      enabled: true
+      groups:
+        - name: redis
+          interval: 60s
+          rules:
+            - alert: RedisDown
+              expr: redis_up == 0
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Redis instance {{ $labels.instance }} is down"
+
+            - alert: RedisEvictionsSpiking
+              expr: rate(redis_evicted_keys_total[5m]) > 10
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Redis evicting keys at > 10/s"
+
+# Metrics exporter — emits redis_* metrics (the alerts above need it). The address
+# is per-env (values-{dev,test,prod}).
+#
+# It authenticates as `default`, out of the same redis-credentials Secret the server
+# boots with: `auth.secret` puts that key into the exporter's REDIS_PASSWORD env
+# (the upstream chart's templates/deployment.yaml), and `auth.redisUser` is left
+# unset, which is how that chart says "the default user". A per-claim ServiceClaim
+# user would NOT do here — redis_exporter reads the server itself, CONFIG GET among
+# it, and CONFIG is in the @admin category the ACL rule refuses a claim. Until ESO
+# has materialized redis-credentials the exporter never starts to authenticate at
+# all: `auth.secret` renders REDIS_PASSWORD as a plain secretKeyRef with no
+# `optional: true`, so the kubelet holds the container in CreateContainerConfigError
+# exactly as it holds the server (Chart.yaml), and it starts once the Secret is there.
+prometheus-redis-exporter:
+  auth:
+    enabled: true
+    secret:
+      name: redis-credentials
+      key: redis-password
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: observability
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Per-namespace SecretStore (the Vault backend the ExternalSecret below reads).
+# vaultUrl falls back to global.vaultUrl, which the branch program writes into
+# installation/profile.yaml as https://vault.<the cluster holding the master role> — so
+# it names one installation and cannot be stated here. Same shape clusters/apps/mongodb has.
+secret-store: {}
+
+# ExternalSecret — materializes the `redis-credentials` K8s Secret from Vault path
+# `<env>/app/redis` (vaultPath set per-env in values-{dev,test,prod}.yaml). One key:
+#   redis-password ← Vault property `redis-password` — the `default` user's
+#                    password, which is what redis.args passes to --requirepass,
+#                    what the probes read through REDISCLI_AUTH, what the metrics
+#                    exporter authenticates with, and what clusters/apps/service-provisioner
+#                    reads to write each claim's ACL user.
+externalsecret-redis:
+  externalSecret:
+    enabled: true
+    name: redis-credentials
+    namespace: redis
+    secretStoreKind: SecretStore
+    targetSecretName: redis-credentials
+    data:
+      - secretKey: redis-password
+        property: redis-password

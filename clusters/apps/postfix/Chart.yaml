@@ -1,0 +1,24 @@
+apiVersion: v2
+name: postfix
+version: 1.0.0
+description: Send-only SMTP for cluster-internal email delivery
+type: application
+dependencies:
+  - name: mail
+    version: 5.1.0
+    repository: https://bokysan.github.io/docker-postfix/
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring
+  # Shared named templates (common.labels etc.) used by the external-secret
+  # library chart above. Declared at APP level because Helm doesn't vendor
+  # nested file:// deps — see clusters/charts/common/Chart.yaml.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

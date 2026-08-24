@@ -1,0 +1,12 @@
+# service-provisioner — DEV env. Only the genuinely dev-stage DB host DNS lives
+# here. The registry pull source Secret + its ESO wiring now DEFAULT in
+# values-common.yaml and are gated on the build cluster — DEV is the build
+# cluster (clusters/platform/values-dev.yaml sets global.servicesLocal.registry: true), so
+# the gate turns them on here automatically; no per-env value needed.
+controller:
+  mongo:
+    host: mongodb-dev-headless.mongodb.svc.cluster.local
+  redis:
+    host: redis-dev.redis.svc.cluster.local
+  # No postgres.host — postgresql is per-consumer (per-consumer-postgres.md §5.4,
+  # §6); the provisioner resolves the host from the claim's own namespace.

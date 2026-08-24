@@ -1,0 +1,8 @@
+apiVersion: v2
+name: middleware
+version: 1.0.0
+description: >-
+  Generic Traefik Middleware chart (basicAuth, etc.) for apps that need a
+  per-app Traefik Middleware. clusters/apps/observability pulls it in as
+  push-auth-middleware to guard the Loki/Prometheus push endpoints.
+type: application

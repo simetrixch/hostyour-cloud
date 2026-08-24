@@ -1,0 +1,42 @@
+dependencies:
+- name: monitoring
+  repository: file://../../charts/monitoring
+  version: 2.0.0
+- name: kube-prometheus-stack
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 87.21.0
+- name: loki
+  repository: https://grafana-community.github.io/helm-charts
+  version: 18.7.0
+- name: tempo
+  repository: https://grafana-community.github.io/helm-charts
+  version: 2.2.3
+- name: alloy
+  repository: https://grafana.github.io/helm-charts
+  version: 1.11.0
+- name: external-secret
+  repository: file://../../charts/external-secret
+  version: 1.0.0
+- name: external-secret
+  repository: file://../../charts/external-secret
+  version: 1.0.0
+- name: ingress
+  repository: file://../../charts/ingress
+  version: 1.0.0
+- name: ingress
+  repository: file://../../charts/ingress
+  version: 1.0.0
+- name: middleware
+  repository: file://../../charts/middleware
+  version: 1.0.0
+- name: external-secret
+  repository: file://../../charts/external-secret
+  version: 1.0.0
+- name: secret-store
+  repository: file://../../charts/secret-store
+  version: 1.0.0
+- name: common
+  repository: file://../../charts/common
+  version: 1.0.0
+digest: sha256:41ac89d5afefccb992a3e825b971746195651718eaac1edcb4dd49643b6a810c
+generated: "2026-08-11T19:16:17.3497193+02:00"

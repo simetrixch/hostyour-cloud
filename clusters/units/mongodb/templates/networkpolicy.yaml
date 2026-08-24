@@ -1,0 +1,49 @@
+{{- /*
+WHO MAY REACH THIS DATABASE ON 27017.
+
+The unit's namespace is already deny-by-default inbound: clusters/units/networkpolicy
+renders `unit-ingress`, which selects every pod and admits same-namespace pods
+plus the platform namespaces `ingress` and `observability` BY NAME. That covers
+the unit's own application, the rs-init Job and the members talking to each
+other — all of it same-namespace traffic.
+
+What it does NOT cover is the one cross-namespace client this database has: the
+service-provisioner mints the consumer's users and databases from its own
+namespace, and a claim it cannot connect to reports an Error forever. Kubernetes
+NetworkPolicies are additive — a pod may accept traffic any policy selecting it
+admits — so this second policy opens exactly that one path and nothing else.
+
+BY NAME, never by label. Every consumer namespace carries the db-consumer label,
+so admitting by it would open this database to every OTHER consumer, which is the
+whole reason a unit brings a database of its own.
+
+The policy is authored here rather than routed through a shared library chart for
+the same reason clusters/units/postgresql authors its own: it carries its own sync-wave, and
+it must land with the workload it protects rather than at a library's wave.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mongodb-allow-internal
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Same-namespace: the unit's application, the rs-init Job, and — in
+        # replicaset mode — the members' own traffic to each other.
+        - podSelector: {}
+        {{- range .Values.networkPolicy.allowedNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.mongodb.containerPort }}

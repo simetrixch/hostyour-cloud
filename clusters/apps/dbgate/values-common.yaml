@@ -1,0 +1,215 @@
+# dbgate — the database browser of the cluster it runs in. Per-stage image
+# resources, Vault paths and connection labels stand in
+# values-{dev,test,prod}.yaml; everything a stage does not change stands here.
+#
+# WHERE IT STANDS AND WHY. app.yaml carries `runsOn: slave`, the same value
+# clusters/apps/mongodb/app.yaml and clusters/apps/redis/app.yaml carry, so the app generator places
+# all three on the same cluster and the two connections below name in-cluster
+# Services. That placement is what the co-location law asks for and it is the only
+# one that holds in both of the cases that occur: a slave standing on the master's
+# own server, and a slave standing alone on a machine of its own.
+app:
+  image:
+    repository: dbgate/dbgate
+    # Managed centrally in clusters/platform/versions.yaml (images.dbgate) and stamped by
+    # the version sync — do not hand-edit this tag.
+    tag: "7.2.3"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  containerPort: 3000
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 3000
+  # DBGate reads CONNECTIONS and materializes each connection from the
+  # per-connection LABEL_/ENGINE_/URL_ variables beside it. clusters/charts/deployment runs
+  # `tpl` over this list, so an entry may read .Values.global.env.
+  env:
+    # Disable DBGate's own login/JWT auth. Without this, DBGate 7.x shows its own
+    # login page AND rejects the UI's API calls with "jwt malformed", because
+    # there is no valid DBGate session token.
+    #
+    # SO NOTHING IN THIS POD ASKS WHO IS CALLING, and that is why the ingress
+    # block at the bottom of this file is off. Whatever reaches :3000 reaches
+    # every database of this cluster as root.
+    - name: SKIP_ALL_AUTH
+      value: "true"
+    - name: CONNECTIONS
+      value: "mongo,redis"
+    # --- MongoDB ---
+    - name: LABEL_mongo
+      value: 'MongoDB ({{ .Values.global.env }})'
+    - name: ENGINE_mongo
+      value: "mongo@dbgate-plugin-mongo"
+    # mongod runs with SCRAM auth on (--auth + --keyFile), so dbgate connects as
+    # the `root` user (authSource=admin) to browse every database. The password is
+    # injected from the dbgate-db-credentials Secret through Kubernetes' native
+    # $(VAR) expansion — MONGO_ROOT_PW MUST be declared BEFORE URL_mongo or the
+    # expansion does not resolve. The root password is alphanumeric (URL-safe); if
+    # it ever gains URL-reserved characters it must be percent-encoded here.
+    - name: MONGO_ROOT_PW
+      valueFrom:
+        secretKeyRef:
+          name: dbgate-db-credentials
+          key: mongodb-password
+    # ?replicaSet=rs0 against the headless Service, and BOTH halves of that are
+    # in-cluster facts. The driver takes the seed, asks the set for its members and
+    # re-dials them under the per-pod FQDNs rs.initiate wrote
+    # (clusters/apps/mongodb/templates/headless-service.yaml) — names that resolve in this
+    # cluster's DNS and in no other. Naming the set is what keeps the browser on
+    # the PRIMARY across an election, and it is available here precisely because
+    # dbgate stands in the cluster mongod runs in.
+    - name: URL_mongo
+      value: "mongodb://root:$(MONGO_ROOT_PW)@mongodb-{{ .Values.global.env }}-headless.mongodb.svc.cluster.local:27017/?replicaSet=rs0&authSource=admin"
+    # --- Redis ---
+    - name: LABEL_redis
+      value: 'Redis ({{ .Values.global.env }})'
+    - name: ENGINE_redis
+      value: "redis@dbgate-plugin-redis"
+    # redis boots with --requirepass (clusters/apps/redis values-common.yaml), so dbgate
+    # connects as the `default` user — the one credential that reaches every key,
+    # which is what a browser needs and what a per-claim ServiceClaim user is
+    # deliberately bounded away from. Same $(VAR) rule as MONGO_ROOT_PW above:
+    # REDIS_DEFAULT_PW MUST be declared BEFORE URL_redis or Kubernetes' expansion
+    # does not resolve.
+    - name: REDIS_DEFAULT_PW
+      valueFrom:
+        secretKeyRef:
+          name: dbgate-redis-credentials
+          key: redis-password
+    - name: URL_redis
+      value: "redis://default:$(REDIS_DEFAULT_PW)@redis-{{ .Values.global.env }}.redis.svc.cluster.local:6379"
+  # DBGate's data dir — saved queries and last-opened tabs across pod restarts.
+  volumeMounts:
+    - name: dbgate-data
+      mountPath: /root/.dbgate
+  volumes:
+    - name: dbgate-data
+      persistentVolumeClaim:
+        claimName: dbgate-data
+  # Probes — DBGate's root path returns 200 when up.
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 15
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+pvc:
+  pvc:
+    enabled: true
+    name: dbgate-data
+    # No Prune/Delete protection: removing dbgate is allowed to delete its saved
+    # queries with it.
+    # storageClassName omitted — falls back to .Values.global.storageClass
+    # (clusters/platform/values-common.yaml: microk8s-hostpath).
+    accessModes:
+      - ReadWriteOnce
+    storageSize: "1Gi"
+
+# THE PUBLIC HOST, AND IT IS OFF. Everything below is written out and ready; the
+# one thing missing is the gate, and without a gate this Ingress would publish a
+# browser that opens every database of this cluster as root to anyone who resolves
+# the name.
+#
+# WHAT IS MISSING, exactly. dbgate has no login of its own (SKIP_ALL_AUTH above),
+# so the gate has to stand in front of it. This platform has TWO such mechanisms.
+# The first is the Traefik forwardAuth Middleware `forwardauth` in namespace `idp`
+# (clusters/bootstrap/idp/middleware-forwardauth.yaml), whose address is the in-cluster
+# Service idp-authentik-server.idp.svc.cluster.local. Two facts put it out of
+# reach of a cluster whose role is `slave`:
+#
+#   * the program that installs clusters/bootstrap/idp declares `roles: [master]`
+#     (digita-deploy ansiwise/programs/deploy-gitops.yaml:48), so on a slave the
+#     namespace `idp` does not exist and the middleware reference resolves to
+#     nothing;
+#   * the identity provider's session cookie is issued for the domain the master
+#     was stamped with — an Authentik proxy provider carries
+#     `cookie_domain: .<IDP_DOMAIN>` and IDP_DOMAIN is the master's own fqdn
+#     (clusters/bootstrap/idp/idp-bootstrap-env.yaml) — so a browser would not send that
+#     cookie to a host under the slave's fqdn even if the middleware could dial
+#     the master over the public network.
+#
+# WHAT WOULD HAVE TO EXIST FIRST. Of the two mechanisms, the forwardAuth half is
+# not writable here at all — it needs an Authentik proxy provider and a cookie
+# domain under the master's fqdn. The basicAuth half IS renderable in this
+# repository (clusters/charts/middleware), and the one thing missing is its credential: no
+# `vault_kv_entry` row writes `<stage>/app/dbgate` with a `users` property, so
+# writing the reader before the writer would turn external-secret-reach red.
+#
+# A gate has
+# to be an object in THIS cluster: a Traefik Middleware in this namespace, whose
+# forwardAuth address the identity provider answers for a host under this
+# cluster's own fqdn. That needs an Authentik proxy provider declaring
+# `gate.<this fqdn>` with a cookie domain covering it, and a credential or a
+# session the slave's Traefik can present — the first is a blueprint under
+# clusters/bootstrap/idp on the MASTER, the second a Vault entry no `vault_kv_entry` row
+# of any program writes today.
+#
+# UNTIL ONE EXISTS the pod is reached the way any other workload of a registered
+# cluster is: `kubectl -n dbgate port-forward svc/dbgate-<stage>-app 3000:3000`
+# through the cluster credential clusters/slaves/slave materializes for the master.
+#
+# TURNING IT ON is `enabled: true` and nothing else, once the annotation below
+# names a middleware that exists in THIS cluster. Traefik DROPS a route whose
+# middleware name resolves to nothing, and says so only in its own log.
+ingress:
+  ingress:
+    enabled: false
+    className: public
+    annotations:
+      traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
+    # gate.<this cluster's own fqdn> — global.domain is the install branch's fqdn,
+    # written into installation/profile.yaml by the branch program, so on a slave
+    # this is the slave's own public name and on a master the master's.
+    host: 'gate.{{ .Values.global.domain }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        serviceName: 'dbgate-{{ .Values.global.env }}-app'
+        servicePort: 3000
+    tls:
+      enabled: true
+      secretName: 'dbgate-{{ .Values.global.env }}-tls'
+
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource). Reads the
+# `external-secrets` Vault role of the cluster this runs on, which admits the
+# namespace `dbgate` on both sides: the master's list in deploy-gitops.yaml and
+# the slave's own in register-slave.yaml.
+secret-store: {}
+
+# ExternalSecret — the mongod root password, injected into URL_mongo above through
+# the dbgate-db-credentials Secret. The Vault path is per-stage and stands as a
+# literal in values-{dev,test,prod}.yaml, the same way clusters/apps/mongodb's own does.
+externalsecret-db:
+  externalSecret:
+    enabled: true
+    name: dbgate-db-credentials
+    secretStoreKind: SecretStore
+    targetSecretName: dbgate-db-credentials
+    vaultPath: ""
+    data:
+      - secretKey: mongodb-password
+        property: mongodb-root-password
+
+# ExternalSecret — the redis `default` user's password, injected into URL_redis
+# above through the dbgate-redis-credentials Secret. Same store and the same
+# one-value rule as the mongod password beside it: what this reads out of
+# <stage>/app/redis is the entry clusters/apps/redis boots its server with as
+# --requirepass, so the password here and the password there cannot drift.
+externalsecret-redis:
+  externalSecret:
+    enabled: true
+    name: dbgate-redis-credentials
+    secretStoreKind: SecretStore
+    targetSecretName: dbgate-redis-credentials
+    vaultPath: ""
+    data:
+      - secretKey: redis-password
+        property: redis-password

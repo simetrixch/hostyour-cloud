@@ -1,0 +1,143 @@
+# Observability PUSH agent (D4b) — shared across DEV / TEST / PROD.
+# Per-env overrides (the Vault path the push creds live at) go in
+# values-{dev,test,prod}.yaml.
+
+# ---------------------------------------------------------------------------
+# Push endpoints + cluster label come from GLOBALS. On a pure slave they are
+# STAMPED by the branch program into installation/profile.yaml (loaded LAST, wins):
+#   global.endpoints.observability.prometheusPush: https://prom-push.<master-fqdn>
+#   global.endpoints.observability.lokiPush:       https://loki-push.<master-fqdn>
+#   global.domain:                                 <slave-fqdn>   (the cluster label)
+# The empty defaults below only let `helm template` render without a profile;
+# they deep-merge with platform's global.endpoints.registry (never clobber it).
+# ---------------------------------------------------------------------------
+global:
+  endpoints:
+    observability:
+      prometheusPush: ""
+      lokiPush: ""
+
+# ---------------------------------------------------------------------------
+# monitoring chart (clusters/charts/monitoring) — turn ON the agent-mode Alloy config.
+# This renders the ConfigMap `alloy-config` (config.alloy) that the alloy
+# sub-chart below mounts. See clusters/charts/monitoring/templates/alloy-agent-config.yaml.
+# ---------------------------------------------------------------------------
+monitoring:
+  alloyAgent:
+    enabled: true
+    # Ship host systemd/journald logs to the master's Loki too (job="journald").
+    journaldEnabled: true
+
+# ---------------------------------------------------------------------------
+# Grafana Alloy (grafana/alloy) — singleton DaemonSet (one node per slave).
+# Config comes from the ConfigMap the monitoring chart renders (create=false).
+# Default rbac.create=true already grants everything an agent needs
+# (servicemonitors/podmonitors read, nodes/metrics for kubelet+cAdvisor,
+# secrets read for remote.kubernetes.secret) — no rbac override required.
+# ---------------------------------------------------------------------------
+alloy:
+  # Stable resource names (matches the ConfigMap name the monitoring chart emits).
+  fullnameOverride: alloy
+  controller:
+    type: daemonset
+    # Host mounts for the in-process node exporter (prometheus.exporter.unix) and
+    # journald: the slave runs no node-exporter DaemonSet, so Alloy reads host
+    # /, /proc, /sys directly. /etc/machine-id + /var/log (varlog below) feed
+    # loki.source.journal.
+    volumes:
+      extra:
+        - name: host-root
+          hostPath: { path: /, type: Directory }
+        - name: host-proc
+          hostPath: { path: /proc, type: Directory }
+        - name: host-sys
+          hostPath: { path: /sys, type: Directory }
+        - name: etc-machine-id
+          hostPath: { path: /etc/machine-id, type: File }
+  alloy:
+    configMap:
+      create: false
+      name: alloy-config
+      key: config.alloy
+    mounts:
+      # Mount host /var/log so loki.source.journal can read /var/log/journal.
+      varlog: true
+      extra:
+        - name: host-root
+          mountPath: /host/root
+          readOnly: true
+          mountPropagation: HostToContainer
+        - name: host-proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: host-sys
+          mountPath: /host/sys
+          readOnly: true
+        - name: etc-machine-id
+          mountPath: /etc/machine-id
+          readOnly: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# kube-state-metrics (prometheus-community) — kube_* metrics (pod state /
+# restarts) that the master's alerts watch; Alloy has no built-in KSM. Scraped
+# via its OWN ServiceMonitor (below), which Alloy's
+# prometheus.operator.servicemonitors discovers cluster-wide.
+# ---------------------------------------------------------------------------
+kube-state-metrics:
+  prometheus:
+    monitor:
+      enabled: true
+      additionalLabels:
+        release: observability
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 192Mi
+
+# ---------------------------------------------------------------------------
+# Per-namespace SecretStore — the Vault backend the push-cred ExternalSecret
+# reads. global.vaultUrl / global.vaultKubernetesAuthPath
+# (installation/profile.yaml) point it at the master's Vault over this
+# cluster's own auth mount; the KV mount is the shared global.vaultKvMount.
+# vaultUrl falls back to global.vaultUrl — no per-env override needed
+# (dbgate/mongodb pattern).
+# ---------------------------------------------------------------------------
+secret-store: {}
+
+# ---------------------------------------------------------------------------
+# Push credentials ExternalSecret — materializes the K8s Secret
+# `observability-agent-push-credentials` (keys username/password) that Alloy's
+# remote_write + loki.write reference via remote.kubernetes.secret. Read from
+# the mount-relative Vault path <stage>/app/observability (vaultPath set per-env
+# below); the mount (`secret`) comes from the SecretStore's global.vaultKvMount.
+#
+# ONE ENTRY AND ONE ACCOUNT, the same rule the mongodb and redis passwords carry.
+# The push Ingresses on the master are guarded by a basic-auth Middleware whose
+# htpasswd line clusters/apps/observability composes from push-user + push-password at
+# <stage>/app/observability, and this agent is what presents that account. Read
+# out of a second entry the two could differ, and a differing password is a push
+# the middleware rejects. This used to name <stage>/app/observability-agent, an
+# entry no vault_kv_entry row of any program writes.
+# ---------------------------------------------------------------------------
+observability-agent-push-secret:
+  externalSecret:
+    enabled: true
+    name: observability-agent-push-credentials
+    namespace: observability
+    secretStoreKind: SecretStore
+    targetSecretName: observability-agent-push-credentials
+    data:
+      - secretKey: username
+        property: push-user
+      - secretKey: password
+        property: push-password

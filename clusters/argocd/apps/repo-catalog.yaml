@@ -1,0 +1,105 @@
+# THE CREDENTIAL THIS INSTANCE READS THE PRIVATE TENANT CATALOG WITH.
+#
+# The tenant ApplicationSet beside this file generates its parameters from the catalog over git, and
+# the catalog is private on purpose — its per-installation branches say which customer runs which
+# version, which is not a fact to publish. ArgoCD discovers a repository credential the same way it
+# discovers a cluster: a Secret in its own namespace labelled argocd.argoproj.io/secret-type:
+# repository. Without one, the repo-server reaches the catalog anonymously and GitHub answers
+# "Repository not found" — the message a private repository gives an unauthenticated caller, which
+# reads like a wrong URL and is a missing credential.
+#
+# THE SLAVE HAD THIS AND THE MASTER DID NOT. clusters/slaves/slave/templates/externalsecret-repo-catalog.yaml
+# does exactly this for a slave's own ArgoCD instance, for exactly this reason. The master's instance
+# reads the same catalog through the same generator and had nothing — so tenants-<stage> failed
+# parameter generation on every installation from the first minute, and the root application it hangs
+# under stood Degraded with no message, which is what a failed generator looks like from above.
+#
+# WHERE THE CREDENTIAL COMES FROM. secret/build/catalog/repo-pat is the entry the installer seeds
+# with the catalog token, and <cluster>-deploy-pat-read is the policy that grants it — already
+# attached to the role this store logs in under. Nothing new is granted here; what was missing was a
+# reader.
+#
+# The store is written out rather than taken from clusters/charts/secret-store because this directory is
+# applied as plain manifests, not rendered by helm. The two addresses are composed from the same
+# placeholders every file here uses: the auth mount is always the word kubernetes and the cluster's
+# short name, and Vault always serves at vault. plus the FQDN of the cluster keeping the books.
+# THE CRD THIS FILE USES IS INSTALLED BY A CHILD OF THE APPLICATION THAT APPLIES THIS FILE, and
+# without the two annotations below that circle never closes. ArgoCD validates every resource of a
+# sync against the cluster BEFORE applying any of them, so one kind the API server does not know
+# makes the whole sync invalid — not this file, the whole of it. On a first installation nothing was
+# created at all: no ApplicationSet, no projects, no external-secrets, and therefore no CRD, and
+# therefore the same refusal on every retry. What the run reported was
+# "one or more synchronization tasks are not valid", which names nothing.
+#
+# SkipDryRunOnMissingResource lets the validation pass for a kind that is not there yet; the apply
+# still fails until the CRD arrives, and the root application's own retry is what covers the gap.
+#
+# AND NO SYNC WAVE, which was tried and is worse than nothing. A late wave never runs at all:
+# ArgoCD starts a wave only once the one before it is HEALTHY, and wave 0 here holds the
+# ApplicationSets — which cannot be healthy while any application they generate is not, and on a
+# first installation manager-dev stands in ImagePullBackOff until its image has been built. The two
+# objects below then sat as `nil->obj` in every sync, never attempted, with nothing reporting that
+# a wave had been skipped rather than failed. In the ordinary wave they are attempted on every
+# pass, and one of those passes is after the CRD arrives.
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: vault-backend
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  provider:
+    vault:
+      server: https://vault.__BOOKS_BRANCH__
+      path: secret
+      version: v2
+      namespace: vault
+      auth:
+        kubernetes:
+          mountPath: kubernetes-__CLUSTER__
+          role: external-secrets
+          serviceAccountRef:
+            name: external-secrets-sa
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets-sa
+  namespace: argocd
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: repo-catalog
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  # Read when it is deployed and when its target Secret is deleted, never on a timer — the platform's
+  # own admission policy refuses anything else, and refuses an ExternalSecret that leaves it unset.
+  refreshPolicy: OnChange
+  secretStoreRef:
+    name: vault-backend
+    kind: SecretStore
+  target:
+    name: repo-catalog
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      metadata:
+        labels:
+          argocd.argoproj.io/secret-type: repository
+      data:
+        # The URL must match the repoURL the generator names, character for character: ArgoCD picks a
+        # credential by comparing the two as text, and a trailing slash or a missing .git is a
+        # credential it will not find.
+        url: https://github.com/__CATALOG_REPO__.git
+        type: git
+        username: x-access-token
+        password: "{{ .pat }}"
+  data:
+    - secretKey: pat
+      remoteRef:
+        key: build/catalog/repo-pat
+        property: pat

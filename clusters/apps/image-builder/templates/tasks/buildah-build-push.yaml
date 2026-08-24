@@ -1,0 +1,338 @@
+{{- /*
+buildah-build-push — builds an OCI image from a Containerfile in the source
+workspace, applies the four standard org.opencontainers.image.* labels, and
+pushes it to the Zot registry. Buildah is invoked with TLS verification enabled
+(Zot has a real LE cert via Ingress).
+
+BUILD/PUSH SPLIT — a defence-in-depth MITIGATION, and the reason this Task has
+TWO steps. Read the honest-limits paragraph below before relying on it.
+`buildah bud` executes UNTRUSTED code: every RUN layer of the consumer's own
+Containerfile, and every npm lifecycle script a `pnpm install` triggers — a
+postinstall is arbitrary code shipped by a third-party dependency. If the
+registry PUSH credential is reachable from that step, a malicious dependency can
+steal it and push a POISONED image to any repo that credential can write —
+another consumer's path, or platform/*. The split keeps the push credential out
+of the step where untrusted code runs:
+
+  step 1 `build` — runs the untrusted code. NO push credential (no envFrom of
+    image-builder-registry-push). It logs in with the READ-ONLY pull identity
+    (image-builder-registry-pull → Zot user pull-user) purely so the base-image
+    pull can authenticate: Zot disables anonymous pulls (anonymousPolicy []),
+    and the drop-in below remaps every `FROM docker.io/...` onto Zot. A
+    read-only credential stolen out of this step is low-value — it can only READ
+    images this build plane already pulls; it cannot poison any repo.
+
+  step 2 `push`  — carries the push credential (image-builder-registry-push) and
+    runs NO consumer code: it only pushes the already-built image out of the
+    shared container storage and writes the results.
+
+HONEST LIMITS — what this split does NOT do. Both steps run `privileged: true`
+(see MicroK8s specifics below): buildah needs CAP_SYS_ADMIN for its chroot
+operations. A privileged container is not confined to its container, so code that
+gets execution in step 1 and actively goes looking is not stopped by this split —
+it can reach the node, and on the node the push credential is readable regardless
+of which step's env it was attached to. So the split raises the cost of the
+REALISTIC threat (a compromised transitive dependency whose postinstall grabs
+whatever credential is lying in its own environment or auth.json — untargeted,
+opportunistic, and the way nearly every npm supply-chain incident has worked) and
+it does NOT contain an attacker who is deliberately targeting this platform. Do
+not treat it as a security boundary, and do not let it justify putting anything
+else sensitive in the build step "because the split protects it".
+
+The durable fix is to stop needing privileged at all: rootless buildah with user
+namespaces, so untrusted build code never holds CAP_SYS_ADMIN in the first place.
+That is the real boundary; this split is what we have until it exists.
+
+STORAGE SHARING between the two steps: the `containers-storage` emptyDir is
+mounted at /var/lib/containers in BOTH steps, and both invoke buildah with an
+explicit `--root /var/lib/containers/storage --storage-driver=vfs`, so step 2
+pushes exactly the image step 1 committed. This is sound because Tekton runs a
+Task's steps as SEQUENTIAL containers inside ONE pod — an emptyDir lives for the
+pod's lifetime, so it survives the step boundary (the same `varlibcontainers`
+pattern as the upstream Tekton catalog buildah Task). Buildah's RUNROOT is
+deliberately NOT shared: it stays each container's own /run, because it holds
+transient locks/mount state, not the image. The auth store follows the runroot
+(/run/containers/0/auth.json), which is what keeps the shared IMAGE storage from
+also sharing the AUTH store — step 2's push login does not end up in a file step 1
+can simply read. (Simply — see HONEST LIMITS above; this is the same mitigation,
+not a boundary.)
+
+MicroK8s specifics:
+  - STORAGE_DRIVER=vfs. The default overlay driver requires fuse + a kernel
+    config that MicroK8s' default kubelet doesn't expose; vfs is slower but
+    just works.
+  - BUILDAH_FORMAT=oci. Default docker manifest format works too but oci is
+    the modern default.
+  - privileged: true. Buildah needs CAP_SYS_ADMIN for the underlying chroot
+    operations, in BOTH steps. PodSecurityStandards on MicroK8s default-allow
+    this; if you enable PSA, mark the image-builder namespace `privileged`.
+    This is the single line that caps how much the build/push split above can be
+    worth (HONEST LIMITS) — removing it via rootless buildah is what would turn
+    the split into an actual boundary.
+
+The image-digest + image-reference results are consumed by downstream
+write-back tasks (yq-git-bump) in the app's own pipeline.
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: buildah-build-push
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: task
+spec:
+  description: Build a Containerfile with Buildah (no push credential in the build step) and push to the registry from a separate step.
+  workspaces:
+    - name: source
+      description: Contains the Containerfile and build context.
+  params:
+    - name: image-name
+      description: Image name (registry path WITHOUT tag), e.g. myapp.
+      type: string
+    - name: image-tag
+      description: Tag to push (from generate-image-tag).
+      type: string
+    - name: registry
+      description: Registry hostname.
+      type: string
+      default: {{ include "common.registryHost" . | quote }}
+    - name: containerfile
+      description: >-
+        Path to the Containerfile inside the source workspace. It reaches the
+        build step as an ENVIRONMENT value and is read back as ${CONTAINERFILE};
+        it is never substituted into the step's script text, because the value
+        comes from the built repo's own manifest and a script body that carries
+        it verbatim is a shell the repo writes.
+      type: string
+      default: Containerfile
+    - name: context
+      description: Build context dir inside the source workspace.
+      type: string
+      default: "."
+    - name: git-url
+      description: For OCI label org.opencontainers.image.source.
+      type: string
+    - name: git-revision
+      description: Resolved commit SHA for OCI label .revision.
+      type: string
+    - name: build-timestamp
+      description: ISO-8601 UTC timestamp for OCI label .created.
+      type: string
+    - name: version
+      description: Semver base for OCI label .version.
+      type: string
+    - name: build-args
+      description: >-
+        Optional KEY=VALUE pairs passed to buildah bud as --build-arg flags.
+        Callers must pass render-time LITERALS from their own Pipeline (e.g.
+        pipeline-ui's PLUGINS_SOURCE=registry) — never a webhook-controlled
+        param, so a push header can never flip a Dockerfile ARG.
+      type: array
+      default: []
+  results:
+    - name: image-digest
+      description: Pushed image digest (sha256:...).
+    - name: image-reference
+      description: Fully-qualified image reference (registry/name:tag).
+  volumes:
+    # Buildah's containers-storage, shared by the build + push steps (see the
+    # STORAGE SHARING note in the header). Tekton runs both steps as sequential
+    # containers in ONE pod, so this emptyDir carries the built image from step 1
+    # to step 2. It is the ONLY thing the two steps share — deliberately NOT the
+    # auth store, which stays per-step in each container's own /run.
+    - name: containers-storage
+      emptyDir: {}
+    # The unit's authenticated .npmrc (Secret build-npmrc, assembled by ESO in
+    # the unit's build namespace). It is mounted into the build step OUTSIDE
+    # the build context and handed to buildah as a BUILD SECRET: a credential
+    # that is not in the context cannot be picked up by a `COPY . .`, and a
+    # secret mount is never committed to a layer. optional, because a unit
+    # without private npm dependencies has no such Secret.
+    - name: npmrc
+      secret:
+        secretName: build-npmrc
+        optional: true
+  steps:
+    # ── step 1: BUILD — runs UNTRUSTED consumer code, holds NO push credential ──
+    - name: build
+      image: quay.io/buildah/stable:v1.43.1
+      env:
+        - name: STORAGE_DRIVER
+          value: vfs
+        - name: BUILDAH_FORMAT
+          value: oci
+        # Tekton replaces $(params.x) inside a `script:` body as plain text, so
+        # a param the built repo controls would become script SOURCE. This one
+        # is placed in the environment instead: the shell receives it as a
+        # value it never parses.
+        - name: CONTAINERFILE
+          value: $(params.containerfile)
+      envFrom:
+        # READ-ONLY registry identity (Zot user pull-user) — REGISTRY_USERNAME +
+        # REGISTRY_PASSWORD pulled by ESO from Vault secret/<env>/app/registry
+        # (properties pull-user + pull-password). See clusters/apps/image-builder/Chart.yaml
+        # dep externalsecret-registry-pull. It exists ONLY so the base-image pull
+        # can authenticate against Zot (anonymous pulls are disabled). This step
+        # deliberately does NOT envFrom image-builder-registry-push: the untrusted
+        # code below must never reach a credential that can WRITE to the registry.
+        # That is the whole point of the build/push split.
+        - secretRef:
+            name: image-builder-registry-pull
+      securityContext:
+        privileged: true
+        runAsUser: 0
+      volumeMounts:
+        - name: containers-storage
+          mountPath: /var/lib/containers
+        - name: npmrc
+          mountPath: /npmrc
+          readOnly: true
+      workingDir: /workspace/source/$(params.context)
+      # Tekton can only expand an ARRAY param in argv position, never inside a
+      # script body — so build-args ride in as the script's positional args
+      # ("$@" below) and become --build-arg flags there.
+      args: ["$(params.build-args[*])"]
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        IMAGE_REF="$(params.registry)/$(params.image-name):$(params.image-tag)"
+        echo "Building $IMAGE_REF from ${CONTAINERFILE}"
+
+        # Optional --build-arg KEY=VALUE pairs (the build-args array param,
+        # passed as positional args above). Empty by default.
+        BUILD_ARG_FLAGS=()
+        for kv in "$@"; do
+          BUILD_ARG_FLAGS+=(--build-arg "$kv")
+        done
+
+        # The unit's npm credential, when it has one. It reaches the build as a
+        # buildah BUILD SECRET, mounted from /npmrc which is outside the build
+        # context: a Containerfile picks it up with
+        #   RUN --mount=type=secret,id=npmrc,target=/root/.npmrc pnpm install
+        # and buildah mounts it for that one RUN without committing a layer
+        # that holds it. Writing the file into the context instead would put
+        # the PAT into every image whose Containerfile copies the context, and
+        # from there into the reach of every identity that may pull.
+        SECRET_FLAGS=()
+        if [ -f /npmrc/.npmrc ]; then
+          SECRET_FLAGS+=(--secret "id=npmrc,src=/npmrc/.npmrc")
+          echo "Handing the unit's .npmrc to buildah as build secret id=npmrc."
+        else
+          echo "No build-npmrc secret mounted — building without npm authentication."
+        fi
+
+        # Log into Zot with the READ-ONLY pull identity so the `FROM …` pulls
+        # (remapped onto Zot just below) authenticate. Credentials are
+        # envFrom-injected above (never appear in argv or in the rendered
+        # Pipeline params). NOTE: deliberately NOT the push identity — the
+        # untrusted build code further down must not be able to steal a
+        # credential that can write to the registry.
+        echo "Logging into $(params.registry) as ${REGISTRY_USERNAME} (read-only pull identity)"
+        buildah --root /var/lib/containers/storage --storage-driver=vfs login \
+          --username "${REGISTRY_USERNAME}" \
+          --password-stdin \
+          "$(params.registry)" <<< "${REGISTRY_PASSWORD}"
+
+        # Override Docker Hub INTERNALLY: base-image pulls (every `FROM …`) resolve to OUR Zot's
+        # docker.io pull-through cache (clusters/apps/registry extensions.sync onDemand), never to
+        # registry-1.docker.io. This keeps builds OFF Docker Hub's anonymous rate limit — which the
+        # build plane hits hard (every `FROM` miss), and once hit it blocks for ~1h. Dockerfiles stay
+        # UNCHANGED — the remap is a registries.conf.d drop-in, so `FROM node:22-alpine` transparently
+        # becomes `<zot>/library/node:22-alpine`; Zot fetches + caches that tag from Docker Hub on the
+        # first miss, and every later build (any consumer) pulls it straight from Zot. buildah is
+        # already logged into this same host above, so the base pulls are authenticated.
+        mkdir -p /etc/containers/registries.conf.d
+        printf '[[registry]]\nprefix = "docker.io"\nlocation = "%s"\n' "$(params.registry)" \
+          > /etc/containers/registries.conf.d/zot-docker-mirror.conf
+
+        # THE UNTRUSTED PART: every RUN layer + every npm lifecycle script of the
+        # consumer's dependency tree executes here. It builds into the SHARED
+        # containers-storage (--root), which the `push` step below reads.
+        buildah --root /var/lib/containers/storage --storage-driver=vfs bud \
+          --format=oci \
+          --label "org.opencontainers.image.source=$(params.git-url)" \
+          --label "org.opencontainers.image.revision=$(params.git-revision)" \
+          --label "org.opencontainers.image.created=$(params.build-timestamp)" \
+          --label "org.opencontainers.image.version=$(params.version)" \
+          "${BUILD_ARG_FLAGS[@]}" \
+          "${SECRET_FLAGS[@]}" \
+          -f "${CONTAINERFILE}" \
+          -t "$IMAGE_REF" \
+          .
+
+        echo "Built $IMAGE_REF into the shared containers-storage — handing off to the push step."
+
+        # Hygiene only (this container is torn down with the pod anyway, and the
+        # untrusted code above has already run): drop the cached pull credential.
+        buildah --root /var/lib/containers/storage --storage-driver=vfs logout "$(params.registry)" || true
+      computeResources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 4Gi
+
+    # ── step 2: PUSH — carries the push credential, runs NO consumer code ──────
+    - name: push
+      image: quay.io/buildah/stable:v1.43.1
+      env:
+        - name: STORAGE_DRIVER
+          value: vfs
+        - name: BUILDAH_FORMAT
+          value: oci
+      envFrom:
+        # REGISTRY_USERNAME + REGISTRY_PASSWORD pulled by ESO from Vault
+        # (secret/<env>/app/registry, properties push-user + push-password).
+        # See clusters/apps/image-builder/Chart.yaml dep externalsecret-registry-push.
+        # This is the ONLY step that carries the push identity, and nothing the
+        # consumer controls runs in it — it just moves the finished image out of
+        # the shared storage. Keep it that way: adding any consumer-influenced
+        # command to this step re-opens exactly the hole the split closes.
+        - secretRef:
+            name: image-builder-registry-push
+      securityContext:
+        privileged: true
+        runAsUser: 0
+      volumeMounts:
+        - name: containers-storage
+          mountPath: /var/lib/containers
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        IMAGE_REF="$(params.registry)/$(params.image-name):$(params.image-tag)"
+
+        # Log into Zot with the PUSH identity. Credentials are envFrom-injected
+        # above (never appear in argv or in the rendered Pipeline params).
+        echo "Logging into $(params.registry) as ${REGISTRY_USERNAME} (push identity)"
+        buildah --root /var/lib/containers/storage --storage-driver=vfs login \
+          --username "${REGISTRY_USERNAME}" \
+          --password-stdin \
+          "$(params.registry)" <<< "${REGISTRY_PASSWORD}"
+
+        # $IMAGE_REF is already fully qualified with the Zot host, so it resolves
+        # straight out of the shared containers-storage the `build` step wrote —
+        # no docker.io remap involved (the drop-in is deliberately build-only).
+        echo "Pushing $IMAGE_REF"
+        buildah --root /var/lib/containers/storage --storage-driver=vfs push \
+          --digestfile /tmp/digest \
+          "$IMAGE_REF" \
+          "docker://$IMAGE_REF"
+
+        DIGEST="$(cat /tmp/digest)"
+        echo "Pushed: $IMAGE_REF @ $DIGEST"
+        printf "%s" "$DIGEST" > $(results.image-digest.path)
+        printf "%s" "$IMAGE_REF" > $(results.image-reference.path)
+
+        # Drop the cached credentials from the build worker filesystem.
+        buildah --root /var/lib/containers/storage --storage-driver=vfs logout "$(params.registry)" || true
+      computeResources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 2Gi

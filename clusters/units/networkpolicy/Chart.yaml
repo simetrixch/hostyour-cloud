@@ -1,0 +1,5 @@
+apiVersion: v2
+name: unit-networkpolicy
+version: 1.0.0
+description: The default-deny ingress policy for ONE unit namespace — a consumer's, or one tenant member's. Rendered as an extra source of the unit's own Application (clusters/argocd/apps/consumers-appset.yaml and tenants-appset.yaml), so it is created, healed and pruned with the namespace it protects. Carries no cluster-scoped object and reads no platform value; the namespaces it admits are platform names from clusters/argocd/apps/applicationset.yaml.
+type: application

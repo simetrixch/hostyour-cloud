@@ -1,0 +1,37 @@
+# Defaults for secret-store.
+# Apps enable this chart as a dependency; the Vault URL (env-specific) is
+# supplied by each app's values-{test,prod}.yaml.
+
+enabled: true
+
+# Optional metadata.annotations applied to BOTH resources this chart renders —
+# the ServiceAccount AND the SecretStore — because the two are one ESO unit that
+# always belongs together and shares its ordering. Use case: a single ArgoCD
+# sync-wave (argocd.argoproj.io/sync-wave) placing the credential-store pair
+# ahead of the workload that consumes the Secret. Default empty = no annotations
+# block on either object (byte-identical for apps that set nothing). Same guarded
+# {{- with }} idiom clusters/charts/pvc uses for pvc.annotations.
+annotations: {}
+
+# Name and namespace of the rendered SecretStore CR. Namespace defaults to
+# the app's release namespace, which is the intended behaviour.
+name: vault-backend
+
+# Vault provider configuration. `vaultUrl` MUST be provided by the platform
+# globals / app values:
+#   https://vault.<domain>
+vaultUrl: ""
+vaultNamespace: vault
+kvVersion: v2
+
+# Vault's Kubernetes auth. The chart creates a local ServiceAccount
+# (named `external-secrets-sa`) in the release namespace; the namespaced
+# SecretStore references it locally. Vault's `external-secrets` role must
+# include this namespace in its `bound_service_account_namespaces` list
+# — it is set where the cluster's Vault is seeded, from the platform's own app
+# list plus whatever extra ESO namespaces that installation declares.
+# The KV mount and the auth mount carry no defaults here: the template
+# requires global.vaultKvMount (clusters/platform/values-common.yaml) and
+# global.vaultKubernetesAuthPath (installation/profile.yaml).
+role: external-secrets
+serviceAccountName: external-secrets-sa

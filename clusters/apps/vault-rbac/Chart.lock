@@ -1,0 +1,9 @@
+dependencies:
+- name: rbac
+  repository: file://../../charts/rbac
+  version: 1.0.0
+- name: common
+  repository: file://../../charts/common
+  version: 1.0.0
+digest: sha256:3502f9b195462d27cdf31ecdc58759bf6b96220f77a09474bffd994b722e16f4
+generated: "2026-08-11T19:16:50.3877213+02:00"

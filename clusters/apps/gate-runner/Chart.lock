@@ -1,0 +1,9 @@
+dependencies:
+- name: secret-store
+  repository: file://../../charts/secret-store
+  version: 1.0.0
+- name: common
+  repository: file://../../charts/common
+  version: 1.0.0
+digest: sha256:a286abc16fd9a5a84617bd6334df7795603ab80dfb2ca66bcda4fa3eeb56a56d
+generated: "2026-08-11T19:16:01.7806837+02:00"

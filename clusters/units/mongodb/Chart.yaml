@@ -1,0 +1,63 @@
+apiVersion: v2
+name: unit-mongodb
+version: 1.0.0
+description: |
+  MongoDB — PER-UNIT TEMPLATE (one instance, one namespace), the official `mongo`
+  image on a StatefulSet. Rendered as an extra source of a consumer's own
+  Application when its registration says `mongodb: standalone` or
+  `mongodb: replicaset`, exactly as clusters/units/postgresql is rendered when the
+  registration claims the postgresql service.
+
+  WHY A SECOND CHART BESIDE clusters/apps/mongodb. clusters/apps/mongodb is the CLUSTER's own
+  replica set — one stage-deployed release in namespace `mongodb`, three members,
+  a NetworkPolicy naming the platform's database consumers, the metrics
+  exporter's ServiceClaim and the rs-ensure CronJob. It stays: every tenant runs
+  on it, and so does every consumer that asked for nothing else. None of that
+  belongs in a consumer's namespace, and its values live in values-common.yaml +
+  values-<stage>.yaml, which a per-unit render never loads — a chart rendered
+  into a unit namespace gets only its own implicit values.yaml plus the platform
+  globals from $values. Two renders, two charts; the alternative was six
+  conditionals inside the database every tenant depends on.
+
+  TWO SHAPES, AND THE DIFFERENCE IS CAPABILITY. `mode: standalone` renders ONE
+  mongod with no --replSet at all, so MongoDB serves NO multi-document
+  transactions from it — that is what the word promises the consumer, and a
+  one-member replica set would quietly break the promise by serving them.
+  `mode: replicaset` renders three members with --replSet and the keyfile, a
+  PostSync Job that initiates the set, and a PodDisruptionBudget that keeps a
+  quorum through a node drain.
+
+  SIZING. Three presets — values-size-{small,medium,large}.yaml — covering
+  CPU/memory requests, limits and the data volume. SMALL is what values.yaml
+  itself carries, so a render that names no size gets the frugal one. The size is
+  the UNIT's size: the operator sells one word and the databases are rendered at
+  it (hostyour-manager/shared/unit-size.ts).
+
+  WHAT A RENDERER MUST SUPPLY. The Vault path of the instance credential
+  (externalsecret-mongodb.externalSecret.vaultPath) — the chart `required`s it
+  rather than silently defaulting to a shared path — and `mongodb.mode`.
+type: application
+dependencies:
+  # The instance credential (root password, plus the replica-set keyfile when the
+  # mode has one) materialized from Vault into `mongodb-credentials` in THIS
+  # namespace. The StatefulSet mounts it; nothing else reads it.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-mongodb
+
+  # The SecretStore that ExternalSecret reads through. Platform-owned and
+  # platform-named (vault-backend-mongodb), NOT the consumer's own vault-backend:
+  # the consumer's store is created by the consumer's chart at a far later wave,
+  # and an ExternalSecret pointed at a store that does not exist yet never
+  # materializes the credential in time — the pod then deadlocks in
+  # CreateContainerConfigError. Same reasoning and the same wave as
+  # clusters/units/postgresql's credential trio.
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # Shared named templates the library charts above use.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

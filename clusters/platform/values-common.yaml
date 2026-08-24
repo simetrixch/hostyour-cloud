@@ -1,0 +1,221 @@
+# Platform-wide constants shared across DEV / TEST / PROD.
+# Loaded by every app's ArgoCD Application via the `$values` ref source:
+#
+#   spec:
+#     sources:
+#       - repoURL: <repo>
+#         targetRevision: <branch>
+#         ref: values
+#       - repoURL: <repo>
+#         path: clusters/apps/<app>
+#         helm:
+#           valueFiles:
+#             - $values/clusters/platform/values-common.yaml   # ← this file
+#             - $values/clusters/platform/values-<env>.yaml
+#             - values-common.yaml
+#             - values-<env>.yaml
+#
+# Helm's built-in `global:` convention propagates these keys to every subchart
+# automatically. Templates reference them as `{{ .Values.global.<key> }}`.
+#
+# Per-env overrides live in values-{dev,test,prod}.yaml alongside this file.
+global:
+  # global.domain is NOT here. It is one installation's fqdn — every platform
+  # hostname hangs off it (gate.<domain>, grafana.<domain>, vault.<domain>,
+  # mail.<domain>, the CoreDNS rewrites) — and a value that names ONE
+  # installation cannot stand in a file the trunk ships to every other. It made
+  # this file two classes at once, so a reader could not tell which of its keys
+  # are the platform's own grammar and which are one cluster's state, and
+  # the install-branch sync had to `git show` the file off master to read
+  # releaseTagFilter below out of a file the branch rewrites.
+  #
+  # The branch program writes it into installation/profile.yaml from the branch's
+  # own fqdn, beside the other globals it derives from the cluster map. That
+  # file is LAST in every app's valueFiles chain, so `{{ .Values.global.domain }}`
+  # resolves exactly as before — the value simply comes from the installation's
+  # own file instead of the product's.
+
+  # Timezone applied to MongoDB, PostgreSQL, and Postfix containers via their
+  # respective TZ env vars. Single source of truth — flipping this here flips
+  # the timezone everywhere. Resolves the prior Europe/Amsterdam vs
+  # Europe/Berlin inconsistency.
+  timezone: Europe/Amsterdam
+
+  # StorageClass for PersistentVolumeClaims. Our own `clusters/charts/pvc/` chart reads
+  # this; upstream charts (Bitnami, kube-prometheus-stack, loki, tempo) still
+  # have it hardcoded in their per-app values blocks for now — those would
+  # need invasive wrapper templates to fully dedupe. See plan note on Step 3.
+  storageClass: microk8s-hostpath
+
+  # cert-manager ClusterIssuer used by every public Ingress for LE certs.
+  # MUST match the name created by the base layer (CLUSTER_ISSUER_NAME in
+  # configs/config.<env>, defaults to `letsencrypt-prod`). Mismatch causes
+  # every GitOps-deployed Certificate to sit in "ClusterIssuer not found"
+  # Pending forever.
+  clusterIssuer: letsencrypt-prod
+
+  # The ONE Vault KV-v2 mount every SecretStore reads. Word-identical on every
+  # cluster and every role — what differs per cluster is only the Kubernetes
+  # auth mount (global.vaultKubernetesAuthPath, installation/profile.yaml).
+  vaultKvMount: secret
+
+  # Name of the per-namespace ESO SecretStore that every app's ExternalSecret
+  # references. The actual SecretStore is rendered by the local `secret-store`
+  # chart dep in each app's namespace; this is just the consistent name.
+  secretStoreName: vault-backend
+
+  # Default Alertmanager recipients — catches all alerts not routed to an
+  # app-specific AlertmanagerConfig CR. Add per-team mailboxes in app values
+  # under `monitoring.alertmanagerConfigs.<name>.emails`.
+  #
+  # EMPTY HERE, AND IT STAYS EMPTY. A mailbox names one installation, and this
+  # file is the trunk every future installation is cut from. The value arrives
+  # from the operator: the answer is written as alert-recipients into
+  # clusters/active/<fqdn>.yaml, and the branch program renders it into
+  # installation/profile.yaml, which loads last and replaces this list.
+  # clusters/charts/monitoring refuses to render an enabled route that resolves to no
+  # recipient, so an installation that never set it is stopped rather than
+  # dropping its alerts in silence.
+  alertRecipients: []
+
+  # DB NetworkPolicy consumers — who may reach the in-house data services, see
+  # apps/{mongodb,postgresql,redis}/templates/networkpolicy.yaml. Platform
+  # components are admitted by NAME (dbConsumerNamespaces); unit namespaces
+  # admit themselves by LABEL. The name list carries one entry, `dbgate`: the
+  # database browser runs on the cluster its databases do (clusters/apps/dbgate/app.yaml
+  # carries the `runsOn: slave` clusters/apps/mongodb and clusters/apps/redis carry), so it is
+  # admitted by name like any other platform namespace and needs no route out of
+  # the cluster to reach either port. Every one of the three services
+  # requires a credential now that clusters/apps/redis boots with --requirepass, so the two
+  # labels no longer differ in what reach MEANS — they differ in HOW WIDELY reach is
+  # handed out, and that difference is deliberate:
+  #   dbConsumerLabel    — mongodb + postgresql, stamped on EVERY unit namespace.
+  #                        A provisioned per-unit credential still gates, so a
+  #                        namespace that never claimed one gains nothing by
+  #                        carrying it.
+  #   redisConsumerLabel — redis, stamped ONLY where the registration claims
+  #                        `redis` in services[] (consumers-appset templatePatch),
+  #                        on the tenant member whose own registration carries the
+  #                        label (the tenant appset stamps a member's
+  #                        namespaceLabels and names none itself), and on
+  #                        clusters/apps/service-provisioner's own namespace, which has to
+  #                        reach :6379 to write each claim's ACL user. It stays
+  #                        narrower than dbConsumerLabel on purpose: the password
+  #                        is a SECOND boundary, never a replacement for the
+  #                        first, so the policy is not widened because one now
+  #                        exists.
+  # Same-namespace pods are always allowed by the template.
+  # ── Shared-service endpoints — the ONLY cross-cluster surface ──────────────
+  # Where THIS cluster consumes a shared service. Empty = self-hosted default
+  # (composed from env+domain), so a plain install renders exactly today's
+  # output. Stamped per install branch when this cluster PULLS from a central
+  # cluster. Read via the `common.registryHost` helper (clusters/charts/common).
+  endpoints:
+    registry:
+      # Empty -> zot.<domain> (this cluster's own registry). On a
+      # NON-build cluster set to the build cluster's host, e.g.
+      # zot.m1.example.com.
+      host: ""
+    post:
+      # Where units on this cluster reach the installation's shared mail service.
+      # Empty ONLY on the trunk: the map's post-url is a mandatory field
+      # (an install is refused without it, because every tenant's auth and
+      # report chart hard-requires this value), and the branch program writes
+      # it into installation/profile.yaml on every branch.
+      url: ""
+  # Whether a shared service is deployed LOCALLY on this cluster — gates the
+  # CoreDNS hairpin rewrites (a chart can't see the deploy toggle). All false
+  # on the trunk; the branch program writes each key from the cluster map's
+  # predicates: registry follows the build plane (the ONE cluster running
+  # clusters/apps/registry); vault follows the master part (the base layer stands it up
+  # there).
+  servicesLocal:
+    registry: false
+    vault: false
+    # observabilityCentral — is THIS cluster the central observability
+    # receiver (the "master")? Default false on the trunk.
+    # The branch program flips it true wherever the role has the master part (a
+    # master receives its slaves' push). Gates clusters/apps/observability's slave receive-path: the prom-push. /
+    # loki-push. Ingresses + the basic-auth Middleware + its htpasswd
+    # ExternalSecret (clusters/apps/observability Chart.yaml `condition:`), and the master
+    # profile additionally enables Prometheus' remote_write receiver (D4b/I6).
+    observabilityCentral: false
+
+  dbConsumerNamespaces:
+    - dbgate
+  dbConsumerLabel: platform/db-consumer
+  redisConsumerLabel: platform/redis-consumer
+
+  # The namespace the ingress controller runs in. It is the MicroK8s ingress
+  # addon's own name, not one this platform chooses, and the deploy program
+  # patches the controller there (ansiwise/programs/deploy-cluster.yaml, the
+  # patch_container_arguments_and_ports row over daemonset/traefik).
+  #
+  # ONE READER, and it reads it as an EGRESS destination:
+  # clusters/apps/consumer-build/templates/networkpolicy.yaml lets a build pod out to
+  # Traefik on 8443/443. NO DATABASE POLICY NAMES IT ANY MORE. The two that did
+  # were the second half of an IngressRouteTCP publishing mongodb and redis
+  # outside their own cluster, and hostyour-cloud#66 removed route and rule
+  # together — a database this platform runs is reached from its own cluster, so
+  # the controller has no part in reaching it.
+  ingressNamespace: ingress
+
+  # ── Release-tag grammar — the ONE build-plane copy ─────────────────────────
+  # The shell/CEL-side MIRROR of hostyour-manager shared/release.ts
+  # RELEASE_TAG_RE, kept here (a `global.*` key) so every build-plane chart that
+  # needs it reads the SAME literal through the shared $values chain:
+  #   - clusters/apps/image-builder github-deploy-request Trigger CEL
+  #     (^refs/tags/deploy/(dev|test|prod)/<filter>$),
+  #   - clusters/apps/consumer-build pipeline-release gate-stage re-verify.
+  # It is the INNER pattern only (no ^/$ anchors) so it composes as above (CEL)
+  # and as `^<filter>$` (shell / release.ts source).
+  # Numeric segments reject leading zeros (a lone 0 excepted). The other side of
+  # the grammar is RELEASE_TAG_RE in hostyour-manager/shared/release.ts,
+  # imported by hostyour-manager/server/domains/inventory/cluster-marking.ts:67.
+  # `^<filter>$` and that regular expression must stay byte-identical — a change
+  # to either is a change to both. Nothing measures that: this repository does
+  # not depend on the other, and a check here could only read it where somebody
+  # happened to have it cloned.
+  releaseTagFilter: '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(alpha|beta|stable)-([0-9]{14})'
+
+  # ── The pin a stage carries before its first release ───────────────────────
+  # WHAT TO WRITE WHEN AN APPLICATION IS ADDED. Every image this platform builds
+  # is pinned per stage as a builds[] entry — {name, image, tag} in
+  # apps/<app>/values-<stage>.yaml — and the entry has to EXIST before the
+  # release that writes its tag: the bump task rewrites the tag of an entry it
+  # finds by `image` and creates none
+  # (clusters/apps/consumer-build/templates/pipeline-release.yaml, bump_file), and the
+  # reach check at the end of that same task FAILS the release when a declared
+  # image is carried by no pin at all. So a new application is added with its
+  # entry already written in every values-<stage>.yaml, its tag THIS value, and
+  # the first release of the unit that builds it writes the minted image tag
+  # over it.
+  # Until that release has run the value is refused where it would otherwise be
+  # believed: clusters/charts/common common.buildTag stops the render naming the entry,
+  # so nothing is scheduled against an image tag no release minted.
+  placeholderTag: "0.0.0-placeholder"
+
+  # ── Channel ceiling — the ONE literal table ────────────────────────────────
+  # Which stages a release channel may reach. The channel is read FROM THE TAG
+  # (the tag is the truth, not a parameter), and the rule is enforced at three
+  # points. The gate-stage task of every <unit>-release Pipeline
+  # (clusters/apps/consumer-build/templates/pipeline-release.yaml) checks the
+  # requested stage against this table BEFORE any clone, and the bump task
+  # re-checks it before every pin write; both read it as the CHANNEL_STAGES
+  # env var that same template renders from .Values.global.channelStages —
+  # the values chain. A cluster release does NOT come that way, and it
+  # enforces the ceiling BEFORE its writing point: the ceilingCheck of the
+  # release run kind
+  # (hostyour-manager/server/domains/runs/defs/release.ts) runs as
+  # attest-target's own check and refuses the run before the set-pin step
+  # commits `release:` into a cluster map. It reads this file off the trunk
+  # through the controller's platform-repo git port — readChannelStages in
+  # hostyour-manager/server/domains/inventory/channel-stages.ts — never a copy.
+  # Nothing else carries a copy — a release script may check it locally as a
+  # courtesy, but nothing relies on that.
+  # It measures this repository only — the controller side named above is
+  # another repository's file and is held to nothing from here.
+  channelStages:
+    alpha: [dev]
+    beta: [dev, test]
+    stable: [dev, test, prod]
