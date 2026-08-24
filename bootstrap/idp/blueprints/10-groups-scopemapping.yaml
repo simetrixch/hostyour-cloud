@@ -1,30 +1,34 @@
 # yaml-language-server: $schema=
-# Authentik blueprint — defines the OAuth2 "groups" scope mapping that the
-# four OIDC clients reference in their property_mappings list.
+# Authentik blueprint — the OAuth2 `groups` scope that this platform's OIDC clients request.
 #
-# Authentik 2026 ships only these default scope mappings: openid, profile,
-# email, offline_access, entitlements, ak_proxy, goauthentik.io/api — no
-# `groups`. We define it here so the JWT carries a top-level
-# `groups: [...]` claim (the standard OIDC convention ArgoCD / Grafana /
-# Headlamp / Vault all expect for group-based RBAC).
+# WHY IT IS DECLARED AT ALL, when the provider emits the claim by itself. The provider's own
+# `profile` scope mapping already writes a top-level `groups` claim from the account's real
+# memberships. What it does not do is make `groups` a SCOPE a client may ask for — and every client
+# here asks for it by name, because the services behind them decide on that claim and a token
+# carries a claim only where its scope was requested. So this declares the scope, and computes
+# exactly what `profile` computes.
 #
-# File name `10-*` so this runs BEFORE the `99-*.yaml` provider blueprints
-# that !Find this scope mapping. (Authentik applies blueprints in
-# alphabetical order by filename within /blueprints/local.)
+# **THE TWO MUST STAY IDENTICAL, and that is measured rather than assumed.** Both write the same
+# claim key. Which of them lands last is the provider's business and not ours, and the one that
+# loses is silent.
 #
-# For authorization mapping we use Authentik's BUILT-IN group
-# "authentik Admins" — akadmin is automatically a member after bootstrap.
-# No custom group is created here; ArgoCD's RBAC policy.csv references
-# the built-in group name directly (quoted, because of the space).
+# This file used to APPEND an invented group name — `admins` — for anybody the provider considered
+# privileged, so that a fresh installation would admit its first operator before anyone was really
+# a member of the platform's group. `profile` overwrote it, and nothing anywhere reported that:
 #
-# Superusers additionally get the virtual `admins` group appended to the
-# claim. The Controller enforces its OWN staff gate on the token's groups
-# claim (ADMINS_GROUP, default `admins` — apps/manager/values-common.yaml,
-# hostyour-manager server/http/middleware/chokepoint.ts), and on a fresh install the bootstrap admin
-# (akadmin) is a superuser but never an actual member of the custom `admins`
-# group (15-group-admins.yaml creates it EMPTY, state: created). Injecting
-# the claim for superusers makes staff access group-naming/timing/version
-# independent, without ever mutating group membership in Authentik.
+#     this mapping, computed alone   ['authentik Admins', 'admins']
+#     the provider's profile scope   ['authentik Admins']
+#     what the issued token carried  ['authentik Admins']
+#
+# Every service that admits on `admins` refused every login, with a message about a claim that did
+# not match. What replaced it is a real membership: the deployment puts the first operator into the
+# group with the step `authentik_group_membership`, additively, so both mappings compute the same
+# list and it contains the group the platform admits on. A membership is also the only form anybody
+# can audit — you can open the provider and see who may enter, which a value computed at token time
+# never lets you do.
+#
+# File name `10-*` so this runs BEFORE the `99-*.yaml` provider blueprints that !Find it. (Authentik
+# applies blueprints in alphabetical order by filename within /blueprints/local.)
 version: 1
 metadata:
   name: OAuth2 groups scope mapping
@@ -40,11 +44,4 @@ entries:
       scope_name: groups
       description: Groups the user belongs to
       expression: |
-        groups = [group.name for group in request.user.groups.all()]
-        # Superusers count as platform staff: append the `admins` group the
-        # Controller's staff gate checks for. is_superuser is derived from
-        # membership in ANY superuser group, so this never depends on the
-        # built-in group's name or on bootstrap membership timing.
-        if request.user.is_superuser and "admins" not in groups:
-            groups.append("admins")
-        return groups
+        return [group.name for group in request.user.groups.all()]

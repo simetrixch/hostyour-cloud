@@ -84,12 +84,13 @@ configs:
       requestedIDTokenClaims:
         groups:
           essential: true
-  # Map Authentik's built-in `authentik Admins` group to ArgoCD's admin
-  # role. akadmin is automatically a member of this group from bootstrap.
-  # Quoted because of the space in the group name — Casbin's CSV parser
-  # honors double-quoted fields.
+  # Map the platform's own `admins` group to this component's admin role.
+  # It is the SAME name the cluster's role binding and the secret store
+  # admit on: one name for the platform's staff, so no component admits
+  # somebody another one refuses. The deployment puts the first operator
+  # into that group; anybody later is added to it in the provider.
   rbac:
     policy.csv: |
-      g, "authentik Admins", role:admin
+      g, admins, role:admin
     policy.default: role:readonly
     scopes: '[groups]'

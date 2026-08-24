@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — the credential the DEPLOYMENT uses to ask this provider for things a
+# declaration cannot do.
+#
+# WHY THIS EXISTS AT ALL. Everything else in this directory states an OBJECT: a provider, an
+# application, a scope mapping, a group. A declaration is the right form for those, because each of
+# them is a thing that either is or is not there. It is the wrong form for an ACT — above all for
+# adding one person to a group, because a declaration states a group WITH its member list and
+# re-applying it removes whoever it does not name. That is why the group beside this one is marked
+# create-once, and why it therefore does nothing on an installation where the group already exists.
+#
+# So the act is performed by a deployment step instead, and a step needs a credential. This is it,
+# and it is the only reason it exists. `05-` so it stands before every provider blueprint: the
+# deployment may need it as soon as the provider answers.
+#
+# THE KEY IS NOT IN THIS FILE. It arrives as PLATFORM_API_TOKEN, one key of the Secret
+# idp-bootstrap-secrets, which the deployment writes out of the secret store and the chart hands to
+# both authentik deployments through envFrom — the same road every other per-installation credential
+# of this provider travels. The name deliberately carries no AUTHENTIK_ prefix: this provider reads
+# every variable of that shape as one of its own configuration keys, and a credential is not one.
+#
+# WHOSE TOKEN IT IS. The account the provider's own bootstrap creates, because the calls it makes
+# are administrative and that account is the only one an installation is guaranteed to have. !Find
+# refuses the entry while that account does not exist yet, and the provider re-applies its
+# blueprints, so a first start that reaches this before the bootstrap has run heals itself.
+version: 1
+metadata:
+  name: platform API token
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - id: platform-api-token
+    model: authentik_core.token
+    identifiers:
+      identifier: platform-api-token
+    attrs:
+      # `expiring: false` because the deployment runs whenever an operator runs it, and a credential
+      # that quietly expired turns every later run into an authentication failure that says nothing
+      # about what actually happened.
+      expiring: false
+      intent: api
+      key: !Env PLATFORM_API_TOKEN
+      user: !Find [authentik_core.user, [username, akadmin]]
+      description: >-
+        Used by the deployment to perform the acts a blueprint cannot: adding one account to one
+        group without owning the other members of it.
