@@ -173,13 +173,18 @@ monitoring:
             # (kube-state-metrics internal/store/pod.go), so a container that shows a waiting
             # reason is always one this rule can see.
             #
-            # Named registry-first because of where the images come from. Every image this
-            # platform builds is pulled by its <registryHost>/<name>:<tag> ref, so the registry
-            # is in the path of all of them; on a cluster that does not host the registry itself
-            # containerd mirrors docker.io to it as well. That mirror falls back to Docker Hub
-            # when the registry does not ANSWER, which does not cover a request that hangs
-            # instead of refusing. Measured once at 25 minutes with Events: <none>, on the
-            # cluster that hosts the registry, ended by restarting the registry.
+            # The description names the IMAGE REF before it names the registry, because only some
+            # of the pulls go through the registry. Every image this platform BUILDS is pulled by
+            # its <registryHost>/<name>:<tag> ref, so the registry is in the path of those; every
+            # third-party image is pulled straight from the public registry its ref names, and
+            # that includes the registry's own zot image — ghcr.io/project-zot/zot-linux-amd64 in
+            # clusters/inventories/registry/values-common.yaml, which is the pod this rule's
+            # description would otherwise send an operator to read the logs of while it is the pod
+            # that is not up. On a cluster that does not host the registry, containerd mirrors
+            # docker.io to it as well, and that mirror falls back to Docker Hub when the registry
+            # does not ANSWER, which does not cover a request that hangs instead of refusing.
+            # Measured once at 25 minutes with Events: <none>, on the cluster that hosts the
+            # registry, ended by restarting the registry.
             #
             # THIS RULE CANNOT FIRE DURING A FIRST INSTALLATION. The registry is syncWave 7 and
             # this stack is syncWave 30 (clusters/inventories/*/app.yaml), so every application
@@ -197,19 +202,27 @@ monitoring:
                   Container {{ $labels.container }} is scheduled and kubelet has been trying to
                   create it for over 10 minutes. Read the pod's events first, because a volume
                   that will not mount says so there. An empty event list points at the image
-                  fetch, and every image pull on this platform goes through the registry: check
-                  `kubectl -n registry logs -l app.kubernetes.io/name=app --tail=100` for
-                  "image already demanded, waiting on channel", which means a fetch is in progress
-                  and every later request for that same image is queued behind it. Restarting the
-                  registry deployment clears the queue and the pull succeeds on the next attempt.
+                  fetch, and the container's image ref says which registry is being waited on: a
+                  ref naming this platform's own registry host goes through the registry, while a
+                  ref naming ghcr.io, quay.io, registry.k8s.io or docker.io is pulled from that
+                  public registry directly — except on a cluster whose containerd mirrors
+                  docker.io to the registry. For a ref that does go through the registry, read
+                  `kubectl -n registry logs -l app.kubernetes.io/name=app --tail=100`: "image
+                  already demanded, waiting on channel" says a fetch is in progress and every
+                  later request for that same image is queued behind it. Restarting the registry
+                  deployment drops that queue, which lives only in the pod's memory, so the next
+                  request starts a fetch of its own.
 
             # `unless` makes this rule and the one above disjoint, and that is what earns the one
             # above its place: a pod whose container is already being created is reported there,
             # five minutes earlier and with the cause named, so it is not reported twice here
             # under a heading that would fit either cause. What is left to this rule is a pod that
-            # is Pending and has no container being created — the scheduler has not placed it, or
-            # a volume, a node selector or a quota is in the way — which is a different problem
-            # with a different first move, and the description can finally say so.
+            # is Pending with no container being created, and that is a placement problem in every
+            # case but one: a pod whose pull has already FAILED is Pending too, with waiting
+            # reason ImagePullBackOff or ErrImagePull rather than ContainerCreating, so the
+            # `unless` clause does not take it out. PodImagePullBackOff above names that pod at
+            # 2m, thirteen minutes before this rule reaches it, which is why the description sends
+            # the reader to that alert before it sends them to volumes and node selectors.
             - alert: PodStuckPending
               expr: |-
                 kube_pod_status_phase{phase="Pending"} == 1
@@ -222,10 +235,12 @@ monitoring:
                 summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} stuck in Pending"
                 description: >-
                   The pod has been Pending for more than 15 minutes and no container of it is
-                  being created yet, so it is waiting to be placed rather than waiting on an
-                  image. Read `kubectl describe pod -n {{ $labels.namespace }} {{ $labels.pod }}`:
-                  the usual causes are an unbound PersistentVolumeClaim, a node selector or taint
-                  no node satisfies, and a namespace quota that the pod's requests exceed.
+                  being created. A pod whose image pull has already FAILED is Pending as well and
+                  is named by PodImagePullBackOff, so read whether that alert is firing for this
+                  pod first; where it is not, the pod is waiting to be placed. Read
+                  `kubectl describe pod -n {{ $labels.namespace }} {{ $labels.pod }}`: the usual
+                  causes are an unbound PersistentVolumeClaim, a node selector or taint no node
+                  satisfies, and a namespace quota that the pod's requests exceed.
 
             - alert: PodNotReady
               expr: kube_pod_status_ready{condition="true"} == 0 and on(namespace, pod) kube_pod_status_phase{phase="Running"} == 1

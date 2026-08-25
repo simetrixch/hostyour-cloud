@@ -226,6 +226,16 @@ ingress:
 # the entries in the order they stand here and moves to the next one when this one has nothing, so
 # an unset key bounds ONE pull at ghcr.io plus docker.io = six hours.
 #
+# THAT IS MEASURED, AND CHECKING IT NEEDS NO CLUSTER. The zot binary of the pinned release carries
+# `zot verify <config>`, which runs the same LoadConfiguration as `zot serve` with no storage, no
+# port and no volume: against the config.json this file renders it answers "config file is valid".
+# Acceptance is not a formality — the same command rejects "20 minutes" with
+# 'Extensions.Sync.Registries[0].SyncTimeout' time: unknown unit and rejects a misspelled key with
+# 'has invalid keys', so a config it accepts is one where this key was READ and parsed as a
+# duration rather than skipped. `zot serve` on the same config then prints the bound it will use:
+# on_demand.go logs timeout 1200000000000 ns (20m) for both entries at debug level, and
+# 10800000000000 ns (3h) with the key taken out again.
+#
 # 20m, AND THE FLOOR UNDER IT IS THE RETRY BUDGET TWO LINES ABOVE. maxRetries 3 and retryDelay 5m
 # become regclient's WithRetryLimit and WithDelay, so a single failing fetch can spend 15 minutes
 # in retry delays before it has transferred anything. A syncTimeout at or below 15m would cut that
