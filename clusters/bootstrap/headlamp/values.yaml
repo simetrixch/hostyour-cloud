@@ -1,4 +1,4 @@
-# Kubernetes Dashboard (Headlamp) Helm Values
+# Headlamp Helm Values
 
 # Service Configuration
 service:
@@ -17,7 +17,7 @@ rbac:
 # Service Account
 serviceAccount:
   create: true
-  name: kubernetes-dashboard
+  name: headlamp
 
 # Resources
 resources:

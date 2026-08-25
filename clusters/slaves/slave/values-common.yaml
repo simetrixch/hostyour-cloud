@@ -80,7 +80,7 @@ repo:
 
 # ---------------------------------------------------------------------------
 # kube (dashboard): deliberately NOT in this chart. ONE SHARED master Headlamp
-# (ns kubernetes-dashboard) serves the master and every slave via its cluster
+# (ns headlamp) serves the master and every slave via its cluster
 # picker — adding or removing a slave rebuilds its multi-context kubeconfig
 # Secret, and each slave's apiserver is configured to trust the master's
 # Authentik for the OIDC client `headlamp`. The former per-slave headlamp

@@ -26,7 +26,7 @@ description: |
       everything, exactly like clusters/argocd/root-app.yaml does on a full
       cluster.
     - (kube dashboard: deliberately NOT in this chart — ONE SHARED master
-      Headlamp in ns kubernetes-dashboard serves the master and every slave
+      Headlamp in ns headlamp serves the master and every slave
       via its cluster picker; contexts come from the kube-slaves-kubeconfig
       Secret that adding or removing a slave rebuilds.)
 
