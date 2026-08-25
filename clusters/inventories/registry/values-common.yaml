@@ -200,6 +200,15 @@ ingress:
 # in the store plus a second key in that file — and it puts the first image of
 # an installation behind a credential that installation does not yet have.
 #
+# WHICH IS WHY credentialsFile IS WRITTEN ONLY WHERE THE FILE WILL EXIST. Zot reads
+# ONE file for EVERY upstream, and a path that is named and absent fails credential
+# loading for all of them — measured on a bare machine, logged once per registry as
+# it starts: "couldn't get registry credentials from configured path". The file holds
+# the Docker Hub login, which is off unless an installation says it has an account,
+# so naming it unconditionally broke THIS entry, the one that needs no credential.
+# A fresh installation could pull no new image at all, and the pod said only
+# ImagePullBackOff — three systems from the line that caused it.
+#
 # RETENTION POLICIES (below) — ORDER MATTERS: zot applies the FIRST policy whose
 # `repositories` glob matches a repo, so the single-segment ["*"] policy is
 # listed BEFORE the ["**"] catch-all.
@@ -321,7 +330,9 @@ configmap:
             },
             "sync": {
               "enable": true,
+              {{- if (index .Values "externalsecret-sync-credentials").externalSecret.enabled }}
               "credentialsFile": "/sync/credentials.json",
+              {{- end }}
               "registries": [
                 {
                   "urls": ["https://ghcr.io"],
