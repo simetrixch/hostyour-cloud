@@ -1,4 +1,4 @@
-mail:
+postfix:
   config:
     general:
       # Per-env selector → DKIM record at dev._domainkey.<apex>; d= stays the apex.

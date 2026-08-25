@@ -178,8 +178,13 @@ spec:
                 secretKeyRef:
                   name: manager-github
                   key: write-pat
-            # CATALOG_WRITE_PAT — the tenant (multi-app) registry pushes tenant pointers to
-            # the tenant catalog@master (config.ts default CATALOG_REPO). It REUSES the
+            # CATALOG_REPO AND CATALOG_WRITE_PAT, and both, because the two are refused unless
+            # they arrive together: the catalogue is the INSTALLATION's own repository and there is
+            # no default that could name it. The address is trimmed off the same value the reaper
+            # reads, so one installation still names its catalog once.
+            - name: CATALOG_REPO
+              value: {{ .Values.github.deployRepo | default (required "manager: global.catalogUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.catalogUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
+            # The write half pushes tenant pointers to the tenant catalog@master. It REUSES the
             # same org GITOPS_REPO_PAT, which must therefore carry write scope for the catalog too; its
             # presence is the discriminator that registers the tenant Run family (config.ts). The
             # family's kube access rides the pod ServiceAccount in-cluster (grants shipped with this
