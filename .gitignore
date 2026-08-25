@@ -1,15 +1,3 @@
-# Helm dependency build artefacts. `helm dependency build` populates `charts/` and `Chart.lock`
-# under every chart that declares a file:// dependency, and ArgoCD does its own dependency fetch
-# when rendering — so tracking them would only add drift the moment a Chart.yaml is bumped without
-# a rebuild. Three directories carry charts, so three pairs of rules: the platform applications,
-# the per-unit charts and the per-slave charts.
-apps/*/charts/
-apps/*/Chart.lock
-units/*/charts/
-units/*/Chart.lock
-slaves/*/charts/
-slaves/*/Chart.lock
-
 # NOTHING SECRET, EVER, ANYWHERE IN THIS TREE. This repository is the product and it is meant to
 # be cloned and used by anybody; one installation's secrets live in that installation's own
 # repository, encrypted, and never here. These patterns are the belt to that braces: a credential
@@ -52,3 +40,12 @@ AGENTS.md
 *.log
 *.tmp
 
+# Helm dependency build artefacts. `helm dependency build` populates `charts/` and `Chart.lock`
+# under every chart that declares a dependency, and ArgoCD does its own dependency fetch when it
+# renders - so tracking them adds drift the moment a Chart.yaml is bumped without a rebuild.
+#
+# WITHOUT A PATH, and that is the point: the rules here used to name apps/, units/ and slaves/, and
+# they stopped matching the day the tree moved under clusters/. A pattern with no slash matches at
+# every depth, so nothing about where a chart lives can put it back in the index.
+*.lock
+*.tgz

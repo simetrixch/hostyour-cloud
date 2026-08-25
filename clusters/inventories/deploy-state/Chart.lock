@@ -1,9 +1,0 @@
-dependencies:
-- name: configmap
-  repository: file://../../charts/configmap
-  version: 1.0.0
-- name: common
-  repository: file://../../charts/common
-  version: 1.0.0
-digest: sha256:60def22afdf5498a0b6417d8e27093c5b7a9807eeda5adb880a455c3a792524b
-generated: "2026-08-11T19:15:55.8422825+02:00"
