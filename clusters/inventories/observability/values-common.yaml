@@ -166,13 +166,16 @@ monitoring:
 
             # The one state on this platform that produces no event, no error and no timeout of
             # its own. The pod is Pending for as long as it lasts, so PodStuckPending below would
-            # reach the same pod five minutes later; its `unless` clause takes this waiting reason
-            # out, which leaves the pod to this rule alone. The two have nothing in common: this one
-            # says the pod HAS a node and kubelet is already working on the container, which
-            # narrows the cause to the two things that happen between those points — fetching the
-            # image, and mounting a volume. Both metrics come from the same container statuses
-            # (kube-state-metrics internal/store/pod.go), so a container that shows a waiting
-            # reason is always one this rule can see.
+            # reach the same pod five minutes later; its `unless` clause takes the pod out while
+            # every waiting container of it carries a reason another rule of this group owns, which
+            # for a pod that is only creating its containers leaves it to this rule alone. The two
+            # DO meet on a pod whose second container waits for a reason nobody owns, and then each
+            # names its own half. This one says the pod HAS a node and kubelet is already working on
+            # the container, which narrows the cause to what happens between those points — creating
+            # the pod sandbox, fetching the image, and mounting a volume. It reads
+            # kube_pod_container_status_waiting_reason, which kube-state-metrics generates over
+            # p.Status.ContainerStatuses alone (internal/store/pod.go), so an INIT container kubelet
+            # is still creating carries its waiting reason in a second family this rule never sees.
             #
             # The description names the IMAGE REF before it names the registry, because only some
             # of the pulls go through the registry. Every image this platform BUILDS is pulled by
@@ -214,45 +217,87 @@ monitoring:
                   deployment drops that queue, which lives only in the pod's memory, so the next
                   request starts a fetch of its own.
 
-            # `unless` makes this rule disjoint from the two rules above, and that is what earns
-            # each of them its place. A pod whose container is already being created is reported by
-            # PodStuckContainerCreating five minutes earlier; a pod whose image pull has already
-            # FAILED is Pending as well, with waiting reason ImagePullBackOff or ErrImagePull, and
-            # is reported by PodImagePullBackOff thirteen minutes earlier. Both name the cause,
-            # so neither is reported a second time here under a heading that would fit any of them.
+            # This rule stands over everything about a Pending pod that no other rule of this group
+            # reports, and the exclusion is what keeps it off what they do. The ALERT is per pod,
+            # because kube_pod_status_phase carries no container dimension and the join can only be
+            # on (namespace, pod). The DECISION to exclude is per container, and the nested `unless`
+            # is what makes it so: the inner operand keeps an owned container only while the same
+            # pod has NO container waiting for a reason nobody owns, so a pod is taken out only when
+            # EVERY waiting container of it is already reported elsewhere.
             #
-            # THE TWO IMAGE REASONS ARE EXACTLY PodImagePullBackOff's OWN REGEX AND HAVE TO STAY IN
-            # STEP WITH IT. A reason excluded here that that rule does not match is a pod NO alert
-            # names — worse than the duplicate the exclusion removes — and a reason it matches that
-            # is not excluded here is the duplicate coming back. CrashLoopBackOff is the only other
-            # waiting reason this group matches and it is deliberately NOT excluded: a container
-            # that has already run puts its pod in phase Running, which the first operand of this
-            # rule does not select, so that pod never arrives here to be taken out again. Every
-            # other waiting reason stays with this rule.
+            # A single `unless on (namespace, pod)` over the reason set removes the whole pod on ONE
+            # owned container, and this platform runs the pods where that is the wrong answer:
+            # DaemonSet alloy runs alloy beside config-reloader and Deployment loki-gateway runs
+            # nginx beside exporter, each pair pulling from a different registry, and a TaskRun of
+            # clusters/inventories/image-builder/templates/tasks/buildah-build-push.yaml puts the
+            # build and the push step in one pod, each with its own ExternalSecret reference. A
+            # sidecar that cannot pull would take the alert off a main container stuck on something
+            # nothing else reports.
             #
-            # What is left is a pod that is Pending with no container being created and no failed
-            # pull. That is a placement problem in almost every case, and the description sends the
-            # reader to the node assignment first, which is what tells the two apart.
+            # THE TWO REASON SETS ARE ONE SET WRITTEN TWICE AND HAVE TO STAY IDENTICAL. The positive
+            # matcher is the reasons another rule of this group owns; the negative one is its
+            # complement, the reasons nobody owns. A reason in one and not the other either silences
+            # a pod nothing else reports or lets the duplicate back in. The owners: ContainerCreating
+            # is PodStuckContainerCreating's, ImagePullBackOff and ErrImagePull are
+            # PodImagePullBackOff's — the two halves of its own regex — and CrashLoopBackOff is
+            # PodCrashLoopBackOff's. A container in CrashLoopBackOff has terminated before, so
+            # kubelet's getPhase counts it as stopped and not as waiting — but the `waiting > 0`
+            # branch of that switch stands ABOVE the one that reads stopped
+            # (kubernetes pkg/kubelet/kubelet_pods.go), so a pod holding a CrashLoopBackOff
+            # container BESIDE one that has never started stands in phase Pending and does reach
+            # this rule. Only a pod whose single container crash-loops comes out Running.
+            #
+            # THE SET COVERS REGULAR CONTAINERS ONLY. kube_pod_container_status_waiting_reason is
+            # generated over p.Status.ContainerStatuses; an init container's waiting reason goes to
+            # kube_pod_init_container_status_waiting_reason over p.Status.InitContainerStatuses
+            # (kube-state-metrics internal/store/pod.go). No rule of this group reads the second
+            # family, and the reason is its stability level: the first is declared STABLE and the
+            # second ALPHA, so a rule built on the second can stop matching at an upgrade with
+            # nothing going red. What that costs is that an init container which cannot pull its
+            # image raises no PodImagePullBackOff — postfix's fix-dkim-permissions on busybox:latest
+            # and mongodb's keyfile-perms are the two init containers on this platform. Such a pod
+            # still arrives HERE, because kubelet gives every app container of a pod that HAS init
+            # containers the waiting reason PodInitializing, and nothing owns that reason.
+            #
+            # THE EXCLUSION DOES NOT PROMISE THAT THE OWNING RULE FIRES FIRST. PodImagePullBackOff's
+            # `for: 2m` runs per alert LABEL SET and `reason` is one of its labels, so a pull whose
+            # reason alternates between ErrImagePull and ImagePullBackOff restarts that clock on
+            # every flip. Planted as a one-minute alternation, no rule of this group fires at all.
+            # Kubelet's image backoff grows towards a cap, so a real alternation slows down and the
+            # alert arrives late rather than never; how late was not measured against a kubelet.
+            #
+            # What is left for this rule is a Pending pod with a container waiting for a reason
+            # nobody owns, or with no container status at all. The description sends the reader to
+            # the node assignment first, which is what tells those two apart.
             - alert: PodStuckPending
               expr: |-
                 kube_pod_status_phase{phase="Pending"} == 1
-                unless on (namespace, pod)
-                kube_pod_container_status_waiting_reason{reason=~"ContainerCreating|ImagePullBackOff|ErrImagePull"} == 1
+                unless on (namespace, pod) (
+                  kube_pod_container_status_waiting_reason{reason=~"ContainerCreating|ImagePullBackOff|ErrImagePull|CrashLoopBackOff"} == 1
+                  unless on (namespace, pod)
+                  kube_pod_container_status_waiting_reason{reason!~"ContainerCreating|ImagePullBackOff|ErrImagePull|CrashLoopBackOff"} == 1
+                )
               for: 15m
               labels:
                 severity: warning
               annotations:
                 summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} stuck in Pending"
                 description: >-
-                  The pod has been Pending for more than 15 minutes with no container of it being
-                  created and no image pull of it failing — those two states are excluded here and
-                  are reported by PodStuckContainerCreating and PodImagePullBackOff. Read
+                  The pod has been Pending for more than 15 minutes and something about it is
+                  reported by no other rule of this group: a container waiting for a reason none of
+                  them matches, or no container status at all. A pod drops out of this alert only
+                  while EVERY waiting container of it carries ContainerCreating, ImagePullBackOff,
+                  ErrImagePull or CrashLoopBackOff, which PodStuckContainerCreating,
+                  PodImagePullBackOff and PodCrashLoopBackOff report — so a pod whose sidecar cannot
+                  pull while another container of it is stuck on something else is named here as
+                  well as there. Read
                   `kubectl describe pod -n {{ $labels.namespace }} {{ $labels.pod }}` and look at
                   the node first. With no node the scheduler could not place the pod, and the usual
                   causes are an unbound PersistentVolumeClaim, a node selector or taint no node
-                  satisfies, and a namespace quota that the pod's requests exceed. With a node the
-                  pod is placed and a container is waiting for a reason none of the three rules
-                  covers, which the container's State section names.
+                  satisfies, and a namespace quota that the pod's requests exceed. With a node, read
+                  the State of every container, INIT CONTAINERS INCLUDED: it names the reason, and
+                  an init container's reason reaches no alert of this group. A placed pod whose
+                  containers carry no status at all is a kubelet that has not reported.
 
             - alert: PodNotReady
               expr: kube_pod_status_ready{condition="true"} == 0 and on(namespace, pod) kube_pod_status_phase{phase="Running"} == 1
