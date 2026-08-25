@@ -340,7 +340,18 @@ monitoring:
                 severity: warning
               annotations:
                 summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} not ready"
-                description: "Pod is Running but readiness probe failing for 10 minutes."
+                description: >-
+                  The pod is Running and its READY CONDITION has not been true for 10 minutes. That
+                  condition is what this reads, not a probe: kube-state-metrics writes one
+                  kube_pod_status_ready series per condition value out of the pod's Ready condition,
+                  so `condition="true"` is 0 while Ready is False AND while it is Unknown, and the
+                  alert stands on a pod that has no readiness probe anywhere in it. A failing
+                  readiness probe is one cause of a false Ready; a container that never started is
+                  another, and a readinessGate no controller has set is a third. Read
+                  `kubectl describe pod -n {{ $labels.namespace }} {{ $labels.pod }}` and compare
+                  the pod's Conditions block with the READY column of its containers: a container
+                  that is not ready names its own reason there, while a false Ready condition over
+                  containers that are all ready points at a readinessGate.
 
             - alert: NodeDiskFillingUp
               expr: (node_filesystem_avail_bytes{mountpoint="/mnt/data"} / node_filesystem_size_bytes{mountpoint="/mnt/data"}) < 0.15
