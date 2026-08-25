@@ -22,7 +22,7 @@ app:
     # Bump when config.json below changes so ArgoCD rolls the zot pod and it
     # re-reads the file — zot loads config ONLY at startup, and a ConfigMap mount
     # update alone does not restart it. Value is arbitrary; changing it = a roll.
-    hostyour.cloud/config-revision: "credentials-file-only-where-it-exists"
+    hostyour.cloud/config-revision: "sync-timeout-bounds-the-on-demand-fetch"
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
   # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
   # With RollingUpdate, the new pod fails to start until the old pod
@@ -209,6 +209,60 @@ ingress:
 # A fresh installation could pull no new image at all, and the pod said only
 # ImagePullBackOff — three systems from the line that caused it.
 #
+# syncTimeout IS WHAT TURNS A SLOW PULL INTO A FAILED ONE, AND ONLY A FAILED ONE IS VISIBLE.
+# An on-demand fetch that has not finished shows up on the consuming pod as ContainerCreating
+# with no event, no error and no timeout of its own — measured once at 25 minutes. Kubernetes
+# reports a pull that FAILS very well (ImagePullBackOff, an event on the pod, and the
+# PodImagePullBackOff alert in clusters/inventories/observability/values-common.yaml) and a pull
+# that is merely slow not at all. So the bound below is not tuning; it is the thing that decides
+# whether an operator ever sees a red field.
+#
+# WITHOUT THIS KEY THE BOUND IS THREE HOURS PER ENTRY. Read in zot v2.1.18, the version
+# clusters/platform/versions.yaml pins: pkg/extensions/config/sync/config.go declares SyncTimeout,
+# pkg/cli/server/root.go fills an unset one with syncConstants.DefaultSyncTimeout, and
+# pkg/extensions/sync/constants/constants.go sets that to 3 * time.Hour. The value is used twice —
+# as the context deadline around one on-demand fetch (pkg/extensions/sync/on_demand.go) and as
+# http.Client.Timeout for every sync request (pkg/extensions/sync/service.go). On demand zot walks
+# the entries in the order they stand here and moves to the next one when this one has nothing, so
+# an unset key bounds ONE pull at ghcr.io plus docker.io = six hours.
+#
+# 20m, AND THE FLOOR UNDER IT IS THE RETRY BUDGET TWO LINES ABOVE. maxRetries 3 and retryDelay 5m
+# become regclient's WithRetryLimit and WithDelay, so a single failing fetch can spend 15 minutes
+# in retry delays before it has transferred anything. A syncTimeout at or below 15m would cut that
+# budget off unspent, which is a second setting silently disabling a first. 20m leaves five
+# minutes beyond a fully spent budget and bounds one pull at 40 minutes across both entries.
+# THE NUMBER IS THE ONE THING HERE THAT IS NOT MEASURED: what it must also exceed is the slowest
+# legitimate copy of the largest image over the slowest link an installation runs on, and no
+# installation was running when it was chosen. An installation that pulls over a slow link raises
+# it in installation/values/registry.yaml, which the ApplicationSet loads after this file.
+#
+# WHY THE PROBES ARE STILL A TCP CONNECT AND NOT AN HTTP CHECK. A wedged fetch does not stop zot
+# serving: each request is its own goroutine, and every repo other than the one being fetched
+# answers normally. So no probe against /v2/ or / can tell the two apart, and a probe that could
+# would be the wrong instrument anyway — a liveness probe that restarts zot for a slow fetch would
+# kill the fetch it was waiting on, and a first installation, which pulls every image cold, is
+# exactly where it would fire hardest and loop.
+#
+# WHY THERE IS NO ALERT HERE THAT NAMES A STUCK FETCH. zot v2.1.18 publishes no sync metric at
+# all: pkg/extensions/monitoring/extension.go registers http_*, repo_*, storage_lock_*,
+# scheduler_* and gc_* under the zot namespace and nothing for sync, so neither a fetch in flight
+# nor a fetch that failed is a number Prometheus can read. Correlating from the consuming pod
+# instead does not work either: the alert would have to match the registry's own host in
+# image_spec, clusters/charts/monitoring/templates/prometheusrules.yaml passes groups through
+# toYaml with no tpl so the host cannot reach the expression, and on every cluster that does not
+# host this registry containerd mirrors docker.io to it, which leaves a mirrored image's
+# image_spec naming docker.io and not the registry it is actually fetched through. Such a matcher
+# would cover our own build images and silently miss those. The rule that CAN be written does not
+# name the registry and stands with the other pod-state rules in
+# clusters/inventories/observability/values-common.yaml.
+#
+# WHY NO WARM-UP JOB. It would pull every pinned image once before the workloads do, and on a
+# first installation it would meet the same cold cache and stall the same way — with the one
+# difference that a Job failing is visible. That difference is bought by a second component that
+# has to be told which images exist, which is clusters/platform/versions.yaml and the builds[]
+# pins restated in a third place. The bound above gets the same visibility out of a key that
+# already exists.
+#
 # RETENTION POLICIES (below) — ORDER MATTERS: zot applies the FIRST policy whose
 # `repositories` glob matches a repo, so the single-segment ["*"] policy is
 # listed BEFORE the ["**"] catch-all.
@@ -340,6 +394,7 @@ configmap:
                   "tlsVerify": true,
                   "maxRetries": 3,
                   "retryDelay": "5m",
+                  "syncTimeout": "20m",
                   "content": [
                     {
                       "prefix": "/simetrixch/*",
@@ -353,7 +408,8 @@ configmap:
                   "onDemand": true,
                   "tlsVerify": true,
                   "maxRetries": 3,
-                  "retryDelay": "5m"
+                  "retryDelay": "5m",
+                  "syncTimeout": "20m"
                 }
               ]
             }
