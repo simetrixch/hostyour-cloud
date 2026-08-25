@@ -22,7 +22,7 @@ app:
     # Bump when config.json below changes so ArgoCD rolls the zot pod and it
     # re-reads the file — zot loads config ONLY at startup, and a ConfigMap mount
     # update alone does not restart it. Value is arbitrary; changing it = a roll.
-    hostyour.cloud/config-revision: "docker-io-mirror-consumer-carveout"
+    hostyour.cloud/config-revision: "credentials-file-only-where-it-exists"
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
   # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
   # With RollingUpdate, the new pod fails to start until the old pod
