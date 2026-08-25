@@ -1,6 +1,16 @@
 pvc:
   enabled: true
   name: ""
+  # The namespace this claim stands in. Empty is the default and means "wherever
+  # this release renders" — nothing is written into metadata and nothing is
+  # checked, which is right for a claim whose content can be rebuilt.
+  #
+  # Naming it PINS the claim to that namespace: the render is refused when the
+  # release moved to another one, and the refusal names this claim. Set it on
+  # every claim whose content cannot be rebuilt from git, because a rename of the
+  # component renames the namespace with it and the data does not travel — see
+  # templates/pvc.yaml.
+  namespace: ""
   # Optional metadata.annotations map. Use case: data-bearing PVCs that must
   # survive ArgoCD prune / Application deletion set
   #   argocd.argoproj.io/sync-options: Prune=false,Delete=false

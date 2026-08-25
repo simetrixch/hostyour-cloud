@@ -246,10 +246,17 @@ ingress:
 # session/credstore metadata live here — LOSS = losing the manager's state,
 # so the PVC is delete-protected like the data-tier stores.
 # storageClassName omitted — falls back to .Values.global.storageClass.
+#
+# The namespace is named for the same reason it is named on the tailnet
+# coordinator: this component was already renamed once, and a rename moves the
+# release into a new namespace while the volume stays behind in the old one with
+# the database in it. Declaring the namespace refuses that render instead, and
+# changing this line is the act that says the data was moved too.
 manager-data:
   pvc:
     enabled: true
     name: manager-data
+    namespace: manager
     annotations:
       argocd.argoproj.io/sync-options: Prune=false,Delete=false
     accessModes:

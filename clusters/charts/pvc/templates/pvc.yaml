@@ -1,8 +1,26 @@
 {{- if .Values.pvc.enabled }}
+{{- /*
+A claim does not move with the release that declared it. Renaming a component
+renames its namespace, so the release comes up in a new namespace and Kubernetes
+creates a new, empty volume there, while the old namespace and the old claim stay
+standing with the data in them. Nothing in ArgoCD reports that: the old
+Application is gone from the generator's view, and a claim carrying
+Prune=false,Delete=false is left behind on purpose.
+
+So a claim whose content cannot be rebuilt from git names the namespace it stands
+in, and this refuses the render when the release has moved away from it. Setting
+the new namespace here is then the act that says the data was moved too.
+*/}}
+{{- if and .Values.pvc.namespace (ne .Values.pvc.namespace .Release.Namespace) }}
+{{- fail (printf "PersistentVolumeClaim %q holds its data in namespace %q, and this release renders into namespace %q. A claim does not follow a release into another namespace: the data stays where it is, and %q would come up on a new, empty volume. Move the data first, and change this claim's declared namespace in the same commit." .Values.pvc.name .Values.pvc.namespace .Release.Namespace .Release.Namespace) }}
+{{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ .Values.pvc.name }}
+  {{- with .Values.pvc.namespace }}
+  namespace: {{ . }}
+  {{- end }}
   labels:
     {{- include "common.labels" . | nindent 4 }}
   {{- with .Values.pvc.annotations }}

@@ -104,10 +104,19 @@ app:
 # volume with the Application.
 # Deleting it is an explicit opt-in:
 #   microk8s kubectl -n headscale delete pvc headscale-data
+#
+# The namespace is named for the second half of the same protection. The
+# annotation keeps the volume when the Application goes; naming the namespace
+# keeps the Application from walking away from the volume. Renaming this
+# component to headscale once left the node database standing in namespace
+# tailnet-coordinator while a new and empty headscale-data came up beside it, and
+# nothing said so. With the namespace declared, that rename is refused until the
+# data has been moved and this line has been changed with it.
 pvc:
   pvc:
     enabled: true
     name: headscale-data
+    namespace: headscale
     annotations:
       argocd.argoproj.io/sync-options: Prune=false,Delete=false
     accessModes:
