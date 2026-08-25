@@ -10,12 +10,7 @@ spec:
 
   source:
     repoURL: https://github.com/simetrixch/hostyour-cloud.git
-    # THE INSTALLATION'S OWN BRANCH, and never the trunk. What stands here is what the reconciler
-    # reads every appset out of, and the trunk carries them with their placeholders unstamped -
-    # so a handover pointing at master hands over a set of names Kubernetes refuses, and the
-    # reconciler holds the cluster while it can create nothing on it. Stamped from __FQDN__ by the
-    # branch program, which is why the trunk shows the placeholder: the trunk is not an installation.
-    targetRevision: __FQDN__
+    targetRevision: master
     path: clusters/argocd/apps
 
   destination:
