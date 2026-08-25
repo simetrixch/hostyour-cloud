@@ -398,7 +398,20 @@ kube-prometheus-stack:
     ingress:
       enabled: true
       ingressClassName: public
-      # Host + TLS set per-env
+      # THE NAME AND THE CERTIFICATE, here and not per-env: both are built out of the
+      # installation's own domain, so a per-env copy would be the same line three times.
+      # The comment that stood here said they were set per-env, and none of the three
+      # files set them. What that cost, measured on an installation from nothing: the
+      # Ingress rendered with NO host, which Traefik reads as "any name", so the
+      # dashboard had neither a certificate nor an address anybody could open — while
+      # the identity provider had been registering it at grafana.<domain> the whole
+      # time (clusters/bootstrap/idp/blueprints/99-grafana.yaml:31).
+      hosts:
+        - 'grafana.{{ .Values.global.domain }}'
+      tls:
+        - secretName: 'observability-grafana-{{ .Values.global.env }}-tls'
+          hosts:
+            - 'grafana.{{ .Values.global.domain }}'
 
 # ============================================================================
 # Loki — single binary

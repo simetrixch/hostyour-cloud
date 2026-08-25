@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=
 # Authentik blueprint — the Manager OIDC client (staff-only).
 # The Manager is the standalone provider admin UI served at
-# https://controller.${IDP_DOMAIN}/ (built from the separate hostyour-manager
+# https://manager.${IDP_DOMAIN}/ (built from the separate hostyour-manager
 # repo, deployed by the `manager` app). Mirrors 99-grafana.yaml (native
 # OIDC, confidential client) and the retired 99-console.yaml: restricts the
 # Manager application to staff: ONE group PolicyBinding, on the platform's
@@ -24,14 +24,14 @@
 # Waits for the groups scope mapping AND the admins group to exist first.
 version: 1
 metadata:
-  name: controller OIDC client
+  name: manager OIDC client
   labels:
     blueprints.goauthentik.io/instantiate: "true"
 conditions:
   - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
   - !Find [authentik_core.group, [name, admins]]
 entries:
-  - id: controller-provider
+  - id: manager-provider
     model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: Manager
@@ -41,17 +41,17 @@ entries:
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
       client_type: confidential
-      client_id: controller
+      client_id: manager
       client_secret: !Env IDP_MANAGER_CLIENT_SECRET
       redirect_uris:
         - matching_mode: strict
-          url: !Format ["https://controller.%s/auth/callback", !Env IDP_DOMAIN]
+          url: !Format ["https://manager.%s/auth/callback", !Env IDP_DOMAIN]
         # RP-initiated logout (/auth/logout): Authentik validates the post_logout_redirect_uri
         # against THIS list. The Manager sends config.publicUrl (the site root, no path), so it
         # must be registered too — otherwise Authentik rejects the logout redirect and "logout
-        # does nothing". Matches PUBLIC_URL exactly (https://controller.<domain>, no trailing slash).
+        # does nothing". Matches PUBLIC_URL exactly (https://manager.<domain>, no trailing slash).
         - matching_mode: strict
-          url: !Format ["https://controller.%s", !Env IDP_DOMAIN]
+          url: !Format ["https://manager.%s", !Env IDP_DOMAIN]
       access_token_validity: hours=1
       refresh_token_validity: days=30
       sub_mode: hashed_user_id
@@ -64,15 +64,15 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
-  - id: controller-app
+  - id: manager-app
     model: authentik_core.application
     identifiers:
-      slug: controller
+      slug: manager
     attrs:
       name: Manager
-      slug: controller
+      slug: manager
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, Manager]]
-      meta_launch_url: !Format ["https://controller.%s/", !Env IDP_DOMAIN]
+      meta_launch_url: !Format ["https://manager.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Platform
       # Explicit OR across the bindings below: a sign-in passes when ANY
@@ -83,10 +83,10 @@ entries:
       # release could change.
       policy_engine_mode: any
   # Restrict the Manager application to the `admins` group (deny everyone else).
-  - id: controller-admins-binding
+  - id: manager-admins-binding
     model: authentik_policies.policybinding
     identifiers:
-      target: !Find [authentik_core.application, [slug, controller]]
+      target: !Find [authentik_core.application, [slug, manager]]
       group: !Find [authentik_core.group, [name, admins]]
       order: 0
     attrs:

@@ -30,5 +30,17 @@ entries:
     identifiers:
       name: authentik Embedded Outpost
     attrs:
+      # WHERE THE OUTPOST SENDS A BROWSER, and it has to be said: the embedded outpost builds
+      # the authorize URL it redirects to out of THIS value, and with the field empty it falls
+      # back to http://localhost. Measured on an installation from nothing: tekton.<domain>
+      # answered 302 to `http://localhost/application/o/authorize/...`, so the dashboard had no
+      # login anybody could reach while every other check read green. The address is the
+      # identity provider's own public one, built the way every blueprint here builds one.
+      config:
+        authentik_host: !Format ["https://idp.%s/", !Env IDP_DOMAIN]
+        authentik_host_browser: !Format ["https://idp.%s/", !Env IDP_DOMAIN]
+        authentik_host_insecure: false
+        log_level: info
+        object_naming_template: "ak-outpost-%(name)s"
       providers:
         - !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]
