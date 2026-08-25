@@ -208,6 +208,13 @@ kube-prometheus-stack:
       # root_url is required so Grafana composes the correct OIDC redirect_uri
       # (the pod listens on plain HTTP:3000; without it Authentik rejects the
       # authorize call with "Redirect URI Error").
+      # THE PUBLIC ADDRESS, which the paragraph above has been asking for and no file wrote.
+      # Grafana composes its OIDC redirect_uri out of root_url; with the key absent it takes the
+      # address the POD listens on and sends `http://grafana.<domain>:3000/login/generic_oauth`,
+      # which the identity provider refuses because it registered the https one. Measured on an
+      # installation from nothing: the sign-in never left Grafana.
+      server:
+        root_url: 'https://grafana.{{ .Values.global.domain }}'
       auth:
         disable_login_form: false   # keep admin/password as emergency fallback
         oauth_auto_login: true      # single-click SSO via the apex Authentik cookie
@@ -215,6 +222,14 @@ kube-prometheus-stack:
         enabled: true
         name: Authentik
         allow_sign_up: true
+        # WHERE THE IDENTITY PROVIDER ACTUALLY IS. Without these three, Grafana has a client id
+        # and nowhere to send it: the auto-login redirect resolves against Grafana's own host and
+        # the browser circles back to /login. The address comes from the cluster map, whose own
+        # comment says everything that accepts a browser login is told THAT address, so it is
+        # read from there and never spelled out again.
+        auth_url: '{{ .Values.global.endpoints.idp.url }}/application/o/authorize/'
+        token_url: '{{ .Values.global.endpoints.idp.url }}/application/o/token/'
+        api_url: '{{ .Values.global.endpoints.idp.url }}/application/o/userinfo/'
         client_id: grafana
         client_secret: $__env{GRAFANA_OAUTH_CLIENT_SECRET}
         scopes: openid profile email groups
