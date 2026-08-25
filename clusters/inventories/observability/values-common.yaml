@@ -135,7 +135,11 @@ monitoring:
                 severity: critical
               annotations:
                 summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash-looping"
-                description: "Container {{ $labels.container }} has restarted {{ $value }} times in the last 5 minutes."
+                description: >-
+                  Container {{ $labels.container }} is restarting. {{ $value }} is what
+                  rate(kube_pod_container_status_restarts_total[5m]) extrapolates over those five
+                  minutes and multiplies back up, so it is a decimal estimate of the restart count
+                  and not a counted number of restarts.
 
             - alert: PodOOMKilled
               expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
@@ -165,14 +169,19 @@ monitoring:
                 description: "Container {{ $labels.container }} repeatedly failing to start."
 
             # The one state on this platform that produces no event, no error and no timeout of
-            # its own. The pod is Pending for as long as it lasts, so PodStuckPending below would
-            # reach the same pod five minutes later; its `unless` clause takes the pod out while
-            # every waiting container of it carries a reason another rule of this group owns, which
-            # for a pod that is only creating its containers leaves it to this rule alone. The two
-            # DO meet on a pod whose second container waits for a reason nobody owns, and then each
-            # names its own half. This one says the pod HAS a node and kubelet is already working on
-            # the container, which narrows the cause to what happens between those points — creating
-            # the pod sandbox, fetching the image, and mounting a volume. It reads
+            # its own. A container that has NEVER started holds its pod in Pending while it lasts,
+            # so PodStuckPending below would reach the same pod five minutes later; its `unless`
+            # clause takes the pod out while every waiting container of it carries a reason another
+            # rule of this group owns, which for a pod that is only creating its containers leaves
+            # it to this rule alone. The two DO meet on a pod whose second container waits for a
+            # reason nobody owns, and then each names its own half. A container being RE-created
+            # after a restart never meets PodStuckPending at all: kubelet's getPhase counts a
+            # waiting container whose LastTerminationState is Terminated as stopped rather than
+            # waiting (kubernetes pkg/kubelet/kubelet_pods.go), so it does not hold its pod in
+            # Pending, and a pod nothing else holds there never enters that rule's first operand.
+            # This one says the pod HAS a node and kubelet is already working on the container,
+            # which narrows the cause to what happens between those points — creating the pod
+            # sandbox, fetching the image, and mounting a volume. It reads
             # kube_pod_container_status_waiting_reason, which kube-state-metrics generates over
             # p.Status.ContainerStatuses alone (internal/store/pod.go), so an INIT container kubelet
             # is still creating carries its waiting reason in a second family this rule never sees.
@@ -217,13 +226,29 @@ monitoring:
                   deployment drops that queue, which lives only in the pod's memory, so the next
                   request starts a fetch of its own.
 
-            # This rule stands over everything about a Pending pod that no other rule of this group
-            # reports, and the exclusion is what keeps it off what they do. The ALERT is per pod,
-            # because kube_pod_status_phase carries no container dimension and the join can only be
-            # on (namespace, pod). The DECISION to exclude is per container, and the nested `unless`
-            # is what makes it so: the inner operand keeps an owned container only while the same
-            # pod has NO container waiting for a reason nobody owns, so a pod is taken out only when
-            # EVERY waiting container of it is already reported elsewhere.
+            # This rule stands over everything about a Pending pod that no other rule of THIS group
+            # reports, and the exclusion is what keeps it off what they do. It keeps it off nothing
+            # else. kube-prometheus-stack ships KubePodNotReady, which selects
+            # phase=~"Pending|Unknown" with no exclusion at all, at the same `for: 15m` and the same
+            # severity: warning, and defaultRules.disabled below turns off RedisMemoryPressure and
+            # nothing else — so the operator is told about the same pod at the same minute whatever
+            # this exclusion does, and what it saves is a second line in this group rather than a
+            # page. hostyour-cloud#119.
+            #
+            # The ALERT is per pod, because kube_pod_status_phase carries no container dimension.
+            # The JOIN is on (namespace, pod), which is not the narrowest available:
+            # kube-state-metrics puts `namespace`, `pod` AND `uid` on every pod metric family
+            # (wrapPodFunc merging descPodLabelsDefaultLabels, internal/store/pod.go), so both
+            # operands carry `uid` too, and upstream KubePodNotReady narrows the same kind of join
+            # with `cluster` instead. What the wider join can match is a phase series and a
+            # waiting-reason series belonging to two DIFFERENT pods that share a namespace and a
+            # name, which takes a second cluster's series in this Prometheus:
+            # enableRemoteWriteReceiver is false below, so it accepts none.
+            #
+            # The DECISION to exclude is per container, and the nested `unless` is what makes
+            # it so: the inner operand keeps an owned container only while the same pod has NO
+            # container waiting for a reason nobody owns, so a pod is taken out only when EVERY
+            # waiting container of it is already reported elsewhere.
             #
             # A single `unless on (namespace, pod)` over the reason set removes the whole pod on ONE
             # owned container, and this platform runs the pods where that is the wrong answer:
@@ -245,7 +270,10 @@ monitoring:
             # branch of that switch stands ABOVE the one that reads stopped
             # (kubernetes pkg/kubelet/kubelet_pods.go), so a pod holding a CrashLoopBackOff
             # container BESIDE one that has never started stands in phase Pending and does reach
-            # this rule. Only a pod whose single container crash-loops comes out Running.
+            # this rule. It takes that second container: with its other containers RUNNING the pod
+            # comes out Running on the `running > 0 && unknown == 0` branch, and with EVERY container
+            # crash-looping it comes out Running as well, because the stopped-only branch below ends
+            # in Running whenever the restart policy will restart them.
             #
             # THE SET COVERS REGULAR CONTAINERS ONLY. kube_pod_container_status_waiting_reason is
             # generated over p.Status.ContainerStatuses; an init container's waiting reason goes to
@@ -254,17 +282,23 @@ monitoring:
             # family, and the reason is its stability level: the first is declared STABLE and the
             # second ALPHA, so a rule built on the second can stop matching at an upgrade with
             # nothing going red. What that costs is that an init container which cannot pull its
-            # image raises no PodImagePullBackOff — postfix's fix-dkim-permissions on busybox:latest
-            # and mongodb's keyfile-perms are the two init containers on this platform. Such a pod
-            # still arrives HERE, because kubelet gives every app container of a pod that HAS init
-            # containers the waiting reason PodInitializing, and nothing owns that reason.
+            # image raises no PodImagePullBackOff, and this platform holds more of them than it
+            # DECLARES: postfix's fix-dkim-permissions on busybox:latest and mongodb's keyfile-perms
+            # stand in the charts, while Tekton Pipelines (clusters/inventories/tekton/) puts
+            # `prepare` on EVERY TaskRun pod from pkg/pod/pod.go and pulls its entrypoint image
+            # straight from ghcr.io, adds `place-scripts` for a step carrying a `script:`, and adds
+            # `working-dir-initializer` where a step needs its working directory made;
+            # consumer-build, gate-runner and image-builder run TaskRuns. Such a pod still arrives
+            # HERE, because kubelet gives every app container of a pod that HAS init containers the
+            # waiting reason PodInitializing, and nothing owns that reason.
             #
             # THE EXCLUSION DOES NOT PROMISE THAT THE OWNING RULE FIRES FIRST. PodImagePullBackOff's
             # `for: 2m` runs per alert LABEL SET and `reason` is one of its labels, so a pull whose
             # reason alternates between ErrImagePull and ImagePullBackOff restarts that clock on
-            # every flip. Planted as a one-minute alternation, no rule of this group fires at all.
-            # Kubelet's image backoff grows towards a cap, so a real alternation slows down and the
-            # alert arrives late rather than never; how late was not measured against a kubelet.
+            # every flip. Kubelet's image backoff grows towards a cap, so a real alternation slows
+            # down and the alert arrives late rather than never. Neither the flip rate a kubelet
+            # actually produces nor how late the alert then arrives has been measured; what stands
+            # here is the `for` semantics alone, and nothing about how often they are reached.
             #
             # What is left for this rule is a Pending pod with a container waiting for a reason
             # nobody owns, or with no container status at all. The description sends the reader to
@@ -315,7 +349,11 @@ monitoring:
                 severity: warning
               annotations:
                 summary: "Node {{ $labels.instance }} disk almost full"
-                description: "Less than 15% free on /mnt/data."
+                description: >-
+                  Less than 15% of /mnt/data is left for a non-root writer.
+                  node_filesystem_avail_bytes over node_filesystem_size_bytes is the space an
+                  unprivileged process can still take, so the blocks the filesystem reserves for
+                  root are not in it and `df` will report a larger free figure.
 
     # Vault runs with the Shamir seal, so a restart of vault-0 brings it back
     # sealed and NOTHING on the cluster gets a secret until it is unsealed again —
@@ -328,7 +366,12 @@ monitoring:
     # VaultNotServing reads kube-state-metrics instead, so it cannot be silenced by
     # the failure it reports: the readiness probe the Vault chart ships runs `vault
     # status`, which fails while sealed. A sealed Vault that stays sealed therefore
-    # raises both; a Vault that cannot start at all raises only the second.
+    # raises both. A Vault that cannot start raises only the second, and only once kubelet has
+    # written a container status: kube_pod_container_status_ready is generated over
+    # p.Status.ContainerStatuses (kube-state-metrics internal/store/pod.go), so a vault-0 that was
+    # never scheduled has no series at all here and `== 0` matches nothing. That pod is
+    # PodStuckPending's instead: it stands in phase Pending with no waiting container to exclude
+    # it, and that rule's description sends the reader to the node assignment first.
     vault:
       enabled: true
       groups:
