@@ -165,8 +165,9 @@ monitoring:
                 description: "Container {{ $labels.container }} repeatedly failing to start."
 
             # The one state on this platform that produces no event, no error and no timeout of
-            # its own. PodStuckPending below covers the same pod five minutes later, but it also
-            # covers a pod that was never scheduled, and the two have nothing in common: this one
+            # its own. The pod is Pending for as long as it lasts, so PodStuckPending below would
+            # reach the same pod five minutes later; its `unless` clause takes this waiting reason
+            # out, which leaves the pod to this rule alone. The two have nothing in common: this one
             # says the pod HAS a node and kubelet is already working on the container, which
             # narrows the cause to the two things that happen between those points — fetching the
             # image, and mounting a volume. Both metrics come from the same container statuses
@@ -213,34 +214,45 @@ monitoring:
                   deployment drops that queue, which lives only in the pod's memory, so the next
                   request starts a fetch of its own.
 
-            # `unless` makes this rule and the one above disjoint, and that is what earns the one
-            # above its place: a pod whose container is already being created is reported there,
-            # five minutes earlier and with the cause named, so it is not reported twice here
-            # under a heading that would fit either cause. What is left to this rule is a pod that
-            # is Pending with no container being created, and that is a placement problem in every
-            # case but one: a pod whose pull has already FAILED is Pending too, with waiting
-            # reason ImagePullBackOff or ErrImagePull rather than ContainerCreating, so the
-            # `unless` clause does not take it out. PodImagePullBackOff above names that pod at
-            # 2m, thirteen minutes before this rule reaches it, which is why the description sends
-            # the reader to that alert before it sends them to volumes and node selectors.
+            # `unless` makes this rule disjoint from the two rules above, and that is what earns
+            # each of them its place. A pod whose container is already being created is reported by
+            # PodStuckContainerCreating five minutes earlier; a pod whose image pull has already
+            # FAILED is Pending as well, with waiting reason ImagePullBackOff or ErrImagePull, and
+            # is reported by PodImagePullBackOff thirteen minutes earlier. Both name the cause,
+            # so neither is reported a second time here under a heading that would fit any of them.
+            #
+            # THE TWO IMAGE REASONS ARE EXACTLY PodImagePullBackOff's OWN REGEX AND HAVE TO STAY IN
+            # STEP WITH IT. A reason excluded here that that rule does not match is a pod NO alert
+            # names — worse than the duplicate the exclusion removes — and a reason it matches that
+            # is not excluded here is the duplicate coming back. CrashLoopBackOff is the only other
+            # waiting reason this group matches and it is deliberately NOT excluded: a container
+            # that has already run puts its pod in phase Running, which the first operand of this
+            # rule does not select, so that pod never arrives here to be taken out again. Every
+            # other waiting reason stays with this rule.
+            #
+            # What is left is a pod that is Pending with no container being created and no failed
+            # pull. That is a placement problem in almost every case, and the description sends the
+            # reader to the node assignment first, which is what tells the two apart.
             - alert: PodStuckPending
               expr: |-
                 kube_pod_status_phase{phase="Pending"} == 1
                 unless on (namespace, pod)
-                kube_pod_container_status_waiting_reason{reason="ContainerCreating"} == 1
+                kube_pod_container_status_waiting_reason{reason=~"ContainerCreating|ImagePullBackOff|ErrImagePull"} == 1
               for: 15m
               labels:
                 severity: warning
               annotations:
                 summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} stuck in Pending"
                 description: >-
-                  The pod has been Pending for more than 15 minutes and no container of it is
-                  being created. A pod whose image pull has already FAILED is Pending as well and
-                  is named by PodImagePullBackOff, so read whether that alert is firing for this
-                  pod first; where it is not, the pod is waiting to be placed. Read
-                  `kubectl describe pod -n {{ $labels.namespace }} {{ $labels.pod }}`: the usual
+                  The pod has been Pending for more than 15 minutes with no container of it being
+                  created and no image pull of it failing — those two states are excluded here and
+                  are reported by PodStuckContainerCreating and PodImagePullBackOff. Read
+                  `kubectl describe pod -n {{ $labels.namespace }} {{ $labels.pod }}` and look at
+                  the node first. With no node the scheduler could not place the pod, and the usual
                   causes are an unbound PersistentVolumeClaim, a node selector or taint no node
-                  satisfies, and a namespace quota that the pod's requests exceed.
+                  satisfies, and a namespace quota that the pod's requests exceed. With a node the
+                  pod is placed and a container is waiting for a reason none of the three rules
+                  covers, which the container's State section names.
 
             - alert: PodNotReady
               expr: kube_pod_status_ready{condition="true"} == 0 and on(namespace, pod) kube_pod_status_phase{phase="Running"} == 1
