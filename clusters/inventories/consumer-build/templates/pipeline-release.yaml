@@ -607,19 +607,19 @@ spec:
               # The branch of hostyour-cloud and of the catalog that carries
               # THIS installation's books — the consumer registrations the
               # class-(a) search reads and the tenant registrations the
-              # class-(b) reach is derived from. It is global.booksBranch and
+              # class-(b) reach is derived from. It is global.booksCluster and
               # NOT global.domain: global.domain is the branch of the cluster
               # this build plane runs ON, and the build plane may be a pure
               # slave — an installation is free to arrange that, and this chart
               # deploys wherever the build plane sits — whose branch carries no
               # registration at all, because the trunk it was cut from carries
               # none and no step of any branch program writes one there. The
-              # branch program writes booksBranch into clusters/active/<fqdn>.yaml
+              # branch program writes booksCluster into clusters/active/<fqdn>.yaml
               # from the same role rule that decides global.endpoints.vault.url. Not the trunk either
               # — a registration names one real unit of one installation, and
               # the trunk is what every future installation is cut from.
               - name: BOOKS_BRANCH
-                value: {{ required "consumer-build: global.booksBranch is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
+                value: {{ required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksCluster | quote }}
               # The tenant catalog this installation deploys from — one repository
               # per installation, composed once by the branch program into
               # clusters/active/<fqdn>.yaml. Required, never defaulted: a bump that
@@ -1278,7 +1278,7 @@ spec:
           # master (clusters/slaves/slave/Chart.yaml). The build plane may be a
           # pure slave, and then this API server holds none of them. That is
           # derived from the two branch names — global.domain is this cluster's
-          # install branch, global.booksBranch is the master's — and stated
+          # install branch, global.booksCluster is the master's — and stated
           # BEFORE any call, instead of discovered as a NotFound that fails a
           # release whose pins already landed.
           - name: argo-sync
@@ -1296,7 +1296,7 @@ spec:
               - name: DOMAIN
                 value: {{ required "consumer-build: global.domain is required (clusters/active/<fqdn>.yaml, the fqdn of the cluster this build plane runs on — the argo-sync cannot say whether the Applications are on this API server without it)" .Values.global.domain | quote }}
               - name: BOOKS_BRANCH
-                value: {{ required "consumer-build: global.booksBranch is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksBranch | quote }}
+                value: {{ required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksCluster | quote }}
               - name: HITS_FILE
                 value: /bump/hits
             volumeMounts:
