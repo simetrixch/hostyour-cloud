@@ -145,7 +145,7 @@ spec:
   # so the retarget never touches it.
   templatePatch: |
     spec:
-      {{- if or (has "redis" .services) (has "mail-relay" .services) }}
+      {{- if or (has "redis" .services) (has "postfix" .services) }}
       # Namespace labels the platform grants on an ATTESTED claim, and only then.
       # The mail relay answers without authenticating the caller, so there REACH is the
       # grant; redis requires a password now, and its policy stays this narrow
@@ -160,8 +160,8 @@ spec:
             {{- if has "redis" .services }}
             platform/redis-consumer: "true"
             {{- end }}
-            {{- if has "mail-relay" .services }}
-            platform/mail-relay-consumer: "true"
+            {{- if has "postfix" .services }}
+            platform/postfix-consumer: "true"
             {{- end }}
       {{- end }}
       sources:

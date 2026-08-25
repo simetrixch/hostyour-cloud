@@ -1,7 +1,7 @@
-name: mail-relay
+name: postfix
 project: services
 syncWave: "20"
-namespace: mail-relay
+namespace: postfix
 prune: "true"
 createNamespace: "true"
 runsOn: master

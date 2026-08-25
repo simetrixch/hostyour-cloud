@@ -144,7 +144,7 @@ kube-prometheus-stack:
         # avoid duplicating the platform domain in every env file.
         global:
           smtp_from: "alertmanager-{{ .Values.global.env }}@mail.{{ .Values.global.domain }}"
-          smtp_smarthost: "mail-relay-{{ .Values.global.env }}.mail-relay.svc.cluster.local:587"
+          smtp_smarthost: "postfix-{{ .Values.global.env }}.postfix.svc.cluster.local:587"
           smtp_require_tls: false
         # Default route receiver is now "null". Actual delivery is handled by the
         # `platform-default` AlertmanagerConfig CR (see

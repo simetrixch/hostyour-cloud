@@ -156,7 +156,7 @@ kube-prometheus-stack:
       # template expressions inside string values are resolved at render time.
       global:
         smtp_from: "alertmanager-{{ .Values.global.env }}@mail.{{ .Values.global.domain }}"
-        smtp_smarthost: "mail-relay-{{ .Values.global.env }}.mail-relay.svc.cluster.local:587"
+        smtp_smarthost: "postfix-{{ .Values.global.env }}.postfix.svc.cluster.local:587"
         smtp_require_tls: false
       # Side-channel sentinels emitted by kube-prometheus-stack to verify the
       # pipeline is alive — they are NOT real problems. Route them straight to

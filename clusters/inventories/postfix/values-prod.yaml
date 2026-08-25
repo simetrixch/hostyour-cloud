@@ -14,7 +14,7 @@ mail:
   extraVolumes:
     - name: dkim-keys-secret
       secret:
-        secretName: mail-relay-dkim-key
+        secretName: postfix-dkim-key
         # OPTIONAL, because signing is. An installation that has not published a DKIM record has no
         # key to sign with, and a relay that signs nothing is a relay that works — its mail is simply
         # unsigned until the record and the key exist together. Mounted as required, the whole mail
@@ -83,11 +83,11 @@ external-secret:
     # it is absent — so an installation with no key carried a secret that could never sync and an app
     # that stood Degraded forever, while the relay beside it ran and delivered mail.
     enabled: false
-    name: mail-relay-dkim-key
-    namespace: mail-relay
+    name: postfix-dkim-key
+    namespace: postfix
     secretStoreKind: SecretStore
-    targetSecretName: mail-relay-dkim-key
-    vaultPath: prod/app/mail-relay
+    targetSecretName: postfix-dkim-key
+    vaultPath: prod/app/postfix
     data:
       - secretKey: dkim-private-key
         property: dkim-private-key

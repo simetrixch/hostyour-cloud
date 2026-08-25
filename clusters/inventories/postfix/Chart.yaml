@@ -1,10 +1,11 @@
 apiVersion: v2
-name: mail-relay
+name: postfix
 version: 1.0.0
 description: Send-only SMTP for cluster-internal email delivery
 type: application
 dependencies:
   - name: mail
+    alias: postfix
     version: 5.1.0
     repository: https://bokysan.github.io/docker-postfix/
   - name: external-secret

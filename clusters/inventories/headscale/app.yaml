@@ -1,7 +1,7 @@
-name: tailnet-coordinator
+name: headscale
 project: services
 syncWave: "42"
-namespace: tailnet-coordinator
+namespace: headscale
 prune: "true"
 createNamespace: "true"
 runsOn: master

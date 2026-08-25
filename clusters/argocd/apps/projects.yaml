@@ -134,7 +134,7 @@ spec:
     - https://bokysan.github.io/docker-postfix/
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: mail-relay
+      namespace: postfix
     # The database browser's own namespace. It stands on the clusters whose role
     # is `slave` — the clusters mongodb and redis run on — because no application
     # of this platform reaches a database in another cluster.
@@ -144,7 +144,7 @@ spec:
     # config ConfigMap and the public Ingress. Namespaced only — nothing
     # cluster-scoped beyond the Namespace itself (createNamespace=true).
     - server: https://kubernetes.default.svc
-      namespace: tailnet-coordinator
+      namespace: headscale
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace

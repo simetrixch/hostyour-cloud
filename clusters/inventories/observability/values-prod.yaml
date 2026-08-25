@@ -157,10 +157,10 @@ kube-prometheus-stack:
       # smtp_from uses bare mail.<domain> (no env subdomain) — the same mail
       # host for every env, so one MX and one SPF record serve all three
       # stages; the relay's own myhostname follows it
-      # (installation/values/mail-relay.yaml, rendered per install branch).
+      # (installation/values/postfix.yaml, rendered per install branch).
       global:
         smtp_from: "alertmanager-prod@mail.{{ .Values.global.domain }}"
-        smtp_smarthost: "mail-relay-{{ .Values.global.env }}.mail-relay.svc.cluster.local:587"
+        smtp_smarthost: "postfix-{{ .Values.global.env }}.postfix.svc.cluster.local:587"
         smtp_require_tls: false
       # Side-channel sentinels emitted by kube-prometheus-stack to verify the
       # pipeline is alive — they are NOT real problems. Route them straight to

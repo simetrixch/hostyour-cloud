@@ -90,12 +90,12 @@ images:
     stamps:
       - kind: yaml_value
         tree: platform
-        file: clusters/inventories/tailnet-coordinator/values-common.yaml
+        file: clusters/inventories/headscale/values-common.yaml
         key: tag
         anchor: 'repository: ghcr.io/juanfont/headscale'
       - kind: yaml_value
         tree: platform
-        file: clusters/inventories/tailnet-coordinator/Chart.yaml
+        file: clusters/inventories/headscale/Chart.yaml
         key: appVersion
   # In-house datastores — official images via clusters/charts/deployment (mongodb:
   # own StatefulSet templates); the Bitnami-chart era is fully migrated out.
@@ -274,7 +274,7 @@ charts:
     stamps:
       - kind: chart_dependency
         tree: platform
-        file: clusters/inventories/mail-relay/Chart.yaml
+        file: clusters/inventories/postfix/Chart.yaml
         dependency: mail
   prometheus-postgres-exporter:
     version: "8.2.0"

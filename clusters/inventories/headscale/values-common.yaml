@@ -103,7 +103,7 @@ app:
 # this cluster's role drops the element from the catalog and ArgoCD prunes the
 # volume with the Application.
 # Deleting it is an explicit opt-in:
-#   microk8s kubectl -n tailnet-coordinator delete pvc headscale-data
+#   microk8s kubectl -n headscale delete pvc headscale-data
 pvc:
   pvc:
     enabled: true
@@ -136,8 +136,8 @@ ingress:
     paths:
       - path: /
         pathType: Prefix
-        serviceName: 'tailnet-coordinator-{{ .Values.global.env }}-app'
+        serviceName: 'headscale-{{ .Values.global.env }}-app'
         servicePort: 8080
     tls:
       enabled: true
-      secretName: 'tailnet-coordinator-{{ .Values.global.env }}-tls'
+      secretName: 'headscale-{{ .Values.global.env }}-tls'

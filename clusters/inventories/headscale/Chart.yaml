@@ -1,5 +1,5 @@
 apiVersion: v2
-name: tailnet-coordinator
+name: headscale
 version: 1.0.0
 description: Headscale — the self-hosted coordination server of the private tailnet the platform's hosts join. The tailnet client is already installed and running on every host, placed there unpinned by the installer; this is the control plane it logs in to instead of the hosted one. Runs on the cluster with the master part, reachable at global.endpoints.tailnet.url over a public Ingress — a host that has not joined yet has no other path. State (the coordinator's own noise key + the node database) on the platform StorageClass.
 type: application

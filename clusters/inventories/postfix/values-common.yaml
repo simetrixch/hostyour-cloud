@@ -1,9 +1,9 @@
-mail:
+postfix:
   recreateOnRedeploy: false
   replicaCount: 1
-  # THE SERVICE IS NAMED FOR THE RELEASE ALONE — mail-relay-<env>, with no `-mail`
+  # THE SERVICE IS NAMED FOR THE RELEASE ALONE — postfix-<env>, with no `-mail`
   # suffix. boky's `mail.fullname` (charts/mail _helpers.tpl) appends the subchart
-  # name only when the release name does not already contain it, and `mail-relay-<env>`
+  # name only when the release name does not already contain it, and `postfix-<env>`
   # does. Every caller spells the host that way: Alertmanager's smtp_smarthost in
   # clusters/inventories/observability/values-{dev,test,prod}.yaml is the one in this tree.
   service:
@@ -22,7 +22,7 @@ mail:
       # per-env keys never collide on one selector. d= stays the apex domain below.
       # ALLOWED_SENDER_DOMAINS is NOT here — it names one installation's sending
       # domains, and this file is shipped to every installation. It stands in
-      # installation/values/mail-relay.yaml, rendered per install branch from the cluster map.
+      # installation/values/postfix.yaml, rendered per install branch from the cluster map.
       # The bokysan chart consumes it without tpl (charts/mail statefulset.yaml
       # renders the env verbatim), so it cannot read a global either — an
       # installation-class file is the only place it fits.
@@ -92,10 +92,10 @@ mail:
 # Deployment + ServiceMonitor that produces postfix_* metrics.
 monitoring:
   prometheusRules:
-    mail-relay:
+    postfix:
       enabled: false
       groups:
-        - name: mail-relay
+        - name: postfix
           interval: 60s
           rules:
             - alert: MailRelayQueueBackup
