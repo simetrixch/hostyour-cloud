@@ -29,7 +29,8 @@ clusters/      EVERYTHING A CLUSTER IS MADE OF, gathered in one place
   charts/        the library charts they are all built from
   argocd/        the ApplicationSets and projects
   bootstrap/     what is applied before ArgoCD exists
-  platform/      the version pins and the platform's own grammar
+  platform/      the version pins, the order an installation's programs run in,
+                 and the platform's own grammar
 installation/  the per-app values and toggles of THIS installation, written per install branch
 configs/       the hand-filled input of one installation, in the clear
 secrets/       the same, encrypted

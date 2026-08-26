@@ -1,0 +1,162 @@
+# clusters/platform/install-order.yaml
+# =============================================================================
+# THE ORDER THE PROGRAMS OF AN INSTALLATION RUN IN, and what each of them needs
+# to already stand. Before this file the order for a first master was written
+# nowhere: it was carried in an operator's head and in a table in a chat window,
+# while the order for a slave was written in TypeScript in a third repository
+# (hostyour-manager server/domains/runs/defs/deploy-slave.ts). Two carriers of
+# one fact disagree the moment one of them is edited, and neither of them can be
+# read by whoever is standing in front of a bare machine.
+#
+# THIS FILE STATES THE ORDER. IT DOES NOT RUN IT. Nothing here starts a program
+# and nothing here is a step. A driver reads the sequence and invokes the
+# programs itself; putting a run inside a run is what the ticket that asked for
+# this file ruled out, because a failure halfway through a child leaves a parent
+# that cannot say what happened.
+#
+# WHO READS IT TODAY: NOBODY. Both drivers still carry their own copy of the
+# sequence, and both live outside this repository. That is stated rather than
+# implied, because a declaration nothing consumes looks exactly like one that is
+# obeyed, and the difference matters to whoever changes a row here and expects
+# an installation to change with it.
+#
+# WHY IT STANDS HERE AND NOT IN THE CATALOGUE. The catalogue holds the programs;
+# it belongs to the installation that was handed it, and every installation gets
+# its own. A sequence written there is written once per customer and drifts once
+# per customer. This repository is the trunk every installation is cut from, so a
+# fact that has to be one fact for all of them belongs on it. `versions.yaml`
+# beside this file already works that way: it pins versions that are stamped into
+# the catalogue's own program files (`tree: deploy`) and into the manager's tree
+# (`tree: manager`), so a cross-repository statement about an installation
+# already has a home, and this is the same kind of statement about the same
+# programs.
+#
+# THE GRAMMAR
+#
+#   engine        where the deployment engine binary stands on the machine.
+#   catalog.path  the directory every program of this sequence is run FROM, and
+#                 the directory the catalogue is checked out into.
+#   catalog.files what has to stand inside that directory, as paths relative to
+#                 it, before the first program runs.
+#   elevated      whether the whole sequence runs elevated.
+#   sequence      one ordered list per role. The list order IS the order.
+#   needs         the facts a program requires to already stand, each written as
+#                 the thing itself — a path where it is a path — rather than as
+#                 "after <program>". A reader can then see WHY a program cannot
+#                 move earlier instead of taking it on trust.
+#   answers-from-run  an answer whose VALUE does not exist until an earlier
+#                 program of this same sequence has run. This is the one part of
+#                 the answers that cannot be read anywhere else.
+#
+# WHAT IS DELIBERATELY NOT HERE: THE ANSWERS EACH PROGRAM REQUIRES. Every program
+# declares its own answers, which of them are required, which carry a default and
+# which are derived, in its own file in the catalogue. Copying that list here
+# would be a second source of it, and the first edit to a program would make this
+# copy wrong while it went on being read. What IS here is the part no program
+# declares: that one answer of the last program is written by the fourth.
+#
+# WHICH OF THESE PROGRAMS RUNS AGAIN ON A LATER PASS IS NOT STATED, because it
+# was not measured. The one thing known is that `deploy-branch` cuts a branch
+# once and `regenerate-branch` is the program that rewrites it afterwards; the
+# other four were only ever watched on a first install.
+# =============================================================================
+
+# The engine binary, as the path it is installed to. deploy-cluster's
+# `require_cli_tool_versions` row runs `ansiwise --version` and fails the run when
+# it is not on the PATH, so an installation that carried the binary somewhere else
+# dies four programs in rather than at the start.
+engine: /usr/local/bin/ansiwise
+
+# Elevated, and the reason is the record directory. The engine writes its records
+# under /var/lib/ansiwise, which belongs to root; an unelevated run dies on it with
+# a PathAccessException that names the path and says nothing about permissions.
+elevated: true
+
+catalog:
+  # ONE path, and it is not free. deploy-platform-services writes
+  # /etc/systemd/system/hostyour-vault-unseal.service, whose WorkingDirectory is
+  # /srv/ansiwise-catalog and whose two ExecStart lines name files under it. On an
+  # installation whose catalogue stood elsewhere the enable failed with
+  # "Changing to the requested working directory failed: No such file or directory",
+  # the run ended at that row, and the unwind took the unit file back with it — so
+  # `systemctl cat` afterwards answered "No files found" and the cause was no longer
+  # on the machine. The same path is CATALOG_CHECKOUT in hostyour-manager
+  # server/domains/runs/defs/place-ansiwise.ts, which is what maintains the checkout
+  # once the manager exists; on a FIRST master the manager does not exist yet, and
+  # nothing creates the directory before the unit needs it.
+  #
+  # It is also the working directory the programs are RUN from, because
+  # `write_file_from_template` resolves its template against the working directory.
+  path: /srv/ansiwise-catalog
+  files:
+    # The installation configuration the run is given with --config.
+    - ansiwise.yaml
+    # The programs, named with --programs. The default is `programs` beside the
+    # working directory and the catalogue keeps them one level down.
+    - ansiwise/programs
+    # BOTH OF THE NEXT TWO ARE NAMED BY hostyour-vault-unseal.service's ExecStart
+    # lines, and neither travels with `ansiwise/` plus `ansiwise.yaml`. A bootstrap
+    # that carried only those two left the unit pointing at files that were not on
+    # the machine.
+    - ansiwise-boot.yaml
+    - ansiwise/boot-programs
+
+sequence:
+  # A FIRST MASTER, measured on an installation from a bare machine. Five programs,
+  # in this order.
+  #
+  # THE SLAVE SEQUENCE IS NOT HERE. It stands in hostyour-manager
+  # server/domains/runs/defs/deploy-slave.ts, and the last reading of it named a
+  # program the catalogue no longer carries — `deploy-gitops`, which is
+  # `deploy-platform-services` in the four sites `versions.yaml` stamps. Copying a
+  # sequence across from a reading that is already stale would put a name on the
+  # trunk that no program answers to. Bringing it here is work in that repository,
+  # not in this one.
+  master:
+    - program: deploy-host
+      # Nothing. Its `git_clone` row is what establishes the platform checkout in
+      # the first place, from the platform_repo and platform_branch answers.
+      needs: []
+
+    - program: deploy-branch
+      needs:
+        # The checkout deploy-host made, and the template inside it that the
+        # generated configuration is written from. Both are this repository: the
+        # example file is tracked on the trunk exactly so this program has
+        # something to make the real file out of.
+        - /srv/hostyour-cloud
+        - /srv/hostyour-cloud/configs/config.example
+
+    - program: deploy-cluster
+      needs:
+        # The cluster map and the secret file, both written by deploy-branch. This
+        # is the edge that contradicted the earlier assumption: deploy-cluster
+        # cannot run before deploy-branch, because it reads two files that do not
+        # exist until deploy-branch has written them.
+        - /srv/hostyour-cloud/clusters/active/<fqdn>.yaml
+        - /srv/hostyour-cloud/secrets/secrets.<stage>
+
+    - program: deploy-platform-services
+      needs:
+        # The generated configuration, written by deploy-branch.
+        - /srv/hostyour-cloud/configs/config.<stage>
+        # The values of the four releases it installs before the reconciler exists.
+        # The directory names are the releases: argocd, headlamp, idp and vault.
+        - /srv/hostyour-cloud/clusters/bootstrap/argocd/values.yaml
+        - /srv/hostyour-cloud/clusters/bootstrap/headlamp/values.yaml
+        - /srv/hostyour-cloud/clusters/bootstrap/idp/values.yaml
+        - /srv/hostyour-cloud/clusters/bootstrap/vault/values.yaml
+
+    - program: onboard-manager
+      # A cluster that is up and serving, with Vault and the identity provider on
+      # it — which is what deploy-platform-services leaves behind.
+      needs:
+        - a running cluster carrying vault and idp
+      answers-from-run:
+        # THE DATA DEPENDENCY INSIDE THE SEQUENCE, and the reason this file exists
+        # rather than a table of five names. This answer's value is a path that
+        # deploy-platform-services creates, so it cannot be filled in before that
+        # program has run — an answers file written up front for all five programs
+        # has one slot it cannot fill.
+        - answer: admin_socket_path
+          program: deploy-platform-services
