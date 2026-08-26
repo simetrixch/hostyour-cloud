@@ -44,21 +44,28 @@
 #                 the thing itself — a path where it is a path — rather than as
 #                 "after <program>". A reader can then see WHY a program cannot
 #                 move earlier instead of taking it on trust.
-#   answers-from-run  an answer whose VALUE does not exist until an earlier
-#                 program of this same sequence has run. This is the one part of
-#                 the answers that cannot be read anywhere else.
 #
 # WHAT IS DELIBERATELY NOT HERE: THE ANSWERS EACH PROGRAM REQUIRES. Every program
 # declares its own answers, which of them are required, which carry a default and
 # which are derived, in its own file in the catalogue. Copying that list here
 # would be a second source of it, and the first edit to a program would make this
-# copy wrong while it went on being read. What IS here is the part no program
-# declares: that one answer of the last program is written by the fourth.
+# copy wrong while it went on being read. NOTHING about the answers is stated
+# here any more — the one exception this file used to carry is gone, and what
+# closed it is below.
 #
 # WHICH OF THESE PROGRAMS RUNS AGAIN ON A LATER PASS IS NOT STATED, because it
 # was not measured. The one thing known is that `deploy-branch` cuts a branch
 # once and `regenerate-branch` is the program that rewrites it afterwards; the
 # other four were only ever watched on a first install.
+#
+# HOW FAST THIS FILE GOES STALE, measured rather than feared. Three sentences in
+# it have been false since it was written on 2026-08-24: a program name that no
+# file in the catalogue answers to, a `needs` path this repository had renamed,
+# and the answer whose value used to come from a run. Each was found by a person
+# reading the file, because nothing reads it and nothing checks it. That is the
+# argument for a driver, and it is also the warning: a row here is intent, not
+# behaviour, and it is verified against the programs in the catalogue and against
+# this tree before it is relied on.
 # =============================================================================
 
 # The engine binary, as the path it is installed to. deploy-cluster's
@@ -155,15 +162,21 @@ sequence:
         - /srv/hostyour-cloud/clusters/bootstrap/vault/values.yaml
 
     - program: onboard-manager
-      # A cluster that is up and serving, with Vault and the identity provider on
-      # it — which is what deploy-platform-services leaves behind.
       needs:
+        # A cluster that is up and serving, with Vault and the identity provider
+        # on it — which is what deploy-platform-services leaves behind.
         - a running cluster carrying vault and idp
-      answers-from-run:
-        # THE DATA DEPENDENCY INSIDE THE SEQUENCE, and the reason this file exists
-        # rather than a table of five names. This answer's value is a path that
-        # deploy-platform-services creates, so it cannot be filled in before that
-        # program has run — an answers file written up front for all five programs
-        # has one slot it cannot fill.
-        - answer: admin_socket_path
-          program: deploy-platform-services
+        # The socket this program connects to. It stands on the HOST at the path
+        # clusters/inventories/manager/values-common.yaml `adminSocket.path`
+        # names, and the manager pod creates it there once the reconciler has
+        # synced the manager application.
+        #
+        # THIS LINE REPLACES A DATA DEPENDENCY THAT NO LONGER EXISTS. Until
+        # simetrixch/hostyour-cloud#125 the manager bound its socket under
+        # DATA_DIR, which is a claim whose directory the storage provisioner
+        # composes with a generated uid — so the path could not be known before
+        # the cluster ran, and this file carried it as the one answer whose VALUE
+        # came from an earlier program. The chart now decides the path, the value
+        # is a constant knowable before any program starts, and the dependency is
+        # an ordinary `needs` like every other.
+        - /var/lib/hostyour-manager/admin.sock
