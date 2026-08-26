@@ -122,6 +122,43 @@ global:
       # Empty ONLY on the trunk.
       url: ""
 
+  # ── The addresses of this cluster's own nodes ─────────────────────────────
+  # Every address a workload of this cluster is reached at because it stands ON
+  # A NODE rather than in the pod network: the Kubernetes API server, anything
+  # with hostNetwork (clusters/inventories/manager sets it, values-common.yaml
+  # hostNetwork), and the ingress controller's host ports. Written as IPv4
+  # CIDRs, one entry per address or range.
+  #
+  # IPv4 ONLY, and that is not a limitation. The reader below carves these out
+  # of an ipBlock whose cidr is 0.0.0.0/0, and Kubernetes refuses an `except`
+  # that does not lie inside its own cidr. An IPv6 destination needs no entry:
+  # the fence's only egress rules are IPv4, and a pod under an egress policy
+  # may go nowhere a rule does not name, so IPv6 is already denied whole.
+  #
+  # WHO READS IT, and it is a DENY list there:
+  # clusters/inventories/gate-runner/templates/networkpolicy.yaml fences the
+  # gate sandbox by carving the private ranges out of an allow-all-internet
+  # ipBlock. That carve-out covers a node whose address is private and NOTHING
+  # of a node whose address is public — which a cloud node's is — so the API
+  # server, the manager and every Ingress of the cluster stayed reachable from
+  # a sandbox holding partially tenant-authored chart code. The addresses of a
+  # node are not derivable at render time and no cluster fact in this tree
+  # carries them, so they are stated here.
+  #
+  # Empty ONLY on the trunk. It belongs in clusters/active/<fqdn>.yaml, which
+  # loads LAST in every app's valueFiles chain, beside the other globals an
+  # installation is given. THE KEY IS NEW AND NO INSTALLATION CARRIES IT YET —
+  # clusters/active/ holds nothing but .gitkeep here — so the fence STOPS ITS
+  # RENDER on an empty list rather than rendering a boundary that names nothing
+  # to deny, and an installation that has not been given the value stops with
+  # it instead of syncing a fence with a hole.
+  #
+  # A /32 per node address is the tightest true answer. The cluster LAN's own
+  # prefix is the answer where nodes are added without the branch being
+  # rewritten each time; it costs the sandbox nothing, because the private
+  # ranges are already denied.
+  nodeCidrs: []
+
   # Whether a shared service is deployed LOCALLY on this cluster — gates the
   # CoreDNS hairpin rewrites (a chart can't see the deploy toggle). All false
   # on the trunk; the branch program writes each key from the cluster map's

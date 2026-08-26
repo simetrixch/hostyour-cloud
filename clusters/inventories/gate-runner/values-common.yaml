@@ -62,11 +62,14 @@ reportWriter:
   # Post-DNAT API-server egress pinhole for the publish pod ONLY (second
   # NetworkPolicy in templates/networkpolicy.yaml). Calico evaluates egress
   # AFTER kube-proxy DNAT, so kubernetes.default.svc resolves to the node's
-  # apiserver endpoint inside the fenced private ranges. Default admits the
-  # 10/8 range on the usual apiserver ports; tighten to <nodeIP>/32 + the one
-  # real port (microk8s: 16443) on an install branch if desired.
+  # apiserver endpoint — an address the fence in that same file denies to
+  # every other pod here. WHICH address is not stated twice: the pinhole reads
+  # global.nodeCidrs, the same list the fence carves out, so the two cannot
+  # come apart. Only the PORTS are the pinhole's own, and they are a superset
+  # on purpose — one of the three is where a given cluster's apiserver
+  # actually listens (443 service VIP, 6443 kubeadm, 16443 microk8s) and the
+  # publish pod runs the platform-pinned kubectl step, never tenant code.
   apiServer:
-    cidr: 10.0.0.0/8
     ports:
       - 443
       - 6443
