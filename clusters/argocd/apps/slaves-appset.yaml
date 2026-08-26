@@ -64,6 +64,51 @@ spec:
                   cm:
                     installationID: "{{ .values.cluster }}"
                     url: "https://argo-{{ .values.cluster }}.{{ .global.master }}"
+                    # THE ONLY WAY INTO A SLAVE'S RECONCILER. values-common.yaml of
+                    # clusters/slaves/slave switches the local account off
+                    # (configs.cm.admin.enabled "false"), so without this key the sign-in
+                    # page offers neither a provider button nor a password form and nobody
+                    # can open the instance at all — while the workload runs, the
+                    # certificate is issued and every check reads green.
+                    #
+                    # IT IS INJECTED HERE AND NOWHERE ELSE because the issuer names the
+                    # cluster holding the master part, and a static values file of the slave
+                    # chart cannot see it: `configs.cm` belongs to the argo-cd sub-chart, and
+                    # `.global.master` is a generator value that only this ApplicationSet
+                    # holds. It is the same value the `url` above is built from, so the
+                    # address a browser is sent back to and the address it signs in at cannot
+                    # be answered apart.
+                    #
+                    # ONE CLIENT FOR EVERY SLAVE, and no secret. The provider in
+                    # clusters/bootstrap/idp/blueprints/99-argo-slave.yaml is `client_type:
+                    # public` with a REGEX redirect_uri covering every
+                    # argo-<name>.<master>/auth/callback, so onboarding a slave needs no new
+                    # client and there is nothing per slave to seal or rotate. A public
+                    # client has no client_secret, and ArgoCD then refuses the exchange
+                    # unless enablePKCEAuthentication is set: OAuth2UsePKCE() reads exactly
+                    # that key off oidc.config (argo-cd util/settings/settings.go).
+                    #
+                    # The application slug is `argo-slave`, and the per-application issuer
+                    # path is built from the slug — so a rename there moves the issuer and
+                    # this line has to move with it.
+                    #
+                    # `groups` is asked for as an essential ID-token claim because the RBAC
+                    # below decides admission on it, and ArgoCD reads the group claim by
+                    # default (DefaultScopes = ["groups"], argo-cd util/rbac/rbac.go), so
+                    # nothing sets rbac.scopes here.
+                    oidc.config: |
+                      name: Authentik
+                      issuer: https://idp.{{ .global.master }}/application/o/argo-slave/
+                      clientID: argo-slave
+                      enablePKCEAuthentication: true
+                      requestedScopes:
+                        - openid
+                        - profile
+                        - email
+                        - groups
+                      requestedIDTokenClaims:
+                        groups:
+                          essential: true
       destination:
         server: https://kubernetes.default.svc
         namespace: "{{ .values.cluster }}"
