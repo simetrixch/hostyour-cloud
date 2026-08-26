@@ -44,13 +44,14 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         # The process's PRIMARY group, and with it the group of every inode it
-        # creates under /data. The one that matters is $DATA_DIR/admin.sock: a
-        # caller that is not a browser takes an operator session off that socket
-        # (hostyour-manager server/domains/access/emergency.ts), connect(2) on it
-        # needs the write bit, and ADMIN_SOCKET_MODE below opens that bit to the
-        # GROUP. Without runAsGroup the primary gid is whatever the runtime
-        # derives from the image and the uid override, so the socket lands in a
-        # group no host account can be put in and the group bit grants nobody.
+        # creates. The one that matters is the admin socket at
+        # .Values.adminSocket.path: a caller that is not a browser takes an
+        # operator session off that socket (hostyour-manager
+        # server/domains/access/emergency.ts), connect(2) on it needs the write
+        # bit, and ADMIN_SOCKET_MODE below opens that bit to the GROUP. Without
+        # runAsGroup the primary gid is whatever the runtime derives from the
+        # image and the uid override, so the socket lands in a group no host
+        # account can be put in and the group bit grants nobody.
         # fsGroup does NOT do this job: it lands on the volume, and a
         # hostPath-backed volume (microk8s-hostpath) is left alone by the kubelet.
         runAsGroup: 65532
@@ -88,14 +89,22 @@ spec:
               value: {{ .Values.adminsGroup | quote }}
             - name: DATA_DIR
               value: /data
-            # The permission bits the manager puts on $DATA_DIR/admin.sock
-            # (config.ts ADMIN_SOCKET_MODE). That socket mints an operator session
-            # with NO password, and connect(2) on a unix socket needs only the write
-            # bit — so this value is the whole boundary in front of it, and it is
-            # stated here rather than left to the code, because who has to reach the
-            # socket is a fact of the machine and not of the product. 0770 admits the
-            # pod's own uid 65532 and the gid 65532 above; an account on the host is
-            # inside it only once somebody puts that account in that gid.
+            # WHERE the manager binds its admin socket (config.ts
+            # ADMIN_SOCKET_PATH — required there, no default, and the process
+            # refuses to boot without it). The same string names the hostPath
+            # volume's directory below, so what the manager binds and what a
+            # program on the host connects to cannot come apart. values-common.yaml
+            # carries why the path is what it is.
+            - name: ADMIN_SOCKET_PATH
+              value: {{ .Values.adminSocket.path | quote }}
+            # The permission bits the manager puts on that socket (config.ts
+            # ADMIN_SOCKET_MODE). It mints an operator session with NO password, and
+            # connect(2) on a unix socket needs only the write bit — so this value is
+            # the whole boundary in front of it, and it is stated here rather than
+            # left to the code, because who has to reach the socket is a fact of the
+            # machine and not of the product. 0770 admits the pod's own uid 65532 and
+            # the gid 65532 above; an account on the host is inside it only once
+            # somebody puts that account in that gid.
             - name: ADMIN_SOCKET_MODE
               value: {{ .Values.adminSocket.mode | quote }}
             - name: LOG_LEVEL
@@ -335,6 +344,11 @@ spec:
               readOnly: true
             - name: data
               mountPath: /data
+            # The directory ADMIN_SOCKET_PATH stands in, mounted at the SAME path
+            # it has on the host, so the manager binds and onboard-manager connects
+            # to one spelling.
+            - name: admin-socket
+              mountPath: {{ .Values.adminSocket.path | dir | quote }}
             - name: tmp
               mountPath: /tmp
             # The manager-registry-pull dockerconfigjson (externalsecret-registry.yaml) as a
@@ -379,6 +393,22 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: manager-data
+        # The admin socket's directory, straight off the node. A hostPath and not a
+        # claim, because the program that connects runs on the HOST and needs a path
+        # it can name: a claim's directory is composed by the provisioner and carries
+        # a generated uid, which is what put the socket path over the 107 bytes
+        # sun_path holds (values-common.yaml adminSocket.path).
+        #
+        # type: Directory, NOT DirectoryOrCreate. A directory the kubelet creates is
+        # root-owned 0755, and this container runs as uid 65532 with
+        # readOnlyRootFilesystem — the bind would answer EACCES and the pod would
+        # come up Ready with no socket in it. Requiring the directory makes the
+        # machine's own preparation the one place its ownership is decided, and a
+        # missing one fails the mount instead.
+        - name: admin-socket
+          hostPath:
+            path: {{ .Values.adminSocket.path | dir | quote }}
+            type: Directory
         - name: tmp
           emptyDir: {}
         # Pull creds for the ensure-images registry probe (mounted read-only above). optional: on

@@ -62,23 +62,58 @@ hostNetwork: true
 # OIDC group required for access (config.ts ADMINS_GROUP, default "admins").
 adminsGroup: admins
 
-# The permission bits the manager puts on its admin socket, $DATA_DIR/admin.sock
-# (config.ts ADMIN_SOCKET_MODE), written as an octal file mode.
-#
-# WHAT IT DECIDES. That socket answers one thing: an operator session, minted with
-# no password and no identity provider. It has no address off the machine, so the
-# file's permissions are the entire boundary in front of it — connect(2) on a unix
-# socket needs the write bit and nothing else. Three sets are inside: the pod's own
-# uid 65532, every account in gid 65532 (the deployment's runAsGroup, which is the
-# group the socket is created in), and root.
-#
-# WHY 0770 AND NOT 0700. The account that operates the master onboards this manager
-# by asking that socket for a session, and it runs on the host, not in the pod —
-# 0700 leaves it with an empty triad and connect() answers EACCES. 0770 opens the
-# GROUP, which by itself admits nobody: no host account is in gid 65532 until one is
-# deliberately put there. Narrow it to "0700" on an installation that does no such
-# onboarding; nothing else on this platform opens the socket.
+# The manager's admin socket. This map carries exactly the two values the manager
+# reads for it — config.ts ADMIN_SOCKET_PATH and ADMIN_SOCKET_MODE — and nothing
+# else. The socket answers one request: an operator session, minted with no
+# password and no identity provider.
 adminSocket:
+  # WHERE the socket file stands (config.ts ADMIN_SOCKET_PATH: required there, no
+  # default, refused at boot when it does not fit the ceiling below).
+  #
+  # ONE value for three spellings that have to be the same string: the path the
+  # manager binds, the HOST directory templates/deployment.yaml mounts, and the
+  # directory that mount lands on inside the pod. The caller is a program on the
+  # host — the account operating the master takes its session off this socket —
+  # so the host spelling and the container spelling are both addresses somebody
+  # uses, and writing the path once is what holds them equal. The manager's own
+  # boot check then covers both, because they are one string.
+  #
+  # NOT UNDER DATA_DIR, and that is arithmetic. sun_path in struct sockaddr_un is
+  # 108 bytes on Linux and a pathname socket is NUL-terminated inside it
+  # (man 7 unix), so 107 are usable. DATA_DIR is a ReadWriteOnce claim and where
+  # that claim lands on the host is the storage provisioner's choice: with
+  # microk8s-hostpath, the storage class global.storageClass names, a from-zero
+  # master composed
+  # /var/snap/microk8s/common/default-storage/manager-manager-data-<uid>/admin.sock
+  # at 114 bytes, and bind(2) in the manager and connect(2) in onboard-manager
+  # both answered ENAMETOOLONG. 40 of those bytes are a generated uid and nothing
+  # on this platform shortens it. The path below is 36 bytes.
+  #
+  # /var/lib AND NOT /run: /run is a tmpfs and is empty after a reboot, so a
+  # socket directory there is gone at boot and the manager comes up with its
+  # break-glass door shut.
+  #
+  # THE DIRECTORY MUST ALREADY EXIST ON THE HOST, owned so uid 65532 can create a
+  # file in it. The volume is `type: Directory`, so the kubelet requires it and
+  # does not create one; a kubelet-created directory would be root-owned 0755 and
+  # the bind would answer EACCES with the pod running and the socket absent.
+  path: /var/lib/hostyour-manager/admin.sock
+  # The permission bits the manager puts on that socket (config.ts
+  # ADMIN_SOCKET_MODE), written as an octal file mode.
+  #
+  # WHAT IT DECIDES. The socket has no address off the machine, so the file's
+  # permissions are the entire boundary in front of it — connect(2) on a unix
+  # socket needs the write bit and nothing else. Three sets are inside: the pod's
+  # own uid 65532, every account in gid 65532 (the deployment's runAsGroup, which
+  # is the group the socket is created in), and root.
+  #
+  # WHY 0770 AND NOT 0700. The account that operates the master onboards this
+  # manager by asking that socket for a session, and it runs on the host, not in
+  # the pod — 0700 leaves it with an empty triad and connect() answers EACCES.
+  # 0770 opens the GROUP, which by itself admits nobody: no host account is in gid
+  # 65532 until one is deliberately put there. Narrow it to "0700" on an
+  # installation that does no such onboarding; nothing else on this platform opens
+  # the socket.
   mode: "0770"
 
 # GitHub access for the Branches view + the Reset wizard (config.ts GITHUB_REPO +
