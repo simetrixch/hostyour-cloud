@@ -33,8 +33,25 @@ resourceNames — only relocated):
 
   * manager-gate-dispatch (Role, ns gate-runner) — TektonGateRunner: create/
     delete the per-run `gate-cred-<runid>` Secret; create/get/delete the
-    `gate-run` PipelineRun; get/delete the `gate-report-<runid>` ConfigMap. No
-    list/watch anywhere (every object addressed by name).
+    `gate-run` PipelineRun; get/delete the `gate-report-<runid>` ConfigMap; and
+    LIST PipelineRuns, which is the one thing here not addressed by name.
+    The sweep that collects orphans has to enumerate what is there before it can
+    say what is left over — hostyour-manager
+    server/adapters/gate-runner/gate-runner-tekton.ts:154 listPipelineRunNames,
+    called from reapOrphans at :259. Without the verb that sweep fails on every
+    pass, and what it leaves standing is the per-run credential Secrets it exists
+    to remove. Measured on apps3, 2026-08-26, before the verb was granted:
+
+      pipelineruns.tekton.dev is forbidden: User
+      "system:serviceaccount:manager:manager" cannot list resource "pipelineruns"
+      in API group "tekton.dev" in the namespace "gate-runner"
+
+    logged as "gate-runner: orphan sweep failed — leftover gate-run objects
+    (including credential Secrets) may still stand", and `kubectl auth can-i` for
+    that account answered get yes, create yes, delete yes, list NO, watch NO. The
+    comment here said "No list/watch anywhere (every object addressed by name)",
+    which the adapter had stopped being true of. Watch is still not granted, and
+    the list is one verb on one resource in one namespace.
   * manager-argocd-onboarding (ClusterRole) — get,list Applications (deploy
     convergence); get,create,update,delete the manager-OWNED per-consumer AND
     per-tenant isolation AppProjects. NOT applicationsets/secrets. Cluster
@@ -139,7 +156,7 @@ serviceaccount.yaml / deployment.yaml.
     "grants" (list
       (dict "name" "manager-gate-dispatch" "namespace" "gate-runner" "rules" (list
         (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "create" "delete"))
-        (dict "apiGroups" (list "tekton.dev") "resources" (list "pipelineruns") "verbs" (list "create" "get" "delete"))
+        (dict "apiGroups" (list "tekton.dev") "resources" (list "pipelineruns") "verbs" (list "create" "get" "list" "delete"))
         (dict "apiGroups" (list "") "resources" (list "configmaps") "verbs" (list "get" "delete"))
       ))
       (dict "name" "manager-argocd-onboarding" "rules" (list
