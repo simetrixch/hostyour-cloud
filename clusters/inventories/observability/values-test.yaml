@@ -230,8 +230,10 @@ kube-prometheus-stack:
         client_secret: $__env{GRAFANA_OAUTH_CLIENT_SECRET}
         scopes: openid profile email groups
         use_pkce: true
-        # 'authentik Admins' -> GrafanaAdmin; everyone else -> Viewer.
-        role_attribute_path: contains(groups[*], 'authentik Admins') && 'GrafanaAdmin' || 'Viewer'
+        # The platform's own `admins` group -> GrafanaAdmin; everyone else ->
+        # Viewer. Same name the manager, the master's ArgoCD and a slave's
+        # ArgoCD admit on. values-dev.yaml states where the group comes from.
+        role_attribute_path: contains(groups[*], 'admins') && 'GrafanaAdmin' || 'Viewer'
 
 # ============================================================================
 # Loki / Tempo storage

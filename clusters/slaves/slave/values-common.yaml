@@ -189,14 +189,20 @@ argo-cd:
         return hs
     # OIDC login via the controller's Authentik (the oidc.config itself is
     # injected PER SLAVE by slaves-appset.yaml — it needs slave.masterFqdn for
-    # the issuer host). This RBAC is static, so it lives here: map Authentik's
-    # `authentik Admins` group (akadmin is a member from bootstrap) to ArgoCD
-    # admin on THIS slave's instance; everyone else read-only. The `groups`
-    # claim drives it — same shape as the master's own ArgoCD
-    # (clusters/bootstrap/argocd/values.yaml).
+    # the issuer host). This RBAC is static, so it lives here: map the
+    # platform's own `admins` group to ArgoCD admin on THIS slave's instance;
+    # everyone else read-only. The `groups` claim drives it — same name and same
+    # shape as the master's own ArgoCD (clusters/bootstrap/argocd/values.yaml),
+    # so a person who can open one reconciler can open the other.
+    #
+    # It used to be Authentik's built-in `authentik Admins`, which admitted
+    # whoever administers the identity provider and refused the operator the
+    # deployment actually puts into `admins` — so one account was admin here and
+    # read-only at the manager, and from a browser both looked like a successful
+    # login.
     rbac:
       policy.csv: |
-        g, "authentik Admins", role:admin
+        g, admins, role:admin
       policy.default: role:readonly
       scopes: '[groups]'
 

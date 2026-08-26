@@ -227,10 +227,14 @@ kube-prometheus-stack:
         # falls through to the Viewer role.
         scopes: openid profile email groups
         use_pkce: true
-        # Built-in Authentik group `authentik Admins` (note the space;
-        # JMESPath single-quoted strings handle whitespace fine). Members
-        # of that group land as Grafana admins; everyone else as Viewer.
-        role_attribute_path: contains(groups[*], 'authentik Admins') && 'GrafanaAdmin' || 'Viewer'
+        # The platform's own `admins` group — the ONE name every product of
+        # this installation admits on, so a person who can open one can open
+        # them all. It is created by clusters/bootstrap/idp/blueprints/
+        # 15-group-admins.yaml and the deployment puts the first operator into
+        # it with the `authentik_group_membership` step; the manager
+        # (ADMINS_GROUP), the master's ArgoCD and a slave's ArgoCD read the same
+        # name. Members land as Grafana admins; everyone else as Viewer.
+        role_attribute_path: contains(groups[*], 'admins') && 'GrafanaAdmin' || 'Viewer'
 
 # ============================================================================
 # Loki / Tempo storage

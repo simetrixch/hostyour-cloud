@@ -85,10 +85,17 @@ configs:
         groups:
           essential: true
   # Map the platform's own `admins` group to this component's admin role.
-  # It is the SAME name the cluster's role binding and the secret store
-  # admit on: one name for the platform's staff, so no component admits
-  # somebody another one refuses. The deployment puts the first operator
-  # into that group; anybody later is added to it in the provider.
+  # ONE NAME FOR THE PLATFORM'S STAFF, and these are the four products that
+  # admit on it, so no component admits somebody another one refuses:
+  # the manager (adminsGroup in clusters/inventories/manager/values-common.yaml,
+  # and the group PolicyBinding in clusters/bootstrap/idp/blueprints/
+  # 99-manager.yaml), this ArgoCD, a slave's ArgoCD
+  # (clusters/slaves/slave/values-common.yaml rbac.policy.csv) and Grafana
+  # (role_attribute_path in clusters/inventories/observability/values-{dev,test,
+  # prod}.yaml). The group is created by blueprints/15-group-admins.yaml, the
+  # deployment puts the first operator into it with the
+  # `authentik_group_membership` step, and anybody later is added to it in the
+  # provider. Nothing else in this repository admits on a group at all.
   rbac:
     policy.csv: |
       g, admins, role:admin
