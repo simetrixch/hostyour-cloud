@@ -227,13 +227,12 @@ monitoring:
                   request starts a fetch of its own.
 
             # This rule stands over everything about a Pending pod that no other rule of THIS group
-            # reports, and the exclusion is what keeps it off what they do. It keeps it off nothing
-            # else. kube-prometheus-stack ships KubePodNotReady, which selects
-            # phase=~"Pending|Unknown" with no exclusion at all, at the same `for: 15m` and the same
-            # severity: warning, and defaultRules.disabled below turns off RedisMemoryPressure and
-            # nothing else — so the operator is told about the same pod at the same minute whatever
-            # this exclusion does, and what it saves is a second line in this group rather than a
-            # page. hostyour-cloud#119.
+            # reports, and the exclusion is what keeps it off what they do. It reaches the operator
+            # because defaultRules.disabled below turns off kube-prometheus-stack's KubePodNotReady,
+            # which selected phase=~"Pending|Unknown" with no exclusion at all, at the same
+            # `for: 15m` and the same severity: warning, in this same Prometheus. While that rule
+            # ran, an excluded pod was named by it at the same minute anyway and the exclusion saved
+            # a line in this group rather than a page.
             #
             # The ALERT is per pod, because kube_pod_status_phase carries no container dimension.
             # The JOIN is on (namespace, pod), which is not the narrowest available:
@@ -477,9 +476,34 @@ kube-prometheus-stack:
   #   RedisMemoryPressure — fires on the redis_exporter pod (which itself
   #     has tiny limits), not the actual Redis. The metric labels aren't
   #     scoped to real Redis instances.
+  #
+  #   KubePodNotReady — every surface it covers is covered by a rule of the
+  #     `kubernetes` group above, and it covered them WITHOUT the exclusion that
+  #     group is built around, so the operator was named twice for one pod at one
+  #     minute: KubePodNotReady is `for: 15m`, `severity: warning`, and the
+  #     Prometheus CR carries `ruleSelector: {}`, so both groups run in the same
+  #     instance. Its expression is two halves. The first,
+  #     phase=~"Pending|Unknown", is PodStuckPending's surface for Pending; the
+  #     Unknown half matches a value nothing writes — the Kubernetes API type
+  #     carries "Deprecated: It isn't being set since 2015" on PodUnknown
+  #     (kubernetes/api core/v1/types.go), and kube-state-metrics reports
+  #     p.Status.Phase verbatim (internal/store/pod.go), so no series of that
+  #     phase is ever 1. The second half is phase="Running" with
+  #     kube_pod_status_ready{condition="true"} == 0, which is PodNotReady's
+  #     expression above at `for: 10m` — ours reaches the operator five minutes
+  #     earlier.
+  #     WHAT IS GIVEN UP. The upstream rule is maintained by the chart and ours is
+  #     not: delete our `kubernetes` group and this surface goes with it, where
+  #     before the chart would have kept reporting it. Its runbook_url annotation
+  #     goes too. Its join is on (namespace, pod, cluster) where ours is on
+  #     (namespace, pod). Its two exclusions — pods owned by a Job, and pods
+  #     carrying kube_pod_status_reason{reason="SchedulingGated"} — are what make
+  #     it QUIETER than ours, so dropping it removes no coverage; a gated or
+  #     Job-owned pod that upstream silenced now reaches PodStuckPending.
   defaultRules:
     disabled:
       RedisMemoryPressure: true
+      KubePodNotReady: true
 
   prometheus:
     prometheusSpec:
