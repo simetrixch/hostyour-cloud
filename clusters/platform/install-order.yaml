@@ -59,13 +59,14 @@
 # other four were only ever watched on a first install.
 #
 # HOW FAST THIS FILE GOES STALE, measured rather than feared. Three sentences in
-# it have been false since it was written on 2026-08-24: a program name that no
-# file in the catalogue answers to, a `needs` path this repository had renamed,
-# and the answer whose value used to come from a run. Each was found by a person
-# reading the file, because nothing reads it and nothing checks it. That is the
-# argument for a driver, and it is also the warning: a row here is intent, not
-# behaviour, and it is verified against the programs in the catalogue and against
-# this tree before it is relied on.
+# it have been false since it was written on 2026-08-24: a program name
+# (`deploy-gitops`) that versions.yaml beside this file stamps no site in, while
+# it stamps four in `ansiwise/programs/deploy-platform-services.yaml`; a `needs`
+# path this repository had renamed; and the answer whose value used to come from
+# a run. Each was found by a person reading the file, because nothing reads it
+# and nothing checks it. That is the argument for a driver, and it is also the
+# warning: a row here is intent, not behaviour, and it is verified against the
+# programs in the catalogue and against this tree before it is relied on.
 # =============================================================================
 
 # The engine binary, as the path it is installed to. deploy-cluster's
