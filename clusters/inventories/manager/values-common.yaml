@@ -85,9 +85,10 @@ adminSocket:
   # microk8s-hostpath, the storage class global.storageClass names, a from-zero
   # master composed
   # /var/snap/microk8s/common/default-storage/manager-manager-data-<uid>/admin.sock
-  # at 114 bytes, and bind(2) in the manager and connect(2) in onboard-manager
-  # both answered ENAMETOOLONG. 40 of those bytes are a generated uid and nothing
-  # on this platform shortens it. The path below is 36 bytes.
+  # at 114 bytes. onboard-manager's connect(2) answered ENAMETOOLONG there, and
+  # the same ceiling bounds the manager's own bind(2), so neither side could use
+  # the path. 40 of those bytes are a generated uid and nothing on this platform
+  # shortens it. The path below is 36 bytes.
   #
   # /var/lib AND NOT /run: /run is a tmpfs and is empty after a reboot, so a
   # socket directory there is gone at boot and the manager comes up with its

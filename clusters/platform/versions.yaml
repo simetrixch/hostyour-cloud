@@ -542,11 +542,12 @@ cliTools:
     upstream:
       kind: github_release
       project: mikefarah/yq
-      # The v-prefixed stables, which is the shape everything from v4.0.1 onward
-      # carries. Read off all 169 releases on 2026-08-26: the only other shapes
-      # are the unprefixed tags this project used up to 4.0.0 and the pre-releases
-      # of that era — 4.0.0-beta2, 4.0.0-alpha1, 3.0.0-beta. The `v` alone keeps
-      # both eras apart, and the three numbers keep the beta suffixes out.
+      # The v-prefixed stables. Read off all 169 releases on 2026-08-26: 119 carry
+      # this shape and every one of the 50 refused is UNPREFIXED, the newest of
+      # them 4.0.0 — the era this project left behind. Those 50 fall in six
+      # shapes: 1.12 and 2.0-beta (two numbers), 4.0.0 (three), and 4.0.0-alpha2,
+      # 4.0.0-beta2 and 3.0.0-beta. The leading `v` alone separates the two eras,
+      # which is why nothing else has to.
       matching: '^v[0-9]+\.[0-9]+\.[0-9]+$'
     stamps:
       - kind: yaml_value
@@ -593,9 +594,9 @@ cliTools:
       # for one sub-command; v0.100.0-153, a build-numbered tag of the 0.x era;
       # and v0.98, which has two numbers. Nothing here narrows to tailscale's own
       # stable/unstable convention — even minor stable, odd minor unstable —
-      # because the released minors measured are 0 through 98 even and then 102,
-      # with no odd minor published as a release at all. A pattern refusing odd
-      # minors would state a rule this feed does not exercise.
+      # because the v1 minors this feed carries are 0 through 98 even and then
+      # 102, with no odd one published as a release at all. A pattern refusing
+      # odd minors would state a rule this feed does not exercise.
       matching: '^v[0-9]+\.[0-9]+\.[0-9]+$'
     stamps:
       - kind: list_pin
