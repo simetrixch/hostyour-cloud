@@ -16,8 +16,10 @@
 # grammar builds[]{name,image,tag} — `image` is the FLAT build name
 # (`manager`, no registry path to compose), and the full ref renders via
 # common.buildImage from common.registryHost. The release bump searches
-# apps/<app>/values-<stage>.yaml for exactly this grammar and writes the tag;
-# the cluster release delivers the bumped master to running clusters.
+# clusters/inventories/<app>/values-<stage>.yaml for exactly this grammar and
+# writes the tag (the bump's own glob stands in
+# clusters/inventories/consumer-build/templates/pipeline-release.yaml); the
+# cluster release delivers the bumped master to running clusters.
 replicas: 1
 
 # registry-reaper — the periodic CronJob (templates/reaper-cronjob.yaml) that

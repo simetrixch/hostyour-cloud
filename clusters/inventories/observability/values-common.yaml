@@ -11,7 +11,8 @@
 #     base/ or the MicroK8s addons). These cannot ship with the
 #     foreign app charts, so they live here in the observability app.
 #
-# Apps in apps/ that need their own monitoring depend on the same chart and
+# Applications in clusters/inventories/ that need their own monitoring depend
+# on the same chart and
 # declare their entries under their own top-level `monitoring:` key.
 # ============================================================================
 monitoring:

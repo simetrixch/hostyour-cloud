@@ -5,8 +5,9 @@
 # always the same build) and invokes the run-once entrypoint server/jobs/registry-reaper.ts. Its
 # referenced safety floor IS the release bump's search space: (a) every registration's
 # chartPath values-<stage>.yaml on the unit's deploy/<stage> branch, (b) the catalog's
-# per-chart values-<stage>.yaml on every branch, (c) hostyour-cloud's apps/<app>/values-<stage>.yaml
-# on every branch — every builds[]{name,image,tag} pin found there is kept; only aged, unreferenced
+# per-chart values-<stage>.yaml on every branch, (c) hostyour-cloud's
+# clusters/inventories/<app>/values-<stage>.yaml on every branch — every builds[]{name,image,tag}
+# pin found there is kept; only aged, unreferenced
 # tags fall. zot's own retention deliberately NEVER touches the single-segment repos (the ["*"]
 # keep-all policy in clusters/inventories/registry/values-common.yaml) — the reaper is the SOLE cleaner there;
 # zot's 50-count rule only prunes the docker.io pull-through cache repos.

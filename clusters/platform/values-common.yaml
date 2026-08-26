@@ -214,7 +214,7 @@ global:
   # ── The pin a stage carries before its first release ───────────────────────
   # WHAT TO WRITE WHEN AN APPLICATION IS ADDED. Every image this platform builds
   # is pinned per stage as a builds[] entry — {name, image, tag} in
-  # apps/<app>/values-<stage>.yaml — and the entry has to EXIST before the
+  # clusters/inventories/<app>/values-<stage>.yaml — and the entry has to EXIST before the
   # release that writes its tag: the bump task rewrites the tag of an entry it
   # finds by `image` and creates none
   # (clusters/inventories/consumer-build/templates/pipeline-release.yaml, bump_file), and the

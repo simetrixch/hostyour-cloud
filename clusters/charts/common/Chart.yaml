@@ -3,9 +3,10 @@ name: common
 version: 1.0.0
 description: >-
   Shared named templates (name / fullname / chart / labels / selectorLabels)
-  for the library charts in charts/. type: library — renders nothing on its
-  own. IMPORTANT consumption rule: declare this chart as a dependency of the
-  consuming APP (apps/<name>/Chart.yaml), not of the library charts — Helm
+  for the library charts in clusters/charts/. type: library — renders nothing
+  on its own. IMPORTANT consumption rule: declare this chart as a dependency of
+  the consuming CHART — the one under clusters/inventories/, clusters/units/ or
+  clusters/slaves/ — and not of the library charts, because Helm
   does not vendor nested file:// dependencies, but template defines are
   global per release, so one app-level dependency makes the common.* defines
   visible to every library subchart in that app. Any app that pulls in

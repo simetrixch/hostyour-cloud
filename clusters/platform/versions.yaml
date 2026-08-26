@@ -11,9 +11,10 @@
 # reports each pin against what its upstream serves now; both operations read
 # this one file, so the writer and the reader cannot drift apart.
 #
-# Do NOT hand-edit the version fields in apps/*/Chart.yaml, apps/*/values-*.yaml
-# or the deploy programs — they are stamped from this file. The stamp touches
-# only the version token, so comments and formatting are preserved.
+# Do NOT hand-edit the version fields in clusters/inventories/*/Chart.yaml,
+# clusters/inventories/*/values-*.yaml, clusters/units/*/Chart.yaml or the deploy
+# programs — they are stamped from this file. The stamp touches only the version
+# token, so comments and formatting are preserved.
 #
 # THE GRAMMAR is the ansiwise-versions plugin's (its declaration.dart states it
 # in full). What matters when editing:
@@ -208,7 +209,8 @@ images:
         key: tag
         anchor: 'repository: python'
 
-# Upstream Helm charts wrapped by apps/*/Chart.yaml (dependency versions).
+# Upstream Helm charts wrapped by a Chart.yaml under clusters/inventories/ or
+# clusters/units/ (dependency versions).
 # Every upstream here is `chart_repository`: the report reads the repository
 # to ask out of the very Chart.yaml the stamp writes, so the repository is
 # named exactly once, where Helm itself reads it.

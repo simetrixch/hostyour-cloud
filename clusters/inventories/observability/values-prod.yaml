@@ -29,7 +29,8 @@ kube-prometheus-stack:
               requests:
                 storage: 2Gi
       # Discover AlertmanagerConfig CRs cluster-wide so per-app email-routing
-      # rules emitted by the monitoring chart (apps/<x>/values.monitoring.
+      # rules emitted by the monitoring chart (clusters/inventories/<x>/
+      # values.monitoring.
       # alertmanagerConfigs) actually take effect. Without these selectors,
       # kube-prometheus-stack ignores AlertmanagerConfig CRs entirely.
       alertmanagerConfigSelector: {}
