@@ -227,6 +227,35 @@ spec:
             # rendering.
             - name: ANSIWISE_SERVE_COMMAND
               value: {{ .Values.ansiwise.serveCommand | quote }}
+            # THE NAME THIS PLATFORM'S OWN UNIT IS ONBOARDED UNDER (config.ts
+            # PLATFORM_UNIT_NAME), and the only value that lets the last program of a
+            # first master's install onboard that unit without a gate run
+            # (hostyour-manager server/domains/units/first-master.ts). That file tries
+            # four conditions in order and the FIRST one is this name: unset, it refuses
+            # with "this Manager names no platform unit" and the onboarding takes the
+            # gated path instead — on every installation, because nothing else in this
+            # tree carries the value.
+            #
+            # A LITERAL, BECAUSE THE WORD IS THE UNIT'S IDENTITY AND NOT A DEPLOYMENT'S
+            # CHOICE. It has to be the same word in three places that already exist: the
+            # unit's own manifest (hostyour-manager deploy/platform.yaml `name`), the
+            # body of the request that onboards it (the installation catalogue's
+            # ansiwise/programs/onboard-manager.yaml sends
+            # "consumerName":"hostyour-manager"), and here, which is where the Manager
+            # reads it from. A values key would be a fourth spelling of one word, and an
+            # installation that set it differently would close the exemption its own
+            # installer needs rather than open anything.
+            #
+            # AN EMPTY VALUE IS NOT THE ABSENT ONE, and the difference is the pod. The
+            # schema is a DNS-1123 label regex under .optional(): absent parses and shuts
+            # the exemption, "" fails the regex and config parsing exits the process
+            # before the logger exists. Measured against the Manager's own zod, 2026-08-26:
+            # {} passes, {PLATFORM_UNIT_NAME:""} fails. So this line must never be turned
+            # into a quoted lookup of a values key somebody can empty: `quote` passes an
+            # absent or empty key through as an empty string, and what that stops is the
+            # Manager, not the branch.
+            - name: PLATFORM_UNIT_NAME
+              value: "hostyour-manager"
             {{- if .Values.onboarding.gatemanagerAddr }}
             # Consumer onboarding (config.ts, onboarding.md §6). Validation runs as an in-cluster
             # `gate-run` Tekton PipelineRun (NOT a host Quadlet). Set gatemanagerAddr ⇒ the onboarding
