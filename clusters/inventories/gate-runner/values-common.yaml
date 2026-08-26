@@ -65,10 +65,24 @@ reportWriter:
   # apiserver endpoint — an address the fence in that same file denies to
   # every other pod here. WHICH address is not stated twice: the pinhole reads
   # global.nodeCidrs, the same list the fence carves out, so the two cannot
-  # come apart. Only the PORTS are the pinhole's own, and they are a superset
-  # on purpose — one of the three is where a given cluster's apiserver
-  # actually listens (443 service VIP, 6443 kubeadm, 16443 microk8s) and the
-  # publish pod runs the platform-pinned kubectl step, never tenant code.
+  # come apart. Only the PORTS are the pinhole's own, and they are a superset on
+  # purpose — one of the three is where a given cluster's apiserver actually
+  # listens: 6443 is kubeadm's and 16443 is MicroK8s'.
+  #
+  # 443 IS NOT THE SERVICE VIP, and this line used to say it was. That was true
+  # while the pinhole's ipBlock was 10.0.0.0/8, which holds the service network;
+  # it stopped being true when the ipBlock became global.nodeCidrs, which holds
+  # NODE addresses and no VIP at all. What answers 443 at a node address is the
+  # ingress controller's host port — the one the fence twenty lines up is
+  # written to deny to every other pod here.
+  #
+  # It stays, and this is a decision rather than an oversight. Dropping it would
+  # leave a cluster whose apiserver does listen on 443 at a node address with no
+  # route for the report, which is the one outage templates/pipeline.yaml says
+  # must never happen, and nothing here has measured that such a cluster does not
+  # exist. What makes it safe meanwhile is WHO may use it: the pinhole selects
+  # tekton.dev/pipelineTask=publish-report alone, and that pod runs the
+  # platform-pinned kubectl step, never tenant code.
   apiServer:
     ports:
       - 443

@@ -153,10 +153,18 @@ global:
   # to deny, and an installation that has not been given the value stops with
   # it instead of syncing a fence with a hole.
   #
-  # A /32 per node address is the tightest true answer. The cluster LAN's own
-  # prefix is the answer where nodes are added without the branch being
-  # rewritten each time; it costs the sandbox nothing, because the private
-  # ranges are already denied.
+  # A /32 PER NODE ADDRESS, AND NOT THE PREFIX THEY SIT IN. This list is read
+  # TWICE, with opposite polarity, and only one of the two readings is a deny.
+  # The fence carves these addresses OUT of an allow-all ipBlock, where a wider
+  # entry is a wider deny and costs nothing. The report-writer pinhole in the
+  # same file uses the identical list as the ipBlock it ALLOWS — the publish
+  # step has to reach the API server through the fence — and there a wider entry
+  # is a wider allow: writing the cluster LAN's /24 here does not widen a deny,
+  # it lets that one pod reach every host on the segment.
+  #
+  # So the convenience of not rewriting the branch when a node is added is paid
+  # for in the pinhole, and it is not the sandbox's to give away. Add the node's
+  # /32 when the node is added.
   nodeCidrs: []
 
   # Whether a shared service is deployed LOCALLY on this cluster — gates the
