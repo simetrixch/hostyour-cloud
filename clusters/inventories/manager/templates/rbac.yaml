@@ -65,7 +65,37 @@ resourceNames — only relocated):
       API group "tekton.dev" in the namespace "gate-runner"
 
     Watch is granted on neither, and neither list reaches outside this namespace.
-  * manager-argocd-onboarding (ClusterRole) — get,list Applications (deploy
+  * manager-build-rbac-writer (ClusterRole) — the per-unit build RBAC, which the
+    manager is the only party allowed to write. A unit's AppProject blacklists Role
+    and RoleBinding (hostyour-manager server/domains/units/appproject.ts) precisely
+    so nothing a unit deploys can mint itself a Role, and build-rbac.ts:1-10 states
+    the consequence: "the manager is therefore the only writer left". Without this
+    grant that writer had no rights at all, and onboarding stopped at
+    `roles.rbac.authorization.k8s.io "<unit>-build-eventlistener" is forbidden` —
+    measured on apps3, 2026-08-26, on the first onboarding that reached this far.
+
+    CLUSTER SCOPE, because the namespaces do not exist yet. Each unit's build
+    namespace is `<unit>-build`, made at onboarding, and grant 3 lands in the target
+    cluster's ArgoCD namespace. Same reason manager-smoke-reader is cluster-scoped:
+    namespaces not known ahead of time.
+
+    THE TEKTON AND ARGOCD VERBS BESIDE IT ARE NOT A SECOND FEATURE — they are what
+    Kubernetes requires before it will let this account CREATE those Roles at all.
+    Privilege-escalation prevention refuses a Role granting permissions the creator
+    does not itself hold, so the set here is exactly the union of what build-rbac.ts
+    hands out and nothing more: create pipelineruns (the EventListener's grant,
+    :108), get/list/watch pipelineruns (the manager's own read, :115), and
+    get,patch applications (the release pipeline's sync, :166-171 — the `patch` is
+    why that verb joins manager-argocd-onboarding above). Holding the union is also
+    what makes `bind` unnecessary on the RoleBindings.
+
+    WHAT WAS REJECTED, and it is the important half: `escalate` on roles. It is the
+    one verb that would have made this grant a single line, and it lets an account
+    write a Role carrying ANY permission into ANY namespace — with the create right
+    beside it, that is cluster-admin by another name. The union above is larger to
+    write and strictly bounded: this account can never mint a Role that reaches
+    further than these two resources.
+  * manager-argocd-onboarding (ClusterRole) — get,list,patch Applications (deploy
     convergence); get,create,update,delete the manager-OWNED per-consumer AND
     per-tenant isolation AppProjects. NOT applicationsets/secrets. Cluster
     scope (was ns argocd) because a tenant's fan-out + operator Application live in
@@ -174,8 +204,12 @@ serviceaccount.yaml / deployment.yaml.
         (dict "apiGroups" (list "") "resources" (list "configmaps") "verbs" (list "get" "delete"))
       ))
       (dict "name" "manager-argocd-onboarding" "rules" (list
-        (dict "apiGroups" (list "argoproj.io") "resources" (list "applications") "verbs" (list "get" "list"))
+        (dict "apiGroups" (list "argoproj.io") "resources" (list "applications") "verbs" (list "get" "list" "patch"))
         (dict "apiGroups" (list "argoproj.io") "resources" (list "appprojects") "verbs" (list "get" "create" "update" "delete"))
+      ))
+      (dict "name" "manager-build-rbac-writer" "rules" (list
+        (dict "apiGroups" (list "rbac.authorization.k8s.io") "resources" (list "roles" "rolebindings") "verbs" (list "get" "create" "update" "delete"))
+        (dict "apiGroups" (list "tekton.dev") "resources" (list "pipelineruns") "verbs" (list "create" "get" "list" "watch"))
       ))
       (dict "name" "manager-deploy-state-reader" "namespace" "kube-system" "rules" (list
         (dict "apiGroups" (list "") "resources" (list "configmaps") "resourceNames" (list "hostyour-deploy-state") "verbs" (list "get"))
