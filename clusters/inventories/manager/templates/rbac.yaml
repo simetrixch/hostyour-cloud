@@ -50,8 +50,21 @@ resourceNames — only relocated):
     (including credential Secrets) may still stand", and `kubectl auth can-i` for
     that account answered get yes, create yes, delete yes, list NO, watch NO. The
     comment here said "No list/watch anywhere (every object addressed by name)",
-    which the adapter had stopped being true of. Watch is still not granted, and
-    the list is one verb on one resource in one namespace.
+    which the adapter had stopped being true of.
+
+    TASKRUNS ARE LISTED FOR THE SAME KIND OF REASON, and it is the more important
+    one. When a gate-run produces no report, the ONLY place the cause exists is the
+    TaskRun statuses of that PipelineRun, and the adapter reads them before it reaps
+    (hostyour-manager gate-runner-tekton.ts:370 states it, and the call is
+    listNamespacedCustomObject over tekton.dev/taskruns at :182). Without the verb
+    the operator is handed a raw 403 where the sentence saying why the gate died
+    belongs. Measured on apps3 before it was granted:
+
+      taskruns.tekton.dev is forbidden: User
+      "system:serviceaccount:manager:manager" cannot list resource "taskruns" in
+      API group "tekton.dev" in the namespace "gate-runner"
+
+    Watch is granted on neither, and neither list reaches outside this namespace.
   * manager-argocd-onboarding (ClusterRole) — get,list Applications (deploy
     convergence); get,create,update,delete the manager-OWNED per-consumer AND
     per-tenant isolation AppProjects. NOT applicationsets/secrets. Cluster
@@ -157,6 +170,7 @@ serviceaccount.yaml / deployment.yaml.
       (dict "name" "manager-gate-dispatch" "namespace" "gate-runner" "rules" (list
         (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "create" "delete"))
         (dict "apiGroups" (list "tekton.dev") "resources" (list "pipelineruns") "verbs" (list "create" "get" "list" "delete"))
+        (dict "apiGroups" (list "tekton.dev") "resources" (list "taskruns") "verbs" (list "list"))
         (dict "apiGroups" (list "") "resources" (list "configmaps") "verbs" (list "get" "delete"))
       ))
       (dict "name" "manager-argocd-onboarding" "rules" (list

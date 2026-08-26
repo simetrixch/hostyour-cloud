@@ -105,13 +105,20 @@ sequence:
   # A FIRST MASTER, measured on an installation from a bare machine. Five programs,
   # in this order.
   #
-  # THE SLAVE SEQUENCE IS NOT HERE. It stands in hostyour-manager
-  # server/domains/runs/defs/deploy-slave.ts, and the last reading of it named a
-  # program the catalogue no longer carries — `deploy-gitops`, which is
-  # `deploy-platform-services` in the four sites `versions.yaml` stamps. Copying a
-  # sequence across from a reading that is already stale would put a name on the
-  # trunk that no program answers to. Bringing it here is work in that repository,
-  # not in this one.
+  # THE SLAVE SEQUENCE IS NOT HERE, and the reason is not that it could not be read.
+  # It stands in hostyour-manager server/domains/runs/defs/deploy-slave.ts and it
+  # names the same three machine programs a master runs — `deploy-host` at :313,
+  # `deploy-cluster` at :319, `deploy-platform-services` at :322 — after a
+  # `deploy-slave-branch` on the MASTER at :247, with the checkout placement and the
+  # tailnet join around them. Read on 2026-08-26; `deploy-gitops`, the old name for
+  # the third, appears nowhere in that repository any more.
+  #
+  # What keeps it out of this file is that a slave's sequence is not a sequence of
+  # PROGRAMS. Half of its steps are the manager's own acts — placing the engine,
+  # moving the checkout onto the branch just cut, minting and spending a join
+  # credential — and a file that listed only the program rows would state a shape
+  # nobody can follow and would read as though the rest did not exist. Stating it
+  # whole means stating a run kind, and a run kind belongs where it runs.
   master:
     - program: deploy-host
       # Nothing. Its `git_clone` row is what establishes the platform checkout in
