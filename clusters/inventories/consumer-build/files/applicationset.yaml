@@ -101,7 +101,19 @@ spec:
               - $values/clusters/platform/values-common.yaml
               - $values/clusters/platform/values-__STAGE__.yaml
               - values-common.yaml
-              - $values/clusters/active/<fqdn>.yaml
+              # __BRANCH__ AND NOT THE LITERAL <fqdn>. The three tokens this file is
+              # substituted through are __STAGE__, __BRANCH__ and __BOOKS__; a <fqdn>
+              # written here is a placeholder nothing replaces, so helm was handed a path
+              # that is not on any branch and every per-unit build Application failed to
+              # render with "open .../clusters/active/<fqdn>.yaml: no such file or
+              # directory". Its namespace is rendered by that same Application, so the
+              # namespace never appeared either, and an onboarding'''s provision-build-rbac
+              # step then failed with a 404 naming a namespace nobody had created.
+              # Measured on apps3.digitacloud.app, 2026-08-26, on the first consumer this
+              # platform ever onboarded. __BRANCH__ is global.domain, which is this
+              # cluster'''s fqdn AND the name of its install branch AND the name of the map
+              # on it — one value, three uses, and the map is named for it.
+              - $values/clusters/active/__BRANCH__.yaml
             valuesObject:
               unit:
                 name: "{{ .name }}"
