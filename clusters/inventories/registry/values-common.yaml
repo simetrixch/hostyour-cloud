@@ -307,12 +307,22 @@ configmap:
     enabled: true
     name: zot-config
     data:
+      # NO `distSpecVersion` KEY, AND ITS ABSENCE IS THE POINT. zot overwrites
+      # whatever stands there with the version its own binary implements
+      # (`config.DistSpecVersion = distspec.Version` in updateDistSpecVersion,
+      # project-zot/zot pkg/cli/server/root.go:1164), warning first when the two
+      # differ. So a value here decides nothing and only states which
+      # distribution-spec the registry serves — a statement that goes stale on
+      # the next bump of images.zot with nothing to move it, because the version
+      # is a property of the BINARY and no upstream kind of
+      # clusters/platform/versions.yaml can ask it. Measured against the pinned
+      # binary (v2.1.18, distribution-spec 1.1.1): with the key absent
+      # `zot verify` answers "config file is valid" and prints no warning.
       config.json: |-
         {{- if eq .Values.global.registryPullUser .Values.global.registryPushUser }}
         {{- fail (printf "global.registryPullUser and global.registryPushUser are both %q, and they are two accounts distinguished by nothing else. The password file gets two lines under one name, the matcher takes the first, and the second password authenticates nothing at all — measured: the reading credential answered 401 while the writing one answered 200, so every image pull from this registry was refused and no manifest anywhere said why. Answer them differently." .Values.global.registryPullUser) }}
         {{- end }}
         {
-          "distSpecVersion": "1.1.0",
           "storage": {
             "rootDirectory": "/var/lib/registry",
             "dedupe": true,
