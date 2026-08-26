@@ -504,6 +504,12 @@ cliTools:
     upstream:
       kind: github_release
       project: argoproj/argo-cd
+      # Stable only. Read off the release list on 2026-08-26: every stable is
+      # vX.Y.Z and every candidate carries a suffix the stable shape has no room
+      # for — v3.5.0-rc1, -rc2, -rc3 stood beside v3.5.0 itself, each marked a
+      # pre-release. Without the anchors a candidate sorts above the stable it
+      # precedes and reads as a version to bump to.
+      matching: '^v[0-9]+\.[0-9]+\.[0-9]+$'
     stamps:
       - kind: yaml_value
         tree: deploy
@@ -536,6 +542,12 @@ cliTools:
     upstream:
       kind: github_release
       project: mikefarah/yq
+      # The v-prefixed stables, which is the shape everything from v4.0.1 onward
+      # carries. Read off all 169 releases on 2026-08-26: the only other shapes
+      # are the unprefixed tags this project used up to 4.0.0 and the pre-releases
+      # of that era — 4.0.0-beta2, 4.0.0-alpha1, 3.0.0-beta. The `v` alone keeps
+      # both eras apart, and the three numbers keep the beta suffixes out.
+      matching: '^v[0-9]+\.[0-9]+\.[0-9]+$'
     stamps:
       - kind: yaml_value
         tree: deploy
@@ -554,6 +566,16 @@ cliTools:
     upstream:
       kind: github_release
       project: jqlang/jq
+      # THE PATCH NUMBER IS OPTIONAL, and that is measured rather than defensive.
+      # All 16 releases were read on 2026-08-26: this project publishes stables
+      # with two numbers as readily as with three — jq-1.7, jq-1.6, jq-1.5,
+      # jq-1.4, jq-1.3, jq-1.2, jq-1.1 and jq-1.0 stand beside jq-1.8.2, jq-1.8.1,
+      # jq-1.8.0 and jq-1.7.1. A pattern demanding three would refuse the next
+      # jq-1.9 and go on reporting jq-1.8.2 as current with a newer stable in the
+      # list it just read. The candidates are jq-1.7rc1, jq-1.7rc2, jq-1.5rc1 and
+      # jq-1.5rc2, which append `rc<n>` with no separator, so ending the pattern
+      # after the numbers is what keeps them out.
+      matching: '^jq-[0-9]+\.[0-9]+(\.[0-9]+)?$'
     stamps:
       - kind: list_pin
         tree: deploy
@@ -566,6 +588,15 @@ cliTools:
     upstream:
       kind: github_release
       project: tailscale/tailscale
+      # Read off all 160 releases on 2026-08-26. Three shapes are not vX.Y.Z and
+      # each is one this pin must not see: cmd/cigocacher/<sha>, a pre-release cut
+      # for one sub-command; v0.100.0-153, a build-numbered tag of the 0.x era;
+      # and v0.98, which has two numbers. Nothing here narrows to tailscale's own
+      # stable/unstable convention — even minor stable, odd minor unstable —
+      # because the released minors measured are 0 through 98 even and then 102,
+      # with no odd minor published as a release at all. A pattern refusing odd
+      # minors would state a rule this feed does not exercise.
+      matching: '^v[0-9]+\.[0-9]+\.[0-9]+$'
     stamps:
       - kind: list_pin
         tree: deploy
@@ -621,6 +652,31 @@ cliTools:
     upstream:
       kind: github_release
       project: simetrixch/ansiwise-cli
+      # ALL THREE CHANNELS, and that is the decision this pin carries.
+      # Every release of this project is cut under one grammar,
+      # <major>.<minor>.<patch>-<channel>-<ts14> with channel one of alpha, beta
+      # and stable (hostyour-manager shared/release.ts:22, and the three tag
+      # filters of ansiwise-cli .github/workflows/release.yml that admit only
+      # tags of that shape). Read off all 25 releases on 2026-08-26: every one is
+      # an alpha and every one is marked a pre-release, the newest being
+      # 0.5.1-alpha-20260826000332, which is the pin.
+      #
+      # An `alpha`-only pattern would match the pin's own channel exactly and be
+      # wrong for it: on the day a stable is cut, it would go on reporting alphas
+      # and never say a riper release exists. Admitting all three lets the highest
+      # version win whatever channel it stands on, and the reading says "the
+      # project marks this release a pre-release" when the winner carries the
+      # marking, so a pre-release is never passed off as a plain newer version.
+      # Ordering across channels is by number, and the ts14 is the last number, so
+      # a stable cut after an alpha of the same version sorts above it.
+      #
+      # WHERE THIS IS WIDER THAN THE GRAMMAR: a leading zero. 01.2.3-alpha-<ts14>
+      # matches here and release.ts:22 refuses it. Nothing can reach the gap —
+      # ansiwise-cli's own release program refuses to compose such a tag, and the
+      # workflow builds only pushed tags — so this stays the pattern a reader can
+      # read rather than a third copy of the grammar literal that nothing holds
+      # against the other two.
+      matching: '^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|stable)-[0-9]{14}$'
     # ONE SITE, AND IT IS AN ASSERTION RATHER THAN AN INSTALL. deploy-cluster names this
     # version in its assert row and fetches the binary nowhere: /usr/local/bin/ansiwise has a
     # single writer and it is the placement (simetrixch/hostyour-manager#14), so an
