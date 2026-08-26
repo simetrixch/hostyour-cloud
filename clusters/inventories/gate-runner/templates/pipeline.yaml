@@ -12,9 +12,10 @@ PipelineRun per gate job; replaces the host-podman Quadlet gate-runner). Flow:
   publish-report  finally — Tekton finally tasks run after all tasks complete,
                   which subsumes the contract's "runAfter gate, even if gate
                   fails" (finally cannot declare runAfter). Hands the report
-                  back as ConfigMap gate-report-<run-id>; synthesizes a FAIL
-                  report if the gate crashed before writing one, so the
-                  Manager's poll never hangs.
+                  back as ConfigMap gate-report-<run-id> under key
+                  report.json; when the gate wrote none, the same ConfigMap
+                  carries key incomplete.json instead, so the Manager's poll
+                  always finds something and never hangs.
 
 RUNTIME WIRING — the Manager's PipelineRun MUST set:
   - workspaces[source]: volumeClaimTemplate, accessModes [ReadWriteOnce]

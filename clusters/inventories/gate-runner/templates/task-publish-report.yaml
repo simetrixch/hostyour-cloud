@@ -1,10 +1,28 @@
 {{- /*
 publish-report — the report hand-off. A small kubectl step that reads
 <workspace>/.gate-report.json and applies it as ConfigMap
-gate-report-<run-id> (key report.json) in THIS namespace, where the
-Manager's poll picks it up (and later deletes it with its own RBAC). If
-the gate task crashed before writing a report, a SYNTHETIC fail report is
-published instead — the Manager must never hang on a missing report.
+gate-report-<run-id> in THIS namespace, where the Manager's poll picks it
+up (and later deletes it with its own RBAC).
+
+THE CONFIGMAP CARRIES EXACTLY ONE OF TWO KEYS, AND THE KEY IS THE
+DISCRIMINATOR:
+
+  report.json      the gate wrote a report. Handed over byte for byte.
+  incomplete.json  the gate wrote none. A different and deliberately small
+                   object: incompleteVersion, runId, reason, generatedAt.
+
+A second KEY rather than a second shape under report.json, because the
+report's contractVersion is a literal: the Manager refuses a report written
+against any other version instead of reading it half-right, and it has to,
+since the runner and the Manager are separate images and a pin set by hand
+can pair a new Manager with an old runner. The absence of report.json is
+not a malformed report, it is no report, so that version check never has to
+be loosened to say the gate did not finish.
+
+The small object may NOT be dressed up as a GateReport. A GateReport carries
+a sandbox attestation and a reportHash, and this step observed neither the
+fence nor a report: filling those two in would attest to a fence nobody
+watched and hash a file that does not exist.
 
 Runs as the pipeline's `finally` task under SA gate-report-writer (bound by
 the Manager's PipelineRun taskRunSpecs — see pipeline.yaml): the ONLY pod
@@ -23,7 +41,8 @@ metadata:
 spec:
   description: >-
     Publish <workspace>/.gate-report.json as ConfigMap gate-report-<run-id>
-    (key report.json); synthesize a FAIL report when the file is missing.
+    under key report.json; publish key incomplete.json in the same ConfigMap
+    instead when the gate wrote no report file.
   workspaces:
     - name: source
       description: The run workspace carrying .gate-report.json (if the gate wrote one).
@@ -44,21 +63,29 @@ spec:
         set -eu
 
         REPORT="$(workspaces.source.path)/.gate-report.json"
-        OUT=/tmp/report.json
 
+        # The key IS the discriminator, so the branch that produces the payload
+        # is also the branch that names the key. /tmp is the only writable path
+        # in this step (read-only rootfs, emptyDir mounted below).
         if [ -s "$REPORT" ]; then
+          KEY=report.json
+          OUT="/tmp/$KEY"
           cp "$REPORT" "$OUT"
         else
-          # The gate task died before writing REPORT_OUT (internal error /
-          # OOM / image pull failure upstream). Publish a synthetic FAIL so
-          # the Manager's poll resolves to a verdict instead of hanging.
+          # All this step can observe is that REPORT_OUT is absent or empty
+          # after the pipeline finished. WHY the gate task wrote nothing is
+          # recorded only in the PipelineRun's TaskRun statuses, so the reason
+          # points there instead of naming a cause this step never saw. One of
+          # the ways the gate step never starts at all is a failed clone: gate
+          # declares runAfter: [clone] (pipeline.yaml).
+          KEY=incomplete.json
+          OUT="/tmp/$KEY"
           NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           cat > "$OUT" <<EOF
         {
-          "verdict": "FAIL",
-          "synthetic": true,
+          "incompleteVersion": "1",
           "runId": "$(params.run-id)",
-          "reason": "gate task produced no report file (crashed before REPORT_OUT was written) - synthesized by publish-report",
+          "reason": "the gate task produced no report file at $(workspaces.source.path)/.gate-report.json, so this run has no verdict; why it produced none is recorded only in this PipelineRun's clone and gate TaskRun statuses, and gate runs after clone, so a failed clone means the gate step never started",
           "generatedAt": "${NOW}"
         }
         EOF
@@ -68,7 +95,7 @@ spec:
         # finally task). The hostyour.cloud/gate-report label lets operators
         # GC orphaned reports in bulk; the Manager itself deletes by name.
         kubectl create configmap "gate-report-$(params.run-id)" \
-          --from-file=report.json="$OUT" \
+          --from-file="$KEY=$OUT" \
           --namespace {{ .Release.Namespace }} \
           --dry-run=client -o yaml \
           | kubectl label --local -f - hostyour.cloud/gate-report=true -o yaml \

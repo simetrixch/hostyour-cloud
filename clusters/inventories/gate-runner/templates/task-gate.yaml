@@ -7,8 +7,8 @@ then the check gates (G1 structure, G2 determinism, G3 render, then
 G6/G7/G8/G22 over the rendered chart), then the full GateReport JSON to
 REPORT_OUT.
 Exit 0 even on gate FAIL — the verdict lives in the report; non-zero only on
-an internal error (no report producible), in which case publish-report
-synthesizes a FAIL report.
+an internal error (no report producible), in which case publish-report writes
+the report ConfigMap under key incomplete.json instead of report.json.
 
 Pod hardening per the onboarding contract: no SA token (pipeline-sa carries
 automountServiceAccountToken=false), non-root, all capabilities dropped,
