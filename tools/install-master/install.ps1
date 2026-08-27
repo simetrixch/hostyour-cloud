@@ -211,13 +211,32 @@ $stream = ("umask 077${lf}cat > `"`$1`" <<'AW_CONFIG_END'${lf}" +
            "AW_CONFIG_END${lf}" +
            ((Get-Content -Raw -Path $driver) -replace "`r", ''))
 
-# UTF-8 WITHOUT A BOM on the way out. PowerShell's default would put one in front of
-# the first line, and bash reads those three bytes as part of `umask`.
-$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+# UTF-8 IN BOTH DIRECTIONS, and they are two different settings.
+#
+# $OutputEncoding is what PowerShell SENDS to a native command; without a BOM,
+# because bash would read those three bytes as part of `umask`.
+#
+# [Console]::OutputEncoding is what PowerShell READS BACK from one, and it is the
+# one that was missing: driver.sh draws its phases with ══ and its verdicts with ✓,
+# and a console left on its code page turned those into ΓòÉΓòÉ and Γ£ô. The bytes
+# arriving were always right; nothing was decoding them.
+#
+# BOTH ARE PUT BACK. This runs in the operator's own session when it is started as
+# ./install.ps1, so a console encoding changed here would outlive the installation.
+$spokenBefore = $OutputEncoding
+$heardBefore  = [Console]::OutputEncoding
+try {
+  $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
-$stream | & ssh @base @door $target 'bash -s -- "$HOME/.aw-config.env"' 2>&1 |
-  Tee-Object -FilePath $transcript
-$installed = $LASTEXITCODE
+  $stream | & ssh @base @door $target 'bash -s -- "$HOME/.aw-config.env"' 2>&1 |
+    Tee-Object -FilePath $transcript
+  $installed = $LASTEXITCODE
+}
+finally {
+  $OutputEncoding = $spokenBefore
+  [Console]::OutputEncoding = $heardBefore
+}
 
 # ---------------------------------------------------- the machine's own records
 # FETCHED WHATEVER HAPPENED: a failed installation is the one whose records are

@@ -101,7 +101,13 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 
 # SHREDDED ON EVERY PATH. A credential that outlives the act it was handed over
 # for is a credential nobody is watching.
-cleanup() { rm -f "$CONFIG" /tmp/.aw-askpass /tmp/.aw-token 2>/dev/null || true; }
+# WHAT THIS PUT ON THE MACHINE, TAKEN OFF AGAIN ON EVERY PATH, including a failure.
+# The answers are not an afterthought here: deploy-branch is told nine credentials,
+# and a file holding them has no reason to outlive the run that needed it.
+cleanup() {
+  rm -f "$CONFIG" /tmp/.aw-askpass /tmp/.aw-token 2>/dev/null || true
+  rm -rf "${ANSWERS_DIR:-}" 2>/dev/null || true
+}
 trap cleanup EXIT INT TERM
 
 # NOTHING BUT ASSIGNMENTS AND COMMENTS, checked BEFORE this file is read, because
@@ -149,7 +155,8 @@ readonly RELEASES=https://github.com/simetrixch/ansiwise-cli/releases/download
 readonly CATALOG=/srv/ansiwise-catalog
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
-readonly ANSWERS=/home/$OPERATOR/.install-master-answers.json
+readonly ANSWERS_DIR=/home/$OPERATOR/.install-master-answers
+ANSWERS=''
 
 RUN_IDS=()
 
@@ -312,41 +319,91 @@ done
 good 'all four things install-order.yaml names stand in the catalogue'
 say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
 
-# The answers, written HERE and never carried: mode 0600 and the operator's own,
+# The answers, written HERE and never carried: mode 0600 and this account's own,
 # because every program reads them and nothing else may.
 #
-# EVERY VALUE THE CONFIG STATES, LOWER-CASED, and nothing else. The config's names are
-# the programs' own answer names in upper case, so the mapping needs no table that could
-# fall behind them.
+# ONE FILE PER PROGRAM, CARRYING WHAT THAT PROGRAM DECLARES AND NOTHING ELSE. An
+# engine refuses an answer a program does not declare, by name and one line each —
+# deploy-host declares four and was handed thirty-three, so it said so
+# twenty-eight times. It is right to refuse: an answer no program asked for is a
+# name somebody mistyped or one a program stopped using, and either is worth a
+# refusal rather than a silent pass.
 #
-# AN EMPTY VALUE IS LEFT OUT rather than written as an empty string. A value the config
-# does not state is one the operator wants the program's DECLARED DEFAULT for, and an
-# empty string is not that default — it is an answer that overrides it with nothing.
+# The Manager composes per program in exactly this way, and its hostAnswers() is
+# deploy-host's four (hostyour-manager/server/domains/runs/defs/deploy-slave.ts:150).
 #
-# THE ELEVATION PASSWORD STANDS BESIDE THE ANSWERS, NOT AMONG THEM. It is what the run
-# was STARTED with, not something a caller answers, and a step that needs it has it
-# filled in by the run itself. The engine refuses an envelope carrying it among the
-# answers by name — ansiwise-core/lib/src/model/caller_inputs.dart:62 — and it is right
-# to: a password sitting in the answers would be recorded as one.
-python3 - "$CONFIG" "$ANSWERS" <<'COMPOSE' || die 'could not write the answers file' 73
+# THE NAMES ARE READ OFF THE PROGRAM ITSELF, out of the catalogue standing on this
+# machine, so nothing here holds a list that could fall behind what the programs
+# declare. The config's names are those names in upper case.
+#
+# COMPOSED ONCE PER PROGRAM, NOT ONCE PER MODE. test, dry and run gate one another
+# on a fingerprint taken over what the run was told, so the three have to be told
+# by the same bytes.
+#
+# AN EMPTY VALUE IS LEFT OUT rather than written as an empty string. A value the
+# config does not state is one the operator wants the program's DECLARED DEFAULT
+# for, and an empty string is not that default — it is an answer that overrides it
+# with nothing.
+#
+# THE ELEVATION PASSWORD STANDS BESIDE THE ANSWERS, NOT AMONG THEM. It is what the
+# run was STARTED with, not something a caller answers, and a step that needs it
+# has it filled in by the run itself. The engine refuses an envelope carrying it
+# among the answers by name — ansiwise-core/lib/src/model/caller_inputs.dart:62 —
+# and it is right to: a password sitting in the answers would be recorded as one.
+mkdir -p "$ANSWERS_DIR" && chmod 700 "$ANSWERS_DIR" \
+  || die "could not make $ANSWERS_DIR, and the answers are written there" 73
+
+compose_answers() {
+  local program="$1"
+  local declares="$CATALOG/ansiwise/programs/$program.yaml"
+  [ -r "$declares" ] || { bad "$declares cannot be read, and it is what states the answers $program takes"; return 1; }
+
+  ANSWERS="$ANSWERS_DIR/$program.json"
+  local counted
+  counted=$(python3 - "$CONFIG" "$declares" "$ANSWERS" <<'COMPOSE'
 import json, re, sys
 
 BESIDE = 'elevation_password'
+config_path, declares_path, into = sys.argv[1], sys.argv[2], sys.argv[3]
 
 stated = {}
-for line in open(sys.argv[1], encoding='utf-8'):
+for line in open(config_path, encoding='utf-8'):
     named = re.match(r"^([A-Z][A-Z0-9_]*)='([^']*)'\s*(#.*)?$", line)
     if named and named.group(2) != '':
         stated[named.group(1).lower()] = named.group(2)
 
-envelope = {'answers': {k: v for k, v in stated.items() if k != BESIDE}}
+declared, inside = [], False
+for line in open(declares_path, encoding='utf-8').read().splitlines():
+    if re.match(r'^answers:\s*(#.*)?$', line):
+        inside = True
+        continue
+    if not inside:
+        continue
+    if line.strip() and not line[0].isspace():
+        break
+    entry = re.match(r'^\s*-\s*name:\s*([a-z][a-z0-9_]*)\s*(#.*)?$', line)
+    if entry:
+        declared.append(entry.group(1))
+
+answers = {name: stated[name] for name in declared
+           if name in stated and name != BESIDE}
+envelope = {'answers': answers}
 if BESIDE in stated:
     envelope[BESIDE] = stated[BESIDE]
 
-json.dump(envelope, open(sys.argv[2], 'w', encoding='utf-8'), indent=2)
+with open(into, 'w', encoding='utf-8') as written:
+    json.dump(envelope, written, indent=2)
+
+silent = [name for name in declared if name not in stated and name != BESIDE]
+print(f"{len(answers)} of the {len(declared)} it declares"
+      + (f", and {len(silent)} left to its own default: {' '.join(silent)}" if silent else ""))
 COMPOSE
-chmod 600 "$ANSWERS"
-good "the answers stand at $ANSWERS, readable by $OPERATOR alone"
+  ) || { bad "could not write the answers for $program"; return 1; }
+
+  chmod 600 "$ANSWERS" || { bad "could not close $ANSWERS to this account alone"; return 1; }
+  say "$program is told $counted"
+  return 0
+}
 
 # =============================================================================
 # The five programs. install-order.yaml's own sequence for a first master, in its
@@ -402,6 +459,11 @@ step=0
 for program in "${PROGRAMS[@]}"; do
   step=$(( step + 1 ))
   phase "$step / 5   $program"
+  compose_answers "$program" || {
+    say ''
+    say "the installation stops here, before $program was started."
+    break
+  }
   for mode in test dry run; do
     run_program "$program" "$mode" "$step" || {
       say ''
