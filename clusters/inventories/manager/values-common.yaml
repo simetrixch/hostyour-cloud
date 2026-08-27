@@ -249,19 +249,18 @@ ansiwise:
   # and WorkingDirectory from them), so the session door and the address door
   # serve one catalogue rather than two that agree by accident.
   #
-  # ~/ansiwise-rest AND NOT A BARE NAME, and this is the same "one release" the
-  # paragraph above is about. The placement writes both executables into the
-  # operating account's own home — BOOTSTRAP_HOME in hostyour-manager
-  # server/domains/runs/defs/place-ansiwise.ts, and it goes there because
-  # /usr/local/bin belongs to root and SFTP has no elevation to offer. NOTHING
-  # writes /usr/local/bin: deploy-cluster.yaml states in its own tool phase that
-  # the engine is asserted there and fetched nowhere, because that path has one
-  # writer and it is not that program. So a bare name reaches whatever an earlier
-  # installation left on PATH — on a machine that never had one, "ansiwise-rest:
-  # command not found", and on one that did, a binary at some other version
-  # serving programs written for this one. Naming the placed half is what makes
-  # the pin above the version that actually answers.
-  serveCommand: "cd /srv/ansiwise-catalog && ~/ansiwise-rest serve --programs /srv/ansiwise-catalog/ansiwise/programs"
+  # A BARE NAME, AND IT IS SAFE BECAUSE ONE STEP NOW OWNS THAT PATH. The placement
+  # transfers both executables into the operating account's home — SFTP
+  # authenticates as that account and has no elevation to offer — and then copies
+  # them into /usr/local/bin with the run's elevation password, reading both back
+  # off the path afterwards (PATH_HOME in hostyour-manager
+  # server/domains/runs/defs/place-ansiwise.ts). Until it did, nothing wrote that
+  # directory at all and a bare name reached whatever an earlier installation had
+  # left there: "ansiwise-rest: command not found" on a machine that never had one,
+  # and a binary at another version serving programs written for this one on a
+  # machine that did. Naming the path is what makes THIS door, the resident door
+  # and deploy-cluster's require_cli_tool_versions row all ask the same file.
+  serveCommand: "cd /srv/ansiwise-catalog && ansiwise-rest serve --programs /srv/ansiwise-catalog/ansiwise/programs"
 
 # pino log level (config.ts LOG_LEVEL): fatal|error|warn|info|debug|trace|silent.
 logLevel: info
