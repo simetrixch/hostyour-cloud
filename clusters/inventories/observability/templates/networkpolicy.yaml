@@ -1,0 +1,158 @@
+{{- /*
+prometheus-query-allow — WHO MAY OPEN THE QUERY API AT ALL.
+
+Prometheus' :9090 answers /api/v1/query, and a query is a read of every series
+this cluster holds: the master's own kube-state-metrics, and — once the
+remote_write receiver is on — every slave's pushed metrics under
+external_labels.cluster. Nothing in front of it authenticates. Until this policy
+exists, every pod on the cluster may read all of it, a consumer's and a tenant's
+workloads included, because no NetworkPolicy in this namespace selects the
+Prometheus pod and an unselected pod admits everything.
+
+THIS POLICY DOES NOT GRANT A PATH — IT REMOVES THE OTHERS. Nothing that reaches
+:9090 today needs it in order to keep reaching :9090; what it does is name the
+four sources that may, so a fifth cannot. Read it that way when judging a rule
+below: an entry is not a door being opened, it is a door being kept.
+
+WHY IT IS OFF ON THE TRUNK (values-common.yaml queryPolicy.enabled). The moment
+one Ingress-typed policy selects this pod, the pod is default-deny for every
+source this file forgot, and the failures are silent in the two directions that
+matter most — Grafana's dashboards go blank, and the kubelet's own probes on
+this pod fail, which takes Prometheus NotReady and the whole stack with it. That
+blast radius cannot be measured from a render; it is measured on a running
+cluster by turning the key on and reading the pod. So it is armed by the
+operator, the way clusters/inventories/manager/values-common.yaml arms the
+registry reaper's deletion, and never by a default nobody chose.
+
+THE FOUR SOURCES, and each one was read out of this tree rather than assumed:
+
+  (1) SAME NAMESPACE. Grafana's `prometheus` datasource dials
+      http://observability-prometheus.observability.svc.cluster.local:9090
+      (values-common.yaml, kube-prometheus-stack.grafana datasources), and
+      Prometheus scrapes ITSELF through the same Service (serviceMonitor
+      selfMonitor). Both are pods of this namespace, so one podSelector: {}
+      covers them.
+
+  (2) THE INGRESS CONTROLLER'S NAMESPACE. On the master the prom-push Ingress
+      routes prom-push.<domain>/api/v1/write to this Service (values-common.yaml
+      ingress-prom-push), and that is the ONLY path a slave's obs-agent has to
+      this Prometheus. Traefik runs as an ordinary pod with host PORTS, not on
+      the host network, so it keeps a pod address and is admitted by the name of
+      its namespace like any other workload.
+
+  (3) THE MANAGER'S NAMESPACE. This admits a Manager whose pod stands in the pod
+      network — see (4) for the Manager that does not, and why both entries have
+      to be here.
+
+  (4) THIS CLUSTER'S OWN NODE ADDRESSES (global.nodeCidrs). Three different
+      callers arrive from a node address and none of them can be named any other
+      way:
+        - THE MANAGER, whenever it runs with hostNetwork, which is its default
+          (clusters/inventories/manager/values-common.yaml hostNetwork: true —
+          it SSHes to machines on the physical LAN and the pod CIDR can overlap
+          that LAN). A pod on the host network has no workload identity of its
+          own: what arrives here is the node's address, and a namespaceSelector
+          naming `manager` matches nothing at all. Writing only rule (3) would
+          have produced exactly the failure this platform has recorded before —
+          a boundary that reads as admitting something and does not.
+          clusters/platform/values-common.yaml states the same fact where it
+          declares nodeCidrs, and clusters/inventories/gate-runner reads that
+          list with the opposite polarity, to DENY the Manager's node address to
+          the gate sandbox.
+        - THE KUBELET, whose readinessProbe and livenessProbe on this pod come
+          from the node it schedules on. Under a default-deny ingress they are
+          dropped, the pod never turns Ready, and the operator sees a broken
+          Prometheus rather than a closed port.
+        - `kubectl port-forward`, which the API server proxies through the
+          kubelet, so it too arrives from the node.
+
+      A MISSING NODE ADDRESS IS AN OUTAGE, NOT A NARROWER RULE, because of the
+      kubelet. That is why the render below stops on an empty list instead of
+      emitting a policy that would take Prometheus NotReady on the first sync.
+
+WHAT THIS BUYS AND WHAT IT COSTS. Admitting the node addresses admits everything
+else on the host network of those nodes, and the host itself — that is wider
+than "the Manager", and it is the narrowest that Kubernetes NetworkPolicy can
+express while the Manager runs where it must. It is still the difference between
+"any pod on this cluster may read every metric" and "four named sources may".
+
+INGRESS ONLY, NEVER EGRESS. Prometheus' outbound side is the scrape, and the
+scrape targets are every pod of every namespace plus the node exporters — an
+egress rule set that named them all would be the cluster. kube-prometheus-stack's
+own prometheus.networkPolicy is unusable here for exactly this reason: it writes
+policyTypes: [Egress, Ingress] unconditionally and emits an egress rule list only
+when one is configured, so switching it on with ingress rules alone denies ALL
+egress and Prometheus stops scraping. That is why this policy is written here
+rather than turned on there.
+*/ -}}
+{{- $policy := .Values.queryPolicy | default dict -}}
+{{- if $policy.enabled }}
+{{- $nodeCidrs := .Values.global.nodeCidrs | default list -}}
+{{- if not $nodeCidrs }}
+{{- fail "queryPolicy.enabled is true but global.nodeCidrs is empty, so this policy would select the Prometheus pod without admitting the node addresses. The kubelet's readiness and liveness probes on that pod arrive from the node, so they would be dropped and Prometheus would never turn Ready — and the Manager, which runs on the host network, would lose the metrics query API at the same time. Write the CIDRs of this cluster's nodes into clusters/active/<fqdn>.yaml (global.nodeCidrs), which loads last in this app's valueFiles chain; clusters/platform/values-common.yaml states the key and what belongs in it." }}
+{{- end }}
+{{- range $nodeCidrs }}
+{{- if contains ":" . }}
+{{- fail (printf "global.nodeCidrs carries the IPv6 range %q. Every rule of this policy is IPv4 and an ipBlock takes one family, so an IPv6 entry here is admitted by nothing and quietly narrows the policy instead of widening it. Write IPv4 ranges only." .) }}
+{{- end }}
+{{- end }}
+{{- $stack := index .Values "kube-prometheus-stack" | default dict -}}
+{{- $fullname := $stack.fullnameOverride | default "observability" -}}
+{{- /*
+The port is NOT a setting of this policy and there is no key for it here. It is
+the container port kube-prometheus-stack opens on the Prometheus pod, and it is
+read from the same value that chart's own Service reads its targetPort from
+(prometheus.service.targetPort, 9090 in the vendored values.yaml, not overridden
+in this tree). A second spelling of the number would be a value that can drift
+from the port it is supposed to name, and the drift's symptom is a policy that
+selects the right pod and admits nobody to the port anybody uses.
+*/ -}}
+{{- $port := dig "prometheus" "service" "targetPort" 9090 $stack -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-query-allow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: observability
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  # The two labels the prometheus-operator stamps on the Prometheus pod, and the
+  # same pair the Service selects on (kube-prometheus-stack
+  # templates/prometheus/service.yaml). The second carries the Prometheus CR's
+  # name, which the chart composes as <fullname>-prometheus — READ off
+  # kube-prometheus-stack.fullnameOverride rather than written out, because a
+  # changed override renames the CR and a selector that missed the rename would
+  # select no pod at all: a policy that appears to bound the query API and bounds
+  # nothing.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      operator.prometheus.io/name: {{ printf "%s-prometheus" $fullname }}
+  # Never Egress — the scrape is Prometheus' outbound side and its targets are
+  # the whole cluster. Naming Egress here at all, even with rules, denies
+  # everything the rules forget.
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # (1) Grafana's datasource and Prometheus' own self-scrape.
+        - podSelector: {}
+        # (2) + (3) the ingress controller carrying the prom-push route, and a
+        # Manager that stands in the pod network (values-common.yaml
+        # queryPolicy.allowNamespaces).
+        {{- range $policy.allowNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+        # (4) the kubelet's probes on this pod, a Manager on the host network,
+        # and `kubectl port-forward` — all three arrive from a node address.
+        {{- range $nodeCidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ $port }}
+{{- end }}

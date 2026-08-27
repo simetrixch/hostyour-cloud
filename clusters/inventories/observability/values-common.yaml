@@ -447,6 +447,54 @@ monitoring:
       # The receiver name defaults to the entry key ("platform-default").
 
 # ============================================================================
+# Who may open Prometheus' query API (templates/networkpolicy.yaml)
+# ============================================================================
+# :9090 answers /api/v1/query and nothing in front of it authenticates, so
+# reaching the port is reading every series the cluster holds. No NetworkPolicy
+# in this namespace selects the Prometheus pod today, and an unselected pod
+# admits everything — so the port stands open to every workload on the cluster,
+# a consumer's and a tenant's included. The policy names who may instead.
+#
+# OFF, AND ARMED BY THE OPERATOR. Selecting the pod makes it default-deny for
+# every source the policy does not name, and the two sources that hurt most fail
+# quietly: Grafana's dashboards go blank, and the kubelet's own probes on the pod
+# are dropped, which takes Prometheus NotReady and every dashboard and alert with
+# it. Which sources actually exist on a given cluster cannot be established from
+# a render — it is read off a running one. So this is turned on deliberately,
+# once, on a cluster somebody is watching, exactly the way the registry reaper's
+# deletion is armed in clusters/inventories/manager/values-common.yaml.
+#
+# WHAT TO READ WHEN ARMING IT: the Prometheus pod stays Ready, a Grafana panel
+# still renders, and a slave's push still lands (the prom-push Ingress route
+# below). All three break in the same way — a silent deny — so all three are
+# looked at, not just the first.
+queryPolicy:
+  enabled: false
+  # Namespaces admitted BY NAME, which reaches a workload that stands in the pod
+  # network and nothing else.
+  #
+  #   ingress — Traefik, which carries the prom-push.<domain>/api/v1/write route
+  #     to this Service (ingress-prom-push below). It is the only path a slave's
+  #     obs-agent has to this Prometheus, so removing this entry silences every
+  #     slave's metrics.
+  #   manager — the Manager's metrics probe, which asks
+  #     /api/v1/query?query=up{cluster="<fqdn>"} whether a slave's agent is
+  #     pushing (clusters/inventories/manager/values-common.yaml metrics.queryUrl
+  #     names the address it dials).
+  #
+  # THE `manager` ENTRY ADMITS NOTHING WHILE THE MANAGER RUNS ON THE HOST
+  # NETWORK, which is its default: a pod on the host network arrives at the
+  # node's address and carries no workload identity, so no namespace name
+  # matches it. It is admitted by global.nodeCidrs instead — the same list the
+  # policy needs for the kubelet's probes. Both entries stand because the
+  # Manager's hostNetwork key decides which of the two carries it, and a cluster
+  # that turns hostNetwork off would otherwise lose the probe with no rule left
+  # to name it. templates/networkpolicy.yaml carries the whole reasoning.
+  allowNamespaces:
+    - ingress
+    - manager
+
+# ============================================================================
 # kube-prometheus-stack
 # ============================================================================
 kube-prometheus-stack:
