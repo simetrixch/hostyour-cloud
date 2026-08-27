@@ -184,6 +184,51 @@ printf '%s
 ' "$ELEVATION_PASSWORD" | sudo -S -p '' true 2>/dev/null || die 'the ELEVATION_PASSWORD in the config does not raise a command on this machine' 77
 good 'the elevation password raises a command'
 
+# THE BRANCH THIS MACHINE WOULD PUSH TO, ASKED BEFORE ANYTHING IS TOUCHED. A RESTORE
+# WIPES A MACHINE AND LEAVES ITS BRANCH STANDING — the branch lives in the platform
+# repository, which no restore reaches. deploy-branch cuts from today's master, so it
+# does not descend from what is on the remote, and its push is refused at step 24 of
+# 24 with a git hint recommending `git pull` — which here would graft the record of a
+# machine that no longer exists onto the machine that replaced it.
+#
+# WHICH OF THE TWO CASES IT IS, THIS CANNOT KNOW and does not guess. A branch standing
+# there means either the machine is LIVE and this is not a first installation, or it is
+# what a restore left behind. Only the operator knows which, so both are said and the
+# run stops.
+#
+# NO CREDENTIAL, AND DELIBERATELY SO. The platform repository is the one this machine
+# already reads its pin out of over plain HTTPS, so asking github whether a ref exists
+# needs nothing — and a token would have to stand in this command's own words, which is
+# the one thing nothing here does. GIT_TERMINAL_PROMPT=0 keeps a repository that is NOT
+# public from turning this into a prompt nobody can see.
+STANDING=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads \
+  "https://github.com/$PLATFORM_REPO.git" "refs/heads/$FQDN" 2>/dev/null | awk '{print $1}')
+STATUS=$?
+
+if [ -n "$STANDING" ]; then
+  die "the platform repository $PLATFORM_REPO already carries a branch named $FQDN, standing at $STANDING.
+
+deploy-branch cuts this machine's branch from today's master, so it will not descend
+from that one, and its push would be refused at the LAST step of twenty-four — after
+everything before it has already been done.
+
+WHICH OF THESE IT IS, ONLY YOU KNOW:
+
+  The machine is LIVE and this is not its first installation. Then this is not the
+  right tool: adopt it from the Manager, which knows how to meet a machine that
+  already exists.
+
+  It is what a RESTORE left behind. A restore wipes a machine and never touches the
+  repository, so the branch outlived the machine it described. Note its tip above in
+  case you want it back, then delete it and start again:
+
+    git push origin --delete $FQDN" 65
+elif [ $STATUS -ne 0 ]; then
+  warn "could not ask whether $PLATFORM_REPO already carries a branch named $FQDN. If it does, deploy-branch is refused at its last step"
+else
+  good "$PLATFORM_REPO carries no branch named $FQDN — this machine's is cut fresh"
+fi
+
 for path in "$CATALOG" /srv/hostyour-cloud /var/lib/ansiwise; do
   [ -e "$path" ] && warn "$path already stands here — this is not a bare machine, and what follows will act on what is there"
 done
