@@ -274,12 +274,25 @@ say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || e
 
 # The answers, written HERE and never carried: mode 0600 and the operator's own,
 # because every program reads them and nothing else may.
-field answers > /dev/null 2>&1 || true
-python3 -c "
-import json, sys
-d = json.load(open(sys.argv[1]))
-json.dump({'answers': d['answers']}, open(sys.argv[2], 'w'), indent=2)
-" "$CONFIG" "$ANSWERS" || die 'could not write the answers file' 73
+#
+# EVERY VALUE THE CONFIG STATES, LOWER-CASED, and nothing else. The config's names are
+# the programs' own answer names in upper case, so the mapping needs no table that could
+# fall behind them.
+#
+# AN EMPTY VALUE IS LEFT OUT rather than written as an empty string. A value the config
+# does not state is one the operator wants the program's DECLARED DEFAULT for, and an
+# empty string is not that default — it is an answer that overrides it with nothing.
+python3 - "$CONFIG" "$ANSWERS" <<'COMPOSE' || die 'could not write the answers file' 73
+import json, re, sys
+
+stated = {}
+for line in open(sys.argv[1], encoding='utf-8'):
+    named = re.match(r"^([A-Z][A-Z0-9_]*)='([^']*)'\s*$", line)
+    if named and named.group(2) != '':
+        stated[named.group(1).lower()] = named.group(2)
+
+json.dump({'answers': stated}, open(sys.argv[2], 'w', encoding='utf-8'), indent=2)
+COMPOSE
 chmod 600 "$ANSWERS"
 good "the answers stand at $ANSWERS, readable by $OPERATOR alone"
 
@@ -300,7 +313,7 @@ run_program() {
   # THE PASSWORD ON STANDARD INPUT AND THE RUN'S OWN OUTPUT ON THIS ONE. Every
   # line the machine writes is echoed as it happens, indented under the program
   # it belongs to, so a session that scrolls still carries the whole of it.
-  field elevation_password | ( cd "$CATALOG" && sudo -S -p '' "$ENGINE" "$program" \
+  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$CATALOG" && sudo -S -p '' "$ENGINE" "$program" \
       --programs "$CATALOG/ansiwise/programs" \
       --config "$CATALOG/ansiwise.yaml" \
       --answers "$ANSWERS" \
