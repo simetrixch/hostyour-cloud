@@ -34,7 +34,7 @@ say rather than what somebody's checkout happened to hold.
 ## Running it
 
 ```
-cp installation.example.json ~/apps4.json     # NOT inside a git working tree
+cp config.example.json ~/apps4.json     # NOT inside a git working tree
 $EDITOR ~/apps4.json                          # 44 answers, 9 of them credentials
 chmod 600 ~/apps4.json                        # Windows: icacls, and the launcher says the line
 
@@ -45,7 +45,7 @@ chmod 600 ~/apps4.json                        # Windows: icacls, and the launche
 them is one nobody can read back, nobody can diff, and whose every value stands in the machine's
 process listing. One file states the whole installation.
 
-`installation.example.json` is generated from what the five programs actually declare — 44 answers,
+`config.example.json` is generated from what the five programs actually declare — 44 answers,
 9 secret, 7 carrying a default — so it cannot drift from them silently.
 
 ## What it refuses, and why

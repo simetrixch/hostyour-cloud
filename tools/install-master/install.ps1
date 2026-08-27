@@ -2,7 +2,7 @@
 # install.ps1 — start a first master's installation from Windows.
 # =============================================================================
 #
-#   pwsh ./install.ps1                     reads ./installation.json
+#   pwsh ./install.ps1                     reads ./config.json
 #   pwsh ./install.ps1 other-machine.json  reads that instead
 #
 # NO OPTIONS, AND THAT IS THE POINT. An installation is a great many statements —
@@ -28,7 +28,7 @@
 
 [CmdletBinding()]
 param(
-  [Parameter(Position = 0)][string] $InstallationFile = './installation.json'
+  [Parameter(Position = 0)][string] $ConfigFile = './config.json'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,16 +43,16 @@ function Stop-Here([string] $Because, [int] $Code = 65) {
 
 $driver = Join-Path $PSScriptRoot 'driver.sh'
 if (-not (Test-Path $driver)) { Stop-Here 'driver.sh is not beside this file — it IS the installation, and this only starts it' 66 }
-if (-not (Test-Path $InstallationFile)) {
-  Stop-Here "there is no installation file at $InstallationFile. Copy installation.example.json, fill it in, then take every other account off it" 66
+if (-not (Test-Path $ConfigFile)) {
+  Stop-Here "there is no config file at $ConfigFile. Copy config.example.json, fill it in, then take every other account off it" 66
 }
-$InstallationFile = (Resolve-Path $InstallationFile).Path
+$ConfigFile = (Resolve-Path $ConfigFile).Path
 
 # ------------------------------------------------------- the file, and its guard
 # OWNER-ONLY OR NOTHING. Windows says this with an access list rather than a mode,
 # so the question asked here is the same one and the answer is read differently:
 # which accounts hold rights on it, beyond the owner and the system.
-$acl = Get-Acl -Path $InstallationFile
+$acl = Get-Acl -Path $ConfigFile
 $owner = $acl.Owner
 $strangers = @($acl.Access | Where-Object {
   $who = $_.IdentityReference.Value
@@ -65,30 +65,41 @@ $strangers = @($acl.Access | Where-Object {
 
 if ($strangers.Count -gt 0) {
   Stop-Here (@(
-    "$InstallationFile can be read by $($strangers -join ', ') and it carries credentials —"
+    "$ConfigFile can be read by $($strangers -join ', ') and it carries credentials —"
     'nine of deploy-branch''s answers are tokens with write access to your repositories.'
     'Take every other account off it:'
     ''
-    "  icacls `"$InstallationFile`" /inheritance:r /grant:r `"$($env:USERNAME):(R,W)`""
+    "  icacls `"$ConfigFile`" /inheritance:r /grant:r `"$($env:USERNAME):(R,W)`""
   ) -join [Environment]::NewLine) 77
 }
 
-# INSIDE A GIT TREE IS REFUSED, for the reason above: the mistake is made once and
-# cannot be taken back.
-$inTree = & git -C (Split-Path -Parent $InstallationFile) rev-parse --show-toplevel 2>$null
+# INSIDE A GIT TREE AND NOT IGNORED BY IT is refused, for the reason above: the
+# mistake is made once and cannot be taken back.
+#
+# IGNORED IS ENOUGH, and the distinction is the whole of what the guard is for. What it
+# exists to stop is `git add .` sweeping the file up, and a file the tree ignores cannot
+# be swept up by one — committing it takes a deliberate `git add -f`, which is somebody
+# choosing. Refusing an ignored file would send an operator to keep credentials somewhere
+# nothing in the repository says anything about, which is worse than one line in a
+# .gitignore naming exactly what may not be committed.
+$here = Split-Path -Parent $ConfigFile
+$inTree = & git -C $here rev-parse --show-toplevel 2>$null
 if ($LASTEXITCODE -eq 0 -and $inTree) {
-  Stop-Here (@(
-    "$InstallationFile stands inside the git working tree at $inTree."
-    'A file of credentials belongs nowhere a commit can reach it — move it out, or say so'
-    'in that tree''s .gitignore and move it anyway.'
-  ) -join [Environment]::NewLine) 77
+  & git -C $here check-ignore -q $ConfigFile 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    Stop-Here (@(
+      "$ConfigFile stands inside the git working tree at $inTree and that tree does not ignore it."
+      'A file of credentials belongs nowhere a commit can reach it — move it out, or name it'
+      'in that tree''s .gitignore.'
+    ) -join [Environment]::NewLine) 77
+  }
 }
 
 # ------------------------------------------------------------- what it must say
-$stated = Get-Content -Raw -Path $InstallationFile | ConvertFrom-Json -AsHashtable
+$stated = Get-Content -Raw -Path $ConfigFile | ConvertFrom-Json -AsHashtable
 function Stated([string] $Section, [string] $Named) {
   if (-not $stated.ContainsKey($Section) -or -not $stated[$Section].ContainsKey($Named) -or -not $stated[$Section][$Named]) {
-    Stop-Here "$InstallationFile states no $Section.$Named, and nothing here may choose one"
+    Stop-Here "$ConfigFile states no $Section.$Named, and nothing here may choose one"
   }
   return $stated[$Section][$Named]
 }
@@ -104,23 +115,23 @@ $null     = Stated 'repositories' 'catalog'
 $null     = Stated 'repositories' 'platform'
 
 if (-not $stated.ContainsKey('answers') -or $stated['answers'].Count -eq 0) {
-  Stop-Here "$InstallationFile states no answers at all, and an installation is what its answers say"
+  Stop-Here "$ConfigFile states no answers at all, and an installation is what its answers say"
 }
 foreach ($named in @('operator_user', 'fqdn')) {
-  if (-not $stated['answers'][$named]) { Stop-Here "$InstallationFile states no answers.$named" }
+  if (-not $stated['answers'][$named]) { Stop-Here "$ConfigFile states no answers.$named" }
 }
 if ($stated['answers']['fqdn'] -ne $fqdn) {
-  Stop-Here "$InstallationFile says machine.fqdn `"$fqdn`" and answers.fqdn `"$($stated['answers']['fqdn'])`" — one installation, one name"
+  Stop-Here "$ConfigFile says machine.fqdn `"$fqdn`" and answers.fqdn `"$($stated['answers']['fqdn'])`" — one installation, one name"
 }
 if ($stated['answers']['operator_user'] -ne $operator) {
-  Stop-Here "$InstallationFile names two different operator accounts — one installation, one account"
+  Stop-Here "$ConfigFile names two different operator accounts — one installation, one account"
 }
 # NAMED HERE BEFORE THE MACHINE IS TOUCHED: an apostrophe in a mailbox makes the
 # cluster map unparseable and the run dies far from the cause
 # (simetrixch/ansiwise-plugins#161).
 $carrying = @($stated['answers'].GetEnumerator() | Where-Object { $_.Value -is [string] -and $_.Value.Contains("'") } | ForEach-Object { $_.Key })
 if ($carrying.Count -gt 0) {
-  Stop-Here "$InstallationFile`: $($carrying -join ', ') carries an apostrophe, and a template slot standing inside quotes has no way to say so — simetrixch/ansiwise-plugins#161"
+  Stop-Here "$ConfigFile`: $($carrying -join ', ') carries an apostrophe, and a template slot standing inside quotes has no way to say so — simetrixch/ansiwise-plugins#161"
 }
 
 # THE ENVELOPE IS COMPOSED IN MEMORY and reaches the machine over standard input;

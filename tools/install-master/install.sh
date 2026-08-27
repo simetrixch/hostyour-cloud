@@ -3,7 +3,7 @@
 # install.sh — start a first master's installation from Linux or macOS.
 # =============================================================================
 #
-#   ./install.sh                     reads ./installation.json
+#   ./install.sh                     reads ./config.json
 #   ./install.sh other-machine.json  reads that instead
 #
 # NO OPTIONS, AND THAT IS THE POINT. An installation is a great many statements —
@@ -29,14 +29,14 @@
 
 set -uo pipefail
 
-readonly FILE="${1:-./installation.json}"
+readonly FILE="${1:-./config.json}"
 readonly HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DRIVER="$HERE/driver.sh"
 
 fail() { printf '\n  %s\n\n' "$*" >&2; exit "${2:-65}"; }
 
 [ -r "$DRIVER" ] || fail 'driver.sh is not beside this file — it IS the installation, and this only starts it' 66
-[ -r "$FILE" ]   || fail "there is no installation file at $FILE. Copy installation.example.json, fill it in, then chmod 600 it" 66
+[ -r "$FILE" ]   || fail "there is no config file at $FILE. Copy config.example.json, fill it in, then chmod 600 it" 66
 
 # ------------------------------------------------------- the file, and its guard
 # OWNER-ONLY OR NOTHING. `stat` spells its arguments differently on Linux and on
@@ -47,11 +47,20 @@ case "$MODE" in
   *) fail "$FILE is mode ${MODE:-unknown} and carries credentials — nine of deploy-branch's answers are tokens with write access to your repositories. Run: chmod 600 $FILE" 77 ;;
 esac
 
-# INSIDE A GIT TREE IS REFUSED, because the mistake is made once and cannot be
-# taken back: a token that reached a remote is a token that must be rotated.
+# INSIDE A GIT TREE AND NOT IGNORED BY IT is refused, because the mistake is made
+# once and cannot be taken back: a token that reached a remote must be rotated.
+#
+# IGNORED IS ENOUGH, and the distinction is the whole of what the guard is for. The
+# mistake it exists to stop is `git add .` sweeping the file up, and a file the tree
+# ignores cannot be swept up by one — it takes a deliberate `git add -f` to commit,
+# which is somebody choosing. Refusing an ignored file would send an operator to keep
+# credentials somewhere nothing in the repository says anything about, which is worse
+# than one line in a .gitignore that says exactly what may not be committed.
 if git -C "$(dirname "$FILE")" rev-parse --show-toplevel >/dev/null 2>&1; then
-  tree=$(git -C "$(dirname "$FILE")" rev-parse --show-toplevel)
-  fail "$FILE stands inside the git working tree at $tree. A file of credentials belongs nowhere a commit can reach it — move it out, or say so in that tree's .gitignore and move it anyway" 77
+  if ! git -C "$(dirname "$FILE")" check-ignore -q "$FILE" 2>/dev/null; then
+    tree=$(git -C "$(dirname "$FILE")" rev-parse --show-toplevel)
+    fail "$FILE stands inside the git working tree at $tree and that tree does not ignore it. A file of credentials belongs nowhere a commit can reach it — move it out, or name it in that tree's .gitignore" 77
+  fi
 fi
 
 # ------------------------------------------------------------- what it must say
