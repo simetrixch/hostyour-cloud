@@ -242,7 +242,10 @@ phase '2 / 5   the catalogue every program is read out of'
 # install-order.yaml names four things that must stand under this ONE path, and
 # says why it is not free: hostyour-vault-unseal.service's WorkingDirectory and
 # both of its ExecStart lines name files under it.
-if [ -d "$CATALOG/.git" ]; then
+# ASKED WITH ELEVATION, because a catalogue an elevated clone left behind is root's
+# and an unelevated test would answer "not a checkout" about a checkout standing
+# right there — sending this into a clone that dies on a non-empty directory.
+if root test -d "$CATALOG/.git"; then
   good "$CATALOG is already a checkout — leaving it where it stands"
 else
   say "cloning $CATALOG_REPO into $CATALOG"
@@ -281,8 +284,30 @@ ASK
   good "cloned $CATALOG_REPO"
 fi
 
+# HANDED TO THIS ACCOUNT, on both paths, because the clone had to be elevated and
+# what an elevated clone leaves behind belongs to root — including one left by an
+# earlier run. Two things need it not to:
+#
+# This account reads the catalogue on the very next line, and every program is read
+# out of it afterwards. And the Manager REFRESHES this checkout later WITHOUT
+# elevation, on purpose — it holds no credential of its own and needs none, because
+# the machine's own remote carries one. A tree it cannot write is a tree it cannot
+# bring forward.
+root chown -R "$OPERATOR:$OPERATOR" "$CATALOG" \
+  || die "could not hand $CATALOG to $OPERATOR, and an elevated clone leaves it as root's" 73
+good "$CATALOG belongs to $OPERATOR"
+
+# WHAT THIS ACCOUNT CAN SEE, ASKED BEFORE WHAT IS MISSING. A directory this account
+# cannot enter answers every question with "not there", so a check that only reports
+# absence sends the reader looking in the repository for a file that is sitting on
+# the machine.
+[ -d "$CATALOG" ]  || die "$CATALOG is not a directory" 66
+[ -r "$CATALOG" ] && [ -x "$CATALOG" ] \
+  || die "$CATALOG cannot be read by $(id -un) — it stands as $(ls -ld "$CATALOG" 2>/dev/null | awk '{print $1, $3, $4}'). Nothing is missing from it; this account cannot look inside" 77
+
 for needed in ansiwise.yaml ansiwise/programs ansiwise-boot.yaml ansiwise/boot-programs; do
-  [ -e "$CATALOG/$needed" ] || die "$CATALOG carries no $needed, and install-order.yaml names it as one of the four that must stand there" 66
+  [ -e "$CATALOG/$needed" ] \
+    || die "$CATALOG carries no $needed, and install-order.yaml names it as one of the four that must stand there. What does stand there: $(ls -A "$CATALOG" 2>/dev/null | tr '\n' ' ')" 66
 done
 good 'all four things install-order.yaml names stand in the catalogue'
 say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
