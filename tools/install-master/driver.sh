@@ -19,21 +19,21 @@
 # repositories say and not what somebody's checkout happened to hold.
 #
 # THE ONE THING IT DOES THAT NO PROGRAM DOES, stated rather than hidden: it
-# installs `git` and `curl` when they are missing. deploy-host's install_packages
-# row installs both — and the catalogue those programs are READ FROM cannot be
-# cloned without git, so the first of them cannot run without it. That is the
-# whole of the exception, it is reported before it happens, and a machine that
-# already carries both is not touched.
+# installs `git`, `curl` and `python3` when they are missing. deploy-host's
+# install_packages row installs all three — and the catalogue those programs are
+# READ FROM cannot be cloned without git, so the first of them cannot run without
+# it. That is the whole of the exception, it is reported before it happens, and a
+# machine that already carries all three is not touched.
 #
 # WHAT IT NEVER DOES. It composes no shell for a program, it edits no file a
 # program owns, and it makes no decision an answer should make. Every value it
-# uses comes out of the envelope the operator wrote; a value it cannot find is a
+# uses comes out of the config the operator wrote; a value it cannot find is a
 # refusal by name, never a default.
 #
-# THE ENVELOPE, and it is the only thing that reaches this from outside:
-#
-#   {"answers": {...}, "elevation_password": "...", "catalog_token": "...",
-#    "catalog_repo": "owner/name", "platform_repo": "owner/name", "stage": "dev"}
+# THE CONFIG, and it is the only thing that reaches this from outside: the same
+# key=value file the operator filled in, carried over the session as it stands.
+# Every value in it is one the five programs declare, lower-cased into the answers
+# a run is told with.
 #
 # It is read once, mode 0600, and shredded before this exits — on every path,
 # including a failure. What is left on the machine afterwards carries no
@@ -96,29 +96,34 @@ summary() {
 }
 
 # ------------------------------------------------------------ what it was told
-readonly ENVELOPE="${1:?the envelope's path is this script's only argument}"
-[ -r "$ENVELOPE" ] || die "there is no envelope at $ENVELOPE, and it is the only thing this is told" 64
+readonly CONFIG="${1:?the config's path is this script's only argument}"
+[ -r "$CONFIG" ] || die "there is no config at $CONFIG, and it is the only thing this is told" 64
 
 # SHREDDED ON EVERY PATH. A credential that outlives the act it was handed over
 # for is a credential nobody is watching.
-cleanup() { rm -f "$ENVELOPE" /tmp/.aw-askpass 2>/dev/null || true; }
+cleanup() { rm -f "$CONFIG" /tmp/.aw-askpass 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-# Read with python3 rather than parsed here: an envelope carrying a value with a
-# quote, a newline or a colon is the operator's business and not a shape this has
-# to survive by hand.
-field() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); v=d
-for k in sys.argv[2].split('.'): v=v.get(k) if isinstance(v,dict) else None
-sys.stdout.write('' if v is None else str(v))" "$ENVELOPE" "$1" 2>/dev/null; }
+# NOTHING BUT ASSIGNMENTS AND COMMENTS, checked BEFORE this file is read, because
+# reading it is running it: a shell `.` executes every line, so a config carrying a
+# command would run it as this account. The launcher checks the same thing on the
+# operator's side; it is checked again HERE because what arrives is what matters
+# and a session is not a promise.
+BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*$" "$CONFIG" | head -3)
+[ -z "$BAD" ] || die "the config carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL: $BAD" 65
 
-readonly STAGE=$(field stage)
-readonly CATALOG_REPO=$(field catalog_repo)
-readonly PLATFORM_REPO=$(field platform_repo)
-readonly OPERATOR=$(field answers.operator_user)
-readonly FQDN=$(field answers.fqdn)
+# shellcheck disable=SC1090
+. "$CONFIG"
 
-for named in STAGE CATALOG_REPO PLATFORM_REPO OPERATOR FQDN; do
-  [ -n "${!named}" ] || die "the envelope says nothing under \"${named,,}\", and nothing here may choose one" 64
+readonly STAGE="${STAGE:-}"
+readonly CATALOG_REPO="${CATALOG_REPO:-}"
+readonly PLATFORM_REPO="${PLATFORM_REPO:-}"
+readonly OPERATOR="${OPERATOR_USER:-}"
+readonly FQDN="${FQDN:-}"
+readonly TOKEN="${CATALOG_REPO_READ_PAT:-}"
+
+for named in STAGE CATALOG_REPO PLATFORM_REPO OPERATOR FQDN TOKEN; do
+  [ -n "${!named}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
 
 # WHERE A RELEASED EXECUTABLE IS FETCHED FROM. Public, so this machine reaches it
@@ -137,7 +142,8 @@ RUN_IDS=()
 # Every elevated command goes through here, and the password reaches it on
 # STANDARD INPUT — never an argument list, which stands in this machine's own
 # process listing for anyone on it to read.
-root() { field elevation_password | sudo -S -p '' "$@"; }
+root() { printf '%s
+' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 
 # =============================================================================
 phase '0 / 5   what this machine is, before anything is touched'
@@ -146,8 +152,9 @@ say "asked as $(id -un) on $(hostname), for $FQDN, stage $STAGE"
 say "$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") · kernel $(uname -r) · $(nproc) cpu · $(free -g | awk '/^Mem:/{print $2}') GB"
 say "free on /: $(df -h / | awk 'NR==2{print $4}')"
 
-root -n true 2>/dev/null && warn 'this account already raises commands without a password — nothing here needs that'
-field elevation_password | sudo -S -p '' true 2>/dev/null || die 'the elevation password in the envelope does not raise a command on this machine' 77
+sudo -n true 2>/dev/null && warn 'this account already raises commands without a password — nothing here needs that'
+printf '%s
+' "$ELEVATION_PASSWORD" | sudo -S -p '' true 2>/dev/null || die 'the ELEVATION_PASSWORD in the config does not raise a command on this machine' 77
 good 'the elevation password raises a command'
 
 for path in "$CATALOG" /srv/hostyour-cloud /var/lib/ansiwise; do
@@ -237,7 +244,7 @@ case \"\$1\" in
 esac
 ASK
 chmod 700 /tmp/.aw-askpass" || die 'could not prepare the credential helper' 73
-  field catalog_token | root bash -c 'umask 077 && cat > /tmp/.aw-token' || die 'could not hand the read credential over' 73
+  printf '%s' "$TOKEN" | root bash -c 'umask 077 && cat > /tmp/.aw-token' || die 'could not hand the read credential over' 73
   root bash -c "GIT_ASKPASS=/tmp/.aw-askpass GIT_TERMINAL_PROMPT=0 git clone --quiet 'https://github.com/$CATALOG_REPO.git' '$CATALOG'"
   status=$?
   root rm -f /tmp/.aw-token /tmp/.aw-askpass
@@ -258,7 +265,7 @@ python3 -c "
 import json, sys
 d = json.load(open(sys.argv[1]))
 json.dump({'answers': d['answers']}, open(sys.argv[2], 'w'), indent=2)
-" "$ENVELOPE" "$ANSWERS" || die 'could not write the answers file' 73
+" "$CONFIG" "$ANSWERS" || die 'could not write the answers file' 73
 chmod 600 "$ANSWERS"
 good "the answers stand at $ANSWERS, readable by $OPERATOR alone"
 

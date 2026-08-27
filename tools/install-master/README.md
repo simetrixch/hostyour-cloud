@@ -22,7 +22,7 @@ transcript, and every line of it kept.
 | file | where it runs | what it does |
 |---|---|---|
 | `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the five programs |
-| `install.ps1` | the operator's machine | collects, opens one session, keeps every line, fetches the records |
+| `install.ps1` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
 | `install.sh` | the operator's machine | the same, for Linux and macOS |
 
 The two launchers are thin on purpose. **Everything is fetched by the machine itself**: the pin out
@@ -34,28 +34,39 @@ say rather than what somebody's checkout happened to hold.
 ## Running it
 
 ```
-cp config.example.json ~/apps4.json     # NOT inside a git working tree
-$EDITOR ~/apps4.json                          # 44 answers, 9 of them credentials
-chmod 600 ~/apps4.json                        # Windows: icacls, and the launcher says the line
+cp config.example.env ~/apps4.env     # NOT inside a git working tree
+$EDITOR ~/apps4.env                   # 34 values, 10 of them credentials
+chmod 600 ~/apps4.env                 # Windows: icacls, and the launcher says the line
 
-./install.sh ~/apps4.json                      # or:  pwsh ./install.ps1 ~/apps4.json
+./install.sh ~/apps4.env              # or:  pwsh ./install.ps1 ~/apps4.env
 ```
 
 **No options.** An installation is a great many statements, and a command line long enough to carry
 them is one nobody can read back, nobody can diff, and whose every value stands in the machine's
 process listing. One file states the whole installation.
 
-`config.example.json` is generated from what the five programs actually declare — 44 answers,
-9 secret, 7 carrying a default — so it cannot drift from them silently.
+**`NAME='value'` and not JSON**, for the reason this organisation's board tooling is the same shape:
+a shell reads it with one `.` and needs no parser, no `jq` and no Python. JSON would cost every
+operator a dependency, and it cannot carry the one thing that file needs most — a sentence saying
+what a value is.
+
+`config.example.env` is generated from what the five programs actually declare, so it cannot drift
+from them silently.
 
 ## What it refuses, and why
 
-- **A file other accounts can read.** Nine of `deploy-branch`'s answers are credentials: three
-  repository *write* tokens, a DNS token, a storage password, a registry token.
+- **A file other accounts can read.** Ten of the thirty-four values are credentials: the elevation
+  password of the machine, four repository *write* tokens, two repository read tokens, a DNS token,
+  a storage password and a registry token.
 - **A file standing inside a git working tree.** The mistake is made once and cannot be taken back —
   a token that reached a remote must be rotated.
-- **An apostrophe in any answer.** A template slot standing inside quotes has no way to say so, and
-  the cluster map becomes unparseable far from the cause
+- **Any line that is not a comment or `NAME='value'`.** The config is READ BY THE SHELL on the
+  machine, so a line that is not an assignment is a command that would run there with the operator's
+  own rights. All three files apply the same test, and the launcher quotes the offending line with
+  its number.
+- **An apostrophe in any value.** That test refuses it as a side effect, and it would break the run
+  in any case: a template slot standing inside quotes has no way to say so, and the cluster map
+  becomes unparseable far from the cause
   ([`ansiwise-plugins#161`](https://github.com/simetrixch/ansiwise-plugins/issues/161)).
 
 ## The one thing it does that no program does
@@ -85,5 +96,5 @@ install-transcripts/apps4.example.com-20260827-141522/
 
 Two reach the machine and neither ever stands in an argument list: the elevation password, which
 raises every command that has to run as root, and a **read** credential for the private catalogue,
-which lives on the machine only for the length of one `git clone` and is shredded with the envelope
-on every path `driver.sh` can end on.
+which lives on the machine only for the length of one `git clone` and is shredded with the config on
+every path `driver.sh` can end on.

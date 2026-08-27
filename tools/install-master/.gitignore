@@ -1,22 +1,21 @@
 # WHAT MAY NOT BE COMMITTED FROM HERE, and the reason is one file.
 #
-# config.json states a whole installation: forty-four answers, NINE of them credentials —
-# three repository write tokens, a DNS token, a registry token, a storage password — plus
-# the elevation password of a machine and a read credential for the catalogue. A token
-# that reaches a remote must be rotated, and the mistake that puts it there is `git add .`
-# made once.
+# config.env states a whole installation: thirty-four values, TEN of them credentials — the
+# elevation password of the machine, four repository write tokens, two repository read
+# tokens, a DNS token, a storage password and a registry token. A token that reaches a
+# remote must be rotated, and the mistake that puts it there is `git add .` made once.
 #
 # THIS FILE IS WHY THE LAUNCHERS ACCEPT A CONFIG STANDING HERE AT ALL. Both refuse a
 # config inside a git working tree that does NOT ignore it, and ask git itself rather
 # than guessing: what is named here can no longer be swept up, and committing it takes a
 # deliberate `git add -f`, which is somebody choosing rather than somebody slipping.
 #
-# config.example.json is NOT ignored and must not be: it carries no value, it is generated
+# config.example.env is NOT ignored and must not be: it carries no value, it is generated
 # from what the five programs declare, and it is the thing an operator copies.
-config.json
+config.env
 
 # Whatever else an operator keeps beside it for a second machine.
-*.local.json
+*.local.env
 
 # Where install.sh and install.ps1 put the session transcript and the machine's own run
 # records. Those carry no credential — the engine redacts a secret answer before it
