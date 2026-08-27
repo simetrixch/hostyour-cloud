@@ -101,7 +101,7 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 
 # SHREDDED ON EVERY PATH. A credential that outlives the act it was handed over
 # for is a credential nobody is watching.
-cleanup() { rm -f "$CONFIG" /tmp/.aw-askpass 2>/dev/null || true; }
+cleanup() { rm -f "$CONFIG" /tmp/.aw-askpass /tmp/.aw-token 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
 # NOTHING BUT ASSIGNMENTS AND COMMENTS, checked BEFORE this file is read, because
@@ -247,21 +247,36 @@ if [ -d "$CATALOG/.git" ]; then
 else
   say "cloning $CATALOG_REPO into $CATALOG"
   # THE CREDENTIAL REACHES GIT AND NOTHING ELSE. It is written into a file only
-  # root may read, git asks that file for it, and both are gone before this phase
-  # ends. It is never a word of a command, because a word of a command stands in
-  # the process listing.
-  root bash -c "umask 077 && cat > /tmp/.aw-askpass <<'ASK'
+  # this account may read, git asks that file for it, and both are gone before this
+  # phase ends. It is never a word of a command, because a word of a command stands
+  # in the process listing.
+  #
+  # WRITTEN BY THIS ACCOUNT AND NOT THROUGH root(). root() feeds sudo the elevation
+  # password on ITS OWN standard input, so anything piped into it is thrown away —
+  # the token file was written EMPTY and github answered "Invalid username or token"
+  # about a credential that is perfectly valid. Only the clone needs to be elevated,
+  # because /srv is root's; root reads these two files without being given them.
+  # ANY LEFTOVER IS TAKEN OUT WITH ELEVATION FIRST. An earlier version of this file
+  # wrote both as root, so a machine that ran it once carries two root-owned files
+  # this account cannot overwrite — and the failure would name the helper rather than
+  # the leftover.
+  root rm -f /tmp/.aw-askpass /tmp/.aw-token 2>/dev/null || true
+
+  ( umask 077 && cat > /tmp/.aw-askpass <<'ASK'
 #!/bin/sh
-case \"\$1\" in
+case "$1" in
   Username*) printf 'x-access-token' ;;
   *) cat /tmp/.aw-token ;;
 esac
 ASK
-chmod 700 /tmp/.aw-askpass" || die 'could not prepare the credential helper' 73
-  printf '%s' "$TOKEN" | root bash -c 'umask 077 && cat > /tmp/.aw-token' || die 'could not hand the read credential over' 73
+  ) || die 'could not prepare the credential helper' 73
+  chmod 700 /tmp/.aw-askpass || die 'could not prepare the credential helper' 73
+  ( umask 077 && printf '%s' "$TOKEN" > /tmp/.aw-token ) || die 'could not hand the read credential over' 73
+  [ -s /tmp/.aw-token ] || die 'the read credential was not written — git would be handed an empty password and github would report it as an invalid token' 73
+
   root bash -c "GIT_ASKPASS=/tmp/.aw-askpass GIT_TERMINAL_PROMPT=0 git clone --quiet 'https://github.com/$CATALOG_REPO.git' '$CATALOG'"
   status=$?
-  root rm -f /tmp/.aw-token /tmp/.aw-askpass
+  rm -f /tmp/.aw-token /tmp/.aw-askpass
   [ $status -eq 0 ] || die "could not clone $CATALOG_REPO — check the read credential and that the repository exists" 69
   good "cloned $CATALOG_REPO"
 fi
