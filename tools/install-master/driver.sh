@@ -109,7 +109,7 @@ trap cleanup EXIT INT TERM
 # command would run it as this account. The launcher checks the same thing on the
 # operator's side; it is checked again HERE because what arrives is what matters
 # and a session is not a promise.
-BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*$" "$CONFIG" | head -3)
+BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
 [ -z "$BAD" ] || die "the config carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL: $BAD" 65
 
 # AND NO CARRIAGE RETURN. The shape check above lets one through — a CR falls after the
@@ -287,7 +287,7 @@ import json, re, sys
 
 stated = {}
 for line in open(sys.argv[1], encoding='utf-8'):
-    named = re.match(r"^([A-Z][A-Z0-9_]*)='([^']*)'\s*$", line)
+    named = re.match(r"^([A-Z][A-Z0-9_]*)='([^']*)'\s*(#.*)?$", line)
     if named and named.group(2) != '':
         stated[named.group(1).lower()] = named.group(2)
 

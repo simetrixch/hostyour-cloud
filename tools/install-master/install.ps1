@@ -95,7 +95,7 @@ if ($LASTEXITCODE -eq 0 -and $inTree) {
 # is the one install.sh and driver.sh apply, so all three agree on what a config
 # may contain.
 $lines = @(Get-Content -Path $ConfigFile)
-$shaped = "^\s*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'\s*$"
+$shaped = "^\s*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'\s*(#.*)?$"
 $bad = @(@(for ($i = 0; $i -lt $lines.Count; $i++) {
   if ($lines[$i] -notmatch $shaped) { '{0}:{1}' -f ($i + 1), $lines[$i] }
 }) | Select-Object -First 3)
@@ -114,7 +114,7 @@ if ($bad.Count -gt 0) {
 # to name a missing value before a session is opened rather than ninety steps in.
 $stated = @{}
 foreach ($line in $lines) {
-  if ($line -match "^([A-Z][A-Z0-9_]*)='([^']*)'\s*$") { $stated[$Matches[1]] = $Matches[2] }
+  if ($line -match "^([A-Z][A-Z0-9_]*)='([^']*)'\s*(#.*)?$") { $stated[$Matches[1]] = $Matches[2] }
 }
 function Stated([string] $Named) {
   if (-not $stated.ContainsKey($Named)) { return '' }

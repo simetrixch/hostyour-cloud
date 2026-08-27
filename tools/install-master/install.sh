@@ -64,8 +64,10 @@ fi
 # reading it is running it. A shell `.` executes every line, so a config carrying a
 # command would run it with the operator's own rights — and an operator who edited
 # a file by hand at two in the morning is exactly who this protects. Every line
-# must be blank, a comment, or NAME='value' with no single quote inside the value.
-BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*$" "$FILE" | head -3)
+# must be blank, a comment, or NAME='value' with no single quote inside the value. A
+# comment may follow a value on the same line, because that is valid in the shell that
+# reads it and it is where an operator naturally writes what a value may be.
+BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$FILE" | head -3)
 if [ -n "$BAD" ]; then
   fail "$FILE carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL — a line that is not an assignment is a command that would run:
 $BAD" 65
