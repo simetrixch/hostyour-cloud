@@ -322,8 +322,16 @@ say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || e
 # AN EMPTY VALUE IS LEFT OUT rather than written as an empty string. A value the config
 # does not state is one the operator wants the program's DECLARED DEFAULT for, and an
 # empty string is not that default — it is an answer that overrides it with nothing.
+#
+# THE ELEVATION PASSWORD STANDS BESIDE THE ANSWERS, NOT AMONG THEM. It is what the run
+# was STARTED with, not something a caller answers, and a step that needs it has it
+# filled in by the run itself. The engine refuses an envelope carrying it among the
+# answers by name — ansiwise-core/lib/src/model/caller_inputs.dart:62 — and it is right
+# to: a password sitting in the answers would be recorded as one.
 python3 - "$CONFIG" "$ANSWERS" <<'COMPOSE' || die 'could not write the answers file' 73
 import json, re, sys
+
+BESIDE = 'elevation_password'
 
 stated = {}
 for line in open(sys.argv[1], encoding='utf-8'):
@@ -331,7 +339,11 @@ for line in open(sys.argv[1], encoding='utf-8'):
     if named and named.group(2) != '':
         stated[named.group(1).lower()] = named.group(2)
 
-json.dump({'answers': stated}, open(sys.argv[2], 'w', encoding='utf-8'), indent=2)
+envelope = {'answers': {k: v for k, v in stated.items() if k != BESIDE}}
+if BESIDE in stated:
+    envelope[BESIDE] = stated[BESIDE]
+
+json.dump(envelope, open(sys.argv[2], 'w', encoding='utf-8'), indent=2)
 COMPOSE
 chmod 600 "$ANSWERS"
 good "the answers stand at $ANSWERS, readable by $OPERATOR alone"
