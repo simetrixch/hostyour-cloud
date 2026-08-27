@@ -112,6 +112,20 @@ trap cleanup EXIT INT TERM
 BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*$" "$CONFIG" | head -3)
 [ -z "$BAD" ] || die "the config carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL: $BAD" 65
 
+# AND NO CARRIAGE RETURN. The shape check above lets one through — a CR falls after the
+# closing quote, where [[:space:]] matches it — and a bash on Linux then reads it as part
+# of the value, so a config written in Notepad would give this machine an FQDN ending in
+# a control character and the first thing to say so would be a certificate issued for a
+# name nobody typed. Both launchers strip it; this refuses it, because what arrives is
+# what matters.
+#
+# COUNTED RATHER THAN MATCHED, because `grep` on a Windows workstation opens a file in
+# text mode and strips the very byte it is being asked about — so the obvious spelling
+# is green on the machine where the file is WRITTEN and only works on the one where it
+# is read. `tr` reads bytes on both.
+[ "$(tr -dc '\r' < "$CONFIG" | wc -c)" -eq 0 ] \
+  || die 'the config carries carriage returns, so every value would end in one. Write it with Unix line endings' 65
+
 # shellcheck disable=SC1090
 . "$CONFIG"
 

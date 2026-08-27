@@ -146,17 +146,76 @@ Write-Host "  $fqdn  ·  stage $(Stated 'STAGE')" -ForegroundColor Cyan
 Write-Host "  Everything said here is also kept in $transcript" -ForegroundColor DarkGray
 
 $target = '{0}@{1}' -f (Stated 'OPERATOR_USER'), $fqdn
-$ssh    = @('-p', "$port", '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20', $target)
+$base   = @('-p', "$port", '-o', 'ConnectTimeout=20', '-o', 'StrictHostKeyChecking=accept-new')
 
-# THE CONFIG TRAVELS AS IT STANDS, over the session's own standard input. It lands
-# under a mask that admits nobody else and driver.sh shreds it on every path it can
-# end on. It is never an argument, because an argument stands in a process listing.
-Get-Content -Raw -Path $ConfigFile | & ssh @ssh 'umask 077 && cat > ~/.aw-config.env'
-if ($LASTEXITCODE -ne 0) { Stop-Here "could not reach $target, or could not write the config there" 69 }
+# WHICH DOOR THIS MACHINE OPENS, asked before anything is sent, because the two cases
+# this has to serve are opposites. A machine this platform installed carries the
+# operator key and has had its password door shut by disable-password-login. A machine
+# at its birth carries NO key — deploy-host's install_authorized_key row is what puts it
+# there — so its first session can only be a password session, and it is the case these
+# launchers exist for.
+#
+# The key is tried first and the password only where the key is refused, so neither case
+# needs a flag and a re-run never asks for a password a machine no longer takes.
+$probe = (& ssh @base -o BatchMode=yes $target true 2>&1 | Out-String)
+if ($LASTEXITCODE -eq 0) {
+  $door = @('-o', 'BatchMode=yes')
+  Write-Host "  $target opens to the operator key" -ForegroundColor DarkGray
+}
+elseif ($probe -match 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed') {
+  # NOT ACCEPTED SILENTLY, and accept-new deliberately does not cover it: a machine
+  # whose host key changed is either one that was rebuilt or one that is not the
+  # machine any more, and only the operator knows which.
+  Stop-Here (@(
+    "$fqdn answers with a host key this machine does not recognise."
+    ''
+    'A restore gives a machine a NEW host key, so if you have just restored it that is'
+    'expected. Forget the old one and start again:'
+    ''
+    "  ssh-keygen -R $fqdn"
+    ''
+    "If you have NOT restored it, clear nothing: something else is answering for $fqdn."
+  ) -join [Environment]::NewLine) 74
+}
+elseif ($probe -match 'Permission denied') {
+  if ([Console]::IsInputRedirected) {
+    Stop-Here "$target carries no operator key yet, so this can only be a password session — and there is no terminal here to ask on. Start it from a terminal." 69
+  }
+  $door = @('-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1')
+  Write-Host ''
+  Write-Host "  $target carries no operator key yet. deploy-host is what puts it there," -ForegroundColor Yellow
+  Write-Host '  and it is one of the five programs this is about to run.' -ForegroundColor Yellow
+  Write-Host ''
+  Write-Host '  ssh will ask for the login password ONCE, on this terminal. It is not read' -ForegroundColor DarkGray
+  Write-Host '  from the config, it is not kept, and it does not reach the transcript.' -ForegroundColor DarkGray
+}
+else {
+  Stop-Here "could not reach ${target}:$([Environment]::NewLine)$([Environment]::NewLine)$($probe.Trim())" 69
+}
 
-# THE INSTALLATION, over the same session, with the driver on standard input so
-# that nothing this put there is left on the machine.
-Get-Content -Raw -Path $driver | & ssh @ssh 'bash -s -- ~/.aw-config.env' 2>&1 |
+# ONE SESSION, so that a password is typed at most once. The stream is the config
+# inside a quoted heredoc with the driver behind it: the config lands on the machine
+# under a mask that admits nobody else, and driver.sh shreds it on every path it can
+# end on. Neither is ever an argument, because an argument stands in a process listing.
+# The heredoc marker cannot collide with anything in the config, because the guard
+# above admits no line but a comment and NAME='value'.
+#
+# A CARRIAGE RETURN IS TAKEN OFF BOTH, and on Windows that is not a formality: the
+# config is written in whatever editor the operator has and Notepad writes CRLF, while
+# the far side is a bash that reads a CR as part of the value. NAME='value' followed by
+# a CR would put that CR INSIDE the value, so the FQDN a certificate is issued for
+# would carry one and nothing downstream would say why.
+$lf     = "`n"
+$stream = ("umask 077${lf}cat > `"`$1`" <<'AW_CONFIG_END'${lf}" +
+           ((Get-Content -Raw -Path $ConfigFile) -replace "`r", '') + $lf +
+           "AW_CONFIG_END${lf}" +
+           ((Get-Content -Raw -Path $driver) -replace "`r", ''))
+
+# UTF-8 WITHOUT A BOM on the way out. PowerShell's default would put one in front of
+# the first line, and bash reads those three bytes as part of `umask`.
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+
+$stream | & ssh @base @door $target 'bash -s -- "$HOME/.aw-config.env"' 2>&1 |
   Tee-Object -FilePath $transcript
 $installed = $LASTEXITCODE
 

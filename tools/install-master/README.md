@@ -25,6 +25,11 @@ transcript, and every line of it kept.
 | `install.ps1` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
 | `install.sh` | the operator's machine | the same, for Linux and macOS |
 
+`install.ps1` is for **Windows** and `install.sh` for **Linux and macOS**. They are held to
+answering identically, and the one real difference is how each asks whether the config is protected:
+Windows says that with an access list and reads it with `icacls`, Linux and macOS say it with a mode
+and read it with `stat`.
+
 The two launchers are thin on purpose. **Everything is fetched by the machine itself**: the pin out
 of the public platform repository, the two executables out of the public release, the catalogue out
 of the private one with a read credential handed over for the length of that clone. Nothing is
@@ -53,6 +58,37 @@ what a value is.
 `config.example.env` is generated from what the five programs actually declare, so it cannot drift
 from them silently.
 
+## Which door it opens
+
+The two cases this has to serve are opposites, so the launcher **asks the machine first** and needs
+no flag from you:
+
+- **A machine this platform installed** carries the operator key, and `disable-password-login` has
+  shut its password door. The key is tried first, so this is the normal path and nothing is asked.
+- **A machine at its birth carries no key at all.** `deploy-host`'s `install_authorized_key` row is
+  what puts it there, and that row is one of the five programs this is about to run — so the very
+  first session can only be a password session. Where the key is refused, `ssh` asks for the login
+  password **once, on your terminal**. It is not read from the config, it is not kept, and it does
+  not reach the transcript.
+
+There is exactly one session either way, so a password is typed at most once: the config travels
+inside a quoted heredoc with `driver.sh` behind it, on that session's own standard input.
+
+**A launcher with no terminal to ask on refuses rather than waits.** Started from a job or a pipe
+against a machine that has no key yet, it says so and exits — a launcher that sits silently on a
+prompt nobody can see is worse than one that stops.
+
+### The host key after a restore
+
+A restore gives a machine a **new host key**. Your `known_hosts` still carries the old one, and
+`ssh` refuses — correctly, because that is also what a machine being impersonated looks like. The
+launcher recognises that refusal and tells you the line that clears it:
+
+    ssh-keygen -R apps4.example.com
+
+A host key that is simply **unknown** is accepted and recorded (`StrictHostKeyChecking=accept-new`),
+because at a machine's birth there is nothing to compare it against. A **changed** one never is.
+
 ## What it refuses, and why
 
 - **A file other accounts can read.** Ten of the thirty-four values are credentials: the elevation
@@ -68,6 +104,10 @@ from them silently.
   in any case: a template slot standing inside quotes has no way to say so, and the cluster map
   becomes unparseable far from the cause
   ([`ansiwise-plugins#161`](https://github.com/simetrixch/ansiwise-plugins/issues/161)).
+- **A carriage return anywhere in the config.** Notepad writes CRLF, and a `bash` on Linux reads
+  that CR as part of the value — so the FQDN a certificate is issued for would end in a control
+  character and nothing downstream would say why. Both launchers strip it on the way over and
+  `driver.sh` refuses it on arrival.
 
 ## The one thing it does that no program does
 
@@ -98,3 +138,7 @@ Two reach the machine and neither ever stands in an argument list: the elevation
 raises every command that has to run as root, and a **read** credential for the private catalogue,
 which lives on the machine only for the length of one `git clone` and is shredded with the config on
 every path `driver.sh` can end on.
+
+The **login** password is not one of them. Where a machine still needs one, `ssh` asks for it on your
+terminal and nothing here ever holds it — it is in no file, no variable and no argument, so there is
+nothing to protect and nothing to rotate.
