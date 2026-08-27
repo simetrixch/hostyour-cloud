@@ -262,6 +262,69 @@ ansiwise:
   # and deploy-cluster's require_cli_tool_versions row all ask the same file.
   serveCommand: "cd /srv/ansiwise-catalog && ansiwise-rest serve --programs /srv/ansiwise-catalog/ansiwise/programs"
 
+# WHERE THIS MANAGER ASKS WHETHER A SLAVE IS REPORTING METRICS (config.ts
+# METRICS_QUERY_URL). The deploy-slave run ends with a soft probe that asks one
+# question — is the new slave's obs-agent pushing? — as
+# GET <this>/api/v1/query?query=up{cluster="<fqdn>"} against the observability
+# stack's Prometheus-compatible query API. The `cluster` label is what a slave's
+# agent stamps on every series it pushes (clusters/charts/monitoring
+# alloy-agent-config.yaml external_labels), so the answer is per-machine.
+#
+# A BASE ADDRESS AND NOT THE FINISHED QUERY. The path grammar and the shape of
+# the JSON that comes back are one thing and belong in one place — the code that
+# parses the answer. A chart that wrote the path would be the second half of an
+# API contract whose first half it cannot read, and the two would drift the next
+# time either moved. What is a fact of the DEPLOYMENT, and the only part stated
+# here, is which host answers.
+#
+# THE ADDRESS IS THIS PLATFORM'S OWN SERVICE, which is why the value stands here
+# with the product settings and not in installation/values/manager.yaml beside
+# master.sshUser: clusters/inventories/observability renders that Service, its
+# name composes from that chart's kube-prometheus-stack.fullnameOverride, and
+# both apps carry runsOn: master, so on every installation this platform builds
+# the Manager and the query API stand on one cluster and the name below is the
+# name that resolves. It is NOT in global.endpoints either — that map is
+# declared as the cross-cluster surface and is empty on the trunk, written per
+# install branch; this address crosses nothing and has a correct value on the
+# trunk. An installation that runs its query API somewhere else overrides the
+# key in installation/values/manager.yaml, which the ApplicationSet loads after
+# this file, the same override path github.deployRepo above states.
+#
+# TWO CHARTS SPELL ONE SERVICE NAME AND NOTHING HOLDS THEM EQUAL. A Helm release
+# cannot read another release's values, so a changed fullnameOverride in
+# clusters/inventories/observability renames the Service and leaves this address
+# pointing at a name that no longer resolves. The probe is soft, so the run does
+# not fail — it reports the check as unreachable. That is the honest outcome and
+# it is also why the Manager must say WHICH of the two soft outcomes it hit: an
+# address it was never given, and an address that answered nothing, are
+# different faults with different fixes, and one marker for both would hide the
+# rename behind a machine that is simply not pushing yet.
+#
+# EMPTY MEANS THE CHECK IS SKIPPED, NOT THAT IT PASSED. There is no default and
+# no fallback address: a Manager given no value renders no METRICS_QUERY_URL at
+# all (templates/deployment.yaml gates the whole env entry on this key being
+# non-empty), config.ts treats the variable as optional, and the probe answers
+# "skipped: this Manager was given no metrics query address" instead of running.
+# The step downgrades that to a meta note the same way it downgrades a miss. What
+# must never happen is the third answer — a silent green — which is what a
+# default address would produce on every installation that never configured one.
+#
+# BLANKING THE KEY IS THEREFORE A DECISION AND NOT AN ACCIDENT, and it is the
+# only way to switch the probe off. An installation whose Manager may not reach
+# the query API sets metrics.queryUrl: "" in installation/values/manager.yaml and
+# gets a run that says so at every deploy-slave.
+#
+# WHAT HOLDS THE KEY IN PLACE. The Deployment reads `.Values.metrics.queryUrl`
+# through a `with`, and queryUrl is this map's only key, so deleting the LINE and
+# deleting the BLOCK are one act: the map is left null and helm answers "nil
+# pointer evaluating interface {}.queryUrl" with no manifest produced. Both
+# measured, 2026-08-27. That is deliberate and it is what makes the blank a
+# statement rather than a gap — the way to switch the probe off is to WRITE the
+# empty value in installation/values/manager.yaml, which loads after this file
+# and leaves the map standing, and never to take the line away.
+metrics:
+  queryUrl: "http://observability-prometheus.observability.svc.cluster.local:9090"
+
 # pino log level (config.ts LOG_LEVEL): fatal|error|warn|info|debug|trace|silent.
 logLevel: info
 

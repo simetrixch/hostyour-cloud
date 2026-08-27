@@ -227,6 +227,27 @@ spec:
             # rendering.
             - name: ANSIWISE_SERVE_COMMAND
               value: {{ .Values.ansiwise.serveCommand | quote }}
+            {{- with .Values.metrics.queryUrl }}
+            # WHERE the deploy-slave run asks whether the new slave's obs-agent is
+            # pushing (config.ts METRICS_QUERY_URL): the base address of the
+            # observability stack's query API, which the Manager completes into
+            # /api/v1/query?query=up{cluster="<fqdn>"}. It replaces a `kubectl exec`
+            # into the Prometheus container, which handed the run that pod's own
+            # ServiceAccount token on a cluster carrying cluster-admin pods, to ask a
+            # question plain HTTP answers with no Kubernetes right at all.
+            #
+            # `with` AND NOT `quote`, and that is the whole design of the absent case.
+            # An empty value must reach the process as an ABSENT variable, because the
+            # probe is soft and "no address" is one of its outcomes: the Manager then
+            # reports the metrics check as skipped and says it was given no address.
+            # `quote` on an empty key would render `value: ""` and hand the container a
+            # variable that is set to nothing — which config.ts refuses at boot rather
+            # than skipping, so a deliberate blank would stop the Manager instead of
+            # switching one soft check off. values-common.yaml states what a blank
+            # means and where it is written.
+            - name: METRICS_QUERY_URL
+              value: {{ . | quote }}
+            {{- end }}
             # THE NAME THIS PLATFORM'S OWN UNIT IS ONBOARDED UNDER (config.ts
             # PLATFORM_UNIT_NAME), and the only value that lets the last program of a
             # first master's install onboard that unit without a gate run
