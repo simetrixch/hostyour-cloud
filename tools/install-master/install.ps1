@@ -1,9 +1,9 @@
 # =============================================================================
-# from-windows.ps1 — start a first master's installation from Windows.
+# install.ps1 — start a first master's installation from Windows.
 # =============================================================================
 #
-#   pwsh ./from-windows.ps1                     reads ./installation.json
-#   pwsh ./from-windows.ps1 other-machine.json  reads that instead
+#   pwsh ./install.ps1                     reads ./installation.json
+#   pwsh ./install.ps1 other-machine.json  reads that instead
 #
 # NO OPTIONS, AND THAT IS THE POINT. An installation is a great many statements —
 # thirty-three answers for deploy-branch alone — and a command line long enough to
@@ -11,9 +11,9 @@
 # stands in this machine's process listing and in the shell's history. One file
 # states the whole installation; this reads it and starts.
 #
-# THE TWIN OF from-unix.sh, doing the same four things in the same order: refuse a
+# THE TWIN OF install.sh, doing the same four things in the same order: refuse a
 # file anyone else can read, compose the envelope, open one session, keep every
-# line that comes back. The installation itself is on-machine.sh and it runs ON
+# line that comes back. The installation itself is driver.sh and it runs ON
 # THE MACHINE — nothing is fetched here and nothing is carried from this disk, so
 # what stands on the machine afterwards is what the repositories say rather than
 # what this checkout happened to hold.
@@ -41,8 +41,8 @@ function Stop-Here([string] $Because, [int] $Code = 65) {
   exit $Code
 }
 
-$driver = Join-Path $PSScriptRoot 'on-machine.sh'
-if (-not (Test-Path $driver)) { Stop-Here 'on-machine.sh is not beside this file — it IS the installation, and this only starts it' 66 }
+$driver = Join-Path $PSScriptRoot 'driver.sh'
+if (-not (Test-Path $driver)) { Stop-Here 'driver.sh is not beside this file — it IS the installation, and this only starts it' 66 }
 if (-not (Test-Path $InstallationFile)) {
   Stop-Here "there is no installation file at $InstallationFile. Copy installation.example.json, fill it in, then take every other account off it" 66
 }

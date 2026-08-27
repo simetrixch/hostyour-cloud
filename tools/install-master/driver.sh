@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# on-machine.sh — a first master, installed from zero, ON THE MACHINE ITSELF.
+# driver.sh — a first master, installed from zero, ON THE MACHINE ITSELF.
 # =============================================================================
 #
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not

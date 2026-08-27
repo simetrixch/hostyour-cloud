@@ -21,9 +21,9 @@ transcript, and every line of it kept.
 
 | file | where it runs | what it does |
 |---|---|---|
-| `on-machine.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the five programs |
-| `from-windows.ps1` | the operator's machine | collects, opens one session, keeps every line, fetches the records |
-| `from-unix.sh` | the operator's machine | the same, for Linux and macOS |
+| `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the five programs |
+| `install.ps1` | the operator's machine | collects, opens one session, keeps every line, fetches the records |
+| `install.sh` | the operator's machine | the same, for Linux and macOS |
 
 The two launchers are thin on purpose. **Everything is fetched by the machine itself**: the pin out
 of the public platform repository, the two executables out of the public release, the catalogue out
@@ -38,7 +38,7 @@ cp installation.example.json ~/apps4.json     # NOT inside a git working tree
 $EDITOR ~/apps4.json                          # 44 answers, 9 of them credentials
 chmod 600 ~/apps4.json                        # Windows: icacls, and the launcher says the line
 
-./from-unix.sh ~/apps4.json                   # or: pwsh ./from-windows.ps1 ~/apps4.json
+./install.sh ~/apps4.json                      # or:  pwsh ./install.ps1 ~/apps4.json
 ```
 
 **No options.** An installation is a great many statements, and a command line long enough to carry
@@ -86,4 +86,4 @@ install-transcripts/apps4.example.com-20260827-141522/
 Two reach the machine and neither ever stands in an argument list: the elevation password, which
 raises every command that has to run as root, and a **read** credential for the private catalogue,
 which lives on the machine only for the length of one `git clone` and is shredded with the envelope
-on every path `on-machine.sh` can end on.
+on every path `driver.sh` can end on.

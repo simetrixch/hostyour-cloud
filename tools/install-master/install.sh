@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# from-unix.sh — start a first master's installation from Linux or macOS.
+# install.sh — start a first master's installation from Linux or macOS.
 # =============================================================================
 #
-#   ./from-unix.sh                     reads ./installation.json
-#   ./from-unix.sh other-machine.json  reads that instead
+#   ./install.sh                     reads ./installation.json
+#   ./install.sh other-machine.json  reads that instead
 #
 # NO OPTIONS, AND THAT IS THE POINT. An installation is a great many statements —
 # thirty-three answers for deploy-branch alone — and a command line long enough to
@@ -12,9 +12,9 @@
 # every value stands in this machine's process listing. One file states the whole
 # installation; this reads it and starts.
 #
-# THE TWIN OF from-windows.ps1, doing the same four things in the same order:
+# THE TWIN OF install.ps1, doing the same four things in the same order:
 # refuse a file anyone else can read, compose the envelope, open one session, keep
-# every line that comes back. The installation itself is on-machine.sh and it runs
+# every line that comes back. The installation itself is driver.sh and it runs
 # ON THE MACHINE — nothing is fetched here and nothing is carried from this disk,
 # so what stands on the machine afterwards is what the repositories say rather
 # than what this checkout happened to hold.
@@ -31,11 +31,11 @@ set -uo pipefail
 
 readonly FILE="${1:-./installation.json}"
 readonly HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly DRIVER="$HERE/on-machine.sh"
+readonly DRIVER="$HERE/driver.sh"
 
 fail() { printf '\n  %s\n\n' "$*" >&2; exit "${2:-65}"; }
 
-[ -r "$DRIVER" ] || fail 'on-machine.sh is not beside this file — it IS the installation, and this only starts it' 66
+[ -r "$DRIVER" ] || fail 'driver.sh is not beside this file — it IS the installation, and this only starts it' 66
 [ -r "$FILE" ]   || fail "there is no installation file at $FILE. Copy installation.example.json, fill it in, then chmod 600 it" 66
 
 # ------------------------------------------------------- the file, and its guard
