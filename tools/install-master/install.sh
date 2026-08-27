@@ -159,7 +159,7 @@ INSTALLED=${PIPESTATUS[1]}
 # ---------------------------------------------------- the machine's own records
 # FETCHED WHATEVER HAPPENED: a failed installation is the one whose records are
 # read, so this runs on the failing path too.
-IDS=$(grep -oE '^[[:space:]]*RUNS .*$' "$TRANSCRIPT" | tail -1 | sed 's/^[[:space:]]*RUNS //' | tr -d '\r')
+IDS=$(sed 's/\x1b\[[0-9;]*m//g' "$TRANSCRIPT" | grep -oE '^[[:space:]]*RUNS .*$' | tail -1 | sed 's/^[[:space:]]*RUNS //' | tr -d '\r')
 if [ -n "${IDS// /}" ]; then
   printf "\n  Fetching the machine's own record of %s run(s) into %s\n" "$(printf '%s' "$IDS" | wc -w | tr -d ' ')" "$SESSION" >&2
   for id in $IDS; do

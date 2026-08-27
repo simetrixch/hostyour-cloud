@@ -92,7 +92,13 @@ summary() {
   fi
   # The launcher reads this line to know which records to fetch. One line, one
   # run identifier, in the order they happened.
-  printf '\n%s   RUNS %s%s\n' "$C_DIM" "${RUN_IDS[*]:-}" "$C_OFF"
+  # PLAIN, AND DELIBERATELY UNDRESSED. Every other line here is written for a person
+  # and wears the colour that helps them read it. This one is written for the
+  # LAUNCHER, which reads it to know which records to fetch — and an escape sequence
+  # in front of it is not whitespace, so a pattern anchored at the start of the line
+  # never matched and the launcher reported that no runs were named while three
+  # stood on the line above it.
+  printf '\nRUNS %s\n' "${RUN_IDS[*]:-}"
 }
 
 # ------------------------------------------------------------ what it was told
@@ -372,7 +378,11 @@ for line in open(config_path, encoding='utf-8'):
     if named and named.group(2) != '':
         stated[named.group(1).lower()] = named.group(2)
 
-declared, inside = [], False
+# WHAT EACH ANSWER IS, not only what it is called. An answer declared as a list and
+# given a string is refused by kind — "alert_recipients" holds textList, and was
+# given String — and the config has one line per name, so the shape has to be read
+# off the program rather than guessed from the value.
+declared, kinds, inside, current = [], {}, False, None
 for line in open(declares_path, encoding='utf-8').read().splitlines():
     if re.match(r'^answers:\s*(#.*)?$', line):
         inside = True
@@ -383,9 +393,27 @@ for line in open(declares_path, encoding='utf-8').read().splitlines():
         break
     entry = re.match(r'^\s*-\s*name:\s*([a-z][a-z0-9_]*)\s*(#.*)?$', line)
     if entry:
-        declared.append(entry.group(1))
+        current = entry.group(1)
+        declared.append(current)
+        continue
+    of_kind = re.match(r'^\s+kind:\s*(\S+)', line)
+    if of_kind and current:
+        kinds[current] = of_kind.group(1)
 
-answers = {name: stated[name] for name in declared
+
+def shaped(name, value):
+    """The value as the kind the program declared it, out of one config line.
+
+    A LIST IS WRITTEN COMMA-SEPARATED, because a config file states one value per
+    line and a list has to fit on that line. Whitespace around an entry is the
+    operator's formatting, not part of the entry, and an empty entry is a trailing
+    comma rather than a member."""
+    if kinds.get(name, '').endswith('_list'):
+        return [part.strip() for part in value.split(',') if part.strip()]
+    return value
+
+
+answers = {name: shaped(name, stated[name]) for name in declared
            if name in stated and name != BESIDE}
 envelope = {'answers': answers}
 if BESIDE in stated:

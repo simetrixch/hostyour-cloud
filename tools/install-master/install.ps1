@@ -241,7 +241,9 @@ finally {
 # ---------------------------------------------------- the machine's own records
 # FETCHED WHATEVER HAPPENED: a failed installation is the one whose records are
 # read, so this runs on the failing path too.
-$runsLine = Select-String -Path $transcript -Pattern '^\s*RUNS (.+)$' | Select-Object -Last 1
+$runsLine = Get-Content -Path $transcript |
+  ForEach-Object { $_ -replace "`e\[[0-9;]*m", '' } |
+  Select-String -Pattern '^\s*RUNS (.+)$' | Select-Object -Last 1
 if ($runsLine) {
   $ids = @($runsLine.Matches[0].Groups[1].Value.Trim() -split '\s+' | Where-Object { $_ })
   Write-Host ''
