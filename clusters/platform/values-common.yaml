@@ -147,11 +147,13 @@ global:
   #
   # Empty ONLY on the trunk. It belongs in clusters/active/<fqdn>.yaml, which
   # loads LAST in every app's valueFiles chain, beside the other globals an
-  # installation is given. THE KEY IS NEW AND NO INSTALLATION CARRIES IT YET —
-  # clusters/active/ holds nothing but .gitkeep here — so the fence STOPS ITS
-  # RENDER on an empty list rather than rendering a boundary that names nothing
-  # to deny, and an installation that has not been given the value stops with
-  # it instead of syncing a fence with a hole.
+  # installation is given. THE BRANCH PROGRAM MEASURES IT OFF THE MACHINE AND
+  # WRITES IT THERE — digita-deploy ansiwise/programs/deploy-branch.yaml reads
+  # the host's own addresses with measure_host_addresses and fills the map's
+  # nodeCidrs slot, so every branch generated since 2026-08-26 carries the list.
+  # A branch cut before that step existed carries none, and for it the fence
+  # STOPS ITS RENDER on an empty list rather than rendering a boundary that
+  # names nothing to deny.
   #
   # A /32 PER NODE ADDRESS, AND NOT THE PREFIX THEY SIT IN. This list is read
   # TWICE, with opposite polarity, and only one of the two readings is a deny.
@@ -180,8 +182,20 @@ global:
     # Gates clusters/inventories/observability's receive path: the prom-push. /
     # loki-push. Ingresses + the basic-auth Middleware + its htpasswd
     # ExternalSecret (clusters/inventories/observability Chart.yaml
-    # `condition:`), and the master profile additionally enables Prometheus'
-    # remote_write receiver (D4b/I6).
+    # `condition:`).
+    #
+    # IT DOES NOT OPEN THE ENDPOINT THOSE INGRESSES ROUTE TO. Prometheus serves
+    # /api/v1/write only where prometheusSpec.enableRemoteWriteReceiver is true;
+    # that key stands at false in
+    # clusters/inventories/observability/values-common.yaml, no file of this
+    # tree sets it, and the branch program writes no such key either — the
+    # cluster map it renders has no slot for it. So on every installation the
+    # prom-push Ingress routes to a path Prometheus never registered: a slave's
+    # obs-agent push lands nowhere, the master holds no up{cluster="<fqdn>"}
+    # series, and the Manager's metrics probe answers `empty` for every slave.
+    # Measured 2026-08-28 by rendering this application for dev, test and prod
+    # against an install branch's cluster map: the Prometheus CR carries no such
+    # field in any of the three.
     observability: false
 
   # Data-service NetworkPolicy consumers — who may reach the in-house data
