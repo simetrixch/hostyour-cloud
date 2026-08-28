@@ -608,16 +608,28 @@ run_program() {
     done ) &
   local ticker=$!
 
-  # NOT UNDER sudo, AND THAT IS WHY THE MACHINE STAYS USABLE AFTERWARDS. This tool
-  # raises single COMMANDS to root, one at a time, from the row that needs it
-  # (ansiwise-core domain/shell.dart, `Command.elevated`), and the password it raises
-  # them with rides beside the answers, which this driver already writes (BESIDE above;
-  # the catalogue's ansiwise.yaml says `password_from_caller: true`). Started under sudo
-  # instead, EVERY command of EVERY program ran as root — including the ones needing
-  # nothing — and each left behind a file the operator account cannot read. That account
-  # is who runs these same programs afterwards: the Manager starts this tool over the
-  # machine's own session as the operator, and it then met a checkout whose .git/HEAD
-  # belonged to root, with git answering "not a git repository". One machine, one account.
+  # `-u "$OPERATOR"` IS WHAT THIS LINE IS ABOUT, AND IT IS NOT ELEVATION. The tool runs
+  # as the account that owns this machine — the same account the Manager starts it as
+  # later. What sudo does here is the OTHER thing it does when it enters an account: it
+  # builds that account's group set afresh out of the group database.
+  #
+  # WHY THAT IS NEEDED. A process carries the groups its session was given, and nothing
+  # later reaches it. deploy-cluster installs MicroK8s and puts this account in the
+  # `microk8s` group — inside this very session, which therefore does not have it.
+  # deploy-platform-services then asks the cluster a question as this account and is told
+  # "Insufficient permissions to access MicroK8s", AFTER its own elevated write had already
+  # succeeded: the Secret existed and the step reported the machine as not in the state it
+  # produces (measured on apps3 2026-08-28, kubernetes_secret_from_vault). Entering the
+  # account again hands each program the machine as it stands, not as it stood at the door.
+  #
+  # WITHOUT `-u` THIS LINE MEANT root, WHICH IS A DIFFERENT PROGRAM ENTIRELY. Every command
+  # of every program then ran as root, including the ones needing nothing, and each left a
+  # file behind that this account cannot read — 38 of them in /srv/hostyour-cloud, .git/HEAD
+  # among them at mode 600, and the next run, started as this account, met its own checkout
+  # with git answering "not a git repository". What needs root is raised one command at a
+  # time, by the tool, from the row that needs it (ansiwise-core domain/shell.dart
+  # `Command.elevated`), with the password that rides beside the answers (BESIDE above; the
+  # catalogue's ansiwise.yaml says `password_from_caller: true`).
   #
   # THE RUN'S OWN OUTPUT ON THIS PIPELINE, AS IT HAPPENS. It used to be captured to a file and printed when the program ended,
   # under a comment claiming it was echoed as it happened — true of the file, and not
@@ -626,16 +638,16 @@ run_program() {
   #
   # It is still kept: tee writes the file the failing-record reader and the summary
   # both read afterwards.
-  ( cd "$CATALOG" && "$ENGINE" "$program" \
+  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$CATALOG" && sudo -S -p '' -u "$OPERATOR" "$ENGINE" "$program" \
       --programs "$CATALOG/ansiwise/programs" \
       --config "$CATALOG/ansiwise.yaml" \
       --answers "$ANSWERS" \
       --runs "$RUNS" \
       --role master --stage "$STAGE" --fqdn "$FQDN" \
       --mode "$mode" ) 2>&1 | tee "$log" | sed -u 's/^/       /'
-  # THE FIRST ELEMENT, not the last. The pipeline is the run, tee, sed — so $? is
-  # sed's, which succeeds whatever the run did.
-  local status=${PIPESTATUS[0]}
+  # THE SECOND ELEMENT, not the last. The pipeline is printf, the run, tee, sed —
+  # so $? is sed's, which succeeds whatever the run did.
+  local status=${PIPESTATUS[1]}
   kill "$ticker" 2>/dev/null
   wait "$ticker" 2>/dev/null
   local took=$(( $(date +%s) - began ))
