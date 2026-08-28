@@ -6,7 +6,7 @@
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not
 # change: it reads the order out of clusters/platform/install-order.yaml's own
 # sequence, puts the two things a program cannot put there itself — the engine and
-# the catalogue — and then invokes the five programs, each of them three times.
+# the catalogue — and then invokes the four programs, each of them three times.
 # install-order.yaml states that division in its own words: "THIS FILE STATES THE
 # ORDER. IT DOES NOT RUN IT. A driver reads the sequence and invokes the programs
 # itself."
@@ -32,7 +32,7 @@
 #
 # THE CONFIG, and it is the only thing that reaches this from outside: the same
 # key=value file the operator filled in, carried over the session as it stands.
-# Every value in it is one the five programs declare, lower-cased into the answers
+# Every value in it is one the four programs declare, lower-cased into the answers
 # a run is told with.
 #
 # It is read once, mode 0600, and shredded before this exits — on every path,
@@ -177,12 +177,6 @@ readonly RELEASES=https://github.com/simetrixch/ansiwise-cli/releases/download
 readonly CATALOG=/srv/ansiwise-catalog
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
-
-# HOW LONG THE MANAGER GETS TO COME UP, in seconds. It is a bound on waiting and not
-# an expectation: on a warm cluster the socket is there on the first ask. What it
-# bounds is a first installation, where argocd itself was installed minutes ago and
-# has never synced the manager application before.
-readonly MANAGER_SOCKET_LIMIT=600
 readonly ANSWERS_DIR=/home/$OPERATOR/.install-master-answers
 ANSWERS=''
 
@@ -195,7 +189,7 @@ root() { printf '%s
 ' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 
 # =============================================================================
-phase '0 / 5   what this machine is, before anything is touched'
+phase '0 / 4   what this machine is, before anything is touched'
 # =============================================================================
 say "asked as $(id -un) on $(hostname), for $FQDN, stage $STAGE"
 say "$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") · kernel $(uname -r) · $(nproc) cpu · $(free -g | awk '/^Mem:/{print $2}') GB"
@@ -316,7 +310,7 @@ else
 fi
 
 # =============================================================================
-phase '1 / 5   the engine, at the version the platform repository pins'
+phase '1 / 4   the engine, at the version the platform repository pins'
 # =============================================================================
 # READ OFF THE PUBLIC PLATFORM REPOSITORY BY THIS MACHINE. The pin is one fact of
 # an installation (clusters/platform/versions.yaml, cliTools.ansiwise.version) and
@@ -364,7 +358,7 @@ else
 fi
 
 # =============================================================================
-phase '2 / 5   the catalogue every program is read out of'
+phase '2 / 4   the catalogue every program is read out of'
 # =============================================================================
 # install-order.yaml names four things that must stand under this ONE path, and
 # says why it is not free: hostyour-vault-unseal.service's WorkingDirectory and
@@ -568,12 +562,25 @@ COMPOSE
 }
 
 # =============================================================================
-# The five programs. install-order.yaml's own sequence for a first master, in its
-# own order, each of them test then dry then run — the three modes gate one
-# another, and a mode that is not green stops the whole installation here rather
-# than carrying a doubt into the next program.
+# The four programs that MAKE A MASTER, each of them test then dry then run — the
+# three modes gate one another, and a mode that is not green stops the whole
+# installation here rather than carrying a doubt into the next program.
+#
+# install-order.yaml's master sequence names a FIFTH, onboard-manager, and it is
+# deliberately not here. It onboards this platform's own manager AS A CONSUMER, over
+# the route every other consumer takes — which makes it an onboarding, and onboarding
+# is not this tool's to do. The header of this file has said so since it was written:
+# adopting a machine, deploying a slave, onboarding a consumer or a tenant are the
+# Manager's, and this deliberately cannot do any of them. It could, and it did, and
+# that was the defect.
+#
+# WHAT A MASTER IS WITHOUT IT: a machine, a branch, a cluster, and the platform
+# services on it — including the manager itself, which deploy-platform-services puts
+# there and which is what the operator then works from. Onboarding it as a consumer is
+# the first thing done IN the manager, by hand, and not the last thing done to it by a
+# script.
 # =============================================================================
-readonly PROGRAMS=(deploy-host deploy-branch deploy-cluster deploy-platform-services onboard-manager)
+readonly PROGRAMS=(deploy-host deploy-branch deploy-cluster deploy-platform-services)
 
 run_program() {
   local program="$1" mode="$2" ordinal="$3"
@@ -582,9 +589,9 @@ run_program() {
   local log="/tmp/aw-$program-$mode.log"
 
   # A HEARTBEAT, because a program can be busy and silent at the same time.
-  # onboard-manager waits up to 1770 seconds for the manager to settle a run it
-  # started, polling every fifteen — and a screen that says nothing for half an hour
-  # is indistinguishable from one that has hung. This says how long, and nothing else.
+  # deploy-cluster's run took 280 seconds on a bare machine and said nothing for most
+  # of it, and a screen that says nothing is indistinguishable from one that has hung.
+  # This says how long, and nothing else.
   ( while :; do
       sleep 60
       printf '%s       … still running, %ds%s\n' "$C_DIM" "$(( $(date +%s) - began ))" "$C_OFF"
@@ -656,7 +663,7 @@ for at, step in enumerate(run.get('steps', []), 1):
 step=0
 for program in "${PROGRAMS[@]}"; do
   step=$(( step + 1 ))
-  phase "$step / 5   $program"
+  phase "$step / 4   $program"
 
   # ONCE AT BIRTH — AND THE REPEAT IS A CHECKOUT, NOT A SKIP. deploy-branch's
   # git_branch row refuses to cut a branch that already exists, and it is right to:
@@ -678,55 +685,6 @@ for program in "${PROGRAMS[@]}"; do
   # A CHECKOUT MOVES HEAD AND NOTHING ELSE. No branch is reset, nothing is thrown
   # away, and deploy-branch then runs its other twenty-three rows as the repeat they
   # are meant to be.
-  # THE ONE THING IN THIS SEQUENCE THAT IS WAITED FOR. install-order.yaml states it
-  # as onboard-manager's own `needs`, in its own words: the socket "stands on the HOST
-  # at the path clusters/inventories/manager/values-common.yaml adminSocket.path
-  # names, and the manager pod creates it there once the reconciler has synced the
-  # manager application."
-  #
-  # deploy-platform-services installs argocd; argocd then syncs the manager
-  # application; the pod starts; the socket appears. None of that has happened when
-  # the program before it returns, and onboard-manager ran ZERO seconds later and
-  # died on connect — SocketException, No such file or directory.
-  #
-  # WAITED FOR, NOT SLEPT THROUGH. A fixed sleep is a guess that is wrong in both
-  # directions: too short on a cold cluster, and wasted on a warm one. This asks the
-  # machine, says how long it has been asking, and gives up at a bound rather than
-  # holding a session open for ever.
-  if [ "$program" = onboard-manager ]; then
-    SOCKET=/var/lib/hostyour-manager/admin.sock
-    WAITED=0
-    if ! root test -S "$SOCKET" 2>/dev/null; then
-      say "waiting for the manager pod to put $SOCKET on this machine"
-      say 'argocd has to sync the manager application first, and this is the first run in'
-      say 'which that application exists at all'
-      while [ "$WAITED" -lt "$MANAGER_SOCKET_LIMIT" ]; do
-        sleep 10
-        WAITED=$(( WAITED + 10 ))
-        root test -S "$SOCKET" 2>/dev/null && break
-        [ $(( WAITED % 60 )) -eq 0 ] && say "  still waiting, ${WAITED}s of ${MANAGER_SOCKET_LIMIT}s"
-      done
-    fi
-    if root test -S "$SOCKET" 2>/dev/null; then
-      good "$SOCKET is there${WAITED:+ after ${WAITED}s} — the manager is serving"
-    else
-      die "$SOCKET did not appear in ${MANAGER_SOCKET_LIMIT}s, and onboard-manager talks to the manager through it.
-
-install-order.yaml names this socket as what onboard-manager needs: the manager pod
-creates it once the reconciler has synced the manager application. So what has not
-happened is upstream of this program, and asking again will not change it.
-
-What to look at on the machine, in this order:
-
-  sudo kubectl -n argocd get applications
-  sudo kubectl -n hostyour get pods
-  sudo kubectl -n hostyour logs deploy/hostyour-manager
-
-Everything before this program is done and stands. Start this again when the manager
-is serving; the four programs before it will measure what they already made." 69
-    fi
-  fi
-
   if [ "$program" = deploy-branch ] && [ "$BRANCH_IS_OURS" = yes ]; then
     STANDS_ON=$(root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null)
     if [ "$STANDS_ON" != "$FQDN" ]; then
@@ -773,6 +731,6 @@ this fails; git said what it said above." 73
 done
 
 phase 'done'
-good "$FQDN is installed: five programs, fifteen runs, every one green"
+good "$FQDN is installed: four programs, twelve runs, every one green"
 say "the machine's own records stand under $RUNS"
 summary

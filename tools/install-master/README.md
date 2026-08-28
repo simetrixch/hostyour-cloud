@@ -7,7 +7,8 @@ A first master, installed from zero, from an operator's own machine — Windows,
 It is a **driver**. It runs no step and decides nothing an answer should decide. It reads the order
 out of [`clusters/platform/install-order.yaml`](../../clusters/platform/install-order.yaml)'s own
 sequence, puts the two things a program cannot put there itself — the engine and the catalogue — and
-then invokes the five programs, each of them three times. That file states the division in its own
+then invokes the four programs that make a master, each of them three times. That file states the
+division in its own
 words:
 
 > THIS FILE STATES THE ORDER. IT DOES NOT RUN IT. A driver reads the sequence and invokes the
@@ -17,11 +18,22 @@ words:
 each step, asks before it acts, and can stop. This exists for the operator who wants one command, one
 transcript, and every line of it kept.
 
+## Where it stops, and why the sequence is four and not five
+
+`install-order.yaml` names a fifth program for a master, `onboard-manager`, and it is deliberately
+not run here. It onboards this platform's own Manager **as a consumer**, over the route every other
+consumer takes — which makes it an onboarding, and onboarding is not this tool's to do.
+
+What a master is without it: a machine, a branch, a cluster, and the platform services on it —
+including the Manager itself, which `deploy-platform-services` puts there. Onboarding it as a
+consumer is then the first thing done **in** the Manager, by hand, and not the last thing done to it
+by a script.
+
 ## The three files
 
 | file | where it runs | what it does |
 |---|---|---|
-| `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the five programs |
+| `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the four programs |
 | `install.ps1` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
 | `install.sh` | the operator's machine | the same, for Linux and macOS |
 
@@ -55,7 +67,7 @@ a shell reads it with one `.` and needs no parser, no `jq` and no Python. JSON w
 operator a dependency, and it cannot carry the one thing that file needs most — a sentence saying
 what a value is.
 
-`config.example.env` is generated from what the five programs actually declare, so it cannot drift
+`config.example.env` is generated from what the four programs actually declare, so it cannot drift
 from them silently.
 
 ## Which door it opens
@@ -66,7 +78,7 @@ no flag from you:
 - **A machine this platform installed** carries the operator key, and `disable-password-login` has
   shut its password door. The key is tried first, so this is the normal path and nothing is asked.
 - **A machine at its birth carries no key at all.** `deploy-host`'s `install_authorized_key` row is
-  what puts it there, and that row is one of the five programs this is about to run — so the very
+  what puts it there, and that row is one of the four programs this is about to run — so the very
   first session can only be a password session. Where the key is refused, `ssh` asks for the login
   password **once, on your terminal**. It is not read from the config, it is not kept, and it does
   not reach the transcript.

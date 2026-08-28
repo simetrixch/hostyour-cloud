@@ -10,7 +10,7 @@
 # this deliberately cannot do any of it. What it installs is the one machine that
 # has to exist before the Manager does.
 #
-# NO OPTIONS. Thirty-four values reach the five programs, and a command line long
+# NO OPTIONS. Thirty-four values reach the four programs, and a command line long
 # enough to carry them is one nobody can read back, nobody can diff, and whose
 # every value stands in this machine's process listing. One file states the whole
 # installation; this reads it and starts.
@@ -184,7 +184,7 @@ elseif ($probe -match 'Permission denied') {
   $door = @('-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1')
   Write-Host ''
   Write-Host "  $target carries no operator key yet. deploy-host is what puts it there," -ForegroundColor Yellow
-  Write-Host '  and it is one of the five programs this is about to run.' -ForegroundColor Yellow
+  Write-Host '  and it is one of the four programs this is about to run.' -ForegroundColor Yellow
   Write-Host ''
   Write-Host '  ssh will ask for the login password ONCE, on this terminal. It is not read' -ForegroundColor DarkGray
   Write-Host '  from the config, it is not kept, and it does not reach the transcript.' -ForegroundColor DarkGray
