@@ -100,12 +100,6 @@ summary() {
   # IN THE SUMMARY BECAUSE THE SUMMARY RUNS ON BOTH PATHS. A failed installation is
   # the one whose records are read, so handing them over only on success would take
   # them away exactly when they are wanted.
-  if [ -e "$RUNS" ]; then
-    root chown -R "$OPERATOR:$OPERATOR" /var/lib/ansiwise 2>/dev/null \
-      && good "$RUNS belongs to $OPERATOR — the records can be fetched" \
-      || warn "could not hand /var/lib/ansiwise to $OPERATOR; the records are there but a session opened as $OPERATOR may not be able to read them"
-  fi
-
   # The launcher reads this line to know which records to fetch. One line, one
   # run identifier, in the order they happened.
   # PLAIN, AND DELIBERATELY UNDRESSED. Every other line here is written for a person
@@ -451,28 +445,8 @@ fi
 # the machine's own remote carries one. A tree it cannot write is a tree it cannot
 # bring forward.
 root chown -R "$OPERATOR:$OPERATOR" "$CATALOG" \
-  || die "could not hand $CATALOG to $OPERATOR, and an elevated clone leaves it as root's" 73
+  || die "could not hand $CATALOG to $OPERATOR, and the programs run as that account" 73
 good "$CATALOG belongs to $OPERATOR"
-
-# AND ROOT IS TOLD IT IS NOT DUBIOUS. git refuses a repository owned by another
-# account outright — "detected dubious ownership" — and every program is elevated,
-# so root reading this operator-owned checkout gets that refusal. deploy-platform-
-# services' git_clone row then reads the refusal as "there is no checkout here" and
-# clones onto one that is standing, dying on a directory that is not empty
-# (simetrixch/ansiwise-plugins#162, measured on apps4 2026-08-28).
-#
-# IT IS NOT DUBIOUS, AND THAT IS WHY THIS IS SAID RATHER THAN WORKED AROUND. This
-# platform put that checkout there and prescribes its owner
-# (hostyour-manager#68); git simply has no way to know it.
-#
-# THIS COMES OUT WHEN #162 IS FIXED. The step's own git commands should carry
-# `-c safe.directory` and write to nobody's configuration; until they do, the
-# statement has to be made once, here, for the account the programs run as.
-if ! root git config --global --get-all safe.directory 2>/dev/null | grep -qx "$CATALOG"; then
-  root git config --global --add safe.directory "$CATALOG" \
-    && good "root reads $CATALOG as trusted — it is this platform's own checkout" \
-    || warn "could not tell root that $CATALOG is trusted; an elevated git will refuse it as dubious ownership (ansiwise-plugins#162)"
-fi
 
 # WHAT THIS ACCOUNT CAN SEE, ASKED BEFORE WHAT IS MISSING. A directory this account
 # cannot enter answers every question with "not there", so a check that only reports
@@ -634,24 +608,34 @@ run_program() {
     done ) &
   local ticker=$!
 
-  # THE PASSWORD ON STANDARD INPUT AND THE RUN'S OWN OUTPUT ON THIS ONE, AS IT
-  # HAPPENS. It used to be captured to a file and printed when the program ended,
+  # NOT UNDER sudo, AND THAT IS WHY THE MACHINE STAYS USABLE AFTERWARDS. This tool
+  # raises single COMMANDS to root, one at a time, from the row that needs it
+  # (ansiwise-core domain/shell.dart, `Command.elevated`), and the password it raises
+  # them with rides beside the answers, which this driver already writes (BESIDE above;
+  # the catalogue's ansiwise.yaml says `password_from_caller: true`). Started under sudo
+  # instead, EVERY command of EVERY program ran as root — including the ones needing
+  # nothing — and each left behind a file the operator account cannot read. That account
+  # is who runs these same programs afterwards: the Manager starts this tool over the
+  # machine's own session as the operator, and it then met a checkout whose .git/HEAD
+  # belonged to root, with git answering "not a git repository". One machine, one account.
+  #
+  # THE RUN'S OWN OUTPUT ON THIS PIPELINE, AS IT HAPPENS. It used to be captured to a file and printed when the program ended,
   # under a comment claiming it was echoed as it happened — true of the file, and not
   # of the screen. A run of ninety steps then showed nothing for as long as it took,
   # and the one asking for traceability watched a blank terminal.
   #
   # It is still kept: tee writes the file the failing-record reader and the summary
   # both read afterwards.
-  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$CATALOG" && sudo -S -p '' "$ENGINE" "$program" \
+  ( cd "$CATALOG" && "$ENGINE" "$program" \
       --programs "$CATALOG/ansiwise/programs" \
       --config "$CATALOG/ansiwise.yaml" \
       --answers "$ANSWERS" \
       --runs "$RUNS" \
       --role master --stage "$STAGE" --fqdn "$FQDN" \
       --mode "$mode" ) 2>&1 | tee "$log" | sed -u 's/^/       /'
-  # THE SECOND ELEMENT, not the last. The pipeline is printf, the run, tee, sed —
-  # so $? is sed's, which succeeds whatever the run did.
-  local status=${PIPESTATUS[1]}
+  # THE FIRST ELEMENT, not the last. The pipeline is the run, tee, sed — so $? is
+  # sed's, which succeeds whatever the run did.
+  local status=${PIPESTATUS[0]}
   kill "$ticker" 2>/dev/null
   wait "$ticker" 2>/dev/null
   local took=$(( $(date +%s) - began ))
@@ -705,6 +689,15 @@ for at, step in enumerate(run.get('steps', []), 1):
   fi
   return 0
 }
+
+# WHERE THE RECORDS GO, MADE FOR THE ACCOUNT THAT WRITES THEM. This tool runs as the
+# operator now, and /var/lib is root's — so the account that is about to record every run
+# there cannot create the directory it records into. It is created elevated and handed
+# over, once, before the first program: the same one act ansiwise-git's git_clone performs
+# for a checkout under /srv, and for the same reason. `install -d` also settles a machine
+# carrying a root-owned one from an earlier installation.
+root install -d -o "$OPERATOR" -g "$OPERATOR" -m 755 /var/lib/ansiwise || die "could not make /var/lib/ansiwise for $OPERATOR; the programs would have nowhere to record" 78
+good "/var/lib/ansiwise belongs to $OPERATOR — every run records into it as itself"
 
 step=0
 for program in "${PROGRAMS[@]}"; do
