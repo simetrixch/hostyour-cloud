@@ -232,21 +232,35 @@ if [ -n "$STANDING" ]; then
   # by a machine that was restored is not: the restore took the checkout with it and
   # left the branch standing in a repository no restore reaches.
   #
-  # So the question is asked of the MACHINE, not of the calendar: does the checkout
-  # here carry that commit, and does the branch here descend from it. Both are read
-  # unelevated, because /srv/hostyour-cloud belongs to this account.
+  # A REFUSAL IS NOT AN ANSWER ABOUT CONTENT, and the second shape of this check made
+  # exactly the mistake it exists to prevent. It read the checkout unelevated; git
+  # refuses a repository owned by another account outright, and that refusal was read
+  # as "this machine does not carry the commit" about a commit this machine had
+  # written itself. It is the same defect as ansiwise-plugins#162, in this file.
+  #
+  # So the reading is elevated and says safe.directory, which takes BOTH ownership and
+  # permission out of the answer — and where it still cannot read, it says so instead
+  # of concluding anything.
   CHECKOUT=/srv/hostyour-cloud
-  LEFTOVER=''
-  if [ ! -d "$CHECKOUT/.git" ]; then
-    LEFTOVER="this machine carries no checkout at $CHECKOUT at all, so nothing here wrote that branch"
-  elif ! git -C "$CHECKOUT" cat-file -e "$STANDING^{commit}" 2>/dev/null; then
-    LEFTOVER="this machine's checkout at $CHECKOUT does not carry that commit, so something else wrote it"
-  elif ! git -C "$CHECKOUT" merge-base --is-ancestor "$STANDING" "refs/heads/$FQDN" 2>/dev/null; then
-    LEFTOVER="this machine's branch does not descend from what is published, so its push would be refused"
+  BRANCH_DOUBT=''
+  BARE=''
+  if ! root test -d "$CHECKOUT/.git"; then
+    BARE="this machine carries no checkout at $CHECKOUT at all, so nothing here wrote that branch"
+  elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    BRANCH_DOUBT="$CHECKOUT is there but could not be read, so whether this machine wrote that branch is unknown"
+  elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" cat-file -e "$STANDING^{commit}" 2>/dev/null; then
+    BRANCH_DOUBT="this machine's checkout does not carry that commit, so something else wrote it"
+  elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" merge-base --is-ancestor "$STANDING" "refs/heads/$FQDN" 2>/dev/null; then
+    BRANCH_DOUBT="this machine's branch does not descend from what is published"
   fi
 
-  if [ -n "$LEFTOVER" ]; then
-    die "the platform repository $PLATFORM_REPO already carries a branch named $FQDN, standing at $STANDING — and $LEFTOVER.
+  # ONLY WHAT IS CERTAIN IS REFUSED. A machine carrying no checkout at all cannot have
+  # written that branch — there is no other reading, and it is the case that cost a run
+  # twenty-four steps. Everything else is a SUSPICION: deploy-branch says it plainly
+  # and at once if it is true, and this check has now stopped two runs it should have
+  # let through, so it does not get to stop a third on a guess.
+  if [ -n "$BARE" ]; then
+    die "the platform repository $PLATFORM_REPO already carries a branch named $FQDN, standing at $STANDING — and $BARE.
 
 deploy-branch cuts this machine's branch from today's master, so it will not descend
 from that one, and its push would be refused at the LAST step of twenty-four — after
@@ -264,7 +278,12 @@ WHICH OF THESE IT IS, ONLY YOU KNOW:
 
     git push origin --delete $FQDN" 65
   fi
-  good "$FQDN stands at ${STANDING:0:7} and this machine wrote it — its push will fast-forward"
+
+  if [ -n "$BRANCH_DOUBT" ]; then
+    warn "$FQDN stands at ${STANDING:0:7} in $PLATFORM_REPO, and $BRANCH_DOUBT. If that branch is what a restore left behind, deploy-branch's push is refused at its last step and \`git push origin --delete $FQDN\` is what clears it"
+  else
+    good "$FQDN stands at ${STANDING:0:7} and this machine wrote it — its push will fast-forward"
+  fi
 elif [ $STATUS -ne 0 ]; then
   warn "could not ask whether $PLATFORM_REPO already carries a branch named $FQDN. If it does, deploy-branch is refused at its last step"
 else
