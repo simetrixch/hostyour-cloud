@@ -737,10 +737,19 @@ for program in "${PROGRAMS[@]}"; do
   # away, and deploy-branch then runs its other twenty-three rows as the repeat they
   # are meant to be.
   if [ "$program" = deploy-branch ] && [ "$BRANCH_IS_OURS" = yes ]; then
-    STANDS_ON=$(root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    # AS THIS ACCOUNT AND NOT AS root, BECAUSE THIS ONE WRITES. The three reads in phase 0
+    # are elevated and harmless — reading changes no owner. A checkout does: it rewrites
+    # .git/HEAD, and root writing it leaves a file this account can no longer read, so the
+    # very next thing to look at the tree is told "not a git repository" about a checkout
+    # that is whole. Measured on apps3 2026-08-28: this line ran at 20:33, and deploy-branch
+    # died two seconds later at git_identity for exactly that reason.
+    #
+    # It needs no elevation either: the checkout belongs to this account, which is the
+    # ownership rule this file states at the clone.
+    STANDS_ON=$(git -C "$CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null)
     if [ "$STANDS_ON" != "$FQDN" ]; then
       say "$CHECKOUT stands on ${STANDS_ON:-nothing}, and $FQDN is this machine's own — putting it there"
-      root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" checkout --quiet "$FQDN" \
+      git -C "$CHECKOUT" checkout --quiet "$FQDN" \
         || die "could not put $CHECKOUT on $FQDN.
 
 deploy-branch cuts that branch once, at birth, and refuses to cut it twice — so a
