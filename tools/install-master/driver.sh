@@ -656,7 +656,17 @@ run_program() {
   wait "$ticker" 2>/dev/null
   local took=$(( $(date +%s) - began ))
 
-  local last; last=$(tail -1 "$log")
+  # THE RECORD'S NAME IS LOOKED FOR, NOT TAKEN FROM THE END. It used to be read off
+  # the last line, which held it right up until a run had something to say afterwards
+  # — deploy-platform-services ended with an `issue:` line under its summary, so the
+  # last word was "issue:" and the identifier was dropped. The launcher then fetched
+  # eleven records out of twelve, and the missing one was the failing run's: the only
+  # one anybody wanted.
+  #
+  # A RUN IDENTIFIER HAS A SHAPE, and that is what is matched: eight digits, T, six
+  # digits, Z, then the process and a hex tail. The LAST one in the log is this run's,
+  # because a program says it once at the end of its own summary.
+  local last; last=$(grep -E '^[[:space:]]*[0-9]{8}T[0-9]{6}Z-[0-9]+-[0-9a-f]+[[:space:]]' "$log" | tail -1)
   local id; id=$(printf '%s' "$last" | awk '{print $1}')
   case "$id" in *T*Z-*) RUN_IDS+=("$id") ;; *) id='' ;; esac
 
