@@ -15,7 +15,9 @@
 # The manager image pin lives in values-{dev,test,prod}.yaml as the ONE pin
 # grammar builds[]{name,image,tag} — `image` is the FLAT build name
 # (`manager`, no registry path to compose), and the full ref renders via
-# common.buildImage from common.registryHost. The release bump searches
+# common.buildImage from common.buildRegistry — ghcr.io, where the seed-images
+# workflow of hostyour-manager publishes it on the release tag, pulled directly
+# and not through this cluster's own registry. The release bump searches
 # clusters/inventories/<app>/values-<stage>.yaml for exactly this grammar and
 # writes the tag (the bump's own glob stands in
 # clusters/inventories/consumer-build/templates/pipeline-release.yaml); the
@@ -24,7 +26,15 @@ replicas: 1
 
 # registry-reaper — the periodic CronJob (templates/reaper-cronjob.yaml) that
 # prunes aged, UNREFERENCED image tags of OUR flat, single-segment repos from
-# the central zot registry. Its keep floor is the release bump's search space
+# the central zot registry.
+#
+# WHAT IS LEFT FOR IT TO PRUNE, now that the builds[] pins compose against
+# ghcr.io: what zot already holds. Copies fetched by its on-demand ghcr seed
+# before the switch, and the tags an older install branch still pins, stay in
+# that registry with nothing pulling them — which is exactly the aged and
+# unreferenced state this job exists to clear. It reads the same keep floor as
+# before, so a pin an installation is still running is never taken out from
+# under it. Its keep floor is the release bump's search space
 # (the builds[] pins in every values-<stage>.yaml carrier — see the CronJob
 # header). It runs THIS manager image + code (server/jobs/registry-reaper.ts)
 # and reuses the manager-github write-pat + manager-registry-pull +

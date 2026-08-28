@@ -72,19 +72,39 @@ template OR to `tpl` from a value.
 {{- end }}
 
 {{/*
+common.buildRegistry — the registry namespace THIS PLATFORM's own images are
+published under, from global.buildRegistry (clusters/platform/values-common.yaml,
+which states why it stands on the trunk). Required rather than defaulted: a
+values chain missing it would otherwise compose a ref against an empty host and
+the pod would report only ImagePullBackOff, naming nothing.
+*/}}
+{{- define "common.buildRegistry" -}}
+{{- .Values.global.buildRegistry | required "global.buildRegistry is not in this chart's values chain — clusters/platform/values-common.yaml states it, and every ApplicationSet loads that file first" -}}
+{{- end }}
+
+{{/*
 common.buildImage — the full image ref of ONE builds[] pin, the pin grammar
 every values-<stage>.yaml carries: builds[]{name,image,tag}. `image` is the
-FLAT build name (== the zot repo — no prefix of any kind left to compose,
-not the tier and not the unit), so the ref is <registryHost>/<image>:<tag>. The release
-bump finds pins by exactly this grammar; an image composed any other way
-would be invisible to it.
+FLAT build name (no prefix of any kind left to compose, not the tier and not
+the unit), so the ref is <buildRegistry>/<image>:<tag>. The release bump finds
+pins by exactly this grammar; an image composed any other way would be
+invisible to it.
+
+IT IS buildRegistry AND NOT registryHost. Every pin in this grammar names an
+image of an open-source repository this platform is built from, published to
+ghcr.io by the seed-images workflow on the release tag, and the pods pull it
+from there. `common.registryHost` — the cluster's own zot — carries what is
+built INSIDE a cluster instead: the consumer and tenant images of the release
+pipeline, which are customer code. The two are separate on purpose, and a pin
+composed against the wrong one reaches a registry that was never asked to hold
+it.
 Call: include "common.buildImage" (dict "root" $ "builds" .Values.builds "name" "manager")
 (`builds` is passed from the CALLER so the reading template names
 .Values.builds itself.) Fails the render when the named pin is absent — a
 missing pin must never render an empty image ref.
 */}}
 {{- define "common.buildImage" -}}
-{{- printf "%s/%s:%s" (include "common.registryHost" .root) (include "common.buildImageName" .) (include "common.buildTag" .) -}}
+{{- printf "%s/%s:%s" (include "common.buildRegistry" .root) (include "common.buildImageName" .) (include "common.buildTag" .) -}}
 {{- end }}
 
 {{/*

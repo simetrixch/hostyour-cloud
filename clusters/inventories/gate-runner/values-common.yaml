@@ -34,7 +34,9 @@ namespace:
 # pin grammar builds[]{name,image,tag} — `image` is the FLAT build name
 # (`gate-runner`, built from the hostyour-manager repo by that unit's
 # <unit>-release pipeline), and the full ref renders via common.buildImage
-# from common.registryHost. The release bump writes the tag; the mutable
+# from common.buildRegistry — ghcr.io, where the seed-images workflow of that
+# repository publishes it on the release tag, pulled directly and not through
+# this cluster's own registry. The release bump writes the tag; the mutable
 # always-rebuilt 0.0.0 tag is gone — gate-runner carries real release tags.
 
 gate:

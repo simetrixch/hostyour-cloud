@@ -287,6 +287,28 @@ global:
   # so nothing is scheduled against an image tag no release minted.
   placeholderTag: "0.0.0-placeholder"
 
+  # ── Where this platform's own images are published ─────────────────────────
+  # The registry namespace every builds[] pin composes its ref under. It is a
+  # property of the PRODUCT and not of an installation — the same value on every
+  # cluster, decided by where our releases are published — so it stands here on
+  # the trunk rather than in endpoints below, which holds the addresses at which
+  # ONE cluster reaches a service of THIS installation.
+  #
+  # THE PODS PULL IT DIRECTLY, and no longer through the cluster's own registry.
+  # The images of the open-source repositories this platform is built from are
+  # published to ghcr.io/<owner>/<build name> by seed-images, the workflow that
+  # runs on the release tag (hostyour-manager .github/workflows/seed-images.yml),
+  # and they are public — measured anonymously on 2026-08-28: manager,
+  # gate-runner and dbtools each answer 200 to an unauthenticated manifest GET.
+  # So a pull needs no credential and no cluster of ours in the path.
+  #
+  # WHAT STAYS ON zot IS WHAT IS BUILT IN A CLUSTER: every consumer and tenant
+  # image the release pipeline builds, which is customer code and belongs on no
+  # public registry. Those compose their ref from endpoints.registry.host
+  # through `common.registryHost`, a different helper reached by a different
+  # path, so nothing here touches them.
+  buildRegistry: "ghcr.io/simetrixch"
+
   # ── Channel ceiling — the ONE literal table ────────────────────────────────
   # Which stages a release channel may reach. The channel is read FROM THE TAG
   # (the tag is the truth, not a parameter), and the rule is enforced at three

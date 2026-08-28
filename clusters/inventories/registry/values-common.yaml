@@ -162,8 +162,15 @@ ingress:
 # upstream tags. Requires a Zot image built with the sync extension (the
 # official ghcr.io/project-zot/zot images bundle it).
 #
-# ghcr.io SEED (extensions.sync, onDemand, listed FIRST): where the images of
-# THIS platform come from on an installation that has never built one. The
+# ghcr.io SEED (extensions.sync, onDemand, listed FIRST). NOT THE PATH THE
+# PLATFORM'S OWN PODS TAKE ANY MORE: their builds[] pins compose against
+# global.buildRegistry (ghcr.io) and reach it directly, so nothing renders a
+# ref at this registry for them. It stays for the pulls that still name this
+# host — an install branch pinned before the switch, and a rollback to such a
+# pin — and it costs nothing while no such pull happens.
+#
+# WHAT IT DOES, WHEN IT DOES FIRE: it fetches the images of THIS platform for an
+# installation that has never built one. The
 # builds[] pins name a tag a release minted, the release pipeline pushes that
 # tag here — and the pipeline exists only once a Manager has written the
 # registration it is rendered from. So the Manager's own image, and the two
