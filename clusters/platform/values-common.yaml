@@ -296,8 +296,8 @@ global:
   #
   # THE PODS PULL IT DIRECTLY, and no longer through the cluster's own registry.
   # The images of the open-source repositories this platform is built from are
-  # published to ghcr.io/<owner>/<build name> by seed-images, the workflow that
-  # runs on the release tag (hostyour-manager .github/workflows/seed-images.yml),
+  # published to ghcr.io/<owner>/<build name> by release-images, the workflow that
+  # runs on the release tag (hostyour-manager .github/workflows/release-images.yml),
   # and they are public — measured anonymously on 2026-08-28: manager,
   # gate-runner and dbtools each answer 200 to an unauthenticated manifest GET.
   # So a pull needs no credential and no cluster of ours in the path.

@@ -74,7 +74,7 @@ from a registration that `hostyour-manager` writes. Its own three images cannot 
 a machine where nothing is installed yet, there is no manager to write that registration.
 
 They come from `ghcr.io/simetrixch/manager`, `.../gate-runner` and `.../dbtools`, pushed by the
-`seed-images` workflow of `hostyour-manager` when a release tag is pushed, under the same
+`release-images` workflow of `hostyour-manager` when a release tag is pushed, under the same
 `<release-tag>-<sha7>` image tag the in-cluster pipeline composes. The registry in
 `clusters/inventories/registry/values-common.yaml` fetches them on the first pull and stores them under their flat
 build name, so nothing downstream can tell where a given tag came from — and from the installation's

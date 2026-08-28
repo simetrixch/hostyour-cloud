@@ -15,7 +15,7 @@
 # The manager image pin lives in values-{dev,test,prod}.yaml as the ONE pin
 # grammar builds[]{name,image,tag} — `image` is the FLAT build name
 # (`manager`, no registry path to compose), and the full ref renders via
-# common.buildImage from common.buildRegistry — ghcr.io, where the seed-images
+# common.buildImage from common.buildRegistry — ghcr.io, where the release-images
 # workflow of hostyour-manager publishes it on the release tag, pulled directly
 # and not through this cluster's own registry. The release bump searches
 # clusters/inventories/<app>/values-<stage>.yaml for exactly this grammar and
