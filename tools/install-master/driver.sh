@@ -177,6 +177,12 @@ readonly RELEASES=https://github.com/simetrixch/ansiwise-cli/releases/download
 readonly CATALOG=/srv/ansiwise-catalog
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
+
+# HOW LONG THE MANAGER GETS TO COME UP, in seconds. It is a bound on waiting and not
+# an expectation: on a warm cluster the socket is there on the first ask. What it
+# bounds is a first installation, where argocd itself was installed minutes ago and
+# has never synced the manager application before.
+readonly MANAGER_SOCKET_LIMIT=600
 readonly ANSWERS_DIR=/home/$OPERATOR/.install-master-answers
 ANSWERS=''
 
@@ -658,6 +664,55 @@ for program in "${PROGRAMS[@]}"; do
   # A CHECKOUT MOVES HEAD AND NOTHING ELSE. No branch is reset, nothing is thrown
   # away, and deploy-branch then runs its other twenty-three rows as the repeat they
   # are meant to be.
+  # THE ONE THING IN THIS SEQUENCE THAT IS WAITED FOR. install-order.yaml states it
+  # as onboard-manager's own `needs`, in its own words: the socket "stands on the HOST
+  # at the path clusters/inventories/manager/values-common.yaml adminSocket.path
+  # names, and the manager pod creates it there once the reconciler has synced the
+  # manager application."
+  #
+  # deploy-platform-services installs argocd; argocd then syncs the manager
+  # application; the pod starts; the socket appears. None of that has happened when
+  # the program before it returns, and onboard-manager ran ZERO seconds later and
+  # died on connect — SocketException, No such file or directory.
+  #
+  # WAITED FOR, NOT SLEPT THROUGH. A fixed sleep is a guess that is wrong in both
+  # directions: too short on a cold cluster, and wasted on a warm one. This asks the
+  # machine, says how long it has been asking, and gives up at a bound rather than
+  # holding a session open for ever.
+  if [ "$program" = onboard-manager ]; then
+    SOCKET=/var/lib/hostyour-manager/admin.sock
+    WAITED=0
+    if ! root test -S "$SOCKET" 2>/dev/null; then
+      say "waiting for the manager pod to put $SOCKET on this machine"
+      say 'argocd has to sync the manager application first, and this is the first run in'
+      say 'which that application exists at all'
+      while [ "$WAITED" -lt "$MANAGER_SOCKET_LIMIT" ]; do
+        sleep 10
+        WAITED=$(( WAITED + 10 ))
+        root test -S "$SOCKET" 2>/dev/null && break
+        [ $(( WAITED % 60 )) -eq 0 ] && say "  still waiting, ${WAITED}s of ${MANAGER_SOCKET_LIMIT}s"
+      done
+    fi
+    if root test -S "$SOCKET" 2>/dev/null; then
+      good "$SOCKET is there${WAITED:+ after ${WAITED}s} — the manager is serving"
+    else
+      die "$SOCKET did not appear in ${MANAGER_SOCKET_LIMIT}s, and onboard-manager talks to the manager through it.
+
+install-order.yaml names this socket as what onboard-manager needs: the manager pod
+creates it once the reconciler has synced the manager application. So what has not
+happened is upstream of this program, and asking again will not change it.
+
+What to look at on the machine, in this order:
+
+  sudo kubectl -n argocd get applications
+  sudo kubectl -n hostyour get pods
+  sudo kubectl -n hostyour logs deploy/hostyour-manager
+
+Everything before this program is done and stands. Start this again when the manager
+is serving; the four programs before it will measure what they already made." 69
+    fi
+  fi
+
   if [ "$program" = deploy-branch ] && [ "$BRANCH_IS_OURS" = yes ]; then
     STANDS_ON=$(root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null)
     if [ "$STANDS_ON" != "$FQDN" ]; then
