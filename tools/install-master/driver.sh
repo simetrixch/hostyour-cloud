@@ -577,21 +577,40 @@ readonly PROGRAMS=(deploy-host deploy-branch deploy-cluster deploy-platform-serv
 
 run_program() {
   local program="$1" mode="$2" ordinal="$3"
-  printf '%s   %-26s %-5s %s' "$C_BLD" "$program" "$mode" "$C_OFF"
+  printf '%s   %-26s %-5s%s\n' "$C_BLD" "$program" "$mode" "$C_OFF"
   local began; began=$(date +%s)
   local log="/tmp/aw-$program-$mode.log"
 
-  # THE PASSWORD ON STANDARD INPUT AND THE RUN'S OWN OUTPUT ON THIS ONE. Every
-  # line the machine writes is echoed as it happens, indented under the program
-  # it belongs to, so a session that scrolls still carries the whole of it.
+  # A HEARTBEAT, because a program can be busy and silent at the same time.
+  # onboard-manager waits up to 1770 seconds for the manager to settle a run it
+  # started, polling every fifteen — and a screen that says nothing for half an hour
+  # is indistinguishable from one that has hung. This says how long, and nothing else.
+  ( while :; do
+      sleep 60
+      printf '%s       … still running, %ds%s\n' "$C_DIM" "$(( $(date +%s) - began ))" "$C_OFF"
+    done ) &
+  local ticker=$!
+
+  # THE PASSWORD ON STANDARD INPUT AND THE RUN'S OWN OUTPUT ON THIS ONE, AS IT
+  # HAPPENS. It used to be captured to a file and printed when the program ended,
+  # under a comment claiming it was echoed as it happened — true of the file, and not
+  # of the screen. A run of ninety steps then showed nothing for as long as it took,
+  # and the one asking for traceability watched a blank terminal.
+  #
+  # It is still kept: tee writes the file the failing-record reader and the summary
+  # both read afterwards.
   printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$CATALOG" && sudo -S -p '' "$ENGINE" "$program" \
       --programs "$CATALOG/ansiwise/programs" \
       --config "$CATALOG/ansiwise.yaml" \
       --answers "$ANSWERS" \
       --runs "$RUNS" \
       --role master --stage "$STAGE" --fqdn "$FQDN" \
-      --mode "$mode" ) > "$log" 2>&1
-  local status=$?
+      --mode "$mode" ) 2>&1 | tee "$log" | sed -u 's/^/       /'
+  # THE SECOND ELEMENT, not the last. The pipeline is printf, the run, tee, sed —
+  # so $? is sed's, which succeeds whatever the run did.
+  local status=${PIPESTATUS[1]}
+  kill "$ticker" 2>/dev/null
+  wait "$ticker" 2>/dev/null
   local took=$(( $(date +%s) - began ))
 
   local last; last=$(tail -1 "$log")
@@ -599,15 +618,10 @@ run_program() {
   case "$id" in *T*Z-*) RUN_IDS+=("$id") ;; *) id='' ;; esac
 
   if [ $status -eq 0 ]; then
-    printf '%s✓ %s%s  %s(%ds)%s\n' "$C_GRN" "$(printf '%s' "$last" | sed 's/^[^ ]*  *//')" "$C_OFF" "$C_DIM" "$took" "$C_OFF"
+    printf '%s   %-26s %-5s ✓ %s%s  %s(%ds)%s\n' "$C_GRN" "$program" "$mode" "$(printf '%s' "$last" | sed 's/^[^ ]*  *//')" "$C_OFF" "$C_DIM" "$took" "$C_OFF"
   else
-    printf '%s✗ exit %d%s  %s(%ds)%s\n' "$C_RED" "$status" "$C_OFF" "$C_DIM" "$took" "$C_OFF"
+    printf '%s   %-26s %-5s ✗ exit %d%s  %s(%ds)%s\n' "$C_RED" "$program" "$mode" "$status" "$C_OFF" "$C_DIM" "$took" "$C_OFF"
   fi
-
-  # THE WHOLE OF WHAT THE MACHINE SAID, indented and kept. Not a tail: the line
-  # that explains a failure is rarely the last one, and this exists so that
-  # nothing has to be asked for twice.
-  sed 's/^/       /' "$log"
   rm -f "$log"
 
   if [ $status -ne 0 ]; then
