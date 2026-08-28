@@ -218,11 +218,11 @@ good 'the elevation password raises a command'
 # the one thing nothing here does. GIT_TERMINAL_PROMPT=0 keeps a repository that is NOT
 # public from turning this into a prompt nobody can see.
 BRANCH_IS_OURS=no
-STANDING=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads \
+BRANCH_TIP=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads \
   "https://github.com/$PLATFORM_REPO.git" "refs/heads/$FQDN" 2>/dev/null | awk '{print $1}')
 STATUS=$?
 
-if [ -n "$STANDING" ]; then
+if [ -n "$BRANCH_TIP" ]; then
   # A BRANCH STANDING THERE IS NOT YET A PROBLEM, and the first shape of this check
   # said it was — which made the installer refuse its own second run, two lines above
   # a message promising that every program is idempotent. deploy-branch PUSHES this
@@ -249,9 +249,9 @@ if [ -n "$STANDING" ]; then
     BARE="this machine carries no checkout at $CHECKOUT at all, so nothing here wrote that branch"
   elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     BRANCH_DOUBT="$CHECKOUT is there but could not be read, so whether this machine wrote that branch is unknown"
-  elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" cat-file -e "$STANDING^{commit}" 2>/dev/null; then
+  elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" cat-file -e "$BRANCH_TIP^{commit}" 2>/dev/null; then
     BRANCH_DOUBT="this machine's checkout does not carry that commit, so something else wrote it"
-  elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" merge-base --is-ancestor "$STANDING" "refs/heads/$FQDN" 2>/dev/null; then
+  elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" merge-base --is-ancestor "$BRANCH_TIP" "refs/heads/$FQDN" 2>/dev/null; then
     BRANCH_DOUBT="this machine's branch does not descend from what is published"
   fi
 
@@ -261,7 +261,7 @@ if [ -n "$STANDING" ]; then
   # and at once if it is true, and this check has now stopped two runs it should have
   # let through, so it does not get to stop a third on a guess.
   if [ -n "$BARE" ]; then
-    die "the platform repository $PLATFORM_REPO already carries a branch named $FQDN, standing at $STANDING — and $BARE.
+    die "the platform repository $PLATFORM_REPO already carries a branch named $FQDN, standing at $BRANCH_TIP — and $BARE.
 
 deploy-branch cuts this machine's branch from today's master, so it will not descend
 from that one, and its push would be refused at the LAST step of twenty-four — after
@@ -281,10 +281,10 @@ WHICH OF THESE IT IS, ONLY YOU KNOW:
   fi
 
   if [ -n "$BRANCH_DOUBT" ]; then
-    warn "$FQDN stands at ${STANDING:0:7} in $PLATFORM_REPO, and $BRANCH_DOUBT. If that branch is what a restore left behind, deploy-branch's push is refused at its last step and \`git push origin --delete $FQDN\` is what clears it"
+    warn "$FQDN stands at ${BRANCH_TIP:0:7} in $PLATFORM_REPO, and $BRANCH_DOUBT. If that branch is what a restore left behind, deploy-branch's push is refused at its last step and \`git push origin --delete $FQDN\` is what clears it"
   else
     BRANCH_IS_OURS=yes
-    good "$FQDN stands at ${STANDING:0:7} and this machine wrote it — its push will fast-forward"
+    good "$FQDN stands at ${BRANCH_TIP:0:7} and this machine wrote it — its push will fast-forward"
   fi
 elif [ $STATUS -ne 0 ]; then
   warn "could not ask whether $PLATFORM_REPO already carries a branch named $FQDN. If it does, deploy-branch is refused at its last step"
@@ -334,11 +334,11 @@ sys.stdout.write(found.group(1) if found else "")')
 [ -n "$PIN" ] || die "$PIN_URL says nothing under cliTools.ansiwise.version" 65
 good "the pin is $PIN"
 
-STANDING=$("$ENGINE" --version 2>/dev/null || true)
-if [ "$STANDING" = "$PIN" ]; then
+ENGINE_ANSWERS=$("$ENGINE" --version 2>/dev/null || true)
+if [ "$ENGINE_ANSWERS" = "$PIN" ]; then
   good "$ENGINE already answers $PIN — nothing fetched"
 else
-  [ -n "$STANDING" ] && say "$ENGINE answers $STANDING, which is not the pin"
+  [ -n "$ENGINE_ANSWERS" ] && say "$ENGINE answers $ENGINE_ANSWERS, which is not the pin"
   for tool in ansiwise ansiwise-rest; do
     url="$RELEASES/$PIN/$tool-$PIN-linux-x64"
     say "fetching $tool from $url"
@@ -638,28 +638,39 @@ for program in "${PROGRAMS[@]}"; do
   step=$(( step + 1 ))
   phase "$step / 5   $program"
 
-  # ONCE AT BIRTH, AND IT HAS BEEN. deploy-branch is the one program of this sequence
-  # that is NOT repeatable, and deliberately so — the catalogue says it in its own
-  # words: "deploy-branch cuts a branch from the tip of the product branch and is run
-  # once, at birth. This program [regenerate-branch] is the operation for every day
-  # after that."
+  # ONCE AT BIRTH — AND THE REPEAT IS A CHECKOUT, NOT A SKIP. deploy-branch's
+  # git_branch row refuses to cut a branch that already exists, and it is right to:
+  # that branch carries this installation's own bytes. But the same step is a NO-OP
+  # when the checkout is already standing on it, and its refusal says so in as many
+  # words — "check it out to work on it again".
   #
-  # Its git_branch row refuses to reset a branch somebody made, which is right: the
-  # branch carries this installation's own bytes — its cluster map, its books, its
-  # registrations — and a second cut would throw them away. So a re-run that reached
-  # this row died here, and the message above it promised idempotence the sequence
-  # does not have.
+  # WHY THE CHECKOUT HAS TO BE MADE HERE. deploy-host's git_clone row puts
+  # /srv/hostyour-cloud on the PRODUCT branch every time it runs, so by the time
+  # deploy-branch is reached on a second run the tree is standing on master with the
+  # machine's branch existing beside it — the one position git_branch refuses.
   #
-  # WHAT IS MEASURED, NOT ASSUMED: phase 0 asked the repository and this machine both,
-  # and only a branch that stands AND that this machine's own checkout wrote gets past
-  # it. That is deploy-branch's work, finished and published. A branch that has to MOVE
-  # afterwards is regenerate-branch's, and that is the Manager's operation, not this
-  # one's.
+  # AND SKIPPING deploy-branch DOES NOT WORK, which is what the first shape of this
+  # tried: the tree is then left standing on master, and master carries none of what
+  # deploy-branch writes. deploy-platform-services asked for
+  # /srv/hostyour-cloud/configs/config.<stage> and was told it is not on this machine
+  # — it was, on the branch nobody had checked out.
+  #
+  # A CHECKOUT MOVES HEAD AND NOTHING ELSE. No branch is reset, nothing is thrown
+  # away, and deploy-branch then runs its other twenty-three rows as the repeat they
+  # are meant to be.
   if [ "$program" = deploy-branch ] && [ "$BRANCH_IS_OURS" = yes ]; then
-    good "$program has already run on this machine — $FQDN stands at ${STANDING:0:7} and this checkout wrote it"
-    say 'it runs once, at birth, and it is past. A branch that must move afterwards is'
-    say "regenerate-branch's operation and the Manager's to start, never this one's."
-    continue
+    STANDS_ON=$(root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$STANDS_ON" != "$FQDN" ]; then
+      say "$CHECKOUT stands on ${STANDS_ON:-nothing}, and $FQDN is this machine's own — putting it there"
+      root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" checkout --quiet "$FQDN" \
+        || die "could not put $CHECKOUT on $FQDN.
+
+deploy-branch cuts that branch once, at birth, and refuses to cut it twice — so a
+second run has to STAND on it instead. Every program after it reads files that live
+there and nowhere else. A working tree with uncommitted changes is the usual reason
+this fails; git said what it said above." 73
+    fi
+    good "$CHECKOUT stands on $FQDN — git_branch is a no-op there and the rest re-measures"
   fi
 
   compose_answers "$program" || {
@@ -677,9 +688,10 @@ for program in "${PROGRAMS[@]}"; do
       say 'names, and start this again: a second run MEASURES what the first one left and'
       say 'does only what is still missing.'
       say ''
-      say 'ONE PROGRAM IS NOT REPEATABLE AND IS NOT REPEATED. deploy-branch runs once, at'
-      say 'birth — a second cut would throw away the branch that carries this'
-      say 'installation. Where it has already run, this says so and walks past it.'
+      say 'ONE PROGRAM IS CUT ONLY ONCE. deploy-branch cuts the branch of this machine at'
+      say 'its birth and refuses to cut it twice, because that branch carries the installation.'
+      say 'On a later run this puts the checkout ON that branch instead, which is what the'
+      say 'step asks for, and its other rows then re-measure as every other program does.'
       say ''
       say 'A restore is worth it for one reason only — when you want to prove a FIRST'
       say 'installation on a bare machine rather than get this one working. Then restore'
