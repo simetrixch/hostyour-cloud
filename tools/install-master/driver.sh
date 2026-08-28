@@ -222,7 +222,31 @@ STANDING=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads \
 STATUS=$?
 
 if [ -n "$STANDING" ]; then
-  die "the platform repository $PLATFORM_REPO already carries a branch named $FQDN, standing at $STANDING.
+  # A BRANCH STANDING THERE IS NOT YET A PROBLEM, and the first shape of this check
+  # said it was — which made the installer refuse its own second run, two lines above
+  # a message promising that every program is idempotent. deploy-branch PUSHES this
+  # branch, so from its first green run onwards the branch is supposed to be there.
+  #
+  # WHAT SEPARATES THE TWO CASES IS WHETHER THIS MACHINE WROTE IT. A branch this
+  # installation pushed is in this machine's own checkout, object and all. One left
+  # by a machine that was restored is not: the restore took the checkout with it and
+  # left the branch standing in a repository no restore reaches.
+  #
+  # So the question is asked of the MACHINE, not of the calendar: does the checkout
+  # here carry that commit, and does the branch here descend from it. Both are read
+  # unelevated, because /srv/hostyour-cloud belongs to this account.
+  CHECKOUT=/srv/hostyour-cloud
+  LEFTOVER=''
+  if [ ! -d "$CHECKOUT/.git" ]; then
+    LEFTOVER="this machine carries no checkout at $CHECKOUT at all, so nothing here wrote that branch"
+  elif ! git -C "$CHECKOUT" cat-file -e "$STANDING^{commit}" 2>/dev/null; then
+    LEFTOVER="this machine's checkout at $CHECKOUT does not carry that commit, so something else wrote it"
+  elif ! git -C "$CHECKOUT" merge-base --is-ancestor "$STANDING" "refs/heads/$FQDN" 2>/dev/null; then
+    LEFTOVER="this machine's branch does not descend from what is published, so its push would be refused"
+  fi
+
+  if [ -n "$LEFTOVER" ]; then
+    die "the platform repository $PLATFORM_REPO already carries a branch named $FQDN, standing at $STANDING — and $LEFTOVER.
 
 deploy-branch cuts this machine's branch from today's master, so it will not descend
 from that one, and its push would be refused at the LAST step of twenty-four — after
@@ -239,6 +263,8 @@ WHICH OF THESE IT IS, ONLY YOU KNOW:
   case you want it back, then delete it and start again:
 
     git push origin --delete $FQDN" 65
+  fi
+  good "$FQDN stands at ${STANDING:0:7} and this machine wrote it — its push will fast-forward"
 elif [ $STATUS -ne 0 ]; then
   warn "could not ask whether $PLATFORM_REPO already carries a branch named $FQDN. If it does, deploy-branch is refused at its last step"
 else
