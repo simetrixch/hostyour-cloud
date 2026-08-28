@@ -217,6 +217,7 @@ good 'the elevation password raises a command'
 # needs nothing — and a token would have to stand in this command's own words, which is
 # the one thing nothing here does. GIT_TERMINAL_PROMPT=0 keeps a repository that is NOT
 # public from turning this into a prompt nobody can see.
+BRANCH_IS_OURS=no
 STANDING=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads \
   "https://github.com/$PLATFORM_REPO.git" "refs/heads/$FQDN" 2>/dev/null | awk '{print $1}')
 STATUS=$?
@@ -282,6 +283,7 @@ WHICH OF THESE IT IS, ONLY YOU KNOW:
   if [ -n "$BRANCH_DOUBT" ]; then
     warn "$FQDN stands at ${STANDING:0:7} in $PLATFORM_REPO, and $BRANCH_DOUBT. If that branch is what a restore left behind, deploy-branch's push is refused at its last step and \`git push origin --delete $FQDN\` is what clears it"
   else
+    BRANCH_IS_OURS=yes
     good "$FQDN stands at ${STANDING:0:7} and this machine wrote it — its push will fast-forward"
   fi
 elif [ $STATUS -ne 0 ]; then
@@ -635,6 +637,31 @@ step=0
 for program in "${PROGRAMS[@]}"; do
   step=$(( step + 1 ))
   phase "$step / 5   $program"
+
+  # ONCE AT BIRTH, AND IT HAS BEEN. deploy-branch is the one program of this sequence
+  # that is NOT repeatable, and deliberately so — the catalogue says it in its own
+  # words: "deploy-branch cuts a branch from the tip of the product branch and is run
+  # once, at birth. This program [regenerate-branch] is the operation for every day
+  # after that."
+  #
+  # Its git_branch row refuses to reset a branch somebody made, which is right: the
+  # branch carries this installation's own bytes — its cluster map, its books, its
+  # registrations — and a second cut would throw them away. So a re-run that reached
+  # this row died here, and the message above it promised idempotence the sequence
+  # does not have.
+  #
+  # WHAT IS MEASURED, NOT ASSUMED: phase 0 asked the repository and this machine both,
+  # and only a branch that stands AND that this machine's own checkout wrote gets past
+  # it. That is deploy-branch's work, finished and published. A branch that has to MOVE
+  # afterwards is regenerate-branch's, and that is the Manager's operation, not this
+  # one's.
+  if [ "$program" = deploy-branch ] && [ "$BRANCH_IS_OURS" = yes ]; then
+    good "$program has already run on this machine — $FQDN stands at ${STANDING:0:7} and this checkout wrote it"
+    say 'it runs once, at birth, and it is past. A branch that must move afterwards is'
+    say "regenerate-branch's operation and the Manager's to start, never this one's."
+    continue
+  fi
+
   compose_answers "$program" || {
     say ''
     say "the installation stops here, before $program was started."
@@ -646,9 +673,13 @@ for program in "${PROGRAMS[@]}"; do
       say "the installation stops here. Nothing after $program was started, and what"
       say 'it already did stands.'
       say ''
-      say 'YOU DO NOT NEED TO RESTORE THIS MACHINE. Every program of this sequence is'
-      say 'idempotent: a second run MEASURES what the first one left and does only what'
-      say 'is still missing. Read the step above, fix what it names, and start this again.'
+      say 'YOU DO NOT NEED TO RESTORE THIS MACHINE. Read the step above, fix what it'
+      say 'names, and start this again: a second run MEASURES what the first one left and'
+      say 'does only what is still missing.'
+      say ''
+      say 'ONE PROGRAM IS NOT REPEATABLE AND IS NOT REPEATED. deploy-branch runs once, at'
+      say 'birth — a second cut would throw away the branch that carries this'
+      say 'installation. Where it has already run, this says so and walks past it.'
       say ''
       say 'A restore is worth it for one reason only — when you want to prove a FIRST'
       say 'installation on a bare machine rather than get this one working. Then restore'
