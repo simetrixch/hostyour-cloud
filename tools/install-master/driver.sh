@@ -749,7 +749,11 @@ this fails; git said what it said above." 73
   compose_answers "$program" || {
     say ''
     say "the installation stops here, before $program was started."
-    break
+    # NOT `break`. A break leaves the loop and falls into the paragraph below it, which
+    # says the installation is done and every run was green — over a failure that had
+    # just been reported. The two ways out of this loop have to end the same way.
+    summary
+    exit 1
   }
   for mode in test dry run; do
     run_program "$program" "$mode" "$step" || {
@@ -780,3 +784,17 @@ phase 'done'
 good "$FQDN is installed: four programs, twelve runs, every one green"
 say "the machine's own records stand under $RUNS"
 summary
+
+# THIS FILE IS READ FROM STANDARD INPUT, so what follows it on that stream is read as
+# more of it. PowerShell appends its own newline when it pipes a string to a native
+# command, and on Windows that newline is CRLF — so the last thing to arrive is a lone
+# carriage return on a line of its own, which bash tries to run:
+#
+#   bash: line 828: $'\r': command not found
+#
+# Measured on a green installation, two lines past the end of an 826-line stream.
+# Stripping carriage returns cannot reach it: it is added after the stripping, by the
+# thing doing the sending.
+#
+# An explicit exit ends the script where the script ends, and bash reads no further.
+exit 0
