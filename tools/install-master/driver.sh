@@ -296,13 +296,49 @@ for path in "$CATALOG" /srv/hostyour-cloud /var/lib/ansiwise; do
   [ -e "$path" ] && warn "$path already stands here — this is not a bare machine, and what follows will act on what is there"
 done
 
+# THE PACKAGE MANAGER, ASKED WHETHER IT IS FREE BEFORE ANY PROGRAM WANTS IT. Ubuntu
+# starts unattended-upgrades on its own shortly after boot, so a machine that was just
+# restored is holding the dpkg lock through the first minutes of its life — which is
+# exactly when deploy-host reaches install_packages, four rows into the first program.
+# Measured on apps4 on 2026-08-28: the first run after a restore died with
+# "Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 14400
+# (unattended-upgr)", and a minute later the same run was green.
+#
+# APT ITSELF DOES THE WAITING. DPkg::Lock::Timeout makes it block for the lock rather
+# than fail on it, so this asks in short turns and reports between them instead of
+# holding a silent session. `check` is the cheapest thing apt does that takes the lock.
+#
+# NOTHING IS STOPPED OR MASKED. unattended-upgrades is a machine's security updates
+# doing their job, and switching them off to make an installation quieter is not a
+# trade this makes — it waits for them like any other tenant of that lock.
+#
+# THIS COMES OUT WHEN ansiwise-plugins#163 LANDS: install_packages will carry the same
+# option itself, and a step that waits for its own lock needs no gate in front of it.
+PACKAGES_WAITED=0
+until root apt-get -o DPkg::Lock::Timeout=5 check >/dev/null 2>&1; do
+  if [ "$PACKAGES_WAITED" -ge 600 ]; then
+    die "the package manager has been busy for ${PACKAGES_WAITED}s and deploy-host installs packages four rows in.
+
+A freshly booted Ubuntu runs unattended-upgrades, which holds the dpkg lock — that is
+normal and it finishes on its own. Ten minutes is longer than it should take, so
+something else holds it. What to look at:
+
+  ps -o pid,etime,cmd -C unattended-upgrade
+  sudo fuser -v /var/lib/dpkg/lock-frontend" 75
+  fi
+  [ $(( PACKAGES_WAITED % 60 )) -eq 0 ] \
+    && say "the package manager is busy — a freshly booted Ubuntu runs unattended-upgrades; waited ${PACKAGES_WAITED}s"
+  PACKAGES_WAITED=$(( PACKAGES_WAITED + 5 ))
+done
+good "the package manager is free${PACKAGES_WAITED:+ after ${PACKAGES_WAITED}s}"
+
 MISSING=()
 for tool in git curl python3; do command -v "$tool" >/dev/null 2>&1 || MISSING+=("$tool"); done
 if [ ${#MISSING[@]} -gt 0 ]; then
   say "this machine carries no ${MISSING[*]} — and the catalogue every program is READ FROM cannot be"
   say 'cloned without git, so the first program cannot run without it. This is the one'
   say "change here that no program makes, and deploy-host's install_packages row makes it again"
-  root bash -c 'DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl python3' \
+  root bash -c 'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 update -qq && DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -qq git curl python3' \
     || die "apt-get would not install ${MISSING[*]}" 70
   good "installed ${MISSING[*]}"
 else
