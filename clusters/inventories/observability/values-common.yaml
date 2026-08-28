@@ -243,7 +243,12 @@ monitoring:
             # with `cluster` instead. What the wider join can match is a phase series and a
             # waiting-reason series belonging to two DIFFERENT pods that share a namespace and a
             # name, which takes a second cluster's series in this Prometheus:
-            # enableRemoteWriteReceiver is false below, so it accepts none.
+            # THIS PROMETHEUS CAN NOW HOLD A SECOND CLUSTER'S SERIES: the receiver
+            # below is on, so a slave's agent pushes into it. What keeps the join
+            # from matching across clusters is the `cluster` label the agent puts
+            # on everything it sends
+            # (clusters/charts/monitoring/templates/alloy-agent-config.yaml), not
+            # the absence of the series.
             #
             # The DECISION to exclude is per container, and the nested `unless` is what makes
             # it so: the inner operand keeps an owned container only while the same pod has NO
@@ -568,14 +573,20 @@ kube-prometheus-stack:
       # global.servicesLocal.observability the way the push Ingresses in
       # Chart.yaml are: it is a kube-prometheus-stack value, not a chart of ours.
       #
-      # NOTHING IN THIS TREE TURNS IT ON. clusters/active/<fqdn>.yaml carries global.*
-      # keys only and the branch program writes no such key, so the profile is
-      # not the surface it was once set from. The only place an installation can
-      # set it today is its own installation/values/observability.yaml, which the
-      # ApplicationSet loads just before the profile. Until one does, the master
-      # serves no /api/v1/write and the prom-push Ingress below leads to an
-      # endpoint Prometheus never registered.
-      enableRemoteWriteReceiver: false
+      # ON, HERE ON THE TRUNK, SO EVERY INSTALLATION HAS IT. It is the same value
+      # on all of them: whether Prometheus serves /api/v1/write depends on nothing
+      # a machine knows about itself, so it is a property of the product and it
+      # belongs where the product is declared. An installation inherits it when
+      # its branch is regenerated, and the reconciler carries it the rest of the
+      # way.
+      #
+      # WHAT IT OPENS, and what stands in front of it: the route to this endpoint
+      # is the prom-push Ingress below, and that Ingress carries Traefik's
+      # obs-push-auth middleware — so a caller from outside presents credentials
+      # before Prometheus is reached. Inside the cluster :9090 is reachable by any
+      # pod until queryPolicy above is armed, which is a separate decision with
+      # its own reading list.
+      enableRemoteWriteReceiver: true
 
   grafana:
     fullnameOverride: grafana
@@ -833,12 +844,11 @@ externalsecret-grafana-oidc:
 # slave agent posts to <prometheusPush>/api/v1/write
 # (clusters/charts/monitoring/templates/alloy-agent-config.yaml).
 #
-# THE PATH IT POSTS TO DOES NOT EXIST UNTIL SOMEBODY TURNS THE RECEIVER ON.
-# prometheusSpec.enableRemoteWriteReceiver stands at false above, which is also
-# the chart's own default, and nothing in this tree sets it — so this route
-# reaches a Prometheus that never registered /api/v1/write. An installation that
-# wants it sets the value in its own installation/values/observability.yaml, which the
-# ApplicationSet loads just before the profile.
+# THE PATH IT POSTS TO EXISTS BECAUSE THE RECEIVER IS ON ABOVE.
+# prometheusSpec.enableRemoteWriteReceiver is true, against the chart's own
+# default of false, so Prometheus registers /api/v1/write and this route reaches
+# it. The route is guarded by the basic-auth middleware named on the Ingress
+# below, so a caller presents credentials before Prometheus is reached.
 ingress-prom-push:
   ingress:
     enabled: true
