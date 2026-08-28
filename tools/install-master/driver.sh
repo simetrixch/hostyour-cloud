@@ -90,6 +90,22 @@ summary() {
     printf '%s   %d failure(s):%s\n' "$C_RED" "${#FAILURES[@]}" "$C_OFF"
     for f in "${FAILURES[@]}"; do printf '%s     ✗ %s%s\n' "$C_RED" "$f" "$C_OFF"; done
   fi
+  # THE RECORDS ARE HANDED TO THIS ACCOUNT BEFORE THEY ARE NAMED. Every run is
+  # elevated, so the engine creates /var/lib/ansiwise as root on a machine that has
+  # never carried it — and the launcher fetches over a session opened as this
+  # account, which then reads nothing. It is the same shape as the catalogue, and
+  # the same rule: hostyour-manager#68 records /var/lib/ansiwise and its runs
+  # directory as this account's.
+  #
+  # IN THE SUMMARY BECAUSE THE SUMMARY RUNS ON BOTH PATHS. A failed installation is
+  # the one whose records are read, so handing them over only on success would take
+  # them away exactly when they are wanted.
+  if [ -e "$RUNS" ]; then
+    root chown -R "$OPERATOR:$OPERATOR" /var/lib/ansiwise 2>/dev/null \
+      && good "$RUNS belongs to $OPERATOR — the records can be fetched" \
+      || warn "could not hand /var/lib/ansiwise to $OPERATOR; the records are there but a session opened as $OPERATOR may not be able to read them"
+  fi
+
   # The launcher reads this line to know which records to fetch. One line, one
   # run identifier, in the order they happened.
   # PLAIN, AND DELIBERATELY UNDRESSED. Every other line here is written for a person
@@ -523,6 +539,28 @@ run_program() {
 
   if [ $status -ne 0 ]; then
     bad "$program ($mode) ended with exit $status${id:+ — its record is $RUNS/$id}"
+
+    # THE RECORD READ OUT HERE, IN THIS SESSION, rather than left to be fetched.
+    # A run that fails before install_authorized_key leaves this account with no key
+    # on the machine, so the launcher's own fetch cannot reach anything — and that is
+    # exactly the run whose record is wanted. This session is already open and
+    # already elevated, so the failing step can say what it said.
+    if [ -n "$id" ]; then
+      root cat "$RUNS/$id/run.json" 2>/dev/null | python3 -c "
+import json, sys
+try:
+    run = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for at, step in enumerate(run.get('steps', []), 1):
+    verdict = step.get('verdict', {})
+    if verdict.get('label') == 'ok':
+        continue
+    print(f\"       step {at} of {len(run['steps'])}, {step['step']} ({step.get('source','')})\")
+    for line in (verdict.get('reason') or verdict.get('label') or '').splitlines():
+        print('         ' + line)
+" || true
+    fi
     return 1
   fi
   return 0
@@ -541,9 +579,16 @@ for program in "${PROGRAMS[@]}"; do
     run_program "$program" "$mode" "$step" || {
       say ''
       say "the installation stops here. Nothing after $program was started, and what"
-      say 'it already did stands. Read the lines above, then start this again — every'
-      say 'program of this sequence is idempotent and a second run measures what the'
-      say 'first one left.'
+      say 'it already did stands.'
+      say ''
+      say 'YOU DO NOT NEED TO RESTORE THIS MACHINE. Every program of this sequence is'
+      say 'idempotent: a second run MEASURES what the first one left and does only what'
+      say 'is still missing. Read the step above, fix what it names, and start this again.'
+      say ''
+      say 'A restore is worth it for one reason only — when you want to prove a FIRST'
+      say 'installation on a bare machine rather than get this one working. Then restore'
+      say "AND delete this machine's branch, because a restore never touches the"
+      say 'repository and the branch left standing stops the next run at its last step.'
       summary
       exit 1
     }

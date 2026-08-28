@@ -248,13 +248,31 @@ if ($runsLine) {
   $ids = @($runsLine.Matches[0].Groups[1].Value.Trim() -split '\s+' | Where-Object { $_ })
   Write-Host ''
   Write-Host "  Fetching the machine's own record of $($ids.Count) run(s) into $session" -ForegroundColor DarkGray
+  $arrived = 0
   foreach ($id in $ids) {
     $into = Join-Path $session $id
     New-Item -ItemType Directory -Force -Path $into | Out-Null
     & scp -q -P $port -o BatchMode=yes "${target}:/var/lib/ansiwise/runs/$id/*" $into 2>$null
     & scp -q -P $port -o BatchMode=yes "${target}:/var/lib/ansiwise/runs/$id.startup.log" $into 2>$null
+    # WHAT ACTUALLY LANDED, COUNTED. An empty directory beside a line saying the
+    # records were fetched is worse than no line at all: it reads as "they are
+    # there" to whoever comes looking for them later.
+    if (@(Get-ChildItem -LiteralPath $into -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+      $arrived++
+    } else {
+      Remove-Item -LiteralPath $into -Force -ErrorAction SilentlyContinue
+    }
   }
-  Write-Host "  $session" -ForegroundColor Green
+  if ($arrived -eq 0) {
+    Write-Host '  NOTHING ARRIVED. The machine named its runs, and none of them could be read.' -ForegroundColor Yellow
+    Write-Host '  Either this account carries no key on that machine yet — deploy-host installs' -ForegroundColor Yellow
+    Write-Host '  it, and it did not get that far — or the records are not readable by it. They' -ForegroundColor Yellow
+    Write-Host '  stand on the machine either way:' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host "    ssh $target sudo tar -C /var/lib/ansiwise -cf - runs | tar -C $session -xf -" -ForegroundColor DarkGray
+  } else {
+    Write-Host "  $arrived of $($ids.Count) arrived: $session" -ForegroundColor Green
+  }
 } else {
   Write-Host '  The machine named no runs — read the transcript above; nothing was recorded to fetch.' -ForegroundColor Yellow
 }

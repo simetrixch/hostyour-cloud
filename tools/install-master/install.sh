@@ -162,12 +162,29 @@ INSTALLED=${PIPESTATUS[1]}
 IDS=$(sed 's/\x1b\[[0-9;]*m//g' "$TRANSCRIPT" | grep -oE '^[[:space:]]*RUNS .*$' | tail -1 | sed 's/^[[:space:]]*RUNS //' | tr -d '\r')
 if [ -n "${IDS// /}" ]; then
   printf "\n  Fetching the machine's own record of %s run(s) into %s\n" "$(printf '%s' "$IDS" | wc -w | tr -d ' ')" "$SESSION" >&2
+  ARRIVED=0
   for id in $IDS; do
     mkdir -p "$SESSION/$id"
     scp -q -P "$PORT" -o BatchMode=yes "$TARGET:/var/lib/ansiwise/runs/$id/*" "$SESSION/$id/" 2>/dev/null || true
     scp -q -P "$PORT" -o BatchMode=yes "$TARGET:/var/lib/ansiwise/runs/$id.startup.log" "$SESSION/$id/" 2>/dev/null || true
+    # WHAT ACTUALLY LANDED, COUNTED. An empty directory beside a line saying the
+    # records were fetched is worse than no line at all: it reads as "they are
+    # there" to whoever comes looking for them later.
+    if [ -n "$(ls -A "$SESSION/$id" 2>/dev/null)" ]; then
+      ARRIVED=$(( ARRIVED + 1 ))
+    else
+      rmdir "$SESSION/$id" 2>/dev/null || true
+    fi
   done
-  printf '  %s\n\n' "$SESSION" >&2
+  if [ "$ARRIVED" -eq 0 ]; then
+    printf '  NOTHING ARRIVED. The machine named its runs, and none of them could be read.\n' >&2
+    printf '  Either this account carries no key on that machine yet — deploy-host installs\n' >&2
+    printf '  it, and it did not get that far — or the records are not readable by it. They\n' >&2
+    printf '  stand on the machine either way:\n\n' >&2
+    printf '    ssh %s sudo tar -C /var/lib/ansiwise -cf - runs | tar -C %s -xf -\n\n' "$TARGET" "$SESSION" >&2
+  else
+    printf '  %s of %s arrived: %s\n\n' "$ARRIVED" "$(printf '%s' "$IDS" | wc -w | tr -d ' ')" "$SESSION" >&2
+  fi
 else
   printf '  The machine named no runs — read the transcript above; nothing was recorded to fetch.\n\n' >&2
 fi
