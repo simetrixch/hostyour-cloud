@@ -371,6 +371,26 @@ root chown -R "$OPERATOR:$OPERATOR" "$CATALOG" \
   || die "could not hand $CATALOG to $OPERATOR, and an elevated clone leaves it as root's" 73
 good "$CATALOG belongs to $OPERATOR"
 
+# AND ROOT IS TOLD IT IS NOT DUBIOUS. git refuses a repository owned by another
+# account outright — "detected dubious ownership" — and every program is elevated,
+# so root reading this operator-owned checkout gets that refusal. deploy-platform-
+# services' git_clone row then reads the refusal as "there is no checkout here" and
+# clones onto one that is standing, dying on a directory that is not empty
+# (simetrixch/ansiwise-plugins#162, measured on apps4 2026-08-28).
+#
+# IT IS NOT DUBIOUS, AND THAT IS WHY THIS IS SAID RATHER THAN WORKED AROUND. This
+# platform put that checkout there and prescribes its owner
+# (hostyour-manager#68); git simply has no way to know it.
+#
+# THIS COMES OUT WHEN #162 IS FIXED. The step's own git commands should carry
+# `-c safe.directory` and write to nobody's configuration; until they do, the
+# statement has to be made once, here, for the account the programs run as.
+if ! root git config --global --get-all safe.directory 2>/dev/null | grep -qx "$CATALOG"; then
+  root git config --global --add safe.directory "$CATALOG" \
+    && good "root reads $CATALOG as trusted — it is this platform's own checkout" \
+    || warn "could not tell root that $CATALOG is trusted; an elevated git will refuse it as dubious ownership (ansiwise-plugins#162)"
+fi
+
 # WHAT THIS ACCOUNT CAN SEE, ASKED BEFORE WHAT IS MISSING. A directory this account
 # cannot enter answers every question with "not there", so a check that only reports
 # absence sends the reader looking in the repository for a file that is sitting on
