@@ -243,10 +243,25 @@ if [ -n "$BRANCH_TIP" ]; then
     BARE="this machine carries no checkout at $CHECKOUT at all, so nothing here wrote that branch"
   elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     BRANCH_DOUBT="$CHECKOUT is there but could not be read, so whether this machine wrote that branch is unknown"
-  elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" cat-file -e "$BRANCH_TIP^{commit}" 2>/dev/null; then
-    BRANCH_DOUBT="this machine's checkout does not carry that commit, so something else wrote it"
-  elif ! root git -c "safe.directory=$CHECKOUT" -C "$CHECKOUT" merge-base --is-ancestor "$BRANCH_TIP" "refs/heads/$FQDN" 2>/dev/null; then
-    BRANCH_DOUBT="this machine's branch does not descend from what is published"
+  # ASKED AFTER A FETCH, because a machine cannot judge a commit it has never seen. The published
+  # tip usually IS newer than anything here: that is how a release reaches a cluster — a merge of
+  # the product branch into this machine's own, made from wherever the release was cut.
+  else
+    git -C "$CHECKOUT" fetch --quiet origin "$FQDN" 2>/dev/null || true
+    if ! git -C "$CHECKOUT" cat-file -e "$BRANCH_TIP^{commit}" 2>/dev/null; then
+      BRANCH_DOUBT="this machine could not fetch that commit, so whether it wrote that branch is unknown"
+    # RELATED IN EITHER DIRECTION IS OURS. What this has to tell apart is a branch this machine grew
+    # from one somebody else's machine wrote, and both readings of "related" answer that: the tip
+    # descends from what stands here (a release was merged in), or what stands here descends from the
+    # tip (this machine has committed since). Only two histories with nothing in common are foreign.
+    #
+    # ASKING ONLY THE FIRST OF THE TWO IS WHAT STOPPED A RUN. A release merged into this branch from
+    # a workstation left the machine calling its own branch somebody else's, so the checkout was
+    # never stood on it and deploy-branch met a local branch it may not reset — twenty-four steps
+    # spent to be refused at the fifth (apps3, 2026-08-29).
+    elif ! git -C "$CHECKOUT" merge-base --is-ancestor "$BRANCH_TIP" "refs/heads/$FQDN" 2>/dev/null       && ! git -C "$CHECKOUT" merge-base --is-ancestor "refs/heads/$FQDN" "$BRANCH_TIP" 2>/dev/null; then
+      BRANCH_DOUBT="this machine's branch and what is published have no commit in common"
+    fi
   fi
 
   # ONLY WHAT IS CERTAIN IS REFUSED. A machine carrying no checkout at all cannot have
@@ -757,6 +772,17 @@ second run has to STAND on it instead. Every program after it reads files that l
 there and nowhere else. A working tree with uncommitted changes is the usual reason
 this fails; git said what it said above." 73
     fi
+    # AND BROUGHT TO WHAT IS PUBLISHED. A release reaches a cluster as a merge into this branch made
+    # somewhere else, so the tip here is usually behind — and deploy-branch commits onto it and
+    # pushes, which a remote refuses when the commit does not descend from what it already carries.
+    # Fast-forward only: a checkout that cannot be fast-forwarded has commits of its own that
+    # nothing here may throw away, and it says so rather than deciding.
+    if git -C "$CHECKOUT" merge --ff-only "origin/$FQDN" >/dev/null 2>&1; then
+      good "$CHECKOUT stands on the published head of $FQDN"
+    else
+      warn "$CHECKOUT could not be fast-forwarded to origin/$FQDN — it carries commits of its own, and deploy-branch's push may be refused at its last step"
+    fi
+
     good "$CHECKOUT stands on $FQDN — git_branch is a no-op there and the rest re-measures"
   fi
 
