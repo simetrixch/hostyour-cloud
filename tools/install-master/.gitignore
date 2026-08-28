@@ -14,8 +14,16 @@
 # from what the five programs declare, and it is the thing an operator copies.
 config.env
 
-# Whatever else an operator keeps beside it for a second machine.
-*.local.env
+# AND ONE PER MACHINE, because a second machine is a second file. `config.apps3.env`
+# beside `config.env` is the obvious way to keep two installations apart, and until this
+# line existed git would have offered to commit it — a file of ten credentials, named
+# after the machine it opens.
+config.*.env
+
+# The example is NOT ignored and must not be: it carries no value, it is generated from
+# what the four programs declare, and it is the thing an operator copies. It is named
+# again here because the line above would otherwise sweep it up.
+!config.example.env
 
 # Where install.sh and install.ps1 put the session transcript and the machine's own run
 # records. Those carry no credential — the engine redacts a secret answer before it
