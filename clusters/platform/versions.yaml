@@ -651,7 +651,7 @@ cliTools:
   # a version out of — a machine carrying it can never be reported as at the pin or
   # off it, only as absent.
   ansiwise:
-    version: "0.6.5-beta-20260829215244"
+    version: "0.6.7-beta-20260829231909"
     upstream:
       kind: github_release
       project: simetrixch/ansiwise-cli
@@ -662,7 +662,7 @@ cliTools:
       # filters of ansiwise-cli .github/workflows/release.yml that admit only
       # tags of that shape). Read off all 25 releases on 2026-08-26: every one is
       # an alpha and every one is marked a pre-release, the newest being
-      # 0.5.1-alpha-20260826000332, which is the pin.
+      # 0.5.1-alpha-20260826000332, which was the pin at that reading.
       #
       # An `alpha`-only pattern would match the pin's own channel exactly and be
       # wrong for it: on the day a stable is cut, it would go on reporting alphas
