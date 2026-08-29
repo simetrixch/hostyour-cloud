@@ -1,0 +1,25 @@
+# The SecretStore this namespace reads through, rendered by the shared chart exactly as every other
+# workload namespace renders one: the cluster's own auth mount, its own ServiceAccount, its own role.
+secret-store: {}
+
+# WHERE THE CLIENT SECRET STANDS. `<env>/idp/bootstrap` is written when the identity provider is
+# seeded, on the cluster that keeps the books, and every cluster of the installation reads that one
+# entry — the reconcilers are separate but the provider is one, so the client is one.
+#
+# TWO THINGS OUTSIDE THIS REPOSITORY have to hold for the read to succeed, and the seed states both:
+#   * the `<cluster>-eso` policy grants read on secret/data/<env>/idp/bootstrap;
+#   * `argocd` is admitted by the store's `external-secrets` role — which it is by carrying
+#     `hostyour.cloud/workload`, the label app.yaml asks ArgoCD to put on the namespace.
+externalsecret-oidc:
+  externalSecret:
+    enabled: true
+    name: argocd-oidc
+    namespace: argocd
+    secretStoreKind: SecretStore
+    targetSecretName: argocd-oidc
+    # The reconciler's own chart labels everything it owns this way, and the Secret is read by name
+    # rather than selected — the label is what makes it recognisable beside the release's own objects.
+    annotations: {}
+    data:
+      - secretKey: clientSecret
+        property: argocd-client-secret

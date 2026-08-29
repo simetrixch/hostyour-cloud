@@ -52,6 +52,11 @@ spec:
   destinations:
     - server: https://kubernetes.default.svc
       namespace: external-secrets
+    # The reconciler's own namespace, for the ONE object of it this project delivers: the client
+    # secret a person signs in with (clusters/inventories/argocd-signin). It is read out of the
+    # store like every other secret, so it belongs to the tier that carries the store's operator.
+    - server: https://kubernetes.default.svc
+      namespace: argocd
     - server: https://kubernetes.default.svc
       namespace: kube-system
     # service-provisioner controller's own namespace.

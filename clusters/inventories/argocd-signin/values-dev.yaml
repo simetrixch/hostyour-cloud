@@ -1,0 +1,7 @@
+# The stage's own entry. Stated per stage rather than composed, like every other app of this tree.
+externalsecret-oidc:
+  externalSecret:
+    data:
+      - secretKey: clientSecret
+        property: argocd-client-secret
+        vaultPath: dev/idp/bootstrap

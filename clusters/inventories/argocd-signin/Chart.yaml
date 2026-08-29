@@ -1,0 +1,30 @@
+apiVersion: v2
+name: argocd-signin
+version: 1.0.0
+description: |
+  THE ONE SECRET A PERSON NEEDS TO OPEN A CLUSTER'S RECONCILER — `argocd-oidc`, key `clientSecret`,
+  which clusters/bootstrap/argocd/values.yaml resolves as `$argocd-oidc:clientSecret` in its
+  oidc.config. Without it the sign-in reaches the token exchange and is answered `invalid_client`,
+  because an unresolved reference is sent as an empty secret; and the local account is off, so there
+  is no password form to fall back to.
+
+  IT IS READ, NOT WRITTEN IN. It used to be placed by a row of deploy-platform-services holding the
+  store's ROOT TOKEN, which exists only on the cluster that keeps the books — so a cluster keeping
+  none could not have it at all, and the run that tried died at that row (apps4, 2026-08-29).
+
+  Here it arrives the way every other secret on every other cluster does: this cluster's own ESO
+  logs in at this cluster's own auth mount and reads the entry with this cluster's own policy. One
+  mechanism instead of two, no root token, and the object is a resource of a GitOps Application —
+  visible in the reconciler it belongs to, like everything else the platform deploys.
+dependencies:
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-oidc
+  # Shared named templates the two library charts above resolve their names through.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

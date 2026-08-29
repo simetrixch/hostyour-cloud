@@ -1,0 +1,14 @@
+name: argocd-signin
+project: core
+# AFTER external-secrets, whose operator and CRDs this reads through, and after the reconciler that
+# consumes the Secret is standing. It is the sign-in and never the syncing: ArgoCD reconciles
+# perfectly well without it, so arriving late costs a person one refreshed login page and nothing else.
+syncWave: "5"
+namespace: argocd
+prune: "true"
+# TRUE ON A NAMESPACE THAT ALREADY EXISTS, and that is what it is here for: it is how ArgoCD is asked
+# to own the namespace's METADATA, and the platform appset stamps `hostyour.cloud/workload` through
+# exactly that. The store's role binds on that label, so the namespace this renders into is admitted
+# at login by the same rule as every other namespace of this platform.
+createNamespace: "true"
+runsOn: every-cluster
