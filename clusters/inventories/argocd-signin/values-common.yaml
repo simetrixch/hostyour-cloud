@@ -1,6 +1,5 @@
 # The SecretStore this namespace reads through, rendered by the shared chart exactly as every other
 # workload namespace renders one: the cluster's own auth mount, its own ServiceAccount, its own role.
-secret-store: {}
 
 # WHERE THE CLIENT SECRET STANDS. `<env>/idp/bootstrap` is written when the identity provider is
 # seeded, on the cluster that keeps the books, and every cluster of the installation reads that one
