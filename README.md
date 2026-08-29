@@ -47,8 +47,10 @@ The arrangement inside `clusters/` is deliberately the one it always had, becaus
 its libraries relatively — `file://../../charts/common`, nineteen times over. Moving the siblings
 together left all of them true, and only the paths anchored at the root had to change.
 
-**And nothing else.** No configuration, no secrets, no executable and no code that runs — this is
-structure, and it is the same structure for everybody who clones it. What belongs to ONE
+**And nothing else deploys.** No configuration and no secrets — this is structure, and it is the
+same structure for everybody who clones it. What runs does so from a person's machine, never in a
+cluster: `tools/install-master/` installs a first master, and `migrations/` corrects facts that are
+born on install branches and reachable neither by a merge nor by a regeneration. What belongs to ONE
 installation comes from outside: that company's own repository, carrying its configuration in the
 clear and its secrets encrypted, handed to the deployer along with the key that opens them.
 
