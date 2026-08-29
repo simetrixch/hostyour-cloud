@@ -54,7 +54,13 @@ spec:
             valuesObject:
               slave:
                 name: "{{ .values.cluster }}"
-                branch: "{{ .fqdn }}"
+                # THE SLAVE'S INSTALL BRANCH, WHICH IS ITS DOMAIN. Read from `global.domain`, the
+                # one place a cluster map states it — the generator's `cluster` value above reads
+                # the same key. It said `.fqdn`, which is a key no cluster map has: the top level of
+                # a map carries stage, role, booksCluster and release and nothing else, and with
+                # `missingkey=error` above, a template naming a key that is not there produces no
+                # Application at all for the slave it was generating.
+                branch: "{{ .global.domain }}"
                 apiHost: "{{ .global.apiHost }}"
                 apiPort: "{{ .global.apiPort }}"
                 masterFqdn: "{{ .global.master }}"
