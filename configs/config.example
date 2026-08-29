@@ -103,6 +103,14 @@ PLATFORM_DOMAIN=
 # so every cluster of it is given the SAME value here: two clusters that both named themselves would
 # each build their own copy of what is meant to be one image promoted from stage to stage. Nothing
 # derives this value from anything else.
+# THE CLUSTER THAT KEEPS THE BOOKS — the cluster maps and the registrations of this installation,
+# and with them the ONE secret store and the ONE place people sign in. On the cluster that keeps
+# them this is its own domain; on every other cluster of the same installation it is that cluster's.
+# Held against CLUSTER_FQDN above, it is what tells a program whether the installation-wide services
+# are provided HERE or reached elsewhere — the same relation BUILD_PLANE_FQDN below carries for the
+# registry, read the same way and stated in the same shape.
+BOOKS_CLUSTER=
+
 BUILD_PLANE_FQDN=
 
 # The repository holding this installation's TENANT charts and their per-stage pins, written as
