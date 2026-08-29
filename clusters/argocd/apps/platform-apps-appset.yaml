@@ -14,13 +14,23 @@ spec:
         revision: master
         files:
           - path: "clusters/inventories/*/app.yaml"
+      # THE SELECTION IS BY PART, NEVER BY ONE ROLE WORD. A cluster's role names every part it
+      # carries — `master`, `slave`, or both as `master+slave` — and an app.yaml's `runsOn` names
+      # the ONE part its app belongs to, or `every-cluster`. The two slots below are stamped by the
+      # branch programs with the FIRST and the LAST part of this cluster's role
+      # (stamp_placeholder_in_tracked_files with the framework's first_part_of / last_part_of
+      # rules), so a machine carrying both parts admits `master` AND `slave` and renders both
+      # parts' workloads, while a single-part role fills the two slots with the same word — a
+      # duplicate an In match reads as one value. An app.yaml whose runsOn matches neither slot nor
+      # `every-cluster` stays unselected on every cluster, exactly as under the one-slot form.
       selector:
         matchExpressions:
           - key: runsOn
             operator: In
             values:
               - every-cluster
-              - __CLUSTER_ROLE__
+              - __CLUSTER_ROLE_FIRST_PART__
+              - __CLUSTER_ROLE_LAST_PART__
 
   template:
     metadata:

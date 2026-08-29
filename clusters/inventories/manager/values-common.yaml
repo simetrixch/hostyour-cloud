@@ -8,9 +8,10 @@
 #
 # PROVIDER-ONLY: like the build plane (registry/tekton/image-builder), the
 # manager runs only where the registry runs locally. app.yaml says
-# runsOn: master, and the app generator admits every-cluster plus the role
-# stamped over __CLUSTER_ROLE__ — the same placement every provider-only app
-# carries.
+# runsOn: master, and the app generator admits every-cluster plus the parts of
+# the cluster's role, stamped over __CLUSTER_ROLE_FIRST_PART__ and
+# __CLUSTER_ROLE_LAST_PART__ — so a master+slave machine renders it too — the
+# same placement every provider-only app carries.
 #
 # The manager image pin lives in values-{dev,test,prod}.yaml as the ONE pin
 # grammar builds[]{name,image,tag} — `image` is the FLAT build name

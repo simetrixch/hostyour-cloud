@@ -17,6 +17,11 @@ spec:
           cluster: '{{ index (splitList "." .global.domain) 0 }}'
       selector:
         matchLabels:
+          # EXACTLY the word `slave`, and the exactness is load-bearing: a map whose role is
+          # `master+slave` carries the slave part but manages itself — its own root ArgoCD renders
+          # that part's workloads through the platform appset's part selection. Generating this
+          # plane for it would stand a second reconciler over the same branch on the same cluster.
+          # The plane is only for a cluster whose WHOLE role is slave, managed from the books.
           role: slave
           stage: __STAGE__
           # THE CLUSTER THAT KEEPS THE BOOKS, in the marker the branch programs stamp from the

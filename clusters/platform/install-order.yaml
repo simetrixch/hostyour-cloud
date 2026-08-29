@@ -181,3 +181,36 @@ sequence:
         # is a constant knowable before any program starts, and the dependency is
         # an ordinary `needs` like every other.
         - /var/lib/hostyour-manager/admin.sock
+
+  # A MACHINE CARRYING BOTH PARTS is installed exactly like a master: the same five
+  # programs, in the same order, with the same needs. What differs is one answer —
+  # deploy-branch is told `role: master+slave` — and the ApplicationSet's part
+  # selection is what turns that answer into both parts' workloads. The list is
+  # written out rather than referenced, because this file's grammar is one ordered
+  # list per role and a reader of one role must not have to resolve another.
+  master+slave:
+    - program: deploy-host
+      needs: []
+
+    - program: deploy-branch
+      needs:
+        - /srv/hostyour-cloud
+        - /srv/hostyour-cloud/configs/config.example
+
+    - program: deploy-cluster
+      needs:
+        - /srv/hostyour-cloud/clusters/active/<fqdn>.yaml
+        - /srv/hostyour-cloud/secrets/secrets.<stage>
+
+    - program: deploy-platform-services
+      needs:
+        - /srv/hostyour-cloud/configs/config.<stage>
+        - /srv/hostyour-cloud/clusters/bootstrap/argocd/values.yaml
+        - /srv/hostyour-cloud/clusters/bootstrap/headlamp/values.yaml
+        - /srv/hostyour-cloud/clusters/bootstrap/idp/values.yaml
+        - /srv/hostyour-cloud/clusters/bootstrap/vault/values.yaml
+
+    - program: onboard-manager
+      needs:
+        - a running cluster carrying vault and idp
+        - /var/lib/hostyour-manager/admin.sock

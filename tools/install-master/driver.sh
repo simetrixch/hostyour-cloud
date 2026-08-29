@@ -156,9 +156,10 @@ readonly CATALOG_REPO="${CATALOG_REPO:-}"
 readonly PLATFORM_REPO="${PLATFORM_REPO:-}"
 readonly OPERATOR="${OPERATOR_USER:-}"
 readonly FQDN="${FQDN:-}"
+readonly ROLE="${ROLE:-}"
 readonly TOKEN="${CATALOG_REPO_READ_PAT:-}"
 
-for named in STAGE CATALOG_REPO PLATFORM_REPO OPERATOR FQDN TOKEN; do
+for named in STAGE CATALOG_REPO PLATFORM_REPO OPERATOR FQDN ROLE TOKEN; do
   [ -n "${!named}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
 
@@ -685,7 +686,7 @@ run_program() {
       --config "$CATALOG/ansiwise.yaml" \
       --answers "$ANSWERS" \
       --runs "$RUNS" \
-      --role master --stage "$STAGE" --fqdn "$FQDN" \
+      --role "$ROLE" --stage "$STAGE" --fqdn "$FQDN" \
       --mode "$mode" ) 2>&1 | tee "$log" | sed -u 's/^/       /'
   # THE SECOND ELEMENT, not the last. The pipeline is printf, the run, tee, sed —
   # so $? is sed's, which succeeds whatever the run did.
