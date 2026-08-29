@@ -49,3 +49,7 @@ AGENTS.md
 # every depth, so nothing about where a chart lives can put it back in the index.
 *.lock
 *.tgz
+
+# The agent worktree container. Tooling state, never product — and a worktree committed into
+# the tree it is a worktree OF is a loop nobody unpicks.
+.claude/
