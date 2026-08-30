@@ -172,7 +172,7 @@ readonly RELEASES=https://github.com/simetrixch/ansiwise-cli/releases/download
 readonly CATALOG=/srv/ansiwise-catalog
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
-readonly ANSWERS_DIR=/home/$OPERATOR/.install-master-answers
+readonly ANSWERS_DIR=/home/$OPERATOR/.installer-answers
 ANSWERS=''
 
 RUN_IDS=()

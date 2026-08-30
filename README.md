@@ -49,7 +49,7 @@ together left all of them true, and only the paths anchored at the root had to c
 
 **And nothing else deploys.** No configuration and no secrets — this is structure, and it is the
 same structure for everybody who clones it. What runs does so from a person's machine, never in a
-cluster: `tools/install-master/` installs a first master, and `migrations/` corrects facts that are
+cluster: `installer/` installs a first master, and `migrations/` corrects facts that are
 born on install branches and reachable neither by a merge nor by a regeneration. What belongs to ONE
 installation comes from outside: that company's own repository, carrying its configuration in the
 clear and its secrets encrypted, handed to the deployer along with the key that opens them.

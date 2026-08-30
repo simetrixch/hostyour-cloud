@@ -1,4 +1,4 @@
-# install-master
+# installer
 
 A first master, installed from zero, from an operator's own machine — Windows, Linux or macOS.
 
