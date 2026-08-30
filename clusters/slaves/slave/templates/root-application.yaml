@@ -37,7 +37,6 @@ cleanup is the job of removing the slave).
 */ -}}
 {{- $slave := .Values.slave }}
 {{- $branch := required "slave.branch is required (pointer-file field branch — the slave's install branch, == its FQDN)" $slave.branch }}
-{{- $env := required "slave.stage is required (injected by slaves-appset.yaml)" .Values.slave.stage }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -51,7 +50,11 @@ spec:
   source:
     repoURL: {{ .Values.repo.url }}
     targetRevision: {{ $branch }}
-    path: clusters/argocd/{{ $env }}/apps
+    # THE TREE HAS NO STAGE SEGMENT, and this line carried one — `clusters/argocd/<stage>/apps` for a
+    # layout that no longer exists. ArgoCD answered `app path does not exist`, the Application stood
+    # Unknown, and the deployment's verification waited its whole 30 minutes on it. The comment at
+    # the head of this file already named the right path; only this line disagreed.
+    path: clusters/argocd/apps
 
   destination:
     # In-cluster from the instance's perspective = the MASTER: the directory's
