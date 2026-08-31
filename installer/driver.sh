@@ -615,11 +615,19 @@ COMPOSE
 }
 
 # =============================================================================
-# The four programs that MAKE A MASTER, each of them test then dry then run — the
+# The five programs that MAKE A MASTER, each of them test then dry then run — the
 # three modes gate one another, and a mode that is not green stops the whole
 # installation here rather than carrying a doubt into the next program.
 #
-# install-order.yaml's master sequence names a FIFTH, onboard-manager, and it is
+# THE LAST OF THE FIVE puts the master on the private network it runs the coordinator
+# for. It is here and not in the Manager because a master that is not a member of its
+# own network cannot reach a slave at the address the design tells it to dial, and
+# nothing else in an installation would notice: every surface answers over its public
+# name, and the gap shows up much later as a slave that cannot be deployed. It waits
+# for the coordinator first, because the coordinator is a workload the reconciler
+# brings rather than anything a program here puts down.
+#
+# install-order.yaml's master sequence names a SIXTH, onboard-manager, and it is
 # deliberately not here. It onboards this platform's own manager AS A CONSUMER, over
 # the route every other consumer takes — which makes it an onboarding, and onboarding
 # is not this tool's to do. The header of this file has said so since it was written:
@@ -633,7 +641,7 @@ COMPOSE
 # the first thing done IN the manager, by hand, and not the last thing done to it by a
 # script.
 # =============================================================================
-readonly PROGRAMS=(deploy-host deploy-branch deploy-cluster deploy-platform-services)
+readonly PROGRAMS=(deploy-host deploy-branch deploy-cluster deploy-platform-services tailnet-join-self)
 
 run_program() {
   local program="$1" mode="$2" ordinal="$3"

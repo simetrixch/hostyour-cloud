@@ -7,7 +7,7 @@ A first master, installed from zero, from an operator's own machine — Windows,
 It is a **driver**. It runs no step and decides nothing an answer should decide. It reads the order
 out of [`clusters/platform/install-order.yaml`](../../clusters/platform/install-order.yaml)'s own
 sequence, puts the two things a program cannot put there itself — the engine and the catalogue — and
-then invokes the four programs that make a master, each of them three times. That file states the
+then invokes the five programs that make a master, each of them three times. That file states the
 division in its own
 words:
 
@@ -18,7 +18,7 @@ words:
 each step, asks before it acts, and can stop. This exists for the operator who wants one command, one
 transcript, and every line of it kept.
 
-## Where it stops, and why the sequence is four and not five
+## Where it stops, and why the sequence is five and not six
 
 `install-order.yaml` names a fifth program for a master, `onboard-manager`, and it is deliberately
 not run here. It onboards this platform's own Manager **as a consumer**, over the route every other
@@ -33,7 +33,7 @@ by a script.
 
 | file | where it runs | what it does |
 |---|---|---|
-| `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the four programs |
+| `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the five programs |
 | `install.ps1` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
 | `install.sh` | the operator's machine | the same, for Linux and macOS |
 
@@ -67,7 +67,7 @@ a shell reads it with one `.` and needs no parser, no `jq` and no Python. JSON w
 operator a dependency, and it cannot carry the one thing that file needs most — a sentence saying
 what a value is.
 
-`config.example.env` is generated from what the four programs actually declare, so it cannot drift
+`config.example.env` is generated from what the five programs actually declare, so it cannot drift
 from them silently.
 
 ## Which door it opens

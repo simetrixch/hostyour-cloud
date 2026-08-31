@@ -162,6 +162,12 @@ sequence:
         - /srv/hostyour-cloud/clusters/bootstrap/idp/values.yaml
         - /srv/hostyour-cloud/clusters/bootstrap/vault/values.yaml
 
+    # The master joins the private network it runs the coordinator for. After the platform
+    # services, because the coordinator is a workload the reconciler brings once this cluster has
+    # its root application — so the program waits for it rather than assuming it.
+    - program: tailnet-join-self
+      needs:
+        - /srv/hostyour-cloud/clusters/active/<fqdn>.yaml
     - program: onboard-manager
       needs:
         # A cluster that is up and serving, with Vault and the identity provider
