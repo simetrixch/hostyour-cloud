@@ -69,13 +69,24 @@ spec:
   isCA: true
   # Written so that an operator who meets it in a browser warning, or in the machine's trust store,
   # can tell at a glance what it is and that nothing outside this installation trusts it.
-  commonName: hostyour.cloud platform authority - trusted by this installation only
+  #
+  # SIXTY-FOUR BYTES IS THE CEILING and it is not cert-manager's: X.509 gives a common name that
+  # much and no more. A longer one was refused by the admission webhook on apps5 on 2026-08-31 with
+  # "spec.commonName: Too long: may not be more than 64 bytes", which is the right place for it to
+  # fail and a poor place to discover it. This one is 53.
+  commonName: hostyour.cloud platform authority (this cluster only)
   secretName: platform-ca
   duration: 26280h
   renewBefore: 720h
   privateKey:
     algorithm: ECDSA
     size: 256
+    # STATED, BECAUSE THE DEFAULT CHANGED UNDER US and because a root is the one certificate where
+    # the two answers differ in kind. cert-manager warns from v1.18.0 that it now rotates the key on
+    # every renewal; for a leaf that costs nothing, and for a root it mints a DIFFERENT authority —
+    # every copy anybody already trusts, this machine's included, stops validating what the cluster
+    # serves. Keeping the key means a renewal extends the same authority instead of replacing it.
+    rotationPolicy: Never
   issuerRef:
     name: platform-self-signed
     kind: ClusterIssuer
