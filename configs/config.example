@@ -183,3 +183,4 @@ ENABLE_IDP=true
 # of them with it. An installation that does not want to hand over writes false here, and until it
 # does the platform applications of this branch simply do not exist on its cluster.
 ENABLE_RECONCILER=true
+ENABLE_CERTIFICATES=false
