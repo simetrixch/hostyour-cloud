@@ -53,15 +53,3 @@ AGENTS.md
 # The agent worktree container. Tooling state, never product — and a worktree committed into
 # the tree it is a worktree OF is a loop nobody unpicks.
 .claude/
-
-# WHAT A MACHINE WRITES INTO ITS OWN CHECKOUT AND NOBODY ELSE NEEDS. The unsealing unit is started
-# by a timer and hands the engine an answers file; deploy-platform-services writes it beside the
-# stage config, and it carries exactly two values - the installation's domain and its stage - both
-# of which the branch already states elsewhere. Committing it would put a second copy of two facts
-# on the branch and oblige somebody to keep the two in step.
-#
-# Untracked it was worse than either: a regeneration merges the product tree into an installation's
-# branch and refuses over a working tree that is not clean, because a merge would otherwise fold
-# changes nobody declared into its commit. So this one file stopped every regeneration on every
-# machine. Measured on apps5 on 2026-08-31.
-/configs/unseal-vault-answers.json
