@@ -1,0 +1,36 @@
+# THE TRUST STORE EVERY WORKLOAD ON THIS CLUSTER READS, in the form it takes where certificates come
+# from a public authority.
+#
+# WHY IT EXISTS EVEN THEN, when every container image already carries these roots and this ConfigMap
+# adds nothing. Because the ALTERNATIVE is worse than redundant: a bundle that exists in one state of
+# the switch and not in the other is a mount that appears and disappears under every workload
+# reading it, and a workload whose volume names a ConfigMap that is not there does not start. One
+# name that is always present, whose CONTENTS differ, is what lets a consumer be written once and
+# never learn which authority this installation issues from.
+#
+# So the two forms of this file are not "on" and "off". They are "the public roots" and "the public
+# roots and ours", and every consumer reads the same file either way.
+#
+# WHO APPLIES IT: the trust rows of deploy-platform-services, under `when: [certificates_enabled]`.
+# Its counterpart is trust-bundle-with-platform-authority.yaml, applied under the opposite condition,
+# and both write the SAME target — so flipping the switch replaces the contents of one ConfigMap and
+# touches nothing else.
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: platform-trust
+spec:
+  sources:
+    # The public root list, which arrives as a container image of its own — installed because
+    # trust-manager-values.yaml keeps `defaultPackage.enabled: true`. Without it this source cannot
+    # be fulfilled and the bundle never becomes ready.
+    - useDefaultCAs: true
+  target:
+    # NO namespaceSelector, and that is the whole point of using this rather than writing ConfigMaps
+    # by hand: unset means every namespace, including the ones created after this — a tenant's, a
+    # consumer's, one a later release brings. A step could copy a ConfigMap into the namespaces that
+    # exist when it runs; nothing but a reconciler can serve the ones that do not exist yet.
+    configMap:
+      # The name a consumer mounts. It is the file's name inside the mount too, so a runtime told
+      # `SSL_CERT_FILE=<mount>/ca-certificates.crt` finds it under the name it expects.
+      key: ca-certificates.crt

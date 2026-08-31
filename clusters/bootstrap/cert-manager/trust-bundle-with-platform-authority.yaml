@@ -1,0 +1,42 @@
+# THE TRUST STORE EVERY WORKLOAD ON THIS CLUSTER READS, in the form it takes where this installation
+# withholds the public authority and issues from one it minted for itself.
+#
+# SAME NAME, SAME TARGET, ONE SOURCE MORE than trust-bundle-public.yaml. That is the whole difference
+# between the two states, and it is why no consumer anywhere has to know which state this
+# installation is in: it mounts one ConfigMap under one name and finds a COMPLETE trust store either
+# way.
+#
+# A SUPERSET AND NEVER A REPLACEMENT. The public roots stay in, beside ours. Dropping them would give
+# a workload our authority ALONE — no image registry, no upstream chart repository, no authority on
+# the internet — which is a different failure from the one this exists to fix and a worse one,
+# because it would appear only where something reached outward.
+#
+# WHY THIS IS NOT A SCAFFOLD FOR THE PROVING PHASE. Both forms of this file are correct in their own
+# state, so nothing here is removed when the switch is flipped: the other manifest is applied over
+# this one and the ConfigMap's contents change. Consumers are not touched, and there is no leftover
+# to remember.
+#
+# WHO APPLIES IT: the trust rows of deploy-platform-services, under `when: [certificates_withheld]`.
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: platform-trust
+spec:
+  sources:
+    - useDefaultCAs: true
+    # The authority this cluster minted for itself, read out of the Secret the certificate service
+    # writes it into. It is read from the namespace trust-manager-values.yaml names under
+    # `app.trust.namespace`, which is where platform-authority.yaml puts it — no copy is made and
+    # nothing is stated twice.
+    #
+    # `ca.crt` AND NOT `tls.crt`: a Secret holding an issued certificate carries the certificate
+    # under one key and the authority that signed it under the other, and what belongs in a trust
+    # store is the authority. For this Secret the two happen to hold the same bytes, because a root
+    # signs itself — but naming the leaf key would be right by accident here and wrong the moment
+    # anything sits between them.
+    - secret:
+        name: platform-ca
+        key: ca.crt
+  target:
+    configMap:
+      key: ca-certificates.crt

@@ -74,6 +74,27 @@ server:
   ingress:
     enabled: false
 
+  # WHAT THIS PROCESS TRUSTS, and it is not the same question as what it serves.
+  #
+  # The store does not only ANSWER over TLS, it also SPEAKS it: telling it where the identity
+  # provider stands makes it fetch that provider's discovery document itself, and it verifies that
+  # certificate against its own container's trust store. An image ships the public roots and nothing
+  # else, so on an installation issuing from an authority it minted for itself the store refuses its
+  # own identity provider — measured on apps5 on 2026-08-31 as
+  # `400 error checking oidc discovery URL`, with everything else on that cluster already working.
+  #
+  # SSL_CERT_FILE AND NOT THE AUTH METHOD'S OWN FIELD. `oidc_discovery_ca_pem` would fix the
+  # discovery document and only that; every other outbound call this process makes would go on using
+  # the image's list. The variable is read by the runtime this binary is built with and covers all of
+  # them at once, which is the difference between configuring one call and telling a process what it
+  # trusts.
+  #
+  # THE FILE IS A SUPERSET, so pointing at it takes nothing away: trust-manager writes the public
+  # roots into it in both states of the certificate switch, and this installation's own authority
+  # beside them only where there is one. See clusters/bootstrap/cert-manager/trust-bundle-public.yaml.
+  extraEnvironmentVars:
+    SSL_CERT_FILE: /vault/userconfig/platform-trust/ca-certificates.crt
+
   # Volume for TLS cert
   volumes:
     - name: platform-tls
@@ -87,10 +108,20 @@ server:
         # the state it produces", on every run, forever. Neither reader is wrong; the file has to be
         # written in the subset both agree on, and a plain decimal is that subset.
         defaultMode: 256
+    # NOT `optional: true`, deliberately. A store started without this file would read SSL_CERT_FILE,
+    # find nothing, and trust NOTHING — every outbound call refused, including ones that worked
+    # before. Waiting for the ConfigMap is what deploy-platform-services does with the row that
+    # stands between the namespace and this release.
+    - name: platform-trust
+      configMap:
+        name: platform-trust
 
   volumeMounts:
     - name: platform-tls
       mountPath: /vault/userconfig/platform-tls
+      readOnly: true
+    - name: platform-trust
+      mountPath: /vault/userconfig/platform-trust
       readOnly: true
 
   # Resources

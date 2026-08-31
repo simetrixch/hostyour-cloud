@@ -1,0 +1,49 @@
+# WHAT THIS COMPONENT IS FOR, AND WHAT IT IS NOT.
+#
+# TLS has two halves. ISSUING — proving "I am vault.<domain>" — is the certificate service's job, and
+# this platform already runs it. TRUSTING — holding the list of authorities a client believes — is
+# the other half, and until this was here nothing on the cluster did it: every workload trusted
+# whatever list its container image happened to ship with.
+#
+# That was invisible while every certificate came from a public authority, because every image
+# already carries those roots. It stops being invisible the moment an installation issues from an
+# authority of its own: measured on apps5 on 2026-08-31, the store answered
+# `400 error checking oidc discovery URL` — Vault fetching the identity provider's discovery document
+# from inside its own container, against a root that container had never heard of.
+#
+# WHAT IT DOES, IN ONE SENTENCE: it keeps a ConfigMap of trusted roots in every namespace, including
+# the ones created after it. It issues nothing, renews nothing and never speaks to any authority.
+#
+# WHY IT STANDS IN THE CERTIFICATE SERVICE'S NAMESPACE. `app.trust.namespace` is where it reads its
+# SOURCES from, and it defaults to this one — which is where the authority a cluster mints for itself
+# already lives, as the Secret `platform-ca`. Moving it would mean carrying that Secret somewhere
+# else for no gain.
+#
+# WHY THE DEFAULT PACKAGE STAYS ON. `useDefaultCAs: true` in a Bundle means "the public root list",
+# and that list is not built into the binary — it arrives as a container image of its own, which this
+# flag is what installs. Without it a Bundle asking for the public roots is one this cluster cannot
+# fulfil, and every workload reading the result would trust our own authority ALONE: no image
+# registry, no upstream chart repository, no authority on the internet. The bundle has to be a
+# SUPERSET of what an image shipped with, never a replacement for it.
+app:
+  trust:
+    namespace: cert-manager
+  logFormat: text
+
+# Shipped by the chart and kept when the release is removed, which is the rule for a definition other
+# objects are written against: removing the release must not take the objects with it.
+crds:
+  enabled: true
+  keep: true
+
+# The public root list, as its own image. Stated rather than left to the default, because everything
+# above turns on it being there.
+defaultPackage:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

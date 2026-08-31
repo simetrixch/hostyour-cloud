@@ -4,6 +4,42 @@
 global:
   domain: argo.example.invalid
 
+  # WHAT EVERY COMPONENT OF THE RECONCILER TRUSTS.
+  #
+  # Signing in is not only a browser talking to this server. Once the browser comes back with an
+  # authorization code, the argocd-server POD exchanges it for a token by calling
+  # https://idp.<domain> itself, and it verifies that certificate against its own container's trust
+  # store — the public root list its image was built with. On an installation issuing from an
+  # authority it minted for itself, that call is refused and what a person sees is `invalid_client`,
+  # a message about the client rather than about the trust. This platform has produced that message
+  # once already.
+  #
+  # ON `global` AND NOT ON THE SERVER ALONE: the repository server speaks to forges and chart
+  # repositories, and the application controller speaks to every registered cluster — including, on
+  # a master, the remote slaves. All of them verify, all of them read the same variable, and naming
+  # them one by one would leave the next component to be added out.
+  #
+  # WHY NOT `oidc.config.rootCA`, which this chart also offers: it holds for the sign-in exchange and
+  # for nothing else, so every other outbound call would go on using the image's list. This says what
+  # the process trusts rather than configuring one call.
+  #
+  # The file is a SUPERSET — the public roots are in it in both states of the certificate switch —
+  # so this adds an authority and takes none away. See
+  # clusters/bootstrap/cert-manager/trust-bundle-public.yaml.
+  env:
+    - name: SSL_CERT_FILE
+      value: /etc/platform-trust/ca-certificates.crt
+
+  extraVolumes:
+    - name: platform-trust
+      configMap:
+        name: platform-trust
+
+  extraVolumeMounts:
+    - name: platform-trust
+      mountPath: /etc/platform-trust
+      readOnly: true
+
 # Server Configuration
 server:
   service:

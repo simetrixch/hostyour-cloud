@@ -42,6 +42,36 @@ external-secrets:
   replicaCount: 1
   leaderElect: false
 
+  # WHAT THIS CONTROLLER TRUSTS WHEN IT DIALS THE STORE.
+  #
+  # Every SecretStore on this cluster names `global.endpoints.vault.url` — an https address of this
+  # installation, and on a slave that address belongs to the MASTER. The controller verifies that
+  # certificate against its own container's trust store, which is the public root list its image was
+  # built with and nothing else. On an installation issuing from an authority it minted for itself,
+  # every secret of every application therefore fails to materialize, and what an operator reads is
+  # `vault-backend ... unable to create client` — measured on this platform once already.
+  #
+  # THE CONTROLLER AND NOT EACH SecretStore. The provider offers `caProvider` per store, and there is
+  # one store per application: the same fact would be written in every chart, and each copy would
+  # have to be taken out again the day the switch is flipped. One variable on the one process that
+  # opens all those connections says it once.
+  #
+  # The file is a SUPERSET — trust-manager writes the public roots into it in both states of the
+  # certificate switch — so this adds an authority and takes none away.
+  extraEnv:
+    - name: SSL_CERT_FILE
+      value: /etc/platform-trust/ca-certificates.crt
+
+  extraVolumes:
+    - name: platform-trust
+      configMap:
+        name: platform-trust
+
+  extraVolumeMounts:
+    - name: platform-trust
+      mountPath: /etc/platform-trust
+      readOnly: true
+
   resources:
     requests:
       cpu: 50m
