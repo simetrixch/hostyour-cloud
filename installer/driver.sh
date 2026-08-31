@@ -6,7 +6,7 @@
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not
 # change: it reads the order out of clusters/platform/install-order.yaml's own
 # sequence, puts the two things a program cannot put there itself — the engine and
-# the catalogue — and then invokes the four programs, each of them three times.
+# the catalogue — and then invokes the programs of the master sequence, each of them three times.
 # install-order.yaml states that division in its own words: "THIS FILE STATES THE
 # ORDER. IT DOES NOT RUN IT. A driver reads the sequence and invokes the programs
 # itself."
@@ -32,7 +32,7 @@
 #
 # THE CONFIG, and it is the only thing that reaches this from outside: the same
 # key=value file the operator filled in, carried over the session as it stands.
-# Every value in it is one the four programs declare, lower-cased into the answers
+# Every value in it is one the programs declare, lower-cased into the answers
 # a run is told with.
 #
 # It is read once, mode 0600, and shredded before this exits — on every path,
@@ -857,7 +857,10 @@ this fails; git said what it said above." 73
 done
 
 phase 'done'
-good "$FQDN is installed: four programs, twelve runs, every one green"
+# COUNTED, never stated. The sentence said "four programs, twelve runs" while the sequence had
+# grown to five, so the last thing an installation told the operator was wrong about what it had
+# just done. Both numbers are held by this script already.
+good "$FQDN is installed: ${#PROGRAMS[@]} programs, ${#RUN_IDS[@]} runs, every one green"
 say "the machine's own records stand under $RUNS"
 summary
 
