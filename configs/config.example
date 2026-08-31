@@ -50,8 +50,8 @@ DEPLOY_ENV=
 # and is stamped into installation/profile.yaml as `global.domain`, which every platform hostname of this
 # cluster hangs off.
 #
-# THIS IS ONE OF THE FIVE VALUES IN THIS FILE THAT A LATER RUN REALLY READS BACK OUT OF IT: this
-# one, BUILD_PLANE_FQDN below, and the three ENABLE_ switches at the foot. Every other key here is
+# THIS IS ONE OF THE SIX VALUES IN THIS FILE THAT A LATER RUN REALLY READS BACK OUT OF IT: this
+# one, BUILD_PLANE_FQDN below, and the four ENABLE_ switches at the foot. Every other key here is
 # this installation's record of an answer, and each of their paragraphs says so.
 #
 # The two conditions that decide where the build plane is are nothing but the comparison of this
@@ -183,4 +183,21 @@ ENABLE_IDP=true
 # of them with it. An installation that does not want to hand over writes false here, and until it
 # does the platform applications of this branch simply do not exist on its cluster.
 ENABLE_RECONCILER=true
-ENABLE_CERTIFICATES=false
+
+# Whether this installation asks a certificate authority for certificates at all. False writes no
+# issuer, so cert-manager has nothing to fulfil with: every Certificate object of every application
+# stands pending and not one request leaves this machine. That is what lets an installation be built
+# and rebuilt as often as it needs to be, against an authority that counts how many it has issued.
+# True writes the issuer, and everything that was pending is fulfilled in one go.
+#
+# WHAT IT COSTS WHILE IT IS FALSE, so that nobody reads the consequence as a defect: this cluster
+# reaches its own secret store over a public name, so without a certificate no SecretStore can log
+# in and every application that reads a secret stands degraded. The installation itself runs
+# through - its own waits accept any certificate - but the platform above it does not come up until
+# this is switched on.
+#
+# ANSWERED, UNLIKE THE THREE ABOVE, which is why this line is empty: a key an answer names is
+# written from that answer whenever the two differ, and a value equal to the one standing here
+# would count as no value at all. So the switch is stated once, in the installation's own config,
+# and every later run writes what it says.
+ENABLE_CERTIFICATES=
