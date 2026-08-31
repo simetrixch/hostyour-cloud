@@ -29,7 +29,7 @@ metadata:
 spec:
   secretName: platform-tls
   issuerRef:
-    name: platform-acme
+    name: __CLUSTER_ISSUER__
     kind: ClusterIssuer
   dnsNames:
   - argo.example.invalid

@@ -184,20 +184,31 @@ ENABLE_IDP=true
 # does the platform applications of this branch simply do not exist on its cluster.
 ENABLE_RECONCILER=true
 
-# Whether this installation asks a certificate authority for certificates at all. False writes no
-# issuer, so cert-manager has nothing to fulfil with: every Certificate object of every application
-# stands pending and not one request leaves this machine. That is what lets an installation be built
-# and rebuilt as often as it needs to be, against an authority that counts how many it has issued.
-# True writes the issuer, and everything that was pending is fulfilled in one go.
+# WHICH AUTHORITY THIS INSTALLATION'S CERTIFICATES ARE ISSUED BY. Two names, and the name is the
+# whole of the choice:
 #
-# WHAT IT COSTS WHILE IT IS FALSE, so that nobody reads the consequence as a defect: this cluster
-# reaches its own secret store over a public name, so without a certificate no SecretStore can log
-# in and every application that reads a secret stands degraded. The installation itself runs
-# through - its own waits accept any certificate - but the platform above it does not come up until
-# this is switched on.
+#   platform-acme    the public authority. Every browser, every operating system and every container
+#                    image already carries its root, so nothing has to be told to trust it.
+#   platform-local   an authority this cluster mints for itself. Nothing outside this installation
+#                    trusts it, and no request ever leaves the machine - which is what lets an
+#                    installation be built and rebuilt as often as it needs to be, against an
+#                    authority that counts how many certificates it has issued.
+#
+# IT IS A NAME AND NOT A SWITCH, and that is not a matter of taste. The certificate service watches
+# the NAME a certificate is issued by and never the specification behind it. A boolean beside a
+# single name could be turned over while every certificate went on being signed by the authority
+# that had just been taken away - measured on apps5 on 2026-09-01, with the cluster serving
+# certificates whose root it had deleted in the same run. Changing the NAME is what makes the service
+# issue everything again, by itself, with nothing left to remember.
+#
+# WHAT IT COSTS WHILE IT IS platform-local, so that nobody reads the consequence as a defect: the
+# machine is given that authority and every step of the installation verifies normally, but a browser
+# warns on every address of this cluster and workloads that reach it from INSIDE - the secret
+# operator dialling the store, the reconciler exchanging its token - are refused, unless the trust
+# bundle carries it. The five programs run through either way.
 #
 # ANSWERED, UNLIKE THE THREE ABOVE, which is why this line is empty: a key an answer names is
 # written from that answer whenever the two differ, and a value equal to the one standing here
-# would count as no value at all. So the switch is stated once, in the installation's own config,
+# would count as no value at all. So the authority is named once, in the installation's own config,
 # and every later run writes what it says.
-ENABLE_CERTIFICATES=
+CLUSTER_ISSUER=
