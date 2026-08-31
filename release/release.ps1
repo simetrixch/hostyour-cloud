@@ -191,6 +191,25 @@ try {
     Stop-Here "$Fqdn is stage $stage and channel $Channel admits only: $admits. Nothing else would refuse this, so this does." 65
   }
 
+  # THE STAGE IS NOT A DOMAIN LABEL, and this is the one place that can still say so
+  # before a tree reaches a machine. An API group is a reverse domain name fixed by
+  # whoever wrote the software - triggers.tekton.dev, cert-manager.io, argoproj.io -
+  # and no part of it varies with an installation's stage. Written as the stage
+  # placeholder it renders correctly on a dev installation by accident, because the
+  # stamp puts "dev" back, and names a group no cluster registers on every other
+  # stage. Measured on apps5 on 2026-08-31: the cicd project permitted
+  # triggers.tekton.prod, ArgoCD could not manage the ClusterInterceptors, and the
+  # tekton application stood OutOfSync for ever with the image-builder behind it.
+  #
+  # READ OFF origin/master, not the working tree: that is the tree this release
+  # publishes, and a correction sitting uncommitted beside it would let a release
+  # claim a fix nobody can fetch.
+  $placed = (& git grep -nE '^[[:space:]]*(-[[:space:]]+)?(group|apiVersion):[[:space:]]*[^[:space:]]*__STAGE__' origin/master -- clusters/argocd clusters/bootstrap 2>$null)
+  if ($LASTEXITCODE -gt 1) { $placed = @() }
+  $placedLine = (($placed | ForEach-Object { "$_;" }) -join '')
+  if ($placedLine) {
+    Stop-Here "a stage placeholder stands where an API group or an apiVersion belongs, and neither ever varies with a stage: $placedLine correct it on master and release again" 65
+  }
   # MINT-ONCE: exactly one release tag per version and channel. A later run for
   # the same pair reuses it, which is how one release reaches a further
   # installation without a second tree ever being cut.
