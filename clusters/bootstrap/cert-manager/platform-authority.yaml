@@ -1,0 +1,73 @@
+# THE AUTHORITY THIS CLUSTER ISSUES FROM WHILE IT IS NOT ASKING A PUBLIC ONE.
+#
+# WHY AN INSTALLATION NEEDS THIS AT ALL. `ENABLE_CERTIFICATES=false` says an installation is not to
+# spend an issuance at the public authority — the tightest limit there is FIVE certificates for one
+# exact set of names in a rolling week, and a rebuild spends one. But "no certificate" is not a
+# quieter installation, it is no installation: clusters/bootstrap/vault/values.yaml mounts the
+# issued Secret as a VOLUME, and a pod whose volume names a Secret that does not exist never starts.
+# Measured on apps5 on 2026-08-31: with no issuer, cert-manager reports IssuerNotFound and creates
+# no Secret at all, so the store never comes up and the program waiting for it to answer sits out
+# its ten minutes.
+#
+# So the switch does not decide WHETHER this cluster has an authority. It decides WHICH one: this
+# chain while it is off, and the public one the moment it is on.
+#
+# WHAT IT COSTS AND WHAT IT DOES NOT. Every certificate on the cluster is issued and every workload
+# that mounts one starts, so an installation can be proven end to end without spending anything.
+# What it does not buy is a browser, and it does not buy the pods: a root that this cluster minted
+# is in no browser's store and in no container image's, so an operator is warned on every address
+# and the workloads that speak to those addresses from INSIDE the cluster — the secret operator
+# reaching the store, the reconciler exchanging a token at the identity provider — go on refusing
+# them. The machine itself is a different matter: deploy-cluster puts this root into its trust store,
+# and every step of the installation then verifies the ordinary way.
+#
+# THE TERMINAL ISSUER CARRIES THE NAME THE WHOLE TREE ALREADY REFERENCES, and that is deliberate.
+# `platform-acme` is written in exactly two places — clusters/platform/values-common.yaml, which
+# every chart reads through the values chain, and clusters/bootstrap/vault/certificate.yaml — and a
+# second name for the same role would have to be chosen per installation, which is a fact nobody can
+# state without stating the switch twice. The name is an identifier; WHICH authority stands behind
+# it is read off the spec below, and `kubectl get clusterissuer platform-acme -o yaml` shows a `ca:`
+# where the public form shows an `acme:`.
+#
+# WHY THE TERMINAL ISSUER IS NOT IN THIS FILE. What the switch flips is which authority stands
+# behind ONE name, and what it leaves behind when flipped on is this chain — so the two have to be
+# removable apart. `remove_kubernetes_object` takes the objects a manifest names, and a file holding
+# all three would take the public issuer down together with the chain it replaced.
+#
+# WHO APPLIES IT: the cluster-issuer rows of deploy-cluster, under `when: [certificates_withheld]`,
+# and the same program takes it off again under `when: [certificates_enabled]`.
+# Nothing reconciles this file — the bootstrap layer is applied by the installation and not by the
+# reconciler, which is what lets the switch decide between two forms of one object.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: platform-self-signed
+spec:
+  selfSigned: {}
+---
+# The root itself. Three years, because it outlives every leaf issued from it and a root that
+# expires mid-installation is a cluster whose certificates all fail on the same day for a reason
+# nobody is looking at; renewed a month ahead, which is the only moment anything has to act.
+#
+# IT STANDS IN THE CERTIFICATE SERVICE'S OWN NAMESPACE, not in the one the base layer's certificate
+# uses. A ClusterIssuer of kind `ca` reads its Secret out of the namespace the service runs in, by
+# that service's own rule, and there is exactly one of these per cluster.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: platform-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  # Written so that an operator who meets it in a browser warning, or in the machine's trust store,
+  # can tell at a glance what it is and that nothing outside this installation trusts it.
+  commonName: hostyour.cloud platform authority - trusted by this installation only
+  secretName: platform-ca
+  duration: 26280h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: platform-self-signed
+    kind: ClusterIssuer

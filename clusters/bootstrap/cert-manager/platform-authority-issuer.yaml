@@ -1,0 +1,25 @@
+# THE OBJECT EVERY CERTIFICATE ON THIS CLUSTER NAMES, in the form it takes while the switch is off.
+#
+# It stands apart from platform-authority.yaml, which carries the chain behind it, because the two
+# have different lives: the chain is applied while certificates are withheld and taken off again
+# when they are not, and this object is never taken off at all — it is REPLACED, by the public form
+# the cluster-issuer rows render when the switch is on.
+#
+# THE FLIP IS ONE APPLY. `kubectl apply` of the public form over this one replaces `ca:` with
+# `acme:`, and the step that does it reads `.spec.acme.server` back afterwards — so a flip that did
+# not take is a failure with a name rather than a cluster quietly issuing from the wrong authority.
+# Every certificate is then re-issued by the service, because its issuer changed.
+# The object every certificate on this cluster names, in the form it takes while the switch is off.
+#
+# THE FLIP IS ONE APPLY. With the switch on, the cluster-issuer rows render the public form of this
+# same object and apply it, which replaces `ca:` with `acme:` — and that step reads
+# `.spec.acme.server` back afterwards, so a flip that did not take is a failure with a name rather
+# than a cluster quietly issuing from the wrong authority. Every certificate is then re-issued by
+# the service, because its issuer changed.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: platform-acme
+spec:
+  ca:
+    secretName: platform-ca
