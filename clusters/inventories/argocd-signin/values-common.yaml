@@ -16,9 +16,25 @@ externalsecret-oidc:
     namespace: argocd
     secretStoreKind: SecretStore
     targetSecretName: argocd-oidc
-    # The reconciler's own chart labels everything it owns this way, and the Secret is read by name
-    # rather than selected — the label is what makes it recognisable beside the release's own objects.
     annotations: {}
+    # THE LABEL IS WHAT MAKES THE SECRET READABLE AT ALL, and it goes on the SECRET rather than on
+    # the ExternalSecret that produces it — so it is stated in ESO's target template, which is the
+    # only thing that reaches the object itself.
+    #
+    # The reconciler resolves `$argocd-oidc:clientSecret` out of argocd-cm by reading Secrets in its
+    # own namespace that carry `app.kubernetes.io/part-of: argocd`, which is the label its own chart
+    # puts on everything it owns. A Secret without it is not consulted, the reference resolves to
+    # nothing, and the reconciler then presents an EMPTY client secret at the token endpoint — which
+    # the identity provider answers with `invalid_client`, a message about the client rather than
+    # about the secret it never received.
+    #
+    # Measured on apps5 on 2026-08-31: the provider held exactly the secret the platform gave it, the
+    # ExternalSecret was SecretSynced, the redirect address matched, and sign-in still failed. The
+    # only difference from the reconciler's own argocd-secret was this one label.
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: argocd
     data:
       - secretKey: clientSecret
         property: argocd-client-secret
