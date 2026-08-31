@@ -236,7 +236,15 @@ spec:
       kind: Namespace
     # Tekton Triggers ships its core interceptors as cluster-scoped CRs
     # (release-interceptors.yaml:163+ — github/gitlab/bitbucket/cel/slack).
-    - group: triggers.tekton.__STAGE__
+    # NOT A STAGE. `triggers.tekton.dev` is the API group Tekton Triggers registers on every
+    # cluster there is; the `dev` in it is the last label of a domain name and never varies.
+    # Written as the placeholder, the stamp turned it into `triggers.tekton.prod` on a prod
+    # installation, the project then permitted a group that does not exist, ArgoCD could not
+    # manage the ClusterInterceptors and reported them Unknown, and the tekton application
+    # stood OutOfSync for ever. On a dev installation the same stamp wrote `dev` back and the
+    # line was right by accident, which is why this survived every installation until the
+    # first one on prod. Measured on apps5, 2026-08-31.
+    - group: triggers.tekton.dev
       kind: ClusterInterceptor
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
