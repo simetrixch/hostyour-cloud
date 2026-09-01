@@ -61,7 +61,7 @@ global:
   # answer of that same program, and it varies per installation while this name
   # may not: every manifest that asks for a certificate references it by this
   # exact string.
-  clusterIssuer: __CLUSTER_ISSUER__
+  clusterIssuer: platform-acme
 
   # The ONE Vault KV-v2 mount every SecretStore reads. Word-identical on every
   # cluster and every role — what differs per cluster is only the Kubernetes

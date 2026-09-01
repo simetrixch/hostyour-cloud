@@ -21,13 +21,15 @@
 # them. The machine itself is a different matter: deploy-cluster puts this root into its trust store,
 # and every step of the installation then verifies the ordinary way.
 #
-# THE TERMINAL ISSUER CARRIES THE NAME THE WHOLE TREE ALREADY REFERENCES, and that is deliberate.
-# `platform-acme` is written in exactly two places — clusters/platform/values-common.yaml, which
-# every chart reads through the values chain, and clusters/bootstrap/vault/certificate.yaml — and a
-# second name for the same role would have to be chosen per installation, which is a fact nobody can
-# state without stating the switch twice. The name is an identifier; WHICH authority stands behind
-# it is read off the spec below, and `kubectl get clusterissuer platform-acme -o yaml` shows a `ca:`
-# where the public form shows an `acme:`.
+# THE TERMINAL ISSUER CARRIES ITS OWN NAME, `platform-local`, and the public one carries
+# `platform-acme`. Which of the two every certificate references is written into
+# clusters/platform/values-common.yaml on every run, and the base layer's certificate is rendered
+# from the catalogue's own template with the same answer — so the name in the tree cannot fall
+# behind the installation.
+#
+# It used to be ONE name for both forms. That is what made the switch unturnable: the certificate
+# service watches the name a certificate is issued BY and never the specification behind it, so
+# turning the authority over rewrote this object and re-issued nothing.
 #
 # WHY THE TERMINAL ISSUER IS NOT IN THIS FILE. What the switch flips is which authority stands
 # behind ONE name, and what it leaves behind when flipped on is this chain — so the two have to be
