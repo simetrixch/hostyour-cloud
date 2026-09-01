@@ -124,6 +124,18 @@ spec:
         server: https://kubernetes.default.svc
         namespace: "{{ .values.cluster }}"
       syncPolicy:
+        # THE NAMESPACE THIS CREATES IS A WORKLOAD NAMESPACE, AND HAS TO SAY SO.
+        # Vault's external-secrets role on the master admits a caller by the label
+        # below, not by a list of names — so the slave instance's own secret reader,
+        # which runs in this namespace on the master, is let in because the namespace
+        # carries it. Without the label the namespace is created bare and every login
+        # out of it is refused with "namespace not authorized"; the answer is not to
+        # write the role from the register program (one object, two writers, and the
+        # last one blinds the other side) but to mark the namespace the way
+        # platform-apps-appset.yaml marks every other one.
+        managedNamespaceMetadata:
+          labels:
+            hostyour.cloud/workload: "true"
         automated:
           prune: true
           selfHeal: true
