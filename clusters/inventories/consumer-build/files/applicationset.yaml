@@ -120,7 +120,10 @@ spec:
                 repoURL: "{{ .repoURL }}"
                 buildsJson: "{{ .builds | toJson }}"
       destination:
-        server: https://kubernetes.default.svc
+        # THE CLUSTER, NEVER A SERVER URL — the same rule projects.yaml states. The `builds` project
+        # allows `name: <cluster>`, and an Application answering with a server URL asks ArgoCD to
+        # resolve one form against the other. It may; relying on it is a bet nobody has to take.
+        name: __CLUSTER__
         namespace: "{{ .name }}-build"
       syncPolicy:
         automated:
