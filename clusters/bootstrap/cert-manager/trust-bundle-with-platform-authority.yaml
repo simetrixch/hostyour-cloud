@@ -24,6 +24,21 @@ metadata:
 spec:
   sources:
     - useDefaultCAs: true
+    # AND THE CLUSTER'S OWN AUTHORITY, which Kubernetes publishes into every namespace as this
+    # ConfigMap. It signs the API server, and a workload told to read this bundle as its WHOLE root
+    # list would otherwise lose the one certificate it needed most.
+    #
+    # Measured on apps5 on 2026-09-01: the store was given SSL_CERT_FILE pointing here, its call to
+    # https://kubernetes.default.svc could no longer be verified, so it could not read the labels its
+    # auth role selects namespaces by — and every SecretStore on the cluster was refused with
+    # "namespace not authorized". Eight applications went Degraded, and the message named a namespace
+    # while the cause was a missing root.
+    #
+    # THIS IS WHAT "SUPERSET" HAS TO MEAN. A bundle that replaces a process's trust list must carry
+    # everything that list carried, and for a workload inside a cluster that includes the cluster.
+    - configMap:
+        name: kube-root-ca.crt
+        key: ca.crt
     # The authority this cluster minted for itself, read out of the Secret the certificate service
     # writes it into. It is read from the namespace trust-manager-values.yaml names under
     # `app.trust.namespace`, which is where platform-authority.yaml puts it — no copy is made and
