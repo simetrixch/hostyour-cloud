@@ -4,12 +4,25 @@
 # =============================================================================
 #
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not
-# change: it reads the order out of clusters/platform/install-order.yaml's own
-# sequence, puts the two things a program cannot put there itself — the engine and
-# the catalogue — and then invokes the programs of the master sequence, each of them three times.
+# change: it puts the two things a program cannot put there itself — the engine and the catalogue —
+# and then invokes the programs of the master sequence, each of them three times.
 # install-order.yaml states that division in its own words: "THIS FILE STATES THE
 # ORDER. IT DOES NOT RUN IT. A driver reads the sequence and invokes the programs
 # itself."
+#
+# IT CARRIES ITS OWN COPY OF THE SEQUENCE, and does not read that file. The list is written out at
+# PROGRAMS below. This sentence used to say it read the order out of
+# clusters/platform/install-order.yaml, which was never true and had already cost something: the two
+# had drifted — the file naming six programs for a master and this driver running five, without
+# onboard-manager — and nobody could see it, because the sentence said there was nothing to compare.
+# install-order.yaml says the same thing from its side, in its own header: "WHO READS IT TODAY:
+# NOBODY. Both drivers still carry their own copy of the sequence."
+#
+# The other carrier is the manager, which invokes the same programs over its own channel and keeps
+# its list in TypeScript. Three carriers of one fact, and the one that was written to be the answer
+# is the one nothing reads. Whether the driver should READ the file is a separate question with a
+# real consequence — it would run onboard-manager too, which it does not today — and it is not
+# answered by this comment. What this comment does is stop claiming otherwise.
 #
 # WHY IT RUNS HERE AND NOT ON THE OPERATOR'S MACHINE. Everything it fetches is
 # fetched by THIS machine: the pin out of the public platform repository, the two
