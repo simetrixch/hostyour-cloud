@@ -324,6 +324,40 @@ done
 #
 # THIS COMES OUT WHEN ansiwise-plugins#163 LANDS: install_packages will carry the same
 # option itself, and a step that waits for its own lock needs no gate in front of it.
+# WHETHER THE MACHINE HAS FINISHED STARTING, asked before anything that needs a service.
+#
+# A machine that was restored a moment ago answers every other question in this phase correctly
+# while its system bus is not yet accepting connections — and the first thing that needs the bus is
+# installing a snap, which registers services. Measured on apps5 on 2026-09-01, on a machine whose
+# uptime was 0 minutes when the run started: deploy-cluster died at install_snap with
+# "Failed to connect to system scope bus via local transport: Connection refused", the snap rolled
+# itself back, and the same run eleven minutes later installed it without trouble.
+#
+# IT BELONGS HERE AND NOT IN THE STEP. This phase exists to establish that a machine is in a state
+# an installation can begin from and to say so before anything is changed; a bus that is not up yet
+# is that kind of fact, and it clears itself within a minute. Left to the step, the same fact arrives
+# four rows into the third program as a snap error quoting systemctl, three layers from its cause.
+#
+# `degraded` IS ACCEPTED, and that is deliberate rather than lax: it means the machine HAS finished
+# starting and some unit of it failed. That is a different problem, it belongs to whoever reads the
+# unit, and swallowing it into this wait would hide it behind a timeout about booting.
+STARTED_WAITED=0
+until case "$(systemctl is-system-running 2>/dev/null)" in running|degraded) true ;; *) false ;; esac; do
+  if [ "$STARTED_WAITED" -ge 300 ]; then
+    die "this machine has not finished starting after ${STARTED_WAITED}s — systemctl is-system-running says '$(systemctl is-system-running 2>&1)'.
+
+Everything after this needs services, and the first of them fails on a system bus that is not
+accepting connections yet. What to look at:
+
+  systemctl list-jobs
+  systemctl --failed" 75
+  fi
+  [ $(( STARTED_WAITED % 30 )) -eq 0 ]     && say "this machine is still starting — waited ${STARTED_WAITED}s"
+  sleep 5
+  STARTED_WAITED=$(( STARTED_WAITED + 5 ))
+done
+good "this machine has finished starting${STARTED_WAITED:+ after ${STARTED_WAITED}s}"
+
 PACKAGES_WAITED=0
 until root apt-get -o DPkg::Lock::Timeout=5 check >/dev/null 2>&1; do
   if [ "$PACKAGES_WAITED" -ge 600 ]; then
