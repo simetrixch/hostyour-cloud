@@ -5,6 +5,19 @@
 # radius at all. These projects pin each app group to:
 #   • the one source repo
 #   • exactly the namespaces it deploys to (destinations)
+#
+# A DESTINATION NAMES THE CLUSTER, never a server URL. Every Application this platform generates
+# says `destination.name: __CLUSTER_NAME__` — the cluster it belongs to, registered under that name
+# (cluster-self on a master, cluster-slave on the per-slave instance). A project that answered with
+# `server: https://kubernetes.default.svc` was saying "the cluster this ArgoCD runs IN", which is the
+# same cluster only on a master.
+#
+# Measured on apps6 on 2026-09-01: the master's per-slave instance drives a REMOTE cluster
+# (https://100.64.0.3:16443), so every one of its ten applications was refused before it was ever
+# compared — "application destination server 'apps6' and namespace 'kube-system' do not match any of
+# the allowed destinations in project 'core'" — and each reported Unknown/Unknown for half an hour
+# until the run gave up. Naming the cluster makes project and Application speak the same language,
+# and it narrows rather than widens: exactly one cluster is allowed, the one these apps belong to.
 #   • only the cluster-scoped resource kinds it legitimately creates
 #     (data / services create NONE → clusterResourceWhitelist: [])
 #
@@ -50,17 +63,17 @@ spec:
     - https://github.com/simetrixch/hostyour-cloud.git
     - oci://ghcr.io/external-secrets/charts
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: external-secrets
     # The reconciler's own namespace, for the ONE object of it this project delivers: the client
     # secret a person signs in with (clusters/inventories/argocd-signin). It is read out of the
     # store like every other secret, so it belongs to the tier that carries the store's operator.
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: argocd
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: kube-system
     # service-provisioner controller's own namespace.
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: service-provisioner
   clusterResourceWhitelist:
     - group: ""
@@ -98,9 +111,9 @@ spec:
     - https://github.com/simetrixch/hostyour-cloud.git
     - https://prometheus-community.github.io/helm-charts
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: mongodb
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: redis
   # Namespace is the ONE permitted cluster-scoped kind: the ApplicationSet
   # sets CreateNamespace=true and ArgoCD validates the auto-created Namespace
@@ -138,17 +151,17 @@ spec:
     - https://github.com/simetrixch/hostyour-cloud.git
     - https://bokysan.github.io/docker-postfix/
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: postfix
     # The database browser's own namespace. It stands on the clusters whose role
     # is `slave` — the clusters mongodb and redis run on — because no application
     # of this platform reaches a database in another cluster.
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: dbgate
     # The coordinator's own namespace: Deployment/Service, the state PVC, its
     # config ConfigMap and the public Ingress. Namespaced only — nothing
     # cluster-scoped beyond the Namespace itself (createNamespace=true).
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: headscale
   clusterResourceWhitelist:
     - group: ""
@@ -174,11 +187,11 @@ spec:
     - https://grafana.github.io/helm-charts
     - https://grafana-community.github.io/helm-charts
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: observability
     # kube-prometheus-stack places its CoreDNS + kubelet scrape-target
     # Services in kube-system (observability-coredns / observability-kubelet).
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: kube-system
   clusterResourceWhitelist:
     - group: ""
@@ -217,17 +230,17 @@ spec:
   # image-builder); tekton's vendored manifests add tekton-resolvers;
   # gate-runner runs its gate PipelineRuns here.
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: tekton
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: tekton-resolvers
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: registry
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: image-builder
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: gate-runner
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: argocd
   clusterResourceWhitelist:
     # Tekton's release manifests create the Namespace objects themselves
@@ -287,7 +300,7 @@ spec:
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: '*-build'
   clusterResourceWhitelist:
     # The chart renders each unit's Namespace itself (CreateNamespace=false),
@@ -322,7 +335,7 @@ spec:
     # The manager's own namespace: Deployment/Service/ServiceAccount, local
     # configmap-reader Role/RoleBinding, ESO ExternalSecrets + SecretStore, the
     # DATA_DIR PVC, the ingress, and (on the build cluster) the registry-reaper.
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: manager
     # Cross-namespace onboarding grants (Role + RoleBinding only in each):
     #   gate-runner   — gate-run PipelineRun dispatch + report;
@@ -331,9 +344,9 @@ spec:
     # grant is cluster-scoped (rbac.yaml, "Cluster scope (was ns argocd)"), so it is
     # a ClusterRole + ClusterRoleBinding, which ArgoCD validates against
     # clusterResourceWhitelist below and never against a destination.
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: gate-runner
-    - server: https://kubernetes.default.svc
+    - name: __CLUSTER_NAME__
       namespace: kube-system
   clusterResourceWhitelist:
     # createNamespace=true on the manager Application: ArgoCD validates the
