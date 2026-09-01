@@ -84,7 +84,11 @@ spec:
       # scalar). Keeping it out of the typed template keeps this file
       # parseable as static YAML.
       destination:
-        server: https://kubernetes.default.svc
+        # THE CLUSTER, NEVER A SERVER URL — see projects.yaml for the whole reasoning. A consumer
+        # Application generated here is refused by its project unless both name the same cluster,
+        # and `https://kubernetes.default.svc` names "the cluster this ArgoCD runs in", which is
+        # the master even when the unit belongs to a slave.
+        name: __CLUSTER_NAME__
         # One unit, one namespace: the namespace IS the unit name — the ingress
         # host <name>.<unitApex> and the per-consumer Vault paths key on the
         # same name.
