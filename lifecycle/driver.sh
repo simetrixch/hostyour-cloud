@@ -484,6 +484,20 @@ if root test -d "$CATALOG/.git"; then
   # checkout an earlier elevated clone left there belongs to root until the chown
   # below hands it over.
   say "bringing $CATALOG onto the published head of its branch"
+  # THE ORIGIN IS STATED, NOT INHERITED. A checkout standing here was cloned from
+  # whatever repository this machine was told to read at the time, and a fetch goes
+  # to that one for ever unless something says otherwise — to a remote this machine
+  # now has no credential for, or to one that no longer carries the programs. Either
+  # way the refusal names github.com and a missing username, which says nothing about
+  # the cause. DEPLOY_REPO is what this machine reads, so it is what this checkout
+  # follows, and stating it costs one command on every run and nothing when it already
+  # agrees.
+  want="https://github.com/$DEPLOY_REPO.git"
+  have=$(root git -C "$CATALOG" remote get-url origin 2>/dev/null || true)
+  if [ "$have" != "$want" ]; then
+    root git -C "$CATALOG" remote set-url origin "$want"       || die "could not point $CATALOG at $DEPLOY_REPO" 69
+    say "$CATALOG followed $have and now follows $DEPLOY_REPO"
+  fi
   branch=$(root git -C "$CATALOG" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
   [ -n "$branch" ] && [ "$branch" != HEAD ] || branch=master
   root bash -c "GIT_TERMINAL_PROMPT=0 git -C '$CATALOG' fetch --quiet origin '$branch'"     || die "could not fetch $DEPLOY_REPO into $CATALOG — check that the repository exists and is reachable from this machine" 69
