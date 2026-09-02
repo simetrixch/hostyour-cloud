@@ -10,7 +10,8 @@
 # this deliberately cannot do any of it. What it installs is the one machine that
 # has to exist before the Manager does.
 #
-# NO OPTIONS. Thirty-five values reach the five programs, and a command line long
+# NO OPTIONS. Every value the five programs are answered with reaches them from one file.
+# A command line long
 # enough to carry them is one nobody can read back, nobody can diff, and whose
 # every value stands in this machine's process listing. One file states the whole
 # installation; this reads it and starts.

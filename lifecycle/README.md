@@ -100,7 +100,7 @@ say rather than what somebody's checkout happened to hold.
 
 ```
 cp config.example.env ~/apps4.env     # NOT inside a git working tree
-$EDITOR ~/apps4.env                   # 37 values, 10 of them credentials
+$EDITOR ~/apps4.env                   # one line per value; the credentials are marked
 chmod 600 ~/apps4.env                 # Windows: icacls, and the launcher says the line
 
 ./install-machine.sh ~/apps4.env      # or:  pwsh ./install-machine.ps1 ~/apps4.env
@@ -154,9 +154,9 @@ because at a machine's birth there is nothing to compare it against. A **changed
 
 ## What it refuses, and why
 
-- **A file other accounts can read.** Ten of the thirty-seven values are credentials: the elevation
-  password of the machine, four repository *write* tokens, one repository read token, a DNS token,
-  a storage password and a registry token.
+- **A file other accounts can read.** Several values are credentials: the elevation password of the
+  machine, repository *write* tokens, a repository read token, a DNS token, a storage password and
+  a registry token.
 - **A file standing inside a git working tree.** The mistake is made once and cannot be taken back —
   a token that reached a remote must be rotated.
 - **Any line that is not a comment or `NAME='value'`.** The config is READ BY THE SHELL on the

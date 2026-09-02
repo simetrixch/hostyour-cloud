@@ -1,9 +1,9 @@
 # WHAT MAY NOT BE COMMITTED FROM HERE, and the reason is one file.
 #
-# config.env states a whole installation: thirty-four values, TEN of them credentials — the
-# elevation password of the machine, four repository write tokens, two repository read
-# tokens, a DNS token, a storage password and a registry token. A token that reaches a
-# remote must be rotated, and the mistake that puts it there is `git add .` made once.
+# config.env states a whole installation, and several of its values are credentials: the
+# elevation password of the machine, repository write tokens, a repository read token, a DNS
+# token, a storage password and a registry token. A token that reaches a remote must be
+# rotated, and the mistake that puts it there is `git add .` made once.
 #
 # THIS FILE IS WHY THE LAUNCHERS ACCEPT A CONFIG STANDING HERE AT ALL. Every one of them
 # refuses a config inside a git working tree that does NOT ignore it, and asks git itself rather
