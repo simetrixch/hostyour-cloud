@@ -61,13 +61,13 @@ spec:
       # BY NAME, NOT "IN-CLUSTER". The apps of this appset belong to the cluster this branch
       # describes, and "in-cluster" answers a different question: it names the cluster the ArgoCD
       # INSTANCE runs on. For the cluster that keeps the books those are the same machine, and this
-      # line was right for as long as that was the only case. A slave's instance runs on the master,
-      # so in-cluster there IS the master — every app of the slave would have been applied to the
-      # wrong machine.
+      # line is right only while that is the only case. A slave's instance runs on the master, so
+      # in-cluster there IS the master — every app of the slave would be applied to the wrong
+      # machine.
       #
       # The name is registered on both: on the books cluster by cluster-self.yaml beside this file,
       # on a slave by its own chart, both under the cluster's short name. tenants-appset addresses
-      # its destination the same way and always has.
+      # its destination the same way.
       destination:
         name: "__CLUSTER_NAME__"
         namespace: "{{ .namespace }}"

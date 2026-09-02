@@ -11,25 +11,25 @@
 # itself."
 #
 # IT CARRIES ITS OWN COPY OF THE SEQUENCE, and does not read that file. The list is written out at
-# PROGRAMS below. This sentence used to say it read the order out of
-# clusters/platform/install-order.yaml, which was never true and had already cost something: the two
-# had drifted — the file naming six programs for a master and this driver running five, without
-# onboard-manager — and nobody could see it, because the sentence said there was nothing to compare.
+# PROGRAMS below, and a sentence here claiming the order is read out of
+# clusters/platform/install-order.yaml would hide a drift rather than prevent one: the file and this
+# driver can name different programs — the file six for a master and this driver five, without
+# onboard-manager — and nobody can see it, because such a sentence says there is nothing to compare.
 # install-order.yaml says the same thing from its side, in its own header: "WHO READS IT TODAY:
 # NOBODY. Both drivers still carry their own copy of the sequence."
 #
 # The other carrier is the manager, which invokes the same programs over its own channel and keeps
 # its list in TypeScript. Three carriers of one fact, and the one that was written to be the answer
 # is the one nothing reads. Whether the driver should READ the file is a separate question with a
-# real consequence — it would run onboard-manager too, which it does not today — and it is not
-# answered by this comment. What this comment does is stop claiming otherwise.
+# real consequence — it would run onboard-manager too, which it does not — and it is not answered
+# by this comment.
 #
 # WHY IT RUNS HERE AND NOT ON THE OPERATOR'S MACHINE. Everything it fetches is
-# fetched by THIS machine: the pin out of the public platform repository, the two
-# executables out of the public release, the catalogue out of the private one with
-# a read credential handed over for the length of that clone. Nothing is carried
-# from the operator's own disk, so what stands here afterwards is what the
-# repositories say and not what somebody's checkout happened to hold.
+# fetched by THIS machine, and every one of the three is public: the pin out of the
+# platform repository, the two executables out of the release, the catalogue out of
+# the repository the deployment programs stand in. Nothing is carried from the
+# operator's own disk, so what stands here afterwards is what the repositories say
+# and not what somebody's checkout happened to hold.
 #
 # THE ONE THING IT DOES THAT NO PROGRAM DOES, stated rather than hidden: it
 # installs `git`, `curl` and `python3` when they are missing. deploy-host's
@@ -131,10 +131,10 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 # SHREDDED ON EVERY PATH. A credential that outlives the act it was handed over
 # for is a credential nobody is watching.
 # WHAT THIS PUT ON THE MACHINE, TAKEN OFF AGAIN ON EVERY PATH, including a failure.
-# The answers are not an afterthought here: deploy-branch is told nine credentials,
-# and a file holding them has no reason to outlive the run that needed it.
+# The answers are not an afterthought here: most of what deploy-branch is told is
+# credentials, and a file holding them has no reason to outlive the run that needed it.
 cleanup() {
-  rm -f "$CONFIG" /tmp/.aw-askpass /tmp/.aw-token 2>/dev/null || true
+  rm -f "$CONFIG" 2>/dev/null || true
   rm -rf "${ANSWERS_DIR:-}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
@@ -166,13 +166,13 @@ BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?
 
 readonly STAGE="${STAGE:-}"
 readonly CATALOG_REPO="${CATALOG_REPO:-}"
+readonly DEPLOY_REPO="${DEPLOY_REPO:-}"
 readonly PLATFORM_REPO="${PLATFORM_REPO:-}"
 readonly OPERATOR="${OPERATOR_USER:-}"
 readonly FQDN="${FQDN:-}"
 readonly ROLE="${ROLE:-}"
-readonly TOKEN="${CATALOG_REPO_READ_PAT:-}"
 
-for named in STAGE CATALOG_REPO PLATFORM_REPO OPERATOR FQDN ROLE TOKEN; do
+for named in STAGE CATALOG_REPO DEPLOY_REPO PLATFORM_REPO OPERATOR FQDN ROLE; do
   [ -n "${!named}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
 
@@ -231,21 +231,21 @@ BRANCH_TIP=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads \
 STATUS=$?
 
 if [ -n "$BRANCH_TIP" ]; then
-  # A BRANCH STANDING THERE IS NOT YET A PROBLEM, and the first shape of this check
-  # said it was — which made the installer refuse its own second run, two lines above
-  # a message promising that every program is idempotent. deploy-branch PUSHES this
-  # branch, so from its first green run onwards the branch is supposed to be there.
+  # A BRANCH STANDING THERE IS NOT YET A PROBLEM. Treating it as one makes the
+  # installer refuse its own second run, two lines above a message promising that
+  # every program is idempotent. deploy-branch PUSHES this branch, so from its first
+  # green run onwards the branch is supposed to be there.
   #
   # WHAT SEPARATES THE TWO CASES IS WHETHER THIS MACHINE WROTE IT. A branch this
   # installation pushed is in this machine's own checkout, object and all. One left
   # by a machine that was restored is not: the restore took the checkout with it and
   # left the branch standing in a repository no restore reaches.
   #
-  # A REFUSAL IS NOT AN ANSWER ABOUT CONTENT, and the second shape of this check made
-  # exactly the mistake it exists to prevent. It read the checkout unelevated; git
-  # refuses a repository owned by another account outright, and that refusal was read
-  # as "this machine does not carry the commit" about a commit this machine had
-  # written itself. It is the same defect as ansiwise-plugins#162, in this file.
+  # A REFUSAL IS NOT AN ANSWER ABOUT CONTENT, and reading the checkout unelevated
+  # makes exactly the mistake this check exists to prevent: git refuses a repository
+  # owned by another account outright, and that refusal reads as "this machine does
+  # not carry the commit" about a commit this machine wrote itself. It is the same
+  # defect as ansiwise-plugins#162, in this file.
   #
   # So the reading is elevated and says safe.directory, which takes BOTH ownership and
   # permission out of the answer — and where it still cannot read, it says so instead
@@ -269,20 +269,20 @@ if [ -n "$BRANCH_TIP" ]; then
     # descends from what stands here (a release was merged in), or what stands here descends from the
     # tip (this machine has committed since). Only two histories with nothing in common are foreign.
     #
-    # ASKING ONLY THE FIRST OF THE TWO IS WHAT STOPPED A RUN. A release merged into this branch from
-    # a workstation left the machine calling its own branch somebody else's, so the checkout was
-    # never stood on it and deploy-branch met a local branch it may not reset — twenty-four steps
-    # spent to be refused at the fifth (apps3, 2026-08-29).
+    # ASKING ONLY THE FIRST OF THE TWO STOPS A RUN. A release merged into this branch from a
+    # workstation makes the machine call its own branch somebody else's, so the checkout is never
+    # stood on it and deploy-branch meets a local branch it may not reset — twenty-four steps spent
+    # to be refused at the fifth.
     elif ! git -C "$CHECKOUT" merge-base --is-ancestor "$BRANCH_TIP" "refs/heads/$FQDN" 2>/dev/null       && ! git -C "$CHECKOUT" merge-base --is-ancestor "refs/heads/$FQDN" "$BRANCH_TIP" 2>/dev/null; then
       BRANCH_DOUBT="this machine's branch and what is published have no commit in common"
     fi
   fi
 
   # ONLY WHAT IS CERTAIN IS REFUSED. A machine carrying no checkout at all cannot have
-  # written that branch — there is no other reading, and it is the case that cost a run
-  # twenty-four steps. Everything else is a SUSPICION: deploy-branch says it plainly
-  # and at once if it is true, and this check has now stopped two runs it should have
-  # let through, so it does not get to stop a third on a guess.
+  # written that branch — there is no other reading. Everything else is a SUSPICION:
+  # deploy-branch says it plainly and at once if it is true, and a check that stops a
+  # run it should have let through is worse than one that lets a suspicion pass, so it
+  # does not get to stop one on a guess.
   if [ -n "$BARE" ]; then
     die "the platform repository $PLATFORM_REPO already carries a branch named $FQDN, standing at $BRANCH_TIP — and $BARE.
 
@@ -323,9 +323,9 @@ done
 # starts unattended-upgrades on its own shortly after boot, so a machine that was just
 # restored is holding the dpkg lock through the first minutes of its life — which is
 # exactly when deploy-host reaches install_packages, four rows into the first program.
-# Measured on apps4 on 2026-08-28: the first run after a restore died with
+# Measured on a real machine: the first run after a restore dies with
 # "Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 14400
-# (unattended-upgr)", and a minute later the same run was green.
+# (unattended-upgr)", and a minute later the same run is green.
 #
 # APT ITSELF DOES THE WAITING. DPkg::Lock::Timeout makes it block for the lock rather
 # than fail on it, so this asks in short turns and reports between them instead of
@@ -341,10 +341,10 @@ done
 #
 # A machine that was restored a moment ago answers every other question in this phase correctly
 # while its system bus is not yet accepting connections — and the first thing that needs the bus is
-# installing a snap, which registers services. Measured on apps5 on 2026-09-01, on a machine whose
-# uptime was 0 minutes when the run started: deploy-cluster died at install_snap with
-# "Failed to connect to system scope bus via local transport: Connection refused", the snap rolled
-# itself back, and the same run eleven minutes later installed it without trouble.
+# installing a snap, which registers services. Measured on a real machine whose uptime was 0 minutes
+# when the run started: deploy-cluster dies at install_snap with
+# "Failed to connect to system scope bus via local transport: Connection refused", the snap rolls
+# itself back, and the same run minutes later installs it without trouble.
 #
 # IT BELONGS HERE AND NOT IN THE STEP. This phase exists to establish that a machine is in a state
 # an installation can begin from and to say so before anything is changed; a bus that is not up yet
@@ -456,38 +456,17 @@ phase '2 / 4   the catalogue every program is read out of'
 # install-order.yaml names four things that must stand under this ONE path, and
 # says why it is not free: hostyour-vault-unseal.service's WorkingDirectory and
 # both of its ExecStart lines name files under it.
-# ASKED WITH ELEVATION, because a catalogue an elevated clone left behind is root's
-# and an unelevated test would answer "not a checkout" about a checkout standing
-# right there — sending this into a clone that dies on a non-empty directory.
-# THE CREDENTIAL, PREPARED ONCE FOR EITHER PATH. It reaches git and nothing else:
-# it is written into a file only this account may read, git asks that file for it,
-# and both are gone before this phase ends. It is never a word of a command,
-# because a word of a command stands in the process listing.
 #
-# WRITTEN BY THIS ACCOUNT AND NOT THROUGH root(). root() feeds sudo the elevation
-# password on ITS OWN standard input, so anything piped into it is thrown away —
-# the token file was written EMPTY and github answered "Invalid username or token"
-# about a credential that is perfectly valid. Only the git acts need elevation,
-# because /srv is root's; root reads these two files without being given them.
+# NOTHING IS HANDED OVER TO REACH IT. The repository the deployment programs stand
+# in is public, so this machine clones and fetches them on its certificate store
+# alone — the same footing the pin and the two executables above arrive on. No
+# credential reaches git in this phase.
 #
-# ANY LEFTOVER IS TAKEN OUT WITH ELEVATION FIRST. An earlier version of this file
-# wrote both as root, so a machine that ran it once carries two root-owned files
-# this account cannot overwrite — and the failure would name the helper rather than
-# the leftover.
-root rm -f /tmp/.aw-askpass /tmp/.aw-token 2>/dev/null || true
-
-( umask 077 && cat > /tmp/.aw-askpass <<'ASK'
-#!/bin/sh
-case "$1" in
-  Username*) printf 'x-access-token' ;;
-  *) cat /tmp/.aw-token ;;
-esac
-ASK
-) || die 'could not prepare the credential helper' 73
-chmod 700 /tmp/.aw-askpass || die 'could not prepare the credential helper' 73
-( umask 077 && printf '%s' "$TOKEN" > /tmp/.aw-token ) || die 'could not hand the read credential over' 73
-[ -s /tmp/.aw-token ] || die 'the read credential was not written — git would be handed an empty password and github would report it as an invalid token' 73
-
+# GIT_TERMINAL_PROMPT=0 ALL THE SAME. A repository github answers 404 for — a name
+# with a typo in it, or one that is not public — turns an unauthenticated clone into
+# a prompt for a username, and a prompt on a session nobody is watching hangs an
+# installation instead of failing it.
+#
 # ASKED WITH ELEVATION, because a catalogue an elevated clone left behind is root's
 # and an unelevated test would answer "not a checkout" about a checkout standing
 # right there — sending this into a clone that dies on a non-empty directory.
@@ -497,31 +476,29 @@ if root test -d "$CATALOG/.git"; then
   # repository names, and the catalogue carries the row that HOLDS a machine to that
   # pin. A run that moved the first and left the second stale puts the two into
   # contradiction, and the machine is then refused by its own catalogue —
-  # "ansiwise is at <the new one> and the program pins <the old one>", measured on
-  # apps3 on 2026-08-29, at the last step of deploy-cluster.
+  # "ansiwise is at <the new one> and the program pins <the old one>", measured on a
+  # real machine, at the last step of deploy-cluster.
   #
-  # WITH THE SAME CREDENTIAL THE CLONE USES. The catalogue repository is private and
-  # the clone stores no credential in the remote it writes, so this account cannot
-  # fetch on its own — "could not read Username for 'https://github.com'". Only what
-  # carries a token can bring this tree forward: this driver here, and the Manager
-  # later out of its own configuration.
+  # ELEVATED AND NOT AUTHENTICATED. The catalogue repository is public, so the fetch
+  # itself asks for nothing; what needs raising is the WRITE — /srv is root's, and a
+  # checkout an earlier elevated clone left there belongs to root until the chown
+  # below hands it over.
   say "bringing $CATALOG onto the published head of its branch"
   branch=$(root git -C "$CATALOG" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
   [ -n "$branch" ] && [ "$branch" != HEAD ] || branch=master
-  root bash -c "GIT_ASKPASS=/tmp/.aw-askpass GIT_TERMINAL_PROMPT=0 git -C '$CATALOG' fetch --quiet origin '$branch'"     || die "could not fetch $CATALOG_REPO into $CATALOG — check the read credential and that the repository exists" 69
+  root bash -c "GIT_TERMINAL_PROMPT=0 git -C '$CATALOG' fetch --quiet origin '$branch'"     || die "could not fetch $DEPLOY_REPO into $CATALOG — check that the repository exists and is reachable from this machine" 69
   # RESET AND NOT MERGE: nothing on a machine may write this tree, so the published
   # head is the whole of what it should carry, and anything else standing here is
   # debris a merge would try to keep.
   root git -C "$CATALOG" reset --quiet --hard FETCH_HEAD     || die "could not bring $CATALOG onto the published head of $branch" 69
   good "$CATALOG stands at $(root git -C "$CATALOG" rev-parse --short HEAD 2>/dev/null || echo 'an unreadable commit') on $branch"
 else
-  say "cloning $CATALOG_REPO into $CATALOG"
-  root bash -c "GIT_ASKPASS=/tmp/.aw-askpass GIT_TERMINAL_PROMPT=0 git clone --quiet 'https://github.com/$CATALOG_REPO.git' '$CATALOG'"
+  say "cloning $DEPLOY_REPO into $CATALOG"
+  root bash -c "GIT_TERMINAL_PROMPT=0 git clone --quiet 'https://github.com/$DEPLOY_REPO.git' '$CATALOG'"
   status=$?
-  [ $status -eq 0 ] || { rm -f /tmp/.aw-token /tmp/.aw-askpass; die "could not clone $CATALOG_REPO — check the read credential and that the repository exists" 69; }
-  good "cloned $CATALOG_REPO"
+  [ $status -eq 0 ] || die "could not clone $DEPLOY_REPO — check that the repository exists and is reachable from this machine" 69
+  good "cloned $DEPLOY_REPO"
 fi
-rm -f /tmp/.aw-token /tmp/.aw-askpass
 
 # HANDED TO THIS ACCOUNT, on both paths, because the clone had to be elevated and
 # what an elevated clone leaves behind belongs to root — including one left by an
@@ -530,10 +507,9 @@ rm -f /tmp/.aw-token /tmp/.aw-askpass
 # This account reads the catalogue on the very next line, and every program is read
 # out of it afterwards. And the Manager REFRESHES this checkout later WITHOUT
 # elevation, on purpose — a tree it cannot write is a tree it cannot bring forward.
-# It brings its OWN credential to that fetch (its catalogue origin), because the
-# machine's remote carries none: a clone stores no token in the remote it writes,
-# and a fetch from this account is answered "could not read Username for
-# 'https://github.com'" — measured on apps3, 2026-08-29.
+# That fetch needs no credential of its own, because the repository the programs
+# stand in is public; what it needs is a tree this account owns, and an elevated
+# clone leaves one belonging to root.
 root chown -R "$OPERATOR:$OPERATOR" "$CATALOG" \
   || die "could not hand $CATALOG to $OPERATOR, and the programs run as that account" 73
 good "$CATALOG belongs to $OPERATOR"
@@ -557,14 +533,13 @@ say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || e
 # because every program reads them and nothing else may.
 #
 # ONE FILE PER PROGRAM, CARRYING WHAT THAT PROGRAM DECLARES AND NOTHING ELSE. An
-# engine refuses an answer a program does not declare, by name and one line each —
-# deploy-host declares four and was handed thirty-three, so it said so
-# twenty-eight times. It is right to refuse: an answer no program asked for is a
-# name somebody mistyped or one a program stopped using, and either is worth a
-# refusal rather than a silent pass.
+# engine refuses an answer a program does not declare, by name and one line each, so
+# handing one program the whole config buries its run in refusals. It is right to
+# refuse: an answer no program asked for is a name somebody mistyped or one a program
+# stopped using, and either is worth a refusal rather than a silent pass.
 #
 # The Manager composes per program in exactly this way, and its hostAnswers() is
-# deploy-host's four (hostyour-manager/server/domains/runs/defs/deploy-slave.ts:150).
+# deploy-host's own (hostyour-manager/server/domains/runs/defs/deploy-slave.ts).
 #
 # THE NAMES ARE READ OFF THE PROGRAM ITSELF, out of the catalogue standing on this
 # machine, so nothing here holds a list that could fall behind what the programs
@@ -582,7 +557,7 @@ say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || e
 # THE ELEVATION PASSWORD STANDS BESIDE THE ANSWERS, NOT AMONG THEM. It is what the
 # run was STARTED with, not something a caller answers, and a step that needs it
 # has it filled in by the run itself. The engine refuses an envelope carrying it
-# among the answers by name — ansiwise-core/lib/src/model/caller_inputs.dart:62 —
+# among the answers by name — ansiwise-core/lib/src/model/caller_inputs.dart —
 # and it is right to: a password sitting in the answers would be recorded as one.
 mkdir -p "$ANSWERS_DIR" && chmod 700 "$ANSWERS_DIR" \
   || die "could not make $ANSWERS_DIR, and the answers are written there" 73
@@ -717,25 +692,24 @@ run_program() {
   # deploy-platform-services then asks the cluster a question as this account and is told
   # "Insufficient permissions to access MicroK8s", AFTER its own elevated write had already
   # succeeded: the Secret existed and the step reported the machine as not in the state it
-  # produces (measured on apps3 2026-08-28, kubernetes_secret_from_vault). Entering the
+  # produces (measured on a real machine, kubernetes_secret_from_vault). Entering the
   # account again hands each program the machine as it stands, not as it stood at the door.
   #
-  # WITHOUT `-u` THIS LINE MEANT root, WHICH IS A DIFFERENT PROGRAM ENTIRELY. Every command
-  # of every program then ran as root, including the ones needing nothing, and each left a
-  # file behind that this account cannot read — 38 of them in /srv/hostyour-cloud, .git/HEAD
-  # among them at mode 600, and the next run, started as this account, met its own checkout
+  # WITHOUT `-u` THIS LINE MEANS root, WHICH IS A DIFFERENT PROGRAM ENTIRELY. Every command
+  # of every program then runs as root, including the ones needing nothing, and each leaves a
+  # file behind that this account cannot read — in /srv/hostyour-cloud, .git/HEAD among them
+  # at mode 600 — so the next run, started as this account, meets its own checkout
   # with git answering "not a git repository". What needs root is raised one command at a
   # time, by the tool, from the row that needs it (ansiwise-core domain/shell.dart
   # `Command.elevated`), with the password that rides beside the answers (BESIDE above; the
   # catalogue's ansiwise.yaml says `password_from_caller: true`).
   #
-  # THE RUN'S OWN OUTPUT ON THIS PIPELINE, AS IT HAPPENS. It used to be captured to a file and printed when the program ended,
-  # under a comment claiming it was echoed as it happened — true of the file, and not
-  # of the screen. A run of ninety steps then showed nothing for as long as it took,
-  # and the one asking for traceability watched a blank terminal.
+  # THE RUN'S OWN OUTPUT ON THIS PIPELINE, AS IT HAPPENS. Capturing it to a file and
+  # printing it when the program ends shows nothing for as long as a run of ninety
+  # steps takes, and the one asking for traceability watches a blank terminal.
   #
-  # It is still kept: tee writes the file the failing-record reader and the summary
-  # both read afterwards.
+  # The file is kept all the same: tee writes the one the failing-record reader and
+  # the summary both read afterwards.
   printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$CATALOG" && sudo -S -p '' -u "$OPERATOR" "$ENGINE" "$program" \
       --programs "$CATALOG/ansiwise/programs" \
       --config "$CATALOG/ansiwise.yaml" \
@@ -750,12 +724,11 @@ run_program() {
   wait "$ticker" 2>/dev/null
   local took=$(( $(date +%s) - began ))
 
-  # THE RECORD'S NAME IS LOOKED FOR, NOT TAKEN FROM THE END. It used to be read off
-  # the last line, which held it right up until a run had something to say afterwards
-  # — deploy-platform-services ended with an `issue:` line under its summary, so the
-  # last word was "issue:" and the identifier was dropped. The launcher then fetched
-  # eleven records out of twelve, and the missing one was the failing run's: the only
-  # one anybody wanted.
+  # THE RECORD'S NAME IS LOOKED FOR, NOT TAKEN FROM THE END. Reading it off the last
+  # line holds right up until a run has something to say afterwards —
+  # deploy-platform-services ends with an `issue:` line under its summary, so the
+  # last word is "issue:" and the identifier is dropped. The launcher then fetches
+  # every record but the failing run's: the only one anybody wanted.
   #
   # A RUN IDENTIFIER HAS A SHAPE, and that is what is matched: eight digits, T, six
   # digits, Z, then the process and a hex tail. The LAST one in the log is this run's,
@@ -825,11 +798,10 @@ for program in "${PROGRAMS[@]}"; do
   # deploy-branch is reached on a second run the tree is standing on master with the
   # machine's branch existing beside it — the one position git_branch refuses.
   #
-  # AND SKIPPING deploy-branch DOES NOT WORK, which is what the first shape of this
-  # tried: the tree is then left standing on master, and master carries none of what
-  # deploy-branch writes. deploy-platform-services asked for
-  # /srv/hostyour-cloud/configs/config.<stage> and was told it is not on this machine
-  # — it was, on the branch nobody had checked out.
+  # AND SKIPPING deploy-branch DOES NOT WORK: the tree is then left standing on
+  # master, and master carries none of what deploy-branch writes.
+  # deploy-platform-services asks for /srv/hostyour-cloud/configs/config.<stage> and
+  # is told it is not on this machine — it is, on the branch nobody has checked out.
   #
   # A CHECKOUT MOVES HEAD AND NOTHING ELSE. No branch is reset, nothing is thrown
   # away, and deploy-branch then runs its other twenty-three rows as the repeat they
@@ -837,10 +809,10 @@ for program in "${PROGRAMS[@]}"; do
   if [ "$program" = deploy-branch ] && [ "$BRANCH_IS_OURS" = yes ]; then
     # AS THIS ACCOUNT AND NOT AS root, BECAUSE THIS ONE WRITES. The three reads in phase 0
     # are elevated and harmless — reading changes no owner. A checkout does: it rewrites
-    # .git/HEAD, and root writing it leaves a file this account can no longer read, so the
+    # .git/HEAD, and root writing it leaves a file this account cannot read, so the
     # very next thing to look at the tree is told "not a git repository" about a checkout
-    # that is whole. Measured on apps3 2026-08-28: this line ran at 20:33, and deploy-branch
-    # died two seconds later at git_identity for exactly that reason.
+    # that is whole. Measured on a real machine: deploy-branch dies at git_identity two
+    # seconds after this line runs, for exactly that reason.
     #
     # It needs no elevation either: the checkout belongs to this account, which is the
     # ownership rule this file states at the clone.
@@ -904,9 +876,9 @@ this fails; git said what it said above." 73
 done
 
 phase 'done'
-# COUNTED, never stated. The sentence said "four programs, twelve runs" while the sequence had
-# grown to five, so the last thing an installation told the operator was wrong about what it had
-# just done. Both numbers are held by this script already.
+# COUNTED, never stated. A sentence naming the numbers goes wrong the moment the sequence changes,
+# and the last thing an installation tells the operator would then be wrong about what it has just
+# done. Both numbers are held by this script already.
 good "$FQDN is installed: ${#PROGRAMS[@]} programs, ${#RUN_IDS[@]} runs, every one green"
 say "the machine's own records stand under $RUNS"
 summary
@@ -918,7 +890,7 @@ summary
 #
 #   bash: line 828: $'\r': command not found
 #
-# Measured on a green installation, two lines past the end of an 826-line stream.
+# Measured on a green installation, two lines past the end of the stream.
 # Stripping carriage returns cannot reach it: it is added after the stripping, by the
 # thing doing the sending.
 #

@@ -2,13 +2,16 @@
 # clusters/inventories/tekton's Ingress references this cross-namespace as
 # `idp-forwardauth@kubernetescrd`. Traefik carries
 # --providers.kubernetescrd.allowCrossNamespace=true for that, written by
-# digita-deploy ansiwise/programs/deploy-cluster.yaml:420.
+# hostyour-deploy ansiwise/programs/deploy-cluster.yaml, step
+# `patch_container_arguments_and_ports`.
 #
 # THIS MIDDLEWARE REACHES ONLY THE CLUSTER IT STANDS IN. Its address is the
 # in-cluster Service idp-authentik-server.idp.svc.cluster.local, and the program
-# that installs this directory declares `roles: [master]` (digita-deploy
-# ansiwise/programs/deploy-gitops.yaml:48) — so an Ingress on a cluster whose
-# role is `slave` names a middleware that is not there. That is why
+# that installs this directory gates every step of it on
+# `when: [idp_enabled, books_here_in_config]` (hostyour-deploy
+# ansiwise/programs/deploy-platform-services.yaml) — so on a cluster that does not
+# keep the books nothing here is applied, and an Ingress there names a middleware
+# that is not present. That is why
 # clusters/inventories/dbgate, which stands beside the databases it browses, renders its Ingress
 # off rather than gated by a reference that resolves to nothing.
 #

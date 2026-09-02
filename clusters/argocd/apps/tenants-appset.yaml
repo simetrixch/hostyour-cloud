@@ -6,9 +6,9 @@
 # THE MEMBER SET IS DATA. `members` in the registration lists every member the tenant has, each with
 # the charts it deploys into its own namespace <guid>-<member>. The Manager resolved that list
 # from the tenant product's own manifest — its standing services and one member per app the tenant
-# selected — so this file names no member, no chart and no app. It used to be FOUR files per stage,
-# one per member family, each carrying a chart path and a values block of one particular product;
-# a product with a different member set could not be deployed by this cloud at all.
+# selected — so this file names no member, no chart and no app. The alternative is FOUR files per
+# stage, one per member family, each carrying a chart path and a values block of one particular
+# product, and it cannot deploy a product with a different member set at all.
 #
 # What this file still decides is what is TRUE OF EVERY MEMBER: the naming, the namespace, the
 # isolation project, the sync policy, and the tenant facts each chart is handed. What a member IS
@@ -36,8 +36,8 @@
 # out anywhere else in this file: the stamp rewrites every occurrence of it on any line it reaches,
 # so a sentence quoting it would come out of a run stating a repository instead of explaining one.
 #
-# __BOOKS_FQDN__ and __CLUSTER_NAME__ have NO writer at all. The shell that used to fill them is gone,
-# and neither value is an answer the branch program holds: the books branch is this cluster's own
+# __BOOKS_FQDN__ and __CLUSTER_NAME__ have NO writer at all, and neither value is an answer the
+# branch program holds: the books branch is this cluster's own
 # domain where it holds the master role and the named master's domain where it does not, and the
 # cluster is the first DNS label of this cluster's domain — the name the Manager writes into a
 # registration's `cluster:` field and the name the destination below resolves (on a master from the
@@ -59,8 +59,8 @@
 # namespace selector matches tenant-managed, and the secret kit's ServiceAccount annotation resolves
 # the per-tenant Vault path); platform/db-consumer admits the namespace through the credentialed
 # backing-service NetworkPolicies (mongodb). Anything BEYOND those three is the member's own
-# `namespaceLabels` out of the registration — the data behind what used to be an `if member == auth`
-# in one of the four files, granting reach to a no-auth service that only that member uses. The
+# `namespaceLabels` out of the registration — data, so that a rule like `if member == auth`, granting
+# reach to a no-auth service that only that member uses, never has to stand in this file. The
 # per-member AppProject <guid>-<member> (name == the destination namespace, destinations pinned to
 # exactly that namespace) is the isolation — the Manager renders it BEFORE it writes the
 # registration, so this template's project: always resolves.
@@ -170,13 +170,12 @@ spec:
               - $values/clusters/active/__FQDN__.yaml
             # The pins file above is the ONE file MEANT to be missing, and only until this
             # installation has built. The flag permits more than that one file: a values file named
-            # here and no longer carried by the repository it stands in renders from whatever files
-            # are left, with no sync error anywhere. NOTHING GUARDS EITHER HALF of this list today —
-            # the audit that used to require every $values/ path named here to exist in this
-            # repository is gone with the tools tree it lived in, and the member chart's own
-            # values.yaml, its stage file and whatever the registration's valueFiles adds have never
-            # been read by anything here, since they stand in the tenant catalog. So the flag is a
-            # silence an installation accepts, on every path in the list.
+            # here but not carried by the repository it stands in renders from whatever files are
+            # left, with no sync error anywhere. NOTHING GUARDS EITHER HALF of this list — no audit
+            # requires a $values/ path named here to exist in this repository, and the member
+            # chart's own values.yaml, its stage file and whatever the registration's valueFiles
+            # adds are read by nothing here, since they stand in the tenant catalog. So the flag is
+            # a silence an installation accepts, on every path in the list.
             ignoreMissingValueFiles: true
             valuesObject:
               # THE TENANT'S OWN FACTS, handed to every source of every member. Bare access is safe

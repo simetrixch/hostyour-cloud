@@ -1,7 +1,6 @@
 {{- /*
 The mongodb exporter's monitoring credentials, claimed from the generic
-service-provisioner like any other consumer — this replaced the dedicated
-annotation-driven mongodb-provisioner (retired). Roles-ONLY claim
+service-provisioner like any other consumer. Roles-ONLY claim
 (clusterMonitor@admin, no database): the provisioner mints the user
 `sp_mongodb_exporter` and writes the `exporter-mongodb` Secret (key
 MONGODB_URI, path-less URI) that the prometheus-mongodb-exporter Deployment
@@ -14,14 +13,15 @@ skip plus ArgoCD's sync retry make this CR apply cleanly once the CRD lands
 
 The UPGRADE case is a different, nastier one, and it is worth knowing about
 before adding the next CRD field. Where a fresh install has NO CRD (apply fails
-loudly → retry), an upgrade has a STALE one: wave 10 applied this claim while
-the OLD schema — which had no `roles` — was still live, so the apiserver PRUNED
-the field and the apply SUCCEEDED. No error, nothing to retry, and a claim
-stored as {service, secretName} that the handler then rejected with "claim needs
-at least one database or role". It self-heals (ArgoCD sees the live object
-missing `roles`, marks the app OutOfSync and re-applies once the wave-16 CRD is
-current — observed live on a master, ~5 minutes, monitoring never gapped because the old
-exporter pod holds its still-valid credentials until the new one is Ready), but
+loudly → retry), an upgrade has a STALE one: wave 10 applies this claim while the
+PREVIOUS schema is still live, so the apiserver PRUNES every field that schema
+does not know — `roles`, here — and the apply SUCCEEDS. No error, nothing to
+retry, and a claim stored as {service, secretName} that the handler then rejects
+with "claim needs at least one database or role". It self-heals (ArgoCD sees the
+live object missing `roles`, marks the app OutOfSync and re-applies once the
+wave-16 CRD is current — observed live on a master, ~5 minutes, monitoring never
+gapped because the old exporter pod holds its still-valid credentials until the
+new one is Ready), but
 it heals via plain OutOfSync/re-apply, NOT via the annotation above. Anyone
 extending the ServiceClaim schema and using the new field in the same rollout
 should expect this window rather than be surprised by it.

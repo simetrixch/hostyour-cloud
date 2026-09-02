@@ -42,9 +42,9 @@ answering identically, and the one real difference is how each asks whether the 
 Windows says that with an access list and reads it with `icacls`, Linux and macOS say it with a mode
 and read it with `stat`.
 
-The two launchers are thin on purpose. **Everything is fetched by the machine itself**: the pin out
-of the public platform repository, the two executables out of the public release, the catalogue out
-of the private one with a read credential handed over for the length of that clone. Nothing is
+The two launchers are thin on purpose. **Everything is fetched by the machine itself, and all three
+are public**: the pin out of the platform repository, the two executables out of the release, the
+catalogue out of `hostyour-deploy`, the repository the deployment programs stand in. Nothing is
 carried from the operator's disk, so what stands on the machine afterwards is what the repositories
 say rather than what somebody's checkout happened to hold.
 
@@ -52,7 +52,7 @@ say rather than what somebody's checkout happened to hold.
 
 ```
 cp config.example.env ~/apps4.env     # NOT inside a git working tree
-$EDITOR ~/apps4.env                   # 34 values, 10 of them credentials
+$EDITOR ~/apps4.env                   # 37 values, 10 of them credentials
 chmod 600 ~/apps4.env                 # Windows: icacls, and the launcher says the line
 
 ./install.sh ~/apps4.env              # or:  pwsh ./install.ps1 ~/apps4.env
@@ -78,7 +78,7 @@ no flag from you:
 - **A machine this platform installed** carries the operator key, and `disable-password-login` has
   shut its password door. The key is tried first, so this is the normal path and nothing is asked.
 - **A machine at its birth carries no key at all.** `deploy-host`'s `install_authorized_key` row is
-  what puts it there, and that row is one of the four programs this is about to run — so the very
+  what puts it there, and that row is one of the five programs this is about to run — so the very
   first session can only be a password session. Where the key is refused, `ssh` asks for the login
   password **once, on your terminal**. It is not read from the config, it is not kept, and it does
   not reach the transcript.
@@ -103,8 +103,8 @@ because at a machine's birth there is nothing to compare it against. A **changed
 
 ## What it refuses, and why
 
-- **A file other accounts can read.** Ten of the thirty-four values are credentials: the elevation
-  password of the machine, four repository *write* tokens, two repository read tokens, a DNS token,
+- **A file other accounts can read.** Ten of the thirty-seven values are credentials: the elevation
+  password of the machine, four repository *write* tokens, one repository read token, a DNS token,
   a storage password and a registry token.
 - **A file standing inside a git working tree.** The mistake is made once and cannot be taken back —
   a token that reached a remote must be rotated.
@@ -114,8 +114,7 @@ because at a machine's birth there is nothing to compare it against. A **changed
   its number.
 - **An apostrophe in any value.** That test refuses it as a side effect, and it would break the run
   in any case: a template slot standing inside quotes has no way to say so, and the cluster map
-  becomes unparseable far from the cause
-  ([`ansiwise-plugins#161`](https://github.com/simetrixch/ansiwise-plugins/issues/161)).
+  becomes unparseable far from the cause (`ansiwise-plugins#161`).
 - **A carriage return anywhere in the config.** Notepad writes CRLF, and a `bash` on Linux reads
   that CR as part of the value — so the FQDN a certificate is issued for would end in a control
   character and nothing downstream would say why. Both launchers strip it on the way over and
@@ -146,10 +145,12 @@ install-transcripts/apps4.example.com-20260827-141522/
 
 ## Credentials
 
-Two reach the machine and neither ever stands in an argument list: the elevation password, which
-raises every command that has to run as root, and a **read** credential for the private catalogue,
-which lives on the machine only for the length of one `git clone` and is shredded with the config on
-every path `driver.sh` can end on.
+One of them is `driver.sh`'s own, and it never stands in an argument list: the elevation password,
+which raises every command that has to run as root and reaches `sudo` on standard input. Fetching
+the catalogue needs none — the repository the deployment programs stand in is public, so the clone
+and the fetch are made on the machine's certificate store alone. Every other credential in the
+config is an answer a program declares; each lands in that program's own answer file at mode 0600,
+and all of them are shredded with the config on every path `driver.sh` can end on.
 
 The **login** password is not one of them. Where a machine still needs one, `ssh` asks for it on your
 terminal and nothing here ever holds it — it is in no file, no variable and no argument, so there is

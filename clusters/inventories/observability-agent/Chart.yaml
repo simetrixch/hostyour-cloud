@@ -44,8 +44,8 @@ dependencies:
     repository: file://../../charts/monitoring
 
   # The scraper + shipper. Same chart + version clusters/inventories/observability pins
-  # (clusters/inventories/observability/Chart.yaml:30-32). configMap.create=false → reads the
-  # ConfigMap the monitoring chart renders above.
+  # (the `alloy` dependency of clusters/inventories/observability/Chart.yaml).
+  # configMap.create=false → reads the ConfigMap the monitoring chart renders above.
   - name: alloy
     version: 1.11.0
     repository: https://grafana.github.io/helm-charts

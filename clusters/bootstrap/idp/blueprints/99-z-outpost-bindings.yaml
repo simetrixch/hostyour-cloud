@@ -7,12 +7,11 @@
 # login but the session cookie doesn't bind to a specific app → forwardauth loop
 # / 404 / etc.
 #
-# ONE PROVIDER, AND IT USED TO BE TWO. The second was dbgate, back when the
-# database browser stood on the master at gate-<slave>.<master>. It stands beside
-# its databases now (clusters/inventories/dbgate, `runsOn: slave`), on a cluster this identity
+# ONE PROVIDER, AND NOT DBGATE. The database browser stands beside its databases
+# (clusters/inventories/dbgate, `runsOn: slave`), on a cluster this identity
 # provider is not installed on, so its Ingress is off and there is no host here
 # to bind. hostyour-cloud#66 carries what has to exist before a provider for it
-# comes back.
+# can be added.
 #
 # File name `99-z-*` so this runs AFTER the `99-proxy-tekton.yaml` blueprint that
 # creates the ProxyProvider the !Find queries below look up. If parallel apply

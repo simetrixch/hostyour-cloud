@@ -51,15 +51,15 @@ postgres:
       # compressible (throttled, never killed), so the request tracks idle draw
       # while the limit lets one heavy query run at a full core. Neither number
       # worsens the node's already-oversubscribed LIMITS (122% CPU / 146% memory,
-      # measured 2026-07-22): the request is what the scheduler reserves.
+      # measured on a live master): the request is what the scheduler reserves.
       cpu: "1"
       memory: 2Gi
 
 postgres-data:
   pvc:
-    # 20Gi — 4x small. This was the dev/test PVC size of the retired shared
-    # instance, i.e. the size the platform already considered sufficient for a
-    # whole stage's worth of databases; for ONE consumer it is years of growth.
+    # 20Gi — 4x small. It is the dev/test PVC size of a single shared instance,
+    # i.e. the size the platform considers sufficient for a whole stage's worth
+    # of databases; for ONE consumer it is years of growth.
     storageSize: "20Gi"
 
 monitoring:

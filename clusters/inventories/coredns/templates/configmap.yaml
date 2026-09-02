@@ -54,15 +54,15 @@ data:
              matches.
 
              THROUGH TRAEFIK AND NOT AT THE SERVICE, because a rewrite changes the
-             NAME and never the port. This used to name vault.vault.svc directly,
-             which is where the store listens — on 8200. The caller's URL is
-             https://, so it asks for 443, and every SecretStore on this cluster
-             got `connect: connection refused` from a Vault that was running
-             perfectly. What an operator saw was every workload that reads a
-             credential coming up Degraded at once, with nothing wrong anywhere
-             the eye could reach.
+             NAME and never the port. Naming vault.vault.svc directly names where
+             the store listens — on 8200. The caller's URL is https://, so it asks
+             for 443, and every SecretStore on this cluster gets
+             `connect: connection refused` from a Vault that is running perfectly.
+             What an operator sees is every workload that reads a credential
+             coming up Degraded at once, with nothing wrong anywhere the eye can
+             reach.
 
-             It costs a dependency: the platform's most critical component is now
+             It costs a dependency: the platform's most critical component is
              reached through the ingress like everything else. That is the same
              path the registry rewrite below already takes, it is the path the
              certificate and the ServersTransport are set up for, and it is the

@@ -1,5 +1,4 @@
-# Narrow local RBAC: read ConfigMaps in the manager's OWN namespace (mirrors
-# the old console's in-chart Role).
+# Narrow local RBAC: read ConfigMaps in the manager's OWN namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -22,14 +21,12 @@ subjects:
     name: manager
 {{- /*
 manager ONBOARDING RBAC — shipped WITH the workload (Model A), exactly like
-clusters/inventories/service-provisioner/templates/rbac.yaml, instead of the satellite RBAC app
-that used to carry these grants under a privileged AppProject. Emitted through
+clusters/inventories/service-provisioner/templates/rbac.yaml, rather than as a satellite RBAC app
+carrying these grants under a privileged AppProject. Emitted through
 the clusters/charts/rbac library helper `rbac.grants` (one building block, RBAC with the
 workload). Bound to THIS chart's own ServiceAccount `manager`
 (serviceaccount.yaml) — not recreated here. These are the exact in-cluster kube
-surface of the manager's onboarding adapters; byte-equivalent to the
-dissolved satellite app (same verbs/resources/apiGroups/namespaces/
-resourceNames — only relocated):
+surface of the manager's onboarding adapters:
 
   * manager-gate-dispatch (Role, ns gate-runner) — TektonGateRunner: create/
     delete the per-run `gate-cred-<runid>` Secret; create/get/delete the
@@ -37,10 +34,10 @@ resourceNames — only relocated):
     LIST PipelineRuns, which is the one thing here not addressed by name.
     The sweep that collects orphans has to enumerate what is there before it can
     say what is left over — hostyour-manager
-    server/adapters/gate-runner/gate-runner-tekton.ts:154 listPipelineRunNames,
-    called from reapOrphans at :259. Without the verb that sweep fails on every
+    server/adapters/gate-runner/gate-runner-tekton.ts listPipelineRunNames,
+    called from reapOrphans. Without the verb that sweep fails on every
     pass, and what it leaves standing is the per-run credential Secrets it exists
-    to remove. Measured on apps3, 2026-08-26, before the verb was granted:
+    to remove. Measured on a real machine, without the verb granted:
 
       pipelineruns.tekton.dev is forbidden: User
       "system:serviceaccount:manager:manager" cannot list resource "pipelineruns"
@@ -48,17 +45,15 @@ resourceNames — only relocated):
 
     logged as "gate-runner: orphan sweep failed — leftover gate-run objects
     (including credential Secrets) may still stand", and `kubectl auth can-i` for
-    that account answered get yes, create yes, delete yes, list NO, watch NO. The
-    comment here said "No list/watch anywhere (every object addressed by name)",
-    which the adapter had stopped being true of.
+    that account answered get yes, create yes, delete yes, list NO, watch NO.
 
     TASKRUNS ARE LISTED FOR THE SAME KIND OF REASON, and it is the more important
     one. When a gate-run produces no report, the ONLY place the cause exists is the
     TaskRun statuses of that PipelineRun, and the adapter reads them before it reaps
-    (hostyour-manager gate-runner-tekton.ts:370 states it, and the call is
-    listNamespacedCustomObject over tekton.dev/taskruns at :182). Without the verb
+    (hostyour-manager gate-runner-tekton.ts states it, and the call is
+    listNamespacedCustomObject over tekton.dev/taskruns). Without the verb
     the operator is handed a raw 403 where the sentence saying why the gate died
-    belongs. Measured on apps3 before it was granted:
+    belongs. Measured on a real machine without the verb granted:
 
       taskruns.tekton.dev is forbidden: User
       "system:serviceaccount:manager:manager" cannot list resource "taskruns" in
@@ -68,11 +63,11 @@ resourceNames — only relocated):
   * manager-build-rbac-writer (ClusterRole) — the per-unit build RBAC, which the
     manager is the only party allowed to write. A unit's AppProject blacklists Role
     and RoleBinding (hostyour-manager server/domains/units/appproject.ts) precisely
-    so nothing a unit deploys can mint itself a Role, and build-rbac.ts:1-10 states
+    so nothing a unit deploys can mint itself a Role, and build-rbac.ts states
     the consequence: "the manager is therefore the only writer left". Without this
-    grant that writer had no rights at all, and onboarding stopped at
+    grant that writer has no rights at all, and onboarding stops at
     `roles.rbac.authorization.k8s.io "<unit>-build-eventlistener" is forbidden` —
-    measured on apps3, 2026-08-26, on the first onboarding that reached this far.
+    measured on a real machine.
 
     CLUSTER SCOPE, because the namespaces do not exist yet. Each unit's build
     namespace is `<unit>-build`, made at onboarding, and grant 3 lands in the target

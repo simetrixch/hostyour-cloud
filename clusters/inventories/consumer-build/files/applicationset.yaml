@@ -67,8 +67,8 @@ spec:
       # Registry.flip writes it unquoted; matchLabels is map[string]string, so an
       # unquoted false HERE is a manifest the API server refuses. The two meet
       # because ArgoCD prints the parameter before it matches — fmt.Sprintf("%v", v)
-      # in applicationset/generators/generator_spec_processor.go:134 at v3.4.5, the
-      # appVersion clusters/slaves/slave/Chart.yaml:4 pins — and a Go bool(false) prints as
+      # in applicationset/generators/generator_spec_processor.go at v3.4.5, the
+      # appVersion clusters/slaves/slave/Chart.yaml pins — and a Go bool(false) prints as
       # false.
       selector:
         matchLabels:
@@ -109,8 +109,8 @@ spec:
               # directory". Its namespace is rendered by that same Application, so the
               # namespace never appeared either, and an onboarding'''s provision-build-rbac
               # step then failed with a 404 naming a namespace nobody had created.
-              # Measured on apps3.digitacloud.app, 2026-08-26, on the first consumer this
-              # platform ever onboarded. __BRANCH__ is global.domain, which is this
+              # Measured on a real machine, on the first consumer onboarded.
+              # __BRANCH__ is global.domain, which is this
               # cluster'''s fqdn AND the name of its install branch AND the name of the map
               # on it — one value, three uses, and the map is named for it.
               - $values/clusters/active/__BRANCH__.yaml

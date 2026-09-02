@@ -2,18 +2,18 @@
 The one grant that lets a webhook land in THIS unit's build namespace: the
 EventListener's identity may create PipelineRuns here, and nothing else.
 
-WHY IT IS RENDERED AND NOT PROVISIONED. The grant used to be written
-imperatively when a unit was onboarded, which is correct for every unit the
-manager onboards and impossible for the one unit that IS the manager: on a first
-installation nothing has run that could write it, so the platform's own release
-webhook was accepted, resolved every parameter, and was refused at the last step
-with "cannot create resource pipelineruns in the namespace <unit>-build".
+WHY IT IS RENDERED AND NOT PROVISIONED. Writing the grant imperatively when a
+unit is onboarded is correct for every unit the manager onboards and impossible
+for the one unit that IS the manager: on a first installation nothing has run
+that could write it, so the platform's own release webhook is accepted, resolves
+every parameter, and is refused at the last step with "cannot create resource
+pipelineruns in the namespace <unit>-build".
 
-It loses nothing that made the imperative form safe. That form's argument was
-that an unregistered repository's webhook must have nothing to land on — and a
+Rendering loses nothing that makes the imperative form safe. That form's argument
+is that an unregistered repository's webhook must have nothing to land on — and a
 registration is exactly what this chart renders from. No registration, no build
 namespace, no binding, nothing to land on. One mechanism instead of two, and the
-two could drift.
+two can drift.
 
 SCOPED TO CREATE, AND TO THIS NAMESPACE. A Role rather than the stock
 tekton-triggers-eventlistener-roles ClusterRole, which also carries reads on

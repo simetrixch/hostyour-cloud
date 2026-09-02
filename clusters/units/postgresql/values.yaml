@@ -9,9 +9,9 @@
 # (clusters/argocd/apps/consumers-appset.yaml), i.e. `path: clusters/units/postgresql` plus the
 # platform globals from $values, and
 # Helm loads only the chart's own implicit `values.yaml` as the base. So the
-# base values must live in a file called exactly values.yaml, and the per-stage
-# files that used to sit next to it are gone: a TEMPLATE has no stage identity
-# of its own. Everything stage-dependent (domain, endpoints.vault.url, storageClass,
+# base values must live in a file called exactly values.yaml, and no per-stage
+# file sits next to it: a TEMPLATE has no stage identity of its own. Everything
+# stage-dependent (domain, endpoints.vault.url, storageClass,
 # timezone, secretStoreName) already arrives through global.* from
 # $values/clusters/platform/values-common.yaml + values-<stage>.yaml + clusters/active/<fqdn>.yaml.
 #
@@ -32,20 +32,20 @@
 #            and index builds that need real work_mem, low gigabytes of data.
 #   large  — the ceiling we are still willing to put on a shared node: sustained
 #            write volume, many connections, large joins. Its limits are exactly
-#            what the RETIRED shared instance was allowed, so any database
-#            migrated off that instance provably cannot need more.
+#            what a single SHARED cluster instance is allowed, so a database
+#            migrated off one provably cannot need more.
 #
 # SMALL IS THE DEFAULT AND IT LIVES HERE, in this file — a render that names no
 # size gets the frugal one, never the generous one. values-size-small.yaml
 # exists only so every renderer can name its size uniformly
 # (-f values-size-<size>.yaml) without a conditional; it is intentionally empty.
 #
-# WHERE THE NUMBERS COME FROM (measured on a live master, 2026-07-22)
-#   • the retired shared instance, EMPTY database: 6-7m CPU / 55-56Mi memory,
+# WHERE THE NUMBERS COME FROM (measured on a live master)
+#   • a shared cluster instance, EMPTY database: 6-7m CPU / 55-56Mi memory,
 #     while REQUESTING 500m/1Gi and being LIMITED to 2 CPU/4Gi on a 50Gi PVC.
 #     That is the trap this file exists to avoid: copying those figures once per
-#     consumer would have requested 10Gi and promised 40Gi of limits for ten
-#     consumers, on a node whose limits already sum to 122% CPU / 146% memory.
+#     consumer requests 10Gi and promises 40Gi of limits for ten consumers, on a
+#     node whose limits already sum to 122% CPU / 146% memory.
 #   • idp-postgresql in namespace `idp` — a genuinely USED instance (Authentik
 #     keeps sessions, cache and its task queue in it): 12-17m CPU / 231Mi memory,
 #     162MB of data on an 8Gi PVC. That, not the empty one, is the honest
@@ -54,8 +54,8 @@
 #     the scarce resource here. STORAGE is: the instruction is to be frugal with
 #     disk even though /mnt/data is a 1TB volume at 3%.
 #   Ten SMALL instances therefore cost 250m CPU / 2.5Gi of requests, 5 CPU / 5Gi
-#   of limits and 50Gi of disk — the whole of ten consumers fitting in what the
-#   ONE retired instance was permitted.
+#   of limits and 50Gi of disk — the whole of ten consumers fitting in what ONE
+#   shared instance is permitted.
 # =============================================================================
 
 # --- the PostgreSQL workload (clusters/charts/deployment, alias `postgres`) ------------
@@ -240,7 +240,7 @@ postgres:
   #     limit lets one query, checkpoint or index build burst up to half a core.
   #     A high CPU limit costs nothing while idle and, unlike memory, cannot
   #     OOM anything; reserving idle cores on a node whose LIMITS already sum to
-  #     122% CPU / 146% memory (measured 2026-07-22) is what we must NOT do.
+  #     122% CPU / 146% memory (measured on a live master) is what we must NOT do.
   resources:
     requests:
       cpu: 25m
@@ -314,13 +314,14 @@ externalsecret-postgres:
     # name the workloads reference.
     name: postgres-superuser
     # No `namespace:` — clusters/charts/external-secret falls back to .Release.Namespace.
-    # The old value hardcoded `postgresql`, which is precisely the singleton
-    # assumption that had to go.
+    # Hardcoding `postgresql` here is precisely the singleton assumption this
+    # chart does not make.
     #
     # SecretStore — bind explicitly to the PLATFORM-OWNED store `vault-backend-postgres`
     # that the secret-store dependency below renders, NOT the consumer's own
     # `vault-backend`. Without this name clusters/charts/external-secret falls back to
-    # .Values.global.secretStoreName (= `vault-backend`, clusters/platform/values-common.yaml:58),
+    # .Values.global.secretStoreName (= `vault-backend`, `global.secretStoreName` in
+    # clusters/platform/values-common.yaml),
     # i.e. the consumer's store — which the consumer's OWN chart creates only at its
     # wave -3, far AFTER the postgres pod at wave -20 (§4.3). An ExternalSecret pointed
     # at a store that does not exist yet never materialises `postgresql-credentials` in
@@ -336,8 +337,8 @@ externalsecret-postgres:
     # Wave -21 (clusters/charts/external-secret `.externalSecret.annotations`) — the third
     # of the credential trio (with the SecretStore + ServiceAccount below). The
     # whole trio sits one wave BEFORE the pod at -20 so `postgresql-credentials` is
-    # materialized before the postgres container mounts it (§4.3). Set in slice S2a
-    # now that clusters/charts/external-secret emits metadata.annotations.
+    # materialized before the postgres container mounts it (§4.3). It is settable
+    # because clusters/charts/external-secret emits metadata.annotations.
     annotations:
       argocd.argoproj.io/sync-wave: "-21"
 
@@ -354,15 +355,16 @@ externalsecret-postgres:
 # therefore point it at a store that does not exist until FAR AFTER the pod that
 # needs the Secret, so `postgresql-credentials` would never materialise in time and
 # the pod would deadlock in CreateContainerConfigError. That is the deadlock this
-# design removes — which is why the previous `enabled: false` (reuse the consumer's
-# store) was wrong, not safe.
+# design removes, and it is why `enabled: false` (reuse the consumer's store) is
+# wrong rather than safe.
 #
 # The fix is to render a SECOND, platform-named store in the platform's own wave:
 #   • SecretStore     `vault-backend-postgres`   (.name)
 #   • ServiceAccount  `postgres-eso`             (.serviceAccountName)
 # Both names are DISTINCT from the consumer's `vault-backend` / `external-secrets-sa`,
-# so there is NO two-owners-one-object collision — that collision (not late ordering)
-# was the real objection the old comment raised, and distinct names remove it (§5.3).
+# so there is NO two-owners-one-object collision — that collision, not late ordering,
+# is the real objection to reusing the consumer's names, and distinct names remove
+# it (§5.3).
 #
 # Vault binding: role `consumer-eso` — NOT the subchart default `external-secrets`,
 # which is the platform-namespace role. A consumer namespace is authorised only for
@@ -483,9 +485,9 @@ prometheus-postgres-exporter:
     create: false
   # Exporter cost is FIXED across the three size presets: it runs the same
   # handful of pg_stat queries regardless of how big the database is. Measured
-  # 1m CPU / 21Mi memory next to the shared instance, versus the upstream-style
-  # 50m/64Mi request and 200m/128Mi limit this chart used to carry — which,
-  # multiplied per consumer, is exactly the waste this rework is about.
+  # 1m CPU / 21Mi memory next to a shared instance, versus the upstream-style
+  # 50m/64Mi request and 200m/128Mi limit — which, multiplied per consumer, is
+  # exactly the waste these numbers avoid.
   resources:
     requests:
       cpu: 10m

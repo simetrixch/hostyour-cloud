@@ -132,9 +132,10 @@ configs:
   # deployment puts the first operator into it with the
   # `authentik_group_membership` step, and anybody later is added to it in the
   # provider.
-  # NO OTHER PLACE IN THIS TREE DECIDES ADMISSION ON A GROUP, measured
-  # 2026-08-26: the blueprints carry exactly one PolicyBinding
-  # (99-manager.yaml:91), there are only the two `policy.csv` files named above
+  # NO OTHER PLACE IN THIS TREE DECIDES ADMISSION ON A GROUP, measured over
+  # the whole tree: the blueprints carry exactly one PolicyBinding
+  # (99-manager.yaml, entry `manager-admins-binding`), there are only the two
+  # `policy.csv` files named above
   # and the three `role_attribute_path` lines, and the only Kubernetes `Group`
   # subject anywhere in the tree is `system:authenticated`, in the three Tekton
   # bindings under clusters/inventories/tekton/templates/.

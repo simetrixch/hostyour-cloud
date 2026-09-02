@@ -8,11 +8,11 @@
 # 24 vCPU / 30GB node, two large instances alone promise 4 CPU and 8Gi of
 # limits on top of everything else already running.
 #
-# CEILING BY CONSTRUCTION: the limits below are EXACTLY what the retired shared
-# cluster instance was permitted (2 CPU / 4Gi) and the PVC is exactly the 50Gi it
-# held. Any database migrated off that instance therefore provably cannot need
-# more than this preset — and no per-consumer instance may ever be granted more
-# than the single shared one used to be.
+# CEILING BY CONSTRUCTION: the limits below are EXACTLY the 2 CPU / 4Gi a single
+# shared cluster instance is permitted, and the PVC is exactly the 50Gi such an
+# instance holds. A database migrated off one therefore provably cannot need more
+# than this preset — and no per-consumer instance is granted more than one shared
+# instance gets.
 #
 # Only the four resource numbers, the server config (args) and the PVC size
 # differ from the small default; every other value (image, probes, security

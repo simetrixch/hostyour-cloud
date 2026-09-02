@@ -26,8 +26,7 @@ dependencies:
     repository: file://../../charts/common
   # RBAC library — the `rbac.grants` helper renders the manager's four
   # cross-cutting onboarding grants (templates/rbac.yaml) WITH the workload,
-  # Model A (like clusters/inventories/service-provisioner). Replaces the dissolved satellite
-  # RBAC app that used to carry these grants under a privileged project.
+  # Model A (like clusters/inventories/service-provisioner).
   - name: rbac
     version: 1.0.0
     repository: file://../../charts/rbac

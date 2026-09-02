@@ -125,10 +125,11 @@ pvc:
 # Service idp-authentik-server.idp.svc.cluster.local. Two facts put it out of
 # reach of a cluster whose role is `slave`:
 #
-#   * the program that installs clusters/bootstrap/idp declares `roles: [master]`
-#     (digita-deploy ansiwise/programs/deploy-gitops.yaml:48), so on a slave the
-#     namespace `idp` does not exist and the middleware reference resolves to
-#     nothing;
+#   * the program that installs clusters/bootstrap/idp gates every step of it on
+#     `when: [idp_enabled, books_here_in_config]` (hostyour-deploy
+#     ansiwise/programs/deploy-platform-services.yaml), so on a cluster that does
+#     not keep the books the namespace `idp` does not exist and the middleware
+#     reference resolves to nothing;
 #   * the identity provider's session cookie is issued for the domain the master
 #     was stamped with — an Authentik proxy provider carries
 #     `cookie_domain: .<IDP_DOMAIN>` and IDP_DOMAIN is the master's own fqdn
@@ -179,9 +180,10 @@ ingress:
       secretName: 'dbgate-{{ .Values.global.env }}-tls'
 
 # Per-namespace SecretStore (visible as an ArgoCD-managed resource). Reads the
-# `external-secrets` Vault role of the cluster this runs on, which admits the
-# namespace `dbgate` on both sides: the master's list in deploy-gitops.yaml and
-# the slave's own in register-slave.yaml.
+# `external-secrets` Vault role of the cluster this runs on, which admits a
+# namespace by the label `hostyour.cloud/workload` rather than by a list of names
+# — the role is written by deploy-platform-services.yaml on a master and by
+# register-slave.yaml on a slave.
 secret-store: {}
 
 # ExternalSecret — the mongod root password, injected into URL_mongo above through

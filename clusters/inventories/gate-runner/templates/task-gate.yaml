@@ -69,7 +69,7 @@ spec:
         - name: CLUSTER_VALUE_FILES
           value: $(params.cluster-value-files)
         # The cloned workspace the CLI reads its files map from
-        # (readWorkspace(dir) — replaces the old bundle unpackAndVerify).
+        # (readWorkspace(dir)).
         - name: SOURCE_DIR
           value: $(workspaces.source.path)
         # Report drop point INSIDE the shared workspace so the publish-report

@@ -20,8 +20,8 @@ metadata:
     # namespace, written here for the reason the comment above gives: rendering the namespace in
     # this chart REPLACES what ArgoCD would have created, and with it that label. Without it Vault's
     # external-secrets role does not admit this namespace, the SecretStore in it reports "unable to
-    # create client", and the ExternalSecret behind it never resolves - measured on apps5 on
-    # 2026-08-31, where this was the one application left degraded. clusters/inventories/gate-runner
+    # create client", and the ExternalSecret behind it never resolves - measured on a real machine,
+    # where this is the one application left degraded. clusters/inventories/gate-runner
     # renders its own namespace too and carries the label for the same reason.
     hostyour.cloud/workload: "true"
     {{ .Values.global.consumerLabels.mongodb }}: "true"

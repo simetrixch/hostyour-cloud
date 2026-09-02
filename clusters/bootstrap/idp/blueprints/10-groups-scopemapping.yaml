@@ -12,20 +12,20 @@
 # claim key. Which of them lands last is the provider's business and not ours, and the one that
 # loses is silent.
 #
-# This file used to APPEND an invented group name — `admins` — for anybody the provider considered
-# privileged, so that a fresh installation would admit its first operator before anyone was really
-# a member of the platform's group. `profile` overwrote it, and nothing anywhere reported that:
+# APPENDING an invented group name here — `admins`, for anybody the provider considers privileged,
+# so that a fresh installation admits its first operator before anyone is really a member of the
+# platform's group — DOES NOT WORK. `profile` overwrites it, and nothing anywhere reports that:
 #
 #     this mapping, computed alone   ['authentik Admins', 'admins']
 #     the provider's profile scope   ['authentik Admins']
-#     what the issued token carried  ['authentik Admins']
+#     what the issued token carries  ['authentik Admins']
 #
-# Every service that admits on `admins` refused every login, with a message about a claim that did
-# not match. What replaced it is a real membership: the deployment puts the first operator into the
-# group with the step `authentik_group_membership`, additively, so both mappings compute the same
-# list and it contains the group the platform admits on. A membership is also the only form anybody
-# can audit — you can open the provider and see who may enter, which a value computed at token time
-# never lets you do.
+# Every service that admits on `admins` then refuses every login, with a message about a claim that
+# does not match. A REAL MEMBERSHIP is what works instead: the deployment puts the first operator
+# into the group with the step `authentik_group_membership`, additively, so both mappings compute
+# the same list and it contains the group the platform admits on. A membership is also the only form
+# anybody can audit — you can open the provider and see who may enter, which a value computed at
+# token time never lets you do.
 #
 # File name `10-*` so this runs BEFORE the `99-*.yaml` provider blueprints that !Find it. (Authentik
 # applies blueprints in alphabetical order by filename within /blueprints/local.)

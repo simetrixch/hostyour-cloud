@@ -50,21 +50,19 @@
 # which are derived, in its own file in the catalogue. Copying that list here
 # would be a second source of it, and the first edit to a program would make this
 # copy wrong while it went on being read. NOTHING about the answers is stated
-# here any more — the one exception this file used to carry is gone, and what
-# closed it is below.
+# here.
 #
 # WHICH OF THESE PROGRAMS RUNS AGAIN ON A LATER PASS IS NOT STATED, because it
-# was not measured. The one thing known is that `deploy-branch` cuts a branch
+# is not measured. The one thing known is that `deploy-branch` cuts a branch
 # once and `regenerate-branch` is the program that rewrites it afterwards; the
-# other four were only ever watched on a first install.
+# other four are watched only on a first install.
 #
-# HOW FAST THIS FILE GOES STALE, measured rather than feared. Three sentences in
-# it have been false since it was written on 2026-08-24: a program name
-# (`deploy-gitops`) that versions.yaml beside this file stamps no site in, while
-# it stamps four in `ansiwise/programs/deploy-platform-services.yaml`; a `needs`
-# path this repository had renamed; and the answer whose value used to come from
-# a run. Each was found by a person reading the file, because nothing reads it
-# and nothing checks it. That is the argument for a driver, and it is also the
+# HOW FAST THIS FILE GOES STALE, measured rather than feared. Nothing reads it
+# and nothing checks it, so a sentence in it goes on being read after it stops
+# being true and only a person reading the file finds it: a program name that
+# versions.yaml beside this file stamps no site in, while it stamps four under
+# another name; a `needs` path this repository has renamed; an answer whose value
+# comes from a run. That is the argument for a driver, and it is also the
 # warning: a row here is intent, not behaviour, and it is verified against the
 # programs in the catalogue and against this tree before it is relied on.
 # =============================================================================
@@ -84,11 +82,11 @@ catalog:
   # ONE path, and it is not free. deploy-platform-services writes
   # /etc/systemd/system/hostyour-vault-unseal.service, whose WorkingDirectory is
   # /srv/ansiwise-catalog and whose two ExecStart lines name files under it. On an
-  # installation whose catalogue stood elsewhere the enable failed with
+  # installation whose catalogue stands elsewhere the enable fails with
   # "Changing to the requested working directory failed: No such file or directory",
-  # the run ended at that row, and the unwind took the unit file back with it — so
-  # `systemctl cat` afterwards answered "No files found" and the cause was no longer
-  # on the machine. The same path is CATALOG_CHECKOUT in hostyour-manager
+  # the run ends at that row, and the unwind takes the unit file back with it — so
+  # `systemctl cat` afterwards answers "No files found" and the cause is gone from
+  # the machine. The same path is CATALOG_CHECKOUT in hostyour-manager
   # server/domains/runs/defs/place-ansiwise.ts, which is what maintains the checkout
   # once the manager exists; on a FIRST master the manager does not exist yet, and
   # nothing creates the directory before the unit needs it.
@@ -115,11 +113,10 @@ sequence:
   #
   # THE SLAVE SEQUENCE IS NOT HERE, and the reason is not that it could not be read.
   # It stands in hostyour-manager server/domains/runs/defs/deploy-slave.ts and it
-  # names the same three machine programs a master runs — `deploy-host` at :313,
-  # `deploy-cluster` at :319, `deploy-platform-services` at :322 — after a
-  # `deploy-slave-branch` on the MASTER at :247, with the checkout placement and the
-  # tailnet join around them. Read on 2026-08-26; `deploy-gitops`, the old name for
-  # the third, appears nowhere in that repository any more.
+  # names the same three machine programs a master runs — `deploy-host`,
+  # `deploy-cluster` and `deploy-platform-services` — after a
+  # `deploy-slave-branch` on the MASTER, with the checkout placement and the
+  # tailnet join around them.
   #
   # What keeps it out of this file is that a slave's sequence is not a sequence of
   # PROGRAMS. Half of its steps are the manager's own acts — placing the engine,
@@ -178,12 +175,11 @@ sequence:
         # names, and the manager pod creates it there once the reconciler has
         # synced the manager application.
         #
-        # THIS LINE REPLACES A DATA DEPENDENCY THAT NO LONGER EXISTS. Until
-        # simetrixch/hostyour-cloud#125 the manager bound its socket under
-        # DATA_DIR, which is a claim whose directory the storage provisioner
-        # composes with a generated uid — so the path could not be known before
-        # the cluster ran, and this file carried it as the one answer whose VALUE
-        # came from an earlier program. The chart now decides the path, the value
+        # A CONSTANT PATH, AND NOT A DATA DEPENDENCY. Binding the socket under
+        # DATA_DIR — a claim whose directory the storage provisioner composes
+        # with a generated uid — makes the path unknowable before the cluster
+        # runs, and this file would carry it as the one answer whose VALUE comes
+        # from an earlier program. The chart decides the path instead, the value
         # is a constant knowable before any program starts, and the dependency is
         # an ordinary `needs` like every other.
         - /var/lib/hostyour-manager/admin.sock

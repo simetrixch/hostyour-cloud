@@ -17,7 +17,7 @@ mongodb:
       cpu: "4"
       memory: 4Gi
 
-# prometheus-mongodb-exporter connection is no longer configured per-env: the
+# prometheus-mongodb-exporter connection is not configured per-env: the
 # exporter consumes the service-provisioner-written exporter-mongodb Secret
 # (existingSecret in values-common.yaml + the roles-only ServiceClaim in
 # templates/serviceclaim-exporter.yaml). The URI's host comes from the

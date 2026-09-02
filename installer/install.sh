@@ -11,7 +11,7 @@
 # this deliberately cannot do any of it. What it installs is the one machine that
 # has to exist before the Manager does.
 #
-# NO OPTIONS. Thirty-four values reach the four programs, and a command line long
+# NO OPTIONS. Thirty-five values reach the five programs, and a command line long
 # enough to carry them is one nobody can read back, nobody can diff, and whose
 # every value stands in this machine's process listing. One file states the whole
 # installation; this reads it and starts.
@@ -76,11 +76,10 @@ fi
 # shellcheck disable=SC1090
 . "$FILE"
 
-for named in FQDN OPERATOR_USER STAGE CATALOG_REPO PLATFORM_REPO; do
+for named in FQDN OPERATOR_USER STAGE CATALOG_REPO DEPLOY_REPO PLATFORM_REPO; do
   [ -n "${!named:-}" ] || fail "$FILE states no $named, and nothing here may choose one" 65
 done
 [ -n "${ELEVATION_PASSWORD:-}" ]   || fail "$FILE states no ELEVATION_PASSWORD, and every program of this sequence is run elevated" 65
-[ -n "${CATALOG_REPO_READ_PAT:-}" ] || fail "$FILE states no CATALOG_REPO_READ_PAT, and the catalogue every program is read from is private" 65
 
 # A MACHINE IS ADDRESSED BY ITS NAME, and by nothing else. The name in the config is
 # the one the certificate will carry and the one the cluster is reached by, so a
@@ -105,7 +104,7 @@ BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 # is the case these launchers exist for.
 #
 # The key is tried first and the password only where the key is refused, so neither
-# case needs a flag and a re-run never asks for a password a machine no longer takes.
+# case needs a flag and a re-run never asks for a password a machine does not take.
 PROBE=$(ssh "${BASE[@]}" -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)
@@ -128,7 +127,7 @@ If you have NOT restored it, clear nothing: something else is answering for $FQD
       [ -t 0 ] || fail "$TARGET carries no operator key yet, so this can only be a password session — and there is no terminal here to ask on. Start it from a terminal." 69
       DOOR=(-o BatchMode=no -o NumberOfPasswordPrompts=1)
       printf '\n  %s carries no operator key yet. deploy-host is what puts it there,\n' "$TARGET" >&2
-      printf '  and it is one of the four programs this is about to run.\n\n' >&2
+      printf '  and it is one of the five programs this is about to run.\n\n' >&2
       printf '  ssh will ask for the login password ONCE, on this terminal. It is not read\n' >&2
       printf '  from the config, it is not kept, and it does not reach the transcript.\n' >&2 ;;
     *)

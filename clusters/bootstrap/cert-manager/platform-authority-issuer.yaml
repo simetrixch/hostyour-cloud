@@ -13,9 +13,9 @@
 # the certificate service watches. It re-issues everything by itself, with no row anywhere having to
 # ask it to.
 #
-# The shape this replaces had both authorities under ONE name. Measured on apps5 on 2026-09-01: the
-# object was rewritten from `ca:` to `acme:`, nothing was re-issued, and the cluster went on serving
-# certificates signed by the root the same run had deleted.
+# THE ALTERNATIVE IS BOTH AUTHORITIES UNDER ONE NAME, and it is worse. Measured on a real machine:
+# the object is rewritten from `ca:` to `acme:`, nothing is re-issued, and the cluster goes on
+# serving certificates signed by the root the same run deleted.
 # The object every certificate on this cluster names, in the form it takes while the switch is off.
 #
 # THE FLIP IS ONE APPLY. With the switch on, the cluster-issuer rows render the public form of this

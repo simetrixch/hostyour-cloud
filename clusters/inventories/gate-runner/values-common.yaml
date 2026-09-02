@@ -71,9 +71,8 @@ reportWriter:
   # purpose — one of the three is where a given cluster's apiserver actually
   # listens: 6443 is kubeadm's and 16443 is MicroK8s'.
   #
-  # 443 IS NOT THE SERVICE VIP, and this line used to say it was. That was true
-  # while the pinhole's ipBlock was 10.0.0.0/8, which holds the service network;
-  # it stopped being true when the ipBlock became global.nodeCidrs, which holds
+  # 443 IS NOT THE SERVICE VIP. It would be one only where the pinhole's ipBlock
+  # holds the service network; this ipBlock is global.nodeCidrs, which holds
   # NODE addresses and no VIP at all. What answers 443 at a node address is the
   # ingress controller's host port — the one the fence twenty lines up is
   # written to deny to every other pod here.

@@ -6,8 +6,8 @@ description: >-
   → ServiceAccount vault:vault). Vault's kubernetes auth evaluates LABEL-bound
   ESO roles (bound_service_account_namespace_selector) by GETting the calling
   SA's Namespace as its own SA; under enforced RBAC that read 403s without this
-  grant and every consumer login fails. GitOps-owned so it survives a wipe —
-  replaces the imperative block that used to create it when the cluster was seeded.
+  grant and every consumer login fails. GitOps-owned so it survives a wipe,
+  rather than written imperatively while the cluster is seeded.
 type: application
 
 dependencies:

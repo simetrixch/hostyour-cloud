@@ -34,12 +34,12 @@
 # SkipDryRunOnMissingResource lets the validation pass for a kind that is not there yet; the apply
 # still fails until the CRD arrives, and the root application's own retry is what covers the gap.
 #
-# AND NO SYNC WAVE, which was tried and is worse than nothing. A late wave never runs at all:
+# AND NO SYNC WAVE, which is worse than nothing. A late wave never runs at all:
 # ArgoCD starts a wave only once the one before it is HEALTHY, and wave 0 here holds the
 # ApplicationSets — which cannot be healthy while any application they generate is not, and on a
 # first installation manager-dev stands in ImagePullBackOff until its image has been built. The two
-# objects below then sat as `nil->obj` in every sync, never attempted, with nothing reporting that
-# a wave had been skipped rather than failed. In the ordinary wave they are attempted on every
+# objects below then sit as `nil->obj` in every sync, never attempted, with nothing reporting that
+# a wave was skipped rather than failed. In the ordinary wave they are attempted on every
 # pass, and one of those passes is after the CRD arrives.
 apiVersion: external-secrets.io/v1
 kind: SecretStore

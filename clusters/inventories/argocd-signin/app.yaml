@@ -17,8 +17,8 @@ createNamespace: "true"
 # the slave. Nothing on a slave would ever read this Secret, and the namespace it asks for is not
 # among the ones its project allows there.
 #
-# Measured on apps6 on 2026-09-01: it was the last of eleven applications left refused after the
-# destination fix — "destination server 'apps6' and namespace 'argocd' do not match any of the
-# allowed destinations in project 'core'". Signing in to the slave's instance is the master's
+# Measured on a real machine: even with every project's destination named by cluster, this app
+# placed on a slave is refused — "destination server 'apps6' and namespace 'argocd' do not match any
+# of the allowed destinations in project 'core'". Signing in to the slave's instance is the master's
 # business, because that is where the instance is.
 runsOn: master

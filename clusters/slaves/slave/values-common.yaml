@@ -195,11 +195,11 @@ argo-cd:
     # shape as the master's own ArgoCD (clusters/bootstrap/argocd/values.yaml),
     # so a person who can open one reconciler can open the other.
     #
-    # It used to be Authentik's built-in `authentik Admins`, the group `akadmin`
-    # belongs to from the provider's own bootstrap and that nothing of ours puts
-    # anybody into. It admitted that account and refused the operator the
-    # deployment actually creates — so one account was admin here and read-only
-    # at the manager, and from a browser both looked like a successful login.
+    # NOT Authentik's built-in `authentik Admins`, the group `akadmin` belongs to
+    # from the provider's own bootstrap and that nothing of ours puts anybody
+    # into. That group admits that account and refuses the operator the
+    # deployment actually creates — so one account is admin here and read-only
+    # at the manager, and from a browser both look like a successful login.
     rbac:
       policy.csv: |
         g, admins, role:admin

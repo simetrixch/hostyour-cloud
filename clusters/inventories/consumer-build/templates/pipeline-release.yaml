@@ -246,7 +246,7 @@ spec:
     # adding a build therefore means running the onboard verb again, which
     # re-attests. Per attested build the task emits the manifest's
     # containerfile / context as results the build tasks consume; an attested
-    # build the manifest no longer declares is marked undeclared and skipped
+    # build the manifest does not declare is marked undeclared and skipped
     # downstream.
     #
     # containerfile and context are the only manifest fields that become a
@@ -357,7 +357,7 @@ spec:
     # A 200 IS NOT PROOF THE PLATFORM BUILT THE IMAGE. The registry answers a
     # local miss by fetching from its sync upstreams on demand
     # (clusters/inventories/registry/values-common.yaml, extensions.sync: ghcr.io
-    # with content prefix /simetrixch/* stripped to /, then registry-1.docker.io
+    # with the seed content prefix stripped to /, then registry-1.docker.io
     # unfiltered), so a repo this installation has never pushed to still answers
     # 200 with whatever an upstream publishes under that name and tag. Taking
     # that for "already built" would skip the build and pin an image nobody
@@ -662,10 +662,10 @@ spec:
               # namespace to serve one step. build-bump is bound to pipeline-sa
               # instead, and grants read on secret/data/build/+/repo-pat and
               # nothing else. Both are seeded with the cluster
-              # (digita-deploy ansiwise/programs/deploy-gitops.yaml).
+              # (hostyour-deploy ansiwise/programs/deploy-gitops.yaml).
               #
               # WHAT THIS COSTS, stated rather than implied: an account that can
-              # read every registered unit's repo PAT now exists in every build
+              # read every registered unit's repo PAT exists in every build
               # namespace. It is reachable only from a pod that HOLDS a
               # pipeline-sa token, and the only pod of this pipeline that holds
               # one is this task's — pipeline-sa carries
@@ -715,7 +715,7 @@ spec:
               # records are PATH-qualified and git must select by repo path.
               git config --global credential.useHttpPath true
               # The store is armed UNCONDITIONALLY, because the three records
-              # ESO delivers are no longer the only ones that reach it: the
+              # ESO delivers are not the only ones that reach it: the
               # class-(a) loop appends one per private registration as it goes.
               # An arm that hung off GITCREDENTIALS would leave those appended
               # records in a file no helper reads, and every foreign carrier
@@ -915,7 +915,7 @@ spec:
                   return 1
                 fi
                 if [ "${code}" != "200" ]; then
-                  echo "bump: FAIL — Vault answered ${code} to a login as role ${VAULT_ROLE} at auth/${VAULT_AUTH_MOUNT}. That role is seeded with the cluster (digita-deploy ansiwise/programs/deploy-gitops.yaml) and binds the ServiceAccount pipeline-sa in a namespace labelled hostyour.cloud/build; a 403 here means the role, the label or the account does not match this pod." >&2
+                  echo "bump: FAIL — Vault answered ${code} to a login as role ${VAULT_ROLE} at auth/${VAULT_AUTH_MOUNT}. That role is seeded with the cluster (hostyour-deploy ansiwise/programs/deploy-gitops.yaml) and binds the ServiceAccount pipeline-sa in a namespace labelled hostyour.cloud/build; a 403 here means the role, the label or the account does not match this pod." >&2
                   return 1
                 fi
                 VAULT_CLIENT_TOKEN="$(yq -p=json -o=y '.auth.client_token // ""' "${body}")"

@@ -5,7 +5,7 @@
 # exact set of names in a rolling week, and a rebuild spends one. But "no certificate" is not a
 # quieter installation, it is no installation: clusters/bootstrap/vault/values.yaml mounts the
 # issued Secret as a VOLUME, and a pod whose volume names a Secret that does not exist never starts.
-# Measured on apps5 on 2026-08-31: with no issuer, cert-manager reports IssuerNotFound and creates
+# Measured on a real machine: with no issuer, cert-manager reports IssuerNotFound and creates
 # no Secret at all, so the store never comes up and the program waiting for it to answer sits out
 # its ten minutes.
 #
@@ -27,9 +27,9 @@
 # from the catalogue's own template with the same answer — so the name in the tree cannot fall
 # behind the installation.
 #
-# It used to be ONE name for both forms. That is what made the switch unturnable: the certificate
-# service watches the name a certificate is issued BY and never the specification behind it, so
-# turning the authority over rewrote this object and re-issued nothing.
+# ONE name for both forms makes the switch unturnable: the certificate service watches the name a
+# certificate is issued BY and never the specification behind it, so turning the authority over
+# rewrites this object and re-issues nothing.
 #
 # WHY THE TERMINAL ISSUER IS NOT IN THIS FILE. What the switch flips is which authority stands
 # behind ONE name, and what it leaves behind when flipped on is this chain — so the two have to be
@@ -73,7 +73,7 @@ spec:
   # can tell at a glance what it is and that nothing outside this installation trusts it.
   #
   # SIXTY-FOUR BYTES IS THE CEILING and it is not cert-manager's: X.509 gives a common name that
-  # much and no more. A longer one was refused by the admission webhook on apps5 on 2026-08-31 with
+  # much and no more. A longer one is refused by the admission webhook with
   # "spec.commonName: Too long: may not be more than 64 bytes", which is the right place for it to
   # fail and a poor place to discover it. This one is 53.
   commonName: hostyour.cloud platform authority (this cluster only)

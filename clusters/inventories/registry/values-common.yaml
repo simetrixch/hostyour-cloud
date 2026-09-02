@@ -163,10 +163,10 @@ ingress:
 # official ghcr.io/project-zot/zot images bundle it).
 #
 # ghcr.io SEED (extensions.sync, onDemand, listed FIRST). NOT THE PATH THE
-# PLATFORM'S OWN PODS TAKE ANY MORE: their builds[] pins compose against
+# PLATFORM'S OWN PODS TAKE: their builds[] pins compose against
 # global.buildRegistry (ghcr.io) and reach it directly, so nothing renders a
-# ref at this registry for them. It stays for the pulls that still name this
-# host — an install branch pinned before the switch, and a rollback to such a
+# ref at this registry for them. It stays for the pulls that do name this
+# host — an install branch pinned at this registry, and a rollback to such a
 # pin — and it costs nothing while no such pull happens.
 #
 # WHAT IT DOES, WHEN IT DOES FIRE: it fetches the images of THIS platform for an
@@ -175,7 +175,7 @@ ingress:
 # tag here — and the pipeline exists only once a Manager has written the
 # registration it is rendered from. So the Manager's own image, and the two
 # images that ship with it, cannot come out of this registry the first time.
-# They are published to ghcr.io/simetrixch/<build name> by the release of the
+# They are published to global.buildRegistry/<build name> by the release of the
 # repository they build from, and this entry fetches them on the first pull.
 #
 # THE LOCAL REPO NAME STAYS FLAT, which is what makes the rest of the file keep
@@ -183,8 +183,8 @@ ingress:
 # it. zot's on-demand path inverts the rule to find the remote name of a repo it
 # was asked for (GetRepoSource, pkg/extensions/sync/content.go): with
 # stripPrefix true and destination "/", a pull of `manager` resolves upstream to
-# `simetrixch/manager` and is stored back as `manager`. Without stripPrefix the
-# repo would be `simetrixch/manager` — two segments, which is a docker.io cache
+# `<owner>/manager` and is stored back as `manager`. Without stripPrefix the
+# repo would stay `<owner>/manager` — two segments, which is a docker.io cache
 # path to the retention policy below and a name no builds[] pin can compose.
 #
 # The prefix MUST carry a glob. GetContentByLocalRepo matches the local name
@@ -192,7 +192,7 @@ ingress:
 # outright matches the empty pattern and never fires on demand. The glob is also
 # what lets one entry serve every image this platform seeds instead of one entry
 # per image — and the price of that is stated plainly: any single-segment repo
-# missing locally is attempted against ghcr.io/simetrixch/<name> before the pull
+# missing locally is attempted against global.buildRegistry/<name> before the pull
 # fails.
 #
 # Listed BEFORE docker.io because on demand zot walks the registries in order
@@ -212,8 +212,8 @@ ingress:
 # loading for all of them — measured on a bare machine, logged once per registry as
 # it starts: "couldn't get registry credentials from configured path". The file holds
 # the Docker Hub login, which is off unless an installation says it has an account,
-# so naming it unconditionally broke THIS entry, the one that needs no credential.
-# A fresh installation could pull no new image at all, and the pod said only
+# so naming it unconditionally breaks THIS entry, the one that needs no credential.
+# A fresh installation can then pull no new image at all, and the pod says only
 # ImagePullBackOff — three systems from the line that caused it.
 #
 # syncTimeout IS WHAT TURNS A SLOW PULL INTO A FAILED ONE, AND ONLY A FAILED ONE IS VISIBLE.
@@ -317,7 +317,7 @@ configmap:
       # NO `distSpecVersion` KEY, AND ITS ABSENCE IS THE POINT. zot overwrites
       # whatever stands there with the version its own binary implements
       # (`config.DistSpecVersion = distspec.Version` in updateDistSpecVersion,
-      # project-zot/zot pkg/cli/server/root.go:1164), warning first when the two
+      # project-zot/zot pkg/cli/server/root.go), warning first when the two
       # differ. So a value here decides nothing and only states which
       # distribution-spec the registry serves — a statement that goes stale on
       # the next bump of images.zot with nothing to move it, because the version
@@ -446,9 +446,9 @@ configmap:
 # ----- ExternalSecret: htpasswd, COMPOSED from the two atomic values ----------
 # Vault path is filled in by the per-env values file (vaultPath: <env>/app/registry).
 #
-# THE STORE HOLDS A USER AND A PASSWORD, NOT AN HTPASSWD LINE. It used to be asked for the finished
-# line, which nothing wrote — so this Secret never materialized, the registry's pod could not mount
-# it, and everything that pulls an image from this installation waited on a pod that would not start.
+# THE STORE HOLDS A USER AND A PASSWORD, NOT AN HTPASSWD LINE. Asking it for the finished line asks
+# for something nothing writes — the Secret never materializes, the registry's pod cannot mount it,
+# and everything that pulls an image from this installation waits on a pod that will not start.
 # A store is for values; a format is for whoever needs it in that format.
 #
 # ESO's own templating does the hashing, the same way the sync credentials below assemble their JSON.
@@ -457,9 +457,9 @@ configmap:
 #
 # BOTH ACCOUNTS, ONE LINE EACH. The access policy above grants two — one that reads and one that
 # reads and writes — and a policy naming an account the password file never heard of grants nothing:
-# the registry refuses the login before any policy is consulted. This file carried the reading
-# account alone, so the release pipeline built its image, tagged it, and was turned away at the push
-# with "invalid username/password" for an account this installation had seeded, granted and named
+# the registry refuses the login before any policy is consulted. Carrying the reading account alone
+# lets the release pipeline build its image and tag it, then turns it away at the push with
+# "invalid username/password" for an account this installation has seeded, granted and named
 # everywhere except in the one file that decides who may log in.
 externalsecret-htpasswd:
   externalSecret:

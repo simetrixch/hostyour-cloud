@@ -2,14 +2,14 @@
 #
 # TLS has two halves. ISSUING — proving "I am vault.<domain>" — is the certificate service's job, and
 # this platform already runs it. TRUSTING — holding the list of authorities a client believes — is
-# the other half, and until this was here nothing on the cluster did it: every workload trusted
-# whatever list its container image happened to ship with.
+# the other half, and without this component nothing on the cluster does it: every workload trusts
+# whatever list its container image happens to ship with.
 #
-# That was invisible while every certificate came from a public authority, because every image
+# That is invisible while every certificate comes from a public authority, because every image
 # already carries those roots. It stops being invisible the moment an installation issues from an
-# authority of its own: measured on apps5 on 2026-08-31, the store answered
+# authority of its own: measured on a real machine, the store answers
 # `400 error checking oidc discovery URL` — Vault fetching the identity provider's discovery document
-# from inside its own container, against a root that container had never heard of.
+# from inside its own container, against a root that container has never heard of.
 #
 # WHAT IT DOES, IN ONE SENTENCE: it keeps a ConfigMap of trusted roots in every namespace, including
 # the ones created after it. It issues nothing, renews nothing and never speaks to any authority.

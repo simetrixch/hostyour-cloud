@@ -28,9 +28,9 @@ externalsecret-oidc:
     # the identity provider answers with `invalid_client`, a message about the client rather than
     # about the secret it never received.
     #
-    # Measured on apps5 on 2026-08-31: the provider held exactly the secret the platform gave it, the
-    # ExternalSecret was SecretSynced, the redirect address matched, and sign-in still failed. The
-    # only difference from the reconciler's own argocd-secret was this one label.
+    # Measured on a real machine: the provider holds exactly the secret the platform gave it, the
+    # ExternalSecret is SecretSynced, the redirect address matches, and sign-in still fails. The
+    # only difference from the reconciler's own argocd-secret is this one label.
     template:
       metadata:
         labels:

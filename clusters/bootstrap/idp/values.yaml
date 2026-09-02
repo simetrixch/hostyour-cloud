@@ -28,15 +28,15 @@
 # operator in front of a login asking for a password they were never told was minted. Unset, that
 # flow is what the address answers with, and the first person to reach it chooses their own.
 #
-# WHAT THAT COSTS IS A WINDOW AND IT IS REAL: between the end of deploy-gitops and the moment
-# somebody completes the flow, the address is public and the flow asks nothing only the operator
-# could know. Whoever reaches it first becomes the administrator of this installation. The product
-# owner decided the window is the operator's to close, on 2026-08-23.
+# WHAT THAT COSTS IS A WINDOW AND IT IS REAL: between the end of deploy-platform-services and the
+# moment somebody completes the flow, the address is public and the flow asks nothing only the
+# operator could know. Whoever reaches it first becomes the administrator of this installation. The
+# product owner decided the window is the operator's to close.
 #
-# AN OPERATOR CANNOT CLOSE A WINDOW NOBODY TOLD THEM ABOUT, so deploy-gitops ends with a row that
-# asks this provider whether it is still standing on that flow and says the answer with the address
-# in it — `report_out_of_box_flow`, the last row of that program. It measures rather than repeating
-# this paragraph: a run on an installation somebody already took says so instead.
+# AN OPERATOR CANNOT CLOSE A WINDOW NOBODY TOLD THEM ABOUT, so deploy-platform-services ends with a
+# row that asks this provider whether it is still standing on that flow and says the answer with the
+# address in it — `report_out_of_box_flow`, the last row of that program. It measures rather than
+# repeating this paragraph: a run on an installation somebody already took says so instead.
 #
 # The variable, when an installation does set one, has to be in `global` and not in `server`: the
 # startup hook that seeds the account runs in the server AND in the worker, whichever gets there

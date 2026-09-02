@@ -50,7 +50,7 @@ global:
   # The cert-manager ClusterIssuer every public Ingress and every Certificate of
   # this platform is issued by, written as the name that object carries.
   #
-  # WHAT CREATES IT: the cluster-issuer rows of deploy-cluster (digita-deploy
+  # WHAT CREATES IT: the cluster-issuer rows of deploy-cluster (hostyour-deploy
   # ansiwise/programs/deploy-cluster.yaml), which write this same name. No key of
   # configs/config.<stage> holds it and nothing composes it — the two places are
   # held together by being spelled alike, and a name here that the cluster does
@@ -148,11 +148,11 @@ global:
   # Empty ONLY on the trunk. It belongs in clusters/active/<fqdn>.yaml, which
   # loads LAST in every app's valueFiles chain, beside the other globals an
   # installation is given. THE BRANCH PROGRAM MEASURES IT OFF THE MACHINE AND
-  # WRITES IT THERE — digita-deploy ansiwise/programs/deploy-branch.yaml reads
+  # WRITES IT THERE — hostyour-deploy ansiwise/programs/deploy-branch.yaml reads
   # the host's own addresses with measure_host_addresses and fills the map's
-  # nodeCidrs slot, so every branch generated since 2026-08-26 carries the list.
-  # A branch cut before that step existed carries none, and for it the fence
-  # STOPS ITS RENDER on an empty list rather than rendering a boundary that
+  # nodeCidrs slot, so a branch's own map is where the list comes from.
+  # A map carrying none leaves this empty, and for it the fence
+  # STOPS ITS RENDER rather than rendering a boundary that
   # names nothing to deny.
   #
   # A /32 PER NODE ADDRESS, AND NOT THE PREFIX THEY SIT IN. This list is read
@@ -193,7 +193,7 @@ global:
     # prom-push Ingress routes to a path Prometheus never registered: a slave's
     # obs-agent push lands nowhere, the master holds no up{cluster="<fqdn>"}
     # series, and the Manager's metrics probe answers `empty` for every slave.
-    # Measured 2026-08-28 by rendering this application for dev, test and prod
+    # Measured by rendering this application for dev, test and prod
     # against an install branch's cluster map: the Prometheus CR carries no such
     # field in any of the three.
     observability: false
@@ -213,8 +213,8 @@ global:
   #
   # consumerLabels is keyed by the SERVICE the label opens, and the two labels
   # are handed out to different widths on purpose. Both services require a
-  # credential now that clusters/inventories/redis boots with --requirepass, so
-  # they no longer differ in what reach MEANS:
+  # credential — clusters/inventories/redis boots with --requirepass — so they
+  # do not differ in what reach MEANS:
   #   mongodb — stamped on EVERY unit namespace. A provisioned per-unit
   #             credential still gates, so a namespace that never claimed one
   #             gains nothing by carrying it.
@@ -263,7 +263,7 @@ global:
   # and as `^<filter>$` (shell / release.ts source).
   # Numeric segments reject leading zeros (a lone 0 excepted). The other side of
   # the grammar is RELEASE_TAG_RE in hostyour-manager/shared/release.ts,
-  # imported by hostyour-manager/server/domains/inventory/cluster-marking.ts:67.
+  # imported by hostyour-manager/server/domains/inventory/cluster-marking.ts.
   # `^<filter>$` and that regular expression must stay byte-identical — a change
   # to either is a change to both. Nothing measures that: this repository does
   # not depend on the other, and a check here could only read it where somebody
@@ -294,11 +294,11 @@ global:
   # the trunk rather than in endpoints below, which holds the addresses at which
   # ONE cluster reaches a service of THIS installation.
   #
-  # THE PODS PULL IT DIRECTLY, and no longer through the cluster's own registry.
+  # THE PODS PULL IT DIRECTLY, and not through the cluster's own registry.
   # The images of the open-source repositories this platform is built from are
   # published to ghcr.io/<owner>/<build name> by release-images, the workflow that
   # runs on the release tag (hostyour-manager .github/workflows/release-images.yml),
-  # and they are public — measured anonymously on 2026-08-28: manager,
+  # and they are public — measured anonymously: manager,
   # gate-runner and dbtools each answer 200 to an unauthenticated manifest GET.
   # So a pull needs no credential and no cluster of ours in the path.
   #

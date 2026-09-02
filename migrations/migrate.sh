@@ -82,8 +82,8 @@ ORIGIN_URL="$(git -C "$ROOT" remote get-url origin 2>/dev/null)" \
   || die "this checkout has no remote 'origin', so there are no install branches to walk"
 
 # The migrations this checkout carries, in the order their numbers state. Two
-# scripts sharing a number would apply in an order the numbers no longer
-# state, so that is refused before any branch is read.
+# scripts sharing a number would apply in an order the numbers do not state, so
+# that is refused before any branch is read.
 MIGRATIONS=()
 while IFS= read -r f; do
   [ -n "$f" ] && MIGRATIONS+=("${f##*/}")

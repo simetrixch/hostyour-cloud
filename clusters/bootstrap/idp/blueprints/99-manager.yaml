@@ -3,22 +3,22 @@
 # The Manager is the standalone provider admin UI served at
 # https://manager.${IDP_DOMAIN}/ (built from the separate hostyour-manager
 # repo, deployed by the `manager` app). Mirrors 99-grafana.yaml (native
-# OIDC, confidential client) and the retired 99-console.yaml: restricts the
-# Manager application to staff: ONE group PolicyBinding, on the platform's
-# `admins` group, which is the same group every other product of this
-# installation admits on: the master's ArgoCD
-# (clusters/bootstrap/argocd/values.yaml rbac.policy.csv), a slave's ArgoCD
-# (clusters/slaves/slave/values-common.yaml rbac.policy.csv) and Grafana
-# (role_attribute_path in clusters/inventories/observability/values-{dev,test,
-# prod}.yaml).
+# OIDC, confidential client): restricts the Manager application to staff:
+# ONE group PolicyBinding, on the platform's `admins` group, which is the
+# same group every other product of this installation admits on: the
+# master's ArgoCD (clusters/bootstrap/argocd/values.yaml rbac.policy.csv),
+# a slave's ArgoCD (clusters/slaves/slave/values-common.yaml
+# rbac.policy.csv) and Grafana (role_attribute_path in
+# clusters/inventories/observability/values-{dev,test,prod}.yaml).
 #
-# There used to be a second binding OR'd beside it — an ExpressionPolicy
-# `return request.user.is_superuser` — because on a fresh install nobody was
-# really in `admins` yet and the first operator would have been shut out. That
-# admitted people on a value computed at authorization time rather than on a
-# membership anyone can look at. The deployment now puts the first operator
-# INTO the group (ansiwise step `authentik_group_membership`), so the gap it
-# covered is closed and the one binding is the whole rule.
+# A SECOND BINDING OR'd beside it — an ExpressionPolicy
+# `return request.user.is_superuser`, covering a fresh install where nobody
+# is really in `admins` yet and the first operator would be shut out — is
+# the worse answer: it admits people on a value computed at authorization
+# time rather than on a membership anyone can look at. The deployment puts
+# the first operator INTO the group (ansiwise step
+# `authentik_group_membership`), so that gap is closed and the one binding
+# is the whole rule.
 # `policy_engine_mode: any` stays pinned on the app entry below: it is the
 # model default, and the access design reads correctly only where the OR
 # semantics are stated rather than inherited.

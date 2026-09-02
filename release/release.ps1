@@ -197,9 +197,9 @@ try {
   # and no part of it varies with an installation's stage. Written as the stage
   # placeholder it renders correctly on a dev installation by accident, because the
   # stamp puts "dev" back, and names a group no cluster registers on every other
-  # stage. Measured on apps5 on 2026-08-31: the cicd project permitted
-  # triggers.tekton.prod, ArgoCD could not manage the ClusterInterceptors, and the
-  # tekton application stood OutOfSync for ever with the image-builder behind it.
+  # stage. Measured on a real machine: the cicd project permits
+  # triggers.tekton.prod, ArgoCD cannot manage the ClusterInterceptors, and the
+  # tekton application stands OutOfSync for ever with the image-builder behind it.
   #
   # READ OFF origin/master, not the working tree: that is the tree this release
   # publishes, and a correction sitting uncommitted beside it would let a release

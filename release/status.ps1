@@ -5,7 +5,7 @@
 # =============================================================================
 #
 #   pwsh ./release/status.ps1                          every installation
-#   pwsh ./release/status.ps1 apps3.digitacloud.app    that one
+#   pwsh ./release/status.ps1 apps3.example.com        that one
 #
 # IT ONLY ANSWERS. Nothing here writes a file, a tag, a commit or a ref. The one
 # thing it changes is this checkout's view of the remote, because an answer read

@@ -130,7 +130,7 @@ images:
         file: docker/dbtools.Dockerfile
         argument: PG_MAJOR
         segments: 1
-  # THIS PIN PROTECTS NOTHING, and it was believed to. Measured 2026-07-30 by
+  # THIS PIN PROTECTS NOTHING. Measured by
   # probing the images: neither the entrypoint nor the mongod binary of 8.0.4,
   # 8.0.28 or 8.2 carries a kernel check. The refusal that circulates comes from
   # a third-party image. So the official image does not decline on an affected
@@ -384,8 +384,8 @@ bootstrap:
         file: ansiwise/programs/deploy-platform-services.yaml
         key: chart_version
         anchor: 'release: headlamp'
-  # 1.35, NOT the newest channel. Owner, 2026-07-29: 1.36 broke on Ubuntu 26.04
-  # when that release came out and had to be rolled back. Raise this only after
+  # 1.35, NOT the newest channel. Owner's decision: 1.36 breaks on Ubuntu 26.04
+  # and has to be rolled back. Raise this only after
   # a rehearsal cluster on 26.04 comes up clean; it is a decision, not a lag.
   # (The channel also drives cert-manager + Traefik addons.)
   microk8s:
@@ -403,7 +403,7 @@ bootstrap:
 
 # The Ubuntu release every host runs. Nothing here installs it — it is the
 # ground the pins above stand on: the microk8s channel is proven on exactly
-# this release (1.36 broke on it, see its note), and the mongodb note above
+# this release (1.36 breaks on it, see its note), and the mongodb note above
 # describes this release's kernel. The installer reads this value in its
 # preflight and refuses any other release before its first write. No stamps
 # and no upstream, on purpose: nothing carries this pin but the preflight that
@@ -416,7 +416,7 @@ ubuntu:
 # they are the ground a build stands on. A raise here is felt at the next
 # build, not at the next sync.
 baseImages:
-  # 12-slim (bookworm), NOT 13. Measured 2026-07-29: on trixie the build dies
+  # 12-slim (bookworm), NOT 13. MEASURED: on trixie the build dies
   # with "Unable to locate package mongodb-database-tools" — MongoDB's apt repo
   # answers for the trixie suite but carries no packages for the 8.0 series
   # there, so a reachable repository is not a usable one. Raise this once
@@ -445,7 +445,7 @@ toolchains:
   # decides which one.
   #
   # 3.47.1 is the stable release of 2026-08-19, and it ships Dart 3.13.1, which
-  # the client's `sdk: ^3.12.0` accepts. MEASURED on 2026-08-20 from the channel
+  # the client's `sdk: ^3.12.0` accepts. MEASURED from the channel
   # Flutter publishes to, never recalled:
   # https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
   # — its `current_release.stable` names a commit hash, and the entry in its
@@ -453,11 +453,11 @@ toolchains:
   # the Dart SDK inside it.
   #
   # NO `upstream:`, because none of the grammar's kinds can ask that channel and
-  # the near miss would lie. Measured the same day: `github_release` over
-  # flutter/flutter answers "3.19.0-0.1.pre" of 11 January 2024 — the newest of
-  # the seven releases that feed carries, since the project stopped publishing
-  # there — so declaring it would print an upstream 28 minor versions BEHIND the
-  # pin and invite a downgrade. The report answers "?" with the reason instead,
+  # the near miss would lie. Measured the same way: `github_release` over
+  # flutter/flutter answers "3.19.0-0.1.pre" of 11 January 2024 — the newest
+  # release that feed carries, since the project stopped publishing there — so
+  # declaring it would print an upstream many minor versions BEHIND the pin and
+  # invite a downgrade. The report answers "?" with the reason instead,
   # which is a finding about the report and not about the pin.
   #
   # THE SITE IS ansiwise-client/tool/ci.dart, and this entry stamps nowhere, so
@@ -506,11 +506,11 @@ cliTools:
     upstream:
       kind: github_release
       project: argoproj/argo-cd
-      # Stable only. Read off the release list on 2026-08-26: every stable is
-      # vX.Y.Z and every candidate carries a suffix the stable shape has no room
-      # for — v3.5.0-rc1, -rc2, -rc3 stood beside v3.5.0 itself, each marked a
-      # pre-release. Without the anchors a candidate sorts above the stable it
-      # precedes and reads as a version to bump to.
+      # Stable only. Read off the release list: every stable is vX.Y.Z and every
+      # candidate carries a suffix the stable shape has no room for — v3.5.0-rc1,
+      # -rc2, -rc3 stand beside v3.5.0 itself, each marked a pre-release. Without
+      # the anchors a candidate sorts above the stable it precedes and reads as a
+      # version to bump to.
       matching: '^v[0-9]+\.[0-9]+\.[0-9]+$'
     stamps:
       - kind: yaml_value
@@ -544,9 +544,9 @@ cliTools:
     upstream:
       kind: github_release
       project: mikefarah/yq
-      # The v-prefixed stables. Read off all 169 releases on 2026-08-26: 119 carry
-      # this shape and every one of the 50 refused is UNPREFIXED, the newest of
-      # them 4.0.0 — the era this project left behind. Those 50 fall in six
+      # The v-prefixed stables. Read off the release list: every tag carrying this
+      # shape is a stable and every refused tag is UNPREFIXED, the newest of them
+      # 4.0.0 — the era this project left behind. The unprefixed ones fall in these
       # shapes: 1.12 and 2.0-beta (two numbers), 4.0.0 (three), and 4.0.0-alpha2,
       # 4.0.0-beta2 and 3.0.0-beta. The leading `v` alone separates the two eras,
       # which is why nothing else has to.
@@ -570,7 +570,7 @@ cliTools:
       kind: github_release
       project: jqlang/jq
       # THE PATCH NUMBER IS OPTIONAL, and that is measured rather than defensive.
-      # All 16 releases were read on 2026-08-26: this project publishes stables
+      # Read off the release list: this project publishes stables
       # with two numbers as readily as with three — jq-1.7, jq-1.6, jq-1.5,
       # jq-1.4, jq-1.3, jq-1.2, jq-1.1 and jq-1.0 stand beside jq-1.8.2, jq-1.8.1,
       # jq-1.8.0 and jq-1.7.1. A pattern demanding three would refuse the next
@@ -591,14 +591,14 @@ cliTools:
     upstream:
       kind: github_release
       project: tailscale/tailscale
-      # Read off all 160 releases on 2026-08-26. Three shapes are not vX.Y.Z and
-      # each is one this pin must not see: cmd/cigocacher/<sha>, a pre-release cut
-      # for one sub-command; v0.100.0-153, a build-numbered tag of the 0.x era;
-      # and v0.98, which has two numbers. Nothing here narrows to tailscale's own
+      # Read off the release list. Three shapes are not vX.Y.Z and each is one
+      # this pin must not see: cmd/cigocacher/<sha>, a pre-release cut for one
+      # sub-command; v0.100.0-153, a build-numbered tag of the 0.x era; and v0.98,
+      # which has two numbers. Nothing here narrows to tailscale's own
       # stable/unstable convention — even minor stable, odd minor unstable —
-      # because the v1 minors this feed carries are 0 through 98 even and then
-      # 102, with no odd one published as a release at all. A pattern refusing
-      # odd minors would state a rule this feed does not exercise.
+      # because the v1 minors this feed carries are even, with no odd one
+      # published as a release at all. A pattern refusing odd minors would state a
+      # rule this feed does not exercise.
       matching: '^v[0-9]+\.[0-9]+\.[0-9]+$'
     stamps:
       - kind: list_pin
@@ -627,18 +627,18 @@ cliTools:
   # ansiwise is stamped, because only ansiwise has a site: the install row for the
   # REST binary is deliberately absent, since replacing the file a service was
   # started from leaves that service on the old code until its unit is restarted
-  # and no step of the framework restarts one (simetrixch/ansiwise-plugins#141).
+  # and no step of the framework restarts one (ansiwise-plugins#141).
   # The install row states that in full.
   #
   # WHO ELSE READS THIS PIN, with no stamp between them and it: hostyour-manager
-  # server/domains/inventory/ansiwise-pin.ts:28 reads cliTools.ansiwise.version
+  # server/domains/inventory/ansiwise-pin.ts reads cliTools.ansiwise.version
   # off this repository over git before it touches a machine, and ansiwise-client
   # reads the same key over the GitHub API before it places anything on a master.
   # Neither has a default — a placement that guessed a version would put one on a
   # machine that no file states.
   #
   # The version is a whole release tag and not three numbers, because the
-  # grammar is the platform's own — hostyour-manager/shared/release.ts:22,
+  # grammar is the platform's own — hostyour-manager/shared/release.ts,
   # <major>.<minor>.<patch>-<channel>-<ts14> — and the release, the artefact and
   # the download address are all named by it. Nothing takes a prefix off it:
   # deploy-cluster's `pin_prefixes` strips at most one of `v` or `jq-` before
@@ -658,14 +658,12 @@ cliTools:
       # ALL THREE CHANNELS, and that is the decision this pin carries.
       # Every release of this project is cut under one grammar,
       # <major>.<minor>.<patch>-<channel>-<ts14> with channel one of alpha, beta
-      # and stable (hostyour-manager shared/release.ts:22, and the three tag
+      # and stable (hostyour-manager shared/release.ts, and the three tag
       # filters of ansiwise-cli .github/workflows/release.yml that admit only
-      # tags of that shape). Read off all 25 releases on 2026-08-26: every one is
-      # an alpha and every one is marked a pre-release, the newest being
-      # 0.5.1-alpha-20260826000332, which was the pin at that reading.
+      # tags of that shape).
       #
-      # An `alpha`-only pattern would match the pin's own channel exactly and be
-      # wrong for it: on the day a stable is cut, it would go on reporting alphas
+      # An `alpha`-only pattern would match one channel exactly and be wrong for
+      # the pin: on the day a stable is cut, it would go on reporting alphas
       # and never say a riper release exists. Admitting all three lets the highest
       # version win whatever channel it stands on, and the reading says "the
       # project marks this release a pre-release" when the winner carries the
@@ -674,7 +672,7 @@ cliTools:
       # a stable cut after an alpha of the same version sorts above it.
       #
       # WHERE THIS IS WIDER THAN THE GRAMMAR: a leading zero. 01.2.3-alpha-<ts14>
-      # matches here and release.ts:22 refuses it. Nothing can reach the gap —
+      # matches here and release.ts refuses it. Nothing can reach the gap —
       # ansiwise-cli's own release program refuses to compose such a tag, and the
       # workflow builds only pushed tags — so this stays the pattern a reader can
       # read rather than a third copy of the grammar literal that nothing holds
@@ -682,7 +680,7 @@ cliTools:
       matching: '^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|stable)-[0-9]{14}$'
     # ONE SITE, AND IT IS AN ASSERTION RATHER THAN AN INSTALL. deploy-cluster names this
     # version in its assert row and fetches the binary nowhere: /usr/local/bin/ansiwise has a
-    # single writer and it is the placement (simetrixch/hostyour-manager#14), so an
+    # single writer and it is the placement (hostyour-manager#14), so an
     # install_pinned_tool row there would be a second one writing a plain file over the link
     # that placement maintains. The pin still has to reach the program, because the assert is
     # what tells an operator the engine drifted — it just reaches one row and not two.

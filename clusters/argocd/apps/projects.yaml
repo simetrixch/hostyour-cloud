@@ -8,15 +8,15 @@
 #
 # A DESTINATION NAMES THE CLUSTER, never a server URL. Every Application this platform generates
 # says `destination.name: __CLUSTER_NAME__` — the cluster it belongs to, registered under that name
-# (cluster-self on a master, cluster-slave on the per-slave instance). A project that answered with
-# `server: https://kubernetes.default.svc` was saying "the cluster this ArgoCD runs IN", which is the
+# (cluster-self on a master, cluster-slave on the per-slave instance). A project that answers with
+# `server: https://kubernetes.default.svc` says "the cluster this ArgoCD runs IN", which is the
 # same cluster only on a master.
 #
-# Measured on apps6 on 2026-09-01: the master's per-slave instance drives a REMOTE cluster
-# (https://100.64.0.3:16443), so every one of its ten applications was refused before it was ever
+# Measured on a real machine: the master's per-slave instance drives a REMOTE cluster
+# (https://100.64.0.3:16443), so every one of its applications is refused before it is ever
 # compared — "application destination server 'apps6' and namespace 'kube-system' do not match any of
-# the allowed destinations in project 'core'" — and each reported Unknown/Unknown for half an hour
-# until the run gave up. Naming the cluster makes project and Application speak the same language,
+# the allowed destinations in project 'core'" — and each reports Unknown/Unknown until the run gives
+# up. Naming the cluster makes project and Application speak the same language,
 # and it narrows rather than widens: exactly one cluster is allowed, the one these apps belong to.
 #   • only the cluster-scoped resource kinds it legitimately creates
 #     (data / services create NONE → clusterResourceWhitelist: [])
@@ -143,9 +143,10 @@ spec:
   # ships cross-namespace and cluster-scoped onboarding RBAC with the workload, and this project is
   # restricted precisely so that it cannot permit that.
   #
-  # The sentence above used to stand in `description`, which the API caps at 255 bytes: over the cap
-  # the object is refused, the whole sync fails, and NO application below the root is created at all.
-  # A comment carries the same words with no limit and reaches the same reader.
+  # The explanation above stands in a comment and NOT in `description`, which the API caps at 255
+  # bytes: over the cap the object is refused, the whole sync fails, and NO application below the
+  # root is created at all. A comment carries the same words with no limit and reaches the same
+  # reader.
   description: Supporting platform services — the mail relay, DBGate, the tailnet coordinator. Namespaced only.
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
@@ -244,19 +245,19 @@ spec:
       namespace: argocd
   clusterResourceWhitelist:
     # Tekton's release manifests create the Namespace objects themselves
-    # (release-pipelines.yaml:16 + :26038, release-dashboard.yaml:23).
+    # (the `Namespace` objects of release-pipelines.yaml and release-dashboard.yaml).
     - group: ""
       kind: Namespace
     # Tekton Triggers ships its core interceptors as cluster-scoped CRs
-    # (release-interceptors.yaml:163+ — github/gitlab/bitbucket/cel/slack).
+    # (release-interceptors.yaml — github/gitlab/bitbucket/cel/slack).
     # NOT A STAGE. `triggers.tekton.dev` is the API group Tekton Triggers registers on every
     # cluster there is; the `dev` in it is the last label of a domain name and never varies.
     # Written as the placeholder, the stamp turned it into `triggers.tekton.prod` on a prod
     # installation, the project then permitted a group that does not exist, ArgoCD could not
     # manage the ClusterInterceptors and reported them Unknown, and the tekton application
     # stood OutOfSync for ever. On a dev installation the same stamp wrote `dev` back and the
-    # line was right by accident, which is why this survived every installation until the
-    # first one on prod. Measured on apps5, 2026-08-31.
+    # line was right by accident, which is why this survives every installation until the
+    # first one on prod. Measured on a real machine.
     - group: triggers.tekton.dev
       kind: ClusterInterceptor
     - group: apiextensions.k8s.io

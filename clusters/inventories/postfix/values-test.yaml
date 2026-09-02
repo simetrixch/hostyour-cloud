@@ -31,7 +31,7 @@ postfix:
         #
         # The name opendkim needs is the domain's, and that is one installation's — it
         # is composed in the init container below, which the chart renders through tpl
-        # (charts/mail statefulset.yaml:60). This block is rendered with toYaml (:230),
+        # (charts/mail statefulset.yaml). This block is rendered with toYaml,
         # where no template action would ever run, so the path here is the key's own
         # name and the renaming happens there.
         items:

@@ -50,10 +50,9 @@ spec:
   source:
     repoURL: {{ .Values.repo.url }}
     targetRevision: {{ $branch }}
-    # THE TREE HAS NO STAGE SEGMENT, and this line carried one — `clusters/argocd/<stage>/apps` for a
-    # layout that no longer exists. ArgoCD answered `app path does not exist`, the Application stood
-    # Unknown, and the deployment's verification waited its whole 30 minutes on it. The comment at
-    # the head of this file already named the right path; only this line disagreed.
+    # THE TREE HAS NO STAGE SEGMENT. A path carrying one — `clusters/argocd/<stage>/apps` — names a
+    # layout that does not exist: ArgoCD answers `app path does not exist`, the Application stands
+    # Unknown, and the deployment's verification waits its whole 30 minutes on it.
     path: clusters/argocd/apps
 
   destination:

@@ -10,7 +10,7 @@
 # this deliberately cannot do any of it. What it installs is the one machine that
 # has to exist before the Manager does.
 #
-# NO OPTIONS. Thirty-four values reach the four programs, and a command line long
+# NO OPTIONS. Thirty-five values reach the five programs, and a command line long
 # enough to carry them is one nobody can read back, nobody can diff, and whose
 # every value stands in this machine's process listing. One file states the whole
 # installation; this reads it and starts.
@@ -121,14 +121,11 @@ function Stated([string] $Named) {
   return $stated[$Named]
 }
 
-foreach ($named in @('FQDN', 'OPERATOR_USER', 'STAGE', 'CATALOG_REPO', 'PLATFORM_REPO')) {
+foreach ($named in @('FQDN', 'OPERATOR_USER', 'STAGE', 'CATALOG_REPO', 'DEPLOY_REPO', 'PLATFORM_REPO')) {
   if (-not (Stated $named)) { Stop-Here "$ConfigFile states no $named, and nothing here may choose one" }
 }
 if (-not (Stated 'ELEVATION_PASSWORD')) {
   Stop-Here "$ConfigFile states no ELEVATION_PASSWORD, and every program of this sequence is run elevated"
-}
-if (-not (Stated 'CATALOG_REPO_READ_PAT')) {
-  Stop-Here "$ConfigFile states no CATALOG_REPO_READ_PAT, and the catalogue every program is read from is private"
 }
 
 # A MACHINE IS ADDRESSED BY ITS NAME, and by nothing else. The name in the config is
@@ -156,7 +153,7 @@ $base   = @('-p', "$port", '-o', 'ConnectTimeout=20', '-o', 'StrictHostKeyChecki
 # launchers exist for.
 #
 # The key is tried first and the password only where the key is refused, so neither case
-# needs a flag and a re-run never asks for a password a machine no longer takes.
+# needs a flag and a re-run never asks for a password a machine does not take.
 $probe = (& ssh @base -o BatchMode=yes $target true 2>&1 | Out-String)
 if ($LASTEXITCODE -eq 0) {
   $door = @('-o', 'BatchMode=yes')
@@ -184,7 +181,7 @@ elseif ($probe -match 'Permission denied') {
   $door = @('-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1')
   Write-Host ''
   Write-Host "  $target carries no operator key yet. deploy-host is what puts it there," -ForegroundColor Yellow
-  Write-Host '  and it is one of the four programs this is about to run.' -ForegroundColor Yellow
+  Write-Host '  and it is one of the five programs this is about to run.' -ForegroundColor Yellow
   Write-Host ''
   Write-Host '  ssh will ask for the login password ONCE, on this terminal. It is not read' -ForegroundColor DarkGray
   Write-Host '  from the config, it is not kept, and it does not reach the transcript.' -ForegroundColor DarkGray

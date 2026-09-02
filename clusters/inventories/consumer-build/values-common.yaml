@@ -47,7 +47,7 @@ eventListener:
 #     matching (ERR_PNPM_TARBALL_URL_MISMATCH).
 #   • privateScopes[] — per-scope PRIVATE routes, each DIRECT to its registry.
 #     Per entry:
-#       scope         npm scope WITHOUT the leading @ (e.g. simetrixch).
+#       scope         npm scope WITHOUT the leading @.
 #       registry      full https registry URL for that scope.
 #       authProperty  (optional) property name on the unit's ONE Vault entry
 #                     secret/build/<name>/repo-pat whose value becomes that

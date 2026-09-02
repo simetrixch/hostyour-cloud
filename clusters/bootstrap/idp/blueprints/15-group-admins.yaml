@@ -5,7 +5,7 @@
 # every worker reconcile and wipe invitation-added members; `created` means "create if
 # absent, then never touch again", so members added via the invitation flow survive.
 # Runs before 99-manager.yaml, which binds this group to the Manager application
-# (staff-only access). Restored generically after the old in-cluster console was removed.
+# (staff-only access).
 version: 1
 metadata:
   name: admins group

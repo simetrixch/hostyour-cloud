@@ -43,9 +43,9 @@ per-app values it was given (`installation/`). What the installation IS stands i
 map under `clusters/active/` — one file, read as parameters by the reconciler's generators and as
 values by Helm, so nothing about an installation is written down twice.
 
-The arrangement inside `clusters/` is deliberately the one it always had, because every chart names
-its libraries relatively — `file://../../charts/common`, nineteen times over. Moving the siblings
-together left all of them true, and only the paths anchored at the root had to change.
+The arrangement inside `clusters/` is deliberate: every chart names its libraries relatively —
+`file://../../charts/common` — so the siblings have to stand at the same depth beside each other for
+those paths to resolve. Only the paths anchored at the root are free to move.
 
 **And nothing else deploys.** No configuration and no secrets — this is structure, and it is the
 same structure for everybody who clones it. What runs does so from a person's machine, never in a
@@ -60,9 +60,9 @@ same tree and be a different company.
 
 ## What deploys it
 
-[ansiwise](https://github.com/simetrixch/ansiwise-core) — a framework that runs a declared program of
-steps against a machine, with three modes that gate each other: a test that measures, a dry run that
-cannot mutate, and a real run that refuses without a green dry run for the same input.
+`ansiwise-core` — a framework that runs a declared program of steps against a machine, with three
+modes that gate each other: a test that measures, a dry run that cannot mutate, and a real run that
+refuses without a green dry run for the same input.
 
 ## What onboards into it
 
@@ -75,7 +75,8 @@ Every unit of the platform is built inside the installation that runs it, by a p
 from a registration that `hostyour-manager` writes. Its own three images cannot come from there: on
 a machine where nothing is installed yet, there is no manager to write that registration.
 
-They come from `ghcr.io/simetrixch/manager`, `.../gate-runner` and `.../dbtools`, pushed by the
+They come from the platform's build registry, under the flat names `manager`, `gate-runner` and
+`dbtools` (`global.buildRegistry` in `clusters/platform/values-common.yaml`), pushed by the
 `release-images` workflow of `hostyour-manager` when a release tag is pushed, under the same
 `<release-tag>-<sha7>` image tag the in-cluster pipeline composes. The registry in
 `clusters/inventories/registry/values-common.yaml` fetches them on the first pull and stores them under their flat

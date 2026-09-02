@@ -167,7 +167,7 @@ github:
 # gatemanagerAddr (whose emptiness switches consumer onboarding off entirely) and
 # gateFenceMustFail — are NOT here: they stand in installation/values/manager.yaml, which the
 # branch program writes when it cuts the install branch, from the address that machine answers on
-# inside the cluster network (digita-deploy ansiwise/programs/deploy-branch.yaml renders
+# inside the cluster network (hostyour-deploy ansiwise/programs/deploy-branch.yaml renders
 # ansiwise/templates/manager-values.tpl). Kube access is IN-CLUSTER via the pod ServiceAccount
 # (grants shipped with this chart, templates/rbac.yaml — no Vault kubeconfig, nothing to seed).
 onboarding:
@@ -240,7 +240,7 @@ ansiwise:
   # started on the session's stdio and speaking HTTP over it.
   #
   # ansiwise-rest AND NOT ansiwise. `serve` and `service` are the two programs of
-  # the REST binary (ansiwise-cli lib/src/rest/resident_service.dart:48,52); the
+  # the REST binary (ansiwise-cli lib/src/rest/resident_service.dart); the
   # deployment tool answers "no program is called serve" — measured, not read off
   # a help text. The REST binary in turn starts each run by invoking the ansiwise
   # standing in its own directory, so this command works only on a machine
@@ -304,7 +304,7 @@ ansiwise:
 # TWO CHARTS SPELL ONE SERVICE NAME AND NOTHING HOLDS THEM EQUAL. A Helm release
 # cannot read another release's values, so a changed fullnameOverride in
 # clusters/inventories/observability renames the Service and leaves this address
-# pointing at a name that no longer resolves. The probe is soft, so the run does
+# pointing at a name that does not resolve. The probe is soft, so the run does
 # not fail — it reports the check as unreachable. That is the honest outcome and
 # it is also why the Manager must say WHICH of the two soft outcomes it hit: an
 # address it was never given, and an address that answered nothing, are
@@ -329,7 +329,7 @@ ansiwise:
 # through a `with`, and queryUrl is this map's only key, so deleting the LINE and
 # deleting the BLOCK are one act: the map is left null and helm answers "nil
 # pointer evaluating interface {}.queryUrl" with no manifest produced. Both
-# measured, 2026-08-27. That is deliberate and it is what makes the blank a
+# measured. That is deliberate and it is what makes the blank a
 # statement rather than a gap — the way to switch the probe off is to WRITE the
 # empty value in installation/values/manager.yaml, which loads after this file
 # and leaves the map standing, and never to take the line away.
@@ -348,7 +348,7 @@ resources:
     memory: 384Mi
 
 # Ingress (library chart) — native OIDC, deliberately NO forwardAuth annotation
-# (the manager enforces its own session chokepoint, like the old console).
+# (the manager enforces its own session chokepoint).
 # host / serviceName / tls.secretName are tpl'd from globals; the
 # cert-manager.io/cluster-issuer annotation is auto-applied from
 # .Values.global.clusterIssuer by the ingress chart.
@@ -372,10 +372,10 @@ ingress:
 # storageClassName omitted — falls back to .Values.global.storageClass.
 #
 # The namespace is named for the same reason it is named on the tailnet
-# coordinator: this component was already renamed once, and a rename moves the
-# release into a new namespace while the volume stays behind in the old one with
-# the database in it. Declaring the namespace refuses that render instead, and
-# changing this line is the act that says the data was moved too.
+# coordinator: a rename moves the release into a new namespace while the volume
+# stays behind in the old one with the database in it. Declaring the namespace
+# refuses that render instead, and changing this line is the act that says the
+# data was moved too.
 manager-data:
   pvc:
     enabled: true

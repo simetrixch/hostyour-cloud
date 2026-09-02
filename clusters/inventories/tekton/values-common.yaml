@@ -23,11 +23,10 @@
 #                              build plane of more than one node the second pod stays Pending until
 #                              the PipelineRun times out an hour later.
 #   enable-api-fields: "beta"  stands in that ConfigMap and is NOT the value a bare Tekton install
-#                              carries. The release pipeline no longer needs it — its one
-#                              array-typed result went out with the buildArgs plumbing — and what
-#                              else on this platform relies on a beta field has not been
-#                              established. It is recorded here so a refresh notices the value
-#                              rather than reverting it unread.
+#                              carries. The release pipeline does not need it — it declares no
+#                              array-typed result — and what else on this platform relies on a beta
+#                              field has not been established. It is recorded here so a refresh
+#                              notices the value rather than reverting it unread.
 
 # ----- Tekton Dashboard (build-cluster only) -------------------------------
 # The Dashboard UI + its Ingress render only on the ONE build cluster (the

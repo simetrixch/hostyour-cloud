@@ -86,11 +86,11 @@ config:
       enabled: true
       name: headlamp-oidc
 
-# `env` AND NOT `extraEnv`, which is what stood here and what this chart has never read. The
-# deployment renders `.Values.env` — in both of its branches — and nothing at all under any other
-# name, so all four of these values were dropped on the floor and the console came up with no
-# identity provider configured. What an operator saw was the token page, which is the fallback for
-# having no OIDC at all, and no error anywhere said a key had been ignored.
+# `env` AND NOT `extraEnv`, which this chart has never read. The deployment renders `.Values.env`
+# — in both of its branches — and nothing at all under any other name, so values written under any
+# other key are dropped on the floor and the console comes up with no identity provider configured.
+# What an operator sees is the token page, which is the fallback for having no OIDC at all, and no
+# error anywhere says a key was ignored.
 env:
   - name: OIDC_CLIENT_ID
     value: "headlamp"

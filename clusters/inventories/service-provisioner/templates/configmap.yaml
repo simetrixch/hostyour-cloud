@@ -711,9 +711,9 @@ data:
             mongo.close()
 
     def deprovision_postgresql(core, spec, ns, claim, user, prefix):
-        """No-op on a DEDICATED instance (per-consumer-postgres.md §7). The old body
-        connected to a shared server and ran DROP DATABASE / DROP ROLE; both reasons
-        it did are now fatal:
+        """No-op on a DEDICATED instance (per-consumer-postgres.md §7). The shared-server
+        answer — connect to the server and run DROP DATABASE / DROP ROLE — is fatal on
+        both of the counts that make it look right:
           • Correctness — the instance's life is the NAMESPACE's, not the claim's. A
             `suspend` deletes the claim while the data must SURVIVE (§5.1). Dropping
             the databases here would destroy a customer's data on a routine lifecycle

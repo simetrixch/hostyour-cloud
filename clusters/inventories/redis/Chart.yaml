@@ -5,11 +5,11 @@ description: |
   Redis cache — the OFFICIAL `redis` image on our own clusters/charts/deployment (no
   Bitnami, no operator). Standalone, AOF-persistent, and AUTHENTICATED: the
   server boots with `--requirepass` (values-common.yaml, redis.args), so opening
-  :6379 is no longer the grant it was.
+  :6379 is not by itself a grant.
 
   TWO BOUNDARIES, and the second never replaces the first. The NetworkPolicy
-  (templates/networkpolicy.yaml) still says who may open :6379 at all, and it is
-  unchanged. Behind it, WHO a connection is decides what it may do:
+  (templates/networkpolicy.yaml) says who may open :6379 at all. Behind it, WHO a
+  connection is decides what it may do:
 
     * `default`, whose password is `--requirepass` — the platform's own
       credential. clusters/inventories/service-provisioner reads it to write the users below,

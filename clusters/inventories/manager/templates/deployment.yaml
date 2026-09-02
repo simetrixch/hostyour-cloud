@@ -270,7 +270,7 @@ spec:
             # AN EMPTY VALUE IS NOT THE ABSENT ONE, and the difference is the pod. The
             # schema is a DNS-1123 label regex under .optional(): absent parses and shuts
             # the exemption, "" fails the regex and config parsing exits the process
-            # before the logger exists. Measured against the Manager's own zod, 2026-08-26:
+            # before the logger exists. Measured against the Manager's own zod:
             # {} passes, {PLATFORM_UNIT_NAME:""} fails. So this line must never be turned
             # into a quoted lookup of a values key somebody can empty: `quote` passes an
             # absent or empty key through as an empty string, and what that stops is the
@@ -292,7 +292,7 @@ spec:
             # ONBOARD_GATE_MANAGER_ADDR, and it is the sole discriminator that registers the
             # onboarding Run family: a name this chart chose for itself is a value the process never
             # reads, and the routes then answer 501 while everything here says they are configured.
-            # The three below it were never renamed and already agree; this one is the only name in
+            # The three below it already agree; this one is the only name in
             # this Deployment that has to be spelled the way the process spells it.
             - name: ONBOARD_GATE_MANAGER_ADDR
               value: {{ .Values.onboarding.gatemanagerAddr | quote }}

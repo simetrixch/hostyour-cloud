@@ -16,9 +16,10 @@ Recipient fallback chain:
       alert-recipients — it is a second rendering of it, not the file the profile
       is read out of. clusters/platform/values-common.yaml holds an empty list because a
       mailbox names one installation and the trunk names none)
-  An ENABLED route that resolves to neither STOPS THE RENDER. It used to emit an
-  AlertmanagerConfig with no emailConfigs, which fires nothing and looks healthy
-  in every view — a monitoring stack that reports its own silence as success.
+  An ENABLED route that resolves to neither STOPS THE RENDER. The alternative —
+  emitting an AlertmanagerConfig with no emailConfigs — fires nothing and looks
+  healthy in every view: a monitoring stack that reports its own silence as
+  success.
   Route off with `enabled: false` to say the silence is meant.
 
 Route matching:

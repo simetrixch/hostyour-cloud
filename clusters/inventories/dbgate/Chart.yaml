@@ -31,8 +31,8 @@ description: |
   ITS INGRESS IS OFF, AND THE REASON IS IN values-common.yaml. dbgate runs with
   SKIP_ALL_AUTH, so the gate is whatever stands in front of it. This platform has
   TWO such mechanisms, and neither is available here yet: the Traefik forwardAuth
-  Middleware in namespace `idp`, installed by a program that declares
-  `roles: [master]`, so a cluster whose role is `slave` has no such namespace; and
+  Middleware in namespace `idp`, whose install steps are gated on the cluster
+  keeping the books, so a cluster whose role is `slave` has no such namespace; and
   the namespace-local basicAuth Middleware clusters/charts/middleware renders, which
   clusters/inventories/observability already uses and which a slave COULD carry — but no
   `vault_kv_entry` row writes this app's users, so a reader for it would turn
@@ -74,9 +74,10 @@ dependencies:
 
   # Per-namespace ESO SecretStore (vault-backend) — required so the two
   # ExternalSecrets above can authenticate to Vault from THIS namespace. Requires
-  # `dbgate` in Vault's external-secrets role bound_service_account_namespaces,
-  # which the installation's register-slave program writes for a slave and
-  # deploy-gitops for a master; this chart does not add it.
+  # this namespace to be admitted by Vault's external-secrets role, which binds on
+  # the namespace label `hostyour.cloud/workload` rather than on a list of names;
+  # the role is written by the installation's register-slave program for a slave
+  # and by deploy-platform-services for a master, and this chart does not add it.
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store
