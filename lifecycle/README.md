@@ -1,8 +1,9 @@
 # lifecycle
 
 The life of one installation: the act that brings it into being, every release put on it afterwards,
-and the shape-changes of what exists only on its own branch. Everything here runs from an operator's
-own machine — Windows, Linux or macOS — and nothing here runs in a cluster.
+the shape-changes of what exists only on its own branch, and the registration one installation holds
+for another taken off again. Everything here runs from an operator's own machine — Windows, Linux or
+macOS — and nothing here runs in a cluster.
 
 **The subject is an installation, not a delivery.** A first install delivers nothing; it creates. The
 acts below share a subject rather than a purpose, which is why they stand in one folder.
@@ -15,15 +16,17 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `release-platform.sh` / `.ps1` | cuts a release of the platform tree and pins ONE installation to it |
 | `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
 | `migrate-install-branches.sh` / `.ps1` | corrects, across every install branch, the facts that are born there |
+| `remove-slave-from-master.sh` / `.ps1` | takes ONE slave's registration off the master it stands on |
 | `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |
 
 Every one of them is written twice, and the two spellings are held to doing the same in the same
 order and printing the same bytes. `test.sh` is what measures that, against fixtures it builds in a
 temporary directory.
 
-**Two files here are not a person's entry point.** `driver.sh` is the installation itself and
-`regenerate-driver.sh` is the regeneration itself: both run ON THE MACHINE, and the launcher beside
-them carries them over the session it opens. Neither is started by hand.
+**Three files here are not a person's entry point.** `driver.sh` is the installation itself,
+`regenerate-driver.sh` is the regeneration itself and `remove-slave-driver.sh` is the removal itself:
+all three run ON THE MACHINE, and the launcher beside them carries them over the session it opens.
+None of them is started by hand.
 
 `migrations/NNNN-<what-it-does>.sh` are the numbered migrations, applied once per branch in the order
 their numbers state.

@@ -10,8 +10,11 @@
 # installation to it, regenerate-install-branch brings that installation's branch
 # onto the pin, and migrate-install-branches corrects what is born on install
 # branches and reachable by neither of the other two. status answers what each
-# installation stands on. Every one of them is written twice, in bash and in
-# PowerShell, and the two spellings are held to printing the same bytes.
+# installation stands on. remove-slave-from-master is none of those: it takes one
+# slave's registration off the master it stands on, which is the only act here
+# whose subject is a relation between two installations. Every one of them is
+# written twice, in bash and in PowerShell, and the two spellings are held to
+# printing the same bytes.
 #
 # WHY TWO ORIGINS PER FIXTURE. release-platform MINTS and a mint pushes; a
 # migration write run PUSHES. Run against one origin the second spelling would
@@ -28,23 +31,32 @@
 # a migration walk can be in.
 #
 # THE PLANTED DEFECTS. A copy of status.sh with one printed line changed is run
-# against the untouched status.ps1, and a copy of regenerate-install-branch.sh
-# with one printed line changed against the untouched .ps1. Both comparisons must
-# go RED. Without them a green run would only prove that the comparisons found
-# nothing, which is also what a comparison that stopped looking prints. The
-# innocent beside them is every other case here, which must stay green. The
-# migration walk carries a planted defect and a planted innocent of its own in
-# every one of its checks.
+# against the untouched status.ps1, a copy of regenerate-install-branch.sh with
+# one printed line changed against the untouched .ps1, and a copy of
+# remove-slave-from-master.sh likewise. All three comparisons must go RED.
+# Without them a green run would only prove that the comparisons found nothing,
+# which is also what a comparison that stopped looking prints. The innocent
+# beside them is every other case here, which must stay green. The migration walk
+# carries a planted defect and a planted innocent of its own in every one of its
+# checks.
 #
 # WHAT THIS FILE CANNOT PROVE, named rather than counted: an authenticated remote
 # (the fixtures' origins are directories, so a push never asks for a credential),
 # two workstations minting the same version and channel at the same moment, two
 # migration runs racing on one branch, a migration that reaches outside the clone
-# it is handed, and the regeneration itself — that runs on a machine, out of the
-# catalogue repository, and nothing here can stand in for it. Nor the config
-# guards of regenerate-install-branch beyond the file's absence: Windows states a
-# file's reach as an access list and every other system as a mode, so the two
-# spellings ask one question and can only answer it in their own words.
+# it is handed, and the regeneration and the removal themselves — those run on a
+# machine, out of the catalogue repository, and nothing here can stand in for
+# them. Nor a slave that is still ANSWERING, which is what
+# remove-slave-from-master refuses on: a fixture cannot make a machine listen on
+# port 22, so what is measured is the other verdict, that the slave is gone.
+#
+# NOR THE OWNER-ONLY GUARD ON A CONFIG, in either act that has one: Windows
+# states a file's reach as an access list and every other system as a mode, so
+# the two spellings ask one question and can only answer it in their own words.
+# The guard beside it — a config standing in a git working tree that does not
+# ignore it — is refused in the SAME words by both, and that is the one the
+# removal's fixture config trips, which is what lets a case run all the way to
+# the slave being asked whether it answers.
 # ===========================================================================
 set -euo pipefail
 
@@ -698,6 +710,184 @@ for CO in "$USERCO_A" "$USERCO_B"; do
   rm "$CO/lifecycle/migrations/0004-draft.sh"
 done
 
+# ===========================================================================
+# FOUR — remove-slave-from-master, against a fixture of its own
+#
+# EVERY CASE HERE IS A REFUSAL, for the reason every regeneration case above is
+# one: the act itself opens a session to a master, and there is no master. What
+# it proves is the half that stands before one is touched — that the master's
+# branch, the map it keeps for the slave, what that map says the slave is, and
+# whether the slave still answers are all asked first, and that both spellings
+# refuse on the same one with the same words.
+#
+# ONE ORIGIN AND NOT TWO, unlike the fixtures above. This act reads the remote
+# and never writes to it, so the second spelling finds nothing the first left
+# behind and the two are compared on the same work. Each spelling gets its own
+# CLONE, because a fetch writes FETCH_HEAD into the checkout it runs in.
+# ===========================================================================
+ORIGIN_S="$WORK/origin-s.git"
+SLAVEWORK_A="$WORK/slave-a"
+SLAVEWORK_B="$WORK/slave-b"
+
+git init --quiet --bare --initial-branch=master "$ORIGIN_S"
+SSEED="$WORK/sseed"
+git init --quiet --initial-branch=master "$SSEED"
+git -C "$SSEED" remote add origin "$ORIGIN_S"
+mkdir -p "$SSEED/clusters/active"
+echo "* text=auto eol=lf" > "$SSEED/.gitattributes"
+touch "$SSEED/clusters/active/.gitkeep"
+git -C "$SSEED" add -A
+git -C "$SSEED" commit --quiet -m "Seed the trunk"
+git -C "$SSEED" push --quiet origin master
+
+# A cluster map as the catalogue's template writes one: the three top-level keys
+# a reader outside Helm selects on, then the block a chart resolves through.
+seed_map() { # fqdn, role, the cluster that keeps its books
+  local fqdn="$1" role="$2" books="$3"
+  {
+    echo "stage: prod"
+    echo "role: $role"
+    echo "booksCluster: $books"
+    echo ""
+    echo "global:"
+    echo "  domain: $fqdn"
+    echo "  clusterName: ${fqdn%%.*}"
+    echo "  booksCluster: $books"
+  } > "$SSEED/clusters/active/$fqdn.yaml"
+}
+
+# THE MASTER'S OWN BRANCH IS WHERE THE BOOKS STAND, so every map below is on it:
+# its own, one slave it keeps, one cluster that is no slave at all, and one slave
+# whose books are somebody else's.
+git -C "$SSEED" checkout --quiet -b apps6.example.invalid master
+seed_map apps6.example.invalid master apps6.example.invalid
+seed_map apps7.example.invalid slave apps6.example.invalid
+seed_map apps8.example.invalid master apps8.example.invalid
+seed_map apps9.example.invalid slave other.example.invalid
+git -C "$SSEED" add -A
+git -C "$SSEED" commit --quiet -m "Cut the master's branch with the maps it keeps"
+git -C "$SSEED" push --quiet origin apps6.example.invalid
+git -C "$SSEED" checkout --quiet master
+
+git clone --quiet "$ORIGIN_S" "$SLAVEWORK_A"
+git clone --quiet "$ORIGIN_S" "$SLAVEWORK_B"
+ok "fixture built — one origin, a master's branch, the map of one slave it keeps and two that are not that"
+
+# THE MASTER'S CONFIG, which this act is given and only reads. It states no
+# credential worth the name and it stands INSIDE a git working tree that does not
+# ignore it, which is deliberate: that is the last guard the launcher asks, it is
+# refused in the same words by both spellings, and it is therefore where a case
+# that has passed everything else can stop and still be compared.
+MASTERCFG="$SLAVEWORK_A/master-config.env"
+{
+  echo "ELEVATION_PASSWORD='not-a-password'"
+  echo "OPERATOR_USER='digi6'"
+  echo "FQDN='apps6.example.invalid'"
+  echo "STAGE='prod' #[dev, test, prod]"
+} > "$MASTERCFG"
+# The same file naming a master that has no branch on the remote.
+NOBRANCHCFG="$SLAVEWORK_A/no-branch-config.env"
+sed "s/^FQDN=.*/FQDN='nomaster.example.invalid'/" "$MASTERCFG" > "$NOBRANCHCFG"
+
+run_remove_bash() { # the arguments of the bash spelling
+  A_CODE=0
+  ( cd "$SLAVEWORK_A" && bash "$HERE/remove-slave-from-master.sh" "$@" ) \
+    > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+run_remove_pwsh() { # the arguments of the PowerShell spelling
+  B_CODE=0
+  ( cd "$SLAVEWORK_B" && "$PWSH" -NoProfile -NoLogo -File "$HERE/remove-slave-from-master.ps1" "$@" ) \
+    > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
+}
+
+run_remove_bash
+run_remove_pwsh
+must "usage: lifecycle/remove-slave-from-master.sh <slave-fqdn>" 'a run naming no slave is refused'
+[ "$A_CODE" = '64' ] || fail "a run naming no slave must end with 64, got $A_CODE"
+same_code 'a run naming no slave'
+
+# THE DRIVER IS WHAT RUNS ON THE MACHINE, and a launcher without it can start
+# nothing. Both spellings are copied where it is not, so both look for it beside
+# themselves and find nothing.
+mkdir -p "$WORK/slave-driverless"
+cp "$HERE/remove-slave-from-master.sh" "$HERE/remove-slave-from-master.ps1" "$WORK/slave-driverless/"
+A_CODE=0
+( cd "$SLAVEWORK_A" && bash "$WORK/slave-driverless/remove-slave-from-master.sh" apps7.example.invalid ) \
+  > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+B_CODE=0
+( cd "$SLAVEWORK_B" && "$PWSH" -NoProfile -NoLogo -File "$WORK/slave-driverless/remove-slave-from-master.ps1" apps7.example.invalid ) \
+  > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
+must "remove-slave-driver.sh is not beside this file" 'a launcher without its driver is refused'
+[ "$A_CODE" = '66' ] || fail "a missing driver must end with 66, got $A_CODE"
+same 'a launcher standing without its driver'
+
+run_remove_bash apps7.example.invalid "$NOCONFIG"
+run_remove_pwsh apps7.example.invalid "$NOCONFIG"
+must "there is no config at" 'a run with no config to state the master is refused'
+must "Nothing has been changed" 'a refusal says that nothing has been changed'
+[ "$A_CODE" = '66' ] || fail "a missing config must end with 66, got $A_CODE"
+same 'a run with no config to state the master'
+
+run_remove_bash apps7.example.invalid "$NOBRANCHCFG"
+run_remove_pwsh apps7.example.invalid "$NOBRANCHCFG"
+must "origin has no branch nomaster.example.invalid" 'a config naming a master with no install branch is refused'
+[ "$A_CODE" = '66' ] || fail "a master with no branch must end with 66, got $A_CODE"
+same 'a config naming a master with no install branch'
+
+run_remove_bash nosuch.example.invalid "$MASTERCFG"
+run_remove_pwsh nosuch.example.invalid "$MASTERCFG"
+must "branch apps6.example.invalid carries no clusters/active/nosuch.example.invalid.yaml" \
+  'a slave the master keeps no map for is refused'
+must "keeps none for nosuch.example.invalid" 'the refusal says whose map is missing and from where'
+[ "$A_CODE" = '66' ] || fail "a slave with no map on the master must end with 66, got $A_CODE"
+same 'a slave the master keeps no map for'
+
+run_remove_bash apps8.example.invalid "$MASTERCFG"
+run_remove_pwsh apps8.example.invalid "$MASTERCFG"
+must "states role 'master', so what stands under that name is no slave" \
+  'a map that does not name the slave part is refused'
+[ "$A_CODE" = '65' ] || fail "a map that names no slave part must end with 65, got $A_CODE"
+same 'a map that does not name the slave part'
+
+run_remove_bash apps9.example.invalid "$MASTERCFG"
+run_remove_pwsh apps9.example.invalid "$MASTERCFG"
+must "states booksCluster 'other.example.invalid'" 'a slave whose books are another cluster is refused'
+[ "$A_CODE" = '65' ] || fail "a slave of another master must end with 65, got $A_CODE"
+same 'a slave whose map names another master'
+
+# THE TARGET IS READ OFF THE MASTER'S BRANCH AND SAID OUT LOUD, and the slave is
+# then asked whether it still answers — which is the whole of what this act
+# establishes before it opens a session. The fixture's slave resolves to nothing,
+# so the verdict is the one this run is for: a machine that is gone. The run then
+# stops on the config standing in a tree that does not ignore it, which is where
+# both spellings refuse in the same words.
+run_remove_bash apps7.example.invalid "$MASTERCFG"
+run_remove_pwsh apps7.example.invalid "$MASTERCFG"
+must "remove-slave: clusters/active/apps7.example.invalid.yaml on branch apps6.example.invalid records apps7.example.invalid as a slave of apps6.example.invalid" \
+  'the registration is read off the master branch and named'
+must "remove-slave: apps7.example.invalid does not answer on port 22" \
+  'the slave is asked whether it is still there, and the verdict is printed'
+must "stands inside a git working tree that does not ignore it" \
+  'a config a commit could reach is refused before it leaves this workstation'
+[ "$A_CODE" = '77' ] || fail "a config a commit could reach must end with 77, got $A_CODE"
+same 'the registration read off the master branch, a slave that is gone, and a config a commit could reach'
+
+# ── the planted defect for this pair ────────────────────────────────────────
+PLANTED_S="$WORK/planted-remove-slave.sh"
+cp "$HERE/remove-slave-driver.sh" "$WORK/remove-slave-driver.sh"
+sed 's/as a slave of/as a slave to/' "$HERE/remove-slave-from-master.sh" > "$PLANTED_S"
+grep -q 'as a slave to' "$PLANTED_S" || fail 'the planted line was not planted — the probe proves nothing'
+A_CODE=0
+( cd "$SLAVEWORK_A" && bash "$PLANTED_S" apps7.example.invalid "$MASTERCFG" ) \
+  > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+grep -q 'as a slave to' "$OUT/a.out" || fail 'the planted spelling printed no registration line — the probe was aimed at a line the fixture does not reach'
+run_remove_pwsh apps7.example.invalid "$MASTERCFG"
+normalise < "$OUT/a.out" > "$OUT/a.out.n"; normalise < "$OUT/b.out" > "$OUT/b.out.n"
+if diff -q "$OUT/a.out.n" "$OUT/b.out.n" >/dev/null; then
+  fail 'a spelling with one line changed compared EQUAL to the other — the comparison above proves nothing'
+fi
+ok 'the planted defect was caught — the comparison of the remove-slave pair can go red'
+
 echo "test: GREEN — every case above was measured on both spellings and answered identically."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, the four states a report can be in and a name that is no installation; the"
@@ -707,8 +897,10 @@ echo "test:   skip reasons, the report run's refusal to push, the write run's"
 echo "test:   apply/record/push, the record holding on a second run, a failing migration"
 echo "test:   ending red and unrecorded, a duplicated number refused before the walk, a record"
 echo "test:   from a newer trunk named as such, and an uncommitted migration refused a write"
-echo "test:   run. Two planted defects prove the comparison can go red."
+echo "test:   run; the eight refusals a removal makes before it touches a master, the"
+echo "test:   registration it reads off the master's branch and the verdict on a slave that is"
+echo "test:   gone. Three planted defects prove the comparison can go red."
 echo "test: not covered — an authenticated remote, two workstations minting at one moment, two"
 echo "test:   migration runs racing on one branch, a migration that reaches outside the clone"
-echo "test:   it is handed, the regeneration itself on a machine, and the config guards beyond"
-echo "test:   the file's absence."
+echo "test:   it is handed, the regeneration and the removal themselves on a machine, a slave"
+echo "test:   that is still answering, and the owner-only guard on a config."
