@@ -114,8 +114,23 @@ if ($Rest.Count -gt 0) {
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
   Stop-Here 'git is not on this path, and the whole run is git'
 }
-if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
-  Stop-Here 'bash is not on this path, and a migration is a shell script'
+# WHICH bash, BECAUSE MORE THAN ONE ANSWERS TO THE NAME. Windows ships one at
+# System32 that is the Linux subsystem's, and it reads a drive-letter path as a
+# relative one and refuses with "No such file or directory" over a file that is
+# plainly there. The one that belongs beside git understands both spellings, and
+# a migration is handed a path in the tree this script is standing in. So the
+# subsystem's is passed over rather than trusted to be absent.
+$bashExe = $null
+foreach ($cand in @(Get-Command bash -All -ErrorAction SilentlyContinue)) {
+  $src = $cand.Source
+  if (-not $src) { continue }
+  if ($src -like "$env:WINDIR*") { continue }
+  if ($src -like '*\WindowsApps\*') { continue }
+  $bashExe = $src
+  break
+}
+if (-not $bashExe) {
+  Stop-Here 'no bash outside the Windows subsystem is on this path, and a migration is a shell script handed a path in this tree'
 }
 
 # READ WITHOUT `Select-Object -First 1`, and every git call below is read the same
@@ -139,6 +154,13 @@ $originUrl = $said[0]
 # ORDERED BY BYTE AND NOT BY CULTURE. The twin sorts under LC_ALL=C, and a
 # culture-aware comparison puts a punctuated name in a different place — so the
 # two would walk the same refs in a different order and report them apart.
+# A PATH BASH CAN READ. Windows spells a path with backslashes and bash reads
+# every one of them as an escape, so a path arrives there with its separators gone
+# and the refusal names a file nobody wrote. The drive-letter form with forward
+# slashes is what both understand, and it is what a migration is handed - the
+# script itself, and the checkout it is told to work in.
+function ToBashPath([string] $Of) { return ($Of.Replace('\', '/')) }
+
 function Sort-ByByte([string[]] $Of) {
   $copy = [string[]]::new($Of.Count)
   [System.Array]::Copy($Of, $copy, $Of.Count)
@@ -272,7 +294,7 @@ try {
     foreach ($m in $pending) {
       # WHAT THE MIGRATION SAID, both streams, with the trailing newline off —
       # the twin reads it through a command substitution, which strips it.
-      $out = (& bash (Join-Path $root "lifecycle/migrations/$m") $tree $b 2>&1 | Out-String)
+      $out = (& $bashExe (ToBashPath (Join-Path $root "lifecycle/migrations/$m")) (ToBashPath $tree) $b 2>&1 | Out-String)
       $ran = $LASTEXITCODE
       $out = ($out -replace "`r", '').TrimEnd("`n")
       if ($ran -eq 0) {
