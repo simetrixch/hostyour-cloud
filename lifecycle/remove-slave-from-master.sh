@@ -185,28 +185,37 @@ git fetch --quiet origin "refs/heads/$MASTER" \
 # the branch the books live on: the slaves generator reads it there, and a slave
 # nobody registered on this master has no file there at all.
 MAP="clusters/active/${SLAVE}.yaml"
-MAPTEXT="$(git show "FETCH_HEAD:$MAP" 2>/dev/null)" \
-  || die "branch $MASTER carries no $MAP. A slave is registered on the master that keeps its map, and $MASTER keeps none for $SLAVE" 66
-
-# WHAT THAT MAP SAYS THE CLUSTER IS. A role is one or several parts joined by a
-# plus, and what this removal is about is the slave part — so the parts are read
-# rather than the whole word compared, and a machine carrying master and slave at
-# once is a slave like any other.
-ROLE="$(printf '%s\n' "$MAPTEXT" | value_in_text role)"
-case "+$ROLE+" in
-  *+slave+*) ;;
-  *) die "$MAP on branch $MASTER states role '${ROLE:-none}', so what stands under that name is no slave. This takes a slave's registration off its master, and a map that does not name the slave part describes something else" 65 ;;
-esac
-
-# AND WHICH MASTER IT STANDS ON. `booksCluster` is the cluster that keeps the
-# maps and the registrations, which for a slave is its master — it is the value
-# the slave's own generator selector is stamped from, so a map naming another
-# cluster is a slave of that one and not of this.
-BOOKS="$(printf '%s\n' "$MAPTEXT" | value_in_text booksCluster)"
-[ "$BOOKS" = "$MASTER" ] \
-  || die "$MAP on branch $MASTER states booksCluster '${BOOKS:-none}', and $CONFIG states the master $MASTER. A slave is registered on the master that keeps its books, and this map names another one" 65
-
-say "remove-slave: $MAP on branch $MASTER records $SLAVE as a slave of $MASTER, and its registration on that master is what this takes off"
+MAPTEXT="$(git show "FETCH_HEAD:$MAP" 2>/dev/null || true)"
+if [ -z "$MAPTEXT" ]; then
+  # A MAP THAT IS GONE IS THE NORMAL CASE AND NOT A REFUSAL. Dropping the slave's part of the books
+  # is the GIT side of this removal, and the program's own header says the caller does it FIRST, so
+  # that the generated Application is already gone when its project goes. By the time the rest is
+  # wanted the map has done its work and left. Refusing here refuses every removal performed in the
+  # order the program states.
+  #
+  # WHAT STILL PROTECTS A TYPED NAME. Every row of remove-slave names objects after the slave — the
+  # mount kubernetes-<name>, the three policies, the three consumables, the coordinator user, the
+  # project. A name nothing was registered under therefore removes nothing, and each row says so.
+  # Where the map stands it adds the two checks below; where it does not, this says as much.
+  say "remove-slave: branch $MASTER keeps no $MAP, which is what the git side of a removal leaves behind. Nothing here confirms $SLAVE stood as a slave of $MASTER, and every row names objects after it, so a name nothing holds removes nothing"
+else
+  # WHAT THAT MAP SAYS THE CLUSTER IS. A role is one or several parts joined by a plus, and what this
+  # removal is about is the slave part — so the parts are read rather than the whole word compared,
+  # and a machine carrying master and slave at once is a slave like any other.
+  ROLE="$(printf '%s
+' "$MAPTEXT" | value_in_text role)"
+  case "+$ROLE+" in
+    *+slave+*) ;;
+    *) die "$MAP on branch $MASTER states role '${ROLE:-none}', so what stands under that name is no slave. This takes a slave's management plane off its master. Nothing has been changed" 65 ;;
+  esac
+  # AND WHICH MASTER IT STANDS ON. `booksCluster` is the cluster that keeps the maps and the
+  # registrations, which for a slave is its master — it is the value the slave's own generator
+  # selector is stamped from, so a map naming another cluster is a slave of that one and not of this.
+  BOOKS="$(printf '%s
+' "$MAPTEXT" | value_in_text booksCluster)"
+  [ "$BOOKS" = "$MASTER" ]     || die "$MAP on branch $MASTER states booksCluster '${BOOKS:-none}', and $CONFIG states the master $MASTER. A slave is registered on the master its books name. Nothing has been changed" 65
+  say "remove-slave: $MAP on branch $MASTER records $SLAVE as a slave of $MASTER, and its registration on that master is what this takes off"
+fi
 
 # --------------------------------------------------- the slave itself, asked
 # WHETHER THE SLAVE IS STILL THERE, asked before anything is decided about it.

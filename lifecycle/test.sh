@@ -836,10 +836,11 @@ same 'a config naming a master with no install branch'
 
 run_remove_bash nosuch.example.invalid "$MASTERCFG"
 run_remove_pwsh nosuch.example.invalid "$MASTERCFG"
-must "branch apps6.example.invalid carries no clusters/active/nosuch.example.invalid.yaml" \
-  'a slave the master keeps no map for is refused'
-must "keeps none for nosuch.example.invalid" 'the refusal says whose map is missing and from where'
-[ "$A_CODE" = '66' ] || fail "a slave with no map on the master must end with 66, got $A_CODE"
+# A MAP THAT IS GONE IS NOT A REFUSAL. Dropping the slave's part of the books is the git side of a
+# removal and the program's header says the caller does it FIRST, so by the time the rest is wanted
+# the map has left. What a run does instead is say so, and say what still protects a typed name.
+must "keeps no clusters/active/nosuch.example.invalid.yaml"   'a slave the master keeps no map for is named rather than refused'
+must "a name nothing holds removes nothing"   'and the run says what protects a typed name where the map cannot'
 same 'a slave the master keeps no map for'
 
 run_remove_bash apps8.example.invalid "$MASTERCFG"

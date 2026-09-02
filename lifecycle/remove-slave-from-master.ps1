@@ -215,30 +215,39 @@ if ($LASTEXITCODE -ne 0) {
 $map = "clusters/active/$SlaveFqdn.yaml"
 $mapText = @(git show "FETCH_HEAD:$map" 2>$null)
 if ($LASTEXITCODE -ne 0) {
-  Stop-Here "branch $master carries no $map. A slave is registered on the master that keeps its map, and $master keeps none for $SlaveFqdn" 66
+  # A MAP THAT IS GONE IS THE NORMAL CASE AND NOT A REFUSAL. Dropping the slave's part of the books
+  # is the GIT side of this removal, and the program's own header says the caller does it FIRST, so
+  # that the generated Application is already gone when its project goes. By the time the rest is
+  # wanted the map has done its work and left. Refusing here refuses every removal performed in the
+  # order the program states.
+  #
+  # WHAT STILL PROTECTS A TYPED NAME. Every row of remove-slave names objects after the slave - the
+  # mount kubernetes-<name>, the three policies, the three consumables, the coordinator user, the
+  # project. A name nothing was registered under therefore removes nothing, and each row says so.
+  # Where the map stands it adds the two checks below; where it does not, this says as much.
+  Say "remove-slave: branch $master keeps no $map, which is what the git side of a removal leaves behind. Nothing here confirms $SlaveFqdn stood as a slave of $master, and every row names objects after it, so a name nothing holds removes nothing"
 }
+else {
+  # WHAT THAT MAP SAYS THE CLUSTER IS. A role is one or several parts joined by a plus, and what this
+  # removal is about is the slave part - so the parts are read rather than the whole word compared,
+  # and a machine carrying master and slave at once is a slave like any other.
+  $role = Read-MapValue $mapText 'role'
+  if ("+$role+" -notlike '*+slave+*') {
+    $said = if ($role) { $role } else { 'none' }
+    Stop-Here "$map on branch $master states role '$said', so what stands under that name is no slave. This takes a slave's management plane off its master. Nothing has been changed" 65
+  }
 
-# WHAT THAT MAP SAYS THE CLUSTER IS. A role is one or several parts joined by a
-# plus, and what this removal is about is the slave part — so the parts are read
-# rather than the whole word compared, and a machine carrying master and slave at
-# once is a slave like any other.
-$role = Read-MapValue $mapText 'role'
-if ("+$role+" -notlike '*+slave+*') {
-  $said = if ($role) { $role } else { 'none' }
-  Stop-Here "$map on branch $master states role '$said', so what stands under that name is no slave. This takes a slave's registration off its master, and a map that does not name the slave part describes something else" 65
+  # AND WHICH MASTER IT STANDS ON. `booksCluster` is the cluster that keeps the maps and the
+  # registrations, which for a slave is its master - it is the value the slave's own generator
+  # selector is stamped from, so a map naming another cluster is a slave of that one and not of this.
+  $books = Read-MapValue $mapText 'booksCluster'
+  if ($books -ne $master) {
+    $said = if ($books) { $books } else { 'none' }
+    Stop-Here "$map on branch $master states booksCluster '$said', and $ConfigFile states the master $master. A slave is registered on the master its books name. Nothing has been changed" 65
+  }
+
+  Say "remove-slave: $map on branch $master records $SlaveFqdn as a slave of $master, and its registration on that master is what this takes off"
 }
-
-# AND WHICH MASTER IT STANDS ON. `booksCluster` is the cluster that keeps the
-# maps and the registrations, which for a slave is its master — it is the value
-# the slave's own generator selector is stamped from, so a map naming another
-# cluster is a slave of that one and not of this.
-$books = Read-MapValue $mapText 'booksCluster'
-if ($books -ne $master) {
-  $said = if ($books) { $books } else { 'none' }
-  Stop-Here "$map on branch $master states booksCluster '$said', and $ConfigFile states the master $master. A slave is registered on the master that keeps its books, and this map names another one" 65
-}
-
-Say "remove-slave: $map on branch $master records $SlaveFqdn as a slave of $master, and its registration on that master is what this takes off"
 
 # --------------------------------------------------- the slave itself, asked
 # WHETHER THE SLAVE IS STILL THERE, asked before anything is decided about it.
