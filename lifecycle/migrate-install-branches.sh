@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# migrate.sh — correct branch-born facts across every install branch.
+# migrate-install-branches.sh — correct branch-born facts across every install
+# branch. PowerShell twin: migrate-install-branches.ps1 (same folder), which
+# walks the same refs in the same order and prints the same lines.
+# lifecycle/test.sh measures that.
 #
 # An install branch carries three kinds of bytes, and two of them already have
 # a path. What the product tree owns unstamped — charts, values, inventories,
@@ -16,11 +19,11 @@
 # and a migration that moves an image pin is a release wearing the wrong hat.
 #
 # USAGE (from the repo root of a checkout, on a person's machine — nothing
-# runs this automatically, the same way release/release.sh of the manager is
+# runs this automatically, the same way release-platform.sh beside it is
 # a person's own act)
 #
-#   bash migrations/migrate.sh            report what every branch would get; push nothing
-#   bash migrations/migrate.sh --write    the same work, plus the push
+#   bash lifecycle/migrate-install-branches.sh          report what every branch would get; push nothing
+#   bash lifecycle/migrate-install-branches.sh --write  the same work, plus the push
 #
 # WHAT A RUN DOES
 #   1. Clones this repository's origin fresh into a temporary directory, so
@@ -46,7 +49,7 @@
 #      dry run is a measurement of the real work and not a prediction.
 #
 # WHAT A MIGRATION IS
-#   migrations/NNNN-<what-it-does>.sh — four digits, unique, applied once per
+#   lifecycle/migrations/NNNN-<what-it-does>.sh — four digits, unique, applied once per
 #   branch, in numeric order. ONE script per migration, never one per kind of
 #   branch: whether a branch keeps the books is a fact recorded in its own
 #   map (role, booksCluster), not a category it belongs to, and a machine may
@@ -58,6 +61,12 @@
 #   carry comments and a form a round-trip destroys. A non-zero exit is a
 #   failure — nothing is recorded, later migrations do not run on that
 #   branch, and the run ends red.
+#
+# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
+# spellings are held to printing the same bytes, and PowerShell writes its
+# output in whatever code page the console carries -- so a dash from outside
+# ASCII arrives there as a different byte and the pair quietly stops agreeing.
+# The comments in these files are read by people and may say what they like.
 # ===========================================================================
 set -euo pipefail
 
@@ -69,15 +78,15 @@ WRITE=0
 case "${1:-}" in
   "") ;;
   --write) WRITE=1 ;;
-  *) die "unknown argument '${1}' — usage: bash migrations/migrate.sh [--write]" ;;
+  *) die "unknown argument '${1}' - usage: bash lifecycle/migrate-install-branches.sh [--write]" ;;
 esac
 
 command -v git >/dev/null 2>&1 || die "git is not on this path, and the whole run is git"
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
-  || die "not inside a git repository — run this from a checkout of the platform tree"
-[ -f "$ROOT/migrations/migrate.sh" ] \
-  || die "this repository has no migrations/migrate.sh at its root, so it is not the platform tree"
+  || die "not inside a git repository - run this from a checkout of the platform tree"
+[ -f "$ROOT/lifecycle/migrate-install-branches.sh" ] \
+  || die "this repository has no lifecycle/migrate-install-branches.sh at its root, so it is not the platform tree"
 ORIGIN_URL="$(git -C "$ROOT" remote get-url origin 2>/dev/null)" \
   || die "this checkout has no remote 'origin', so there are no install branches to walk"
 
@@ -87,27 +96,27 @@ ORIGIN_URL="$(git -C "$ROOT" remote get-url origin 2>/dev/null)" \
 MIGRATIONS=()
 while IFS= read -r f; do
   [ -n "$f" ] && MIGRATIONS+=("${f##*/}")
-done < <(find "$ROOT/migrations" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.sh' | LC_ALL=C sort)
+done < <(find "$ROOT/lifecycle/migrations" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.sh' | LC_ALL=C sort)
 if [ "${#MIGRATIONS[@]}" -gt 0 ]; then
   DUP="$(printf '%s\n' "${MIGRATIONS[@]}" | cut -c1-4 | LC_ALL=C sort | uniq -d | head -1)"
-  [ -z "$DUP" ] || die "two migrations share the number ${DUP} — renumber one, the number is the order"
+  [ -z "$DUP" ] || die "two migrations share the number ${DUP} - renumber one, the number is the order"
 fi
 
 # A write run applies only migrations that are committed. An uncommitted one
 # would change live installations and then exist nowhere anybody else can
 # read — the branch would record a name this repository never carried.
 if [ "$WRITE" = "1" ]; then
-  [ -z "$(git -C "$ROOT" status --porcelain -- migrations)" ] \
-    || die "migrations/ carries uncommitted changes — commit them first, or run without --write"
-  echo "migrate: a WRITE run — what a migration changes is committed and pushed to the install branches"
+  [ -z "$(git -C "$ROOT" status --porcelain -- lifecycle/migrations)" ] \
+    || die "lifecycle/migrations/ carries uncommitted changes - commit them first, or run without --write"
+  echo "migrate: a WRITE run - what a migration changes is committed and pushed to the install branches"
 else
-  echo "migrate: a report run — the commits are built in a throwaway clone and discarded; nothing is pushed without --write"
+  echo "migrate: a report run - the commits are built in a throwaway clone and discarded; nothing is pushed without --write"
 fi
 
 TREE="$(mktemp -d)"
 trap 'rm -rf "$TREE"' EXIT
 git clone --quiet "$ORIGIN_URL" "$TREE" \
-  || die "the platform tree at ${ORIGIN_URL} could not be cloned — nothing was read"
+  || die "the platform tree at ${ORIGIN_URL} could not be cloned - nothing was read"
 
 TRUNK="$(git -C "$TREE" symbolic-ref --short refs/remotes/origin/HEAD)"
 TRUNK="${TRUNK#origin/}"
@@ -128,7 +137,7 @@ for B in "${REFS[@]}"; do
 
   MAP="clusters/active/${B}.yaml"
   if ! MAPTEXT="$(git -C "$TREE" show "origin/${B}:${MAP}" 2>/dev/null)"; then
-    REPORT+=("${B} — skipped: it carries no ${MAP}, so it is not an install branch")
+    REPORT+=("${B} - skipped: it carries no ${MAP}, so it is not an install branch")
     SKIPPED=$((SKIPPED + 1))
     continue
   fi
@@ -138,7 +147,7 @@ for B in "${REFS[@]}"; do
   # can be seen to come from looking, not from failing to look.
   ROLE="$(printf '%s\n' "$MAPTEXT" | sed -n -E 's/^role:[[:space:]]*//p' | head -1)"
   BOOKS="$(printf '%s\n' "$MAPTEXT" | sed -n -E 's/^booksCluster:[[:space:]]*//p' | head -1)"
-  REPORT+=("${B} — an install branch; its map states role '${ROLE:-<none>}' and booksCluster '${BOOKS:-<none>}'")
+  REPORT+=("${B} - an install branch; its map states role '${ROLE:-<none>}' and booksCluster '${BOOKS:-<none>}'")
 
   RECORDED="$(git -C "$TREE" show "origin/${B}:${RECORD}" 2>/dev/null || true)"
 
@@ -152,7 +161,7 @@ for B in "${REFS[@]}"; do
       [ "${M:0:4}" = "${LINE:0:4}" ] && KNOWN=1 && break
     done
     [ "$KNOWN" = "1" ] \
-      || REPORT+=("    its ${RECORD} records ${LINE}, which this checkout does not carry — the checkout is behind what has already run")
+      || REPORT+=("    its ${RECORD} records ${LINE}, which this checkout does not carry - the checkout is behind what has already run")
   done <<< "$RECORDED"
 
   if [ "${#MIGRATIONS[@]}" -eq 0 ]; then
@@ -165,7 +174,7 @@ for B in "${REFS[@]}"; do
     printf '%s\n' "$RECORDED" | grep -q "^${M:0:4}-" || PENDING+=("$M")
   done
   if [ "${#PENDING[@]}" -eq 0 ]; then
-    REPORT+=("    every migration of this checkout is recorded in ${RECORD} — nothing pending")
+    REPORT+=("    every migration of this checkout is recorded in ${RECORD} - nothing pending")
     continue
   fi
 
@@ -177,12 +186,12 @@ for B in "${REFS[@]}"; do
   git -C "$TREE" reset --quiet --hard "origin/${B}"
 
   for M in "${PENDING[@]}"; do
-    if OUT="$(bash "$ROOT/migrations/${M}" "$TREE" "$B" 2>&1)"; then
+    if OUT="$(bash "$ROOT/lifecycle/migrations/${M}" "$TREE" "$B" 2>&1)"; then
       CHANGED="$(git -C "$TREE" status --porcelain)"
       mkdir -p "$TREE/installation"
       if [ ! -f "$TREE/${RECORD}" ]; then
         printf '%s\n' \
-          "# The migrations this branch has had, one per line, appended by migrations/migrate.sh." \
+          "# The migrations this branch has had, one per line, appended by lifecycle/migrate-install-branches.sh." \
           "# The branch keeps this record itself: it is the one carrier every machine of the" \
           "# installation reads the same way, where a list kept on a machine knows only the runs" \
           "# that machine happened to perform." > "$TREE/${RECORD}"
@@ -197,10 +206,10 @@ for B in "${REFS[@]}"; do
         REPORT+=("    ${M}: ${OUT}")
       else
         git -C "$TREE" commit --quiet -m "Record migration ${M%.sh} as applied without effect" -m "$OUT"
-        REPORT+=("    ${M}: nothing to do — ${OUT} (recorded as applied)")
+        REPORT+=("    ${M}: nothing to do - ${OUT} (recorded as applied)")
       fi
     else
-      REPORT+=("    ${M}: FAILED — ${OUT}")
+      REPORT+=("    ${M}: FAILED - ${OUT}")
       REPORT+=("    the remaining migrations did not run on this branch, and nothing of ${M} was recorded")
       RED=1
       break
@@ -213,29 +222,29 @@ for B in "${REFS[@]}"; do
       if git -C "$TREE" push --quiet origin "$B"; then
         REPORT+=("    pushed ${AHEAD} commit(s) to origin/${B}")
       else
-        REPORT+=("    FAILED — the ${AHEAD} commit(s) could not be pushed to origin/${B}")
+        REPORT+=("    FAILED - the ${AHEAD} commit(s) could not be pushed to origin/${B}")
         RED=1
       fi
     else
-      REPORT+=("    ${AHEAD} commit(s) stand ready in a throwaway clone and were NOT pushed — run with --write to push them")
+      REPORT+=("    ${AHEAD} commit(s) stand ready in a throwaway clone and were NOT pushed - run with --write to push them")
     fi
   fi
 done
 
-echo "migrate: the report — every ref of ${ORIGIN_URL}, and what happened on it"
+echo "migrate: the report - every ref of ${ORIGIN_URL}, and what happened on it"
 for LINE in ${REPORT[@]+"${REPORT[@]}"}; do
   echo "migrate:   ${LINE}"
 done
-echo "migrate: walked ${WALKED} install branch(es) and skipped ${SKIPPED} other ref(s), each named above with why; the trunk ${TRUNK} is not walked — what the trunk needs is a commit on the trunk"
+echo "migrate: walked ${WALKED} install branch(es) and skipped ${SKIPPED} other ref(s), each named above with why; the trunk ${TRUNK} is not walked - what the trunk needs is a commit on the trunk"
 [ "${#MIGRATIONS[@]}" -gt 0 ] \
   || echo "migrate: this checkout carries no migrations, so the walk above states only what each branch is"
 
 if [ "$RED" = "1" ]; then
-  echo "migrate: the run is RED — a FAILED line above names the branch and the migration" >&2
+  echo "migrate: the run is RED - a FAILED line above names the branch and the migration" >&2
   exit 1
 fi
 if [ "$WRITE" = "1" ]; then
-  echo "migrate: OK — every pending migration ran, was recorded on its branch, and was pushed"
+  echo "migrate: OK - every pending migration ran, was recorded on its branch, and was pushed"
 else
-  echo "migrate: OK — every install branch was read; nothing was pushed"
+  echo "migrate: OK - every install branch was read; nothing was pushed"
 fi

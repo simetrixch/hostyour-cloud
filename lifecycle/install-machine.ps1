@@ -1,9 +1,9 @@
 # =============================================================================
-# install.ps1 — install a first master, from Windows.
+# install-machine.ps1 — install a first master, from Windows.
 # =============================================================================
 #
-#   pwsh ./install.ps1              reads ./config.env
-#   pwsh ./install.ps1 other.env    reads that instead
+#   pwsh ./install-machine.ps1              reads ./config.env
+#   pwsh ./install-machine.ps1 other.env    reads that instead
 #
 # A FIRST MASTER AND NOTHING ELSE. Everything after it — adopting a machine,
 # deploying a slave, onboarding a consumer or a tenant — is the Manager's, and
@@ -15,7 +15,7 @@
 # every value stands in this machine's process listing. One file states the whole
 # installation; this reads it and starts.
 #
-# THE TWIN OF install.sh, doing the same four things in the same order: refuse a
+# THE TWIN OF install-machine.sh, doing the same four things in the same order: refuse a
 # config anyone else can read, carry it over, open one session, keep every line
 # that comes back. The installation itself is driver.sh and it runs ON THE
 # MACHINE — nothing is fetched here and nothing is carried from this disk, so what
@@ -49,7 +49,7 @@ $ConfigFile = (Resolve-Path $ConfigFile).Path
 
 # ------------------------------------------------------ the file, and its guards
 # OWNER-ONLY OR NOTHING. Windows says this with an access list rather than a mode,
-# so the question asked here is the one install.sh asks and only the answer is read
+# so the question asked here is the one install-machine.sh asks and only the answer is read
 # differently: which accounts hold rights on it, beyond the owner and the system.
 $acl = Get-Acl -Path $ConfigFile
 $owner = $acl.Owner
@@ -92,7 +92,7 @@ if ($LASTEXITCODE -eq 0 -and $inTree) {
 # command would run it there with the operator's own rights. Refusing it on this
 # side tells the operator which line is wrong while the file is still open in front
 # of them, rather than after a session has been opened to the machine. The pattern
-# is the one install.sh and driver.sh apply, so all three agree on what a config
+# is the one install-machine.sh and driver.sh apply, so all three agree on what a config
 # may contain.
 $lines = @(Get-Content -Path $ConfigFile)
 $shaped = "^\s*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'\s*(#.*)?$"
@@ -219,7 +219,7 @@ $stream = ("umask 077${lf}cat > `"`$1`" <<'AW_CONFIG_END'${lf}" +
 # arriving were always right; nothing was decoding them.
 #
 # BOTH ARE PUT BACK. This runs in the operator's own session when it is started as
-# ./install.ps1, so a console encoding changed here would outlive the installation.
+# ./install-machine.ps1, so a console encoding changed here would outlive the installation.
 $spokenBefore = $OutputEncoding
 $heardBefore  = [Console]::OutputEncoding
 try {

@@ -49,10 +49,13 @@ those paths to resolve. Only the paths anchored at the root are free to move.
 
 **And nothing else deploys.** No configuration and no secrets — this is structure, and it is the
 same structure for everybody who clones it. What runs does so from a person's machine, never in a
-cluster: `installer/` installs a first master, and `migrations/` corrects facts that are
-born on install branches and reachable neither by a merge nor by a regeneration. What belongs to ONE
-installation comes from outside: that company's own repository, carrying its configuration in the
-clear and its secrets encrypted, handed to the deployer along with the key that opens them.
+cluster: `lifecycle/` carries the acts one installation's life is made of — installing the first
+master, which brings the installation into being; releasing the platform tree and pinning an
+installation to that release; regenerating an install branch onto the pin it carries; and migrating
+the facts which are born on install branches and reachable neither by a merge nor by a regeneration.
+What belongs to ONE installation comes from outside: that company's own repository, carrying its
+configuration in the clear and its secrets encrypted, handed to the deployer along with the key that
+opens them.
 
 Nothing on the trunk names one installation. A cluster's own settings and what it knows about
 itself stand on its install branch, never here — which is what lets a second installation take the

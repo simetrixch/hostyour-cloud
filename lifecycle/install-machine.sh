@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# install.sh — install a first master, from Linux or macOS.
+# install-machine.sh — install a first master, from Linux or macOS.
 # =============================================================================
 #
-#   ./install.sh                 reads ./config.env
-#   ./install.sh other.env       reads that instead
+#   ./install-machine.sh                 reads ./config.env
+#   ./install-machine.sh other.env       reads that instead
 #
 # A FIRST MASTER AND NOTHING ELSE. Everything after it — adopting a machine,
 # deploying a slave, onboarding a consumer or a tenant — is the Manager's, and
@@ -21,7 +21,7 @@
 # Python. JSON would cost every operator a dependency, and it cannot carry the
 # one thing that file needs most — a sentence saying what a value is.
 #
-# THE TWIN OF install.ps1, doing the same four things in the same order: refuse a
+# THE TWIN OF install-machine.ps1, doing the same four things in the same order: refuse a
 # config anyone else can read, carry it over, open one session, keep every line
 # that comes back. The installation itself is driver.sh and it runs ON THE
 # MACHINE — nothing is fetched here and nothing is carried from this disk, so what

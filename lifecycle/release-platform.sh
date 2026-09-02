@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-# release.sh — cut a release of the platform tree and put ONE installation on
-# it. PowerShell twin: release.ps1 (same folder), which does the same in the
-# same order and prints the same lines. release/test.sh measures that.
+# release-platform.sh — cut a release of the platform tree and put ONE
+# installation on it. PowerShell twin: release-platform.ps1 (same folder), which
+# does the same in the same order and prints the same lines. lifecycle/test.sh
+# measures that.
 # =============================================================================
 #
 # USAGE (run from anywhere inside a hostyour-cloud checkout)
-#   bash release/release.sh <x.y.z> <stable|beta|alpha> <fqdn>
+#   bash lifecycle/release-platform.sh <x.y.z> <stable|beta|alpha> <fqdn>
 #
 # THE THREE INPUTS
 #   version  — x.y.z, no leading zeros. EVERY RELEASE IS A PATCH BUMP: the first
@@ -43,13 +44,15 @@
 # clusters/argocd or clusters/bootstrap. Those files carry one installation's own
 # domain, name, stage and role where this tree carries markers, and writing them
 # is the branch programs' act in the catalogue repository — re-run by
-# regenerate-branch, which is the act a person performs after this one. A second
+# regenerate-branch, which regenerate-install-branch.sh beside this file performs
+# on the machine, and which is the act a person performs after this one. A second
 # implementation of that stamping beside them would disagree with them the first
 # time either was corrected.
 #
 # THE ORDER IS PIN, THEN REGENERATE, and they are two acts on purpose. Between
-# them somebody can read what the pin now says and stop. This one ends by
-# printing the second, with the ref already filled in.
+# them somebody can read what the pin now says and stop. This one ends by naming
+# the second, which reads the ref off the pin this one writes rather than being
+# told it a second time.
 #
 # THE TAG GOES ON origin/master AND NEVER ON THE LOCAL BRANCH. What is released
 # is what the remote publishes; a local master may carry commits nobody else has,
@@ -113,7 +116,7 @@ CHANNEL="${2:-}"
 FQDN="${3:-}"
 
 [ -n "$VERSION" ] && [ -n "$CHANNEL" ] && [ -n "$FQDN" ] \
-  || die 'usage: release/release.sh <x.y.z> <stable|beta|alpha> <fqdn>' 64
+  || die 'usage: lifecycle/release-platform.sh <x.y.z> <stable|beta|alpha> <fqdn>' 64
 [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
   || die "version must be x.y.z with no leading zeros (got '$VERSION')" 64
 case "$CHANNEL" in
@@ -229,6 +232,7 @@ else
   say "release: pinned $FQDN to $TAG in $MAP"
 fi
 
-say "release: $FQDN is pinned. It STANDS on that release once its branch is regenerated, on the machine, from the catalogue root:"
-say 'release:     ansiwise regenerate-branch --role master --mode run --answers <file>'
-say "release: with platform_ref: $TAG in that answers file. That answer and this pin are two statements, and nothing but you holds them together."
+say "release: $FQDN is pinned. It STANDS on that release once its branch is regenerated, which is the second act and is performed from a checkout of the platform tree:"
+say "release:     bash lifecycle/regenerate-install-branch.sh $FQDN"
+say "release:     pwsh ./lifecycle/regenerate-install-branch.ps1 $FQDN"
+say "release: that script reads $TAG off the pin this run just wrote, so the ref is stated once and a regeneration cannot be aimed at a state the map does not record."

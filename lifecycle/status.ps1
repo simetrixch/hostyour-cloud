@@ -1,25 +1,26 @@
 # =============================================================================
 # status.ps1 — which platform release each installation stands on, and how far
 # origin/master has moved past it. Bash twin: status.sh (same folder), which
-# answers identically on the same repository. release/test.sh measures that.
+# answers identically on the same repository. lifecycle/test.sh measures that.
 # =============================================================================
 #
-#   pwsh ./release/status.ps1                          every installation
-#   pwsh ./release/status.ps1 apps3.example.com        that one
+#   pwsh ./lifecycle/status.ps1                          every installation
+#   pwsh ./lifecycle/status.ps1 apps3.example.com        that one
 #
 # IT ONLY ANSWERS. Nothing here writes a file, a tag, a commit or a ref. The one
 # thing it changes is this checkout's view of the remote, because an answer read
-# from a stale view is not an answer. release.ps1 beside it is the half that acts.
+# from a stale view is not an answer. release-platform.ps1 beside it is the half
+# that acts.
 #
 # WHAT AN INSTALLATION IS, HERE. A branch of this repository named after the
 # cluster's own domain, carrying `clusters/active/<branch>.yaml` — its cluster
 # map. That file is what makes a branch an installation rather than a working
 # branch, so it is what this looks for, and a branch without one is skipped
-# without comment. migrations/migrate.sh decides the same question the same way,
-# and nothing holds the two statements of it together.
+# without comment. migrate-install-branches.sh decides the same question the same
+# way, and nothing holds the two statements of it together.
 #
 # WHAT THE PIN IS. One line in that map, `release: <tag>`, naming the state of
-# the product tree the installation stands on. release.ps1 writes it. A machine
+# the product tree the installation stands on. release-platform.ps1 writes it. A machine
 # whose map records nothing cannot be told apart from one that is level, which is
 # why an absent line is reported as loudly as a stale one.
 #
@@ -160,7 +161,7 @@ foreach ($installation in $installations) {
   $pin = Read-MapValue $installation 'release'
   if (-not $pin) {
     Say '  release: none'
-    Say '  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release.sh / release.ps1 beside this file writes that line.'
+    Say '  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh / release-platform.ps1 beside this file writes that line.'
     continue
   }
   Say "  release: $pin"

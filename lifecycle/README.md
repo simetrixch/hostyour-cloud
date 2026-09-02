@@ -1,18 +1,66 @@
-# installer
+# lifecycle
 
-A first master, installed from zero, from an operator's own machine — Windows, Linux or macOS.
+The life of one installation: the act that brings it into being, every release put on it afterwards,
+and the shape-changes of what exists only on its own branch. Everything here runs from an operator's
+own machine — Windows, Linux or macOS — and nothing here runs in a cluster.
+
+**The subject is an installation, not a delivery.** A first install delivers nothing; it creates. The
+acts below share a subject rather than a purpose, which is why they stand in one folder.
+
+## The acts
+
+| act | what it does |
+|---|---|
+| `install-machine.sh` / `.ps1` | installs a first master from zero: a machine, a branch, a cluster and the platform services on it |
+| `release-platform.sh` / `.ps1` | cuts a release of the platform tree and pins ONE installation to it |
+| `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
+| `migrate-install-branches.sh` / `.ps1` | corrects, across every install branch, the facts that are born there |
+| `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |
+
+Every one of them is written twice, and the two spellings are held to doing the same in the same
+order and printing the same bytes. `test.sh` is what measures that, against fixtures it builds in a
+temporary directory.
+
+**Two files here are not a person's entry point.** `driver.sh` is the installation itself and
+`regenerate-driver.sh` is the regeneration itself: both run ON THE MACHINE, and the launcher beside
+them carries them over the session it opens. Neither is started by hand.
+
+`migrations/NNNN-<what-it-does>.sh` are the numbered migrations, applied once per branch in the order
+their numbers state.
+
+## The order the acts stand in
+
+A release is TWO acts and they are separate on purpose. `release-platform` puts the tag on the remote
+and writes `release: <tag>` into `clusters/active/<fqdn>.yaml` on the installation's own branch —
+and stops. The installation still stands on the state before it. `regenerate-install-branch` is what
+brings the branch to the pin: it reads the ref off that line rather than being told it again, so the
+pin and the regeneration are one statement instead of two that can disagree. Between the two acts
+somebody can read what the pin now says and stop.
+
+`migrate-install-branches` is neither of those. What a merge brings and what a regeneration stamps
+both have a path already; what is born on a branch and exists nowhere else — the cluster maps,
+`configs/config.<stage>`, the files under `installation/` — has none, and that is the only thing a
+migration is for.
+
+# Installing a first master
+
+A first master, installed from zero, from an operator's own machine.
 
 ## What this is, and what it is not
 
-It is a **driver**. It runs no step and decides nothing an answer should decide. It reads the order
-out of [`clusters/platform/install-order.yaml`](../../clusters/platform/install-order.yaml)'s own
-sequence, puts the two things a program cannot put there itself — the engine and the catalogue — and
-then invokes the five programs that make a master, each of them three times. That file states the
-division in its own
-words:
+It is a **driver**. It runs no step and decides nothing an answer should decide: it puts the two
+things a program cannot put there itself — the engine and the catalogue — and then invokes the five
+programs that make a master, each of them three times.
+[`clusters/platform/install-order.yaml`](../clusters/platform/install-order.yaml) states that
+division in its own words:
 
 > THIS FILE STATES THE ORDER. IT DOES NOT RUN IT. A driver reads the sequence and invokes the
 > programs itself.
+
+**`driver.sh` carries its own copy of that sequence and does not read the file.** So does the
+Manager, in TypeScript. Three carriers of one fact, and the one written to be the answer is the one
+nothing reads; both `driver.sh` and `install-order.yaml` say so in their own headers rather than
+leaving the drift to be discovered.
 
 `ansiwise-client` is the other driver, and the one to prefer when a person is at a screen: it shows
 each step, asks before it acts, and can stop. This exists for the operator who wants one command, one
@@ -20,7 +68,7 @@ transcript, and every line of it kept.
 
 ## Where it stops, and why the sequence is five and not six
 
-`install-order.yaml` names a fifth program for a master, `onboard-manager`, and it is deliberately
+`install-order.yaml` names a sixth program for a master, `onboard-manager`, and it is deliberately
 not run here. It onboards this platform's own Manager **as a consumer**, over the route every other
 consumer takes — which makes it an onboarding, and onboarding is not this tool's to do.
 
@@ -34,13 +82,13 @@ by a script.
 | file | where it runs | what it does |
 |---|---|---|
 | `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the five programs |
-| `install.ps1` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
-| `install.sh` | the operator's machine | the same, for Linux and macOS |
+| `install-machine.ps1` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
+| `install-machine.sh` | the operator's machine | the same, for Linux and macOS |
 
-`install.ps1` is for **Windows** and `install.sh` for **Linux and macOS**. They are held to
-answering identically, and the one real difference is how each asks whether the config is protected:
-Windows says that with an access list and reads it with `icacls`, Linux and macOS say it with a mode
-and read it with `stat`.
+`install-machine.ps1` is for **Windows** and `install-machine.sh` for **Linux and macOS**. They are
+held to answering identically, and the one real difference is how each asks whether the config is
+protected: Windows says that with an access list and reads it with `icacls`, Linux and macOS say it
+with a mode and read it with `stat`.
 
 The two launchers are thin on purpose. **Everything is fetched by the machine itself, and all three
 are public**: the pin out of the platform repository, the two executables out of the release, the
@@ -55,7 +103,7 @@ cp config.example.env ~/apps4.env     # NOT inside a git working tree
 $EDITOR ~/apps4.env                   # 37 values, 10 of them credentials
 chmod 600 ~/apps4.env                 # Windows: icacls, and the launcher says the line
 
-./install.sh ~/apps4.env              # or:  pwsh ./install.ps1 ~/apps4.env
+./install-machine.sh ~/apps4.env      # or:  pwsh ./install-machine.ps1 ~/apps4.env
 ```
 
 **No options.** An installation is a great many statements, and a command line long enough to carry
@@ -68,7 +116,8 @@ operator a dependency, and it cannot carry the one thing that file needs most �
 what a value is.
 
 `config.example.env` is generated from what the five programs actually declare, so it cannot drift
-from them silently.
+from them silently. `regenerate-install-branch` reads the same file, in the same grammar, for the
+same reason: what an installation is, is stated once.
 
 ## Which door it opens
 
@@ -85,6 +134,8 @@ no flag from you:
 
 There is exactly one session either way, so a password is typed at most once: the config travels
 inside a quoted heredoc with `driver.sh` behind it, on that session's own standard input.
+`regenerate-install-branch` opens its session the same way, with `regenerate-driver.sh` behind the
+same heredoc.
 
 **A launcher with no terminal to ask on refuses rather than waits.** Started from a job or a pipe
 against a machine that has no key yet, it says so and exits — a launcher that sits silently on a
@@ -155,3 +206,45 @@ and all of them are shredded with the config on every path `driver.sh` can end o
 The **login** password is not one of them. Where a machine still needs one, `ssh` asks for it on your
 terminal and nothing here ever holds it — it is in no file, no variable and no argument, so there is
 nothing to protect and nothing to rotate.
+
+# Putting a release on an installation
+
+```
+bash lifecycle/release-platform.sh 0.8.123 stable apps4.example.com
+bash lifecycle/regenerate-install-branch.sh apps4.example.com
+bash lifecycle/status.sh
+```
+
+The first cuts the tag on `origin/master`, proves it is on the remote, and writes the pin into the
+installation's own cluster map. It refuses before it mints anything where the branch does not exist,
+where the map states no stage, or where the channel's ceiling does not admit that installation's
+stage: `alpha` reaches a dev installation only, `beta` dev and test, `stable` any.
+
+The second opens one session to the machine and runs `regenerate-branch` there, in the three modes
+that gate one another. It takes the domain and nothing else — the ref comes off the pin, and the
+answers come from the same `NAME='value'` config an installation was installed with. It refuses,
+before it touches the machine, where the branch does not exist, where the map carries no `release:`
+line, and where the tag that line names is not on the remote; every one of those refusals says that
+nothing has been changed, because at every one of them nothing has.
+
+The third only answers, and writes nothing at all.
+
+# Migrating what is born on a branch
+
+```
+bash lifecycle/migrate-install-branches.sh            # report; push nothing
+bash lifecycle/migrate-install-branches.sh --write    # the same work, plus the push
+```
+
+A migration is `migrations/NNNN-<what-it-does>.sh`: four digits, unique, applied once per branch, in
+numeric order. It is handed a checkout standing on the branch and the branch's name, reads what the
+branch IS from the branch's own files, does what there is to do or nothing, and prints ONE line
+saying which. Each branch records what it has had in `installation/migrations`, in the same commit as
+the change — the branch is the one carrier every machine of an installation reads the same way.
+
+A report run builds its commits in a throwaway clone and discards them, so its report is a
+measurement of the real work rather than a prediction. `--write` adds the push and nothing else.
+
+The PowerShell twin asks for that push as `-Write`, and it is the one place the two spellings are
+spelled apart: PowerShell binds an argument beginning with a dash as a parameter of its own, so
+`--write` is refused before a line of the script runs.
