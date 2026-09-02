@@ -49,6 +49,12 @@ die()  { bad "$1"; exit "${2:-1}"; }
 # ------------------------------------------------------------ what it was told
 readonly CONFIG="${1:?the config's path is this script's only argument}"
 [ -r "$CONFIG" ] || die "there is no config at $CONFIG, and it is the only thing this is told" 64
+# WHETHER A DIRTY CHECKOUT MAY BE THROWN AWAY, stated by the person and never
+# assumed. Only the deployment programs write /srv/hostyour-cloud and they commit
+# what they write, so anything uncommitted there is debris a failed run left. It
+# is still not discarded on its own: a merge that folds away whatever is lying
+# around hides the reason it was lying around, and the refusal is what names it.
+readonly DISCARD="${2:-}"
 
 ANSWERS_DIR=''
 # SHREDDED ON EVERY PATH. A credential that outlives the act it was handed over
@@ -105,6 +111,29 @@ ANSWERS_DIR="/home/$OPERATOR/.regenerate-answers"
 # so master is the only role it admits. What every part of this machine carries
 # is the `role` ANSWER, which the config states and the stamps below write.
 readonly RUN_ROLE=master
+# THE TREE THE MERGE HAPPENS IN. The program names it on every `repository:` row
+# of its own; this names it once, to look at before the program is started.
+readonly PLATFORM=/srv/hostyour-cloud
+
+# ------------------------------------------- what a failed run may have left
+# NAMED BEFORE IT GOES, every path of it. A count says nothing a reader can act
+# on, and the one thing worth knowing about a discarded change is what it was.
+DIRTY=$(git -C "$PLATFORM" status --porcelain 2>/dev/null || true)
+if [ -n "$DIRTY" ]; then
+  if [ "$DISCARD" = "--discard" ]; then
+    say "$PLATFORM carries changes nothing declared, and --discard was given, so they are thrown away:"
+    printf '%s
+' "$DIRTY" | while IFS= read -r line; do say "    $line"; done
+    git -C "$PLATFORM" reset --quiet --hard       || die "could not put $PLATFORM back on its own last commit" 70
+    git -C "$PLATFORM" clean -qfd       || die "could not remove what was left standing in $PLATFORM" 70
+    good "$PLATFORM stands on its own last commit again"
+  else
+    say "$PLATFORM carries changes nothing declared:"
+    printf '%s
+' "$DIRTY" | while IFS= read -r line; do say "    $line"; done
+    die "a merge over them would fold changes nobody declared into the merge commit. Read them above: they are either debris a failed run left, in which case start this again with --discard, or something that belongs in the repository, in which case it belongs there and not on a machine" 65
+  fi
+fi
 
 # ONLY WHAT AN INSTALLATION ALREADY HAS. Both of these are put here by
 # deploy-host at an installation's birth, and this is a regeneration: a machine

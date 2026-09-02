@@ -85,10 +85,20 @@ value_in_text() {
   return 1
 }
 
-FQDN="${1:-}"
-CONFIG="${2:-}"
+FQDN=""
+CONFIG=""
+DISCARD=""
+# --discard IS TAKEN FROM ANY POSITION, because it is the argument a person adds
+# to a command they have already typed once and had refused.
+for arg in "$@"; do
+  case "$arg" in
+    --discard) DISCARD=--discard ;;
+    *) if [ -z "$FQDN" ]; then FQDN="$arg"; elif [ -z "$CONFIG" ]; then CONFIG="$arg"; else
+         die "lifecycle/regenerate-install-branch.sh was given more than it takes: $arg" 64; fi ;;
+  esac
+done
 
-[ -n "$FQDN" ] || die 'usage: lifecycle/regenerate-install-branch.sh <fqdn> [config]' 64
+[ -n "$FQDN" ] || die 'usage: lifecycle/regenerate-install-branch.sh <fqdn> [config] [--discard]' 64
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRIVER="$HERE/regenerate-driver.sh"
@@ -241,7 +251,7 @@ fi
   printf "PLATFORM_REF='%s'\n" "$PIN"
   printf 'AW_CONFIG_END\n'
   tr -d $'\r' < "$DRIVER"
-} | ssh "${BASE[@]}" "${DOOR[@]}" "$TARGET" 'bash -s -- "$HOME/.aw-regenerate.env"'
+} | ssh "${BASE[@]}" "${DOOR[@]}" "$TARGET" "bash -s -- \"\$HOME/.aw-regenerate.env\" $DISCARD"
 REGENERATED=${PIPESTATUS[1]}
 
 if [ "$REGENERATED" -eq 0 ]; then

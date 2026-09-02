@@ -53,7 +53,10 @@
 [CmdletBinding()]
 param(
   [Parameter(Position = 0)][string] $Fqdn = '',
-  [Parameter(Position = 1)][string] $ConfigFile = ''
+  [Parameter(Position = 1)][string] $ConfigFile = '',
+  # THROWN AWAY ONLY WHEN SAID. The twin takes -Discard where the shell takes
+  # --discard: PowerShell binds a double dash as a parameter name of its own.
+  [switch] $Discard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -300,7 +303,8 @@ $stream = ("umask 077${lf}cat > `"`$1`" <<'AW_CONFIG_END'${lf}" +
 $spokenBefore = $OutputEncoding
 try {
   $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-  $stream | & ssh @base @door $target 'bash -s -- "$HOME/.aw-regenerate.env"'
+  $remote = if ($Discard) { 'bash -s -- "$HOME/.aw-regenerate.env" --discard' } else { 'bash -s -- "$HOME/.aw-regenerate.env"' }
+  $stream | & ssh @base @door $target $remote
   $regenerated = $LASTEXITCODE
 }
 finally {
