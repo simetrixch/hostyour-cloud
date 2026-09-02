@@ -122,6 +122,13 @@ BUILD_PLANE_FQDN=
 # nothing.
 CATALOG_REPO=
 
+# The repository the DEPLOYMENT PROGRAMS are read from, written as owner/name. It is the platform's
+# own and public, the same for every installation, and the row that clones the catalogue onto this
+# machine reads it from HERE and names no credential beside it. It is not CATALOG_REPO above: that
+# one is your tenant charts, private and reached with a read credential, and a single key for both
+# clones whichever repository the last writer meant.
+DEPLOY_REPO=
+
 # ── the mailboxes ────────────────────────────────────────────────────────────────────────────────
 
 # A real mailbox the certificate authority writes to before a certificate expires and when its

@@ -1,0 +1,218 @@
+{
+  "id": "20260902T093726Z-2289548-6daa5caa",
+  "program": "deploy-host",
+  "mode": "test",
+  "argv": [
+    "deploy-host",
+    "--programs",
+    "/srv/ansiwise-catalog/ansiwise/programs",
+    "--config",
+    "/srv/ansiwise-catalog/ansiwise.yaml",
+    "--answers",
+    "/home/digi6/.installer-answers/deploy-host.json",
+    "--runs",
+    "/var/lib/ansiwise/runs",
+    "--role",
+    "master",
+    "--stage",
+    "prod",
+    "--fqdn",
+    "apps6.digitacloud.app",
+    "--mode",
+    "test"
+  ],
+  "start": "2026-09-02T09:37:26.294930Z",
+  "stage": "prod",
+  "role": "master",
+  "fqdn": "apps6.digitacloud.app",
+  "commit": "2fcd52e246f032fd9b9f8e00b71a074a1f433bb3",
+  "fingerprint": "7f9c4328605c2f267dc89b0a6d447ad834c9682b666f9927b76103396d00903a",
+  "waived": [],
+  "end": "2026-09-02T09:37:28.259998Z",
+  "exit_code": 0,
+  "steps": [
+    {
+      "step": "require_commands",
+      "source": "lib/src/steps/host/require_commands.dart:18",
+      "start": "2026-09-02T09:37:26.335012Z",
+      "end": "2026-09-02T09:37:26.369258Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 1,
+      "last_event": 17,
+      "issues": []
+    },
+    {
+      "step": "require_pinned_ubuntu",
+      "source": "lib/src/steps/host/require_pinned_ubuntu.dart:11",
+      "start": "2026-09-02T09:37:26.369319Z",
+      "end": "2026-09-02T09:37:26.372243Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 18,
+      "last_event": 20,
+      "issues": []
+    },
+    {
+      "step": "require_machine_size",
+      "source": "lib/src/steps/host/require_machine_size.dart:12",
+      "start": "2026-09-02T09:37:26.372297Z",
+      "end": "2026-09-02T09:37:26.386449Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 21,
+      "last_event": 25,
+      "issues": []
+    },
+    {
+      "step": "require_free_disk",
+      "source": "lib/src/steps/host/require_free_disk.dart:8",
+      "start": "2026-09-02T09:37:26.386514Z",
+      "end": "2026-09-02T09:37:26.397556Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 26,
+      "last_event": 30,
+      "issues": []
+    },
+    {
+      "step": "install_packages",
+      "source": "lib/src/steps/host/install_packages.dart:14",
+      "start": "2026-09-02T09:37:26.397610Z",
+      "end": "2026-09-02T09:37:26.464535Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 31,
+      "last_event": 43,
+      "issues": []
+    },
+    {
+      "step": "require_commands",
+      "source": "lib/src/steps/host/require_commands.dart:18",
+      "start": "2026-09-02T09:37:26.464592Z",
+      "end": "2026-09-02T09:37:26.485469Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 44,
+      "last_event": 56,
+      "issues": []
+    },
+    {
+      "step": "remove_unused_packages",
+      "source": "lib/src/steps/host/remove_unused_packages.dart:8",
+      "start": "2026-09-02T09:37:26.485519Z",
+      "end": "2026-09-02T09:37:27.173587Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 57,
+      "last_event": 61,
+      "issues": []
+    },
+    {
+      "step": "clean_package_cache",
+      "source": "lib/src/steps/host/clean_package_cache.dart:10",
+      "start": "2026-09-02T09:37:27.173644Z",
+      "end": "2026-09-02T09:37:27.177842Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 62,
+      "last_event": 64,
+      "issues": []
+    },
+    {
+      "step": "install_authorized_key",
+      "source": "lib/src/steps/host/install_authorized_key.dart:113",
+      "start": "2026-09-02T09:37:27.177896Z",
+      "end": "2026-09-02T09:37:27.196487Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 65,
+      "last_event": 71,
+      "issues": []
+    },
+    {
+      "step": "require_key_login_possible",
+      "source": "lib/src/steps/host/require_key_login_possible.dart:20",
+      "start": "2026-09-02T09:37:27.196542Z",
+      "end": "2026-09-02T09:37:27.289958Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 72,
+      "last_event": 86,
+      "issues": []
+    },
+    {
+      "step": "git_clone",
+      "source": "lib/src/steps/git_clone.dart:32",
+      "start": "2026-09-02T09:37:27.290008Z",
+      "end": "2026-09-02T09:37:27.385814Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 87,
+      "last_event": 98,
+      "issues": []
+    },
+    {
+      "step": "git_clone",
+      "source": "lib/src/steps/git_clone.dart:32",
+      "start": "2026-09-02T09:37:27.385890Z",
+      "end": "2026-09-02T09:37:27.988219Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 99,
+      "last_event": 114,
+      "issues": []
+    },
+    {
+      "step": "hand_directory_to_account",
+      "source": "lib/src/steps/host/hand_directory_to_account.dart:39",
+      "start": "2026-09-02T09:37:27.988288Z",
+      "end": "2026-09-02T09:37:28.132392Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 115,
+      "last_event": 123,
+      "issues": []
+    },
+    {
+      "step": "hand_directory_to_account",
+      "source": "lib/src/steps/host/hand_directory_to_account.dart:39",
+      "start": "2026-09-02T09:37:28.132471Z",
+      "end": "2026-09-02T09:37:28.259882Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 124,
+      "last_event": 132,
+      "issues": []
+    }
+  ],
+  "issues": []
+}

@@ -1,0 +1,186 @@
+{"kind":"run-started","sequence":0,"at":"2026-09-02T09:37:33.776874Z","program":"deploy-host","mode":"run"}
+{"kind":"step-started","sequence":1,"at":"2026-09-02T09:37:33.777087Z","step":"require_commands","source":"lib/src/steps/host/require_commands.dart:18"}
+{"kind":"command-started","sequence":2,"at":"2026-09-02T09:37:33.777272Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","apt-get"],"elevated":false}
+{"kind":"command-finished","sequence":3,"at":"2026-09-02T09:37:33.782611Z","step":"require_commands","exit_code":0,"elapsed_micros":5252,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":4,"at":"2026-09-02T09:37:33.782722Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","dpkg-query"],"elevated":false}
+{"kind":"command-finished","sequence":5,"at":"2026-09-02T09:37:33.787389Z","step":"require_commands","exit_code":0,"elapsed_micros":4598,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":6,"at":"2026-09-02T09:37:33.787508Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","nproc"],"elevated":false}
+{"kind":"command-finished","sequence":7,"at":"2026-09-02T09:37:33.792303Z","step":"require_commands","exit_code":0,"elapsed_micros":4725,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":8,"at":"2026-09-02T09:37:33.792422Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","df"],"elevated":false}
+{"kind":"command-finished","sequence":9,"at":"2026-09-02T09:37:33.796990Z","step":"require_commands","exit_code":0,"elapsed_micros":4487,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":10,"at":"2026-09-02T09:37:33.797177Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","getent"],"elevated":false}
+{"kind":"command-finished","sequence":11,"at":"2026-09-02T09:37:33.801805Z","step":"require_commands","exit_code":0,"elapsed_micros":4535,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":12,"at":"2026-09-02T09:37:33.801920Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","sshd"],"elevated":false}
+{"kind":"command-finished","sequence":13,"at":"2026-09-02T09:37:33.806813Z","step":"require_commands","exit_code":0,"elapsed_micros":4820,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":14,"at":"2026-09-02T09:37:33.806934Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","stat"],"elevated":false}
+{"kind":"command-finished","sequence":15,"at":"2026-09-02T09:37:33.812437Z","step":"require_commands","exit_code":0,"elapsed_micros":5429,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":16,"at":"2026-09-02T09:37:33.812963Z","step":"require_commands","level":"info","message":"nothing to do: apt-get, dpkg-query, nproc, df, getent, sshd, stat are on the path"}
+{"kind":"step-finished","sequence":17,"at":"2026-09-02T09:37:33.813007Z","step":"require_commands","verdict":{"label":"ok"},"elapsed_micros":35921,"standing":"proven"}
+{"kind":"step-started","sequence":18,"at":"2026-09-02T09:37:33.813079Z","step":"require_pinned_ubuntu","source":"lib/src/steps/host/require_pinned_ubuntu.dart:11"}
+{"kind":"log","sequence":19,"at":"2026-09-02T09:37:33.815912Z","step":"require_pinned_ubuntu","level":"info","message":"nothing to do: ubuntu 26.04"}
+{"kind":"step-finished","sequence":20,"at":"2026-09-02T09:37:33.816094Z","step":"require_pinned_ubuntu","verdict":{"label":"ok"},"elapsed_micros":3015,"standing":"proven"}
+{"kind":"step-started","sequence":21,"at":"2026-09-02T09:37:33.816239Z","step":"require_machine_size","source":"lib/src/steps/host/require_machine_size.dart:12"}
+{"kind":"command-started","sequence":22,"at":"2026-09-02T09:37:33.816275Z","step":"require_machine_size","argv":["nproc"],"elevated":false}
+{"kind":"command-finished","sequence":23,"at":"2026-09-02T09:37:33.826749Z","step":"require_machine_size","exit_code":0,"elapsed_micros":10423,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":24,"at":"2026-09-02T09:37:33.830318Z","step":"require_machine_size","level":"info","message":"nothing to do: 24 processors and 63737472 kB of memory"}
+{"kind":"step-finished","sequence":25,"at":"2026-09-02T09:37:33.830426Z","step":"require_machine_size","verdict":{"label":"ok"},"elapsed_micros":14187,"standing":"proven"}
+{"kind":"step-started","sequence":26,"at":"2026-09-02T09:37:33.830478Z","step":"require_free_disk","source":"lib/src/steps/host/require_free_disk.dart:8"}
+{"kind":"command-started","sequence":27,"at":"2026-09-02T09:37:33.830632Z","step":"require_free_disk","argv":["df","-Pk","/"],"elevated":false}
+{"kind":"command-finished","sequence":28,"at":"2026-09-02T09:37:33.842656Z","step":"require_free_disk","exit_code":0,"elapsed_micros":11973,"stdout_lines":2,"stderr_lines":0}
+{"kind":"log","sequence":29,"at":"2026-09-02T09:37:33.842846Z","step":"require_free_disk","level":"info","message":"nothing to do: 92 GB free on /"}
+{"kind":"step-finished","sequence":30,"at":"2026-09-02T09:37:33.842875Z","step":"require_free_disk","verdict":{"label":"ok"},"elapsed_micros":12397,"standing":"proven"}
+{"kind":"step-started","sequence":31,"at":"2026-09-02T09:37:33.842914Z","step":"install_packages","source":"lib/src/steps/host/install_packages.dart:14"}
+{"kind":"command-started","sequence":32,"at":"2026-09-02T09:37:33.842943Z","step":"install_packages","argv":["dpkg-query","-W","-f=${Status}","git"],"elevated":false}
+{"kind":"command-finished","sequence":33,"at":"2026-09-02T09:37:33.859950Z","step":"install_packages","exit_code":0,"elapsed_micros":16961,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":34,"at":"2026-09-02T09:37:33.860064Z","step":"install_packages","argv":["dpkg-query","-W","-f=${Status}","openssl"],"elevated":false}
+{"kind":"command-finished","sequence":35,"at":"2026-09-02T09:37:33.873093Z","step":"install_packages","exit_code":0,"elapsed_micros":12896,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":36,"at":"2026-09-02T09:37:33.873267Z","step":"install_packages","argv":["dpkg-query","-W","-f=${Status}","curl"],"elevated":false}
+{"kind":"command-finished","sequence":37,"at":"2026-09-02T09:37:33.896464Z","step":"install_packages","exit_code":0,"elapsed_micros":23112,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":38,"at":"2026-09-02T09:37:33.896625Z","step":"install_packages","argv":["dpkg-query","-W","-f=${Status}","jq"],"elevated":false}
+{"kind":"command-finished","sequence":39,"at":"2026-09-02T09:37:33.913319Z","step":"install_packages","exit_code":0,"elapsed_micros":16604,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":40,"at":"2026-09-02T09:37:33.913439Z","step":"install_packages","argv":["dpkg-query","-W","-f=${Status}","apache2-utils"],"elevated":false}
+{"kind":"command-finished","sequence":41,"at":"2026-09-02T09:37:33.937012Z","step":"install_packages","exit_code":0,"elapsed_micros":23505,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":42,"at":"2026-09-02T09:37:33.937167Z","step":"install_packages","level":"info","message":"nothing to do: git, openssl, curl, jq, apache2-utils are installed"}
+{"kind":"step-finished","sequence":43,"at":"2026-09-02T09:37:33.937199Z","step":"install_packages","verdict":{"label":"ok"},"elapsed_micros":94286,"standing":"proven"}
+{"kind":"step-started","sequence":44,"at":"2026-09-02T09:37:33.937238Z","step":"require_commands","source":"lib/src/steps/host/require_commands.dart:18"}
+{"kind":"command-started","sequence":45,"at":"2026-09-02T09:37:33.937267Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","git"],"elevated":false}
+{"kind":"command-finished","sequence":46,"at":"2026-09-02T09:37:33.942374Z","step":"require_commands","exit_code":0,"elapsed_micros":5052,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":47,"at":"2026-09-02T09:37:33.942497Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","openssl"],"elevated":false}
+{"kind":"command-finished","sequence":48,"at":"2026-09-02T09:37:33.948200Z","step":"require_commands","exit_code":0,"elapsed_micros":5634,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":49,"at":"2026-09-02T09:37:33.948324Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","curl"],"elevated":false}
+{"kind":"command-finished","sequence":50,"at":"2026-09-02T09:37:33.955094Z","step":"require_commands","exit_code":0,"elapsed_micros":6710,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":51,"at":"2026-09-02T09:37:33.955282Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","jq"],"elevated":false}
+{"kind":"command-finished","sequence":52,"at":"2026-09-02T09:37:33.960669Z","step":"require_commands","exit_code":0,"elapsed_micros":5301,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":53,"at":"2026-09-02T09:37:33.960800Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","htpasswd"],"elevated":false}
+{"kind":"command-finished","sequence":54,"at":"2026-09-02T09:37:33.965795Z","step":"require_commands","exit_code":0,"elapsed_micros":4908,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":55,"at":"2026-09-02T09:37:33.965920Z","step":"require_commands","level":"info","message":"nothing to do: git, openssl, curl, jq, htpasswd are on the path"}
+{"kind":"step-finished","sequence":56,"at":"2026-09-02T09:37:33.965951Z","step":"require_commands","verdict":{"label":"ok"},"elapsed_micros":28713,"standing":"proven"}
+{"kind":"step-started","sequence":57,"at":"2026-09-02T09:37:33.966004Z","step":"remove_unused_packages","source":"lib/src/steps/host/remove_unused_packages.dart:8"}
+{"kind":"command-started","sequence":58,"at":"2026-09-02T09:37:33.966040Z","step":"remove_unused_packages","argv":["apt-get","--dry-run","autoremove"],"elevated":false}
+{"kind":"command-finished","sequence":59,"at":"2026-09-02T09:37:34.565361Z","step":"remove_unused_packages","exit_code":0,"elapsed_micros":599252,"stdout_lines":9,"stderr_lines":0}
+{"kind":"log","sequence":60,"at":"2026-09-02T09:37:34.565579Z","step":"remove_unused_packages","level":"info","message":"nothing to do: nothing on this machine is unused"}
+{"kind":"step-finished","sequence":61,"at":"2026-09-02T09:37:34.565618Z","step":"remove_unused_packages","verdict":{"label":"ok"},"elapsed_micros":599614,"standing":"proven"}
+{"kind":"step-started","sequence":62,"at":"2026-09-02T09:37:34.565679Z","step":"clean_package_cache","source":"lib/src/steps/host/clean_package_cache.dart:10"}
+{"kind":"log","sequence":63,"at":"2026-09-02T09:37:34.568737Z","step":"clean_package_cache","level":"info","message":"nothing to do: the package archive is empty"}
+{"kind":"step-finished","sequence":64,"at":"2026-09-02T09:37:34.568856Z","step":"clean_package_cache","verdict":{"label":"ok"},"elapsed_micros":3178,"standing":"proven"}
+{"kind":"step-started","sequence":65,"at":"2026-09-02T09:37:34.568912Z","step":"install_authorized_key","source":"lib/src/steps/host/install_authorized_key.dart:113"}
+{"kind":"command-started","sequence":66,"at":"2026-09-02T09:37:34.568955Z","step":"install_authorized_key","argv":["getent","passwd","digi6"],"elevated":false}
+{"kind":"command-finished","sequence":67,"at":"2026-09-02T09:37:34.575158Z","step":"install_authorized_key","exit_code":0,"elapsed_micros":6144,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":68,"at":"2026-09-02T09:37:34.575381Z","step":"install_authorized_key","argv":["ls","-A","--","/home/digi6/.ssh"],"elevated":false}
+{"kind":"command-finished","sequence":69,"at":"2026-09-02T09:37:34.585419Z","step":"install_authorized_key","exit_code":0,"elapsed_micros":9975,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":70,"at":"2026-09-02T09:37:34.586644Z","step":"install_authorized_key","level":"info","message":"nothing to do: the key is already in /home/digi6/.ssh/authorized_keys"}
+{"kind":"step-finished","sequence":71,"at":"2026-09-02T09:37:34.586694Z","step":"install_authorized_key","verdict":{"label":"ok"},"elapsed_micros":17783,"standing":"proven"}
+{"kind":"step-started","sequence":72,"at":"2026-09-02T09:37:34.586725Z","step":"require_key_login_possible","source":"lib/src/steps/host/require_key_login_possible.dart:20"}
+{"kind":"command-started","sequence":73,"at":"2026-09-02T09:37:34.586922Z","step":"require_key_login_possible","argv":["sshd","-T"],"elevated":true}
+{"kind":"command-finished","sequence":74,"at":"2026-09-02T09:37:34.637820Z","step":"require_key_login_possible","exit_code":0,"elapsed_micros":50741,"stdout_lines":103,"stderr_lines":1}
+{"kind":"command-started","sequence":75,"at":"2026-09-02T09:37:34.638178Z","step":"require_key_login_possible","argv":["getent","passwd","digi6"],"elevated":false}
+{"kind":"command-finished","sequence":76,"at":"2026-09-02T09:37:34.647060Z","step":"require_key_login_possible","exit_code":0,"elapsed_micros":6377,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":77,"at":"2026-09-02T09:37:34.647250Z","step":"require_key_login_possible","argv":["stat","-c","%a","/home/digi6/.ssh"],"elevated":false}
+{"kind":"command-finished","sequence":78,"at":"2026-09-02T09:37:34.657220Z","step":"require_key_login_possible","exit_code":0,"elapsed_micros":9891,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":79,"at":"2026-09-02T09:37:34.657381Z","step":"require_key_login_possible","argv":["stat","-c","%a","/home/digi6"],"elevated":false}
+{"kind":"command-finished","sequence":80,"at":"2026-09-02T09:37:34.665321Z","step":"require_key_login_possible","exit_code":0,"elapsed_micros":7868,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":81,"at":"2026-09-02T09:37:34.665433Z","step":"require_key_login_possible","argv":["ls","-A","--","/home/digi6/.ssh"],"elevated":false}
+{"kind":"command-finished","sequence":82,"at":"2026-09-02T09:37:34.672720Z","step":"require_key_login_possible","exit_code":0,"elapsed_micros":7221,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":83,"at":"2026-09-02T09:37:34.674933Z","step":"require_key_login_possible","argv":["stat","-c","%a","/home/digi6/.ssh/authorized_keys"],"elevated":false}
+{"kind":"command-finished","sequence":84,"at":"2026-09-02T09:37:34.681974Z","step":"require_key_login_possible","exit_code":0,"elapsed_micros":6912,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":85,"at":"2026-09-02T09:37:34.682169Z","step":"require_key_login_possible","level":"info","message":"nothing to do: sshd would accept this key for digi6"}
+{"kind":"step-finished","sequence":86,"at":"2026-09-02T09:37:34.682215Z","step":"require_key_login_possible","verdict":{"label":"ok"},"elapsed_micros":95490,"standing":"proven"}
+{"kind":"step-started","sequence":87,"at":"2026-09-02T09:37:34.682270Z","step":"git_clone","source":"lib/src/steps/git_clone.dart:32"}
+{"kind":"command-started","sequence":88,"at":"2026-09-02T09:37:34.682389Z","step":"git_clone","argv":["stat","-c","%U","/srv/hostyour-cloud"],"elevated":true}
+{"kind":"command-finished","sequence":89,"at":"2026-09-02T09:37:34.726153Z","step":"git_clone","exit_code":0,"elapsed_micros":43703,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":90,"at":"2026-09-02T09:37:34.726236Z","step":"git_clone","argv":["stat","-c","%U","/srv/hostyour-cloud/.git"],"elevated":true}
+{"kind":"command-finished","sequence":91,"at":"2026-09-02T09:37:34.776243Z","step":"git_clone","exit_code":0,"elapsed_micros":49931,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":92,"at":"2026-09-02T09:37:34.776503Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","rev-parse","--is-inside-work-tree"],"elevated":false}
+{"kind":"command-finished","sequence":93,"at":"2026-09-02T09:37:34.784045Z","step":"git_clone","exit_code":0,"elapsed_micros":7464,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":94,"at":"2026-09-02T09:37:34.784197Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","remote","get-url","origin"],"elevated":false}
+{"kind":"command-finished","sequence":95,"at":"2026-09-02T09:37:34.789898Z","step":"git_clone","exit_code":0,"elapsed_micros":5629,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":96,"at":"2026-09-02T09:37:34.790035Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":97,"at":"2026-09-02T09:37:34.796416Z","step":"git_clone","exit_code":0,"elapsed_micros":6300,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":98,"at":"2026-09-02T09:37:34.796680Z","step":"git_clone","argv":["install","-d","-o","digi6","-g","digi6","/srv/hostyour-cloud"],"elevated":true}
+{"kind":"command-finished","sequence":99,"at":"2026-09-02T09:37:34.836942Z","step":"git_clone","exit_code":0,"elapsed_micros":40148,"stdout_lines":0,"stderr_lines":1}
+{"kind":"command-started","sequence":100,"at":"2026-09-02T09:37:34.837077Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","rev-parse","--is-inside-work-tree"],"elevated":false}
+{"kind":"command-finished","sequence":101,"at":"2026-09-02T09:37:34.846434Z","step":"git_clone","exit_code":0,"elapsed_micros":9221,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":102,"at":"2026-09-02T09:37:34.846558Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","remote","get-url","origin"],"elevated":false}
+{"kind":"command-finished","sequence":103,"at":"2026-09-02T09:37:34.853005Z","step":"git_clone","exit_code":0,"elapsed_micros":6372,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":104,"at":"2026-09-02T09:37:34.853205Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","fetch","origin","master"],"elevated":false}
+{"kind":"command-finished","sequence":105,"at":"2026-09-02T09:37:35.538617Z","step":"git_clone","exit_code":0,"elapsed_micros":685308,"stdout_lines":0,"stderr_lines":3}
+{"kind":"command-started","sequence":106,"at":"2026-09-02T09:37:35.538697Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","checkout","-B","master","origin/master"],"elevated":false}
+{"kind":"command-finished","sequence":107,"at":"2026-09-02T09:37:35.559386Z","step":"git_clone","exit_code":0,"elapsed_micros":20632,"stdout_lines":2,"stderr_lines":1}
+{"kind":"command-started","sequence":108,"at":"2026-09-02T09:37:35.559509Z","step":"git_clone","argv":["chown","-R","digi6:digi6","/srv/hostyour-cloud"],"elevated":true}
+{"kind":"command-finished","sequence":109,"at":"2026-09-02T09:37:35.602066Z","step":"git_clone","exit_code":0,"elapsed_micros":42456,"stdout_lines":0,"stderr_lines":1}
+{"kind":"command-started","sequence":110,"at":"2026-09-02T09:37:35.602318Z","step":"git_clone","argv":["stat","-c","%U","/srv/hostyour-cloud"],"elevated":true}
+{"kind":"command-finished","sequence":111,"at":"2026-09-02T09:37:35.632048Z","step":"git_clone","exit_code":0,"elapsed_micros":29628,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":112,"at":"2026-09-02T09:37:35.632230Z","step":"git_clone","argv":["stat","-c","%U","/srv/hostyour-cloud/.git"],"elevated":true}
+{"kind":"command-finished","sequence":113,"at":"2026-09-02T09:37:35.674208Z","step":"git_clone","exit_code":0,"elapsed_micros":41900,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":114,"at":"2026-09-02T09:37:35.674364Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","rev-parse","--is-inside-work-tree"],"elevated":false}
+{"kind":"command-finished","sequence":115,"at":"2026-09-02T09:37:35.681934Z","step":"git_clone","exit_code":0,"elapsed_micros":7495,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":116,"at":"2026-09-02T09:37:35.682055Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","remote","get-url","origin"],"elevated":false}
+{"kind":"command-finished","sequence":117,"at":"2026-09-02T09:37:35.690371Z","step":"git_clone","exit_code":0,"elapsed_micros":8239,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":118,"at":"2026-09-02T09:37:35.690510Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":119,"at":"2026-09-02T09:37:35.696387Z","step":"git_clone","exit_code":0,"elapsed_micros":5803,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":120,"at":"2026-09-02T09:37:35.696498Z","step":"git_clone","argv":["git","ls-remote","--heads","https://github.com/simetrixch/hostyour-cloud.git","master"],"elevated":false}
+{"kind":"command-finished","sequence":121,"at":"2026-09-02T09:37:36.179968Z","step":"git_clone","exit_code":0,"elapsed_micros":483383,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":122,"at":"2026-09-02T09:37:36.180267Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud","-C","/srv/hostyour-cloud","rev-parse","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":123,"at":"2026-09-02T09:37:36.187267Z","step":"git_clone","exit_code":0,"elapsed_micros":6915,"stdout_lines":1,"stderr_lines":0}
+{"kind":"step-finished","sequence":124,"at":"2026-09-02T09:37:36.187408Z","step":"git_clone","verdict":{"label":"ok"},"elapsed_micros":1505139,"standing":"proven"}
+{"kind":"step-started","sequence":125,"at":"2026-09-02T09:37:36.187476Z","step":"git_clone","source":"lib/src/steps/git_clone.dart:32"}
+{"kind":"command-started","sequence":126,"at":"2026-09-02T09:37:36.187536Z","step":"git_clone","argv":["stat","-c","%U","/srv/hostyour-cloud-slave"],"elevated":true}
+{"kind":"command-finished","sequence":127,"at":"2026-09-02T09:37:36.233313Z","step":"git_clone","exit_code":0,"elapsed_micros":45679,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":128,"at":"2026-09-02T09:37:36.233435Z","step":"git_clone","argv":["stat","-c","%U","/srv/hostyour-cloud-slave/.git"],"elevated":true}
+{"kind":"command-finished","sequence":129,"at":"2026-09-02T09:37:36.278073Z","step":"git_clone","exit_code":0,"elapsed_micros":44542,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":130,"at":"2026-09-02T09:37:36.278260Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","rev-parse","--is-inside-work-tree"],"elevated":false}
+{"kind":"command-finished","sequence":131,"at":"2026-09-02T09:37:36.284036Z","step":"git_clone","exit_code":0,"elapsed_micros":5690,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":132,"at":"2026-09-02T09:37:36.284237Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","remote","get-url","origin"],"elevated":false}
+{"kind":"command-finished","sequence":133,"at":"2026-09-02T09:37:36.289824Z","step":"git_clone","exit_code":0,"elapsed_micros":5487,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":134,"at":"2026-09-02T09:37:36.289944Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":135,"at":"2026-09-02T09:37:36.297291Z","step":"git_clone","exit_code":0,"elapsed_micros":6959,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":136,"at":"2026-09-02T09:37:36.297404Z","step":"git_clone","argv":["git","ls-remote","--heads","https://github.com/simetrixch/hostyour-cloud.git","master"],"elevated":false}
+{"kind":"command-finished","sequence":137,"at":"2026-09-02T09:37:36.782256Z","step":"git_clone","exit_code":0,"elapsed_micros":484783,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":138,"at":"2026-09-02T09:37:36.782427Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","rev-parse","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":139,"at":"2026-09-02T09:37:36.790814Z","step":"git_clone","exit_code":0,"elapsed_micros":8304,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":140,"at":"2026-09-02T09:37:36.791005Z","step":"git_clone","argv":["install","-d","-o","digi6","-g","digi6","/srv/hostyour-cloud-slave"],"elevated":true}
+{"kind":"command-finished","sequence":141,"at":"2026-09-02T09:37:36.839699Z","step":"git_clone","exit_code":0,"elapsed_micros":48575,"stdout_lines":0,"stderr_lines":1}
+{"kind":"command-started","sequence":142,"at":"2026-09-02T09:37:36.839848Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","rev-parse","--is-inside-work-tree"],"elevated":false}
+{"kind":"command-finished","sequence":143,"at":"2026-09-02T09:37:36.847846Z","step":"git_clone","exit_code":0,"elapsed_micros":7922,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":144,"at":"2026-09-02T09:37:36.847966Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","remote","get-url","origin"],"elevated":false}
+{"kind":"command-finished","sequence":145,"at":"2026-09-02T09:37:36.855351Z","step":"git_clone","exit_code":0,"elapsed_micros":7310,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":146,"at":"2026-09-02T09:37:36.855482Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","fetch","origin","master"],"elevated":false}
+{"kind":"command-finished","sequence":147,"at":"2026-09-02T09:37:37.592385Z","step":"git_clone","exit_code":0,"elapsed_micros":736826,"stdout_lines":0,"stderr_lines":3}
+{"kind":"command-started","sequence":148,"at":"2026-09-02T09:37:37.592523Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","checkout","-B","master","origin/master"],"elevated":false}
+{"kind":"command-finished","sequence":149,"at":"2026-09-02T09:37:37.649844Z","step":"git_clone","exit_code":0,"elapsed_micros":57226,"stdout_lines":2,"stderr_lines":1}
+{"kind":"command-started","sequence":150,"at":"2026-09-02T09:37:37.649979Z","step":"git_clone","argv":["chown","-R","digi6:digi6","/srv/hostyour-cloud-slave"],"elevated":true}
+{"kind":"command-finished","sequence":151,"at":"2026-09-02T09:37:37.697639Z","step":"git_clone","exit_code":0,"elapsed_micros":47538,"stdout_lines":0,"stderr_lines":1}
+{"kind":"command-started","sequence":152,"at":"2026-09-02T09:37:37.697805Z","step":"git_clone","argv":["stat","-c","%U","/srv/hostyour-cloud-slave"],"elevated":true}
+{"kind":"command-finished","sequence":153,"at":"2026-09-02T09:37:37.741258Z","step":"git_clone","exit_code":0,"elapsed_micros":43344,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":154,"at":"2026-09-02T09:37:37.741379Z","step":"git_clone","argv":["stat","-c","%U","/srv/hostyour-cloud-slave/.git"],"elevated":true}
+{"kind":"command-finished","sequence":155,"at":"2026-09-02T09:37:37.786510Z","step":"git_clone","exit_code":0,"elapsed_micros":45058,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":156,"at":"2026-09-02T09:37:37.786642Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","rev-parse","--is-inside-work-tree"],"elevated":false}
+{"kind":"command-finished","sequence":157,"at":"2026-09-02T09:37:37.793359Z","step":"git_clone","exit_code":0,"elapsed_micros":6635,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":158,"at":"2026-09-02T09:37:37.793471Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","remote","get-url","origin"],"elevated":false}
+{"kind":"command-finished","sequence":159,"at":"2026-09-02T09:37:37.800830Z","step":"git_clone","exit_code":0,"elapsed_micros":7284,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":160,"at":"2026-09-02T09:37:37.800950Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":161,"at":"2026-09-02T09:37:37.807217Z","step":"git_clone","exit_code":0,"elapsed_micros":6164,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":162,"at":"2026-09-02T09:37:37.807356Z","step":"git_clone","argv":["git","ls-remote","--heads","https://github.com/simetrixch/hostyour-cloud.git","master"],"elevated":false}
+{"kind":"command-finished","sequence":163,"at":"2026-09-02T09:37:38.238391Z","step":"git_clone","exit_code":0,"elapsed_micros":430927,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":164,"at":"2026-09-02T09:37:38.238689Z","step":"git_clone","argv":["git","-c","safe.directory=/srv/hostyour-cloud-slave","-C","/srv/hostyour-cloud-slave","rev-parse","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":165,"at":"2026-09-02T09:37:38.247026Z","step":"git_clone","exit_code":0,"elapsed_micros":8229,"stdout_lines":1,"stderr_lines":0}
+{"kind":"step-finished","sequence":166,"at":"2026-09-02T09:37:38.247243Z","step":"git_clone","verdict":{"label":"ok"},"elapsed_micros":2059767,"standing":"proven"}
+{"kind":"step-started","sequence":167,"at":"2026-09-02T09:37:38.247319Z","step":"hand_directory_to_account","source":"lib/src/steps/host/hand_directory_to_account.dart:39"}
+{"kind":"command-started","sequence":168,"at":"2026-09-02T09:37:38.247365Z","step":"hand_directory_to_account","argv":["id","-u","digi6"],"elevated":true}
+{"kind":"command-finished","sequence":169,"at":"2026-09-02T09:37:38.297238Z","step":"hand_directory_to_account","exit_code":0,"elapsed_micros":49788,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":170,"at":"2026-09-02T09:37:38.297356Z","step":"hand_directory_to_account","argv":["id","-g","digi6"],"elevated":true}
+{"kind":"command-finished","sequence":171,"at":"2026-09-02T09:37:38.345071Z","step":"hand_directory_to_account","exit_code":0,"elapsed_micros":47608,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":172,"at":"2026-09-02T09:37:38.345369Z","step":"hand_directory_to_account","argv":["stat","-c","%u %g %f","/var/lib/ansiwise"],"elevated":true}
+{"kind":"command-finished","sequence":173,"at":"2026-09-02T09:37:38.387623Z","step":"hand_directory_to_account","exit_code":0,"elapsed_micros":42169,"stdout_lines":1,"stderr_lines":1}
+{"kind":"log","sequence":174,"at":"2026-09-02T09:37:38.387822Z","step":"hand_directory_to_account","level":"info","message":"nothing to do: /var/lib/ansiwise is a directory belonging to digi6 (1000:1000) at 0755"}
+{"kind":"step-finished","sequence":175,"at":"2026-09-02T09:37:38.387856Z","step":"hand_directory_to_account","verdict":{"label":"ok"},"elapsed_micros":140537,"standing":"proven"}
+{"kind":"step-started","sequence":176,"at":"2026-09-02T09:37:38.387900Z","step":"hand_directory_to_account","source":"lib/src/steps/host/hand_directory_to_account.dart:39"}
+{"kind":"command-started","sequence":177,"at":"2026-09-02T09:37:38.387929Z","step":"hand_directory_to_account","argv":["id","-u","digi6"],"elevated":true}
+{"kind":"command-finished","sequence":178,"at":"2026-09-02T09:37:38.429549Z","step":"hand_directory_to_account","exit_code":0,"elapsed_micros":41538,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":179,"at":"2026-09-02T09:37:38.429644Z","step":"hand_directory_to_account","argv":["id","-g","digi6"],"elevated":true}
+{"kind":"command-finished","sequence":180,"at":"2026-09-02T09:37:38.477389Z","step":"hand_directory_to_account","exit_code":0,"elapsed_micros":47687,"stdout_lines":1,"stderr_lines":1}
+{"kind":"command-started","sequence":181,"at":"2026-09-02T09:37:38.477540Z","step":"hand_directory_to_account","argv":["stat","-c","%u %g %f","/var/lib/ansiwise/runs"],"elevated":true}
+{"kind":"command-finished","sequence":182,"at":"2026-09-02T09:37:38.521926Z","step":"hand_directory_to_account","exit_code":0,"elapsed_micros":44308,"stdout_lines":1,"stderr_lines":1}
+{"kind":"log","sequence":183,"at":"2026-09-02T09:37:38.522188Z","step":"hand_directory_to_account","level":"info","message":"nothing to do: /var/lib/ansiwise/runs is a directory belonging to digi6 (1000:1000) at 0755"}
+{"kind":"step-finished","sequence":184,"at":"2026-09-02T09:37:38.522286Z","step":"hand_directory_to_account","verdict":{"label":"ok"},"elapsed_micros":134386,"standing":"proven"}
+{"kind":"run-finished","sequence":185,"at":"2026-09-02T09:37:38.522404Z","exit_code":0,"issues":[],"standings":{"proven":14,"declared":0,"skipped":0}}
