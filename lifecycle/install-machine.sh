@@ -88,7 +88,11 @@ done
 readonly PORT=22
 
 # --------------------------------------------------------------- the transcript
-SESSION="./install-transcripts/$FQDN-$(date -u +%Y%m%d-%H%M%S)"
+# BESIDE THIS SCRIPT, NOT BESIDE WHOEVER STARTED IT. A relative path lands
+# wherever the shell happens to stand, and the ignore rule that keeps a
+# transcript out of the repository sits next to this file. A transcript written
+# anywhere else is one `git add -A` away from being published.
+SESSION="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-transcripts/$FQDN-$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$SESSION"
 TRANSCRIPT="$SESSION/session.log"
 printf '\n  %s  ·  stage %s\n' "$FQDN" "$STAGE" >&2

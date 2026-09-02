@@ -53,3 +53,11 @@ AGENTS.md
 # The agent worktree container. Tooling state, never product — and a worktree committed into
 # the tree it is a worktree OF is a loop nobody unpicks.
 .claude/
+
+# A TRANSCRIPT IS A RECORD OF ONE RUN AND NOT OF THIS TREE. The launcher writes it
+# beside itself, under lifecycle/, where the ignore file next to it keeps it out.
+# This line covers the other case: a transcript that lands here because something
+# was started from somewhere else. A record of a run in the product's history says
+# nothing true about the product, and a merge onto an install branch carries it to
+# every machine.
+install-transcripts/

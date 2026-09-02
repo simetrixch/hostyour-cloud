@@ -136,7 +136,11 @@ $fqdn = Stated 'FQDN'
 $port = 22
 
 # --------------------------------------------------------------- the transcript
-$session = Join-Path './install-transcripts' ('{0}-{1}' -f $fqdn, (Get-Date -Format 'yyyyMMdd-HHmmss'))
+# BESIDE THIS SCRIPT, NOT BESIDE WHOEVER STARTED IT. A relative path lands
+# wherever the shell happens to stand, and the ignore rule that keeps a
+# transcript out of the repository sits next to this file. A transcript written
+# anywhere else is one `git add -A` away from being published.
+$session = Join-Path (Join-Path $PSScriptRoot 'install-transcripts') ('{0}-{1}' -f $fqdn, (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Force -Path $session | Out-Null
 $transcript = Join-Path $session 'session.log'
 Write-Host ''
