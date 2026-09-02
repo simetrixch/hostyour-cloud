@@ -1,0 +1,193 @@
+{"kind":"run-started","sequence":0,"at":"2026-09-02T10:36:50.657893Z","program":"deploy-branch","mode":"test"}
+{"kind":"step-started","sequence":1,"at":"2026-09-02T10:36:50.658085Z","step":"require_commands","source":"lib/src/steps/host/require_commands.dart:18"}
+{"kind":"command-started","sequence":2,"at":"2026-09-02T10:36:50.658235Z","step":"require_commands","argv":["sh","-c","command -v \"$1\"","sh","git"],"elevated":false}
+{"kind":"command-finished","sequence":3,"at":"2026-09-02T10:36:50.667263Z","step":"require_commands","exit_code":0,"elapsed_micros":8925,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":4,"at":"2026-09-02T10:36:50.667470Z","step":"require_commands","level":"info","message":"nothing to do: git are on the path"}
+{"kind":"step-finished","sequence":5,"at":"2026-09-02T10:36:50.667508Z","step":"require_commands","verdict":{"label":"ok"},"elapsed_micros":9423,"standing":"proven"}
+{"kind":"step-started","sequence":6,"at":"2026-09-02T10:36:50.667580Z","step":"git_identity","source":"lib/src/steps/git_identity.dart:24"}
+{"kind":"command-started","sequence":7,"at":"2026-09-02T10:36:50.667616Z","step":"git_identity","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--git-dir"],"elevated":false}
+{"kind":"command-finished","sequence":8,"at":"2026-09-02T10:36:50.677429Z","step":"git_identity","exit_code":0,"elapsed_micros":9748,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":9,"at":"2026-09-02T10:36:50.677551Z","step":"git_identity","argv":["git","-C","/srv/hostyour-cloud","config","--get","user.name"],"elevated":false}
+{"kind":"command-finished","sequence":10,"at":"2026-09-02T10:36:50.684238Z","step":"git_identity","exit_code":0,"elapsed_micros":6615,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":11,"at":"2026-09-02T10:36:50.684388Z","step":"git_identity","argv":["git","-C","/srv/hostyour-cloud","config","--get","user.email"],"elevated":false}
+{"kind":"command-finished","sequence":12,"at":"2026-09-02T10:36:50.690783Z","step":"git_identity","exit_code":0,"elapsed_micros":6311,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":13,"at":"2026-09-02T10:36:50.690921Z","step":"git_identity","level":"info","message":"nothing to do: commits in /srv/hostyour-cloud are made as ansiwise <info@simetrix.ch>"}
+{"kind":"step-finished","sequence":14,"at":"2026-09-02T10:36:50.690965Z","step":"git_identity","verdict":{"label":"ok"},"elapsed_micros":23385,"standing":"proven"}
+{"kind":"step-started","sequence":15,"at":"2026-09-02T10:36:50.691029Z","step":"git_push_credential","source":"lib/src/steps/git_push_credential.dart:35"}
+{"kind":"command-started","sequence":16,"at":"2026-09-02T10:36:50.691069Z","step":"git_push_credential","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--absolute-git-dir"],"elevated":false}
+{"kind":"command-finished","sequence":17,"at":"2026-09-02T10:36:50.697690Z","step":"git_push_credential","exit_code":0,"elapsed_micros":6554,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":18,"at":"2026-09-02T10:36:50.697894Z","step":"git_push_credential","argv":["git","-C","/srv/hostyour-cloud","remote","get-url","origin"],"elevated":false}
+{"kind":"command-finished","sequence":19,"at":"2026-09-02T10:36:50.707195Z","step":"git_push_credential","exit_code":0,"elapsed_micros":9221,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":20,"at":"2026-09-02T10:36:50.709588Z","step":"git_push_credential","argv":["git","-C","/srv/hostyour-cloud","config","--local","--get-all","credential.helper"],"elevated":false}
+{"kind":"command-finished","sequence":21,"at":"2026-09-02T10:36:50.716398Z","step":"git_push_credential","exit_code":0,"elapsed_micros":6669,"stdout_lines":2,"stderr_lines":0}
+{"kind":"log","sequence":22,"at":"2026-09-02T10:36:50.716548Z","step":"git_push_credential","level":"info","message":"nothing to do: /srv/hostyour-cloud presents a credential to origin out of /srv/hostyour-cloud/.git/push-credentials, and nothing outside this checkout decides which"}
+{"kind":"step-finished","sequence":23,"at":"2026-09-02T10:36:50.716622Z","step":"git_push_credential","verdict":{"label":"ok"},"elapsed_micros":25594,"standing":"proven"}
+{"kind":"step-started","sequence":24,"at":"2026-09-02T10:36:50.716732Z","step":"require_pushable_remote","source":"lib/src/steps/require_pushable_remote.dart:25"}
+{"kind":"command-started","sequence":25,"at":"2026-09-02T10:36:50.716766Z","step":"require_pushable_remote","argv":["git","-C","/srv/hostyour-cloud","remote","get-url","origin"],"elevated":false}
+{"kind":"command-finished","sequence":26,"at":"2026-09-02T10:36:50.723301Z","step":"require_pushable_remote","exit_code":0,"elapsed_micros":6475,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":27,"at":"2026-09-02T10:36:50.723426Z","step":"require_pushable_remote","argv":["git","-C","/srv/hostyour-cloud","ls-remote","--heads","origin"],"elevated":false}
+{"kind":"command-finished","sequence":28,"at":"2026-09-02T10:36:51.167833Z","step":"require_pushable_remote","exit_code":0,"elapsed_micros":444320,"stdout_lines":3,"stderr_lines":0}
+{"kind":"command-started","sequence":29,"at":"2026-09-02T10:36:51.167924Z","step":"require_pushable_remote","argv":["git","-C","/srv/hostyour-cloud","push","--dry-run","origin","master"],"elevated":false}
+{"kind":"command-finished","sequence":30,"at":"2026-09-02T10:36:51.727522Z","step":"require_pushable_remote","exit_code":0,"elapsed_micros":559513,"stdout_lines":0,"stderr_lines":1}
+{"kind":"log","sequence":31,"at":"2026-09-02T10:36:51.727833Z","step":"require_pushable_remote","level":"info","message":"nothing to do: https://github.com/simetrixch/hostyour-cloud.git answers and would accept a push"}
+{"kind":"step-finished","sequence":32,"at":"2026-09-02T10:36:51.727937Z","step":"require_pushable_remote","verdict":{"label":"ok"},"elapsed_micros":1011207,"standing":"proven"}
+{"kind":"step-started","sequence":33,"at":"2026-09-02T10:36:51.728072Z","step":"git_branch","source":"lib/src/steps/git_branch.dart:20"}
+{"kind":"command-started","sequence":34,"at":"2026-09-02T10:36:51.728303Z","step":"git_branch","argv":["git","check-ref-format","--branch","apps6.digitacloud.app"],"elevated":false}
+{"kind":"command-finished","sequence":35,"at":"2026-09-02T10:36:51.737096Z","step":"git_branch","exit_code":0,"elapsed_micros":8667,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":36,"at":"2026-09-02T10:36:51.737351Z","step":"git_branch","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":37,"at":"2026-09-02T10:36:51.746224Z","step":"git_branch","exit_code":0,"elapsed_micros":8742,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":38,"at":"2026-09-02T10:36:51.746366Z","step":"git_branch","level":"info","message":"nothing to do: apps6.digitacloud.app is checked out"}
+{"kind":"step-finished","sequence":39,"at":"2026-09-02T10:36:51.746406Z","step":"git_branch","verdict":{"label":"ok"},"elapsed_micros":18334,"standing":"proven"}
+{"kind":"step-started","sequence":40,"at":"2026-09-02T10:36:51.746475Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":41,"at":"2026-09-02T10:36:51.746529Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":42,"at":"2026-09-02T10:36:51.754811Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":8213,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":43,"at":"2026-09-02T10:36:51.754920Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":44,"at":"2026-09-02T10:36:51.761833Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":6843,"stdout_lines":8,"stderr_lines":0}
+{"kind":"command-started","sequence":45,"at":"2026-09-02T10:36:51.761950Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","master","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":46,"at":"2026-09-02T10:36:51.774531Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":12486,"stdout_lines":7,"stderr_lines":0}
+{"kind":"log","sequence":47,"at":"2026-09-02T10:36:51.800075Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/argocd/ that holds installation state carries master"}
+{"kind":"step-finished","sequence":48,"at":"2026-09-02T10:36:51.800207Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":53732,"standing":"proven"}
+{"kind":"step-started","sequence":49,"at":"2026-09-02T10:36:51.800283Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":50,"at":"2026-09-02T10:36:51.800329Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":51,"at":"2026-09-02T10:36:51.807699Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":7321,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":52,"at":"2026-09-02T10:36:51.807786Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","example.invalid"],"elevated":false}
+{"kind":"command-finished","sequence":53,"at":"2026-09-02T10:36:51.830070Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":22223,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":54,"at":"2026-09-02T10:36:51.830246Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file in the checkout that holds installation state carries example.invalid"}
+{"kind":"step-finished","sequence":55,"at":"2026-09-02T10:36:51.830284Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":30002,"standing":"proven"}
+{"kind":"step-started","sequence":56,"at":"2026-09-02T10:36:51.830335Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":57,"at":"2026-09-02T10:36:51.830376Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":58,"at":"2026-09-02T10:36:51.836888Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":6456,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":59,"at":"2026-09-02T10:36:51.836978Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":60,"at":"2026-09-02T10:36:51.843045Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":6010,"stdout_lines":8,"stderr_lines":0}
+{"kind":"command-started","sequence":61,"at":"2026-09-02T10:36:51.843217Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","__CATALOG_REPO__","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":62,"at":"2026-09-02T10:36:51.857839Z","step":"stamp_placeholder_in_tracked_files","exit_code":1,"elapsed_micros":14496,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":63,"at":"2026-09-02T10:36:51.857973Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/argocd/ that holds installation state carries __CATALOG_REPO__"}
+{"kind":"step-finished","sequence":64,"at":"2026-09-02T10:36:51.858020Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":27685,"standing":"proven"}
+{"kind":"step-started","sequence":65,"at":"2026-09-02T10:36:51.858106Z","step":"measure_host_addresses","source":"lib/src/steps/host/measure_host_addresses.dart:46"}
+{"kind":"command-started","sequence":66,"at":"2026-09-02T10:36:51.858215Z","step":"measure_host_addresses","argv":["ip","-4","-o","addr","show","scope","global"],"elevated":false}
+{"kind":"command-finished","sequence":67,"at":"2026-09-02T10:36:51.867282Z","step":"measure_host_addresses","exit_code":0,"elapsed_micros":8977,"stdout_lines":3,"stderr_lines":0}
+{"kind":"log","sequence":68,"at":"2026-09-02T10:36:51.867668Z","step":"measure_host_addresses","level":"info","message":"nothing to do: this machine can be reached at 136.243.202.195/32, 100.64.0.1/32, which is what a boundary drawn around it has to name"}
+{"kind":"step-finished","sequence":69,"at":"2026-09-02T10:36:51.867724Z","step":"measure_host_addresses","verdict":{"label":"ok"},"elapsed_micros":9619,"standing":"proven"}
+{"kind":"step-started","sequence":70,"at":"2026-09-02T10:36:51.867789Z","step":"write_file_from_template","source":"lib/src/steps/host/write_file_from_template.dart:28"}
+{"kind":"log","sequence":71,"at":"2026-09-02T10:36:51.867849Z","step":"write_file_from_template","level":"warn","message":"not known yet: \"values\" entry \"node-cidrs\" holds the measurement \"host_addresses\", which step 9 measure_host_addresses takes while the run happens"}
+{"kind":"step-finished","sequence":72,"at":"2026-09-02T10:36:51.867900Z","step":"write_file_from_template","verdict":{"label":"ok"},"elapsed_micros":112,"standing":"declared"}
+{"kind":"step-started","sequence":73,"at":"2026-09-02T10:36:51.867936Z","step":"fill_key_value_file","source":"lib/src/steps/host/fill_key_value_file.dart:31"}
+{"kind":"log","sequence":74,"at":"2026-09-02T10:36:51.876413Z","step":"fill_key_value_file","level":"info","message":"not answered before the steps it rests on have run: /srv/hostyour-cloud/configs/config.example declares no DEPLOY_REPO, so filling one in place would put a bare assignment at the end of a file whose whole value is that every key stands under its own explanation"}
+{"kind":"step-finished","sequence":75,"at":"2026-09-02T10:36:51.876560Z","step":"fill_key_value_file","verdict":{"label":"ok"},"elapsed_micros":8624,"standing":"declared"}
+{"kind":"step-started","sequence":76,"at":"2026-09-02T10:36:51.876643Z","step":"fill_key_value_file","source":"lib/src/steps/host/fill_key_value_file.dart:31"}
+{"kind":"log","sequence":77,"at":"2026-09-02T10:36:51.897781Z","step":"fill_key_value_file","level":"info","message":"nothing to do: /srv/hostyour-cloud/secrets/secrets.prod states this credentials, and every value in it was answered"}
+{"kind":"step-finished","sequence":78,"at":"2026-09-02T10:36:51.897850Z","step":"fill_key_value_file","verdict":{"label":"ok"},"elapsed_micros":21208,"standing":"proven"}
+{"kind":"step-started","sequence":79,"at":"2026-09-02T10:36:51.897884Z","step":"fill_key_value_file","source":"lib/src/steps/host/fill_key_value_file.dart:31"}
+{"kind":"log","sequence":80,"at":"2026-09-02T10:36:51.909830Z","step":"fill_key_value_file","level":"info","message":"nothing to do: /srv/hostyour-cloud/secrets/secrets.prod states this build plane credentials, and every value in it was answered"}
+{"kind":"step-finished","sequence":81,"at":"2026-09-02T10:36:51.909889Z","step":"fill_key_value_file","verdict":{"label":"ok"},"elapsed_micros":12005,"standing":"proven"}
+{"kind":"step-started","sequence":82,"at":"2026-09-02T10:36:51.909919Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":83,"at":"2026-09-02T10:36:51.909946Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":84,"at":"2026-09-02T10:36:51.917038Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":7067,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":85,"at":"2026-09-02T10:36:51.917087Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":86,"at":"2026-09-02T10:36:51.923780Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":6642,"stdout_lines":8,"stderr_lines":0}
+{"kind":"command-started","sequence":87,"at":"2026-09-02T10:36:51.923849Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","__CLUSTER_ROLE_FIRST_PART__","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":88,"at":"2026-09-02T10:36:51.936722Z","step":"stamp_placeholder_in_tracked_files","exit_code":1,"elapsed_micros":12808,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":89,"at":"2026-09-02T10:36:51.936865Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/argocd/ that holds installation state carries __CLUSTER_ROLE_FIRST_PART__"}
+{"kind":"step-finished","sequence":90,"at":"2026-09-02T10:36:51.936913Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":26994,"standing":"proven"}
+{"kind":"step-started","sequence":91,"at":"2026-09-02T10:36:51.936975Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":92,"at":"2026-09-02T10:36:51.937031Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":93,"at":"2026-09-02T10:36:51.944188Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":7011,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":94,"at":"2026-09-02T10:36:51.944313Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":95,"at":"2026-09-02T10:36:51.951059Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":6662,"stdout_lines":8,"stderr_lines":0}
+{"kind":"command-started","sequence":96,"at":"2026-09-02T10:36:51.951299Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","__CLUSTER_ROLE_LAST_PART__","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":97,"at":"2026-09-02T10:36:51.964900Z","step":"stamp_placeholder_in_tracked_files","exit_code":1,"elapsed_micros":13495,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":98,"at":"2026-09-02T10:36:51.965737Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/argocd/ that holds installation state carries __CLUSTER_ROLE_LAST_PART__"}
+{"kind":"step-finished","sequence":99,"at":"2026-09-02T10:36:51.965856Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":28881,"standing":"proven"}
+{"kind":"step-started","sequence":100,"at":"2026-09-02T10:36:51.965946Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":101,"at":"2026-09-02T10:36:51.965999Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":102,"at":"2026-09-02T10:36:51.971265Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":5193,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":103,"at":"2026-09-02T10:36:51.971365Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":104,"at":"2026-09-02T10:36:51.976644Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":5195,"stdout_lines":8,"stderr_lines":0}
+{"kind":"command-started","sequence":105,"at":"2026-09-02T10:36:51.976777Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","__CLUSTER_NAME__","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":106,"at":"2026-09-02T10:36:51.990273Z","step":"stamp_placeholder_in_tracked_files","exit_code":1,"elapsed_micros":13408,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":107,"at":"2026-09-02T10:36:51.990424Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/argocd/ that holds installation state carries __CLUSTER_NAME__"}
+{"kind":"step-finished","sequence":108,"at":"2026-09-02T10:36:51.990470Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":24524,"standing":"proven"}
+{"kind":"step-started","sequence":109,"at":"2026-09-02T10:36:51.990535Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":110,"at":"2026-09-02T10:36:51.990587Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":111,"at":"2026-09-02T10:36:51.997917Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":7259,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":112,"at":"2026-09-02T10:36:51.998035Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/bootstrap"],"elevated":false}
+{"kind":"command-finished","sequence":113,"at":"2026-09-02T10:36:52.005909Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":7784,"stdout_lines":28,"stderr_lines":0}
+{"kind":"command-started","sequence":114,"at":"2026-09-02T10:36:52.006097Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","__CLUSTER_NAME__","--","clusters/bootstrap"],"elevated":false}
+{"kind":"command-finished","sequence":115,"at":"2026-09-02T10:36:52.022992Z","step":"stamp_placeholder_in_tracked_files","exit_code":1,"elapsed_micros":16739,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":116,"at":"2026-09-02T10:36:52.023258Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/bootstrap/ that holds installation state carries __CLUSTER_NAME__"}
+{"kind":"step-finished","sequence":117,"at":"2026-09-02T10:36:52.023322Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":32787,"standing":"proven"}
+{"kind":"step-started","sequence":118,"at":"2026-09-02T10:36:52.023389Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":119,"at":"2026-09-02T10:36:52.023459Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":120,"at":"2026-09-02T10:36:52.031280Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":7745,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":121,"at":"2026-09-02T10:36:52.031393Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":122,"at":"2026-09-02T10:36:52.037281Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":5820,"stdout_lines":8,"stderr_lines":0}
+{"kind":"command-started","sequence":123,"at":"2026-09-02T10:36:52.037396Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","__BOOKS_FQDN__","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":124,"at":"2026-09-02T10:36:52.052027Z","step":"stamp_placeholder_in_tracked_files","exit_code":1,"elapsed_micros":14526,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":125,"at":"2026-09-02T10:36:52.052239Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/argocd/ that holds installation state carries __BOOKS_FQDN__"}
+{"kind":"step-finished","sequence":126,"at":"2026-09-02T10:36:52.052296Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":28908,"standing":"proven"}
+{"kind":"step-started","sequence":127,"at":"2026-09-02T10:36:52.052358Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":128,"at":"2026-09-02T10:36:52.052408Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":129,"at":"2026-09-02T10:36:52.059338Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":6870,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":130,"at":"2026-09-02T10:36:52.059453Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":131,"at":"2026-09-02T10:36:52.066304Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":6781,"stdout_lines":8,"stderr_lines":0}
+{"kind":"command-started","sequence":132,"at":"2026-09-02T10:36:52.066423Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","__FQDN__","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":133,"at":"2026-09-02T10:36:52.080506Z","step":"stamp_placeholder_in_tracked_files","exit_code":1,"elapsed_micros":13994,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":134,"at":"2026-09-02T10:36:52.080669Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/argocd/ that holds installation state carries __FQDN__"}
+{"kind":"step-finished","sequence":135,"at":"2026-09-02T10:36:52.080715Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":28357,"standing":"proven"}
+{"kind":"step-started","sequence":136,"at":"2026-09-02T10:36:52.080777Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":137,"at":"2026-09-02T10:36:52.080828Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":138,"at":"2026-09-02T10:36:52.087424Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":6535,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":139,"at":"2026-09-02T10:36:52.087539Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/bootstrap"],"elevated":false}
+{"kind":"command-finished","sequence":140,"at":"2026-09-02T10:36:52.095032Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":7412,"stdout_lines":28,"stderr_lines":0}
+{"kind":"command-started","sequence":141,"at":"2026-09-02T10:36:52.095239Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","__BOOKS_NAME__","--","clusters/bootstrap"],"elevated":false}
+{"kind":"command-finished","sequence":142,"at":"2026-09-02T10:36:52.110363Z","step":"stamp_placeholder_in_tracked_files","exit_code":1,"elapsed_micros":15031,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":143,"at":"2026-09-02T10:36:52.110528Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/bootstrap/ that holds installation state carries __BOOKS_NAME__"}
+{"kind":"step-finished","sequence":144,"at":"2026-09-02T10:36:52.110577Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":29800,"standing":"proven"}
+{"kind":"step-started","sequence":145,"at":"2026-09-02T10:36:52.110641Z","step":"stamp_placeholder_in_tracked_files","source":"lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86"}
+{"kind":"command-started","sequence":146,"at":"2026-09-02T10:36:52.110691Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":147,"at":"2026-09-02T10:36:52.116782Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":6031,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":148,"at":"2026-09-02T10:36:52.116907Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","ls-files","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":149,"at":"2026-09-02T10:36:52.122737Z","step":"stamp_placeholder_in_tracked_files","exit_code":0,"elapsed_micros":5754,"stdout_lines":8,"stderr_lines":0}
+{"kind":"command-started","sequence":150,"at":"2026-09-02T10:36:52.122857Z","step":"stamp_placeholder_in_tracked_files","argv":["git","-C","/srv/hostyour-cloud","grep","--full-name","--files-with-matches","--fixed-strings","-e","__STAGE__","--","clusters/argocd"],"elevated":false}
+{"kind":"command-finished","sequence":151,"at":"2026-09-02T10:36:52.138208Z","step":"stamp_placeholder_in_tracked_files","exit_code":1,"elapsed_micros":15192,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":152,"at":"2026-09-02T10:36:52.138351Z","step":"stamp_placeholder_in_tracked_files","level":"info","message":"nothing to do: no file under clusters/argocd/ that holds installation state carries __STAGE__"}
+{"kind":"step-finished","sequence":153,"at":"2026-09-02T10:36:52.138398Z","step":"stamp_placeholder_in_tracked_files","verdict":{"label":"ok"},"elapsed_micros":27758,"standing":"proven"}
+{"kind":"step-started","sequence":154,"at":"2026-09-02T10:36:52.138461Z","step":"write_value_in_branch_file","source":"lib/src/steps/write_value_in_branch_file.dart:24"}
+{"kind":"command-started","sequence":155,"at":"2026-09-02T10:36:52.138498Z","step":"write_value_in_branch_file","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":156,"at":"2026-09-02T10:36:52.146847Z","step":"write_value_in_branch_file","exit_code":0,"elapsed_micros":8279,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":157,"at":"2026-09-02T10:36:52.151050Z","step":"write_value_in_branch_file","level":"info","message":"nothing to do: clusters/platform/values-common.yaml records global.clusterIssuer: platform-acme"}
+{"kind":"step-finished","sequence":158,"at":"2026-09-02T10:36:52.151215Z","step":"write_value_in_branch_file","verdict":{"label":"ok"},"elapsed_micros":12754,"standing":"proven"}
+{"kind":"step-started","sequence":159,"at":"2026-09-02T10:36:52.151301Z","step":"write_file_from_template","source":"lib/src/steps/host/write_file_from_template.dart:28"}
+{"kind":"step-finished","sequence":160,"at":"2026-09-02T10:36:52.161329Z","step":"write_file_from_template","verdict":{"label":"ok"},"elapsed_micros":10028,"standing":"proven"}
+{"kind":"step-started","sequence":161,"at":"2026-09-02T10:36:52.161484Z","step":"write_file_from_template","source":"lib/src/steps/host/write_file_from_template.dart:28"}
+{"kind":"log","sequence":162,"at":"2026-09-02T10:36:52.168327Z","step":"write_file_from_template","level":"info","message":"nothing to do: /srv/hostyour-cloud/installation/values/postfix.yaml already holds what this step writes"}
+{"kind":"step-finished","sequence":163,"at":"2026-09-02T10:36:52.168456Z","step":"write_file_from_template","verdict":{"label":"ok"},"elapsed_micros":6972,"standing":"proven"}
+{"kind":"step-started","sequence":164,"at":"2026-09-02T10:36:52.168506Z","step":"write_file_from_template","source":"lib/src/steps/host/write_file_from_template.dart:28"}
+{"kind":"log","sequence":165,"at":"2026-09-02T10:36:52.176322Z","step":"write_file_from_template","level":"info","message":"nothing to do: /srv/hostyour-cloud/installation/values/manager.yaml already holds what this step writes"}
+{"kind":"step-finished","sequence":166,"at":"2026-09-02T10:36:52.176421Z","step":"write_file_from_template","verdict":{"label":"ok"},"elapsed_micros":7916,"standing":"proven"}
+{"kind":"step-started","sequence":167,"at":"2026-09-02T10:36:52.176470Z","step":"write_file_from_template","source":"lib/src/steps/host/write_file_from_template.dart:28"}
+{"kind":"log","sequence":168,"at":"2026-09-02T10:36:52.182728Z","step":"write_file_from_template","level":"info","message":"nothing to do: /srv/hostyour-cloud/configs/unseal-vault-answers.json already holds what this step writes"}
+{"kind":"step-finished","sequence":169,"at":"2026-09-02T10:36:52.182822Z","step":"write_file_from_template","verdict":{"label":"ok"},"elapsed_micros":6353,"standing":"proven"}
+{"kind":"step-started","sequence":170,"at":"2026-09-02T10:36:52.182870Z","step":"git_commit","source":"lib/src/steps/git_commit.dart:34"}
+{"kind":"command-started","sequence":171,"at":"2026-09-02T10:36:52.182898Z","step":"git_commit","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--git-dir"],"elevated":false}
+{"kind":"command-finished","sequence":172,"at":"2026-09-02T10:36:52.189278Z","step":"git_commit","exit_code":0,"elapsed_micros":6304,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":173,"at":"2026-09-02T10:36:52.189391Z","step":"git_commit","argv":["git","-C","/srv/hostyour-cloud","ls-files","--error-unmatch","--","clusters"],"elevated":false}
+{"kind":"command-finished","sequence":174,"at":"2026-09-02T10:36:52.196421Z","step":"git_commit","exit_code":0,"elapsed_micros":6935,"stdout_lines":310,"stderr_lines":0}
+{"kind":"command-started","sequence":175,"at":"2026-09-02T10:36:52.196631Z","step":"git_commit","argv":["git","-C","/srv/hostyour-cloud","ls-files","--error-unmatch","--","configs"],"elevated":false}
+{"kind":"command-finished","sequence":176,"at":"2026-09-02T10:36:52.203753Z","step":"git_commit","exit_code":0,"elapsed_micros":7038,"stdout_lines":3,"stderr_lines":0}
+{"kind":"command-started","sequence":177,"at":"2026-09-02T10:36:52.203879Z","step":"git_commit","argv":["git","-C","/srv/hostyour-cloud","ls-files","--error-unmatch","--","installation"],"elevated":false}
+{"kind":"command-finished","sequence":178,"at":"2026-09-02T10:36:52.210074Z","step":"git_commit","exit_code":0,"elapsed_micros":6108,"stdout_lines":2,"stderr_lines":0}
+{"kind":"command-started","sequence":179,"at":"2026-09-02T10:36:52.210254Z","step":"git_commit","argv":["git","-C","/srv/hostyour-cloud","status","--porcelain","--","clusters","configs","installation"],"elevated":false}
+{"kind":"command-finished","sequence":180,"at":"2026-09-02T10:36:52.224516Z","step":"git_commit","exit_code":0,"elapsed_micros":14187,"stdout_lines":0,"stderr_lines":0}
+{"kind":"log","sequence":181,"at":"2026-09-02T10:36:52.224720Z","step":"git_commit","level":"info","message":"nothing to do: nothing among clusters, configs, installation differs from what is recorded"}
+{"kind":"step-finished","sequence":182,"at":"2026-09-02T10:36:52.224766Z","step":"git_commit","verdict":{"label":"ok"},"elapsed_micros":41896,"standing":"proven"}
+{"kind":"step-started","sequence":183,"at":"2026-09-02T10:36:52.224827Z","step":"git_push","source":"lib/src/steps/git_push.dart:25"}
+{"kind":"command-started","sequence":184,"at":"2026-09-02T10:36:52.224861Z","step":"git_push","argv":["git","-C","/srv/hostyour-cloud","rev-parse","--abbrev-ref","HEAD"],"elevated":false}
+{"kind":"command-finished","sequence":185,"at":"2026-09-02T10:36:52.229603Z","step":"git_push","exit_code":0,"elapsed_micros":4679,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":186,"at":"2026-09-02T10:36:52.229737Z","step":"git_push","argv":["git","-C","/srv/hostyour-cloud","rev-parse","apps6.digitacloud.app"],"elevated":false}
+{"kind":"command-finished","sequence":187,"at":"2026-09-02T10:36:52.235045Z","step":"git_push","exit_code":0,"elapsed_micros":5232,"stdout_lines":1,"stderr_lines":0}
+{"kind":"command-started","sequence":188,"at":"2026-09-02T10:36:52.235271Z","step":"git_push","argv":["git","-C","/srv/hostyour-cloud","ls-remote","--heads","origin","apps6.digitacloud.app"],"elevated":false}
+{"kind":"command-finished","sequence":189,"at":"2026-09-02T10:36:52.663324Z","step":"git_push","exit_code":0,"elapsed_micros":427966,"stdout_lines":1,"stderr_lines":0}
+{"kind":"log","sequence":190,"at":"2026-09-02T10:36:52.663613Z","step":"git_push","level":"info","message":"nothing to do: origin already carries apps6.digitacloud.app at the commit this checkout is on"}
+{"kind":"step-finished","sequence":191,"at":"2026-09-02T10:36:52.663663Z","step":"git_push","verdict":{"label":"ok"},"elapsed_micros":438836,"standing":"proven"}
+{"kind":"run-finished","sequence":192,"at":"2026-09-02T10:36:52.663776Z","exit_code":0,"issues":[],"standings":{"proven":26,"declared":2,"skipped":0}}

@@ -1,0 +1,180 @@
+{
+  "id": "20260902T103658Z-2468118-3277c193",
+  "program": "deploy-branch",
+  "mode": "run",
+  "argv": [
+    "deploy-branch",
+    "--programs",
+    "/srv/ansiwise-catalog/ansiwise/programs",
+    "--config",
+    "/srv/ansiwise-catalog/ansiwise.yaml",
+    "--answers",
+    "/home/digi6/.installer-answers/deploy-branch.json",
+    "--runs",
+    "/var/lib/ansiwise/runs",
+    "--role",
+    "master",
+    "--stage",
+    "prod",
+    "--fqdn",
+    "apps6.digitacloud.app",
+    "--mode",
+    "run"
+  ],
+  "start": "2026-09-02T10:36:58.947885Z",
+  "stage": "prod",
+  "role": "master",
+  "fqdn": "apps6.digitacloud.app",
+  "commit": "2fcd52e246f032fd9b9f8e00b71a074a1f433bb3",
+  "fingerprint": "d874ed5146ad6d75f94cd642a9b026ad9b2009c2936b25627d3f0f3a16b20bdd",
+  "waived": [],
+  "end": "2026-09-02T10:37:00.222050Z",
+  "exit_code": 1,
+  "steps": [
+    {
+      "step": "require_commands",
+      "source": "lib/src/steps/host/require_commands.dart:18",
+      "start": "2026-09-02T10:36:58.986993Z",
+      "end": "2026-09-02T10:36:58.993104Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 1,
+      "last_event": 5,
+      "issues": []
+    },
+    {
+      "step": "git_identity",
+      "source": "lib/src/steps/git_identity.dart:24",
+      "start": "2026-09-02T10:36:58.993240Z",
+      "end": "2026-09-02T10:36:59.014661Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 6,
+      "last_event": 14,
+      "issues": []
+    },
+    {
+      "step": "git_push_credential",
+      "source": "lib/src/steps/git_push_credential.dart:35",
+      "start": "2026-09-02T10:36:59.014722Z",
+      "end": "2026-09-02T10:36:59.038331Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 15,
+      "last_event": 23,
+      "issues": []
+    },
+    {
+      "step": "require_pushable_remote",
+      "source": "lib/src/steps/require_pushable_remote.dart:25",
+      "start": "2026-09-02T10:36:59.038413Z",
+      "end": "2026-09-02T10:37:00.055467Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 24,
+      "last_event": 32,
+      "issues": []
+    },
+    {
+      "step": "git_branch",
+      "source": "lib/src/steps/git_branch.dart:20",
+      "start": "2026-09-02T10:37:00.055550Z",
+      "end": "2026-09-02T10:37:00.065575Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 33,
+      "last_event": 39,
+      "issues": []
+    },
+    {
+      "step": "stamp_placeholder_in_tracked_files",
+      "source": "lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86",
+      "start": "2026-09-02T10:37:00.065638Z",
+      "end": "2026-09-02T10:37:00.123080Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 40,
+      "last_event": 48,
+      "issues": []
+    },
+    {
+      "step": "stamp_placeholder_in_tracked_files",
+      "source": "lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86",
+      "start": "2026-09-02T10:37:00.123161Z",
+      "end": "2026-09-02T10:37:00.157371Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 49,
+      "last_event": 55,
+      "issues": []
+    },
+    {
+      "step": "stamp_placeholder_in_tracked_files",
+      "source": "lib/src/steps/branch/stamp_placeholder_in_tracked_files.dart:86",
+      "start": "2026-09-02T10:37:00.157438Z",
+      "end": "2026-09-02T10:37:00.190586Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 56,
+      "last_event": 64,
+      "issues": []
+    },
+    {
+      "step": "measure_host_addresses",
+      "source": "lib/src/steps/host/measure_host_addresses.dart:46",
+      "start": "2026-09-02T10:37:00.190681Z",
+      "end": "2026-09-02T10:37:00.200709Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "proven",
+      "first_event": 65,
+      "last_event": 69,
+      "issues": []
+    },
+    {
+      "step": "write_file_from_template",
+      "source": "lib/src/steps/host/write_file_from_template.dart:28",
+      "start": "2026-09-02T10:37:00.200767Z",
+      "end": "2026-09-02T10:37:00.214395Z",
+      "verdict": {
+        "label": "ok"
+      },
+      "standing": "declared",
+      "first_event": 70,
+      "last_event": 73,
+      "issues": []
+    },
+    {
+      "step": "fill_key_value_file",
+      "source": "lib/src/steps/host/fill_key_value_file.dart:31",
+      "start": "2026-09-02T10:37:00.214449Z",
+      "end": "2026-09-02T10:37:00.221931Z",
+      "verdict": {
+        "label": "exit",
+        "reason": "/srv/hostyour-cloud/configs/config.example declares no DEPLOY_REPO, so filling one in place would put a bare assignment at the end of a file whose whole value is that every key stands under its own explanation"
+      },
+      "standing": "proven",
+      "first_event": 74,
+      "last_event": 75,
+      "issues": []
+    }
+  ],
+  "issues": []
+}
