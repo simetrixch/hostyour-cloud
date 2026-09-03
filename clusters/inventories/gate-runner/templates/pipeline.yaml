@@ -145,5 +145,10 @@ spec:
         name: publish-report
       params:
         - { name: run-id, value: $(params.run-id) }
+        # context.pipelineRun.* resolves in a Pipeline and not inside a Task, so the run's own
+        # identity is handed down as params. publish-report makes the report ConfigMap a child of
+        # the run with it, which is what collects a report written after a cancel reaped its name.
+        - { name: owner-name, value: $(context.pipelineRun.name) }
+        - { name: owner-uid, value: $(context.pipelineRun.uid) }
       workspaces:
         - { name: source, workspace: source }

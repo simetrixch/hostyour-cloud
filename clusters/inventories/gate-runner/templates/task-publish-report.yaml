@@ -50,6 +50,21 @@ spec:
     - name: run-id
       type: string
       description: Manager-issued run id — names the ConfigMap gate-report-<run-id>.
+    - name: owner-name
+      type: string
+      description: >-
+        Name of the PipelineRun this report belongs to. The ConfigMap is made its CHILD, so
+        Kubernetes collects the report when the run goes even if nothing deletes it by name. The
+        case that needs it is a CANCEL: the Manager's reap deletes the report and then the run,
+        and this task is a finally task — it can still write a report a moment after the reap
+        passed the name it was going to delete.
+    - name: owner-uid
+      type: string
+      description: >-
+        The uid Kubernetes gave that PipelineRun. An owner reference is honoured only while the uid
+        matches the object standing under that name, which is what stops the reference from
+        attaching this report to a LATER run that reuses the name. Both values are handed down from
+        the pipeline, because context.pipelineRun.* resolves there and not inside a Task.
   steps:
     - name: publish
       image: {{ .Values.reportWriter.image }}
@@ -94,11 +109,18 @@ spec:
         # create-or-update (idempotent across ArgoCD/Tekton retries of this
         # finally task). The hostyour.cloud/gate-report label lets operators
         # GC orphaned reports in bulk; the Manager itself deletes by name.
+        #
+        # The owner reference is stamped by `patch --local`, which edits the manifest travelling
+        # through the pipe and never an object on the cluster: this step's ServiceAccount holds
+        # create and get on ConfigMaps, and a cluster-side patch would ask for a verb it must not
+        # have. blockOwnerDeletion is false, so deleting the run never waits on this report.
         kubectl create configmap "gate-report-$(params.run-id)" \
           --from-file="$KEY=$OUT" \
           --namespace {{ .Release.Namespace }} \
           --dry-run=client -o yaml \
           | kubectl label --local -f - hostyour.cloud/gate-report=true -o yaml \
+          | kubectl patch --local -f - -o yaml --type=merge -p \
+              '{"metadata":{"ownerReferences":[{"apiVersion":"tekton.dev/v1","kind":"PipelineRun","name":"$(params.owner-name)","uid":"$(params.owner-uid)","blockOwnerDeletion":false}]}}' \
           | kubectl apply -f -
       securityContext:
         runAsNonRoot: true
