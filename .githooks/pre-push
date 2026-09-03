@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# The checks run here, on this machine, before anything leaves it.
+#
+# A check somebody else's machine runs is a check the person who wrote the code does not watch:
+# they push, they walk away, and the failure arrives later addressed to nobody. So the charts,
+# the delivery programs and the credential scan run at the push, and a red one keeps the commits
+# local.
+#
+# THE COMMIT MESSAGES ARE READ TOO, and the work here stays on master. A commit reaches master
+# with the number of the issue it belongs to written in it — anywhere in the message, subject or
+# body, because on master nothing sorts commits by their opening word and a number in the body is
+# as findable as one in the subject. Three kinds of commit carry no number and are not defects:
+# a release stamp, which belongs to no issue; a commit that only explains, which changes nothing
+# a check can run against; and a commit somebody deliberately asked for outside the tracker,
+# which says so in a No-issue trailer naming who asked.
+#
+# Install it once, in this checkout:  git config core.hooksPath .githooks
+
+set -uo pipefail
+
+root="$(git rev-parse --show-toplevel)" || exit 1
+cd "$root" || exit 1
+
+head_sha="$(git rev-parse HEAD)" || exit 1
+pushed=0
+unexplained=""
+
+# Only the files a commit changes decide whether it explains and nothing more. A root commit has
+# no parent to diff against, which `git diff-tree` answers with silence and `git log` answers
+# with the whole tree — so this reads it the second way.
+explains_only() {
+  local commit="$1" file changed=0
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    changed=1
+    case "${file##*/}" in
+      *.md | LICENSE*) ;;
+      *) return 1 ;;
+    esac
+  done <<EOF
+$(git log -1 --format= --name-only "$commit")
+EOF
+  [ "$changed" -eq 1 ]
+}
+
+# Git writes one line per ref being pushed: local ref, local sha, remote ref, remote sha.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_ref:-}" ] || continue
+
+  # An all-zero local sha is a branch being deleted. It carries no commit, so it is counted out,
+  # and a push that names nothing else is let through without running the checks.
+  case "$local_sha" in
+    *[!0]*) ;;
+    *) continue ;;
+  esac
+  pushed=$((pushed + 1))
+
+  # The checks below run against the working copy, which is HEAD. A ref that is not HEAD would be
+  # judged by a run that never read it.
+  if [ "$local_sha" != "$head_sha" ]; then
+    echo "REFUSED: $local_ref is not the checked-out commit, so its checks did not run."
+    echo "Check out that commit and push it again."
+    exit 1
+  fi
+
+  # An all-zero remote sha is a ref the remote does not have yet, so there is no "before" to
+  # compare with and every commit reachable from the local sha is read.
+  case "$remote_sha" in
+    *[!0]*) range="$remote_sha..$local_sha" ;;
+    *) range="$local_sha" ;;
+  esac
+
+  # A merge carries no work of its own and its message is written by git, so it is left out.
+  while IFS= read -r commit; do
+    [ -n "$commit" ] || continue
+
+    message="$(git log -1 --format=%B "$commit")"
+    subject="$(git log -1 --format=%s "$commit")"
+
+    # An issue number anywhere in the message.
+    printf '%s' "$message" | grep -Eq '#[0-9]+' && continue
+
+    # A release stamp. It belongs to no issue: it records that a version was cut.
+    case "$subject" in release:*) continue ;; esac
+
+    # A No-issue trailer, which has to name a reason — the trailer alone says nothing.
+    printf '%s\n' "$message" | grep -Eq '^No-issue:[[:space:]]*[^[:space:]]' && continue
+
+    # A commit that only explains.
+    explains_only "$commit" && continue
+
+    unexplained="$unexplained
+  $(git log -1 --format='%h %s' "$commit")"
+  done <<EOF
+$(git rev-list --no-merges $range 2>/dev/null)
+EOF
+done
+
+if [ -n "$unexplained" ]; then
+  echo "REFUSED: a commit on master names the issue it belongs to, or says why it has none."
+  echo "These do neither:$unexplained"
+  echo "Each one needs an issue number (#<n>) anywhere in its message, or a 'release:' subject,"
+  echo "or a 'No-issue: <who asked, and when>' trailer. A commit that only changes *.md or"
+  echo "LICENSE* needs none of them. Reword them, then push again."
+  exit 1
+fi
+
+if [ "$pushed" -eq 0 ]; then
+  echo "pre-push: nothing to check, no commits are being pushed."
+  exit 0
+fi
+
+# No push without the three team modes (the language rules). The check lives in the issue tooling
+# beside this checkout, found by name whatever letter case the checkout was cloned under; a push
+# whose modes cannot be checked does not leave the machine.
+modes_check=""
+for sibling in "$root"/../*/; do
+  case "$(basename "$sibling" | tr '[:upper:]' '[:lower:]')" in
+    simetrix-gh) modes_check="${sibling%/}/bin/team-modes-check.sh" ;;
+  esac
+done
+if [ -z "$modes_check" ]; then
+  echo "REFUSED: the issue tooling is not beside this checkout, so the team modes cannot be checked."
+  echo "It is a checkout named simetrix-gh, standing beside this one, holding bin/team-modes-check.sh."
+  exit 1
+fi
+if [ ! -f "$modes_check" ]; then
+  echo "REFUSED: $modes_check does not exist, so the team modes cannot be checked."
+  exit 1
+fi
+bash "$modes_check" || {
+  echo "REFUSED: the team modes are missing; the lines above say which and how to install them."
+  exit 1
+}
+
+echo "pre-push: the charts, lifecycle/test.sh and the credential scan run here. About four minutes."
+bash "$root/scripts/check.sh" || {
+  echo "REFUSED: the line above says which check went red."
+  exit 1
+}
+
+echo "pre-push: every check passed."
