@@ -24,6 +24,7 @@ cd "$root" || exit 1
 head_sha="$(git rev-parse HEAD)" || exit 1
 pushed=0
 unexplained=""
+scan_ranges=""
 
 # Only the files a commit changes decide whether it explains and nothing more. A root commit has
 # no parent to diff against, which `git diff-tree` answers with silence and `git log` answers
@@ -63,12 +64,44 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     exit 1
   fi
 
+  # A remote sha this checkout does not carry cannot be measured from. git rev-list would fail with
+  # its message silenced, the loop below would read zero commits, and a forced push over an
+  # unfetched remote would pass the message rule with nothing read at all.
+  case "$remote_sha" in
+    *[!0]*)
+      if ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+        echo "REFUSED: the commit $remote_sha that $remote_ref points at is not in this checkout, so the commits being pushed cannot be listed."
+        echo "Run git fetch, then push again."
+        exit 1
+      fi
+      ;;
+  esac
+
   # An all-zero remote sha is a ref the remote does not have yet, so there is no "before" to
   # compare with and every commit reachable from the local sha is read.
   case "$remote_sha" in
     *[!0]*) range="$remote_sha..$local_sha" ;;
     *) range="$local_sha" ;;
   esac
+
+  # THE RANGE IS COLLECTED FOR THE CREDENTIAL SCAN AT THE END. This loop is the only place that
+  # knows what the remote already has, and the scan needs exactly that.
+  #
+  # An all-zero remote sha has no "before", so the range would be the whole history, and the
+  # initial commit of this repository carries four findings of its own in secrets/secrets.example:
+  # the file that names every credential an installation is asked for. They are already in every
+  # clone and no push can take them back out, so the range starts at that commit's children and
+  # covers everything a push can still add.
+  case "$remote_sha" in
+    *[!0]*) pushed_range="$local_sha ^$remote_sha" ;;
+    *)
+      pushed_range="$local_sha"
+      for initial in $(git rev-list --max-parents=0 "$local_sha"); do
+        pushed_range="$pushed_range ^$initial"
+      done
+      ;;
+  esac
+  scan_ranges="$scan_ranges$pushed_range"$'\n'
 
   # A merge carries no work of its own and its message is written by git, so it is left out.
   while IFS= read -r commit; do
@@ -111,17 +144,30 @@ if [ "$pushed" -eq 0 ]; then
 fi
 
 # No push without the three team modes (the language rules). The check lives in the issue tooling
-# beside this checkout, found by name whatever letter case the checkout was cloned under; a push
+# beside the main checkout, found by name whatever letter case the checkout was cloned under; a push
 # whose modes cannot be checked does not leave the machine.
+#
+# THE SIBLINGS STAND BESIDE THE MAIN CHECKOUT, and this hook also runs from a worktree. An issue is
+# worked in a worktree under ../.worktrees/<repo>/, whose own parent directory holds nothing but
+# other worktrees, so a search beside the working tree finds no tooling there. The common git
+# directory is the main checkout's .git from either place, and it is what the neighbourhood is
+# measured from.
 modes_check=""
-for sibling in "$root"/../*/; do
+common="$(git rev-parse --git-common-dir)" || exit 1
+case "$common" in
+  /*|[A-Za-z]:*) ;;
+  *) common="$root/$common" ;;
+esac
+main_checkout="$(cd "$common/.." && pwd)" || exit 1
+for sibling in "$main_checkout"/../*/; do
+  [ -d "$sibling" ] || continue
   case "$(basename "$sibling" | tr '[:upper:]' '[:lower:]')" in
-    simetrix-gh) modes_check="${sibling%/}/bin/team-modes-check.sh" ;;
+    simetrix-gh) modes_check="$(cd "$sibling" && pwd)/bin/team-modes-check.sh" ;;
   esac
 done
 if [ -z "$modes_check" ]; then
-  echo "REFUSED: the issue tooling is not beside this checkout, so the team modes cannot be checked."
-  echo "It is a checkout named simetrix-gh, standing beside this one, holding bin/team-modes-check.sh."
+  echo "REFUSED: the issue tooling is not beside $main_checkout, so the team modes cannot be checked."
+  echo "It is a checkout named simetrix-gh, standing beside that one, holding bin/team-modes-check.sh."
   exit 1
 fi
 if [ ! -f "$modes_check" ]; then
@@ -138,5 +184,26 @@ bash "$root/scripts/check.sh" || {
   echo "REFUSED: the line above says which check went red."
   exit 1
 }
+
+# THE COMMITS ARE SCANNED TOO, not only the working copy. scripts/check.sh reads one state: the
+# files git would let you commit right now. A credential that was committed in one pushed commit
+# and taken out again in a later one is not in that state, and it would leave this machine unread.
+# The commits being pushed are the only place it still stands, and this hook is the only thing that
+# knows which those are.
+echo "pre-push: gitleaks over the commits this push carries."
+command -v gitleaks >/dev/null 2>&1 || {
+  echo "REFUSED: gitleaks is not on this path, so the commits being pushed cannot be read for credentials."
+  exit 1
+}
+while IFS= read -r pushed_range; do
+  [ -n "$pushed_range" ] || continue
+  gitleaks git --no-banner --log-opts="$pushed_range" "$root" || {
+    echo "REFUSED: a credential stands in a commit this push carries. The lines above name the commit, the file and the rule."
+    echo "Take it out of the history — a commit that is pushed cannot be recalled — then push again."
+    exit 1
+  }
+done <<EOF
+$scan_ranges
+EOF
 
 echo "pre-push: every check passed."

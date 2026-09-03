@@ -82,101 +82,18 @@ New-Item -ItemType Directory -Path $work -Force | Out-Null
 try {
 
 # ── What an installation answers ────────────────────────────────────────────────────────────
-# The stand-in cluster map. It stands where clusters/active/<fqdn>.yaml stands in every chart's
-# valueFiles chain: last, after the platform globals and the chart's own values.
-#
-# WITHOUT IT ALMOST NOTHING RENDERS, and that is the trunk working as designed. The endpoint
-# keys in clusters/platform/values-common.yaml are deliberately empty there — every reader wraps
-# them in `required`, so a cluster that was given no address is stopped rather than dialling
-# nothing. Measured on this tree: 7 of the 24 charts render without this file and 17 do not, so
-# a check that skipped them would leave the manager, the registry and the observability charts
-# unrendered while reporting itself green.
-#
-# THE ANSWERS ARE STAND-INS AND NAME NOTHING REAL. configs/config.example declares the keys an
-# installation is asked for and leaves every one of them empty on purpose, so it can give a
-# domain to nobody. The domain here is under .invalid, which is reserved and resolves nowhere.
-#
-# THE SHAPE IS THE CONTRACT, not the values: it is the shape the run that generates an install
-# branch writes, and a chart that starts reading a key this file does not carry will say so by
-# name at the render.
-$clusterMap = @'
-stage: dev
-role: master
-booksCluster: check.example.invalid
-release: 0.0.0-placeholder
-
-global:
-  domain: check.example.invalid
-  clusterName: check
-  booksCluster: check.example.invalid
-  buildPlane: check.example.invalid
-  unitApex: check.example.invalid
-  platformDomain: check.example.invalid
-  letsencryptEmail: check@check.example.invalid
-  letsencryptServer: https://acme-staging-v02.api.letsencrypt.org/directory
-  alertRecipients: ['check@check.example.invalid']
-  catalogUrl: https://github.com/check/check.git
-  catalogRepo: check/check
-  vaultKubernetesAuthPath: kubernetes-check
-  registryPullUser: check-pull
-  registryPushUser: check-push
-  nodeCidrs: [10.0.0.1/32]
-  endpoints:
-    registry:
-      host: zot.check.example.invalid
-    mail: {url: 'https://mail.check.example.invalid'}
-    vault: {url: 'https://vault.check.example.invalid'}
-    idp: {url: 'https://idp.check.example.invalid'}
-    tailnet: {url: 'https://tale.check.example.invalid'}
-  servicesLocal:
-    registry: true
-    vault: true
-    observability: true
-'@
-
-# The stand-in registration, for the charts an ApplicationSet hands per-unit and per-slave facts
-# to at deploy time. A unit chart's own values declare these keys empty and `required` on
-# purpose — a default there would be a second source for a number the registration already
-# states — so the numbers below are what lets those charts be rendered at all. They bound
-# nothing: no cluster ever reads this file.
-$registration = @'
-suspended: false
-quiesced: false
-tenant:
-  guid: 00000000-0000-0000-0000-000000000000
-  member: check
-  appName: check
-  subdomain: check
-  stage: dev
-quota:
-  requestsCpu: "1"
-  requestsMemory: 1Gi
-  limitsCpu: "2"
-  limitsMemory: 2Gi
-  pods: "10"
-  persistentVolumeClaims: "4"
-slave:
-  name: check
-  branch: check.example.invalid
-  apiHost: 10.0.0.1
-  apiPort: "16443"
-  masterFqdn: check.example.invalid
-  stage: dev
-externalsecret-mongodb:
-  externalSecret:
-    vaultPath: secret/dev/units/check/mongodb
-externalsecret-postgres:
-  externalSecret:
-    vaultPath: secret/dev/units/check/postgres
-'@
-
-$mapFile = Join-Path $work 'cluster-map.yaml'
-$regFile = Join-Path $work 'registration.yaml'
-# LF and no byte order mark. helm reads these as YAML, and a mark at the head of the first file
-# of a values chain is a parse error rather than a value.
-$utf8 = [System.Text.UTF8Encoding]::new($false)
-[System.IO.File]::WriteAllText($mapFile, ($clusterMap -replace "`r`n", "`n") + "`n", $utf8)
-[System.IO.File]::WriteAllText($regFile, ($registration -replace "`r`n", "`n") + "`n", $utf8)
+# The two stand-in documents are TRACKED FILES, and each is read here rather than written out.
+# scripts/check.sh reads the same two. A copy in each spelling of this check would be a second and
+# a third place to change a key, and a key that moved in one of them would leave this check green
+# while a real install branch failed. Their own comments say what each document is and why the
+# charts need it.
+$mapFile = Join-Path $root 'scripts/standin/cluster-map.yaml'
+$regFile = Join-Path $root 'scripts/standin/registration.yaml'
+foreach ($standin in $mapFile, $regFile) {
+    if (-not (Test-Path -LiteralPath $standin)) {
+        Stop-Check "$standin is missing, and it is what lets the charts of an installation render here"
+    }
+}
 
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
 Write-Output 'check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves.'

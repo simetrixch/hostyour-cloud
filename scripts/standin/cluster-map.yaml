@@ -1,0 +1,52 @@
+# The stand-in cluster map, for the render check only. No cluster ever reads this file.
+#
+# It stands where clusters/active/<fqdn>.yaml stands in every chart's valueFiles chain: last, after
+# the platform globals and the chart's own values. scripts/check.sh and scripts/check.ps1 both hand
+# this one file to helm template, so the shape below is declared once in this repository.
+#
+# WITHOUT IT ALMOST NOTHING RENDERS, and that is the trunk working as designed. The endpoint keys in
+# clusters/platform/values-common.yaml are deliberately empty there — every reader wraps them in
+# `required`, so a cluster that was given no address is stopped rather than dialling nothing.
+# Measured on this tree: 7 of the 24 charts render without this file and 17 do not, so a check that
+# skipped them would leave the manager, the registry and the observability charts unrendered while
+# reporting itself green.
+#
+# THE ANSWERS ARE STAND-INS AND NAME NOTHING REAL. configs/config.example declares the keys an
+# installation is asked for and leaves every one of them empty on purpose, so it can give a domain
+# to nobody. The domain here is under .invalid, which is reserved and resolves nowhere.
+#
+# THE SHAPE IS THE CONTRACT, not the values: it is the shape the run that generates an install
+# branch writes, and a chart that starts reading a key this file does not carry will say so by name
+# at the render.
+stage: dev
+role: master
+booksCluster: check.example.invalid
+release: 0.0.0-placeholder
+
+global:
+  domain: check.example.invalid
+  clusterName: check
+  booksCluster: check.example.invalid
+  buildPlane: check.example.invalid
+  unitApex: check.example.invalid
+  platformDomain: check.example.invalid
+  letsencryptEmail: check@check.example.invalid
+  letsencryptServer: https://acme-staging-v02.api.letsencrypt.org/directory
+  alertRecipients: ['check@check.example.invalid']
+  catalogUrl: https://github.com/check/check.git
+  catalogRepo: check/check
+  vaultKubernetesAuthPath: kubernetes-check
+  registryPullUser: check-pull
+  registryPushUser: check-push
+  nodeCidrs: [10.0.0.1/32]
+  endpoints:
+    registry:
+      host: zot.check.example.invalid
+    mail: {url: 'https://mail.check.example.invalid'}
+    vault: {url: 'https://vault.check.example.invalid'}
+    idp: {url: 'https://idp.check.example.invalid'}
+    tailnet: {url: 'https://tale.check.example.invalid'}
+  servicesLocal:
+    registry: true
+    vault: true
+    observability: true

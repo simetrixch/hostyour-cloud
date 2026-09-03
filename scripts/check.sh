@@ -47,93 +47,16 @@ work="$(mktemp -d)" || fail "no temporary directory could be made"
 trap 'rm -rf "$work"' EXIT
 
 # ── What an installation answers ────────────────────────────────────────────────────────────
-# The stand-in cluster map. It stands where clusters/active/<fqdn>.yaml stands in every chart's
-# valueFiles chain: last, after the platform globals and the chart's own values.
-#
-# WITHOUT IT ALMOST NOTHING RENDERS, and that is the trunk working as designed. The endpoint
-# keys in clusters/platform/values-common.yaml are deliberately empty there — every reader wraps
-# them in `required`, so a cluster that was given no address is stopped rather than dialling
-# nothing. Measured on this tree: 7 of the 24 charts render without this file and 17 do not, so
-# a check that skipped them would leave the manager, the registry and the observability charts
-# unrendered while reporting itself green.
-#
-# THE ANSWERS ARE STAND-INS AND NAME NOTHING REAL. configs/config.example declares the keys an
-# installation is asked for and leaves every one of them empty on purpose, so it can give a
-# domain to nobody. The domain here is under .invalid, which is reserved and resolves nowhere.
-#
-# THE SHAPE IS THE CONTRACT, not the values: it is the shape the run that generates an install
-# branch writes, and a chart that starts reading a key this file does not carry will say so by
-# name at the render.
-cat > "$work/cluster-map.yaml" <<'CLUSTER_MAP'
-stage: dev
-role: master
-booksCluster: check.example.invalid
-release: 0.0.0-placeholder
-
-global:
-  domain: check.example.invalid
-  clusterName: check
-  booksCluster: check.example.invalid
-  buildPlane: check.example.invalid
-  unitApex: check.example.invalid
-  platformDomain: check.example.invalid
-  letsencryptEmail: check@check.example.invalid
-  letsencryptServer: https://acme-staging-v02.api.letsencrypt.org/directory
-  alertRecipients: ['check@check.example.invalid']
-  catalogUrl: https://github.com/check/check.git
-  catalogRepo: check/check
-  vaultKubernetesAuthPath: kubernetes-check
-  registryPullUser: check-pull
-  registryPushUser: check-push
-  nodeCidrs: [10.0.0.1/32]
-  endpoints:
-    registry:
-      host: zot.check.example.invalid
-    mail: {url: 'https://mail.check.example.invalid'}
-    vault: {url: 'https://vault.check.example.invalid'}
-    idp: {url: 'https://idp.check.example.invalid'}
-    tailnet: {url: 'https://tale.check.example.invalid'}
-  servicesLocal:
-    registry: true
-    vault: true
-    observability: true
-CLUSTER_MAP
-
-# The stand-in registration, for the charts an ApplicationSet hands per-unit and per-slave facts
-# to at deploy time. A unit chart's own values declare these keys empty and `required` on
-# purpose — a default there would be a second source for a number the registration already
-# states — so the numbers below are what lets those charts be rendered at all. They bound
-# nothing: no cluster ever reads this file.
-cat > "$work/registration.yaml" <<'REGISTRATION'
-suspended: false
-quiesced: false
-tenant:
-  guid: 00000000-0000-0000-0000-000000000000
-  member: check
-  appName: check
-  subdomain: check
-  stage: dev
-quota:
-  requestsCpu: "1"
-  requestsMemory: 1Gi
-  limitsCpu: "2"
-  limitsMemory: 2Gi
-  pods: "10"
-  persistentVolumeClaims: "4"
-slave:
-  name: check
-  branch: check.example.invalid
-  apiHost: 10.0.0.1
-  apiPort: "16443"
-  masterFqdn: check.example.invalid
-  stage: dev
-externalsecret-mongodb:
-  externalSecret:
-    vaultPath: secret/dev/units/check/mongodb
-externalsecret-postgres:
-  externalSecret:
-    vaultPath: secret/dev/units/check/postgres
-REGISTRATION
+# The two stand-in documents are TRACKED FILES, and each is read here rather than written out.
+# scripts/check.ps1 reads the same two. A copy in each spelling of this check would be a second and
+# a third place to change a key, and a key that moved in one of them would leave this check green
+# while a real install branch failed. Their own comments say what each document is and why the
+# charts need it.
+cluster_map="$root/scripts/standin/cluster-map.yaml"
+registration="$root/scripts/standin/registration.yaml"
+for standin in "$cluster_map" "$registration"; do
+  [ -f "$standin" ] || fail "$standin is missing, and it is what lets the charts of an installation render here"
+done
 
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
 echo "check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves."
@@ -189,7 +112,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/; do
     # It did not render from what the trunk carries. That is the normal case and not yet a
     # finding: the installation's own answers load last in the chain, and the trunk has none.
     out="$(helm template "$name" "$chart" --namespace "$namespace" \
-      "${args[@]}" -f "$work/cluster-map.yaml" -f "$work/registration.yaml" 2>&1)"
+      "${args[@]}" -f "$cluster_map" -f "$registration" 2>&1)"
     if [ $? -eq 0 ]; then
       rendered=$((rendered + 1))
       case " $needed_standin " in
@@ -231,12 +154,27 @@ bash lifecycle/test.sh || fail "lifecycle/test.sh"
 # The set is tracked files plus untracked ones git does not ignore, taken from the working copy
 # rather than from HEAD, so an edit that has not been committed yet is read too. .gitleaks.toml
 # is tracked and travels with them, which is how its allowlist reaches the scan.
+#
+# COPIED ONE FILE AT A TIME, and not with `cp --parents -t`. Those two options are GNU coreutils
+# only: the cp macOS ships carries neither, so that line ends this check red on every Mac. The loop
+# below makes each file's folder itself and uses nothing but plain cp.
+#
+# The list is separated by zero bytes, because a file name may carry anything else — a newline
+# included — and a list split on newlines would take one such name for two files and copy neither.
 echo "check: gitleaks over the files git would let you commit."
 scan="$work/scan"
 mkdir -p "$scan" || fail "the scan directory could not be made"
-git ls-files --cached --others --exclude-standard -z \
-  | xargs -0 cp --parents -t "$scan" \
-  || fail "the committable files could not be collected for the credential scan"
+list="$work/committable"
+git ls-files --cached --others --exclude-standard -z > "$list" \
+  || fail "the committable files could not be listed for the credential scan"
+while IFS= read -r -d '' file; do
+  [ -n "$file" ] || continue
+  destination="$scan/$file"
+  mkdir -p "$(dirname "$destination")" \
+    || fail "the committable files could not be collected for the credential scan"
+  cp "$file" "$destination" \
+    || fail "the committable files could not be collected for the credential scan"
+done < "$list"
 gitleaks detect --no-git --no-banner --source "$scan" || fail "gitleaks found a credential"
 
 echo "check: OK — every check green"

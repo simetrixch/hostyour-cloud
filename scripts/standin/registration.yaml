@@ -1,0 +1,37 @@
+# The stand-in registration, for the render check only. No cluster ever reads this file.
+#
+# It carries the per-unit and per-slave facts an ApplicationSet hands a chart at deploy time. A unit
+# chart's own values declare these keys empty and `required` on purpose — a default there would be a
+# second source for a number the registration already states — so the numbers below are what lets
+# those charts be rendered at all. They bound nothing.
+#
+# scripts/check.sh and scripts/check.ps1 both hand this one file to helm template, so the shape
+# below is declared once in this repository.
+suspended: false
+quiesced: false
+tenant:
+  guid: 00000000-0000-0000-0000-000000000000
+  member: check
+  appName: check
+  subdomain: check
+  stage: dev
+quota:
+  requestsCpu: "1"
+  requestsMemory: 1Gi
+  limitsCpu: "2"
+  limitsMemory: 2Gi
+  pods: "10"
+  persistentVolumeClaims: "4"
+slave:
+  name: check
+  branch: check.example.invalid
+  apiHost: 10.0.0.1
+  apiPort: "16443"
+  masterFqdn: check.example.invalid
+  stage: dev
+externalsecret-mongodb:
+  externalSecret:
+    vaultPath: secret/dev/units/check/mongodb
+externalsecret-postgres:
+  externalSecret:
+    vaultPath: secret/dev/units/check/postgres
