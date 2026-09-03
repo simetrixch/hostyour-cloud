@@ -190,6 +190,27 @@ PLACED=$(git grep -nE '^[[:space:]]*(-[[:space:]]+)?(group|apiVersion):[[:space:
 # without a second tree ever being cut.
 PREFIX="${VERSION}-${CHANNEL}-"
 EXISTING="$(git tag -l "${PREFIX}*" | sort | tail -1)"
+
+# A TAG THAT NEVER REACHED ORIGIN AND NAMES ANOTHER COMMIT IS RESIDUE, and reusing
+# it aims every retry at the commit a refused push left behind. The tag is minted
+# before it is pushed, so a push the pre-push hook refuses leaves it standing here
+# and nowhere else; the next run finds it, reuses it, and is refused again — for
+# the same reason, printed as if it were about the new attempt. Measured on this
+# workstation: three runs of 0.7.8 refused in a row, cleared only by deleting the
+# tag by hand.
+#
+# A TAG THAT IS ON ORIGIN IS LEFT EXACTLY AS IT STANDS, whatever commit it names.
+# That is mint-once itself: one release per version and channel, reused so a
+# release already cut reaches a second installation without a second tree.
+if [ -n "$EXISTING" ] \
+  && ! git ls-remote --exit-code --tags origin "refs/tags/${EXISTING}" >/dev/null 2>&1 \
+  && [ "$(git rev-parse --verify --quiet "${EXISTING}^{commit}")" != "$(git rev-parse --verify origin/master)" ]; then
+  say "release: $EXISTING stands on this workstation only and names $(git rev-parse --short=7 "${EXISTING}^{commit}"), not the commit this release is cut from. A run whose push was refused left it behind; it is dropped and cut again."
+  git tag -d "$EXISTING" >/dev/null \
+    || die "the leftover tag $EXISTING could not be dropped, and reusing it would put this release on a commit nobody is releasing" 69
+  EXISTING=""
+fi
+
 if [ -n "$EXISTING" ]; then
   TAG="$EXISTING"
   say "release: reusing $TAG. One release per version and channel, so putting it on $FQDN cuts nothing new"

@@ -218,6 +218,35 @@ try {
   # installation without a second tree ever being cut.
   $prefix = "$Version-$Channel-"
   $existing = @(git tag -l "$prefix*" | Sort-Object)
+
+  # A TAG THAT NEVER REACHED ORIGIN AND NAMES ANOTHER COMMIT IS RESIDUE, and reusing
+  # it aims every retry at the commit a refused push left behind. The tag is minted
+  # before it is pushed, so a push the pre-push hook refuses leaves it standing here
+  # and nowhere else; the next run finds it, reuses it, and is refused again — for
+  # the same reason, printed as if it were about the new attempt. Measured on this
+  # workstation: three runs of 0.7.8 refused in a row, cleared only by deleting the
+  # tag by hand.
+  #
+  # A TAG THAT IS ON ORIGIN IS LEFT EXACTLY AS IT STANDS, whatever commit it names.
+  # That is mint-once itself: one release per version and channel, reused so a
+  # release already cut reaches a second installation without a second tree.
+  if ($existing.Count -gt 0) {
+    $candidate = $existing[-1]
+    git ls-remote --exit-code --tags origin "refs/tags/$candidate" *> $null
+    $onOrigin = ($LASTEXITCODE -eq 0)
+    $candidateSha = (git rev-parse --verify --quiet "$candidate^{commit}" | Select-Object -First 1)
+    $releasedSha = (git rev-parse --verify origin/master | Select-Object -First 1)
+    if (-not $onOrigin -and "$candidateSha" -ne "$releasedSha") {
+      $candidateShort = (git rev-parse --short=7 "$candidate^{commit}" | Select-Object -First 1)
+      Say "release: $candidate stands on this workstation only and names $candidateShort, not the commit this release is cut from. A run whose push was refused left it behind; it is dropped and cut again."
+      git tag -d $candidate *> $null
+      if ($LASTEXITCODE -ne 0) {
+        Stop-Here "the leftover tag $candidate could not be dropped, and reusing it would put this release on a commit nobody is releasing" 69
+      }
+      $existing = @()
+    }
+  }
+
   if ($existing.Count -gt 0) {
     $tag = $existing[-1]
     Say "release: reusing $tag. One release per version and channel, so putting it on $Fqdn cuts nothing new"

@@ -210,6 +210,10 @@ seed_installation() { # fqdn, stage, release line (empty for none)
 seed_installation apps3.example.invalid dev ''
 seed_installation apps5.example.invalid test '9.9.9-stable-19700101000000'
 seed_installation apps9.example.invalid prod ''
+# The fourth exists so the mint cases at the end of this section have an installation
+# nothing else reads: every one of the three above is load-bearing somewhere — apps3's
+# pin, apps9's missing pin and apps5's unresolvable one are each asserted in TWO.
+seed_installation apps4.example.invalid dev ''
 git -C "$SEED" checkout --quiet -b work/no-map master
 git -C "$SEED" push --quiet origin work/no-map
 git -C "$SEED" checkout --quiet master
@@ -219,7 +223,7 @@ git -C "$SEED" checkout --quiet master
 git clone --quiet --bare "$ORIGIN_A" "$ORIGIN_B"
 git clone --quiet "$ORIGIN_A" "$WORK_A"
 git clone --quiet "$ORIGIN_B" "$WORK_B"
-ok "fixture built — two origins, one trunk, three installations and one ref that is none"
+ok "fixture built — two origins, one trunk, four installations and one ref that is none"
 
 # ── the refusals, which cost nothing and must leave nothing behind ──────────
 run_bash release-platform 1.2 stable apps3.example.invalid
@@ -347,6 +351,48 @@ if diff -q "$OUT/a.out.n" "$OUT/b.out.n" >/dev/null; then
   fail 'a spelling with one line changed compared EQUAL to the other — the comparison above proves nothing'
 fi
 ok 'the planted defect was caught — the comparison of the release pair can go red'
+
+# ── a tag a refused push left behind is dropped, not reused ─────────────────
+# THE STATE A REFUSED PUSH LEAVES. The tag is minted before it is pushed, so a
+# push the hook refuses leaves it standing in the checkout and nowhere else,
+# naming the commit it was minted for rather than the one a later run releases.
+# Reusing it aims every retry at that same commit and is refused for the same
+# reason — printed as if it were about the new attempt. Measured on a real
+# workstation: three runs of one version refused in a row, cleared only by
+# deleting the tag by hand.
+STALE='0.2.0-alpha-19700101000000'
+git -C "$WORK_A" tag -a "$STALE" -m 'left behind by a refused push' origin/apps4.example.invalid
+git -C "$WORK_B" tag -a "$STALE" -m 'left behind by a refused push' origin/apps4.example.invalid
+run_bash release-platform 0.2.0 alpha apps4.example.invalid
+run_pwsh release-platform 0.2.0 alpha apps4.example.invalid
+must "stands on this workstation only" 'the leftover is named as standing nowhere else'
+must "it is dropped and cut again" 'and it is dropped rather than reused'
+must "release: minted 0.2.0-alpha-" 'a fresh tag is cut in its place'
+must_not "release: reusing $STALE" 'the leftover is never reused'
+same 'a tag a refused push left behind'
+[ -z "$(git -C "$WORK_A" tag -l "$STALE")" ] || fail 'the leftover tag still stands in the checkout'
+[ "$(git --git-dir="$ORIGIN_A" tag -l '0.2.0-alpha-*' | wc -l)" = '1' ] \
+  || fail 'origin A does not carry exactly one tag for the version that was cut again'
+ok 'the leftover is gone from the checkout and origin carries exactly one tag for that version'
+
+# ── a tag that never reached origin but names the released commit IS reused ──
+# The other half of the same reading, and the half that keeps the fix from
+# deleting too much: a run whose push was refused for a reason that has nothing
+# to do with the tag is resumable, and re-minting there would cut a second tree
+# for one release. What decides is not whether the tag was pushed but whether it
+# names the commit being released.
+RESUMABLE='0.3.0-alpha-19700101000000'
+git -C "$WORK_A" tag -a "$RESUMABLE" -m 'minted, not yet pushed' origin/master
+git -C "$WORK_B" tag -a "$RESUMABLE" -m 'minted, not yet pushed' origin/master
+run_bash release-platform 0.3.0 alpha apps4.example.invalid
+run_pwsh release-platform 0.3.0 alpha apps4.example.invalid
+must "release: reusing $RESUMABLE" 'a leftover naming the released commit is reused as it stands'
+must_not "is dropped and cut again" 'and nothing is dropped'
+must_not "release: minted 0.3.0" 'and nothing is cut a second time'
+same 'a tag that never reached origin but names the released commit'
+[ -n "$(git --git-dir="$ORIGIN_A" tag -l "$RESUMABLE")" ] \
+  || fail 'the reused tag never reached origin, so the run resumed nothing'
+ok 'a leftover naming the released commit is reused and pushed, not cut again'
 
 # ===========================================================================
 # TWO — regenerate-install-branch, on the fixture the release above pinned
@@ -891,7 +937,9 @@ ok 'the planted defect was caught — the comparison of the remove-slave pair ca
 
 echo "test: GREEN — every case above was measured on both spellings and answered identically."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
-echo "test:   tag, the four states a report can be in and a name that is no installation; the"
+echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
+echo "test:   never reached origin but names the released commit and is reused as it stands,"
+echo "test:   the four states a report can be in and a name that is no installation; the"
 echo "test:   six refusals a regeneration makes before it touches a machine, the pin it reads"
 echo "test:   off the branch, and a launcher without its driver; the migration walk and its"
 echo "test:   skip reasons, the report run's refusal to push, the write run's"
