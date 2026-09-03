@@ -482,14 +482,14 @@ toolchains:
   # Until then ansiwise-client's tool/flutter_pin.dart is what refuses a drift,
   # on the client's side; this line is stated here and held nowhere.
   flutter:
-    version: "3.47.0"
+    version: "3.47.2"
     note: |
-      Read by hand from the Flutter release channel — no upstream kind can ask it.
-      3.47.0 and not the newer 3.47.1, because a pin is for reproducing a build and
-      not for being current: ansiwise-client/tool/ci.dart refuses every SDK but the
-      pinned one, so a version nobody has installed turns that gate red everywhere.
-      3.47.0 is the one the client was built and tested with. versions-upstream
-      reports 3.47.1 standing beside it and never fails on it.
+      Read by hand from the Flutter release channel on 2026-09-03 — no upstream
+      kind can ask it. A pin is for reproducing a build and not for being current:
+      ansiwise-client/tool/ci.dart refuses every SDK but the pinned one, so a
+      version nobody has installed turns that gate red everywhere. 3.47.2 is the
+      one the client is built and tested with, and it moves only together with
+      that constant. versions-upstream never fails on this line.
 
 # CLI tools installed to /usr/local/bin on every host. They were fetched as
 # "latest" until they were pinned here: two hosts installed a month apart got
