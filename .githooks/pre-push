@@ -63,7 +63,13 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 
   # The checks below run against the working copy, which is HEAD. A ref that is not HEAD would be
   # judged by a run that never read it.
-  if [ "$local_sha" != "$head_sha" ]; then
+  #
+  # WHAT IS PUSHED IS RESOLVED TO A COMMIT FIRST. An annotated tag hands its own object's sha here,
+  # never the commit it names, so comparing it to HEAD refuses every annotated tag there is -
+  # including the ones lifecycle/release-platform.sh mints. Resolving it asks the question the
+  # refusal below means to ask: does the tree this ref names match the tree the checks read.
+  local_commit="$(git rev-parse --quiet --verify "${local_sha}^{commit}" 2>/dev/null || printf '%s' "$local_sha")"
+  if [ "$local_commit" != "$head_sha" ]; then
     echo "REFUSED: $local_ref is not the checked-out commit, so its checks did not run."
     echo "Check out that commit and push it again."
     exit 1
@@ -83,28 +89,28 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   esac
 
   # An all-zero remote sha is a ref the remote does not have yet, so there is no "before" to
-  # compare with and every commit reachable from the local sha is read.
+  # compare with. Reading that as "everything reachable" judges the whole history - every commit
+  # already published, by whatever rule held when it was written. A TAG is exactly that case: it
+  # names a commit the branch already carries, so what it introduces is nothing at all. Excluding
+  # every remote ref this checkout knows asks the question the loop below means to ask - which
+  # commits does this push add - and answers it with none where none are added.
   case "$remote_sha" in
     *[!0]*) range="$remote_sha..$local_sha" ;;
-    *) range="$local_sha" ;;
+    *) range="$local_sha --not --remotes=origin" ;;
   esac
 
   # THE RANGE IS COLLECTED FOR THE CREDENTIAL SCAN AT THE END. This loop is the only place that
   # knows what the remote already has, and the scan needs exactly that.
   #
-  # An all-zero remote sha has no "before", so the range would be the whole history, and the
-  # initial commit of this repository carries four findings of its own in secrets/secrets.example:
-  # the file that names every credential an installation is asked for. They are already in every
-  # clone and no push can take them back out, so the range starts at that commit's children and
-  # covers everything a push can still add.
+  # An all-zero remote sha has no "before", so reading it as "everything reachable" scans the whole
+  # history. What that costs is not only time: the initial commit of this repository carries four
+  # findings of its own in secrets/secrets.example, the file that names every credential an
+  # installation is asked for, and they are in every clone already - no push can take them back
+  # out. Excluding every remote ref this checkout knows leaves exactly what a push can still add,
+  # and leaves a tag naming an already-published commit with nothing to scan.
   case "$remote_sha" in
     *[!0]*) pushed_range="$local_sha ^$remote_sha" ;;
-    *)
-      pushed_range="$local_sha"
-      for initial in $(git rev-list --max-parents=0 "$local_sha"); do
-        pushed_range="$pushed_range ^$initial"
-      done
-      ;;
+    *) pushed_range="$local_sha --not --remotes=origin" ;;
   esac
   scan_ranges="$scan_ranges$pushed_range"$'\n'
 
