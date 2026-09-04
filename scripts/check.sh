@@ -59,7 +59,7 @@ for standin in "$cluster_map" "$registration"; do
 done
 
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
-echo "check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves."
+echo "check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves, and clusters/argocd."
 
 stages="dev test prod"
 rendered=0
@@ -67,7 +67,10 @@ skipped_library=""
 needed_standin=""
 broken=""
 
-for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/; do
+# clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
+# renders the seven manifests of clusters/argocd/files from the cluster map, with the same values a
+# branch program stamps into them.
+for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ clusters/argocd/; do
   chart="${chart%/}"
   [ -f "$chart/Chart.yaml" ] || continue
   name="$(basename "$chart")"

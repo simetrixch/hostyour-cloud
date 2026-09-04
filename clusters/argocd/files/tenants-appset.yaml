@@ -68,7 +68,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: tenants-__STAGE__
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
 spec:
   goTemplate: true
   goTemplateOptions:
@@ -91,7 +91,7 @@ spec:
   template:
     metadata:
       name: "{{ .values.guid }}-{{ .name }}-__STAGE__"
-      namespace: argocd
+      namespace: __ARGOCD_NAMESPACE__
       labels:
         platform/tenant: "{{ .values.guid }}"
         platform/member: "{{ .name }}"
@@ -136,7 +136,7 @@ spec:
         # 0. Values-only source — makes $values/... resolvable for the sources below. Stamped
         #    normally: the chain follows THIS cluster's branch.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: master
+          targetRevision: __BRANCH__
           ref: values
         # 0b. Pins-only source — this installation's OWN image versions, on the catalog's books
         #    branch. A tag says which version THIS installation runs, so it cannot stand on the
@@ -218,7 +218,7 @@ spec:
         #    Reads no platform value, so it loads no $values file; the tenant guid is
         #    what makes the sibling rule this tenant's and not every tenant's.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: master
+          targetRevision: __BRANCH__
           path: clusters/units/networkpolicy
           helm:
             valuesObject:
@@ -233,7 +233,7 @@ spec:
         #    members, so each gets this ceiling and one member filling its own cannot take another's
         #    room.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: master
+          targetRevision: __BRANCH__
           path: clusters/units/quota
           helm:
             valuesObject:

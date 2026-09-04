@@ -1,0 +1,51 @@
+{{- /*
+THE RECONCILER'S OWN TREE, RENDERED FROM THE CLUSTER MAP.
+
+The seven manifests stand in files/ and not in templates/. ArgoCD reads its own
+{{ }} goTemplate expressions inside them, and anything under templates/ is read
+by Helm first, so a manifest placed there would lose those expressions. This
+template reads each file whole with .Files.Get and puts this cluster's own
+values in place of the markers. The idiom is the one
+clusters/inventories/consumer-build/templates/applicationset.yaml:27 already
+uses, for the same reason.
+
+A REPLACE HAS NO KEY AND NO KEEP MARKER. `replace` rewrites every occurrence of
+its literal, in a comment as well as in a value, and it cannot be narrowed to
+the value of one key the way a stamp row of
+../hostyour-deploy/ansiwise/programs/deploy-branch.yaml can. So every value this
+template writes stands behind a marker of its own, and no plain word is
+replaced. The word `argocd` stands inside the annotation domain
+argocd.argoproj.io, and the word `master` stands in prose and once as the tenant
+catalog's own branch, so files/ carries __ARGOCD_NAMESPACE__ and __BRANCH__ at
+the sites where those two are values.
+
+`# file: <name>` opens each emitted document. Helm writes one `# Source:` line
+for this template, and all seven documents come from it, so that line cannot
+tell them apart.
+*/ -}}
+{{- $stage := required "argocd-apps: stage is required (clusters/active/<fqdn>.yaml) — the ApplicationSets are named per stage and the registrations they read are filed per stage" .Values.stage }}
+{{- $role := required "argocd-apps: role is required (clusters/active/<fqdn>.yaml) — the platform app selector admits the parts this cluster carries, and a cluster admitting no part runs no platform application" .Values.role }}
+{{- $clusterName := required "argocd-apps: global.clusterName is required (clusters/active/<fqdn>.yaml) — this cluster registers itself under that name and the unit generators select the registrations carrying it" .Values.global.clusterName }}
+{{- $branch := required "argocd-apps: global.domain is required (clusters/active/<fqdn>.yaml) — it is the name of this cluster's install branch, which every source of this tree reads from, and the name of the cluster map file the value chains load last" .Values.global.domain }}
+{{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role, which carries this installation's registrations" .Values.global.booksCluster }}
+{{- $catalogRepo := required "argocd-apps: global.catalogRepo is required (clusters/active/<fqdn>.yaml) — the tenant catalog as bare owner/name, written inside a URL these files already carry" .Values.global.catalogRepo }}
+{{- $holdsBooks := required "argocd-apps: global.servicesLocal.vault is required (clusters/active/<fqdn>.yaml) — it says whether this cluster keeps the books, and the three files below exist only on the cluster that does" (dig "servicesLocal" "vault" "" .Values.global) }}
+{{- $roleParts := splitList "+" $role }}
+{{- /*
+WHERE THIS CLUSTER'S ARGOCD OBJECTS STAND. On a cluster that carries the master
+part the reconciler runs in the namespace `argocd`. A slave's instance does not:
+it runs on the master, in a namespace named after the slave, and an object still
+naming `argocd` is outside what that instance manages, so ArgoCD refuses to
+compare it at all. ../hostyour-deploy/ansiwise/programs/deploy-slave-branch.yaml:383-394
+writes the same value with a stamp row narrowed to the key `namespace`.
+*/ -}}
+{{- $namespace := ternary "argocd" $clusterName (eq (first $roleParts) "master") }}
+{{- $booksOnly := list "cluster-self.yaml" "repo-catalog.yaml" "slaves-appset.yaml" }}
+{{- $docs := list }}
+{{- range $name := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "repo-catalog.yaml" "slaves-appset.yaml" "tenants-appset.yaml" }}
+{{- if or $holdsBooks (not (has $name $booksOnly)) }}
+{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $branch | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__BRANCH__" $branch | replace "__ARGOCD_NAMESPACE__" $namespace }}
+{{- $docs = append $docs (printf "# file: %s\n%s" $name $doc) }}
+{{- end }}
+{{- end }}
+{{- join "---\n" $docs -}}

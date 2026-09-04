@@ -52,7 +52,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: core
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
   finalizers:
@@ -69,7 +69,7 @@ spec:
     # secret a person signs in with (clusters/inventories/argocd-signin). It is read out of the
     # store like every other secret, so it belongs to the tier that carries the store's operator.
     - name: __CLUSTER_NAME__
-      namespace: argocd
+      namespace: __ARGOCD_NAMESPACE__
     - name: __CLUSTER_NAME__
       namespace: kube-system
     # service-provisioner controller's own namespace.
@@ -100,7 +100,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: data
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
   finalizers:
@@ -133,7 +133,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: services
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
   finalizers:
@@ -175,7 +175,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: observability
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
   finalizers:
@@ -215,7 +215,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: cicd
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
   finalizers:
@@ -242,7 +242,7 @@ spec:
     - name: __CLUSTER_NAME__
       namespace: gate-runner
     - name: __CLUSTER_NAME__
-      namespace: argocd
+      namespace: __ARGOCD_NAMESPACE__
   clusterResourceWhitelist:
     # Tekton's release manifests create the Namespace objects themselves
     # (the `Namespace` objects of release-pipelines.yaml and release-dashboard.yaml).
@@ -285,7 +285,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: builds
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
   finalizers:
@@ -317,7 +317,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: manager
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
   finalizers:

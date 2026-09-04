@@ -54,7 +54,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: consumer-apps-__STAGE__
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
 spec:
   goTemplate: true
   goTemplateOptions:
@@ -71,7 +71,7 @@ spec:
   template:
     metadata:
       name: "{{ .name }}-__STAGE__"
-      namespace: argocd
+      namespace: __ARGOCD_NAMESPACE__
       annotations:
         # After the platform apps (wave 10-26); consumers come last.
         argocd.argoproj.io/sync-wave: "50"
@@ -171,7 +171,7 @@ spec:
       sources:
         # 0. Values-only source — makes $values/... resolvable for the sources below.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: master
+          targetRevision: __BRANCH__
           ref: values
         # 1. The consumer's CHART on its delivery branch deploy/__STAGE__ — a
         #    LITERAL, never a pin. The platform values reach the chart as
@@ -221,7 +221,7 @@ spec:
         #    registration (an empty list is allowed).
         {{- if has "postgresql" .services }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: master
+          targetRevision: __BRANCH__
           path: clusters/units/postgresql
           helm:
             # Platform globals only — the SAME $values chain source 1 reads.
@@ -272,7 +272,7 @@ spec:
         #    every commit.
         {{- if ne .mongodb "shared" }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: master
+          targetRevision: __BRANCH__
           path: clusters/units/mongodb
           helm:
             # Platform globals only — the SAME $values chain source 1 reads. The
@@ -313,7 +313,7 @@ spec:
         #    tenant-sibling rule its values.yaml carries stays off for a consumer, which
         #    is one namespace with no siblings.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: master
+          targetRevision: __BRANCH__
           path: clusters/units/networkpolicy
         # 4. The platform's own resource ceiling for this consumer's namespace
         #    (clusters/units/quota on the trunk: a ResourceQuota and the LimitRange that keeps it from
@@ -324,7 +324,7 @@ spec:
         #    table when it wrote the file; no $values file and no preset name, because the table lives
         #    in the Manager's database and no cluster can read it.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: master
+          targetRevision: __BRANCH__
           path: clusters/units/quota
           helm:
             valuesObject:

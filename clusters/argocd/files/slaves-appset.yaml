@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: slaves-__STAGE__
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
 spec:
   goTemplate: true
   goTemplateOptions:
@@ -35,7 +35,7 @@ spec:
   template:
     metadata:
       name: "{{ .values.cluster }}-apps"
-      namespace: argocd
+      namespace: __ARGOCD_NAMESPACE__
       annotations:
         argocd.argoproj.io/sync-wave: "45"
       finalizers:
@@ -44,7 +44,7 @@ spec:
       project: "{{ .values.cluster }}"
       sources:
         - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
-          targetRevision: &branch master
+          targetRevision: &branch __BRANCH__
           ref: values
         - repoURL: *repo
           targetRevision: *branch

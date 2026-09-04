@@ -96,7 +96,7 @@ foreach ($standin in $mapFile, $regFile) {
 }
 
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
-Write-Output 'check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves.'
+Write-Output 'check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves, and clusters/argocd.'
 
 $stages = @('dev', 'test', 'prod')
 $rendered = 0
@@ -118,6 +118,10 @@ foreach ($parent in 'clusters/inventories', 'clusters/units', 'clusters/slaves')
     [array]::Sort($sorted, [System.StringComparer]::Ordinal)
     foreach ($entry in $sorted) { $chartDirs += "$parent/$($entry.TrimEnd('/'))" }
 }
+# clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
+# renders the seven manifests of clusters/argocd/files from the cluster map, with the same values a
+# branch program stamps into them.
+$chartDirs += 'clusters/argocd'
 
 foreach ($chart in $chartDirs) {
     $chartYaml = "$chart/Chart.yaml"

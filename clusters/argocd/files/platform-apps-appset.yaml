@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: platform-apps-__STAGE__
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
 spec:
   goTemplate: true
   goTemplateOptions:
@@ -11,7 +11,7 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: master
+        revision: __BRANCH__
         files:
           - path: "clusters/inventories/*/app.yaml"
       # THE SELECTION IS BY PART, NEVER BY ONE ROLE WORD. A cluster's role names every part it
@@ -35,7 +35,7 @@ spec:
   template:
     metadata:
       name: "{{ .name }}-__STAGE__"
-      namespace: argocd
+      namespace: __ARGOCD_NAMESPACE__
       annotations:
         argocd.argoproj.io/sync-wave: "{{ .syncWave }}"
       finalizers:
@@ -44,7 +44,7 @@ spec:
       project: "{{ .project }}"
       sources:
         - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
-          targetRevision: &branch master
+          targetRevision: &branch __BRANCH__
           ref: values
         - repoURL: *repo
           targetRevision: *branch

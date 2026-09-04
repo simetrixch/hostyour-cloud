@@ -1,0 +1,38 @@
+# WHAT THIS CHART READS, AND WHERE EACH VALUE COMES FROM.
+#
+# This file sets nothing. Every value below stands in clusters/active/<fqdn>.yaml, the cluster map,
+# which is the last file of every valueFiles chain and the one file that says what one cluster is. A
+# default here would be a second place to carry an installation's own name, and the installation
+# that inherited it would never learn which of the two it was running on.
+#
+#   stage                        the marker __STAGE__. Top level of the map, written from
+#                                cluster-map.tpl:23. NOT global.env: global.env stands in
+#                                clusters/platform/values-<stage>.yaml, and reaching it needs the
+#                                stage already known, which is the value being read here.
+#   role                         the markers __CLUSTER_ROLE_FIRST_PART__ and
+#                                __CLUSTER_ROLE_LAST_PART__, split on "+" so a master+slave machine
+#                                admits both parts (cluster-map.tpl:24). Its first part also
+#                                decides __ARGOCD_NAMESPACE__.
+#   global.clusterName           the marker __CLUSTER_NAME__ — the first DNS label of this
+#                                cluster's domain (cluster-map.tpl:38). It is also
+#                                __ARGOCD_NAMESPACE__ on a cluster whose role does not open with
+#                                master.
+#   global.domain                the markers __FQDN__ and __BRANCH__. An install branch is named
+#                                after the cluster's own domain, so the file the value chains load
+#                                last and the branch every source reads from are the same word
+#                                (cluster-map.tpl:35).
+#   global.booksCluster          the marker __BOOKS_FQDN__ — the install branch of the cluster that
+#                                keeps the books (cluster-map.tpl:42).
+#   global.catalogRepo           the marker __CATALOG_REPO__ — the tenant catalog as bare
+#                                owner/name, written inside a URL the file already carries
+#                                (cluster-map.tpl:75).
+#   global.servicesLocal.vault   whether this cluster keeps the books, which decides whether
+#                                cluster-self.yaml, repo-catalog.yaml and slaves-appset.yaml are
+#                                emitted at all (cluster-map.tpl:123).
+#
+# WHY servicesLocal.vault AND NOT role. cluster-map.tpl:123 writes servicesLocal.vault from
+# <holds-books>, and deploy-branch.yaml:136-141 derives holds_books as "books_fqdn is the same as
+# fqdn". It is therefore true on exactly the cluster that keeps the books. `role` at
+# cluster-map.tpl:24 is an ANSWER a person gives, and nothing holds it against booksCluster — a
+# cluster answered role: slave while keeping its own books carries role slave and holds_books true
+# at the same time. The predicate this chart needs is the second one.

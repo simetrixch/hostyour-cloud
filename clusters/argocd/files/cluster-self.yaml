@@ -24,7 +24,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: cluster-self
-  namespace: argocd
+  namespace: __ARGOCD_NAMESPACE__
   labels:
     argocd.argoproj.io/secret-type: cluster
 stringData:
