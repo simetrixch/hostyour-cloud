@@ -559,6 +559,20 @@ kube-prometheus-stack:
       RedisMemoryPressure: true
       KubePodNotReady: true
 
+  alertmanager:
+    # THE CHART RUNS HELM `tpl` OVER alertmanager.config ONLY WHERE THIS IS TRUE, and its own
+    # default is false. Its templates/alertmanager/secret.yaml picks between
+    # `tpl (toYaml .Values.alertmanager.config) .` and a bare `toYaml` on this key alone. The
+    # config in values-{dev,test,prod}.yaml spells `smtp_from` and `smtp_smarthost` with
+    # `.Values.global.domain` and `.Values.global.env`, because both name one installation and
+    # cannot be written out on the trunk. Without this key the bare `toYaml` copies them through
+    # as text, the Secret reaches the cluster with the expression spelled out, smtp_smarthost
+    # resolves to no host, and no alert mail leaves any cluster.
+    #
+    # alertmanager.templateFiles stands OUTSIDE that block and `tpl` never reaches it at either
+    # setting, so the Go template in alert.tmpl arrives byte for byte and Alertmanager renders it.
+    tplConfig: true
+
   prometheus:
     prometheusSpec:
       ruleSelectorNilUsesHelmValues: false

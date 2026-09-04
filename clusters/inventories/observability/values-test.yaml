@@ -153,8 +153,9 @@ kube-prometheus-stack:
         {{- end -}}
 
     config:
-      # kube-prometheus-stack runs Helm `tpl` on this entire config block —
-      # template expressions inside string values are resolved at render time.
+      # The two expressions below are resolved only because
+      # kube-prometheus-stack.alertmanager.tplConfig is true in values-common.yaml
+      # beside this file; the chart's own default leaves them in the Secret as text.
       global:
         smtp_from: "alertmanager-{{ .Values.global.env }}@mail.{{ .Values.global.domain }}"
         smtp_smarthost: "postfix-{{ .Values.global.env }}.postfix.svc.cluster.local:587"

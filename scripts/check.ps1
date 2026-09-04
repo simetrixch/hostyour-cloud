@@ -3,7 +3,8 @@
 #
 # Three checks, in this order, and the run stops at the first red one:
 #
-#   1. every chart under clusters/inventories, clusters/units and clusters/slaves renders
+#   1. every chart under clusters/inventories, clusters/units and clusters/slaves renders,
+#      and no value in what came out still carries a Helm expression
 #   2. bash lifecycle/test.sh — the delivery programs against their fixtures
 #   3. gitleaks over the files git would let you commit
 #
@@ -95,6 +96,106 @@ foreach ($standin in $mapFile, $regFile) {
     }
 }
 
+# ── What a render must never carry ──────────────────────────────────────────────────────────
+# A HELM EXPRESSION THAT SURVIVED THE RENDER REACHES A CLUSTER AS TEXT. helm resolves `{{ ... }}`
+# in a TEMPLATE; the same thing standing in a VALUE is resolved only where the chart passes that
+# value through `tpl`, and a chart that does not ships the expression spelled out. Alertmanager's
+# smtp_smarthost stood in every cluster as the text of an expression, so no alert mail could
+# leave one, and every render here was green because nothing read what came out of it.
+#
+# A BARE `{{` IS NOT THE TEST. Twelve of the twenty-four charts render a value carrying one, in
+# five template languages that are not helm's: Alertmanager's own alert.tmpl, Prometheus rule
+# annotations (`{{ $labels.pod }}`), ExternalSecret templates (`{{ .secretKey }}`), ArgoCD
+# ApplicationSet parameters (`{{ .name }}`) and Alloy's log-level mapping (`{{ .level }}`). Each
+# is rendered by the system that reads it, so a refusal on `{{` would be red on all twelve. What
+# is refused is an expression naming one of the six objects helm alone defines: .Values,
+# .Release, .Chart, .Capabilities, .Files and .Template. Nothing but helm resolves one of those,
+# so an expression carrying one is an expression helm was meant to have resolved and did not.
+#
+# BASE64 IS WHERE IT HID. The Alertmanager configuration reaches the cluster as one key of a
+# Secret, so the render carries it encoded and a scan of the render text answers nothing. Every
+# value standing alone on its line as base64 is decoded and read as well, and a finding out of one
+# is named by the key that carried it rather than by a line of the decoded text.
+#
+# WHAT IT CANNOT SEE, named rather than counted: it reads line by line, so an expression written
+# across two lines is not found, and it decodes a value only where the whole value is one base64
+# token on its own line.
+$script:decodedValues = 0
+
+# One render, already split into lines. Returns the finding records as objects, each carrying the
+# `# Source:` line it stood under, the key on its line, and either the expression or a base64
+# value still to be decoded. $SourceOf and $KeyOf are set when the lines came OUT of a base64
+# value, so a finding is attributed to the value that carried it and nothing recurses.
+function Read-RenderLines {
+    param([string[]] $Lines, [string] $SourceOf = '', [string] $KeyOf = '')
+    $records = @()
+    $source = $SourceOf
+    foreach ($line in $Lines) {
+        if (-not $SourceOf -and $line.StartsWith('# Source: ')) { $source = $line.Substring(10); continue }
+        $key = '-'
+        $named = [regex]::Match($line, '^[ \t]*([A-Za-z0-9._/-]+):')
+        if ($named.Success) { $key = $named.Groups[1].Value }
+        if ($KeyOf) { $key = $KeyOf }
+        $found = ''
+        foreach ($expression in [regex]::Matches($line, '\{\{[^{}]*\}\}')) {
+            if ($expression.Value -match '\.(Values|Release|Chart|Capabilities|Files|Template)[^A-Za-z0-9_]') {
+                $found = $expression.Value
+                break
+            }
+        }
+        if ($found) { $records += ,@('expression', $source, $key, $found); continue }
+        if (-not $SourceOf) {
+            $encoded = [regex]::Match($line, '^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?([A-Za-z0-9+/]{40,}={0,2})"?[ \t]*$')
+            if ($encoded.Success) { $records += ,@('base64', $source, $key, $encoded.Groups[1].Value) }
+        }
+    }
+    return ,$records
+}
+
+# $Where says where the render came from, $Lines is the render. One string per finding.
+function Find-HelmExpression {
+    param([string] $Where, [string[]] $Lines)
+    $records = Read-RenderLines -Lines $Lines
+    foreach ($record in @($records)) {
+        if ($record[0] -ne 'base64') { continue }
+        $script:decodedValues++
+        try { $text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($record[3])) }
+        catch { continue }
+        $records += Read-RenderLines -Lines ($text -split "`r?`n") -SourceOf $record[1] -KeyOf $record[2]
+    }
+    $findings = @()
+    foreach ($record in $records) {
+        if ($record[0] -ne 'expression') { continue }
+        $findings += "  $Where, $($record[1]), $($record[2]): $($record[3])"
+    }
+    return ,$findings
+}
+
+# ── The counter-probe of that scan ──────────────────────────────────────────────────────────
+# THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
+# plants two defects it has to report and two innocents it has to leave alone, and its own header
+# says which is which. Without the defects a green run would only mean the scan found nothing,
+# which is also what a scan that stopped looking prints. scripts/check.sh reads the same file and
+# holds it to the same two lines.
+$counterProbe = Join-Path $root 'scripts/counter-probe.yaml'
+if (-not (Test-Path -LiteralPath $counterProbe)) {
+    Stop-Check "$counterProbe is missing, and it is what shows the scan of step 1 can go red"
+}
+$probeExpected = @(
+    '  scripts/counter-probe.yaml, counter-probe/planted-defect-in-the-clear.yaml, smtp_smarthost: {{ .Values.global.env }}'
+    '  scripts/counter-probe.yaml, counter-probe/planted-defect-in-base64.yaml, alertmanager.yaml: {{ .Values.global.domain }}'
+)
+$probeReported = Find-HelmExpression -Where 'scripts/counter-probe.yaml' -Lines ([System.IO.File]::ReadAllLines($counterProbe))
+if (($probeReported -join "`n") -ne ($probeExpected -join "`n")) {
+    Write-Output 'The counter-probe plants two defects and two innocents. The scan had to report:'
+    Write-Output ($probeExpected -join "`n")
+    Write-Output 'and it reported:'
+    if ($probeReported.Count -gt 0) { Write-Output ($probeReported -join "`n") } else { Write-Output '  (nothing)' }
+    Stop-Check 'the scan for a Helm expression does not report what scripts/counter-probe.yaml plants'
+}
+Write-Output 'check: the counter-probe reports both planted defects in scripts/counter-probe.yaml and neither planted innocent.'
+$script:decodedValues = 0
+
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
 Write-Output 'check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves, and clusters/argocd.'
 
@@ -103,6 +204,7 @@ $rendered = 0
 $skippedLibrary = @()
 $neededStandin = @()
 $broken = @()
+$expressions = @()
 
 $chartDirs = @()
 foreach ($parent in 'clusters/inventories', 'clusters/units', 'clusters/slaves') {
@@ -171,9 +273,10 @@ foreach ($chart in $chartDirs) {
             if (Test-Path -LiteralPath $candidate) { $helmArgs += @('-f', $candidate) }
         }
 
-        & helm template $name $chart --namespace $namespace @helmArgs 2>&1 | Out-Null
+        $trunkOnly = & helm template $name $chart --namespace $namespace @helmArgs 2>&1 | Out-String
         if ($LASTEXITCODE -eq 0) {
             $rendered++
+            $expressions += Find-HelmExpression -Where "$name at stage $stage" -Lines ($trunkOnly -split "`r?`n")
             continue
         }
 
@@ -182,6 +285,7 @@ foreach ($chart in $chartDirs) {
         $out = & helm template $name $chart --namespace $namespace @helmArgs -f $mapFile -f $regFile 2>&1 | Out-String
         if ($LASTEXITCODE -eq 0) {
             $rendered++
+            $expressions += Find-HelmExpression -Where "$name at stage $stage" -Lines ($out -split "`r?`n")
             if ($neededStandin -notcontains $name) { $neededStandin += $name }
             continue
         }
@@ -205,6 +309,12 @@ if ($broken.Count -gt 0) {
     Stop-Check 'a chart does not render'
 }
 Write-Output "check: $rendered chart renders green, over stages $($stages -join ' ')."
+
+if ($expressions.Count -gt 0) {
+    Write-Output "These rendered values still carry a Helm expression, which reaches a cluster as text:`n$($expressions -join "`n")"
+    Stop-Check 'a rendered value carries a Helm expression'
+}
+Write-Output "check: no rendered value carries a Helm expression, over $rendered renders and the $script:decodedValues base64 values in them."
 
 # ── 2. The delivery programs ────────────────────────────────────────────────────────────────
 Write-Output 'check: lifecycle/test.sh — the release, the regeneration, the migration, the report and the slave removal, in both spellings. About a minute.'

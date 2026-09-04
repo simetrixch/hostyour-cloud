@@ -3,7 +3,8 @@
 #
 # Three checks, in this order, and the run stops at the first red one:
 #
-#   1. every chart under clusters/inventories, clusters/units and clusters/slaves renders
+#   1. every chart under clusters/inventories, clusters/units and clusters/slaves renders,
+#      and no value in what came out still carries a Helm expression
 #   2. bash lifecycle/test.sh — the delivery programs against their fixtures
 #   3. gitleaks over the files git would let you commit
 #
@@ -36,9 +37,11 @@ fail() { echo "check: FAIL — $1"; exit 1; }
 # the first two have run costs a minute for an answer that was knowable at the start.
 #
 # pwsh is here because lifecycle/test.sh needs it: half of what that file measures is written
-# in PowerShell, and it holds the two spellings to printing the same bytes.
+# in PowerShell, and it holds the two spellings to printing the same bytes. base64 is here
+# because the scan of step 1 decodes every base64 value of a render, and a decoder that is not
+# there would leave that half of the scan silently finding nothing.
 missing=""
-for tool in helm gitleaks pwsh; do
+for tool in helm gitleaks pwsh base64; do
   command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
 done
 [ -n "$missing" ] && fail "these tools are not on this path:$missing"
@@ -58,6 +61,113 @@ for standin in "$cluster_map" "$registration"; do
   [ -f "$standin" ] || fail "$standin is missing, and it is what lets the charts of an installation render here"
 done
 
+# ── What a render must never carry ──────────────────────────────────────────────────────────
+# A HELM EXPRESSION THAT SURVIVED THE RENDER REACHES A CLUSTER AS TEXT. helm resolves `{{ ... }}`
+# in a TEMPLATE; the same thing standing in a VALUE is resolved only where the chart passes that
+# value through `tpl`, and a chart that does not ships the expression spelled out. Alertmanager's
+# smtp_smarthost stood in every cluster as the text of an expression, so no alert mail could
+# leave one, and every render here was green because nothing read what came out of it.
+#
+# A BARE `{{` IS NOT THE TEST. Twelve of the twenty-four charts render a value carrying one, in
+# five template languages that are not helm's: Alertmanager's own alert.tmpl, Prometheus rule
+# annotations (`{{ $labels.pod }}`), ExternalSecret templates (`{{ .secretKey }}`), ArgoCD
+# ApplicationSet parameters (`{{ .name }}`) and Alloy's log-level mapping (`{{ .level }}`). Each
+# is rendered by the system that reads it, so a refusal on `{{` would be red on all twelve. What
+# is refused is an expression naming one of the six objects helm alone defines: .Values,
+# .Release, .Chart, .Capabilities, .Files and .Template. Nothing but helm resolves one of those,
+# so an expression carrying one is an expression helm was meant to have resolved and did not.
+#
+# BASE64 IS WHERE IT HID. The Alertmanager configuration reaches the cluster as one key of a
+# Secret, so the render carries it encoded and a scan of the render text answers nothing. Every
+# value standing alone on its line as base64 is decoded and read as well, and a finding out of one
+# is named by the key that carried it rather than by a line of the decoded text.
+#
+# WHAT IT CANNOT SEE, named rather than counted: it reads line by line, so an expression written
+# across two lines is not found, and it decodes a value only where the whole value is one base64
+# token on its own line.
+tab="$(printf '\t')"
+scan_awk='
+function helm_expression(s,   m) {
+  while (match(s, /\{\{[^{}]*\}\}/)) {
+    m = substr(s, RSTART, RLENGTH)
+    if (m ~ /\.(Values|Release|Chart|Capabilities|Files|Template)[^A-Za-z0-9_]/) return m
+    s = substr(s, RSTART + RLENGTH)
+  }
+  return ""
+}
+/^# Source: / { if (src == "") { source = substr($0, 11); next } }
+{
+  key = "-"
+  if (match($0, /^[ \t]*[A-Za-z0-9._\/-]+:/)) {
+    key = substr($0, RSTART, RLENGTH - 1)
+    sub(/^[ \t]+/, "", key)
+  }
+  if (src != "") { source = src }
+  if (keyname != "") { key = keyname }
+  found = helm_expression($0)
+  if (found != "") { print "expression\t" source "\t" key "\t" found; next }
+  if (src == "" && match($0, /^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?[A-Za-z0-9+\/]{40,}={0,2}"?[ \t]*$/)) {
+    payload = $0
+    sub(/^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?/, "", payload)
+    sub(/"?[ \t]*$/, "", payload)
+    print "base64\t" source "\t" key "\t" payload
+  }
+}
+'
+
+# HOW MANY VALUES scan_render DECODED IS TALLIED IN A FILE AND NOT IN A VARIABLE. Its callers read
+# it through `$( )`, which runs it in a subshell, and a count kept in a variable would be thrown
+# away with that subshell: the run would end by reporting nought values decoded over a tree full
+# of Secrets, which is a check saying it looked where it did not.
+: > "$work/decoded.tally"
+
+# $1 says where the render came from, $2 is a file holding it. One line per finding on stdout.
+scan_render() {
+  : > "$work/records.decoded"
+  awk "$scan_awk" "$2" > "$work/records" || fail "the render of $1 could not be read"
+  while IFS="$tab" read -r kind src key payload; do
+    [ "$kind" = base64 ] || continue
+    echo >> "$work/decoded.tally"
+    printf '%s' "$payload" | base64 -d 2>/dev/null \
+      | awk -v src="$src" -v keyname="$key" "$scan_awk" >> "$work/records.decoded"
+  done < "$work/records"
+  cat "$work/records" "$work/records.decoded" | while IFS="$tab" read -r kind src key payload; do
+    [ "$kind" = expression ] || continue
+    printf '  %s, %s, %s: %s\n' "$1" "$src" "$key" "$payload"
+  done
+}
+
+# $1 says where the render came from, $2 is the render itself. Adds what it finds to $expressions.
+collect_expressions() {
+  printf '%s\n' "$2" > "$work/render"
+  found="$(scan_render "$1" "$work/render")"
+  [ -n "$found" ] || return 0
+  expressions="$expressions
+$found"
+}
+
+# ── The counter-probe of that scan ──────────────────────────────────────────────────────────
+# THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
+# plants two defects it has to report and two innocents it has to leave alone, and its own header
+# says which is which. Without the defects a green run would only mean the scan found nothing,
+# which is also what a scan that stopped looking prints. scripts/check.ps1 reads the same file and
+# holds it to the same two lines.
+counter_probe="$root/scripts/counter-probe.yaml"
+[ -f "$counter_probe" ] || fail "$counter_probe is missing, and it is what shows the scan of step 1 can go red"
+
+probe_expected="  scripts/counter-probe.yaml, counter-probe/planted-defect-in-the-clear.yaml, smtp_smarthost: {{ .Values.global.env }}
+  scripts/counter-probe.yaml, counter-probe/planted-defect-in-base64.yaml, alertmanager.yaml: {{ .Values.global.domain }}"
+probe_reported="$(scan_render 'scripts/counter-probe.yaml' "$counter_probe")"
+if [ "$probe_reported" != "$probe_expected" ]; then
+  echo "The counter-probe plants two defects and two innocents. The scan had to report:"
+  echo "$probe_expected"
+  echo "and it reported:"
+  echo "${probe_reported:-  (nothing)}"
+  fail "the scan for a Helm expression does not report what scripts/counter-probe.yaml plants"
+fi
+echo "check: the counter-probe reports both planted defects in scripts/counter-probe.yaml and neither planted innocent."
+: > "$work/decoded.tally"
+
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
 echo "check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves, and clusters/argocd."
 
@@ -66,6 +176,7 @@ rendered=0
 skipped_library=""
 needed_standin=""
 broken=""
+expressions=""
 
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
 # renders the seven manifests of clusters/argocd/files from the cluster map, and it is the only
@@ -109,6 +220,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
     trunk_only="$(helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" 2>&1)"
     if [ $? -eq 0 ]; then
       rendered=$((rendered + 1))
+      collect_expressions "$name at stage $stage" "$trunk_only"
       continue
     fi
 
@@ -118,6 +230,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       "${args[@]}" -f "$cluster_map" -f "$registration" 2>&1)"
     if [ $? -eq 0 ]; then
       rendered=$((rendered + 1))
+      collect_expressions "$name at stage $stage" "$out"
       case " $needed_standin " in
         *" $name "*) ;;
         *) needed_standin="$needed_standin $name" ;;
@@ -141,6 +254,13 @@ if [ -n "$broken" ]; then
   fail "a chart does not render"
 fi
 echo "check: $rendered chart renders green, over stages $stages."
+
+if [ -n "$expressions" ]; then
+  echo "These rendered values still carry a Helm expression, which reaches a cluster as text:$expressions"
+  fail "a rendered value carries a Helm expression"
+fi
+decoded="$(wc -l < "$work/decoded.tally" | tr -d ' ')"
+echo "check: no rendered value carries a Helm expression, over $rendered renders and the $decoded base64 values in them."
 
 # ── 2. The delivery programs ────────────────────────────────────────────────────────────────
 echo "check: lifecycle/test.sh — the release, the regeneration, the migration, the report and the slave removal, in both spellings. About a minute."

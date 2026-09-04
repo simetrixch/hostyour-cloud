@@ -1,0 +1,79 @@
+# THE COUNTER-PROBE OF THE SCAN THAT READS A RENDER FOR AN UNRESOLVED HELM EXPRESSION.
+# scripts/check.sh and scripts/check.ps1 both scan this file before they scan a single real chart,
+# and both end the run red unless the scan reports EXACTLY the two planted defects below and says
+# nothing at all about the two planted innocents beside them. Without the defects the scan cannot
+# be shown to go red; without the innocents a clean answer might only mean nobody was looking.
+#
+# THIS IS A RENDER AND NOT A MANIFEST OF THIS PLATFORM. Nothing applies it, no chart produces it,
+# and no cluster ever sees it. It is shaped like the output of `helm template` — documents split by
+# ---, each under the `# Source:` line helm writes — because that output is what the scan reads.
+#
+# THE TWO ENCODED DOCUMENTS ARE ConfigMaps AND NOT Secrets, and the real one they stand for is a
+# Secret. The scan reads the LINE — a key whose whole value is one base64 token — and never the
+# `kind:` above it, so a ConfigMap plants the same shape. A Secret here would not survive step 3 of
+# this check: gitleaks' `kubernetes-secret-yaml` rule reports `kind: Secret` with a high-entropy
+# base64 value under `data:`, which is exactly what a planted defect has to be, and the run would
+# end red on the file that proves the scan works. Do not change these back.
+#
+# WHAT IS PLANTED, and every shape is one this tree really produces:
+#
+#   1. a value in the clear naming a Helm object. It is the smtp_smarthost the Alertmanager
+#      configuration carried before it was resolved.                        MUST BE REPORTED
+#   2. the same inside a base64 value, which is where the Alertmanager configuration actually
+#      stands and where a scan of the render text finds nothing.            MUST BE REPORTED
+#   3. an Alertmanager template inside a base64 value. It is a Go template from the first
+#      character to the last, and Alertmanager renders it rather than helm. `.Value` in it stands
+#      one letter away from `.Values`, which is the narrowest case the scan has to get right.
+#                                                                          MUST STAY UNREPORTED
+#   4. an ArgoCD ApplicationSet parameter in the clear. The generator resolves it when it creates
+#      the Application, so helm leaving it alone is correct.                MUST STAY UNREPORTED
+#
+# Those two innocents stand for a real population: twelve of the twenty-four charts render a value
+# carrying a template expression that helm must NOT touch, in five languages — Alertmanager's
+# alert.tmpl, Prometheus rule annotations, ExternalSecret templates, ArgoCD ApplicationSet
+# parameters and Alloy's log-level mapping.
+#
+# The two decoded payloads are, in full:
+#
+#   2. global:
+#        smtp_from: alertmanager-prod@mail.<the Helm expression for global.domain>
+#        smtp_require_tls: false
+#   3. a define block, a range over .GroupLabels.SortedPairs printing .Name and .Value, a call to
+#      template "alert.text", and a Prometheus label reference.
+---
+# Source: counter-probe/planted-defect-in-the-clear.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: planted-defect-in-the-clear
+data:
+  smtp_smarthost: postfix-{{ .Values.global.env }}.postfix.svc.cluster.local:587
+---
+# Source: counter-probe/planted-defect-in-base64.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: planted-defect-in-base64
+binaryData:
+  alertmanager.yaml: "Z2xvYmFsOgogIHNtdHBfZnJvbTogYWxlcnRtYW5hZ2VyLXByb2RAbWFpbC57eyAuVmFsdWVzLmdsb2JhbC5kb21haW4gfX0KICBzbXRwX3JlcXVpcmVfdGxzOiBmYWxzZQo="
+---
+# Source: counter-probe/planted-innocent-in-base64.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: planted-innocent-in-base64
+binaryData:
+  alert.tmpl: "e3stIGRlZmluZSAiYWxlcnQuc3ViamVjdCIgLX19Clt7eyAuU3RhdHVzIHwgdG9VcHBlciB9fV0ge3sgLkNvbW1vbkxhYmVscy5hbGVydG5hbWUgfX0Ke3stIGVuZCAtfX0Ke3sgcmFuZ2UgLkdyb3VwTGFiZWxzLlNvcnRlZFBhaXJzIH19e3sgLk5hbWUgfX09e3sgLlZhbHVlIH19e3sgZW5kIH19Cnt7IHRlbXBsYXRlICJhbGVydC50ZXh0IiAuIH19Cnt7IGlmIC5MYWJlbHMuc2V2ZXJpdHkgfX17eyAkbGFiZWxzLnBvZCB9fXt7IGVuZCB9fQo="
+---
+# Source: counter-probe/planted-innocent-in-the-clear.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: planted-innocent-in-the-clear
+spec:
+  template:
+    metadata:
+      name: "{{ .name }}-prod"
+    spec:
+      source:
+        repoURL: "{{ .repoURL }}"
