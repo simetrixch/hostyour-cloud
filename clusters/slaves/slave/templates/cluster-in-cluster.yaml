@@ -11,10 +11,10 @@ carrying a `namespaces` restriction — the cache then watches only those
 namespaces and ignores cluster-scoped resources for this destination.
 
 The instance's in-cluster surface is exactly ONE namespace: its own (the handoff
-root Application syncs the slave branch's argocd-tree CRs — AppProjects +
+root Application syncs the argocd-tree CRs rendered for this slave — AppProjects +
 ApplicationSets + the Applications they generate — into ns <name>). Everything
 else it manages lives on the REMOTE slave cluster (Secret cluster-slave),
-which is unrestricted — the slave branch's platform tree legitimately creates
+which is unrestricted — that slave's platform tree legitimately creates
 cluster-scoped resources THERE (CRDs, ClusterRoles, Namespaces).
 
 No credentials in this Secret: for the in-cluster server ArgoCD uses its own

@@ -7,7 +7,8 @@ bookkeeping (secrets/configmaps, argoproj.io CRs, events, deployments). But the
 controller's cluster cache for the in-cluster destination (templates/
 cluster-in-cluster.yaml — restricted to ns <name>) must LIST/WATCH every
 namespaced resource kind in ns <name>, and syncing the handoff root
-Application writes whatever the slave branch's argocd tree contains there.
+Application writes whatever the argocd tree rendered for this slave contains
+there.
 Under MicroK8s AlwaysAllow this gap was invisible; with the rbac addon
 enforced the cache dies with
   cannot list resource "..." in the namespace "<name>"

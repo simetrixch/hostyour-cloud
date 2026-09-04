@@ -114,16 +114,19 @@ sequence:
   # THE SLAVE SEQUENCE IS NOT HERE, and the reason is not that it could not be read.
   # It stands in hostyour-manager server/domains/runs/defs/deploy-slave.ts and it
   # names the same three machine programs a master runs — `deploy-host`,
-  # `deploy-cluster` and `deploy-platform-services` — after a
-  # `deploy-slave-branch` on the MASTER, with the checkout placement and the
-  # tailnet join around them.
+  # `deploy-cluster` and `deploy-platform-services`. NO BRANCH PROGRAM IS AMONG
+  # THEM: a pure slave has no install branch of its own, its map stands on the
+  # books branch beside every other map of the installation, and its checkout is
+  # stood on that same branch. `deploy-branch` names `master` alone in its own
+  # `roles:` line, which is what holds that.
   #
   # What keeps it out of this file is that a slave's sequence is not a sequence of
   # PROGRAMS. Half of its steps are the manager's own acts — placing the engine,
-  # moving the checkout onto the branch just cut, minting and spending a join
-  # credential — and a file that listed only the program rows would state a shape
-  # nobody can follow and would read as though the rest did not exist. Stating it
-  # whole means stating a run kind, and a run kind belongs where it runs.
+  # moving the checkout onto the books branch, marking the slave in the books,
+  # minting and spending a join credential — and a file that listed only the
+  # program rows would state a shape nobody can follow and would read as though
+  # the rest did not exist. Stating it whole means stating a run kind, and a run
+  # kind belongs where it runs.
   master:
     - program: deploy-host
       # Nothing. Its `git_clone` row is what establishes the platform checkout in

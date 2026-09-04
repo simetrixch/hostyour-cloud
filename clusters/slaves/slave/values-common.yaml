@@ -30,7 +30,13 @@ global:
 # All strings — the ApplicationSet's go-template renders every field as a
 # string.
 #   name       s1                        — the slave's short name (first label of the map's fqdn)
-#   branch     s1.example.com            — the SLAVE's install branch (== the map's fqdn)
+#   fqdn       s1.example.com            — the slave's own domain, which names its cluster map
+#                                          (clusters/active/<fqdn>.yaml) on the books branch
+#   branch     m1.example.com            — the BOOKS branch: the install branch of the cluster
+#                                          holding the master role, and the one branch an
+#                                          installation keeps every cluster map on. A pure slave
+#                                          has no branch of its own, so this is where its whole
+#                                          tree is read from
 #   apiHost    100.64.0.11               — the address this master's in-cluster components dial the
 #                                          slave's kube-apiserver on: its tailnet address once the
 #                                          two share that private network, its LAN address on a
@@ -43,6 +49,7 @@ global:
 # ---------------------------------------------------------------------------
 slave:
   name: ""
+  fqdn: ""
   branch: ""
   apiHost: ""
   apiPort: "16443"
@@ -62,7 +69,7 @@ repo:
   # registrations (registrations/<guid>/<stage>.yaml) and the member charts.
   # Read by the repo credential ESO twin
   # (templates/externalsecret-repo-catalog.yaml): the tenant
-  # ApplicationSets live in the slave branch's argocd tree
+  # ApplicationSets live in the books branch's argocd tree
   # (clusters/argocd/files/tenants-appset.yaml, synced by the handoff root
   # Application) and read the catalog through this instance's repo-server, so
   # the instance needs the credential even though no template here renders
@@ -123,7 +130,7 @@ argo-cd:
   # NAMESPACED install (upstream "namespace-scoped installation" pattern):
   # no ClusterRoles/ClusterRoleBindings — every component gets namespace Roles
   # in ns <name> only. Locally this ArgoCD manages nothing but its own namespace
-  # (the slave branch's argocd-tree CRs); the REMOTE slave is reached via the
+  # (the argocd-tree CRs rendered for this slave); the REMOTE slave is reached via the
   # cluster Secret's bearerToken (cluster-admin SA on the slave), which needs no
   # local RBAC at all. The in-cluster destination is namespace-restricted to
   # ns <name> by templates/cluster-in-cluster.yaml.
@@ -146,7 +153,7 @@ argo-cd:
   dex:
     enabled: false
 
-  # The ApplicationSet controller MUST run: the slave branch's tree uses two
+  # The ApplicationSet controller MUST run: the tree this instance syncs uses two
   # ApplicationSets (applicationset.yaml + consumers-appset.yaml). Chart 9.x
   # always deploys it (no enabled toggle); replicas pinned like the rest.
   applicationSet:

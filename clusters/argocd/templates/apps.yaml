@@ -19,6 +19,16 @@ argocd.argoproj.io, and the word `master` stands in prose and once as the tenant
 catalog's own branch, so files/ carries __ARGOCD_NAMESPACE__ and __BRANCH__ at
 the sites where those two are values.
 
+__BRANCH__ AND __FQDN__ ARE TWO QUESTIONS THAT WERE ONE WORD. __FQDN__ is what
+this cluster is called — it names the cluster map, and it is a fqdn a selector
+compares. __BRANCH__ is which branch a source reads this installation's tree
+from, and that is the BOOKS branch for every cluster: an installation has one
+install branch, named after the cluster carrying the master part, and a cluster
+carrying only the slave part has none. They are the same word on a cluster that
+keeps its own books and different words on every other one, so a slave whose
+sources took __FQDN__ would target a branch nothing ever cut and generate
+nothing at all.
+
 `# file: <name>` opens each emitted document. Helm writes one `# Source:` line
 for this template, and all seven documents come from it, so that line cannot
 tell them apart.
@@ -26,8 +36,8 @@ tell them apart.
 {{- $stage := required "argocd-apps: stage is required (clusters/active/<fqdn>.yaml) — the ApplicationSets are named per stage and the registrations they read are filed per stage" .Values.stage }}
 {{- $role := required "argocd-apps: role is required (clusters/active/<fqdn>.yaml) — the platform app selector admits the parts this cluster carries, and a cluster admitting no part runs no platform application" .Values.role }}
 {{- $clusterName := required "argocd-apps: global.clusterName is required (clusters/active/<fqdn>.yaml) — this cluster registers itself under that name and the unit generators select the registrations carrying it" .Values.global.clusterName }}
-{{- $branch := required "argocd-apps: global.domain is required (clusters/active/<fqdn>.yaml) — it is the name of this cluster's install branch, which every source of this tree reads from, and the name of the cluster map file the value chains load last" .Values.global.domain }}
-{{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role, which carries this installation's registrations" .Values.global.booksCluster }}
+{{- $fqdn := required "argocd-apps: global.domain is required (clusters/active/<fqdn>.yaml) — this cluster's own domain, which names its cluster map, the file the value chains load last" .Values.global.domain }}
+{{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role. It carries this installation's registrations AND every cluster map of it, and it is the branch every source of this tree reads from: a cluster carrying only the slave part has no branch of its own" .Values.global.booksCluster }}
 {{- $catalogRepo := required "argocd-apps: global.catalogRepo is required (clusters/active/<fqdn>.yaml) — the tenant catalog as bare owner/name, written inside a URL these files already carry" .Values.global.catalogRepo }}
 {{- $holdsBooks := required "argocd-apps: global.servicesLocal.vault is required (clusters/active/<fqdn>.yaml) — it says whether this cluster keeps the books, and the three files below exist only on the cluster that does" (dig "servicesLocal" "vault" "" .Values.global) }}
 {{- $roleParts := splitList "+" $role }}
@@ -44,7 +54,7 @@ stands Unknown, and a deployment's verification waits out its clock on it.
 {{- $docs := list }}
 {{- range $name := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "repo-catalog.yaml" "slaves-appset.yaml" "tenants-appset.yaml" }}
 {{- if or $holdsBooks (not (has $name $booksOnly)) }}
-{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $branch | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__BRANCH__" $branch | replace "__ARGOCD_NAMESPACE__" $namespace }}
+{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__BRANCH__" $booksFqdn | replace "__ARGOCD_NAMESPACE__" $namespace }}
 {{- $docs = append $docs (printf "# file: %s\n%s" $name $doc) }}
 {{- end }}
 {{- end }}

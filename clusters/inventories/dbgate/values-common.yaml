@@ -126,7 +126,7 @@ pvc:
 # reach of a cluster whose role is `slave`:
 #
 #   * the program that installs clusters/bootstrap/idp gates every step of it on
-#     `when: [idp_enabled, books_here_in_config]` (hostyour-deploy
+#     `when: [idp_enabled, books_here_in_answers]` (hostyour-deploy
 #     ansiwise/programs/deploy-platform-services.yaml), so on a cluster that does
 #     not keep the books the namespace `idp` does not exist and the middleware
 #     reference resolves to nothing;

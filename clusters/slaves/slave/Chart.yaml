@@ -14,17 +14,18 @@ description: |
       manages ONE remote slave cluster, dialled on the map's apiHost/apiPort
       (the slave's tailnet address once the two share that private network,
       its LAN address when it sits in the master's network). NOT a registered cluster
-      inside the master's own ArgoCD — its own instance, so the slave branch's
-      argocd tree (root app -> projects -> appsets) is reused nearly verbatim
-      with zero name collisions across slaves.
+      inside the master's own ArgoCD — its own instance, so the books branch's
+      argocd tree (root app -> projects -> appsets), rendered from this slave's
+      own cluster map, is reused nearly verbatim with zero name collisions
+      across slaves.
     - the slave CLUSTER registration Secret (cluster name `<name>`) and
       the REPO credential Secret — both materialized by ESO from the
       master's Vault at secret/<stage>/slaves/<name>/{cluster,repo-pat}
       (written there when a slave is added to the installation).
     - the HANDOFF root Application (`root-applications`) pointing this ArgoCD at
-      the SLAVE branch's clusters/argocd chart — from there the slave branch drives
-      everything, exactly like clusters/argocd/root-app.yaml does on a full
-      cluster.
+      the BOOKS branch's clusters/argocd chart, rendered from this slave's own
+      map — from there that branch drives everything, exactly like
+      clusters/argocd/root-app.yaml does on a full cluster.
     - (kube dashboard: deliberately NOT in this chart — ONE SHARED master
       Headlamp in ns headlamp serves the master and every slave
       via its cluster picker; contexts come from the kube-slaves-kubeconfig
@@ -59,7 +60,7 @@ dependencies:
   # Per-namespace ESO SecretStore (vault-backend) + ServiceAccount in ns <name>,
   # so the ExternalSecrets in templates/ can read the MASTER's Vault (mount
   # `secret`, auth path `kubernetes` — the defaults; the slave-mount globals are
-  # only ever set on SLAVE branches, never on the master's). Vault's
+  # only ever set by a slave's own cluster map, never by the master's). Vault's
   # external-secrets role must include namespace <name> in its
   # bound_service_account_namespaces — extended when a slave is added.
   - name: secret-store

@@ -8,7 +8,7 @@
 # THIS MIDDLEWARE REACHES ONLY THE CLUSTER IT STANDS IN. Its address is the
 # in-cluster Service idp-authentik-server.idp.svc.cluster.local, and the program
 # that installs this directory gates every step of it on
-# `when: [idp_enabled, books_here_in_config]` (hostyour-deploy
+# `when: [idp_enabled, books_here_in_answers]` (hostyour-deploy
 # ansiwise/programs/deploy-platform-services.yaml) — so on a cluster that does not
 # keep the books nothing here is applied, and an Ingress there names a middleware
 # that is not present. That is why

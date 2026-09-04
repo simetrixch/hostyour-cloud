@@ -59,13 +59,20 @@ spec:
             valuesObject:
               slave:
                 name: "{{ .values.cluster }}"
-                # THE SLAVE'S INSTALL BRANCH, WHICH IS ITS DOMAIN. Read from `global.domain`, the
-                # one place a cluster map states it — the generator's `cluster` value above reads
-                # the same key. It said `.fqdn`, which is a key no cluster map has: the top level of
-                # a map carries stage, role, booksCluster and release and nothing else, and with
-                # `missingkey=error` above, a template naming a key that is not there produces no
-                # Application at all for the slave it was generating.
-                branch: "{{ .global.domain }}"
+                # THE SLAVE'S OWN DOMAIN, which is the name of its cluster map and NOT the name of a
+                # branch: a pure slave has none. Read from `global.domain`, the one place a cluster
+                # map states it — the generator's `cluster` value above reads the same key. It said
+                # `.fqdn`, which is a key no cluster map has: the top level of a map carries stage,
+                # role, booksCluster and release and nothing else, and with `missingkey=error`
+                # above, a template naming a key that is not there produces no Application at all
+                # for the slave it was generating.
+                fqdn: "{{ .global.domain }}"
+                # THE BRANCH THE SLAVE'S WHOLE TREE IS READ FROM: the books. One installation keeps
+                # every cluster map on one branch, and a pure slave has no branch of its own — so
+                # the chart, the values chain and the slave's own map all come from here. The
+                # selector above matches on this same key, so the generator can never produce an
+                # element whose map does not carry it.
+                branch: "{{ .global.booksCluster }}"
                 apiHost: "{{ .global.apiHost }}"
                 apiPort: "{{ .global.apiPort }}"
                 masterFqdn: "{{ .global.master }}"

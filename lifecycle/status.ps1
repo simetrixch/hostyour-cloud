@@ -19,6 +19,12 @@
 # without comment. migrate-install-branches.sh decides the same question the same
 # way, and nothing holds the two statements of it together.
 #
+# A PURE SLAVE IS NOT LISTED, AND HAS NOTHING TO LIST. A cluster that carries
+# only the slave part has no install branch of its own: its map stands on the
+# books branch beside the master's, and the revision it runs is the books
+# branch's. So there is no release line of its own for this to read, and the
+# count below is the count of INSTALL BRANCHES, not of clusters.
+#
 # WHAT THE PIN IS. One line in that map, `release: <tag>`, naming the state of
 # the product tree the installation stands on. release-platform.ps1 writes it. A machine
 # whose map records nothing cannot be told apart from one that is level, which is
@@ -160,7 +166,7 @@ if ($installations.Count -eq 0) {
   exit 0
 }
 
-Say 'status: which platform release each installation stands on, and what origin/master carries since'
+Say 'status: which platform release each install branch stands on, and what origin/master carries since. A cluster carrying only the slave part has no branch here and runs the revision of the branch that keeps its books'
 
 foreach ($installation in $installations) {
   Say ''

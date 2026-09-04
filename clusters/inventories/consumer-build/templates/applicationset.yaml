@@ -7,7 +7,9 @@ substitutions, and the two branches are DIFFERENT branches:
   __STAGE__  global.env.
   __BRANCH__ global.domain — the install branch of the cluster this build
              plane runs ON, which is where the generated Applications render
-             this chart from.
+             this chart from. app.yaml says runsOn: master, so this chart is
+             only ever generated on a cluster carrying the master part, and on
+             such a cluster the domain IS the install branch.
   __CLUSTER__ global.clusterName — the cluster these build Applications deploy to, named the
               way its project allows it
   __BOOKS__  global.booksCluster — the install branch of the cluster holding
@@ -15,9 +17,9 @@ substitutions, and the two branches are DIFFERENT branches:
              globs over stand (clusters/active/<fqdn>.yaml, written by the branch program).
 
 They are the same value whenever the build plane sits on the cluster holding
-the master role, and they are not when it sits on a pure slave — an arrangement
-an installation is free to choose, and a branch run then deploys this chart
-where the build plane sits.
+the master role, which is the only cluster this chart is generated on — see the
+runsOn line below. A cluster carrying only the slave part has no install branch
+at all, so a build plane placed there would have no __BRANCH__ to name.
 
 Build-cluster only: this app is deployed via the platform catalog, and
 clusters/inventories/consumer-build/app.yaml says runsOn: master, so the app generator creates

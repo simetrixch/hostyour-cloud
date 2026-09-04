@@ -9,7 +9,8 @@
 # tenant appset selectors admit — and the chart above fills it from the map's
 # global.clusterName, which is derived from the fqdn rather than answered twice.
 #
-# On a PURE SLAVE branch this file has to GO: the slave's ArgoCD instance
+# On a PURE SLAVE this file is not emitted at all (the chart's $holdsBooks
+# gate): the slave's ArgoCD instance
 # already registers the slave under that same name with the slave's real
 # apiserver (clusters/slaves/slave/templates/externalsecret-cluster-slave.yaml), and a
 # second Secret claiming the same cluster name with server

@@ -11,8 +11,8 @@
 #
 # THE TWO INPUTS
 #   slave-fqdn — WHICH SLAVE is taken off. It is the domain of the slave's
-#             cluster, the name of its install branch, and the name of the map
-#             the master keeps for it under clusters/active.
+#             cluster and the name of the map the master keeps for it under
+#             clusters/active. A pure slave has no install branch of its own.
 #   config  — the MASTER's key=value file, the same one install-machine.sh is
 #             given for the master and in the same grammar. It states the master
 #             this runs on, the account that machine is reached as, the password
@@ -26,11 +26,12 @@
 # domain — and that is the argument.
 #
 # THIS IS THE INVERSE OF register-slave AND ONLY OF ITS HALF. What goes is the
-# master-side management plane of one slave. What stays is the git side: the map
-# clusters/active/<slave-fqdn>.yaml on the master's own branch and the slave's
-# install branch. Dropping those is what tears the per-slave reconciler instance
-# down, it is a separate act with a separate blast radius, and the last line this
-# prints says so.
+# master-side management plane of one slave. What stays is the git side: the ONE
+# map clusters/active/<slave-fqdn>.yaml on the master's own branch. A pure slave
+# has no install branch of its own, so that map is the whole of the git side.
+# Dropping it is what tears the per-slave reconciler instance down, it is a
+# separate act with a separate blast radius, and the last line this prints says
+# so.
 #
 # WHAT THE REGISTRATION LEAVES BEHIND when nothing takes it off: a slave keeps
 # its auth mount, its policies, its KV entries, its reconciler project, its
@@ -328,7 +329,7 @@ REMOVED=${PIPESTATUS[1]}
 
 if [ "$REMOVED" -eq 0 ]; then
   say "remove-slave: $SLAVE is off $MASTER"
-  say "remove-slave: $MAP on branch $MASTER and the install branch $SLAVE still stand. They are the git side of the registration, and dropping them is what tears the per-slave reconciler instance down"
+  say "remove-slave: $MAP on branch $MASTER still stands. It is the git side of the registration, and dropping it is what tears the per-slave reconciler instance down"
 else
   say "remove-slave: taking $SLAVE off $MASTER ended with exit $REMOVED. The line above it says which mode stopped and why"
 fi

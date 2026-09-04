@@ -24,7 +24,8 @@ quota:
   persistentVolumeClaims: "4"
 slave:
   name: check
-  branch: check.example.invalid
+  fqdn: check.example.invalid
+  branch: books.example.invalid
   apiHost: 10.0.0.1
   apiPort: "16443"
   masterFqdn: check.example.invalid

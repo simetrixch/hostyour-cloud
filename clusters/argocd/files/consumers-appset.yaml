@@ -29,8 +29,7 @@
 # ref it reads, so registrations/ standing on this branch, or absent from it,
 # changes nothing here. Nothing takes them off a branch either: no step of any
 # branch program deletes a path, and the trunk every branch is cut from carries
-# no customer registration at all — so a pure slave's branch has none to begin
-# with.
+# no customer registration at all.
 #
 # suspended and quiesced are NOT selectors and never prune: both reach the
 # chart as values (source 1 below) and the chart renders the off state —

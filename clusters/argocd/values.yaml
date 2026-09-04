@@ -17,12 +17,16 @@
 #                                cluster's domain (cluster-map.tpl:38). It is also
 #                                __ARGOCD_NAMESPACE__ on a cluster whose role does not open with
 #                                master.
-#   global.domain                the markers __FQDN__ and __BRANCH__. An install branch is named
-#                                after the cluster's own domain, so the file the value chains load
-#                                last and the branch every source reads from are the same word
-#                                (cluster-map.tpl:35).
-#   global.booksCluster          the marker __BOOKS_FQDN__ — the install branch of the cluster that
-#                                keeps the books (cluster-map.tpl:42).
+#   global.domain                the marker __FQDN__ — this cluster's own domain, which names the
+#                                cluster map the value chains load last (cluster-map.tpl:35). NOT
+#                                __BRANCH__: a cluster carrying only the slave part has no install
+#                                branch of its own.
+#   global.booksCluster          the markers __BOOKS_FQDN__ and __BRANCH__ — the install branch of
+#                                the cluster that keeps the books (cluster-map.tpl:42), which is the
+#                                one install branch an installation has and therefore the branch
+#                                every source of this tree reads from. The two markers are one value
+#                                and two questions: __BOOKS_FQDN__ is a cluster a selector compares
+#                                against, __BRANCH__ is a git revision a source targets.
 #   global.catalogRepo           the marker __CATALOG_REPO__ — the tenant catalog as bare
 #                                owner/name, written inside a URL the file already carries
 #                                (cluster-map.tpl:75).
