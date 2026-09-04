@@ -210,10 +210,11 @@ good 'the elevation password raises a command'
 
 # THE BRANCH THIS MACHINE WOULD PUSH TO, ASKED BEFORE ANYTHING IS TOUCHED. A RESTORE
 # WIPES A MACHINE AND LEAVES ITS BRANCH STANDING — the branch lives in the platform
-# repository, which no restore reaches. deploy-branch cuts from today's master, so it
-# does not descend from what is on the remote, and its push is refused at step 24 of
-# 24 with a git hint recommending `git pull` — which here would graft the record of a
-# machine that no longer exists onto the machine that replaced it.
+# repository, which no restore reaches. deploy-branch cuts from the master this machine
+# cloned and merges the release PLATFORM_REF names into it, so it does not descend from
+# what is on the remote, and its push is refused at the last step with a git hint
+# recommending `git pull` — which here would graft the record of a machine that no
+# longer exists onto the machine that replaced it.
 #
 # WHICH OF THE TWO CASES IT IS, THIS CANNOT KNOW and does not guess. A branch standing
 # there means either the machine is LIVE and this is not a first installation, or it is
@@ -286,9 +287,10 @@ if [ -n "$BRANCH_TIP" ]; then
   if [ -n "$BARE" ]; then
     die "the platform repository $PLATFORM_REPO already carries a branch named $FQDN, standing at $BRANCH_TIP — and $BARE.
 
-deploy-branch cuts this machine's branch from today's master, so it will not descend
-from that one, and its push would be refused at the LAST step of twenty-four — after
-everything before it has already been done.
+deploy-branch cuts this machine's branch from the master this machine cloned and merges
+PLATFORM_REF into it, so it will not descend from that one, and its push would be
+refused at the LAST step of the program — after everything before it has already been
+done.
 
 WHICH OF THESE IT IS, ONLY YOU KNOW:
 

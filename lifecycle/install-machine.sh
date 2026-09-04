@@ -77,7 +77,7 @@ fi
 # shellcheck disable=SC1090
 . "$FILE"
 
-for named in FQDN OPERATOR_USER STAGE CATALOG_REPO DEPLOY_REPO PLATFORM_REPO; do
+for named in FQDN OPERATOR_USER STAGE CATALOG_REPO DEPLOY_REPO PLATFORM_REPO PLATFORM_REF; do
   [ -n "${!named:-}" ] || fail "$FILE states no $named, and nothing here may choose one" 65
 done
 [ -n "${ELEVATION_PASSWORD:-}" ]   || fail "$FILE states no ELEVATION_PASSWORD, and every program of this sequence is run elevated" 65

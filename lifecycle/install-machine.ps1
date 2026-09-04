@@ -122,7 +122,7 @@ function Stated([string] $Named) {
   return $stated[$Named]
 }
 
-foreach ($named in @('FQDN', 'OPERATOR_USER', 'STAGE', 'CATALOG_REPO', 'DEPLOY_REPO', 'PLATFORM_REPO')) {
+foreach ($named in @('FQDN', 'OPERATOR_USER', 'STAGE', 'CATALOG_REPO', 'DEPLOY_REPO', 'PLATFORM_REPO', 'PLATFORM_REF')) {
   if (-not (Stated $named)) { Stop-Here "$ConfigFile states no $named, and nothing here may choose one" }
 }
 if (-not (Stated 'ELEVATION_PASSWORD')) {
