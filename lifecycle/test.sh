@@ -173,7 +173,7 @@ git init --quiet --bare --initial-branch=master "$ORIGIN_A"
 SEED="$WORK/seed"
 git init --quiet --initial-branch=master "$SEED"
 git -C "$SEED" remote add origin "$ORIGIN_A"
-mkdir -p "$SEED/clusters/argocd/apps" "$SEED/clusters/bootstrap/idp" \
+mkdir -p "$SEED/clusters/argocd/files" "$SEED/clusters/bootstrap/idp" \
          "$SEED/clusters/platform" "$SEED/clusters/active"
 # The same byte rule the real tree carries, so the fixture's files are stored and
 # checked out LF on every machine.
@@ -181,7 +181,7 @@ echo "* text=auto eol=lf" > "$SEED/.gitattributes"
 # One file in each stamped tree, carrying a marker exactly as the trunk does, and
 # one file outside them — so a commit that touches only the third proves the
 # split in the report is real and not a count of everything.
-echo "selector: __CLUSTER_ROLE_FIRST_PART__" > "$SEED/clusters/argocd/apps/platform-apps-appset.yaml"
+echo "selector: __CLUSTER_ROLE_FIRST_PART__" > "$SEED/clusters/argocd/files/platform-apps-appset.yaml"
 echo "host: idp.example.invalid" > "$SEED/clusters/bootstrap/idp/values.yaml"
 echo "platform: 0.0.0" > "$SEED/clusters/platform/versions.yaml"
 touch "$SEED/clusters/active/.gitkeep"
@@ -302,9 +302,9 @@ same 'the report with one installation level'
 # ── the trunk moves, and the report says how far ────────────────────────────
 advance_master() { # a checkout to commit in and push from
   local checkout="$1"
-  echo "role: __CLUSTER_ROLE_LAST_PART__" >> "$checkout/clusters/argocd/apps/platform-apps-appset.yaml"
-  git -C "$checkout" add -- clusters/argocd/apps/platform-apps-appset.yaml
-  git -C "$checkout" commit --quiet -m "Move a file the branch programs stamp"
+  echo "role: __CLUSTER_ROLE_LAST_PART__" >> "$checkout/clusters/argocd/files/platform-apps-appset.yaml"
+  git -C "$checkout" add -- clusters/argocd/files/platform-apps-appset.yaml
+  git -C "$checkout" commit --quiet -m "Move a file only a regeneration carries"
   echo "platform: 0.0.1" >> "$checkout/clusters/platform/versions.yaml"
   git -C "$checkout" add -- clusters/platform/versions.yaml
   git -C "$checkout" commit --quiet -m "Move a file nothing stamps"
@@ -317,7 +317,7 @@ run_bash status
 run_pwsh status
 must "  behind: 2 commits on origin/master since that release, 1 of them under clusters/argocd or clusters/bootstrap" \
      'the report counts the commits since the pin and the stamped ones among them'
-must "  stamped: clusters/argocd/apps/platform-apps-appset.yaml" 'the report names the stamped file that moved'
+must "  stamped: clusters/argocd/files/platform-apps-appset.yaml" 'the report names the stamped file that moved'
 must_not "  stamped: clusters/platform/versions.yaml" 'a file outside the stamped trees is not reported as stamped'
 same 'the report with the trunk two commits ahead'
 

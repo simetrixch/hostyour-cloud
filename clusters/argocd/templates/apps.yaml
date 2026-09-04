@@ -11,8 +11,8 @@ uses, for the same reason.
 
 A REPLACE HAS NO KEY AND NO KEEP MARKER. `replace` rewrites every occurrence of
 its literal, in a comment as well as in a value, and it cannot be narrowed to
-the value of one key the way a stamp row of
-../hostyour-deploy/ansiwise/programs/deploy-branch.yaml can. So every value this
+the value of one key the way the `keys:` argument of the
+stamp_placeholder_in_tracked_files step narrows a stamp row. So every value this
 template writes stands behind a marker of its own, and no plain word is
 replaced. The word `argocd` stands inside the annotation domain
 argocd.argoproj.io, and the word `master` stands in prose and once as the tenant
@@ -36,8 +36,8 @@ WHERE THIS CLUSTER'S ARGOCD OBJECTS STAND. On a cluster that carries the master
 part the reconciler runs in the namespace `argocd`. A slave's instance does not:
 it runs on the master, in a namespace named after the slave, and an object still
 naming `argocd` is outside what that instance manages, so ArgoCD refuses to
-compare it at all. ../hostyour-deploy/ansiwise/programs/deploy-slave-branch.yaml:383-394
-writes the same value with a stamp row narrowed to the key `namespace`.
+compare it at all ("namespace argocd for ... is not managed"), the whole tree
+stands Unknown, and a deployment's verification waits out its clock on it.
 */ -}}
 {{- $namespace := ternary "argocd" $clusterName (eq (first $roleParts) "master") }}
 {{- $booksOnly := list "cluster-self.yaml" "repo-catalog.yaml" "slaves-appset.yaml" }}

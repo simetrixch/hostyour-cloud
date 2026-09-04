@@ -4,10 +4,10 @@ The HANDOFF root Application (D5) — the moment GitOps takes over for the slave
 This Application CR lands in ns <name>. The MASTER's ArgoCD (which deploys
 this chart) only watches Applications in ns `argocd`, so for the master it is
 an inert managed resource; the slave's own ArgoCD controller watches its OWN
-namespace, picks it up, and syncs the SLAVE branch's clusters/argocd/apps
-directory (projects.yaml + platform-apps-appset.yaml + consumers-appset.yaml +
-slaves-appset.yaml, all stamped on the slave branch to ns <name> / destination
-name:<name>) into ns <name>. From there the slave branch drives everything —
+namespace, picks it up, and syncs the SLAVE branch's clusters/argocd chart
+(projects.yaml + platform-apps-appset.yaml + consumers-appset.yaml +
+tenants-appset.yaml, rendered from the slave's own cluster map to ns <name> /
+destination name:<name>) into ns <name>. From there the slave branch drives everything —
 the exact per-cluster mechanism clusters/argocd/root-app.yaml implements on a
 full cluster (the installer's GitOps handoff), relocated onto the master.
 
@@ -15,7 +15,7 @@ project `default`: the instance's own auto-created allow-all default project —
 this root app CREATES the slave tree's AppProjects, so it cannot reference one
 (the same first-sync chicken-and-egg the MASTER solves imperatively for the
 slave's own AppProject <name> — see the per-slave projects note in
-clusters/argocd/apps/projects.yaml; here `default` always exists, so no
+clusters/argocd/files/projects.yaml; here `default` always exists, so no
 imperative step is needed).
 
 NAME COLLISION WITH THE MASTER'S ROOT APP is survived by design: the master's
@@ -47,18 +47,32 @@ metadata:
 spec:
   project: default
 
-  source:
-    repoURL: {{ .Values.repo.url }}
-    targetRevision: {{ $branch }}
-    # THE TREE HAS NO STAGE SEGMENT. A path carrying one — `clusters/argocd/<stage>/apps` — names a
-    # layout that does not exist: ArgoCD answers `app path does not exist`, the Application stands
-    # Unknown, and the deployment's verification waits its whole 30 minutes on it.
-    path: clusters/argocd/apps
+  # TWO SOURCES, BECAUSE clusters/argocd IS A CHART. It renders the slave's reconciler tree from the
+  # slave's OWN cluster map, and a chart reaches a file outside its own directory only through a
+  # source declared `ref:`. The first entry carries no path and exists only to give `$values` a
+  # meaning. Both entries stand on the slave's branch, so the map the chart reads is the map of the
+  # cluster this instance manages and not the master's.
+  sources:
+    - repoURL: {{ .Values.repo.url }}
+      targetRevision: {{ $branch }}
+      ref: values
+    - repoURL: {{ .Values.repo.url }}
+      targetRevision: {{ $branch }}
+      # THE TREE HAS NO STAGE SEGMENT. A path carrying one — `clusters/argocd/<stage>` — names a
+      # layout that does not exist: ArgoCD answers `app path does not exist`, the Application stands
+      # Unknown, and the deployment's verification waits its whole 30 minutes on it.
+      path: clusters/argocd
+      helm:
+        valueFiles:
+          # The slave's own map, named after its own branch. It is what makes the chart render the
+          # slave's namespace rather than `argocd`: role there does not open with `master`, so
+          # __ARGOCD_NAMESPACE__ becomes the slave's short name.
+          - $values/clusters/active/{{ $branch }}.yaml
 
   destination:
     # In-cluster from the instance's perspective = the MASTER: the directory's
     # contents are argocd-tree CRs applied into the instance's own namespace (the
-    # slave branch stamps their in-app destinations to the remote name:<name>).
+    # slave branch renders their in-app destinations to the remote name:<name>).
     server: https://kubernetes.default.svc
     namespace: {{ .Release.Namespace }}
 

@@ -119,8 +119,8 @@ foreach ($parent in 'clusters/inventories', 'clusters/units', 'clusters/slaves')
     foreach ($entry in $sorted) { $chartDirs += "$parent/$($entry.TrimEnd('/'))" }
 }
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
-# renders the seven manifests of clusters/argocd/files from the cluster map, with the same values a
-# branch program stamps into them.
+# renders the seven manifests of clusters/argocd/files from the cluster map, and it is the only
+# writer of their markers.
 $chartDirs += 'clusters/argocd'
 
 foreach ($chart in $chartDirs) {
@@ -159,7 +159,7 @@ foreach ($chart in $chartDirs) {
     }
 
     foreach ($stage in $stages) {
-        # The valueFiles chain of clusters/argocd/apps, in its order: the platform globals, then
+        # The valueFiles chain of clusters/argocd/files, in its order: the platform globals, then
         # the chart's own values, then the installation. A chart carries either
         # values-common.yaml or values.yaml, and units carry a size preset instead of a stage
         # file.

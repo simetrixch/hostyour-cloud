@@ -230,7 +230,7 @@ global:
   # only (networkPolicy.allowedNamespaces), because a label every unit namespace
   # wears would open one unit's database to every other unit.
   # The label VALUES are stamped on live namespaces by the ApplicationSets in
-  # clusters/argocd/apps and by hostyour-manager, both of which carry them as
+  # clusters/argocd/files and by hostyour-manager, both of which carry them as
   # literals.
   dataConsumerNamespaces:
     - dbgate

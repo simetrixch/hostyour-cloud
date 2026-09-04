@@ -1,6 +1,6 @@
 # PROD-specific coredns overrides — currently none. The file is kept, not
 # required: every generated platform Application names values-prod.yaml in its
-# valueFiles chain (clusters/argocd/apps/platform-apps-appset.yaml) under
+# valueFiles chain (clusters/argocd/files/platform-apps-appset.yaml) under
 # ignoreMissingValueFiles: true, so an absent file is skipped and this one
 # stands as the declared place a PROD-only override goes. Per-stage
 # `extraRewrites` or `forward` overrides go here;

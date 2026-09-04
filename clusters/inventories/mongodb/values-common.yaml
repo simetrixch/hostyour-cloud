@@ -77,7 +77,7 @@ mongodb:
 #
 # What reads this database therefore stands in this same cluster. clusters/inventories/dbgate
 # carries `runsOn: slave`, exactly as clusters/inventories/mongodb/app.yaml does, so the app
-# generator (clusters/argocd/apps/platform-apps-appset.yaml) places both wherever the cluster's
+# generator (clusters/argocd/files/platform-apps-appset.yaml) places both wherever the cluster's
 # role is `slave`, and dbgate dials mongodb-<env>-headless.mongodb.svc.cluster.local.
 
 # Per-pod data volume (volumeClaimTemplate → /data/db). Each member gets its own

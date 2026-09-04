@@ -7,7 +7,7 @@ description: |
   MASTER-side GitOps vehicle (D5).
 
   One release per slave, deployed by the slaves ApplicationSet
-  (clusters/argocd/apps/slaves-appset.yaml, driven by the cluster maps
+  (clusters/argocd/files/slaves-appset.yaml, driven by the cluster maps
   clusters/active/*.yaml on master) into namespace <name> ON THE MASTER. It contains:
 
     - a dedicated, NAMESPACED ArgoCD instance (argo-cd dep below) that
@@ -22,7 +22,7 @@ description: |
       master's Vault at secret/<stage>/slaves/<name>/{cluster,repo-pat}
       (written there when a slave is added to the installation).
     - the HANDOFF root Application (`root-applications`) pointing this ArgoCD at
-      the SLAVE branch's clusters/argocd/apps — from there the slave branch drives
+      the SLAVE branch's clusters/argocd chart — from there the slave branch drives
       everything, exactly like clusters/argocd/root-app.yaml does on a full
       cluster.
     - (kube dashboard: deliberately NOT in this chart — ONE SHARED master
@@ -35,7 +35,7 @@ description: |
   the run that adds a slave — as is the slave's OWN ArgoCD AppProject `<name>`
   (the Application deploying this chart references that project, so a
   chart-carried AppProject could never survive its own first sync; see the
-  per-slave projects note in clusters/argocd/apps/projects.yaml).
+  per-slave projects note in clusters/argocd/files/projects.yaml).
 
   Per-slave inputs (slave.*) are injected by the slaves ApplicationSet from the
   slave's cluster map (clusters/active/<fqdn>.yaml) via helm valuesObject; the

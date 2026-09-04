@@ -14,7 +14,7 @@ description: |
   NOT A CLUSTER APP. Every consumer that needs PostgreSQL gets its OWN instance
   in its OWN namespace, and this chart is the TEMPLATE each of those is rendered
   from. There is therefore deliberately no apps/postgresql/ directory for
-  clusters/argocd/apps/platform-apps-appset.yaml to glob an app.yaml out of, and adding one
+  clusters/argocd/files/platform-apps-appset.yaml to glob an app.yaml out of, and adding one
   would raise a singleton `postgresql` instance this chart does not model.
 
   WHAT MAKES IT RENDERABLE PER CONSUMER. Every cluster-singleton assumption is
@@ -97,7 +97,7 @@ dependencies:
   # prometheus-community, and ArgoCD fetches it at render time (the vendored
   # charts/ are gitignored). ArgoCD gates dependency repos by the Application's
   # AppProject.sourceRepos — the platform already lists this repo in the `data` and
-  # `observability` projects for exactly this reason (clusters/argocd/apps/projects.yaml).
+  # `observability` projects for exactly this reason (clusters/argocd/files/projects.yaml).
   # The PER-CONSUMER project (hostyour-manager appproject.ts renderConsumerAppProject)
   # currently permits only [consumerRepo, platformRepo], so a per-consumer render
   # with metrics.enabled would be REJECTED until that project also allows

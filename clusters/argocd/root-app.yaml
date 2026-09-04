@@ -8,10 +8,29 @@ metadata:
 spec:
   project: default
 
-  source:
-    repoURL: https://github.com/simetrixch/hostyour-cloud.git
-    targetRevision: master
-    path: clusters/argocd/apps
+  # TWO SOURCES, BECAUSE clusters/argocd IS A CHART. The tree it syncs is rendered from this
+  # cluster's own map, and a chart reaches a file outside its own directory only through a source
+  # declared `ref:`. The first entry carries no path and exists only to give `$values` a meaning.
+  #
+  # ONE PLACEHOLDER ANSWERS THE BRANCH NAME AND THE MAP'S FILE NAME, because an install branch is
+  # named after the cluster's own domain and its map is the file named for that domain. The
+  # placeholder is the domain the trunk carries wherever one installation would carry its own, and
+  # the branch programs replace it everywhere in the checkout. It is deliberately NOT spelled out in
+  # this comment: that row names no keys, so it rewrites every occurrence on any line it reaches,
+  # comments included, and a sentence quoting it would come out of a run stating one installation's
+  # domain instead of explaining the placeholder. Nothing renders this file — it is the object that
+  # starts the reconciler, so it cannot come from the reconciler — and the branch is therefore the
+  # only place its two values become this installation's own.
+  sources:
+    - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
+      targetRevision: &branch example.invalid
+      ref: values
+    - repoURL: *repo
+      targetRevision: *branch
+      path: clusters/argocd
+      helm:
+        valueFiles:
+          - $values/clusters/active/example.invalid.yaml
 
   destination:
     server: https://kubernetes.default.svc

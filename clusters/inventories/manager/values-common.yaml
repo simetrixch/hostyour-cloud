@@ -155,7 +155,7 @@ github:
   # master.sshUser, which is on an install branch only. What the key states is
   # where the override goes — an installation pointing THIS app at another
   # catalog sets deployRepo in installation/values/manager.yaml, which
-  # clusters/argocd/apps/platform-apps-appset.yaml loads after this file.
+  # clusters/argocd/files/platform-apps-appset.yaml loads after this file.
   deployRepo: ""
 
 # Consumer onboarding (config.ts, onboarding.md §6). Chart validation runs as an in-cluster

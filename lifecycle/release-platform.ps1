@@ -40,13 +40,15 @@
 # leaves no tag behind naming a release nobody meant to cut.
 #
 # WHAT THIS DOES NOT DO. It does not stamp anything, and it touches no file under
-# clusters/argocd or clusters/bootstrap. Those files carry one installation's own
-# domain, name, stage and role where this tree carries markers, and writing them
-# is the branch programs' act in the catalogue repository — re-run by
-# regenerate-branch, which regenerate-install-branch.ps1 beside this file performs
-# on the machine, and which is the act a person performs after this one. A second
-# implementation of that stamping beside them would disagree with them the first
-# time either was corrected.
+# clusters/argocd or clusters/bootstrap. clusters/bootstrap and the root-app.yaml
+# beside clusters/argocd carry one installation's own domain and name where this
+# tree carries markers, and writing them is the branch programs' act in the
+# catalogue repository — re-run by regenerate-branch, which
+# regenerate-install-branch.ps1 beside this file performs on the machine, and which
+# is the act a person performs after this one. A second implementation of that
+# stamping beside them would disagree with them the first time either was
+# corrected. The rest of clusters/argocd is a chart the reconciler renders from
+# the cluster map, and nothing writes its markers on a branch at all.
 #
 # THE ORDER IS PIN, THEN REGENERATE, and they are two acts on purpose. Between
 # them somebody can read what the pin now says and stop. This one ends by naming

@@ -17,8 +17,10 @@ description: |
   mechanism instead of two, no root token, and the object is a resource of a GitOps Application —
   visible in the reconciler it belongs to, like everything else the platform deploys.
   THE STORE IS NOT RENDERED HERE. The `argocd` namespace already carries `SecretStore/vault-backend`
-  and `ServiceAccount/external-secrets-sa`, both written by clusters/argocd/apps/repo-catalog.yaml,
-  which is a resource of the root-applications Application. Rendering them again would put the same
+  and `ServiceAccount/external-secrets-sa`, both written by clusters/argocd/files/repo-catalog.yaml,
+  which the chart at clusters/argocd emits only where the cluster map says
+  `global.servicesLocal.vault: true`, and which is a resource of the root-applications Application.
+  Rendering them again would put the same
   two objects under two Applications, which ArgoCD reports as a SharedResourceWarning and which makes
   each sync of one of them contend with the other. The ExternalSecret below names no store and falls
   back to `global.secretStoreName` — `vault-backend`, in clusters/platform/values-common.yaml — so it

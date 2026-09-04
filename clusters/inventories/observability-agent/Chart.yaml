@@ -30,7 +30,7 @@ description: |
 
   Placed by clusters/inventories/observability-agent/app.yaml — runsOn: slave, so the app generator
   creates it exactly where the role lacks the master part. Catalog entry in
-  clusters/argocd/apps/platform-apps-appset.yaml (project observability, wave 30),
+  clusters/argocd/files/platform-apps-appset.yaml (project observability, wave 30),
   deployed into the `observability` namespace — the observability plane on this
   cluster; mutually exclusive with the full clusters/inventories/observability (D2), so they
   never coexist and the observability AppProject's existing destination /

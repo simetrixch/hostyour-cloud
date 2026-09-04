@@ -21,8 +21,8 @@
 #   • only the cluster-scoped resource kinds it legitimately creates
 #     (data / services create NONE → clusterResourceWhitelist: [])
 #
-# Lifecycle: this file lives in clusters/argocd/apps/ next to platform-apps-appset.yaml, and
-# clusters/argocd/root-app.yaml syncs that directory (`path: clusters/argocd/apps`), so it is
+# Lifecycle: this file lives in clusters/argocd/files/ next to platform-apps-appset.yaml, and
+# clusters/argocd/root-app.yaml syncs the chart above it (`path: clusters/argocd`), so it is
 # applied by the same Application. The sync-wave -1 annotation
 # guarantees the AppProjects exist before the ApplicationSet's generated
 # Applications (which reference them by name) attempt their first sync.
@@ -252,10 +252,10 @@ spec:
     # (release-interceptors.yaml — github/gitlab/bitbucket/cel/slack).
     # NOT A STAGE. `triggers.tekton.dev` is the API group Tekton Triggers registers on every
     # cluster there is; the `dev` in it is the last label of a domain name and never varies.
-    # Written as the placeholder, the stamp turned it into `triggers.tekton.prod` on a prod
-    # installation, the project then permitted a group that does not exist, ArgoCD could not
-    # manage the ClusterInterceptors and reported them Unknown, and the tekton application
-    # stood OutOfSync for ever. On a dev installation the same stamp wrote `dev` back and the
+    # Written as the placeholder, whatever fills __STAGE__ turns it into `triggers.tekton.prod` on
+    # a prod installation, the project then permits a group that does not exist, ArgoCD cannot
+    # manage the ClusterInterceptors and reports them Unknown, and the tekton application
+    # stands OutOfSync for ever. On a dev installation the same value writes `dev` back and the
     # line was right by accident, which is why this survives every installation until the
     # first one on prod. Measured on a real machine.
     - group: triggers.tekton.dev

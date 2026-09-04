@@ -24,20 +24,28 @@
 # whose map records nothing cannot be told apart from one that is level, which is
 # why an absent line is reported as loudly as a stale one.
 #
-# WHY THE STAMPED TREE IS COUNTED ON ITS OWN. Everything under clusters/argocd
-# and clusters/bootstrap carries this installation's own domain, name, stage and
-# role where the trunk carries markers. Those files cannot travel to a machine by
-# a merge — merging the trunk's copy would put the markers back into files a
-# reconciler reads literally — so they reach an existing installation only by a
+# WHY THESE TWO TREES ARE COUNTED ON THEIR OWN. clusters/bootstrap carries this
+# installation's own name where the trunk carries markers, and helm applies those
+# files literally before ArgoCD exists. clusters/argocd carries root-app.yaml,
+# whose branch name and cluster map file name are the placeholder domain the
+# branch programs replace across the whole checkout. Neither can travel to a
+# machine as the trunk writes it, so both reach an existing installation only by a
 # regeneration somebody runs. A commit that touches one of them is therefore a
 # commit that stays away until that happens, and the count of them is the number
 # this whole answer exists for.
 #
+# WHAT THE PER-FILE LINE MEANS. `stamped:` names a file under one of those two
+# trees that changed since the pin. It says the file needs a regeneration to reach
+# the machine; it does not say a stamp row writes that particular file. The rest
+# of clusters/argocd is a CHART the reconciler renders from the cluster map, so
+# its markers are filled at render and the trunk's bytes are what a branch carries.
+#
 # THOSE TWO DIRECTORY NAMES ARE ALSO WRITTEN SOMEWHERE ELSE: on the
 # `stamp_placeholder_in_tracked_files` rows of the branch programs in the
-# catalogue repository, which is what actually does the stamping. Nothing
-# compares the two lists. A third stamped tree added there and not here makes
-# every count below too low, and nothing would say so.
+# catalogue repository, which is what actually does the stamping —
+# clusters/bootstrap on a `tree:` of its own, root-app.yaml through the row that
+# names no tree at all. Nothing compares the two lists. A third stamped tree added
+# there and not here makes every count below too low, and nothing would say so.
 #
 # IT ANSWERS ABOUT THE BRANCH, WHICH IS WHAT THE MACHINE FOLLOWS. The cluster's
 # reconciler tracks the install branch, so for these files the branch is the

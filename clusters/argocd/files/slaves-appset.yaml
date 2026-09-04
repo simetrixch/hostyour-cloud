@@ -24,8 +24,8 @@ spec:
           # The plane is only for a cluster whose WHOLE role is slave, managed from the books.
           role: slave
           stage: __STAGE__
-          # THE CLUSTER THAT KEEPS THE BOOKS, in the marker the branch programs stamp from the
-          # `books_cluster` answer — the same answer the map's own `books-cluster` is written from,
+          # THE CLUSTER THAT KEEPS THE BOOKS, in the marker the chart above fills from the map's
+          # `global.booksCluster` — the same value the map's own `books-cluster` is written from,
           # so the two sides of this comparison can never be answered apart. It is the same value
           # the generator's revision above carries, because a books branch is named for the cluster
           # whose books it holds. A literal here would be one installation's domain in a file every

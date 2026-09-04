@@ -5,7 +5,7 @@
 # TWO RENDER MODES, one chart, told apart by `unit`:
 #
 #   unit: null   CATALOG mode — the consumer-build Application from the app
-#                catalog (clusters/argocd/apps/platform-apps-appset.yaml, project
+#                catalog (clusters/argocd/files/platform-apps-appset.yaml, project
 #                cicd) renders ONLY templates/applicationset.yaml, which emits
 #                the build fan-out ApplicationSet over registrations/*/build.yaml.
 #

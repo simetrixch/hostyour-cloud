@@ -14,16 +14,16 @@
 # follows the consumer's delivery branch deploy/__STAGE__ as a LITERAL. What that
 # branch points at is decided in the consumer's repo, not here.
 #
-# THE TWO MARKERS IN THIS FILE ARE BOTH STAMPED. The post-selector pins
+# THE TWO MARKERS IN THIS FILE ARE BOTH FILLED BY THE CHART ABOVE. The post-selector pins
 # cluster=__CLUSTER_NAME__ — the install branch's cluster short name, which is the
 # fqdn's first DNS label and the name the Manager writes into a
-# registration's `cluster:` field; the branch program derives that label from
-# the fqdn it was answered rather than asking for it twice, and stamps it over
-# this whole tree. The generator revision is __BOOKS_FQDN__ and deliberately
+# registration's `cluster:` field; the cluster map carries it as
+# global.clusterName, derived from the fqdn rather than answered twice. The
+# generator revision is __BOOKS_FQDN__ and deliberately
 # not this branch: the registrations stand on the install branch of the cluster
-# holding the master role, which on a pure slave is another branch, and the
-# branch program stamps it from the books_cluster answer — the same answer the
-# cluster map's own `books-cluster` is written from.
+# holding the master role, which on a pure slave is another branch, and the map
+# carries it as global.booksCluster — the same value the map's own
+# `books-cluster` is written from.
 #
 # SO WHAT THIS BRANCH CARRIES IS NOT WHAT THIS SELECTS. The generator names the
 # ref it reads, so registrations/ standing on this branch, or absent from it,
@@ -62,12 +62,12 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: __BOOKS_FQDN__  # the books stamp fills it — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
+        revision: __BOOKS_FQDN__  # the chart fills it from global.booksCluster — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
         files:
           - path: "registrations/*/__STAGE__.yaml"
       selector:
         matchLabels:
-          cluster: __CLUSTER_NAME__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
+          cluster: __CLUSTER_NAME__  # the chart fills it from global.clusterName — the short name is DERIVED from the fqdn, not answered
   template:
     metadata:
       name: "{{ .name }}-__STAGE__"
@@ -144,9 +144,9 @@ spec:
   # without breaking a static YAML parse. templatePatch is rendered by the
   # ApplicationSet's go-template and merge-patched onto the Application above
   # (arrays are replaced, so the full sources list is authoritative here).
-  # set-domain restamps the `master` targetRevisions to the install branch,
-  # like every other argocd/ file; `deploy/__STAGE__` carries no `master` token,
-  # so the retarget never touches it.
+  # The chart above fills the marker carrying global.domain in every targetRevision of
+  # this file, like every other file of clusters/argocd/files. The consumer's own
+  # `deploy/__STAGE__` below carries no such marker, so the retarget never reaches it.
   templatePatch: |
     spec:
       {{- if or (has "redis" .services) (has "postfix" .services) }}

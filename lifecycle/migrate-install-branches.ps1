@@ -7,8 +7,8 @@
 # An install branch carries three kinds of bytes, and two of them already have
 # a path. What the product tree owns unstamped — charts, values, inventories,
 # pins — reaches a branch by a merge. What it owns stamped — the files under
-# clusters/argocd and clusters/bootstrap, where the installation's own domain,
-# name, stage and role stand where the trunk carries markers — reaches it by a
+# clusters/bootstrap and clusters/argocd/root-app.yaml, where the installation's
+# own domain and name stand where the trunk carries markers — reaches it by a
 # regeneration. The third kind is born on the branch and exists nowhere else:
 # the cluster maps under clusters/active/, configs/config.<stage>, the files
 # under installation/. A merge cannot reach it because the trunk does not

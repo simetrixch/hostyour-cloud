@@ -101,7 +101,7 @@ redis:
 #
 # What reads this cache stands in the same cluster. clusters/inventories/dbgate carries
 # `runsOn: slave`, exactly as clusters/inventories/redis/app.yaml does, so the app generator
-# (clusters/argocd/apps/platform-apps-appset.yaml) places both on the same cluster and dbgate
+# (clusters/argocd/files/platform-apps-appset.yaml) places both on the same cluster and dbgate
 # dials redis-<env>.redis.svc.cluster.local:6379 as the `default` user.
 #
 # WHAT REACHING THIS PORT IS WORTH, now that the args above carry --requirepass:

@@ -6,8 +6,8 @@
 # field — so on a master that name must resolve to the master's OWN
 # apiserver, or a master cannot carry tenants. __CLUSTER_NAME__ is the install
 # branch's cluster short name — the fqdn's first DNS label, the same value the
-# tenant appset selectors admit — and the branch program fills it, deriving the
-# label from the FQDN it was answered rather than asking for it twice.
+# tenant appset selectors admit — and the chart above fills it from the map's
+# global.clusterName, which is derived from the fqdn rather than answered twice.
 #
 # On a PURE SLAVE branch this file has to GO: the slave's ArgoCD instance
 # already registers the slave under that same name with the slave's real
@@ -15,11 +15,11 @@
 # second Secret claiming the same cluster name with server
 # kubernetes.default.svc — the MASTER's apiserver from the instance's point
 # of view — would point the tenant Applications at the wrong apiserver.
-# NOTHING removes it today, and nothing is meant to: no step of any branch
-# program deletes a path from a branch. A branch is the trunk plus what the
-# program WRITES into it, so a file the trunk carries stands on every branch cut
-# from it, this one included. Removing it on a pure slave is work nobody has
-# built.
+# THE CHART ABOVE IS WHAT KEEPS IT OFF ONE: it emits this file, slaves-appset.yaml
+# and repo-catalog.yaml only where the map says global.servicesLocal.vault, which
+# is the cluster that keeps the books. A pure slave's map says false, so its
+# reconciler never sees this Secret, and no file has to be deleted from a branch
+# for that to hold.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -28,5 +28,5 @@ metadata:
   labels:
     argocd.argoproj.io/secret-type: cluster
 stringData:
-  name: __CLUSTER_NAME__  # the cluster stamp fills it — the short name is DERIVED from the fqdn, not answered
+  name: __CLUSTER_NAME__  # the chart fills it from global.clusterName — the short name is DERIVED from the fqdn, not answered
   server: https://kubernetes.default.svc

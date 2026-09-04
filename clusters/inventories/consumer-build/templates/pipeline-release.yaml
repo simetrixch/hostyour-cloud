@@ -1098,7 +1098,7 @@ spec:
               # ── tenant hits: who renders a bumped catalog chart ────────────
               # A class-(b) hit changes a chart that tenant member Applications
               # render. WHICH ones is derived, never listed: the tenant
-              # ApplicationSets under clusters/argocd/apps/ state which member
+              # ApplicationSets under clusters/argocd/files/ state which member
               # sources which chart and how its Application is named, and the
               # tenant registrations state which tenants exist on which
               # cluster. Those registrations are NOT on the catalog's trunk —
@@ -1136,18 +1136,19 @@ spec:
                   helm template appset-sim "${SIM}" -f "$2"
                 }
                 # ONE parameterized argocd tree, not three per-stage ones: the
-                # appsets stand at clusters/argocd/apps/*.yaml and carry the stage as the
-                # marker __STAGE__, which the branch program fills when an
-                # installation's branch is cut. This is the trunk clone, so the
-                # marker is still standing, and the sim fills it for the stage
-                # being bumped before reading anything out of the file — the
-                # Application name is "<guid>-<member>-__STAGE__", and an
-                # unfilled marker there fails the shape check on every member.
-                # The other three markers of this tree (__CLUSTER_NAME__,
-                # __BOOKS_FQDN__, __CATALOG_REPO__) stand in the generator, the
-                # selector and the source repoURLs, none of which this
+                # appsets stand at clusters/argocd/files/*.yaml and carry the stage as the
+                # marker __STAGE__, which the chart at clusters/argocd renders
+                # from the cluster map. This is the trunk clone, so the marker is
+                # still standing, and the sim fills it for the stage being bumped
+                # before reading anything out of the file — the Application name
+                # is "<guid>-<member>-__STAGE__", and an unfilled marker there
+                # fails the shape check on every member. The other six markers of
+                # this tree (__CLUSTER_NAME__, __BOOKS_FQDN__, __CATALOG_REPO__,
+                # __BRANCH__, __FQDN__ and __ARGOCD_NAMESPACE__) stand in the
+                # generator, the selector, the namespace, the source repoURLs,
+                # the targetRevisions and a valueFiles entry, none of which this
                 # derivation reads.
-                for src in "${WORK}"/hostyour-cloud/clusters/argocd/apps/*.yaml; do
+                for src in "${WORK}"/hostyour-cloud/clusters/argocd/files/*.yaml; do
                   [ -f "${src}" ] || continue
                   asname="$(basename "${src}")"
                   as="${WORK}/filled-${asname}"
@@ -1189,8 +1190,8 @@ spec:
                       # Three resolution checks guard the sync decision, and the
                       # Application name plus the source paths are all of the
                       # render it consumes. An unconsumed template action would
-                      # leave braces behind; a stamp marker would leave its own
-                      # text; and a param helm could not resolve leaves a GAP,
+                      # leave braces behind; an unfilled marker would leave its
+                      # own text; and a param helm could not resolve leaves a GAP,
                       # because helm strips the missing-key marker from every
                       # render — which is why the third check is the name's
                       # <guid>-<member>-<stage> shape and not marker text.

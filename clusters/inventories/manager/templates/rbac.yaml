@@ -184,8 +184,8 @@ surface of the manager's onboarding adapters:
 
 Build-plane-only, like the whole manager app: renders wherever the app
 deploys (clusters/inventories/manager/app.yaml says runsOn: master, and the app generator in
-clusters/argocd/apps/platform-apps-appset.yaml admits every-cluster and the parts of the cluster's
-role stamped over __CLUSTER_ROLE_FIRST_PART__ / __CLUSTER_ROLE_LAST_PART__, and nothing
+clusters/argocd/files/platform-apps-appset.yaml admits every-cluster and the parts of the cluster's
+role rendered into __CLUSTER_ROLE_FIRST_PART__ / __CLUSTER_ROLE_LAST_PART__, and nothing
 else) — no separate toggle, exactly like
 serviceaccount.yaml / deployment.yaml.
 */ -}}
