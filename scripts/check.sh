@@ -262,6 +262,36 @@ fi
 decoded="$(wc -l < "$work/decoded.tally" | tr -d ' ')"
 echo "check: no rendered value carries a Helm expression, over $rendered renders and the $decoded base64 values in them."
 
+# ── clusters/argocd as ArgoCD is handed it: the cluster map ALONE ────────────────────────────
+# THE LOOP ABOVE RENDERS IT WITH THE PLATFORM CHAIN, AND NO CLUSTER EVER DOES. clusters/argocd is
+# the one chart of this repository whose whole values chain is a single file:
+# clusters/argocd/root-app.yaml:33 and clusters/slaves/slave/templates/root-application.yaml:83
+# both name $values/clusters/active/<fqdn>.yaml and nothing else. So `global:` reaches this chart
+# from the cluster map or from nowhere, while every other chart is handed
+# clusters/platform/values-common.yaml first and can never see the block missing.
+#
+# THE OLD MAP SHAPE IS DERIVED FROM THE STAND-IN, NOT WRITTEN OUT. A cluster map made before the
+# block existed carries its values flat at the top level, which is the stand-in with everything
+# from its `global:` line onward cut off. Deriving it means the two shapes cannot drift apart and
+# there is no third stand-in document to keep in step.
+echo "check: clusters/argocd from the cluster map alone, the way its root Application is handed it."
+if ! helm template argocd-apps clusters/argocd -f "$cluster_map" > "$work/argocd-alone" 2>&1; then
+  cat "$work/argocd-alone"
+  fail "clusters/argocd does not render from the cluster map alone, which is the only chain it ever gets"
+fi
+
+refusal_said='the cluster map states no global: block'
+awk '/^global:/ { exit } { print }' "$cluster_map" > "$work/map-without-global"
+refused="$(helm template argocd-apps clusters/argocd -f "$work/map-without-global" 2>&1)"
+case "$refused" in
+  *"$refusal_said"*) ;;
+  *)
+    echo "$refused"
+    fail "a cluster map with no global: block is not refused by name — helm stops on a nil pointer that names neither the file nor the block"
+    ;;
+esac
+echo "check: a cluster map with no global: block is refused by name, not by a nil pointer."
+
 # ── 2. The delivery programs ────────────────────────────────────────────────────────────────
 echo "check: lifecycle/test.sh — the release, the regeneration, the report and the slave removal, in both spellings. About a minute."
 bash lifecycle/test.sh || fail "lifecycle/test.sh"

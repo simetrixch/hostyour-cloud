@@ -33,13 +33,27 @@ nothing at all.
 for this template, and all seven documents come from it, so that line cannot
 tell them apart.
 */ -}}
+{{- /*
+THE BLOCK BEFORE THE KEYS IN IT. This chart is the ONE chart of this repository
+whose whole values chain is a single file: root-app.yaml:33 beside this template
+and clusters/slaves/slave/templates/root-application.yaml:83 both hand it
+$values/clusters/active/<fqdn>.yaml and nothing else, so `global` reaches it from
+the cluster map or from nowhere. Every other chart is handed
+clusters/platform/values-common.yaml first, and that file carries the block.
+A guard written as `required "..." .Values.global.clusterName` cannot answer for
+a map with no block at all: the dereference of the missing block fails before
+`required` is ever called, and helm stops with `nil pointer evaluating
+interface {}.clusterName`, which names neither the file nor the block. So the
+block is bound once here and every key below is read out of the binding.
+*/ -}}
 {{- $stage := required "argocd-apps: stage is required (clusters/active/<fqdn>.yaml) — the ApplicationSets are named per stage and the registrations they read are filed per stage" .Values.stage }}
 {{- $role := required "argocd-apps: role is required (clusters/active/<fqdn>.yaml) — the platform app selector admits the parts this cluster carries, and a cluster admitting no part runs no platform application" .Values.role }}
-{{- $clusterName := required "argocd-apps: global.clusterName is required (clusters/active/<fqdn>.yaml) — this cluster registers itself under that name and the unit generators select the registrations carrying it" .Values.global.clusterName }}
-{{- $fqdn := required "argocd-apps: global.domain is required (clusters/active/<fqdn>.yaml) — this cluster's own domain, which names its cluster map, the file the value chains load last" .Values.global.domain }}
-{{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role. It carries this installation's registrations AND every cluster map of it, and it is the branch every source of this tree reads from: a cluster carrying only the slave part has no branch of its own" .Values.global.booksCluster }}
-{{- $catalogRepo := required "argocd-apps: global.catalogRepo is required (clusters/active/<fqdn>.yaml) — the tenant catalog as bare owner/name, written inside a URL these files already carry" .Values.global.catalogRepo }}
-{{- $holdsBooks := required "argocd-apps: global.servicesLocal.vault is required (clusters/active/<fqdn>.yaml) — it says whether this cluster keeps the books, and the three files below exist only on the cluster that does" (dig "servicesLocal" "vault" "" .Values.global) }}
+{{- $global := required "argocd-apps: the cluster map states no global: block (clusters/active/<fqdn>.yaml), and this chart is handed that one file and nothing else. Every value below stands under global: in it. A map written before the block existed carries those values flat at the top level instead, and no chart of this tree can be rendered against it" .Values.global }}
+{{- $clusterName := required "argocd-apps: global.clusterName is required (clusters/active/<fqdn>.yaml) — this cluster registers itself under that name and the unit generators select the registrations carrying it" $global.clusterName }}
+{{- $fqdn := required "argocd-apps: global.domain is required (clusters/active/<fqdn>.yaml) — this cluster's own domain, which names its cluster map, the file the value chains load last" $global.domain }}
+{{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role. It carries this installation's registrations AND every cluster map of it, and it is the branch every source of this tree reads from: a cluster carrying only the slave part has no branch of its own" $global.booksCluster }}
+{{- $catalogRepo := required "argocd-apps: global.catalogRepo is required (clusters/active/<fqdn>.yaml) — the tenant catalog as bare owner/name, written inside a URL these files already carry" $global.catalogRepo }}
+{{- $holdsBooks := required "argocd-apps: global.servicesLocal.vault is required (clusters/active/<fqdn>.yaml) — it says whether this cluster keeps the books, and the three files below exist only on the cluster that does" (dig "servicesLocal" "vault" "" $global) }}
 {{- $roleParts := splitList "+" $role }}
 {{- /*
 WHERE THIS CLUSTER'S ARGOCD OBJECTS STAND. On a cluster that carries the master

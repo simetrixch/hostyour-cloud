@@ -334,6 +334,41 @@ if ($expressions.Count -gt 0) {
 }
 Write-Output "check: no rendered value carries a Helm expression, over $rendered renders and the $script:decodedValues base64 values in them."
 
+# ── clusters/argocd as ArgoCD is handed it: the cluster map ALONE ────────────────────────────
+# THE LOOP ABOVE RENDERS IT WITH THE PLATFORM CHAIN, AND NO CLUSTER EVER DOES. clusters/argocd is
+# the one chart of this repository whose whole values chain is a single file:
+# clusters/argocd/root-app.yaml:33 and clusters/slaves/slave/templates/root-application.yaml:83
+# both name $values/clusters/active/<fqdn>.yaml and nothing else. So `global:` reaches this chart
+# from the cluster map or from nowhere, while every other chart is handed
+# clusters/platform/values-common.yaml first and can never see the block missing.
+#
+# THE OLD MAP SHAPE IS DERIVED FROM THE STAND-IN, NOT WRITTEN OUT. A cluster map made before the
+# block existed carries its values flat at the top level, which is the stand-in with everything
+# from its `global:` line onward cut off. Deriving it means the two shapes cannot drift apart and
+# there is no third stand-in document to keep in step.
+Write-Output 'check: clusters/argocd from the cluster map alone, the way its root Application is handed it.'
+$alone = & helm template argocd-apps clusters/argocd -f $mapFile 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+    Write-Output $alone.TrimEnd()
+    Stop-Check 'clusters/argocd does not render from the cluster map alone, which is the only chain it ever gets'
+}
+
+$refusalSaid = 'the cluster map states no global: block'
+$flat = @()
+foreach ($line in [System.IO.File]::ReadAllLines($mapFile)) {
+    # Ordinal and case-sensitive, because scripts/check.sh cuts the same line with awk over bytes.
+    if ($line.StartsWith('global:', [System.StringComparison]::Ordinal)) { break }
+    $flat += $line
+}
+$mapWithoutGlobal = Join-Path $work 'map-without-global.yaml'
+[System.IO.File]::WriteAllLines($mapWithoutGlobal, $flat)
+$refused = & helm template argocd-apps clusters/argocd -f $mapWithoutGlobal 2>&1 | Out-String
+if (-not $refused.Contains($refusalSaid, [System.StringComparison]::Ordinal)) {
+    Write-Output $refused.TrimEnd()
+    Stop-Check 'a cluster map with no global: block is not refused by name — helm stops on a nil pointer that names neither the file nor the block'
+}
+Write-Output 'check: a cluster map with no global: block is refused by name, not by a nil pointer.'
+
 # ── 2. The delivery programs ────────────────────────────────────────────────────────────────
 Write-Output 'check: lifecycle/test.sh — the release, the regeneration, the report and the slave removal, in both spellings. About a minute.'
 & $bash lifecycle/test.sh
