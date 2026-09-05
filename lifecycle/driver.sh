@@ -15,14 +15,16 @@
 # clusters/platform/install-order.yaml would hide a drift rather than prevent one: the file and this
 # driver can name different programs — the file six for a master and this driver five, without
 # onboard-manager — and nobody can see it, because such a sentence says there is nothing to compare.
-# install-order.yaml says the same thing from its side, in its own header: "WHO READS IT TODAY:
-# NOBODY. Both drivers still carry their own copy of the sequence."
+# install-order.yaml names this driver from its side, in its own header, as one of the two that do
+# not read it.
 #
-# The other carrier is the manager, which invokes the same programs over its own channel and keeps
-# its list in TypeScript. Three carriers of one fact, and the one that was written to be the answer
-# is the one nothing reads. Whether the driver should READ the file is a separate question with a
-# real consequence — it would run onboard-manager too, which it does not — and it is not answered
-# by this comment.
+# The other non-reader is the manager, which invokes the same programs over its own channel and keeps
+# its list in TypeScript. THE FILE IS READ, though — by the manager's boot check
+# `install-order.agrees`, which holds those TypeScript lists against it, and by ansiwise-client, which
+# fetches it to show an operator the programs of the role being installed. So it is not a declaration
+# nothing consumes: it is one that no RUNNER consumes, and this driver is one of the runners.
+# Whether the driver should READ it is a separate question with a real consequence — it would run
+# onboard-manager too, which it does not — and it is not answered by this comment.
 #
 # WHY IT RUNS HERE AND NOT ON THE OPERATOR'S MACHINE. Everything it fetches is
 # fetched by THIS machine, and every one of the three is public: the pin out of the

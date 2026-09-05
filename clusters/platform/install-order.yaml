@@ -14,11 +14,31 @@
 # this file ruled out, because a failure halfway through a child leaves a parent
 # that cannot say what happened.
 #
-# WHO READS IT TODAY: NOBODY. Both drivers still carry their own copy of the
-# sequence, and both live outside this repository. That is stated rather than
-# implied, because a declaration nothing consumes looks exactly like one that is
-# obeyed, and the difference matters to whoever changes a row here and expects
-# an installation to change with it.
+# WHO READS IT TODAY: TWO PROGRAMS, IN TWO OTHER REPOSITORIES, and neither of
+# them is a driver.
+#
+#   hostyour-manager  server/domains/inventory/install-order.ts fetches and parses
+#                     this file off the trunk, and the boot self-check
+#                     `install-order.agrees` (server/boot/selfchecks.ts) holds the
+#                     manager's own run kinds against what it says. The module's
+#                     own header states why it is a reader and not a driver: a run
+#                     that composed its steps out of a file on a remote trunk would
+#                     fail to plan when that trunk is unreachable.
+#   ansiwise-client   lib/domain/install_order.dart names this path and
+#                     lib/infrastructure/feed_install_order.dart fetches it over
+#                     the GitHub contents API to show an operator the programs of
+#                     the role being installed, in order, before anything runs.
+#                     THIS IS THE READER A PERSON MEETS: a row changed here changes
+#                     what somebody standing in front of a bare machine is shown.
+#
+# WHO DOES NOT: the two drivers. hostyour-cloud lifecycle/driver.sh carries its own
+# `PROGRAMS` array and says so in its own header, and the manager invokes its
+# programs from step lists written in TypeScript. So a row changed here reaches
+# every READER and no RUN, and that is the distinction to hold on to: this file
+# tells people what an installation does, and nothing here makes it do it.
+#
+# It is stated rather than implied, because a declaration nothing consumes looks
+# exactly like one that is obeyed, and so does one that is only read.
 #
 # WHY IT STANDS HERE AND NOT IN THE CATALOGUE. The catalogue holds the programs;
 # it belongs to the installation that was handed it, and every installation gets
@@ -57,14 +77,43 @@
 # branch and rewrites it afterwards, deciding which by asking the remote whether
 # it publishes one; the other four are watched only on a first install.
 #
-# HOW FAST THIS FILE GOES STALE, measured rather than feared. Nothing reads it
-# and nothing checks it, so a sentence in it goes on being read after it stops
+# HOW FAST THIS FILE GOES STALE, measured rather than feared. One check holds one
+# thing about it — `install-order.agrees`, in another repository, comparing the
+# manager's own program lists against a sequence below — and nothing in THIS
+# repository holds anything. So a sentence here goes on being read after it stops
 # being true and only a person reading the file finds it: a program name that
 # versions.yaml beside this file stamps no site in, while it stamps four under
 # another name; a `needs` path this repository has renamed; an answer whose value
 # comes from a run. That is the argument for a driver, and it is also the
 # warning: a row here is intent, not behaviour, and it is verified against the
 # programs in the catalogue and against this tree before it is relied on.
+#
+# ONE SEQUENCE, ONE ACT: INSTALLING A MACHINE FROM BARE METAL. That is what every
+# list below states, and it is why `needs` is the load-bearing part of this file
+# rather than decoration. On a bare machine `deploy-branch` can only run after
+# `deploy-host`, because its two needs — the checkout at /srv/hostyour-cloud and
+# the config template inside it — do not exist until `deploy-host`'s `git_clone`
+# has put them there. The needs impose the order; the list only writes it down.
+#
+# A CHANGE TO A MACHINE THAT IS ALREADY INSTALLED IS A DIFFERENT ACT, AND ITS
+# ORDER IS NOT THIS ONE. On such a machine the checkout and the template already
+# stand, so `deploy-branch`'s needs are satisfied before the run begins, the edge
+# that forced host-before-branch is gone, and what decides the order instead is
+# the change being made. Giving an installed master the slave part regenerates the
+# branch FIRST and re-runs the machine layer off it — hostyour-manager
+# server/domains/runs/defs/deploy-slave.master.ts, `masterSlavePartSteps`, which
+# runs `deploy-branch` before `deploy-host` and says why in its own comment: the
+# slave part has to arrive as a property of the branch the machine already reads,
+# and the machine programs have to act on that branch and not on the one before it.
+#
+# NEITHER ORDER IS WRONG AND NEITHER IS A COPY OF THE OTHER. They answer two
+# questions: what has to be true before a program can run AT ALL, which is what
+# this file states, and which order carries a machine from one state to another,
+# which belongs to the act making the change. A second sequence here naming the
+# second act would be a list derivable from the needs already written above it, and
+# a derivable list is a copy that drifts — which is the thing this file exists
+# against. So it is not here, and the rule is: read the sequence as the order for a
+# machine that carries nothing yet, and read the `needs` for every other case.
 # =============================================================================
 
 # The engine binary, as the path it is installed to. deploy-cluster's
@@ -108,8 +157,14 @@ catalog:
     - ansiwise/boot-programs
 
 sequence:
-  # A FIRST MASTER, measured on an installation from a bare machine. Five programs,
+  # A FIRST MASTER, measured on an installation from a bare machine. Six programs,
   # in this order.
+  #
+  # SIX HERE AND FIVE IN THE DRIVER, and that is not a drift. lifecycle/driver.sh
+  # runs the first five and deliberately not `onboard-manager`, because that program
+  # onboards this platform's own manager AS A CONSUMER and an onboarding is the
+  # manager's own act rather than an installer's. Its header says so; this line
+  # exists so a reader who counts both does not have to work out which is wrong.
   #
   # THE SLAVE SEQUENCE IS NOT HERE, and the reason is not that it could not be read.
   # It stands in hostyour-manager server/domains/runs/defs/deploy-slave.ts and it
@@ -187,12 +242,21 @@ sequence:
         # an ordinary `needs` like every other.
         - /var/lib/hostyour-manager/admin.sock
 
-  # A MACHINE CARRYING BOTH PARTS is installed exactly like a master: the same five
+  # A MACHINE CARRYING BOTH PARTS is installed exactly like a master: the same six
   # programs, in the same order, with the same needs. What differs is one answer —
   # deploy-branch is told `role: master+slave` — and the ApplicationSet's part
   # selection is what turns that answer into both parts' workloads. The list is
   # written out rather than referenced, because this file's grammar is one ordered
   # list per role and a reader of one role must not have to resolve another.
+  #
+  # THIS LIST STOOD AT FIVE AND WAS MISSING `tailnet-join-self`, which is a copy that
+  # did not move when the master's list did. It is written back in here because the
+  # rule above is what decides the content — this role IS a master plus a part — and
+  # because that program declares `roles: [master]` (hostyour-deploy
+  # ansiwise/programs/tailnet-join-self.yaml), which a master+slave machine carries.
+  # A master that never joined the network it runs the coordinator for cannot reach
+  # a slave at the address the design tells it to dial, and nothing else notices:
+  # every surface answers over its public name.
   master+slave:
     - program: deploy-host
       needs: []
@@ -214,6 +278,10 @@ sequence:
         - /srv/hostyour-cloud/clusters/bootstrap/headlamp/values.yaml
         - /srv/hostyour-cloud/clusters/bootstrap/idp/values.yaml
         - /srv/hostyour-cloud/clusters/bootstrap/vault/values.yaml
+
+    - program: tailnet-join-self
+      needs:
+        - /srv/hostyour-cloud/clusters/active/<fqdn>.yaml
 
     - program: onboard-manager
       needs:

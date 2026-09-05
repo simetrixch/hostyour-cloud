@@ -55,8 +55,14 @@ division in its own words:
 
 **`driver.sh` carries its own copy of that sequence and does not read the file.** So does the
 Manager, in TypeScript. Three carriers of one fact, and the one written to be the answer is the one
-nothing reads; both `driver.sh` and `install-order.yaml` say so in their own headers rather than
+no RUNNER reads; both `driver.sh` and `install-order.yaml` say so in their own headers rather than
 leaving the drift to be discovered.
+
+The file is read, though, and by two programs: the Manager's boot check `install-order.agrees`, which
+holds its own step lists against it, and `ansiwise-client`, which fetches it to show an operator the
+programs of the role being installed. So a row changed there changes what a person is SHOWN and what
+one check compares, and changes no run — which is the whole of what "nothing reads it" used to say
+wrongly.
 
 `ansiwise-client` is the other driver, and the one to prefer when a person is at a screen: it shows
 each step, asks before it acts, and can stop. IT DRIVES A MACHINE THIS TOOL HAS ALREADY INSTALLED —
