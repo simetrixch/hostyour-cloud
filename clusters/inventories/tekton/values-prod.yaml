@@ -1,7 +1,0 @@
-# PROD-specific Tekton overrides — none today.
-#
-# The file stays even while empty, and the render does not need it: the catalog
-# lists values-<stage>.yaml unconditionally for every app it renders
-# (clusters/argocd/files/platform-apps-appset.yaml) under ignoreMissingValueFiles: true, so an
-# absent file is skipped. It stays as the declared place a PROD-only Tekton
-# override goes.

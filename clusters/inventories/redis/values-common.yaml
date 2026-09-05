@@ -4,8 +4,9 @@
 # may open :6379 at all — the password is the second boundary, never a replacement
 # for the first — and every rule it carries admits a namespace of THIS cluster.
 # There is no route out of the cluster: no templates/ingressroutetcp.yaml stands
-# beside this file. Per-env storage / resources in values-{dev,test,prod}, per-env
-# Vault path in the same three files.
+# beside this file. Per-stage Vault path and exporter address in
+# values-{dev,test,prod}; the storage size and the resources are the same on every
+# stage and stand here.
 redis:
   image:
     repository: redis
@@ -88,6 +89,13 @@ redis:
     enabled: true
     type: ClusterIP
     port: 6379
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 6Gi
 
 # WHERE THIS CACHE ANSWERS, and the answer is one cluster.
 #
@@ -117,7 +125,7 @@ redis-data:
     name: redis-data
     accessModes:
       - ReadWriteOnce
-    # storageSize set per-env in values-{dev,test,prod}.yaml.
+    storageSize: "10Gi"
 
 # Redis alert rules. Metrics (redis_*) come from the redis exporter, wired as a
 # follow-up; until then these rules stay dormant.

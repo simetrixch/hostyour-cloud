@@ -1,9 +1,5 @@
-mongodb-data:
-  pvc:
-    storageSize: "20Gi"
-
 mongodb:
-  # replicas is set in values-common.yaml (3 for all envs); override here only
+  # replicas is set in values-common.yaml (3 on every stage); override here only
   # if this host needs a different member count.
   resources:
     # Burstable: low requests (not reserved up-front) so the scheduler packs pods,
@@ -16,16 +12,6 @@ mongodb:
     limits:
       cpu: "4"
       memory: 4Gi
-
-# prometheus-mongodb-exporter connection is not configured per-env: the
-# exporter consumes the service-provisioner-written exporter-mongodb Secret
-# (existingSecret in values-common.yaml + the roles-only ServiceClaim in
-# templates/serviceclaim-exporter.yaml). The URI's host comes from the
-# service-provisioner's own per-env mongoHost.
-
-# Per-namespace SecretStore — Vault URL falls back to global.endpoints.vault.url, written
-# by the branch program into clusters/active/<fqdn>.yaml from the cluster map.
-secret-store: {}
 
 # mongodb-credentials ExternalSecret — reads Vault path prod/app/mongodb.
 externalsecret-mongodb:

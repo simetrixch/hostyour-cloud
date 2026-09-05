@@ -1,5 +1,5 @@
-# DEV-specific Zot registry config. This is where Zot actually runs — TEST
-# and PROD do not generate this Application via their ApplicationSets.
+# The Vault entries the registry reads on the dev stage. What the registry is, and
+# the one cluster of an installation it deploys on, stand in values-common.yaml.
 externalsecret-htpasswd:
   externalSecret:
     vaultPath: dev/app/registry

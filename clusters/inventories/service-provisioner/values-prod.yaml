@@ -1,8 +1,9 @@
-# service-provisioner — PROD env.
+# service-provisioner — the prod stage's database host names. Everything else about
+# this controller stands in values-common.yaml.
 controller:
   mongo:
     host: mongodb-prod-headless.mongodb.svc.cluster.local
   redis:
     host: redis-prod.redis.svc.cluster.local
-  # No postgres.host — postgresql is per-consumer (per-consumer-postgres.md §5.4,
-  # §6); the provisioner resolves the host from the claim's own namespace.
+  # No postgres.host — postgresql is per-consumer, and the provisioner resolves
+  # the host from the claim's own namespace.

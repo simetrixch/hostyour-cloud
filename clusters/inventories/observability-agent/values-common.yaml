@@ -119,7 +119,7 @@ secret-store: {}
 # Push credentials ExternalSecret — materializes the K8s Secret
 # `observability-agent-push-credentials` (keys username/password) that Alloy's
 # remote_write + loki.write reference via remote.kubernetes.secret. Read from
-# the mount-relative Vault path <stage>/app/observability (vaultPath set per-env
+# the mount-relative Vault path <stage>/app/observability (vaultPath set per stage
 # below); the mount (`secret`) comes from the SecretStore's global.vaultKvMount.
 #
 # ONE ENTRY AND ONE ACCOUNT, the same rule the mongodb and redis passwords carry.

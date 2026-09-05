@@ -82,12 +82,12 @@ mongodb:
 
 # Per-pod data volume (volumeClaimTemplate → /data/db). Each member gets its own
 # PVC (data-mongodb-<env>-<ordinal>), owned by the StatefulSet controller (not
-# ArgoCD-pruned), so data survives a chart re-sync. storageSize per env below.
+# ArgoCD-pruned), so data survives a chart re-sync.
 mongodb-data:
   pvc:
     accessModes:
       - ReadWriteOnce
-    # storageSize set per-env in values-{dev,test,prod}.yaml.
+    storageSize: "20Gi"
 
 # MongoDB alert rules. Metrics (mongodb_*) come from the mongodb exporter, wired
 # as a follow-up; until then these rules stay dormant.
@@ -157,7 +157,7 @@ prometheus-mongodb-exporter:
 secret-store: {}
 
 # ExternalSecret — materializes the `mongodb-credentials` K8s Secret from Vault
-# path `<env>/app/mongodb` (vaultPath set per-env in values-{dev,test,prod}.yaml).
+# path `<stage>/app/mongodb` (vaultPath set per stage in values-{dev,test,prod}.yaml).
 # Two keys:
 #   root-password ← Vault property `mongodb-root-password` — the SCRAM root
 #                   user's password (MONGO_INITDB_ROOT_PASSWORD + rs-init auth).

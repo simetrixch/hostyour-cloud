@@ -1,6 +1,6 @@
-# PROD-specific image-builder config. The build plane is centralized on ONE
-# build cluster; if a PROD cluster carries it, this file wires PROD's Vault
-# path for the webhook HMAC secret.
+# The Vault path the image-builder reads its webhook HMAC secret from on the prod
+# stage. The build plane itself runs on the one build cluster of an installation;
+# what it is stands in values-common.yaml.
 externalsecret-webhooks:
   externalSecret:
     vaultPath: prod/app/image-builder

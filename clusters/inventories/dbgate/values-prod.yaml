@@ -9,12 +9,3 @@ externalsecret-db:
 externalsecret-redis:
   externalSecret:
     vaultPath: prod/app/redis
-
-app:
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 1Gi

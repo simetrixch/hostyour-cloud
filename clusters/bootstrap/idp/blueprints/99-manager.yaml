@@ -9,7 +9,7 @@
 # master's ArgoCD (clusters/bootstrap/argocd/values.yaml rbac.policy.csv),
 # a slave's ArgoCD (clusters/slaves/slave/values-common.yaml
 # rbac.policy.csv) and Grafana (role_attribute_path in
-# clusters/inventories/observability/values-{dev,test,prod}.yaml).
+# clusters/inventories/observability/values-common.yaml).
 #
 # A SECOND BINDING OR'd beside it — an ExpressionPolicy
 # `return request.user.is_superuser`, covering a fresh install where nobody

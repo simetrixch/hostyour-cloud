@@ -13,7 +13,8 @@ description: |
 
   The image tag is managed centrally in clusters/platform/versions.yaml (images.mongodb)
   and stamped by the version sync. Per-pod data via volumeClaimTemplate;
-  replicas per env (values-{dev,test,prod}.yaml).
+  replicas in values-common.yaml, resources per stage in
+  values-{dev,test,prod}.yaml.
 type: application
 dependencies:
   # The MongoDB workload (StatefulSet), its ClusterIP + headless Services, the

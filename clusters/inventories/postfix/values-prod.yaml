@@ -1,93 +1,10 @@
 postfix:
   config:
     general:
-      # Per-env selector → DKIM record at prod._domainkey.<apex>; d= stays the apex.
+      # Per-stage selector → DKIM record at prod._domainkey.<apex>; d= stays the apex.
       DKIM_SELECTOR: "prod"
       mydestination: "$myhostname"
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 250m
-      memory: 256Mi
-  extraVolumes:
-    - name: dkim-keys-secret
-      secret:
-        secretName: postfix-dkim-key
-        # OPTIONAL, because signing is. An installation that has not published a DKIM record has no
-        # key to sign with, and a relay that signs nothing is a relay that works — its mail is simply
-        # unsigned until the record and the key exist together. Mounted as required, the whole mail
-        # service does not start, and what an operator sees is a platform with no mail rather than
-        # mail without a signature.
-        optional: true
-        defaultMode: 0400
-        # THE PATH IS REQUIRED HERE, and the comment that stood in its place said the
-        # opposite. A secret volume without `items` does land each key under its own
-        # name — but the moment `items` is written, Kubernetes requires a path for
-        # every entry and refuses the whole volume without one. What that produced was
-        # a StatefulSet the API would not take, reported as two faults: the missing
-        # path, and an init container mounting a volume that "does not exist" because
-        # the invalid one was never registered.
-        #
-        # The name opendkim needs is the domain's, and that is one installation's — it
-        # is composed in the init container below, which the chart renders through tpl
-        # (charts/mail statefulset.yaml). This block is rendered with toYaml,
-        # where no template action would ever run, so the path here is the key's own
-        # name and the renaming happens there.
-        items:
-          - key: dkim-private-key
-            path: dkim-private-key
-    - name: dkim-keys
-      emptyDir: {}
-  extraVolumeMounts:
-    - name: dkim-keys
-      mountPath: /etc/opendkim/keys
-  # boky's mail subchart consumes extraInitContainers (tpl'd STRING), not
-  # pod.initContainers (which silently renders nothing). chown to opendkim
-  # (101:104) so opendkim can read the key.
-  extraInitContainers: |
-    - name: fix-dkim-permissions
-      image: busybox:latest
-      command:
-        - sh
-        - -c
-        - |
-          # The key may not be there: signing is optional and the volume is mounted that way.
-          # Without it the relay starts and its mail is unsigned, which is the honest state of
-          # an installation that has published no DKIM record yet.
-          if [ -f /dkim-source/dkim-private-key ]; then
-          cp /dkim-source/dkim-private-key /dkim-keys/{{ .Values.global.domain }}.private
-          chown 101:104 /dkim-keys /dkim-keys/{{ .Values.global.domain }}.private
-          chmod 700 /dkim-keys
-          chmod 600 /dkim-keys/{{ .Values.global.domain }}.private
-          fi
-      volumeMounts:
-        - name: dkim-keys-secret
-          mountPath: /dkim-source
-          readOnly: true
-        - name: dkim-keys
-          mountPath: /dkim-keys
 
-# Per-namespace SecretStore (visible as an ArgoCD-managed resource under this app).
-secret-store: {}
-
-# ExternalSecret (external-secret) — pulls DKIM key from Vault
 external-secret:
   externalSecret:
-    # OFF UNLESS AN INSTALLATION SUPPLIES A SIGNING KEY, matching what the rest of this file already
-    # says about that key: the volume carrying it is mounted optional and the init that installs it
-    # is guarded on the file being there, because mail relays without DKIM and signs when it can.
-    #
-    # An ExternalSecret has no per-property optionality — it names the property and fails whole when
-    # it is absent — so an installation with no key carried a secret that could never sync and an app
-    # that stood Degraded forever, while the relay beside it ran and delivered mail.
-    enabled: false
-    name: postfix-dkim-key
-    namespace: postfix
-    secretStoreKind: SecretStore
-    targetSecretName: postfix-dkim-key
     vaultPath: prod/app/postfix
-    data:
-      - secretKey: dkim-private-key
-        property: dkim-private-key

@@ -100,6 +100,15 @@ app:
       port: http
     initialDelaySeconds: 5
     periodSeconds: 10
+  # The same figures on every stage. dbgate is one browser pod per cluster and its
+  # load does not follow the stage.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
 
 pvc:
   pvc:

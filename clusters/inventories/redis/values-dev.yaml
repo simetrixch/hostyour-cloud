@@ -1,22 +1,5 @@
-redis-data:
-  pvc:
-    storageSize: "10Gi"
-
-redis:
-  resources:
-    requests:
-      cpu: 500m
-      memory: 2Gi
-    limits:
-      cpu: "2"
-      memory: 6Gi
-
 prometheus-redis-exporter:
   redisAddress: redis://redis-dev.redis.svc.cluster.local:6379
-
-# Per-namespace SecretStore — Vault URL falls back to global.endpoints.vault.url, written
-# by the branch program into clusters/active/<fqdn>.yaml from the cluster map.
-secret-store: {}
 
 # redis-credentials ExternalSecret — reads Vault path dev/app/redis.
 externalsecret-redis:

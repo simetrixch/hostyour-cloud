@@ -1,45 +1,5 @@
-# Per-namespace SecretStore (visible as an ArgoCD-managed resource).
-secret-store: {}
-
 kube-prometheus-stack:
-  prometheus:
-    prometheusSpec:
-      resources:
-        requests:
-          cpu: 200m
-          memory: 1Gi
-        limits:
-          cpu: "1"
-          memory: 4Gi
-      storageSpec:
-        volumeClaimTemplate:
-          spec:
-            accessModes: ["ReadWriteOnce"]
-            resources:
-              requests:
-                storage: 30Gi
-
   alertmanager:
-    alertmanagerSpec:
-      storage:
-        volumeClaimTemplate:
-          spec:
-            accessModes: ["ReadWriteOnce"]
-            resources:
-              requests:
-                storage: 2Gi
-      # Discover AlertmanagerConfig CRs cluster-wide so per-app email-routing
-      # rules emitted by the monitoring chart (clusters/inventories/<x>/
-      # values.monitoring.
-      # alertmanagerConfigs) actually take effect. Without these selectors,
-      # kube-prometheus-stack ignores AlertmanagerConfig CRs entirely.
-      alertmanagerConfigSelector: {}
-      alertmanagerConfigNamespaceSelector: {}
-      # Stop the operator from auto-injecting a `namespace=<ns>` matcher into
-      # each AlertmanagerConfig's route — let the config's own matchers fully
-      # control scope.
-      alertmanagerConfigMatcherStrategy:
-        type: None
     # Custom email template (mounted as a Secret by the chart). Provides a
     # human-readable subject and a plain-text body that lists severity,
     # summary, description, all labels, and quick Grafana links per alert.
@@ -152,105 +112,6 @@ kube-prometheus-stack:
         </body></html>
         {{- end -}}
 
-    config:
-      # The two expressions below are resolved only because
-      # kube-prometheus-stack.alertmanager.tplConfig is true in values-common.yaml
-      # beside this file; the chart's own default leaves them in the Secret as text.
-      global:
-        smtp_from: "alertmanager-{{ .Values.global.env }}@mail.{{ .Values.global.domain }}"
-        smtp_smarthost: "postfix-{{ .Values.global.env }}.postfix.svc.cluster.local:587"
-        smtp_require_tls: false
-      # Side-channel sentinels emitted by kube-prometheus-stack to verify the
-      # pipeline is alive — they are NOT real problems. Route them straight to
-      # /dev/null so they don't pollute the inbox.
-      #
-      # Default route receiver is now "null". Actual delivery is handled by the
-      # `platform-default` AlertmanagerConfig CR (see
-      # clusters/inventories/observability/values-common.yaml.monitoring.alertmanagerConfigs),
-      # whose recipients come from .Values.global.alertRecipients, rendered into
-      # clusters/active/<fqdn>.yaml by the branch program from the alert_recipients
-      # answer the generating run was given — ONE place to change the mailbox of
-      # every entry that carries no `emails` of its own.
-      route:
-        receiver: "null"
-        group_by: [alertname, namespace]
-        group_wait: 30s
-        group_interval: 5m
-        repeat_interval: 4h
-        routes:
-          - matchers: ['alertname = "Watchdog"']
-            receiver: "null"
-          - matchers: ['alertname = "InfoInhibitor"']
-            receiver: "null"
-          # Cosmetic info-level noise (CPUThrottlingHigh on tiny exporter
-          # pods, etc.). Visible in Grafana but not worth an email.
-          - matchers: ['severity = "info"']
-            receiver: "null"
-      receivers:
-        - name: "null"
-
-  grafana:
-    persistence:
-      enabled: true
-      size: 5Gi
-    ingress:
-      annotations:
-        cert-manager.io/cluster-issuer: "{{ .Values.global.clusterIssuer }}"
-
-    # Native OIDC against the platform IdP (Authentik) — D7 rollout. The
-    # client_secret rides in as an env var from the ESO-materialized
-    # idp-oidc-grafana Secret (enabled below).
-    envFromSecret: idp-oidc-grafana
-
-    grafana.ini:
-      # root_url is required so Grafana composes the correct OIDC redirect_uri
-      # (the pod listens on plain HTTP:3000; without it Authentik rejects the
-      # authorize call with "Redirect URI Error").
-      # THE PUBLIC ADDRESS, which the paragraph above has been asking for and no file wrote.
-      # Grafana composes its OIDC redirect_uri out of root_url; with the key absent it takes the
-      # address the POD listens on and sends `http://grafana.<domain>:3000/login/generic_oauth`,
-      # which the identity provider refuses because it registered the https one. Measured on an
-      # installation from nothing: the sign-in never left Grafana.
-      server:
-        root_url: 'https://grafana.{{ .Values.global.domain }}'
-      auth:
-        disable_login_form: false   # keep admin/password as emergency fallback
-        oauth_auto_login: true      # single-click SSO via the apex Authentik cookie
-      "auth.generic_oauth":
-        enabled: true
-        name: Authentik
-        allow_sign_up: true
-        # WHERE THE IDENTITY PROVIDER ACTUALLY IS. Without these three, Grafana has a client id
-        # and nowhere to send it: the auto-login redirect resolves against Grafana's own host and
-        # the browser circles back to /login. The address comes from the cluster map, whose own
-        # comment says everything that accepts a browser login is told THAT address, so it is
-        # read from there and never spelled out again.
-        auth_url: '{{ .Values.global.endpoints.idp.url }}/application/o/authorize/'
-        token_url: '{{ .Values.global.endpoints.idp.url }}/application/o/token/'
-        api_url: '{{ .Values.global.endpoints.idp.url }}/application/o/userinfo/'
-        client_id: grafana
-        client_secret: $__env{GRAFANA_OAUTH_CLIENT_SECRET}
-        scopes: openid profile email groups
-        use_pkce: true
-        # The platform's own `admins` group -> GrafanaAdmin; everyone else ->
-        # Viewer. Same name the manager, the master's ArgoCD and a slave's
-        # ArgoCD admit on. values-dev.yaml states where the group comes from.
-        role_attribute_path: contains(groups[*], 'admins') && 'GrafanaAdmin' || 'Viewer'
-
-# ============================================================================
-# Loki / Tempo storage
-# ============================================================================
-loki:
-  singleBinary:
-    persistence:
-      enabled: true
-      size: 50Gi
-
-tempo:
-  persistence:
-    enabled: true
-    size: 20Gi
-
 # ============================================================================
 # Vault paths — TEST
 # ============================================================================
@@ -266,8 +127,4 @@ externalsecret-push-htpasswd:
 
 externalsecret-grafana-oidc:
   externalSecret:
-    # Enabled with the OIDC config block above (D7). Requires
-    # test/app/idp/grafana-client-secret seeded in Vault.
-    enabled: true
     vaultPath: test/app/idp
-

@@ -1,11 +1,5 @@
-# PROD-specific Zot registry config.
-#
-# The registry is in every stage's catalog (project cicd) but deploys ONLY
-# when THIS cluster is the build cluster (app.yaml's runsOn: master +
-# global.servicesLocal.registry:true). Otherwise this chart is
-# not rendered and PROD workloads pull from the build cluster's registry
-# (global.endpoints.registry.host). This file wires PROD's Vault path so the
-# htpasswd/push/pull creds are in place whenever PROD is the build cluster.
+# The Vault entries the registry reads on the prod stage. What the registry is, and
+# the one cluster of an installation it deploys on, stand in values-common.yaml.
 externalsecret-htpasswd:
   externalSecret:
     vaultPath: prod/app/registry

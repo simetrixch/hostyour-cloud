@@ -127,8 +127,9 @@ configs:
   # and the group PolicyBinding in clusters/bootstrap/idp/blueprints/
   # 99-manager.yaml), this ArgoCD, a slave's ArgoCD
   # (clusters/slaves/slave/values-common.yaml rbac.policy.csv) and Grafana
-  # (role_attribute_path in clusters/inventories/observability/values-{dev,test,
-  # prod}.yaml). The group is created by blueprints/15-group-admins.yaml, the
+  # (role_attribute_path in
+  # clusters/inventories/observability/values-common.yaml).
+  # The group is created by blueprints/15-group-admins.yaml, the
   # deployment puts the first operator into it with the
   # `authentik_group_membership` step, and anybody later is added to it in the
   # provider.

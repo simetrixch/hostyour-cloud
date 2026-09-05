@@ -1,6 +1,6 @@
-# TEST-specific image-builder config. The build plane is centralized on ONE
-# build cluster; if a TEST cluster carries it, this file wires TEST's Vault
-# path for the webhook HMAC secret.
+# The Vault path the image-builder reads its webhook HMAC secret from on the test
+# stage. The build plane itself runs on the one build cluster of an installation;
+# what it is stands in values-common.yaml.
 externalsecret-webhooks:
   externalSecret:
     vaultPath: test/app/image-builder

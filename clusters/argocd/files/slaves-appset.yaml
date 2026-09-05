@@ -56,6 +56,11 @@ spec:
               - values-common.yaml
               - values-__STAGE__.yaml
               - $values/clusters/active/__FQDN__.yaml
+            # A NAMED FILE THAT DOES NOT STAND IS SKIPPED, not refused. The chain above names a
+            # per-stage file for the platform and one for this chart, and a chart carries one only
+            # where the three stages genuinely differ. Without this the Application stops syncing on
+            # a file nobody was ever obliged to write.
+            ignoreMissingValueFiles: true
             valuesObject:
               slave:
                 name: "{{ .values.cluster }}"

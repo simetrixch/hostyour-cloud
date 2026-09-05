@@ -1,8 +1,0 @@
-# DEV-specific coredns overrides — currently none. The file is kept, not
-# required: every generated platform Application names values-dev.yaml in its
-# valueFiles chain (clusters/argocd/files/platform-apps-appset.yaml) under
-# ignoreMissingValueFiles: true, so an absent file is skipped and this one
-# stands as the declared place a DEV-only override goes. Per-stage
-# `extraRewrites` or `forward` overrides go here;
-# the service hairpins (vault/zot) are template-gated on
-# global.servicesLocal.* and never per-stage values.

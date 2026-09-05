@@ -1,2 +1,0 @@
-# PROD — no per-env overrides. domain/stage are tpl'd from the platform globals
-# (clusters/platform/values-common.yaml + values-prod.yaml) in values-common.yaml.

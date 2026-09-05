@@ -1,5 +1,6 @@
-# Shared observability config across DEV / TEST / PROD. Per-env overrides go in
-# values-{dev,test,prod}.yaml.
+# Observability config for every stage. What a stage genuinely changes stands in
+# values-{dev,test,prod}.yaml: the Alertmanager mail template, which names the
+# stage in its subject and its banner, and the three Vault paths.
 
 # ============================================================================
 # Monitoring chart — emits everything that ties the platform to Prometheus /
@@ -563,15 +564,68 @@ kube-prometheus-stack:
     # THE CHART RUNS HELM `tpl` OVER alertmanager.config ONLY WHERE THIS IS TRUE, and its own
     # default is false. Its templates/alertmanager/secret.yaml picks between
     # `tpl (toYaml .Values.alertmanager.config) .` and a bare `toYaml` on this key alone. The
-    # config in values-{dev,test,prod}.yaml spells `smtp_from` and `smtp_smarthost` with
-    # `.Values.global.domain` and `.Values.global.env`, because both name one installation and
-    # cannot be written out on the trunk. Without this key the bare `toYaml` copies them through
+    # config below spells `smtp_from` and `smtp_smarthost` with `.Values.global.domain` and
+    # `.Values.global.env`, because the first names one installation and the second names the
+    # stage, and neither can be written out on the trunk. Without this key the bare `toYaml`
+    # copies them through
     # as text, the Secret reaches the cluster with the expression spelled out, smtp_smarthost
     # resolves to no host, and no alert mail leaves any cluster.
     #
     # alertmanager.templateFiles stands OUTSIDE that block and `tpl` never reaches it at either
     # setting, so the Go template in alert.tmpl arrives byte for byte and Alertmanager renders it.
     tplConfig: true
+    alertmanagerSpec:
+      storage:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 2Gi
+      # Discover AlertmanagerConfig CRs cluster-wide so per-app email-routing
+      # rules emitted by the monitoring chart (clusters/inventories/<x>/
+      # values.monitoring.
+      # alertmanagerConfigs) actually take effect. Without these selectors,
+      # kube-prometheus-stack ignores AlertmanagerConfig CRs entirely.
+      alertmanagerConfigSelector: {}
+      alertmanagerConfigNamespaceSelector: {}
+      # Stop the operator from auto-injecting a `namespace=<ns>` matcher into
+      # each AlertmanagerConfig's route — let the config's own matchers fully
+      # control scope. App-scoped configs still match their own namespace via
+      # an explicit matcher; cross-namespace routing is only possible with
+      # type=None.
+      alertmanagerConfigMatcherStrategy:
+        type: None
+    config:
+      # The two expressions below are resolved only because tplConfig above is
+      # true; the chart's own default leaves them in the Secret as text. They read
+      # .Values.global.env and .Values.global.domain rather than naming the stage
+      # and the platform domain a second time.
+      global:
+        smtp_from: "alertmanager-{{ .Values.global.env }}@mail.{{ .Values.global.domain }}"
+        smtp_smarthost: "postfix-{{ .Values.global.env }}.postfix.svc.cluster.local:587"
+        smtp_require_tls: false
+      # Default route receiver is "null". Actual delivery is handled by the
+      # `platform-default` AlertmanagerConfig CR (monitoring.alertmanagerConfigs in
+      # this file), whose recipients come from .Values.global.alertRecipients,
+      # rendered into clusters/active/<fqdn>.yaml by the branch program from the
+      # alert_recipients answer the generating run was given — ONE place to change
+      # the mailbox of every entry that carries no `emails` of its own.
+      route:
+        receiver: "null"
+        group_by: [alertname, namespace]
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
+        routes:
+          - matchers: ['alertname = "Watchdog"']
+            receiver: "null"
+          - matchers: ['alertname = "InfoInhibitor"']
+            receiver: "null"
+          - matchers: ['severity = "info"']
+            receiver: "null"
+      receivers:
+        - name: "null"
 
   prometheus:
     prometheusSpec:
@@ -601,9 +655,30 @@ kube-prometheus-stack:
       # pod until queryPolicy above is armed, which is a separate decision with
       # its own reading list.
       enableRemoteWriteReceiver: true
+      resources:
+        requests:
+          cpu: 200m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 4Gi
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 30Gi
 
   grafana:
     fullnameOverride: grafana
+    persistence:
+      enabled: true
+      size: 5Gi
+    # Mount the OIDC client_secret as an env var so the generic_oauth config
+    # below can reference it via $__env{GRAFANA_OAUTH_CLIENT_SECRET} without
+    # writing the secret to the in-cluster ConfigMap.
+    envFromSecret: idp-oidc-grafana
     admin:
       existingSecret: grafana-admin-credentials
       userKey: admin-user
@@ -676,6 +751,12 @@ kube-prometheus-stack:
     ingress:
       enabled: true
       ingressClassName: public
+      annotations:
+        cert-manager.io/cluster-issuer: "{{ .Values.global.clusterIssuer }}"
+        # No forwardAuth Middleware — Grafana authenticates natively via OIDC
+        # against the platform IdP (Authentik). See `grafana.ini.auth.generic_oauth`
+        # below and the `idp-oidc-grafana` Secret materialized by ESO from
+        # secret/<stage>/app/idp/grafana-client-secret.
       # THE NAME AND THE CERTIFICATE, here and not per-env: both are built out of the
       # installation's own domain, so a per-env copy would be the same line three times.
       # Leaving them to the per-env files leaves them set in none of the three, measured
@@ -689,6 +770,50 @@ kube-prometheus-stack:
         - secretName: 'observability-grafana-{{ .Values.global.env }}-tls'
           hosts:
             - 'grafana.{{ .Values.global.domain }}'
+
+    grafana.ini:
+      # THE PUBLIC ADDRESS. Grafana composes its OIDC redirect_uri out of root_url;
+      # with the key absent it takes the address the POD listens on and sends
+      # `http://grafana.<domain>:3000/login/generic_oauth`, which the identity
+      # provider refuses because it registered the https one. Measured on an
+      # installation from nothing: the sign-in never left Grafana.
+      server:
+        root_url: 'https://grafana.{{ .Values.global.domain }}'
+      auth:
+        disable_login_form: false   # keep admin/password as emergency fallback
+        # Auto-redirect unauthenticated users to Authentik. With SSO cookie
+        # already valid (from a prior login elsewhere) the Authentik
+        # consent step is skipped and the browser lands back at Grafana —
+        # single-click SSO. To bypass for admin/password recovery, hit
+        # /login?disableAutoLogin=true.
+        oauth_auto_login: true
+      "auth.generic_oauth":
+        enabled: true
+        name: Authentik
+        allow_sign_up: true
+        # WHERE THE IDENTITY PROVIDER ACTUALLY IS. Without these three, Grafana has a client id
+        # and nowhere to send it: the auto-login redirect resolves against Grafana's own host and
+        # the browser circles back to /login. The address comes from the cluster map, whose own
+        # comment says everything that accepts a browser login is told THAT address, so it is
+        # read from there and never spelled out again.
+        auth_url: '{{ .Values.global.endpoints.idp.url }}/application/o/authorize/'
+        token_url: '{{ .Values.global.endpoints.idp.url }}/application/o/token/'
+        api_url: '{{ .Values.global.endpoints.idp.url }}/application/o/userinfo/'
+        client_id: grafana
+        client_secret: $__env{GRAFANA_OAUTH_CLIENT_SECRET}
+        # `groups` scope is required for `role_attribute_path` below —
+        # without it the JWT carries no `groups` claim and every user
+        # falls through to the Viewer role.
+        scopes: openid profile email groups
+        use_pkce: true
+        # The platform's own `admins` group — the ONE name every product of
+        # this installation admits on, so a person who can open one can open
+        # them all. It is created by clusters/bootstrap/idp/blueprints/
+        # 15-group-admins.yaml and the deployment puts the first operator into
+        # it with the `authentik_group_membership` step; the manager
+        # (ADMINS_GROUP), the master's ArgoCD and a slave's ArgoCD read the same
+        # name. Members land as Grafana admins; everyone else as Viewer.
+        role_attribute_path: contains(groups[*], 'admins') && 'GrafanaAdmin' || 'Viewer'
 
 # ============================================================================
 # Loki — single binary
@@ -737,6 +862,9 @@ loki:
       rollingUpdate: null
   singleBinary:
     replicas: 1
+    persistence:
+      enabled: true
+      size: 50Gi
   read: { replicas: 0 }
   write: { replicas: 0 }
   backend: { replicas: 0 }
@@ -774,6 +902,9 @@ tempo:
           grpc: { endpoint: "0.0.0.0:4317" }
           http: { endpoint: "0.0.0.0:4318" }
   serviceMonitor: { enabled: true }
+  persistence:
+    enabled: true
+    size: 20Gi
 
 # ============================================================================
 # Grafana Alloy (DaemonSet)
@@ -809,6 +940,9 @@ alloy:
 # Per-env vaultPath overrides go in values-{test,prod}.yaml.
 # Per-app exporter secrets live in each app's chart, not here.
 # ============================================================================
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource).
+secret-store: {}
+
 externalsecret-grafana-admin:
   externalSecret:
     enabled: true
