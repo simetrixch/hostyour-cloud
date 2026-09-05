@@ -12,7 +12,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | act | what it does |
 |---|---|
 | `install-machine.sh` / `.ps1` | installs a first master from zero: a machine, a branch, a cluster and the platform services on it |
-| `release-platform.sh` / `.ps1` | cuts a release of the platform tree and pins ONE installation to it |
+| `release-platform.sh` / `.ps1` | with an fqdn, cuts a release of the platform tree and pins ONE installation to it; without one, cuts the release and pins nothing, which is what a first machine names as `PLATFORM_REF` |
 | `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` / `.ps1` | takes ONE slave's registration off the master it stands on |
 | `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |

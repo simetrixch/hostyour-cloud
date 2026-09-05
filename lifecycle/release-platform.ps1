@@ -1,14 +1,14 @@
 # =============================================================================
-# release-platform.ps1 — cut a release of the platform tree and put ONE
-# installation on it. Bash twin: release-platform.sh (same folder), which does
-# the same in the same order and prints the same lines. lifecycle/test.sh measures
-# that.
+# release-platform.ps1 — cut a release of the platform tree, and put ONE
+# installation on it where one is named. Bash twin: release-platform.sh (same
+# folder), which does the same in the same order and prints the same lines.
+# lifecycle/test.sh measures that.
 # =============================================================================
 #
 # USAGE (run from anywhere inside a hostyour-cloud checkout)
-#   pwsh ./lifecycle/release-platform.ps1 <x.y.z> <stable|beta|alpha> <fqdn>
+#   pwsh ./lifecycle/release-platform.ps1 <x.y.z> <stable|beta|alpha> [fqdn]
 #
-# THE THREE INPUTS
+# THE INPUTS, AND THE THIRD IS OPTIONAL
 #   version  — x.y.z, no leading zeros. EVERY RELEASE IS A PATCH BUMP: the first
 #              two numbers say what the product is and are the owner's to move.
 #   channel  — the maturity CEILING of the release: alpha may reach a dev
@@ -19,6 +19,17 @@
 #              its map under clusters/active. One release, one tree, any number
 #              of installations: run this again with another fqdn and the tag is
 #              REUSED rather than cut a second time.
+#
+# LEFT OFF, THE TAG IS MINTED AND NOTHING IS PINNED. That is the state a FIRST
+# machine of an installation is in: it has no install branch yet, because the
+# branch is cut by the deploy-branch program the installation itself runs, and
+# that program fetches PLATFORM_REF as a TAG, so a commit will not do. The tag
+# minted here is what its config names as PLATFORM_REF. Everything that needs an
+# installation is skipped: the clone, the map, the channel ceiling and the pin.
+# The ceiling is measured against the stage line of an installation's own map, so
+# a run with no installation cannot measure it and says so rather than passing
+# silently. Once the branch exists, the same version and channel REUSE this tag,
+# so the machine and every later pin stand on one tree.
 #
 # WHAT A PLATFORM RELEASE IS, AND WHAT IT IS NOT. This repository builds nothing
 # — no image, no archive, no package. THE TREE AT THE TAG IS THE RELEASE. So
@@ -131,8 +142,8 @@ function Write-FileValue([string] $Path, [string] $Key, [string] $Value) {
   [System.IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
 }
 
-if (-not $Version -or -not $Channel -or -not $Fqdn) {
-  Stop-Here 'usage: lifecycle/release-platform.ps1 <x.y.z> <stable|beta|alpha> <fqdn>' 64
+if (-not $Version -or -not $Channel) {
+  Stop-Here 'usage: lifecycle/release-platform.ps1 <x.y.z> <stable|beta|alpha> [fqdn]' 64
 }
 if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
   Stop-Here "version must be x.y.z with no leading zeros (got '$Version')" 64
@@ -167,34 +178,41 @@ if ($LASTEXITCODE -ne 0) {
   Stop-Here 'origin carries no master, and master is what a platform release is cut from' 69
 }
 
-# THE TREE IS CLONED FRESH FOR THE WRITE. The pin stands on an install branch,
-# and checking one out in the tree somebody is standing in is a thing a release
-# has no business doing.
-$url = (git remote get-url origin | Select-Object -First 1)
-if (-not $url) { Stop-Here 'this checkout has no origin to clone, so there is no branch to pin' 69 }
-$work = (New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName()))).FullName
+# EVERYTHING THAT NEEDS AN INSTALLATION STANDS IN THE BLOCK BELOW, and a run that
+# names none skips it. What is skipped is the clone, the map, the channel ceiling
+# and, at the end of this file, the pin. The mint is not: a tag that names no
+# installation is exactly what a first machine is given.
+$work = ''
 try {
-  git clone --quiet --single-branch --branch $Fqdn $url $work
-  if ($LASTEXITCODE -ne 0) {
-    Stop-Here "origin has no branch $Fqdn. An installation is pinned on its own install branch, and there is none of that name" 66
-  }
+  if ($Fqdn) {
+    # THE TREE IS CLONED FRESH FOR THE WRITE. The pin stands on an install branch,
+    # and checking one out in the tree somebody is standing in is a thing a release
+    # has no business doing.
+    $url = (git remote get-url origin | Select-Object -First 1)
+    if (-not $url) { Stop-Here 'this checkout has no origin to clone, so there is no branch to pin' 69 }
+    $work = (New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName()))).FullName
+    git clone --quiet --single-branch --branch $Fqdn $url $work
+    if ($LASTEXITCODE -ne 0) {
+      Stop-Here "origin has no branch $Fqdn. An installation is pinned on its own install branch, and there is none of that name" 66
+    }
 
-  $map = "clusters/active/$Fqdn.yaml"
-  $mapPath = Join-Path $work $map
-  if (-not (Test-Path -LiteralPath $mapPath)) {
-    Stop-Here "branch $Fqdn carries no $map. That map is where an installation records what it is, and the pin is one line in it" 66
-  }
+    $map = "clusters/active/$Fqdn.yaml"
+    $mapPath = Join-Path $work $map
+    if (-not (Test-Path -LiteralPath $mapPath)) {
+      Stop-Here "branch $Fqdn carries no $map. That map is where an installation records what it is, and the pin is one line in it" 66
+    }
 
-  # THE CEILING IS ENFORCED HERE, and this is the only place that can. The
-  # manager's release client only warns because a pipeline refuses afterwards; a
-  # platform release has no pipeline, so a refusal that did not happen here would
-  # not happen at all, and a prod installation would stand on an alpha tree.
-  $stage = Read-FileValue $mapPath 'stage'
-  if (-not $stage) {
-    Stop-Here "$map on branch $Fqdn states no stage, so the channel ceiling cannot be checked, and a check that cannot measure must not report a pass" 65
-  }
-  if ($admits.Split(' ') -notcontains $stage) {
-    Stop-Here "$Fqdn is stage $stage and channel $Channel admits only: $admits. Nothing else would refuse this, so this does." 65
+    # THE CEILING IS ENFORCED HERE, and this is the only place that can. The
+    # manager's release client only warns because a pipeline refuses afterwards; a
+    # platform release has no pipeline, so a refusal that did not happen here would
+    # not happen at all, and a prod installation would stand on an alpha tree.
+    $stage = Read-FileValue $mapPath 'stage'
+    if (-not $stage) {
+      Stop-Here "$map on branch $Fqdn states no stage, so the channel ceiling cannot be checked, and a check that cannot measure must not report a pass" 65
+    }
+    if ($admits.Split(' ') -notcontains $stage) {
+      Stop-Here "$Fqdn is stage $stage and channel $Channel admits only: $admits. Nothing else would refuse this, so this does." 65
+    }
   }
 
   # THE STAGE IS NOT A DOMAIN LABEL, and this is the one place that can still say so
@@ -251,7 +269,12 @@ try {
 
   if ($existing.Count -gt 0) {
     $tag = $existing[-1]
-    Say "release: reusing $tag. One release per version and channel, so putting it on $Fqdn cuts nothing new"
+    if ($Fqdn) {
+      Say "release: reusing $tag. One release per version and channel, so putting it on $Fqdn cuts nothing new"
+    }
+    else {
+      Say "release: reusing $tag. One release per version and channel, so this run cuts nothing new"
+    }
   }
   else {
     $ts14 = [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')
@@ -284,29 +307,36 @@ try {
   }
   Say 'release: the tag stands on the remote, so a machine that fetches origin can resolve it'
 
-  $held = Read-FileValue $mapPath 'release'
-  if ($held -eq $tag) {
-    Say "release: $map already records $tag, so it is left as it stands"
-  }
-  else {
-    Write-FileValue $mapPath 'release' $tag
-    git -C $work add -- $map
-    if ($LASTEXITCODE -ne 0) { Stop-Here "the pin could not be staged in $map" }
-    git -C $work commit --quiet -m "Pin $Fqdn to $tag" -m 'Written by the release of the platform tree, once the tag stood on the remote.'
-    if ($LASTEXITCODE -ne 0) { Stop-Here "the pin of $Fqdn to $tag could not be committed" }
-    git -C $work push --quiet origin $Fqdn
-    if ($LASTEXITCODE -ne 0) {
-      Stop-Here "the pin of $Fqdn to $tag could not be pushed, so it is a pin only this machine believes" 74
+  if ($Fqdn) {
+    $held = Read-FileValue $mapPath 'release'
+    if ($held -eq $tag) {
+      Say "release: $map already records $tag, so it is left as it stands"
     }
-    Say "release: pinned $Fqdn to $tag in $map"
+    else {
+      Write-FileValue $mapPath 'release' $tag
+      git -C $work add -- $map
+      if ($LASTEXITCODE -ne 0) { Stop-Here "the pin could not be staged in $map" }
+      git -C $work commit --quiet -m "Pin $Fqdn to $tag" -m 'Written by the release of the platform tree, once the tag stood on the remote.'
+      if ($LASTEXITCODE -ne 0) { Stop-Here "the pin of $Fqdn to $tag could not be committed" }
+      git -C $work push --quiet origin $Fqdn
+      if ($LASTEXITCODE -ne 0) {
+        Stop-Here "the pin of $Fqdn to $tag could not be pushed, so it is a pin only this machine believes" 74
+      }
+      Say "release: pinned $Fqdn to $tag in $map"
+    }
   }
 }
 finally {
-  Remove-Item -Recurse -Force -LiteralPath $work -ErrorAction SilentlyContinue
+  if ($work) { Remove-Item -Recurse -Force -LiteralPath $work -ErrorAction SilentlyContinue }
 }
 
-Say "release: $Fqdn is pinned, and its reconciler reads every chart of this repository from $tag as soon as it picks up the map commit this run pushed."
-Say "release: what a regeneration still carries is the reconciler's own tree, the bootstrap manifests and the platform values chain. bash lifecycle/status.sh $Fqdn names the files of those trees this release moved, and where it names none there is nothing left to do. Where it names one, the second act is performed from a checkout of the platform tree:"
-Say "release:     bash lifecycle/regenerate-install-branch.sh $Fqdn"
-Say "release:     pwsh ./lifecycle/regenerate-install-branch.ps1 $Fqdn"
-Say "release: that script reads $tag off the pin this run just wrote, so the ref is stated once and a regeneration cannot be aimed at a state the map does not record."
+if ($Fqdn) {
+  Say "release: $Fqdn is pinned, and its reconciler reads every chart of this repository from $tag as soon as it picks up the map commit this run pushed."
+  Say "release: what a regeneration still carries is the reconciler's own tree, the bootstrap manifests and the platform values chain. bash lifecycle/status.sh $Fqdn names the files of those trees this release moved, and where it names none there is nothing left to do. Where it names one, the second act is performed from a checkout of the platform tree:"
+  Say "release:     bash lifecycle/regenerate-install-branch.sh $Fqdn"
+  Say "release:     pwsh ./lifecycle/regenerate-install-branch.ps1 $Fqdn"
+  Say "release: that script reads $tag off the pin this run just wrote, so the ref is stated once and a regeneration cannot be aimed at a state the map does not record."
+}
+else {
+  Say "release: nothing is pinned, and no channel ceiling was checked: the ceiling is measured against the stage line of an installation's own map, and this run names no installation. A first machine is given $tag as PLATFORM_REF in the config install-machine reads, and deploy-branch writes it as the release: pin of the map it cuts."
+}

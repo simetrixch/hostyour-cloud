@@ -22,9 +22,10 @@
 # digits of a mint stamp — is normalised away before the comparison.
 #
 # WHAT IS COMPARED. Standard output, standard error and the exit code, for every
-# path a person can reach: the mint and the pin, the reuse of a tag that already
-# stands, the four release refusals, the four states a report can be in, and the
-# six refusals a regeneration makes before it touches a machine.
+# path a person can reach: the mint and the pin, the mint that names no
+# installation and pins nothing, the reuse of a tag that already stands, the four
+# release refusals, the four states a report can be in, and the six refusals a
+# regeneration makes before it touches a machine.
 #
 # THE PLANTED DEFECTS. A copy of status.sh with one printed line changed is run
 # against the untouched status.ps1, a copy of regenerate-install-branch.sh with
@@ -387,6 +388,50 @@ same 'a tag that never reached origin but names the released commit'
   || fail 'the reused tag never reached origin, so the run resumed nothing'
 ok 'a leftover naming the released commit is reused and pushed, not cut again'
 
+# ── the mint that names no installation, which a FIRST machine needs ────────
+# THE STATE A FIRST MACHINE IS IN. It has no install branch, because the branch is
+# cut by deploy-branch on the machine itself, and that program fetches
+# PLATFORM_REF as a TAG rather than a commit. So the tag has to stand on the
+# remote before the installation exists, and the form that mints one names no
+# installation. Three things are measured that the printed line alone cannot
+# prove: the tag reached both origins, no branch on either moved, and the run
+# SAID the channel ceiling went unmeasured rather than passing silently — that
+# ceiling reads the stage off an installation's own map, and there is none.
+HEADS_A="$(git --git-dir="$ORIGIN_A" for-each-ref --format='%(refname) %(objectname)' refs/heads)"
+HEADS_B="$(git --git-dir="$ORIGIN_B" for-each-ref --format='%(refname) %(objectname)' refs/heads)"
+run_bash release-platform 0.4.0 stable
+run_pwsh release-platform 0.4.0 stable
+must "release: minted 0.4.0-stable-" 'a run naming no installation mints'
+must "release: the tag stands on the remote" 'and reads the tag back off the remote'
+must "no channel ceiling was checked" 'and says the ceiling went unmeasured rather than passing silently'
+must "as PLATFORM_REF" 'and names what a first machine does with the tag'
+must_not "release: pinned" 'a run naming no installation pins nothing'
+must_not "regenerate-install-branch" 'and names no regeneration, because there is no installation to bring onto anything'
+same 'the mint that names no installation'
+[ -n "$(git --git-dir="$ORIGIN_A" tag -l '0.4.0-stable-*')" ] || fail 'the mint that names no installation put no tag on origin A'
+[ -n "$(git --git-dir="$ORIGIN_B" tag -l '0.4.0-stable-*')" ] || fail 'the mint that names no installation put no tag on origin B'
+[ "$(git --git-dir="$ORIGIN_A" for-each-ref --format='%(refname) %(objectname)' refs/heads)" = "$HEADS_A" ] \
+  || fail 'the mint that names no installation moved a branch on origin A'
+[ "$(git --git-dir="$ORIGIN_B" for-each-ref --format='%(refname) %(objectname)' refs/heads)" = "$HEADS_B" ] \
+  || fail 'the mint that names no installation moved a branch on origin B'
+ok 'the mint that names no installation reached both origins and moved no branch'
+
+# ── the counter-probes: ONE argument became optional, and no more ───────────
+# Without these the case above would only prove that the arity check was
+# loosened, not that it was loosened by exactly one argument.
+run_bash release-platform 0.5.0
+run_pwsh release-platform 0.5.0
+must "usage: lifecycle/release-platform.sh" 'a run naming a version and no channel is still refused'
+[ "$A_CODE" = '64' ] || fail "a run naming no channel must end with 64, got $A_CODE"
+same_code 'a run naming a version and no channel'
+
+run_bash release-platform 0.4.0 stable nosuch.example.invalid
+run_pwsh release-platform 0.4.0 stable nosuch.example.invalid
+must "origin has no branch nosuch.example.invalid" 'a domain with no install branch is still refused by name'
+must_not "release: reusing" 'and it is refused before the tag it would have reused is read'
+[ "$A_CODE" = '66' ] || fail "a domain that names no install branch must still end with 66, got $A_CODE"
+same 'a domain with no install branch, now that the third argument is optional'
+
 # ===========================================================================
 # TWO — regenerate-install-branch, on the fixture the release above pinned
 #
@@ -647,6 +692,9 @@ echo "test: GREEN — every case above was measured on both spellings and answer
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
+echo "test:   the mint that names no installation — which pins nothing, moves no branch and"
+echo "test:   says the channel ceiling went unmeasured — beside the two counter-probes that"
+echo "test:   one argument and no more became optional,"
 echo "test:   the four states a report can be in and a name that is no installation; the"
 echo "test:   six refusals a regeneration makes before it touches a machine, the pin it reads"
 echo "test:   off the branch, and a launcher without its driver; the eight refusals a removal"
