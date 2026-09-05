@@ -226,7 +226,6 @@ good 'the elevation password raises a command'
 # needs nothing — and a token would have to stand in this command's own words, which is
 # the one thing nothing here does. GIT_TERMINAL_PROMPT=0 keeps a repository that is NOT
 # public from turning this into a prompt nobody can see.
-BRANCH_IS_OURS=no
 BRANCH_TIP=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads \
   "https://github.com/$PLATFORM_REPO.git" "refs/heads/$FQDN" 2>/dev/null | awk '{print $1}')
 STATUS=$?
@@ -235,7 +234,9 @@ if [ -n "$BRANCH_TIP" ]; then
   # A BRANCH STANDING THERE IS NOT YET A PROBLEM. Treating it as one makes the
   # installer refuse its own second run, two lines above a message promising that
   # every program is idempotent. deploy-branch PUSHES this branch, so from its first
-  # green run onwards the branch is supposed to be there.
+  # green run onwards the branch is supposed to be there — and deploy-branch asks the
+  # same question of the same remote before its first step, to decide whether to cut
+  # the branch or to stand the checkout on what is published.
   #
   # WHAT SEPARATES THE TWO CASES IS WHETHER THIS MACHINE WROTE IT. A branch this
   # installation pushed is in this machine's own checkout, object and all. One left
@@ -308,8 +309,7 @@ WHICH OF THESE IT IS, ONLY YOU KNOW:
   if [ -n "$BRANCH_DOUBT" ]; then
     warn "$FQDN stands at ${BRANCH_TIP:0:7} in $PLATFORM_REPO, and $BRANCH_DOUBT. If that branch is what a restore left behind, deploy-branch's push is refused at its last step and \`git push origin --delete $FQDN\` is what clears it"
   else
-    BRANCH_IS_OURS=yes
-    good "$FQDN stands at ${BRANCH_TIP:0:7} and this machine wrote it — its push will fast-forward"
+    good "$FQDN stands at ${BRANCH_TIP:0:7} and this machine wrote it — deploy-branch stands the checkout on it and its push will fast-forward"
   fi
 elif [ $STATUS -ne 0 ]; then
   warn "could not ask whether $PLATFORM_REPO already carries a branch named $FQDN. If it does, deploy-branch is refused at its last step"
@@ -802,60 +802,6 @@ step=0
 for program in "${PROGRAMS[@]}"; do
   step=$(( step + 1 ))
   phase "$step / 4   $program"
-
-  # ONCE AT BIRTH — AND THE REPEAT IS A CHECKOUT, NOT A SKIP. deploy-branch's
-  # git_branch row refuses to cut a branch that already exists, and it is right to:
-  # that branch carries this installation's own bytes. But the same step is a NO-OP
-  # when the checkout is already standing on it, and its refusal says so in as many
-  # words — "check it out to work on it again".
-  #
-  # WHY THE CHECKOUT HAS TO BE MADE HERE. deploy-host's git_clone row puts
-  # /srv/hostyour-cloud on the PRODUCT branch every time it runs, so by the time
-  # deploy-branch is reached on a second run the tree is standing on master with the
-  # machine's branch existing beside it — the one position git_branch refuses.
-  #
-  # AND SKIPPING deploy-branch DOES NOT WORK: the tree is then left standing on
-  # master, and master carries none of what deploy-branch writes.
-  # deploy-platform-services asks for /srv/hostyour-cloud/configs/config.<stage> and
-  # is told it is not on this machine — it is, on the branch nobody has checked out.
-  #
-  # A CHECKOUT MOVES HEAD AND NOTHING ELSE. No branch is reset, nothing is thrown
-  # away, and deploy-branch then runs its other twenty-three rows as the repeat they
-  # are meant to be.
-  if [ "$program" = deploy-branch ] && [ "$BRANCH_IS_OURS" = yes ]; then
-    # AS THIS ACCOUNT AND NOT AS root, BECAUSE THIS ONE WRITES. The three reads in phase 0
-    # are elevated and harmless — reading changes no owner. A checkout does: it rewrites
-    # .git/HEAD, and root writing it leaves a file this account cannot read, so the
-    # very next thing to look at the tree is told "not a git repository" about a checkout
-    # that is whole. Measured on a real machine: deploy-branch dies at git_identity two
-    # seconds after this line runs, for exactly that reason.
-    #
-    # It needs no elevation either: the checkout belongs to this account, which is the
-    # ownership rule this file states at the clone.
-    STANDS_ON=$(git -C "$CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null)
-    if [ "$STANDS_ON" != "$FQDN" ]; then
-      say "$CHECKOUT stands on ${STANDS_ON:-nothing}, and $FQDN is this machine's own — putting it there"
-      git -C "$CHECKOUT" checkout --quiet "$FQDN" \
-        || die "could not put $CHECKOUT on $FQDN.
-
-deploy-branch cuts that branch once, at birth, and refuses to cut it twice — so a
-second run has to STAND on it instead. Every program after it reads files that live
-there and nowhere else. A working tree with uncommitted changes is the usual reason
-this fails; git said what it said above." 73
-    fi
-    # AND BROUGHT TO WHAT IS PUBLISHED. A release reaches a cluster as a merge into this branch made
-    # somewhere else, so the tip here is usually behind — and deploy-branch commits onto it and
-    # pushes, which a remote refuses when the commit does not descend from what it already carries.
-    # Fast-forward only: a checkout that cannot be fast-forwarded has commits of its own that
-    # nothing here may throw away, and it says so rather than deciding.
-    if git -C "$CHECKOUT" merge --ff-only "origin/$FQDN" >/dev/null 2>&1; then
-      good "$CHECKOUT stands on the published head of $FQDN"
-    else
-      warn "$CHECKOUT could not be fast-forwarded to origin/$FQDN — it carries commits of its own, and deploy-branch's push may be refused at its last step"
-    fi
-
-    good "$CHECKOUT stands on $FQDN — git_branch is a no-op there and the rest re-measures"
-  fi
 
   compose_answers "$program" || {
     say ''

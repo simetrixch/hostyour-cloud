@@ -250,7 +250,7 @@ must "release: the tag stands on the remote" 'the tag is read back off the remot
 must "release: pinned apps3.example.invalid to 0.1.0-alpha-" 'the pin is written'
 must "bash lifecycle/regenerate-install-branch.sh apps3.example.invalid" \
      'the second act is named, as the script that performs it'
-must_not "ansiwise regenerate-branch" 'the second act is a script beside this one, not a command to retype'
+must_not "ansiwise deploy-branch" 'the second act is a script beside this one, not a command to retype'
 same 'the mint and the pin'
 
 TAG_A="$(git --git-dir="$ORIGIN_A" tag -l)"

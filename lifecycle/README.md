@@ -213,7 +213,7 @@ installation's own cluster map. It refuses before it mints anything where the br
 where the map states no stage, or where the channel's ceiling does not admit that installation's
 stage: `alpha` reaches a dev installation only, `beta` dev and test, `stable` any.
 
-The second opens one session to the machine and runs `regenerate-branch` there, in the three modes
+The second opens one session to the machine and runs `deploy-branch` there, in the three modes
 that gate one another. It takes the domain and nothing else — the ref comes off the pin, and the
 answers come from the same `NAME='value'` config an installation was installed with. It refuses,
 before it touches the machine, where the branch does not exist, where the map carries no `release:`

@@ -53,9 +53,9 @@
 # here.
 #
 # WHICH OF THESE PROGRAMS RUNS AGAIN ON A LATER PASS IS NOT STATED, because it
-# is not measured. The one thing known is that `deploy-branch` cuts a branch
-# once and `regenerate-branch` is the program that rewrites it afterwards; the
-# other four are watched only on a first install.
+# is not measured. The one thing known is that `deploy-branch` both cuts a
+# branch and rewrites it afterwards, deciding which by asking the remote whether
+# it publishes one; the other four are watched only on a first install.
 #
 # HOW FAST THIS FILE GOES STALE, measured rather than feared. Nothing reads it
 # and nothing checks it, so a sentence in it goes on being read after it stops

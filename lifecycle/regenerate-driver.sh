@@ -7,10 +7,13 @@
 # =============================================================================
 #
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not
-# change: it composes the answers regenerate-branch is told with and invokes the
-# program, once per mode. The regeneration itself is regenerate-branch.yaml in
+# change: it composes the answers deploy-branch is told with and invokes the
+# program, once per mode. The regeneration itself is deploy-branch.yaml in
 # the catalogue standing on this machine, and every decision about what a branch
-# becomes is a row of that file.
+# becomes is a row of that file. That one program carries both acts: it cuts the
+# branch where the remote publishes none and stands the checkout on the one it
+# does, so what tells a birth from a regeneration is the remote and not the name
+# of the program.
 #
 # WHY IT IS A FILE OF ITS OWN RATHER THAN TEXT INSIDE THE TWO LAUNCHERS. The
 # answers are composed HERE, out of the program's own declaration, and the
@@ -19,7 +22,7 @@
 # time one was corrected. One file, streamed by both, cannot.
 #
 # WHY THE ANSWERS ARE COMPOSED ON THIS MACHINE AND NOT ON THE WORKSTATION. The
-# names are read off regenerate-branch.yaml in the catalogue standing here, so
+# names are read off deploy-branch.yaml in the catalogue standing here, so
 # nothing on the workstation holds a list of answers that could fall behind what
 # the program declares. The catalogue is on this machine and not on that one.
 #
@@ -58,7 +61,7 @@ readonly DISCARD="${2:-}"
 
 ANSWERS_DIR=''
 # SHREDDED ON EVERY PATH. A credential that outlives the act it was handed over
-# for is a credential nobody is watching, and most of what regenerate-branch is
+# for is a credential nobody is watching, and most of what deploy-branch is
 # told is credentials.
 cleanup() {
   rm -f "$CONFIG" 2>/dev/null || true
@@ -101,12 +104,12 @@ done
 readonly CATALOG=/srv/ansiwise-catalog
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
-readonly PROGRAM=regenerate-branch
+readonly PROGRAM=deploy-branch
 readonly DECLARES="$CATALOG/ansiwise/programs/$PROGRAM.yaml"
 ANSWERS_DIR="/home/$OPERATOR/.regenerate-answers"
 
 # THE ROLE THE RUN IS STARTED UNDER IS master, AND IT IS NOT THIS MACHINE'S OWN
-# ROLE. regenerate-branch.yaml states `roles: [master]` — the cluster maps and
+# ROLE. deploy-branch.yaml states `roles: [master]` — the cluster maps and
 # the books stand on the master's branch, which is the branch this regenerates —
 # so master is the only role it admits. What every part of this machine carries
 # is the `role` ANSWER, which the config states and the stamps below write.

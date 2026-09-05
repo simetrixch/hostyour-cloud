@@ -15,7 +15,7 @@
 #   config  — the key=value file stating that installation, the same one
 #             install-machine.ps1 is given and in the same grammar. It holds the
 #             account this machine is reached as, the password that raises a
-#             command there, and the answers regenerate-branch is told with.
+#             command there, and the answers deploy-branch is told with.
 #             Defaults to config.env beside this file.
 #
 # THIS IS THE SECOND ACT, and release-platform.ps1 beside it is the first. That
@@ -36,7 +36,7 @@
 # Every refusal below says that nothing has been changed, because at every one of
 # them nothing has.
 #
-# WHAT ACTUALLY REGENERATES A BRANCH is regenerate-branch.yaml in the catalogue
+# WHAT ACTUALLY REGENERATES A BRANCH is deploy-branch.yaml in the catalogue
 # repository, run by the engine on the machine. This opens ONE session, carries
 # the config over it, and starts regenerate-driver.sh there — the same shape
 # install-machine.ps1 uses to start driver.sh, and for the same
@@ -159,7 +159,7 @@ Say "regenerate: $Fqdn is pinned to $pin in $map, and that is the state this bri
 # ------------------------------------------------------- the config, and its guards
 # THE SAME FILE install-machine.ps1 IS GIVEN, in the same grammar and under the
 # same guards. It carries the account this machine is reached as, the password
-# that raises a command there, and every answer regenerate-branch declares except
+# that raises a command there, and every answer deploy-branch declares except
 # the ref, which is the pin above.
 if (-not $ConfigFile) { $ConfigFile = Join-Path $PSScriptRoot 'config.env' }
 if (-not (Test-Path -LiteralPath $ConfigFile)) {

@@ -43,7 +43,7 @@
 # clusters/argocd or clusters/bootstrap. clusters/bootstrap and the root-app.yaml
 # beside clusters/argocd carry one installation's own domain and name where this
 # tree carries markers, and writing them is the branch programs' act in the
-# catalogue repository — re-run by regenerate-branch, which
+# catalogue repository — re-run by deploy-branch, which
 # regenerate-install-branch.ps1 beside this file performs on the machine, and which
 # is the act a person performs after this one. A second implementation of that
 # stamping beside them would disagree with them the first time either was
