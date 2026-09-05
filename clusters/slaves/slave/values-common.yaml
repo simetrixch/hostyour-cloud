@@ -167,7 +167,7 @@ argo-cd:
   # TLS is terminated at the argo-<name>.<masterFqdn> Ingress
   # (templates/argo-ingress.yaml); argocd-server must therefore talk plaintext,
   # or it redirects to its own TLS and the Ingress 502s/loops. Same decision as
-  # the master's own ArgoCD (clusters/bootstrap/argocd/values.yaml server.insecure).
+  # the master's own ArgoCD (clusters/bootstrap/argocd/values.tpl server.insecure).
   # NOTE: configs.cm is ALSO injected per-slave by slaves-appset.yaml's
   # valuesObject (installationID + url); Helm deep-merges it with this block.
   configs:
@@ -188,7 +188,7 @@ argo-cd:
       # (e.g. a tenant's auth member) at Progressing so create-tenant's
       # watch-sync-set times out even though the workload is up. Treat Ingress as
       # Healthy, exactly as the master's own ArgoCD does
-      # (clusters/bootstrap/argocd/values.yaml).
+      # (clusters/bootstrap/argocd/values.tpl).
       resource.customizations.health.networking.k8s.io_Ingress: |
         hs = {}
         hs.status = "Healthy"
@@ -199,7 +199,7 @@ argo-cd:
     # the issuer host). This RBAC is static, so it lives here: map the
     # platform's own `admins` group to ArgoCD admin on THIS slave's instance;
     # everyone else read-only. The `groups` claim drives it — same name and same
-    # shape as the master's own ArgoCD (clusters/bootstrap/argocd/values.yaml),
+    # shape as the master's own ArgoCD (clusters/bootstrap/argocd/values.tpl),
     # so a person who can open one reconciler can open the other.
     #
     # NOT Authentik's built-in `authentik Admins`, the group `akadmin` belongs to

@@ -2,7 +2,7 @@
 # TLSStore bootstrap/ingress/certificate.yaml puts in Traefik's own namespace.
 # Replaces the chart-bundled k8s Ingress so the routing layer is consistent
 # across all four base-layer-installed apps (idp, kube, argocd, vault).
-# Auth is handled by ArgoCD's own OIDC client (clusters/bootstrap/argocd/values.yaml
+# Auth is handled by ArgoCD's own OIDC client (clusters/bootstrap/argocd/values.tpl
 # configs.cm.oidc.config) talking directly to the IdP — no Traefik
 # forwardAuth Middleware needed.
 apiVersion: traefik.io/v1alpha1
@@ -14,7 +14,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`argo.example.invalid`)
+    - match: Host(`argo.<fqdn>`)
       kind: Rule
       services:
         - name: argocd-server

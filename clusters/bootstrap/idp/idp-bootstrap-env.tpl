@@ -4,8 +4,9 @@
 # the blueprints can read with !Env. There is one, and there is one on purpose: a key nothing
 # reads is a setting somebody will one day change expecting it to do something.
 #
-# IT CARRIES THE DOMAIN STAND-IN, which makes this file installation state and not product,
-# whatever directory it sits in — the one file under bootstrap/ that is stamped per installation.
+# IT CARRIES THE DOMAIN SLOT, which makes this file installation state and not product, whatever
+# directory it sits in. The branch program renders it onto the install branch as
+# idp-bootstrap-env.yaml beside this template, and only that rendered file is applied.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -13,4 +14,4 @@ metadata:
   namespace: idp
 data:
   # Every blueprint builds its redirect and launch addresses on this, with !Format.
-  IDP_DOMAIN: "example.invalid"
+  IDP_DOMAIN: "<fqdn>"

@@ -3,7 +3,7 @@ name: argocd-signin
 version: 1.0.0
 description: |
   THE ONE SECRET A PERSON NEEDS TO OPEN A CLUSTER'S RECONCILER — `argocd-oidc`, key `clientSecret`,
-  which clusters/bootstrap/argocd/values.yaml resolves as `$argocd-oidc:clientSecret` in its
+  which clusters/bootstrap/argocd/values.tpl resolves as `$argocd-oidc:clientSecret` in its
   oidc.config. Without it the sign-in reaches the token exchange and is answered `invalid_client`,
   because an unresolved reference is sent as an empty secret; and the local account is off, so there
   is no password form to fall back to.

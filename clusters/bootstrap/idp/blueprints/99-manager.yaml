@@ -6,7 +6,7 @@
 # OIDC, confidential client): restricts the Manager application to staff:
 # ONE group PolicyBinding, on the platform's `admins` group, which is the
 # same group every other product of this installation admits on: the
-# master's ArgoCD (clusters/bootstrap/argocd/values.yaml rbac.policy.csv),
+# master's ArgoCD (clusters/bootstrap/argocd/values.tpl rbac.policy.csv),
 # a slave's ArgoCD (clusters/slaves/slave/values-common.yaml
 # rbac.policy.csv) and Grafana (role_attribute_path in
 # clusters/inventories/observability/values-common.yaml).

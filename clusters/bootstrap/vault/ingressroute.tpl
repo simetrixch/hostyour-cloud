@@ -18,8 +18,8 @@ metadata:
   namespace: vault
 spec:
   redirectRegex:
-    regex: ^https?://vault.example.invalid/?$
-    replacement: https://vault.example.invalid/ui/vault/auth?with=oidc%2F
+    regex: ^https?://vault.<fqdn>/?$
+    replacement: https://vault.<fqdn>/ui/vault/auth?with=oidc%2F
     permanent: false
 ---
 apiVersion: traefik.io/v1alpha1
@@ -31,7 +31,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`vault.example.invalid`)
+    - match: Host(`vault.<fqdn>`)
       kind: Rule
       middlewares:
         - name: vault-oidc-redirect

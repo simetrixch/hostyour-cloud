@@ -369,6 +369,23 @@ if (-not $refused.Contains($refusalSaid, [System.StringComparison]::Ordinal)) {
 }
 Write-Output 'check: a cluster map with no global: block is refused by name, not by a nil pointer.'
 
+# ── What clusters/bootstrap must never carry ─────────────────────────────────────────────────
+# NOTHING STAMPS THAT TREE, AND A PLACEHOLDER LEFT IN IT TRAVELS AS TEXT. The seven files under
+# clusters/bootstrap that carry one installation's own domain and short name are TEMPLATES: the
+# branch program renders each .tpl onto the install branch beside itself, filling <fqdn>,
+# <cluster-name> and <books-name>. No stamping row reaches the tree any more, and a row whose
+# literal is gone reports itself satisfied rather than refusing, so a placeholder written here
+# afterwards would reach every machine spelled out, with no run saying a word.
+#
+# STATED OVER THE TREE AND NOT OVER A LIST OF FILES, so it holds for a file nobody has written yet.
+$placeholders = & git grep -lE 'example\.invalid|__[A-Z][A-Z0-9_]*__' -- clusters/bootstrap
+if ($LASTEXITCODE -gt 1) { Stop-Check 'clusters/bootstrap could not be read for placeholders' }
+if ($placeholders) {
+    Write-Output (($placeholders | ForEach-Object { "  $_" }) -join "`n")
+    Stop-Check 'a file under clusters/bootstrap carries a placeholder, and nothing stamps that tree — write the value as a template slot in the .tpl beside it instead'
+}
+Write-Output 'check: no file under clusters/bootstrap carries a placeholder, which nothing there would replace.'
+
 # ── 2. The delivery programs ────────────────────────────────────────────────────────────────
 Write-Output 'check: lifecycle/test.sh — the release, the regeneration, the report and the slave removal, in both spellings. About a minute.'
 & $bash lifecycle/test.sh

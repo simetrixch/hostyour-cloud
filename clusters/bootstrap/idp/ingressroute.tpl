@@ -12,7 +12,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`idp.example.invalid`)
+    - match: Host(`idp.<fqdn>`)
       kind: Rule
       services:
         # Chart names the Service `{release}-authentik-{component}` —

@@ -2,13 +2,13 @@
 
 # Global Configuration
 global:
-  domain: argo.example.invalid
+  domain: argo.<fqdn>
 
   # WHAT EVERY COMPONENT OF THE RECONCILER TRUSTS.
   #
   # Signing in is not only a browser talking to this server. Once the browser comes back with an
   # authorization code, the argocd-server POD exchanges it for a token by calling
-  # https://idp.<domain> itself, and it verifies that certificate against its own container's trust
+  # https://idp.<fqdn> itself, and it verifies that certificate against its own container's trust
   # store — the public root list its image was built with. On an installation issuing from an
   # authority it minted for itself, that call is refused and what a person sees is `invalid_client`,
   # a message about the client rather than about the trust. This platform has produced that message
@@ -74,15 +74,15 @@ configs:
   # Disable the built-in `admin` user — OIDC via Authentik is the sole
   # login path. The `argocd-initial-admin-secret` K8s Secret is left in
   # place so emergency CLI access (`argocd login --username admin
-  # --password <pw>`) still works on the host, but the web UI's
-  # password form is removed and admin can't sign in to it.
+  # --password` with the value out of that Secret) still works on the host, but
+  # the web UI's password form is removed and admin can't sign in to it.
   #
   # Recovery if Authentik is unreachable: set `admin.enabled: "true"`
   # here and `helm upgrade` (i.e. re-run --deploy-argocd). Or use the
   # `argocd-cm` ConfigMap directly via kubectl.
   cm:
     admin.enabled: "false"
-    url: https://argo.example.invalid
+    url: https://argo.<fqdn>
     # Which Application manages an object is written into the annotation
     # argocd.argoproj.io/tracking-id, and ArgoCD overwrites it on every apply —
     # which is what makes it evidence rather than a claim. Two admission
@@ -103,13 +103,13 @@ configs:
       hs.message = ""
       return hs
     # OIDC client config — Authentik provides the OIDC issuer at
-    # idp.<domain>. The clientSecret is read from the K8s Secret
+    # idp.<fqdn>. The clientSecret is read from the K8s Secret
     # `argocd-oidc` (key `clientSecret`) which is created in
     # this namespace. ArgoCD's `$secret-name:key` syntax substitutes it
     # at runtime.
     oidc.config: |
       name: Authentik
-      issuer: https://idp.example.invalid/application/o/argocd/
+      issuer: https://idp.<fqdn>/application/o/argocd/
       clientID: argocd
       clientSecret: $argocd-oidc:clientSecret
       requestedScopes:

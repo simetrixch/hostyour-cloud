@@ -41,15 +41,16 @@
 # leaves no tag behind naming a release nobody meant to cut.
 #
 # WHAT THIS DOES NOT DO. It does not stamp anything, and it touches no file under
-# clusters/argocd or clusters/bootstrap. clusters/bootstrap and the root-app.yaml
-# beside clusters/argocd carry one installation's own domain and name where this
-# tree carries markers, and writing them is the branch programs' act in the
-# catalogue repository — re-run by deploy-branch, which
-# regenerate-install-branch.sh beside this file performs on the machine, and which
-# is the act a person performs after this one. A second implementation of that
-# stamping beside them would disagree with them the first time either was
-# corrected. The rest of clusters/argocd is a chart the reconciler renders from
-# the cluster map, and nothing writes its markers on a branch at all.
+# clusters/argocd or clusters/bootstrap. The root-app.yaml beside clusters/argocd
+# carries one installation's own domain where this tree carries a placeholder, and
+# writing it is the branch programs' act in the catalogue repository — re-run by
+# deploy-branch, which regenerate-install-branch.sh beside this file performs on
+# the machine, and which is the act a person performs after this one. A second
+# implementation of that stamping beside them would disagree with them the first
+# time either was corrected. The rest of clusters/argocd is a chart the reconciler
+# renders from the cluster map, and clusters/bootstrap is seven templates the
+# branch programs render onto the install branch, so neither carries a marker this
+# act could put anything into.
 #
 # THE ORDER IS PIN, THEN REGENERATE, and they are two acts on purpose. Between
 # them somebody can read what the pin now says and stop. This one ends by naming
@@ -183,7 +184,7 @@ esac
 # publishes, and a correction sitting uncommitted beside it would let a release
 # claim a fix nobody can fetch.
 PLACED=$(git grep -nE '^[[:space:]]*(-[[:space:]]+)?(group|apiVersion):[[:space:]]*[^[:space:]]*__STAGE__' \
-  origin/master -- clusters/argocd clusters/bootstrap 2>/dev/null | sed 's/$/;/' | tr -d '\n')
+  origin/master -- clusters/argocd 2>/dev/null | sed 's/$/;/' | tr -d '\n')
 [ -z "$PLACED" ] \
   || die "a stage placeholder stands where an API group or an apiVersion belongs, and neither ever varies with a stage: $PLACED correct it on master and release again" 65
 

@@ -7,16 +7,16 @@ apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: headlamp
-  # THE ADDRESS STAYS kube.<domain> WHILE THE NAMESPACE BECOMES headlamp: what a component is
+  # THE ADDRESS STAYS kube.<fqdn> WHILE THE NAMESPACE BECOMES headlamp: what a component is
   # called and what a browser types are two different names. The identity provider registers
-  # this product at https://kube.<domain>/oidc-callback (blueprints/99-headlamp.yaml), so moving
+  # this product at https://kube.<fqdn>/oidc-callback (blueprints/99-headlamp.yaml), so moving
   # the host would take the login with it and cost a certificate for nothing.
   namespace: headlamp
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`kube.example.invalid`)
+    - match: Host(`kube.<fqdn>`)
       kind: Rule
       services:
         - name: headlamp

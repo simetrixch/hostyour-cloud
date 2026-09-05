@@ -30,12 +30,12 @@ resources:
 
 # Settings
 settings:
-  # Global dashboard settings. __CLUSTER_NAME__ is this cluster's short name —
-  # the fqdn's first DNS label — and the branch program stamps it over the
-  # bootstrap tree from the cluster_name answer, which it derives from the fqdn
-  # before the first step rather than asking for a short name its own domain
-  # could contradict.
-  clusterName: "__CLUSTER_NAME__"
+  # Global dashboard settings. <cluster-name> is this cluster's short name —
+  # the fqdn's first DNS label — and the branch program fills it when it renders
+  # this template onto the install branch, from the cluster_name answer, which it
+  # derives from the fqdn before the first step rather than asking for a short
+  # name its own domain could contradict.
+  clusterName: "<cluster-name>"
   itemsPerPage: 10
   labelsLimit: 3
   logsAutoRefreshTimeInterval: 5
@@ -64,13 +64,13 @@ config:
   inCluster: true
   # Name the in-cluster (master) context after the master's short name — e.g.
   # "m1", matching how the slave contexts are named (s1, s2) — instead
-  # of the chart default "main". Shown in the cluster picker. __BOOKS_NAME__ is
+  # of the chart default "main". Shown in the cluster picker. <books-name> is
   # the first DNS label of the domain of the cluster holding the master role —
   # this cluster's own domain where it holds the role and the named master's
-  # where it does not — and the branch program stamps it over the bootstrap tree
-  # from the books_name answer, which it derives from the books_cluster answer
-  # the same way it derives cluster_name from the fqdn.
-  inClusterContextName: "__BOOKS_NAME__"
+  # where it does not — and the branch program fills it at the same render, from
+  # the books_name answer, which it derives from the books_cluster answer the
+  # same way it derives cluster_name from the fqdn.
+  inClusterContextName: "<books-name>"
   extraArgs:
     - -kubeconfig=/etc/kube-slaves/kubeconfig
   # THE ONE CREDENTIAL COMES IN AS A WHOLE SECRET, and the other three stand below in the open.
@@ -95,7 +95,7 @@ env:
   - name: OIDC_CLIENT_ID
     value: "headlamp"
   - name: OIDC_ISSUER_URL
-    value: "https://idp.example.invalid/application/o/headlamp/"
+    value: "https://idp.<fqdn>/application/o/headlamp/"
   # THE FOUR THE CLIENT IS GRANTED, and no other. clusters/bootstrap/idp/blueprints/99-headlamp.yaml gives
   # this client openid, profile, email and groups; asking for a scope it was not granted ends the
   # flow without a session and the browser lands back on the sign-in dialog, which reads as a login
