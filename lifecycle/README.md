@@ -59,8 +59,10 @@ nothing reads; both `driver.sh` and `install-order.yaml` say so in their own hea
 leaving the drift to be discovered.
 
 `ansiwise-client` is the other driver, and the one to prefer when a person is at a screen: it shows
-each step, asks before it acts, and can stop. This exists for the operator who wants one command, one
-transcript, and every line of it kept.
+each step, asks before it acts, and can stop. IT DRIVES A MACHINE THIS TOOL HAS ALREADY INSTALLED —
+it opens one that already carries the engine and puts nothing on one that does not
+(`ansiwise-client#34`). This is what makes a first master out of a bare one, for the operator who
+wants one command, one transcript, and every line of it kept.
 
 ## Where it stops, and why the sequence is five and not six
 

@@ -631,11 +631,13 @@ cliTools:
   # The install row states that in full.
   #
   # WHO ELSE READS THIS PIN, with no stamp between them and it: hostyour-manager
-  # server/domains/inventory/ansiwise-pin.ts reads cliTools.ansiwise.version
-  # off this repository over git before it touches a machine, and ansiwise-client
-  # reads the same key over the GitHub API before it places anything on a master.
-  # Neither has a default — a placement that guessed a version would put one on a
-  # machine that no file states.
+  # server/domains/inventory/ansiwise-pin.ts reads cliTools.ansiwise.version off
+  # this repository over git before it touches a machine, and lifecycle/driver.sh
+  # reads the same key off raw.githubusercontent.com before it fetches either
+  # binary. Neither has a default — a placement that guessed a version would put
+  # one on a machine that no file states. ansiwise-client was a third reader
+  # until 2026-09-05: it placed nothing that an installation could then use, and
+  # that half was deleted with the reader (ansiwise-client#34).
   #
   # The version is a whole release tag and not three numbers, because the
   # grammar is the platform's own — hostyour-manager/shared/release.ts,
