@@ -38,6 +38,20 @@ eventListener:
   serviceAccountName: eventlistener-sa
   namespace: image-builder
 
+# WHO MAY WATCH A RUN IT DID NOT START. The manager has no task in a release cycle — the webhook
+# starts the run and the pipeline finishes it — but it reports the run's progress to the operator who
+# asked for the release, so it needs get/list/watch on PipelineRuns in the unit's build namespace.
+# Read only, and rendered per unit by templates/rbac-manager-read.yaml beside the eventlistener grant,
+# for the same reason: both are grants ON the unit's build namespace, and this chart is what creates
+# that namespace.
+#
+# Named here rather than composed, for the reason stated above the EventListener: this is the identity
+# of another release (clusters/inventories/manager, its own namespace and its own ServiceAccount), and
+# a chart that guessed it would bind a subject that does not exist and report itself green.
+manager:
+  serviceAccountName: manager
+  namespace: manager
+
 # npm registries the per-unit .npmrc points at (templates/externalsecret-npmrc.yaml).
 # Only PRIVATE scopes are configured:
 #   • The DEFAULT (unscoped) registry is deliberately NOT set, so pnpm resolves

@@ -32,8 +32,8 @@
 # `default` on purpose: it CREATES these projects, so it can't depend on one
 # existing first (chicken-and-egg).
 #
-# Every stage defines the same 6 projects (core / data / services /
-# observability / cicd / consumers). The build plane
+# Every stage defines the same 8 projects (core / data / services /
+# observability / cicd / builds / manager / units). The build plane
 # (tekton / registry / image-builder) is centralized on ONE build cluster and
 # stays off elsewhere because each of those app.yaml files says runsOn: master,
 # but the `cicd` project exists in every catalog for symmetry.
@@ -369,3 +369,53 @@ spec:
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: units
+  namespace: __ARGOCD_NAMESPACE__
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # THE PROJECT THE PER-UNIT FENCES ARE DELIVERED UNDER, one Application per registration
+  # (units-appset.yaml beside this file). What a unit GETS is fenced by the project named after the
+  # unit itself, which this project's Applications create; what CREATES those fences is fenced here.
+  #
+  # TWO DESTINATIONS, BECAUSE THE FENCES ARE NOT ONE PLACE. A unit's AppProject and its argo-sync
+  # grant stand in the ArgoCD namespace it belongs to, which is on the cluster this reconciler runs
+  # in whichever cluster the unit itself runs on — the `server:` entry, and the one place in this
+  # file where a server URL is the right answer rather than the wrong one (see the destination note
+  # at the top). Its ValidatingAdmissionPolicy is cluster-scoped and has to stand on the unit's OWN
+  # cluster — the `name:` entry, which for a per-slave instance is a remote one.
+  #
+  # THE WHITELISTS ARE THE FIVE KINDS AND NOT A GLOB. Every sibling project above answers
+  # namespaceResourceWhitelist with '*/*', because each delivers a whole application into namespaces
+  # of its own. This one delivers grants — an AppProject and two RBAC kinds — into the namespace the
+  # reconciler itself lives in, where a glob would let a chart of this repository write anything at
+  # all beside the reconciler's own objects.
+  #
+  # Kept as a comment rather than in `description`, which the API caps at 255 bytes.
+  description: "Per-unit fences, one Application per registration."
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: __ARGOCD_NAMESPACE__
+    - name: __CLUSTER_NAME__
+      namespace: __ARGOCD_NAMESPACE__
+  clusterResourceWhitelist:
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicy
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicyBinding
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: AppProject
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding

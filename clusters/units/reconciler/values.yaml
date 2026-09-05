@@ -1,0 +1,44 @@
+# What one unit's two ArgoCD objects are rendered from. Every value arrives from the unit's
+# REGISTRATION, handed over by clusters/argocd/files/units-appset.yaml, and every one of them is
+# empty and `required` here for the reason clusters/units/quota/values.yaml states: a default would
+# be a second source for a fact the registration already carries, and the two drift apart the first
+# time one of them changes.
+registration:
+  # The unit's name. It is ALSO its namespace and ALSO its AppProject's name — one word, three uses,
+  # which is the identity law the Manager holds in appproject.ts and the reason nothing here composes
+  # a second spelling of it.
+  name: ""
+  # The unit's own chart repository, as the URL a source clones. It is the first entry of the
+  # project's sourceRepos, and the reason the project cannot simply allow this platform's repo alone.
+  repoURL: ""
+
+# The ArgoCD namespace the two objects stand in — `argocd` on a cluster carrying the master part, and
+# the slave's own short name on a pure slave, where the instance managing it runs ON the master in a
+# namespace of that name. The ApplicationSet fills it from the marker the cluster map decides
+# (clusters/argocd/templates/apps.yaml), so this chart never derives it from a role.
+argoNamespace: ""
+
+# The repository this platform is delivered from, allowed in the project beside the unit's own,
+# because the generated Application is multi-source: it pulls its chart from the unit's repository
+# and its whole $values chain from here. The appset TEMPLATE pins the paths under this repository, so
+# allowing it cannot let a unit redirect its chart source.
+platformRepoUrl: https://github.com/simetrixch/hostyour-cloud.git
+
+# The chart repository the per-unit PostgreSQL pulls its metrics exporter from as a Helm dependency.
+# ArgoCD runs `helm dependency build` for that source, so the project must permit it or the sync is
+# rejected. Allowed for EVERY unit: an allowlist entry creates nothing, and the postgres source
+# itself is rendered only where the registration claims `postgresql`.
+exporterChartsUrl: https://prometheus-community.github.io/helm-charts
+
+# The three stages of this platform, naming the three Applications a unit can ever have. The
+# argo-sync Role names them OUTRIGHT: the ArgoCD namespace holds every unit's Applications, so a rule
+# without resourceNames would reach all of them.
+stages:
+  - dev
+  - test
+  - prod
+
+# The identity every release PipelineRun of a unit runs as, in that unit's own build namespace. It is
+# the subject the argo-sync grant arms, and it is one per build namespace, so a unit's pipeline holds
+# exactly this unit's grant and no other's.
+buildPipelineServiceAccount: pipeline-sa

@@ -1,7 +1,7 @@
 {{- /*
 THE RECONCILER'S OWN TREE, RENDERED FROM THE CLUSTER MAP.
 
-The seven manifests stand in files/ and not in templates/. ArgoCD reads its own
+The eight manifests stand in files/ and not in templates/. ArgoCD reads its own
 {{ }} goTemplate expressions inside them, and anything under templates/ is read
 by Helm first, so a manifest placed there would lose those expressions. This
 template reads each file whole with .Files.Get and puts this cluster's own
@@ -41,7 +41,7 @@ sources took __FQDN__ would target a branch nothing ever cut and generate
 nothing at all.
 
 `# file: <name>` opens each emitted document. Helm writes one `# Source:` line
-for this template, and all seven documents come from it, so that line cannot
+for this template, and all eight documents come from it, so that line cannot
 tell them apart.
 */ -}}
 {{- /*
@@ -85,7 +85,7 @@ stands Unknown, and a deployment's verification waits out its clock on it.
 {{- $namespace := ternary "argocd" $clusterName (eq (first $roleParts) "master") }}
 {{- $booksOnly := list "cluster-self.yaml" "repo-catalog.yaml" "slaves-appset.yaml" }}
 {{- $docs := list }}
-{{- range $name := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "repo-catalog.yaml" "slaves-appset.yaml" "tenants-appset.yaml" }}
+{{- range $name := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "repo-catalog.yaml" "slaves-appset.yaml" "tenants-appset.yaml" "units-appset.yaml" }}
 {{- if or $holdsBooks (not (has $name $booksOnly)) }}
 {{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__BRANCH__" $booksFqdn | replace "__RELEASE__" $release | replace "__ARGOCD_NAMESPACE__" $namespace }}
 {{- $docs = append $docs (printf "# file: %s\n%s" $name $doc) }}

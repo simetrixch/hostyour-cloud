@@ -1,0 +1,56 @@
+{{- /*
+The grant that lets the manager watch a release run it did not start: get, list and watch on
+PipelineRuns in THIS unit's build namespace, and nothing else.
+
+WHY IT IS RENDERED AND NOT PROVISIONED, and it is the same argument the eventlistener grant beside it
+already makes. Writing it imperatively when a unit is onboarded is correct for every unit the manager
+onboards and impossible for the one unit that IS the manager: on a first installation nothing has run
+that could write it, so the platform's own first release is built and the operator who asked for it
+watches a run the manager is refused a read on. A registration is what this chart renders from, so no
+registration means no build namespace and nothing to watch in the first place.
+
+READ ONLY, AND SCOPED TO THIS ONE NAMESPACE. The manager has no task in a release cycle — the webhook
+starts the run and the pipeline finishes it — so it needs no verb that changes anything, and a
+cluster-wide read would hand it every other unit's runs for a report about one.
+
+ITS SCOPE IS THE UNIT'S AND NOT THE STAGE'S, which is why it stands here rather than beside the unit's
+argo-sync grant (clusters/units/reconciler). A build is stage-free: one namespace per unit, one image per
+release, so a unit deployed at two stages has ONE of these. The argo-sync grant lives in the
+reconciler namespace of the unit's TARGET cluster and a cluster carries exactly one stage, so a unit
+at two stages has two of those. A teardown that removed all three together left a surviving stage
+unable to release.
+*/ -}}
+{{- if .Values.unit }}
+{{- $unit := include "consumer-build.unitName" . -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-read-pipelineruns
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: manager-read-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: manager-read-pipelineruns
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: manager-read-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ required "consumer-build: manager.serviceAccountName is required — the identity the manager reads a release run under" .Values.manager.serviceAccountName }}
+    namespace: {{ required "consumer-build: manager.namespace is required — the namespace that identity lives in" .Values.manager.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: manager-read-pipelineruns
+{{- end }}

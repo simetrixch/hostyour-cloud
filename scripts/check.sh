@@ -179,7 +179,7 @@ broken=""
 expressions=""
 
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
-# renders the seven manifests of clusters/argocd/files from the cluster map, and it is the only
+# renders the eight manifests of clusters/argocd/files from the cluster map, and it is the only
 # writer of their markers.
 for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ clusters/argocd/; do
   chart="${chart%/}"
@@ -320,9 +320,9 @@ tag_ref="$(sed -n 's/^release:[[:space:]]*//p' "$cluster_map" | head -1)"
 branch_ref="$(sed -n 's/^booksCluster:[[:space:]]*//p' "$cluster_map" | head -1)"
 on_tag="$(refs_on "$work/argocd-alone" "$tag_ref")"
 on_branch="$(refs_on "$work/argocd-alone" "$branch_ref")"
-if [ "$on_tag" != 9 ] || [ "$on_branch" != 8 ]; then
+if [ "$on_tag" != 11 ] || [ "$on_branch" != 11 ]; then
   grep -nE '^[[:space:]]+(revision|targetRevision):' "$work/argocd-alone" | sed 's/^/  /'
-  fail "the render of clusters/argocd stands on the release tag at $on_tag sites and on the install branch at $on_branch, and it has to be 9 and 8 — a source reading a chart of this repository stands on the tag, a source reading this installation's own state stands on its branch"
+  fail "the render of clusters/argocd stands on the release tag at $on_tag sites and on the install branch at $on_branch, and it has to be 11 and 11 — a source reading a chart of this repository stands on the tag, a source reading this installation's own state stands on its branch"
 fi
 
 # AND WITH NO PIN, EVERY ONE OF THEM READS THE BRANCH. A map carrying no `release:` line is not a
@@ -330,11 +330,81 @@ fi
 # slave's own reconciler tree renders in.
 helm template argocd-apps clusters/argocd -f "$cluster_map" --set release=null > "$work/argocd-unpinned" 2>&1   || { cat "$work/argocd-unpinned"; fail "clusters/argocd does not render from a cluster map that records no release pin"; }
 unpinned_count="$(refs_on "$work/argocd-unpinned" "$branch_ref")"
-if [ "$unpinned_count" != 17 ]; then
+if [ "$unpinned_count" != 22 ]; then
   grep -nE '^[[:space:]]+(revision|targetRevision):' "$work/argocd-unpinned" | sed 's/^/  /'
-  fail "with no release pin the render of clusters/argocd stands on the install branch at $unpinned_count sites and it has to be 17 — a cluster whose map records no pin reads its charts from its branch, which is what it read before the tag was told apart from it"
+  fail "with no release pin the render of clusters/argocd stands on the install branch at $unpinned_count sites and it has to be 22 — a cluster whose map records no pin reads its charts from its branch, which is what it read before the tag was told apart from it"
 fi
-echo "check: clusters/argocd reads 9 sources from the release tag and 8 from the install branch, and all 17 from the branch where the map records no pin."
+echo "check: clusters/argocd reads 11 sources from the release tag and 11 from the install branch, and all 22 from the branch where the map records no pin."
+
+# ── The per-unit fences, held to the objects they must render ────────────────────────────────
+# NOTHING ELSE HERE WOULD NOTICE ONE MISSING. The chart loop above renders every chart and reads
+# what came out for a Helm expression, so a chart that rendered one object FEWER renders exactly as
+# green as one that rendered them all. These nine objects are what fences a customer's unit — its
+# isolation AppProject, its admission boundary and its Binding, and the three grants its release
+# cycle runs on — and one dropped from a template is a unit that onboards, reports itself green and
+# is never fenced. That is the failure this whole mechanism exists to remove, and it would arrive
+# through the mechanism itself.
+#
+# HELD AS THE OBJECTS AND NOT AS A COUNT, because a count is satisfied by any nine. Each is a `kind`
+# and the name under the `metadata:` block that follows it, which is the object's own identity and
+# never the name a roleRef or a subject repeats further down.
+#
+# THE THREE GRANTS STAND IN TWO PLACES AND THAT IS THE RULE, not an accident: a fence is rendered by
+# the reconciler that manages the namespace it lands in. The two build-namespace grants come from
+# clusters/inventories/consumer-build in UNIT mode, which is the Application that creates
+# <unit>-build in the first place, and this is the only place that mode is rendered at all.
+#
+# WHAT THIS CANNOT SEE, named rather than counted: whether these nine are still the set the Manager
+# writes per unit. That comparison lives in hostyour-manager, and nothing on this machine can make
+# it. A tenth object appearing there is not refused here.
+#
+# `--set-json` AND NOT `--set`, because consumer-build declares `unit: null` in its own values and
+# that is what tells its two render modes apart. helm applies a `--set` INTO the loaded values, and
+# `unit.name=check` over a nil `unit` ends the run with "interface conversion: interface {} is nil"
+# rather than with anything naming the chart. `--set-json` writes the whole key and never descends.
+echo "check: the per-unit fences, held to the objects they must render."
+objects_of() { # $1 a file holding a render. One `kind/name` per object on stdout.
+  awk '
+    /^kind: / { kind = substr($0, 7); next }
+    /^metadata:/ { inmeta = 1; next }
+    /^[^ ]/ { inmeta = 0 }
+    inmeta && /^  name: / { print kind "/" substr($0, 9); inmeta = 0 }
+  ' "$1"
+}
+fences_expected='AppProject/check
+Role/check-argo-sync
+Role/eventlistener-create-pipelineruns
+Role/manager-read-pipelineruns
+RoleBinding/check-argo-sync
+RoleBinding/eventlistener-create-pipelineruns
+RoleBinding/manager-read-pipelineruns
+ValidatingAdmissionPolicy/consumer-check
+ValidatingAdmissionPolicyBinding/consumer-check'
+: > "$work/fences"
+for chart in clusters/units/reconciler clusters/units/admissionpolicy; do
+  helm template "$(basename "$chart")" "$chart" --namespace check \
+    -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+    -f "$chart/values.yaml" -f "$cluster_map" -f "$registration" > "$work/fence-render" 2>&1 \
+    || { cat "$work/fence-render"; fail "$chart does not render, and it is what fences a unit"; }
+  objects_of "$work/fence-render" >> "$work/fences"
+done
+helm template consumer-build clusters/inventories/consumer-build --namespace argocd \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+  -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
+  --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[]"}' \
+  > "$work/fence-render" 2>&1 \
+  || { cat "$work/fence-render"; fail "clusters/inventories/consumer-build does not render in unit mode, which is where a unit's build grants stand"; }
+objects_of "$work/fence-render" \
+  | grep -E '^(Role|RoleBinding)/(eventlistener-create-pipelineruns|manager-read-pipelineruns)$' >> "$work/fences"
+fences_rendered="$(sort "$work/fences")"
+if [ "$fences_rendered" != "$fences_expected" ]; then
+  echo "The per-unit fences had to be:"
+  printf '%s\n' "$fences_expected" | sed 's/^/  /'
+  echo "and they rendered as:"
+  printf '%s\n' "${fences_rendered:-  (nothing)}" | sed 's/^/  /'
+  fail "the per-unit fences are not the objects they have to be — a unit would onboard green and stand unfenced"
+fi
+echo "check: all 9 per-unit fences render, over clusters/units/reconciler, clusters/units/admissionpolicy and clusters/inventories/consumer-build in unit mode."
 
 # ── What clusters/bootstrap must never carry ─────────────────────────────────────────────────
 # NOTHING STAMPS THAT TREE, AND A PLACEHOLDER LEFT IN IT TRAVELS AS TEXT. The seven files under

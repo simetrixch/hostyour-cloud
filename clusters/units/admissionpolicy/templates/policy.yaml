@@ -1,0 +1,143 @@
+{{- /*
+The unit's admission boundary — what its objects may SAY, once its AppProject has decided what it may
+submit. The two hold together whatever the unit deploys, which is what makes a per-release check
+unnecessary.
+
+SIX CLAUSES, THREE RESOURCES, AND EACH CLAUSE IS A WHOLE ANSWER:
+
+  Ingress    every rule's FQDN is one the platform GRANTED: `<name>.<unitApex>` always, plus the
+             unit's attested `fqdn` where its stage registration carries one. A rule with no host
+             serves every FQDN that reaches the ingress, so an absent field is a violation and not an
+             exemption. NOT `*.<name>`: the platform's DNS carries one record per unit, so no
+             resolver exists for a sub-host.
+  Ingress    spec.tls is held to the SAME granted set, because a tls host drives an ACME order
+             against the shared cluster-issuer — a name is a claim there even when no rule serves it.
+  Ingress    the platform address stands in a tls entry of its OWN. cert-manager builds one
+             Certificate per entry and an ACME order is atomic, so a granted customer domain sharing
+             the entry would tie the platform certificate's renewal to a DNS record the platform does
+             not control, and its expiry would take the unit's own address down weeks after an
+             onboard nobody remembers.
+  Service    type ClusterIP only. A LoadBalancer or a NodePort reaches past the ingress the host
+             clauses just pinned, and past the NetworkPolicy that follows the namespace.
+  Namespace  a unit may only create the namespace it IS.
+  Namespace  and that namespace may say nothing in the platform's own label namespaces beyond the
+             pairs the platform itself stamps. This is the clause that keeps a namespace label from
+             being a self-service grant: a ServiceAccount named `external-secrets-sa` beside a
+             self-written `hostyour.cloud/workload` label reads the whole app tier of the cluster's
+             Vault mount, and a self-written `pod-security.kubernetes.io/enforce: privileged` runs a
+             privileged pod on a shared node.
+
+THE NAMESPACE CLAUSES DICTATE HOW THIS IS SCOPED, and the scope lives in matchConditions rather than
+in the Binding. A Binding's namespaceSelector is evaluated, for an object that IS a Namespace,
+against that object's OWN labels — the API server stamps `kubernetes.io/metadata.name` on every
+namespace — so a selector pinned to the unit's name would SKIP every foreign namespace name, and the
+clause that refuses a foreign name could never fire. So: namespaced kinds are confined to the unit's
+own namespace by `request.namespace` (a false matchCondition SKIPS the request, which is scope and
+not a verdict), while every Namespace admission on the cluster is evaluated and the reach limiter for
+those is the reconciler's tracking id.
+
+WHY THE VALUES CANNOT ESCAPE THE SINGLE-QUOTED CEL LITERALS: every one of them comes from a validated
+grammar before it is written into a registration — the unit name alphabet, the public-FQDN grammar
+the onboard's attestation applies, and a fixed service vocabulary. None of the three admits an
+apostrophe.
+
+RENDERED CLAUSE FOR CLAUSE AS THE MANAGER WRITES IT TODAY, labels included, because both writers
+stand until hostyour-manager#107 lands: a policy that differs by one clause is one the two writers
+take turns overwriting, and the difference would be found on a cluster.
+*/ -}}
+{{- $name := required "unit-admissionpolicy: registration.name is required — it names the policy, the namespace the clauses fence, and the platform address they admit" .Values.registration.name }}
+{{- $unitApex := required "unit-admissionpolicy: global.unitApex is required (clusters/active/<fqdn>.yaml) — a unit's platform address is <name>.<unitApex>, and a host clause rendered against a guessed apex fences the unit off its own ingress" .Values.global.unitApex }}
+{{- $stage := required "unit-admissionpolicy: global.env is required (clusters/platform/values-<stage>.yaml) — the unit's Application is <name>-<stage>, and its name is the prefix of every tracking id the Namespace clauses read" .Values.global.env }}
+{{- $trackingId := required "unit-admissionpolicy: trackingIdAnnotation is required — without it the cluster-scoped clauses would reach every namespace on the cluster instead of the ones this unit owns" .Values.trackingIdAnnotation }}
+{{- $services := required "unit-admissionpolicy: registration.servicesJson is required — the attested claim list decides two of the granted namespace labels, and an absent one would grant them to a unit that never claimed them" .Values.registration.servicesJson | fromJsonArray }}
+{{- $policyName := printf "consumer-%s" $name }}
+{{- $host := printf "%s.%s" $name $unitApex }}
+{{- $fqdns := list $host }}
+{{- if .Values.registration.fqdn }}
+{{- $fqdns = append $fqdns .Values.registration.fqdn }}
+{{- end }}
+{{- $ownedByUnit := printf "has(object.metadata.annotations) && '%s' in object.metadata.annotations && object.metadata.annotations['%s'].startsWith('%s-%s:')" $trackingId $trackingId $name $stage }}
+{{- $ruleHosts := list }}
+{{- $tlsHosts := list }}
+{{- range $fqdns }}
+{{- $ruleHosts = append $ruleHosts (printf "r.host == '%s'" .) }}
+{{- $tlsHosts = append $tlsHosts (printf "h == '%s'" .) }}
+{{- end }}
+{{- $said := ternary "the FQDN" "the FQDNs" (eq (len $fqdns) 1) }}
+{{- $granted := list
+      (list "pod-security.kubernetes.io/enforce" "restricted")
+      (list "hostyour.cloud/consumer" "true")
+      (list "hostyour.cloud/consumer-name" $name)
+      (list "platform/db-consumer" "true") }}
+{{- if has "redis" $services }}
+{{- $granted = append $granted (list "platform/redis-consumer" "true") }}
+{{- end }}
+{{- if has "postfix" $services }}
+{{- $granted = append $granted (list "platform/postfix-consumer" "true") }}
+{{- end }}
+{{- $grantedPair := list }}
+{{- $grantedText := list }}
+{{- range $granted }}
+{{- $grantedPair = append $grantedPair (printf "(k == '%s' && object.metadata.labels[k] == '%s')" (index . 0) (index . 1)) }}
+{{- $grantedText = append $grantedText (printf "%s=%s" (index . 0) (index . 1)) }}
+{{- end }}
+{{- $reservedPrefixes := required "unit-admissionpolicy: reservedLabelPrefixes is required — an empty list would reserve nothing and the label clause would admit every platform label a unit wrote on itself" .Values.reservedLabelPrefixes }}
+{{- $reservedKey := list }}
+{{- range $reservedPrefixes }}
+{{- $reservedKey = append $reservedKey (printf "k.startsWith('%s')" .) }}
+{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $policyName }}
+  labels:
+    hostyour.cloud/consumer: "true"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["services"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["namespaces"]
+  matchConditions:
+    - name: unit-scope
+      expression: {{ printf "request.resource.resource == 'namespaces' || request.namespace == '%s'" $name | quote }}
+  validations:
+    - expression: {{ printf "request.resource.resource != 'ingresses' || (has(object.spec.rules) && object.spec.rules.all(r, has(r.host) && (%s)))" (join " || " $ruleHosts) | quote }}
+      message: {{ printf "a consumer Ingress may only serve %s %s" $said (join " and " $fqdns) | quote }}
+    - expression: {{ printf "request.resource.resource != 'ingresses' || !has(object.spec.tls) || object.spec.tls.all(t, has(t.hosts) && t.hosts.all(h, %s))" (join " || " $tlsHosts) | quote }}
+      message: {{ printf "a consumer Ingress tls entry may only carry %s %s — a certificate is only ordered for granted names" $said (join " and " $fqdns) | quote }}
+    - expression: {{ printf "request.resource.resource != 'ingresses' || !has(object.spec.tls) || object.spec.tls.all(t, !(has(t.hosts) && ('%s' in t.hosts) && t.hosts.size() > 1))" $host | quote }}
+      message: {{ printf "the platform FQDN %s must stand in a tls entry of its own — a shared entry is one atomic certificate order, and a name pointed elsewhere would block its renewal" $host | quote }}
+    - expression: "request.resource.resource != 'services' || !has(object.spec.type) || object.spec.type == 'ClusterIP'"
+      message: "a consumer Service must be of type ClusterIP"
+    - expression: {{ printf "request.resource.resource != 'namespaces' || !(%s) || object.metadata.name == '%s'" $ownedByUnit $name | quote }}
+      message: {{ printf "a consumer may only create its own namespace %s" $name | quote }}
+    - expression: {{ printf "request.resource.resource != 'namespaces' || !(%s) || !has(object.metadata.labels) || object.metadata.labels.all(k, !(%s) || %s)" $ownedByUnit (join " || " $reservedKey) (join " || " $grantedPair) | quote }}
+      message: {{ printf "a consumer namespace may carry no label under %s beyond the ones the platform stamps on it (%s) — those label namespaces bind Vault roles, admit network reach and set pod security, so a self-written one is a self-granted permission" (join ", " $reservedPrefixes) (join ", " $grantedText) | quote }}
+---
+{{- /*
+NO matchResources ON THE BINDING. It arms the policy for everything matchConstraints names, and every
+scope this boundary has lives in the policy's own matchConditions. A namespaceSelector here would be
+matched against a Namespace object's own labels and would skip every foreign namespace name — the
+exact admission the own-name clause exists to refuse.
+*/ -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $policyName }}
+  labels:
+    hostyour.cloud/consumer: "true"
+spec:
+  policyName: {{ $policyName }}
+  validationActions:
+    - Deny

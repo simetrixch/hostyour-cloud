@@ -1,0 +1,41 @@
+# What one unit's admission boundary is rendered from. Every value arrives from the unit's
+# REGISTRATION, handed over by clusters/argocd/files/units-appset.yaml, and the granted ones are
+# empty and `required` for the reason clusters/units/quota/values.yaml states: a default here would
+# be a second source for a grant the registration already carries, and a fence rendered against a
+# guessed value is a fence that reports itself armed while admitting the wrong thing.
+registration:
+  # The unit's name. It is also its namespace, and it composes both its platform address
+  # `<name>.<unitApex>` and the prefix of every tracking id its Application owns.
+  name: ""
+  # The unit's ATTESTED extra public FQDN, admitted IN ADDITION to `<name>.<unitApex>`. EMPTY for
+  # almost every unit: the onboard writes it into the stage registration only after refusing every
+  # name the platform already serves, so an empty value here means "granted nothing beyond the
+  # platform address" and never "not asked yet".
+  fqdn: ""
+  # The unit's ATTESTED service claims, as the JSON array the ApplicationSet stamps
+  # (`{{ .services | toJson }}` — a rendered list would not survive Helm's own YAML parse of this
+  # file, a quoted scalar does). Two of them decide a granted namespace label: `redis` and `postfix`
+  # are reached without authenticating the caller, so REACH is the grant, and a unit that never
+  # claimed one must not be able to write itself into that NetworkPolicy's selector.
+  servicesJson: "[]"
+
+# The three label namespaces the PLATFORM decides on. A unit's own Namespace object may carry nothing
+# under them beyond the value-exact pairs below: Vault binds ESO roles by a namespace label selector,
+# Calico admits the no-auth services by one, and the API server reads pod security off the third — so
+# a self-written label under any of them is a self-granted permission.
+#
+# `kubernetes.io/` is deliberately NOT here: the API server stamps `kubernetes.io/metadata.name` on
+# every namespace before this policy is evaluated, so reserving that prefix would refuse every
+# namespace including the unit's own.
+reservedLabelPrefixes:
+  - hostyour.cloud/
+  - platform/
+  - pod-security.kubernetes.io/
+
+# The annotation the reconciler stamps on everything it applies. Its value opens with the
+# Application's own name, which is what makes "does this unit own the object under review" answerable
+# inside a CEL expression — and that is the reach limiter of the cluster-scoped Namespace clauses,
+# because a Binding namespaceSelector cannot express it: for a Namespace object the selector is
+# matched against that object's OWN labels, so a foreign name would skip the policy instead of being
+# refused by it.
+trackingIdAnnotation: argocd.argoproj.io/tracking-id

@@ -9,6 +9,24 @@
 # below is declared once in this repository.
 suspended: false
 quiesced: false
+# What clusters/argocd/files/units-appset.yaml stamps onto the two charts that render a unit's
+# fences: its isolation AppProject and argo-sync grant (clusters/units/reconciler) and its admission
+# boundary (clusters/units/admissionpolicy). The names are the registration's own fields, so a chart
+# reading one that this file does not carry says so by name at the render.
+#
+# `fqdn` STANDS EMPTY ON PURPOSE, and it is not an unanswered key: most units serve only
+# `<name>.<unitApex>`, and the onboard writes an extra FQDN into a stage registration only after
+# refusing every name the platform already serves. Empty is what the common case looks like, so it is
+# the case this check renders.
+registration:
+  name: check
+  repoURL: https://github.com/check/check.git
+  fqdn: ""
+  servicesJson: "[]"
+# The reconciler namespace a unit's AppProject and argo-sync grant stand in. `argocd` here, which is
+# what a cluster carrying the master part answers; on a pure slave the ApplicationSet fills the
+# slave's own short name instead.
+argoNamespace: argocd
 tenant:
   guid: 00000000-0000-0000-0000-000000000000
   member: check

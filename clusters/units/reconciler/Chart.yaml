@@ -1,0 +1,5 @@
+apiVersion: v2
+name: unit-reconciler
+version: 1.0.0
+description: What ONE unit is inside the reconciler — its isolation AppProject, which its generated Application names as `.spec.project`, and the argo-sync grant its release pipeline patches that Application with. Both objects live in the ArgoCD namespace the unit belongs to, which is the master's `argocd` for a unit on a master and the per-slave instance's own namespace on the master for a unit on a slave. Rendered per registration by clusters/argocd/files/units-appset.yaml; the facts arrive from registrations/<unit>/<stage>.yaml and this chart holds none of its own.
+type: application

@@ -1,0 +1,65 @@
+{{- /*
+The one grant that lets a unit's release pipeline tell the reconciler to sync the bump it has just
+committed: get and patch, on exactly this unit's OWN Applications, in the reconciler namespace they
+live in.
+
+IT STANDS BESIDE THE PROJECT AND NOT IN THE BUILD NAMESPACE, because its scope is not the build's.
+The two build-namespace grants belong to the UNIT and a build is stage-free — one namespace per unit,
+one image per release — so a unit deployed at two stages has one of each, and they are rendered from
+registrations/<unit>/build.yaml by clusters/inventories/consumer-build. This grant belongs to the
+unit AT ONE STAGE: it lives in the reconciler namespace of the unit's TARGET cluster, and a cluster
+carries exactly one stage, so a unit at two stages has two of these, on two clusters. Calling the set
+"the per-unit build RBAC" is what once made a one-stage teardown delete all three.
+
+EVERY APPLICATION THIS UNIT CAN EVER HAVE, NAMED OUTRIGHT. The reconciler namespace holds every
+unit's Applications, so a rule without resourceNames would reach all of them. The three names are the
+three stages: a unit's Application is `<name>-<stage>`, which is what the consumers ApplicationSet
+stamps, and the pipeline that releases at one stage must not have to be told which.
+
+`list` AND `watch` ARE DELIBERATELY ABSENT. Kubernetes ignores resourceNames for those two verbs, so
+granting either would silently widen this Role back to every Application in the namespace. A sync is
+a read plus a patch of the named object, which needs neither.
+
+WHY THE MANAGER COULD NOT LEAVE THIS TO THE UNIT'S OWN CHART: the unit's AppProject beside this file
+blacklists Role and RoleBinding, which is the point — a unit that could mint its own Role could grant
+itself anything. So the platform is the only writer left, and rendering it here is that same platform
+writing it through the one mechanism it uses for everything else.
+*/ -}}
+{{- $name := required "unit-reconciler: registration.name is required — the grant names this unit's own Applications and binds this unit's own build pipeline" .Values.registration.name }}
+{{- $namespace := required "unit-reconciler: argoNamespace is required — the grant stands where the Applications it names stand" .Values.argoNamespace }}
+{{- $stages := required "unit-reconciler: stages is required — the Applications a unit can ever have are one per stage, and the rule names them outright" .Values.stages }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-argo-sync
+  namespace: {{ $namespace }}
+  labels:
+    hostyour.cloud/consumer: "true"
+rules:
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - applications
+    resourceNames:
+      {{- range $stages }}
+      - {{ printf "%s-%s" $name . }}
+      {{- end }}
+    verbs:
+      - get
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-argo-sync
+  namespace: {{ $namespace }}
+  labels:
+    hostyour.cloud/consumer: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-argo-sync
+subjects:
+  - kind: ServiceAccount
+    name: {{ required "unit-reconciler: buildPipelineServiceAccount is required — the identity every release PipelineRun of this unit runs as" .Values.buildPipelineServiceAccount }}
+    namespace: {{ printf "%s-build" $name }}

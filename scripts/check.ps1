@@ -234,7 +234,7 @@ foreach ($parent in 'clusters/inventories', 'clusters/units', 'clusters/slaves')
     foreach ($entry in $sorted) { $chartDirs += "$parent/$($entry.TrimEnd('/'))" }
 }
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
-# renders the seven manifests of clusters/argocd/files from the cluster map, and it is the only
+# renders the eight manifests of clusters/argocd/files from the cluster map, and it is the only
 # writer of their markers.
 $chartDirs += 'clusters/argocd'
 
@@ -403,9 +403,9 @@ $branchRef = (($mapLines | Where-Object { $_ -cmatch '^booksCluster:\s' } | Sele
 $aloneLines = $alone -split "`r?`n"
 $onTag = Measure-Refs -Lines $aloneLines -Ref $tagRef
 $onBranch = Measure-Refs -Lines $aloneLines -Ref $branchRef
-if ($onTag -ne 9 -or $onBranch -ne 8) {
+if ($onTag -ne 11 -or $onBranch -ne 11) {
     Write-Output ((@($aloneLines | Where-Object { $_ -cmatch '^\s+(revision|targetRevision):' }) | ForEach-Object { "  $_" }) -join "`n")
-    Stop-Check "the render of clusters/argocd stands on the release tag at $onTag sites and on the install branch at $onBranch, and it has to be 9 and 8 — a source reading a chart of this repository stands on the tag, a source reading this installation's own state stands on its branch"
+    Stop-Check "the render of clusters/argocd stands on the release tag at $onTag sites and on the install branch at $onBranch, and it has to be 11 and 11 — a source reading a chart of this repository stands on the tag, a source reading this installation's own state stands on its branch"
 }
 
 # AND WITH NO PIN, EVERY ONE OF THEM READS THE BRANCH. A map carrying no `release:` line is not a
@@ -418,11 +418,97 @@ if ($LASTEXITCODE -ne 0) {
 }
 $unpinnedLines = $unpinned -split "`r?`n"
 $unpinnedCount = Measure-Refs -Lines $unpinnedLines -Ref $branchRef
-if ($unpinnedCount -ne 17) {
+if ($unpinnedCount -ne 22) {
     Write-Output ((@($unpinnedLines | Where-Object { $_ -cmatch '^\s+(revision|targetRevision):' }) | ForEach-Object { "  $_" }) -join "`n")
-    Stop-Check "with no release pin the render of clusters/argocd stands on the install branch at $unpinnedCount sites and it has to be 17 — a cluster whose map records no pin reads its charts from its branch, which is what it read before the tag was told apart from it"
+    Stop-Check "with no release pin the render of clusters/argocd stands on the install branch at $unpinnedCount sites and it has to be 22 — a cluster whose map records no pin reads its charts from its branch, which is what it read before the tag was told apart from it"
 }
-Write-Output 'check: clusters/argocd reads 9 sources from the release tag and 8 from the install branch, and all 17 from the branch where the map records no pin.'
+Write-Output 'check: clusters/argocd reads 11 sources from the release tag and 11 from the install branch, and all 22 from the branch where the map records no pin.'
+
+# ── The per-unit fences, held to the objects they must render ────────────────────────────────
+# NOTHING ELSE HERE WOULD NOTICE ONE MISSING. The chart loop above renders every chart and reads
+# what came out for a Helm expression, so a chart that rendered one object FEWER renders exactly as
+# green as one that rendered them all. These nine objects are what fences a customer's unit — its
+# isolation AppProject, its admission boundary and its Binding, and the three grants its release
+# cycle runs on — and one dropped from a template is a unit that onboards, reports itself green and
+# is never fenced. That is the failure this whole mechanism exists to remove, and it would arrive
+# through the mechanism itself.
+#
+# HELD AS THE OBJECTS AND NOT AS A COUNT, because a count is satisfied by any nine. Each is a `kind`
+# and the name under the `metadata:` block that follows it, which is the object's own identity and
+# never the name a roleRef or a subject repeats further down.
+#
+# THE THREE GRANTS STAND IN TWO PLACES AND THAT IS THE RULE, not an accident: a fence is rendered by
+# the reconciler that manages the namespace it lands in. The two build-namespace grants come from
+# clusters/inventories/consumer-build in UNIT mode, which is the Application that creates
+# <unit>-build in the first place, and this is the only place that mode is rendered at all.
+#
+# WHAT THIS CANNOT SEE, named rather than counted: whether these nine are still the set the Manager
+# writes per unit. That comparison lives in hostyour-manager, and nothing on this machine can make
+# it. A tenth object appearing there is not refused here.
+#
+# `--set-json` AND NOT `--set`, because consumer-build declares `unit: null` in its own values and
+# that is what tells its two render modes apart. helm applies a `--set` INTO the loaded values, and
+# `unit.name=check` over a nil `unit` ends the run with "interface conversion: interface {} is nil"
+# rather than with anything naming the chart. `--set-json` writes the whole key and never descends.
+Write-Output 'check: the per-unit fences, held to the objects they must render.'
+function Get-RenderedObject {
+    # One `kind/name` per object of a render. -cmatch throughout, because scripts/check.sh reads the
+    # same lines with awk, which is case-sensitive.
+    param([string[]] $Lines)
+    $found = @()
+    $kind = ''
+    $inMetadata = $false
+    foreach ($line in $Lines) {
+        if ($line -cmatch '^kind: (.*)$') { $kind = $Matches[1]; continue }
+        if ($line -ceq 'metadata:') { $inMetadata = $true; continue }
+        if ($line -cmatch '^[^ ]') { $inMetadata = $false }
+        if ($inMetadata -and $line -cmatch '^  name: (.*)$') { $found += "$kind/$($Matches[1])"; $inMetadata = $false }
+    }
+    return $found
+}
+$fencesExpected = @(
+    'AppProject/check'
+    'Role/check-argo-sync'
+    'Role/eventlistener-create-pipelineruns'
+    'Role/manager-read-pipelineruns'
+    'RoleBinding/check-argo-sync'
+    'RoleBinding/eventlistener-create-pipelineruns'
+    'RoleBinding/manager-read-pipelineruns'
+    'ValidatingAdmissionPolicy/consumer-check'
+    'ValidatingAdmissionPolicyBinding/consumer-check'
+)
+$fences = @()
+foreach ($chart in 'clusters/units/reconciler', 'clusters/units/admissionpolicy') {
+    $fenceRender = & helm template (Split-Path -Leaf $chart) $chart --namespace check `
+        -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml `
+        -f "$chart/values.yaml" -f $mapFile -f $regFile 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output $fenceRender.TrimEnd()
+        Stop-Check "$chart does not render, and it is what fences a unit"
+    }
+    $fences += Get-RenderedObject -Lines ($fenceRender -split "`r?`n")
+}
+$buildRender = & helm template consumer-build clusters/inventories/consumer-build --namespace argocd `
+    -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml `
+    -f clusters/inventories/consumer-build/values-common.yaml -f $mapFile -f $regFile `
+    --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[]"}' 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+    Write-Output $buildRender.TrimEnd()
+    Stop-Check "clusters/inventories/consumer-build does not render in unit mode, which is where a unit's build grants stand"
+}
+$fences += @(Get-RenderedObject -Lines ($buildRender -split "`r?`n") |
+    Where-Object { $_ -cmatch '^(Role|RoleBinding)/(eventlistener-create-pipelineruns|manager-read-pipelineruns)$' })
+# Ordinal, for the reason the chart list above is sorted that way: a list in two orders is two lists.
+$fences = [string[]] $fences
+[array]::Sort($fences, [System.StringComparer]::Ordinal)
+if (($fences -join "`n") -cne ($fencesExpected -join "`n")) {
+    Write-Output 'The per-unit fences had to be:'
+    Write-Output (($fencesExpected | ForEach-Object { "  $_" }) -join "`n")
+    Write-Output 'and they rendered as:'
+    Write-Output ((@(if ($fences.Count -gt 0) { $fences } else { '(nothing)' }) | ForEach-Object { "  $_" }) -join "`n")
+    Stop-Check 'the per-unit fences are not the objects they have to be — a unit would onboard green and stand unfenced'
+}
+Write-Output 'check: all 9 per-unit fences render, over clusters/units/reconciler, clusters/units/admissionpolicy and clusters/inventories/consumer-build in unit mode.'
 
 # ── What clusters/bootstrap must never carry ─────────────────────────────────────────────────
 # NOTHING STAMPS THAT TREE, AND A PLACEHOLDER LEFT IN IT TRAVELS AS TEXT. The seven files under

@@ -1,5 +1,5 @@
 apiVersion: v2
 name: argocd-apps
 version: 0.1.0
-description: The reconciler's own material — the ApplicationSets, the AppProjects, the repository catalog and this cluster's own registration. The seven manifests stand in files/ so that ArgoCD's own goTemplate expressions survive Helm, and templates/apps.yaml emits each of them with the values of clusters/active/<fqdn>.yaml written in. root-app.yaml beside this file is applied at the handoff and is not part of the chart.
+description: The reconciler's own material — the ApplicationSets, the AppProjects, the repository catalog and this cluster's own registration. The eight manifests stand in files/ so that ArgoCD's own goTemplate expressions survive Helm, and templates/apps.yaml emits each of them with the values of clusters/active/<fqdn>.yaml written in. root-app.yaml beside this file is applied at the handoff and is not part of the chart.
 type: application
