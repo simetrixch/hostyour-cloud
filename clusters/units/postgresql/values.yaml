@@ -26,7 +26,6 @@
 #   small  — the honest default. One consumer application, a working set that
 #            fits in PostgreSQL's stock 128MB shared_buffers, single-digit
 #            concurrent connections, data measured in hundreds of megabytes.
-#            This covers every consumer we run today.
 #   medium — the working set no longer fits the stock cache, or reporting
 #            queries run next to the OLTP traffic: tens of connections, sorts
 #            and index builds that need real work_mem, low gigabytes of data.
@@ -105,7 +104,7 @@ postgres:
   # declares (floor -10). Paired with -20 on the Service below, the PVC and the
   # NetworkPolicy; the credential trio (ExternalSecret + SecretStore + ServiceAccount)
   # sits one wave earlier at -21 so `postgresql-credentials` exists before this pod
-  # mounts it. Set in slice S2a now that clusters/charts/deployment emits metadata.annotations.
+  # mounts it.
   annotations:
     argocd.argoproj.io/sync-wave: "-20"
 

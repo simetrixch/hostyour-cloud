@@ -21,10 +21,9 @@
 # The other non-reader is the manager, which invokes the same programs over its own channel and keeps
 # its list in TypeScript. THE FILE IS READ, though — by the manager's boot check
 # `install-order.agrees`, which holds those TypeScript lists against it, and by ansiwise-client, which
-# fetches it to show an operator the programs of the role being installed. So it is not a declaration
-# nothing consumes: it is one that no RUNNER consumes, and this driver is one of the runners.
-# Whether the driver should READ it is a separate question with a real consequence — it would run
-# onboard-manager too, which it does not — and it is not answered by this comment.
+# fetches it to show an operator the programs of the role being installed. So it is read by every
+# READER and by no RUNNER, and this driver is one of the runners. Whether the driver should read it
+# is open, and it carries a consequence: reading it would run onboard-manager too, which it does not.
 #
 # WHY IT RUNS HERE AND NOT ON THE OPERATOR'S MACHINE. Everything it fetches is
 # fetched by THIS machine, and every one of the three is public: the pin out of the
@@ -33,7 +32,7 @@
 # operator's own disk, so what stands here afterwards is what the repositories say
 # and not what somebody's checkout happened to hold.
 #
-# THE ONE THING IT DOES THAT NO PROGRAM DOES, stated rather than hidden: it
+# THE ONE THING IT DOES THAT NO PROGRAM DOES: it
 # installs `git`, `curl` and `python3` when they are missing. deploy-host's
 # install_packages row installs all three — and the catalogue those programs are
 # READ FROM cannot be cloned without git, so the first of them cannot run without
@@ -108,21 +107,19 @@ summary() {
   # THE RECORDS ARE HANDED TO THIS ACCOUNT BEFORE THEY ARE NAMED. Every run is
   # elevated, so the engine creates /var/lib/ansiwise as root on a machine that has
   # never carried it — and the launcher fetches over a session opened as this
-  # account, which then reads nothing. It is the same shape as the catalogue, and
-  # the same rule: hostyour-manager#68 records /var/lib/ansiwise and its runs
-  # directory as this account's.
+  # account, which then reads nothing. /var/lib/ansiwise and its runs directory
+  # belong to this account, the same rule the catalogue follows.
   #
   # IN THE SUMMARY BECAUSE THE SUMMARY RUNS ON BOTH PATHS. A failed installation is
   # the one whose records are read, so handing them over only on success would take
   # them away exactly when they are wanted.
-  # The launcher reads this line to know which records to fetch. One line, one
-  # run identifier, in the order they happened.
+  #
   # PLAIN, AND DELIBERATELY UNDRESSED. Every other line here is written for a person
   # and wears the colour that helps them read it. This one is written for the
-  # LAUNCHER, which reads it to know which records to fetch — and an escape sequence
-  # in front of it is not whitespace, so a pattern anchored at the start of the line
-  # never matched and the launcher reported that no runs were named while three
-  # stood on the line above it.
+  # LAUNCHER, which reads it to know which records to fetch — one line, one run
+  # identifier, in the order they happened. An escape sequence in front of it is not
+  # whitespace, so a pattern anchored at the start of the line does not match it and
+  # the launcher finds no runs named.
   printf '\nRUNS %s\n' "${RUN_IDS[*]:-}"
 }
 
@@ -130,11 +127,9 @@ summary() {
 readonly CONFIG="${1:?the config's path is this script's only argument}"
 [ -r "$CONFIG" ] || die "there is no config at $CONFIG, and it is the only thing this is told" 64
 
-# SHREDDED ON EVERY PATH. A credential that outlives the act it was handed over
-# for is a credential nobody is watching.
 # WHAT THIS PUT ON THE MACHINE, TAKEN OFF AGAIN ON EVERY PATH, including a failure.
-# The answers are not an afterthought here: most of what deploy-branch is told is
-# credentials, and a file holding them has no reason to outlive the run that needed it.
+# Most of what deploy-branch is told is credentials, and a credential that outlives
+# the act it was handed over for is one nobody is watching.
 cleanup() {
   rm -f "$CONFIG" 2>/dev/null || true
   rm -rf "${ANSWERS_DIR:-}" 2>/dev/null || true
@@ -248,8 +243,7 @@ if [ -n "$BRANCH_TIP" ]; then
   # A REFUSAL IS NOT AN ANSWER ABOUT CONTENT, and reading the checkout unelevated
   # makes exactly the mistake this check exists to prevent: git refuses a repository
   # owned by another account outright, and that refusal reads as "this machine does
-  # not carry the commit" about a commit this machine wrote itself. It is the same
-  # defect as ansiwise-plugins#162, in this file.
+  # not carry the commit" about a commit this machine wrote itself.
   #
   # So the reading is elevated and says safe.directory, which takes BOTH ownership and
   # permission out of the answer — and where it still cannot read, it says so instead
@@ -327,9 +321,9 @@ done
 # starts unattended-upgrades on its own shortly after boot, so a machine that was just
 # restored is holding the dpkg lock through the first minutes of its life — which is
 # exactly when deploy-host reaches install_packages, four rows into the first program.
-# Measured on a real machine: the first run after a restore dies with
-# "Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 14400
-# (unattended-upgr)", and a minute later the same run is green.
+# Without this wait the first run after a restore dies with
+# "Could not get lock /var/lib/dpkg/lock-frontend. It is held by process <pid>
+# (unattended-upgr)", and the same run a minute later is green.
 #
 # APT ITSELF DOES THE WAITING. DPkg::Lock::Timeout makes it block for the lock rather
 # than fail on it, so this asks in short turns and reports between them instead of
@@ -345,8 +339,8 @@ done
 #
 # A machine that was restored a moment ago answers every other question in this phase correctly
 # while its system bus is not yet accepting connections — and the first thing that needs the bus is
-# installing a snap, which registers services. Measured on a real machine whose uptime was 0 minutes
-# when the run started: deploy-cluster dies at install_snap with
+# installing a snap, which registers services. Without this wait, on a machine whose uptime is 0
+# minutes, deploy-cluster dies at install_snap with
 # "Failed to connect to system scope bus via local transport: Connection refused", the snap rolls
 # itself back, and the same run minutes later installs it without trouble.
 #
@@ -355,7 +349,7 @@ done
 # is that kind of fact, and it clears itself within a minute. Left to the step, the same fact arrives
 # four rows into the third program as a snap error quoting systemctl, three layers from its cause.
 #
-# `degraded` IS ACCEPTED, and that is deliberate rather than lax: it means the machine HAS finished
+# `degraded` IS ACCEPTED: it means the machine HAS finished
 # starting and some unit of it failed. That is a different problem, it belongs to whoever reads the
 # unit, and swallowing it into this wait would hide it behind a timeout about booting.
 STARTED_WAITED=0
@@ -423,8 +417,8 @@ PIN=$(printf '%s' "$PIN_YAML" | python3 -c 'import sys, re
 text = sys.stdin.read()
 # THE cliTools BLOCK AND NOT THE WHOLE FILE, and it may be the LAST one: a lookahead
 # demanding another top-level key after it matched nothing at all, because it IS the
-# last. \Z is what makes the end of the file an end of the block. Counter-probed
-# against a decoy ansiwise: standing under another top-level key, which it does not take.
+# last. \Z is what makes the end of the file an end of the block. An `ansiwise` key
+# standing under another top-level key is outside the block and is not taken.
 block = re.search(r"^cliTools:\s*$.*?(?=^\S|\Z)", text, re.S | re.M)
 found = re.search(r"^  ansiwise:\s*$\s*^\s+version:\s*\"([^\"]+)\"", block.group(0) if block else "", re.M)
 sys.stdout.write(found.group(1) if found else "")')
@@ -480,8 +474,8 @@ if root test -d "$CATALOG/.git"; then
   # repository names, and the catalogue carries the row that HOLDS a machine to that
   # pin. A run that moved the first and left the second stale puts the two into
   # contradiction, and the machine is then refused by its own catalogue —
-  # "ansiwise is at <the new one> and the program pins <the old one>", measured on a
-  # real machine, at the last step of deploy-cluster.
+  # "ansiwise is at <the new one> and the program pins <the old one>", at the last
+  # step of deploy-cluster.
   #
   # ELEVATED AND NOT AUTHENTICATED. The catalogue repository is public, so the fetch
   # itself asks for nothing; what needs raising is the WRITE — /srv is root's, and a
@@ -552,9 +546,9 @@ say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || e
 #
 # ONE FILE PER PROGRAM, CARRYING WHAT THAT PROGRAM DECLARES AND NOTHING ELSE. An
 # engine refuses an answer a program does not declare, by name and one line each, so
-# handing one program the whole config buries its run in refusals. It is right to
-# refuse: an answer no program asked for is a name somebody mistyped or one a program
-# stopped using, and either is worth a refusal rather than a silent pass.
+# handing one program the whole config buries its run in refusals. An answer no
+# program asked for is a name somebody mistyped or one a program no longer declares,
+# and both are worth a refusal rather than a silent pass.
 #
 # The Manager composes per program in exactly this way, and its hostAnswers() is
 # deploy-host's own (hostyour-manager/server/domains/runs/defs/deploy-slave.ts).
@@ -576,7 +570,7 @@ say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || e
 # run was STARTED with, not something a caller answers, and a step that needs it
 # has it filled in by the run itself. The engine refuses an envelope carrying it
 # among the answers by name — ansiwise-core/lib/src/model/caller_inputs.dart —
-# and it is right to: a password sitting in the answers would be recorded as one.
+# because a password sitting among the answers is recorded as one.
 mkdir -p "$ANSWERS_DIR" && chmod 700 "$ANSWERS_DIR" \
   || die "could not make $ANSWERS_DIR, and the answers are written there" 73
 
@@ -670,10 +664,8 @@ COMPOSE
 # install-order.yaml's master sequence names a SIXTH, onboard-manager, and it is
 # deliberately not here. It onboards this platform's own manager AS A CONSUMER, over
 # the route every other consumer takes — which makes it an onboarding, and onboarding
-# is not this tool's to do. The header of this file has said so since it was written:
-# adopting a machine, deploying a slave, onboarding a consumer or a tenant are the
-# Manager's, and this deliberately cannot do any of them. It could, and it did, and
-# that was the defect.
+# is not this tool's to do. Adopting a machine, deploying a slave, onboarding a
+# consumer or a tenant are the Manager's, and this deliberately cannot do any of them.
 #
 # WHAT A MASTER IS WITHOUT IT: a machine, a branch, a cluster, and the platform
 # services on it — including the manager itself, which deploy-platform-services puts
@@ -690,8 +682,8 @@ run_program() {
   local log="/tmp/aw-$program-$mode.log"
 
   # A HEARTBEAT, because a program can be busy and silent at the same time.
-  # deploy-cluster's run took 280 seconds on a bare machine and said nothing for most
-  # of it, and a screen that says nothing is indistinguishable from one that has hung.
+  # deploy-cluster's run takes minutes on a bare machine and says nothing for most of
+  # it, and a screen that says nothing is indistinguishable from one that has hung.
   # This says how long, and nothing else.
   ( while :; do
       sleep 60
@@ -709,8 +701,8 @@ run_program() {
   # `microk8s` group — inside this very session, which therefore does not have it.
   # deploy-platform-services then asks the cluster a question as this account and is told
   # "Insufficient permissions to access MicroK8s", AFTER its own elevated write had already
-  # succeeded: the Secret existed and the step reported the machine as not in the state it
-  # produces (measured on a real machine, kubernetes_secret_from_vault). Entering the
+  # succeeded: at kubernetes_secret_from_vault the Secret exists and the step reports the
+  # machine as not in the state it produces. Entering the
   # account again hands each program the machine as it stands, not as it stood at the door.
   #
   # WITHOUT `-u` THIS LINE MEANS root, WHICH IS A DIFFERENT PROGRAM ENTIRELY. Every command
@@ -854,7 +846,6 @@ summary
 #
 #   bash: line 828: $'\r': command not found
 #
-# Measured on a green installation, two lines past the end of the stream.
 # Stripping carriage returns cannot reach it: it is added after the stripping, by the
 # thing doing the sending.
 #

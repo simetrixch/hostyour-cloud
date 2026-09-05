@@ -100,12 +100,10 @@ redis:
 # WHERE THIS CACHE ANSWERS, and the answer is one cluster.
 #
 # No key here names an entry point of the ingress controller, and no
-# templates/ingressroutetcp.yaml stands beside this file. Both were here until
-# hostyour-cloud#66: they published :6379 on a plain-TCP entry point so a dbgate
-# running on the MASTER could dial a SLAVE's cache. A slave standing on the
-# master's own server is ONE cluster, where publishing changes nothing; a slave on
-# a machine of its own is TWO, where publishing is what the co-location law
-# forbids. Both cases happen, so the route went.
+# templates/ingressroutetcp.yaml stands beside this file, so :6379 is published
+# nowhere. A slave standing on the master's own server is ONE cluster, where
+# publishing changes nothing; a slave on a machine of its own is TWO, where
+# publishing is what the co-location law forbids. Both cases happen.
 #
 # What reads this cache stands in the same cluster. clusters/inventories/dbgate carries
 # `runsOn: slave`, exactly as clusters/inventories/redis/app.yaml does, so the app generator

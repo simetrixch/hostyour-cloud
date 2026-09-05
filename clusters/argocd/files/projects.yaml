@@ -38,8 +38,8 @@
 # stays off elsewhere because each of those app.yaml files says runsOn: master,
 # but the `cicd` project exists in every catalog for symmetry.
 #
-# Cluster-resource whitelists below were derived from the ACTUAL rendered
-# manifests, not assumptions:
+# Cluster-resource whitelists below are what the rendered manifests actually
+# create:
 #   • external-secrets: vendored CRDs (clusters/inventories/external-secrets/templates/) +
 #     the operator's ClusterRole/Binding. Webhook + cert-controller disabled.
 #   • observability: kube-prometheus-stack CRDs + ClusterRole/Binding +
@@ -255,9 +255,8 @@ spec:
     # Written as the placeholder, whatever fills __STAGE__ turns it into `triggers.tekton.prod` on
     # a prod installation, the project then permits a group that does not exist, ArgoCD cannot
     # manage the ClusterInterceptors and reports them Unknown, and the tekton application
-    # stands OutOfSync for ever. On a dev installation the same value writes `dev` back and the
-    # line was right by accident, which is why this survives every installation until the
-    # first one on prod. Measured on a real machine.
+    # stands OutOfSync for ever. On a dev installation the same value writes `dev` back, so the
+    # placeholder spelling is only wrong from the first installation on another stage onwards.
     - group: triggers.tekton.dev
       kind: ClusterInterceptor
     - group: apiextensions.k8s.io

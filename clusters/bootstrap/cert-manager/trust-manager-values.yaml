@@ -36,8 +36,8 @@ crds:
   enabled: true
   keep: true
 
-# The public root list, as its own image. Stated rather than left to the default, because everything
-# above turns on it being there.
+# The public root list, as its own image. It is set here because everything above turns on it
+# being there.
 defaultPackage:
   enabled: true
 

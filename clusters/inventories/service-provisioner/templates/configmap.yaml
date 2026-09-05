@@ -75,7 +75,7 @@ data:
     # what the create handler made, THEN strip this string so the object (and, on a
     # namespace teardown, the namespace) can be garbage-collected. Without the
     # finalizer a delete just drops the claim from the next list and the backend
-    # user/db lives on forever — the whole gap #18 targets.
+    # user/db lives on forever.
     FINALIZER = "platform.hostyour.cloud/deprovision"
     # Operator escape lever: set this annotation to "true" on a wedged claim to
     # release the finalizer on the next poll even if teardown keeps failing (the

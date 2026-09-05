@@ -664,7 +664,7 @@ spec:
               # nothing else. Both are seeded with the cluster
               # (hostyour-deploy ansiwise/programs/deploy-gitops.yaml).
               #
-              # WHAT THIS COSTS, stated rather than implied: an account that can
+              # WHAT THIS COSTS: an account that can
               # read every registered unit's repo PAT exists in every build
               # namespace. It is reachable only from a pod that HOLDS a
               # pipeline-sa token, and the only pod of this pipeline that holds

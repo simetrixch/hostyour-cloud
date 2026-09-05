@@ -16,7 +16,6 @@
 # THE ALTERNATIVE IS BOTH AUTHORITIES UNDER ONE NAME, and it is worse. Measured on a real machine:
 # the object is rewritten from `ca:` to `acme:`, nothing is re-issued, and the cluster goes on
 # serving certificates signed by the root the same run deleted.
-# The object every certificate on this cluster names, in the form it takes while the switch is off.
 #
 # THE FLIP IS ONE APPLY. With the switch on, the cluster-issuer rows render the public form of this
 # same object and apply it, which replaces `ca:` with `acme:` — and that step reads

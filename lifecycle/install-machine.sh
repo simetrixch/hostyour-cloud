@@ -63,8 +63,7 @@ fi
 
 # NOTHING BUT ASSIGNMENTS AND COMMENTS, checked BEFORE this file is read, because
 # reading it is running it. A shell `.` executes every line, so a config carrying a
-# command would run it with the operator's own rights — and an operator who edited
-# a file by hand at two in the morning is exactly who this protects. Every line
+# command would run it with the operator's own rights. Every line
 # must be blank, a comment, or NAME='value' with no single quote inside the value. A
 # comment may follow a value on the same line, because that is valid in the shell that
 # reads it and it is where an operator naturally writes what a value may be.

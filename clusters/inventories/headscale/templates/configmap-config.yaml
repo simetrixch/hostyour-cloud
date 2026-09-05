@@ -68,7 +68,7 @@ data:
       # ingress does not open and its firewall does not carry — 443, 80 and 22 and
       # nothing else, on purpose.
       #
-      # WHAT THIS COSTS, said plainly rather than left in the word "urls": a host that
+      # WHAT THIS COSTS: a host that
       # cannot reach another directly relays through a third party's servers. What
       # that party sees is ciphertext — the relay carries a tunnel it holds no key to,
       # and it is used only when a direct connection cannot be made. What a

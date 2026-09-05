@@ -49,7 +49,7 @@ external-secrets:
   # certificate against its own container's trust store, which is the public root list its image was
   # built with and nothing else. On an installation issuing from an authority it minted for itself,
   # every secret of every application therefore fails to materialize, and what an operator reads is
-  # `vault-backend ... unable to create client` — measured on this platform once already.
+  # `vault-backend ... unable to create client`.
   #
   # THE CONTROLLER AND NOT EACH SecretStore. The provider offers `caProvider` per store, and there is
   # one store per application: the same fact would be written in every chart, and each copy would

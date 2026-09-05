@@ -127,8 +127,8 @@ secret-store: {}
 # htpasswd line clusters/inventories/observability composes from push-user + push-password at
 # <stage>/app/observability, and this agent is what presents that account. Read
 # out of a second entry the two could differ, and a differing password is a push
-# the middleware rejects. This used to name <stage>/app/observability-agent, an
-# entry no vault_kv_entry row of any program writes.
+# the middleware rejects. No vault_kv_entry row of any program writes an
+# <stage>/app/observability-agent entry, so there is no second entry to read.
 # ---------------------------------------------------------------------------
 externalsecret-agent-push:
   externalSecret:

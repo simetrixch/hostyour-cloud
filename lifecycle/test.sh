@@ -351,9 +351,8 @@ ok 'the planted defect was caught — the comparison of the release pair can go 
 # push the hook refuses leaves it standing in the checkout and nowhere else,
 # naming the commit it was minted for rather than the one a later run releases.
 # Reusing it aims every retry at that same commit and is refused for the same
-# reason — printed as if it were about the new attempt. Measured on a real
-# workstation: three runs of one version refused in a row, cleared only by
-# deleting the tag by hand.
+# reason — printed as if it were about the new attempt, until somebody deletes
+# the tag by hand.
 STALE='0.2.0-alpha-19700101000000'
 git -C "$WORK_A" tag -a "$STALE" -m 'left behind by a refused push' origin/apps4.example.invalid
 git -C "$WORK_B" tag -a "$STALE" -m 'left behind by a refused push' origin/apps4.example.invalid

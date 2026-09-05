@@ -17,7 +17,7 @@
 # that instance's own in-cluster registration is restricted to that one namespace
 # (clusters/slaves/slave/templates/cluster-in-cluster.yaml).
 #
-# WHAT IS NOT HERE, and it is named rather than left to be discovered. Two of the objects the Manager
+# WHAT IS NOT HERE. Two of the objects the Manager
 # writes per unit land in namespaces neither instance manages:
 #
 #   <unit>-build   the EventListener's create grant and the manager's read grant. They are stage-FREE

@@ -176,9 +176,9 @@ esac
 # and no part of it varies with an installation's stage. Written as the stage
 # placeholder it renders correctly on a dev installation by accident, because the
 # stamp puts "dev" back, and names a group no cluster registers on every other
-# stage. Measured on a real machine: the cicd project permits
-# triggers.tekton.prod, ArgoCD cannot manage the ClusterInterceptors, and the
-# tekton application stands OutOfSync for ever with the image-builder behind it.
+# stage. On such a stage the cicd project permits triggers.tekton.<stage>, ArgoCD
+# cannot manage the ClusterInterceptors, and the tekton application stands
+# OutOfSync for ever with the image-builder behind it.
 #
 # READ OFF origin/master, not the working tree: that is the tree this release
 # publishes, and a correction sitting uncommitted beside it would let a release
@@ -198,9 +198,8 @@ EXISTING="$(git tag -l "${PREFIX}*" | sort | tail -1)"
 # it aims every retry at the commit a refused push left behind. The tag is minted
 # before it is pushed, so a push the pre-push hook refuses leaves it standing here
 # and nowhere else; the next run finds it, reuses it, and is refused again — for
-# the same reason, printed as if it were about the new attempt. Measured on this
-# workstation: three runs of 0.7.8 refused in a row, cleared only by deleting the
-# tag by hand.
+# the same reason, printed as if it were about the new attempt, until somebody
+# deletes the tag by hand.
 #
 # A TAG THAT IS ON ORIGIN IS LEFT EXACTLY AS IT STANDS, whatever commit it names.
 # That is mint-once itself: one release per version and channel, reused so a

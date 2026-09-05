@@ -1,12 +1,10 @@
 apiVersion: v2
 name: dbgate
-# 3.0.0 — BREAKING vs 2.0.0, and it undoes what 2.0.0 was. 2.0.0 was a per-slave
-# render standing ON THE MASTER (slaves/dbgate), reached at gate-<name>.<master>,
-# dialling a slave's databases at the slave's own address. That only worked if the
-# slave published mongodb and redis outside its cluster, which hostyour-cloud#66
-# refused. 3.0.0 is a platform application again: one release per cluster whose
-# role is `slave`, in a `dbgate` namespace of THAT cluster, dialling the two
-# databases by their in-cluster Service names. Nothing upgrades in place.
+# 3.0.0 — BREAKING vs 2.0.0: nothing upgrades in place. This is a platform
+# application, one release per cluster whose role is `slave`, in a `dbgate`
+# namespace of THAT cluster, dialling the two databases by their in-cluster
+# Service names. It never reaches a database outside its own cluster, because a
+# slave publishes mongodb and redis nowhere.
 version: 3.0.0
 appVersion: "7.2.3"
 description: |

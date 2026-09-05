@@ -305,10 +305,9 @@ ingress:
 # expressions resolve before the file reaches zot — and they must stay Helm expressions rather than
 # JSON comments, because what is below becomes config.json literally and JSON has no comments.
 #
-# Spelled out literally, the two disagreed the moment an operator chose a name: the credential said
-# platform-pull, this policy said pull-user, and every probe against the registry answered 403 —
-# authenticated and then refused, which is neither present nor absent and the one answer a probe that
-# decides whether to build cannot act on.
+# Where the two disagree — the credential saying platform-pull and this policy pull-user — every
+# probe against the registry answers 403: authenticated and then refused, which is neither present
+# nor absent and the one answer a probe that decides whether to build cannot act on.
 configmap:
   configmap:
     enabled: true

@@ -50,8 +50,7 @@ DEPLOY_ENV=
 # and is stamped into installation/profile.yaml as `global.domain`, which every platform hostname of this
 # cluster hangs off.
 #
-# THIS KEY IS NOT ONE A LATER RUN READS BACK, and it stopped being one when the slave's install
-# branch was dropped. FIVE values in this file are read back, counted from `conditions:` in
+# THIS KEY IS NOT ONE A LATER RUN READS BACK. FIVE values in this file are read back, counted from `conditions:` in
 # ../hostyour-deploy/ansiwise.yaml and from the one row outside it: CLUSTER_ISSUER, the three ENABLE_
 # switches at the foot, and DEPLOY_REPO, which deploy-platform-services clones the catalogue from
 # through `origin_file`. Every one of those five is an INSTALLATION-wide fact — the same word for
@@ -200,12 +199,12 @@ ENABLE_RECONCILER=true
 #
 # IT IS A NAME AND NOT A SWITCH, and that is not a matter of taste. The certificate service watches
 # the NAME a certificate is issued by and never the specification behind it. A boolean beside a
-# single name could be turned over while every certificate went on being signed by the authority
-# that had just been taken away - measured on apps5 on 2026-09-01, with the cluster serving
-# certificates whose root it had deleted in the same run. Changing the NAME is what makes the service
-# issue everything again, by itself, with nothing left to remember.
+# single name can be turned over while every certificate goes on being signed by the authority that
+# was taken away in the same run, and the cluster then serves certificates whose root it deleted.
+# Changing the NAME is what makes the service issue everything again, by itself, with nothing left
+# to remember.
 #
-# WHAT IT COSTS WHILE IT IS platform-local, so that nobody reads the consequence as a defect: the
+# WHAT IT COSTS WHILE IT IS platform-local: the
 # machine is given that authority and every step of the installation verifies normally, but a browser
 # warns on every address of this cluster and workloads that reach it from INSIDE - the secret
 # operator dialling the store, the reconciler exchanging its token - are refused, unless the trust

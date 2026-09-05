@@ -245,11 +245,9 @@ global:
   #
   # ONE READER, and it reads it as an EGRESS destination:
   # clusters/inventories/consumer-build/templates/networkpolicy.yaml lets a build pod out to
-  # Traefik on 8443/443. NO DATABASE POLICY NAMES IT ANY MORE. The two that did
-  # were the second half of an IngressRouteTCP publishing mongodb and redis
-  # outside their own cluster, and hostyour-cloud#66 removed route and rule
-  # together — a database this platform runs is reached from its own cluster, so
-  # the controller has no part in reaching it.
+  # Traefik on 8443/443. NO DATABASE POLICY NAMES IT: a database this platform
+  # runs is reached from its own cluster, so the controller has no part in
+  # reaching it.
   ingressNamespace: ingress
 
   # ── Release-tag grammar — the ONE build-plane copy ─────────────────────────

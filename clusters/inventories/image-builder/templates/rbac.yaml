@@ -45,7 +45,7 @@ metadata:
   # RoleBinding (not ClusterRoleBinding) on purpose: pins the ClusterRole's
   # `secrets` rule to THIS namespace (the github/HMAC secretRef lives here). The
   # ClusterRole's cluster-scoped rules are inert through a RoleBinding — the
-  # ClusterRoleBinding below carries those (hostyour-cloud#22).
+  # ClusterRoleBinding below carries those.
   name: {{ .Values.pipeline.eventListenerServiceAccountName }}-triggers-secrets
   namespace: {{ .Release.Namespace }}
 subjects:
@@ -59,8 +59,8 @@ roleRef:
 ---
 # Cluster-scoped read the EventListener actually needs: ClusterTriggerBindings +
 # ClusterInterceptors (the cel/github interceptors the triggers reference) are
-# CLUSTER-scoped, so a RoleBinding can NEVER grant them — that was the bug that
-# stopped every webhook/release build (hostyour-cloud#22). This ClusterRole is
+# CLUSTER-scoped, so a RoleBinding can NEVER grant them, and without them no
+# webhook and no release build starts. This ClusterRole is
 # cluster-resources-ONLY (no secrets), so the ClusterRoleBinding does not hand
 # eventlistener-sa cluster-wide Secret access.
 apiVersion: rbac.authorization.k8s.io/v1

@@ -1,18 +1,15 @@
 # clusters/platform/install-order.yaml
 # =============================================================================
 # THE ORDER THE PROGRAMS OF AN INSTALLATION RUN IN, and what each of them needs
-# to already stand. Before this file the order for a first master was written
-# nowhere: it was carried in an operator's head and in a table in a chat window,
-# while the order for a slave was written in TypeScript in a third repository
-# (hostyour-manager server/domains/runs/defs/deploy-slave.ts). Two carriers of
-# one fact disagree the moment one of them is edited, and neither of them can be
-# read by whoever is standing in front of a bare machine.
+# to already stand. It is the one place the order for a first master is written
+# down; the order for a slave is written in TypeScript in hostyour-manager
+# server/domains/runs/defs/deploy-slave.ts, and a second copy of either disagrees
+# with the first the moment one of them is edited.
 #
 # THIS FILE STATES THE ORDER. IT DOES NOT RUN IT. Nothing here starts a program
 # and nothing here is a step. A driver reads the sequence and invokes the
-# programs itself; putting a run inside a run is what the ticket that asked for
-# this file ruled out, because a failure halfway through a child leaves a parent
-# that cannot say what happened.
+# programs itself; a run started from inside a run cannot say what happened when
+# the child fails halfway through, so nothing here starts one.
 #
 # WHO READS IT TODAY: TWO PROGRAMS, IN TWO OTHER REPOSITORIES, and neither of
 # them is a driver.
@@ -36,9 +33,6 @@
 # programs from step lists written in TypeScript. So a row changed here reaches
 # every READER and no RUN, and that is the distinction to hold on to: this file
 # tells people what an installation does, and nothing here makes it do it.
-#
-# It is stated rather than implied, because a declaration nothing consumes looks
-# exactly like one that is obeyed, and so does one that is only read.
 #
 # WHY IT STANDS HERE AND NOT IN THE CATALOGUE. The catalogue holds the programs;
 # it belongs to the installation that was handed it, and every installation gets
@@ -77,16 +71,11 @@
 # branch and rewrites it afterwards, deciding which by asking the remote whether
 # it publishes one; the other four are watched only on a first install.
 #
-# HOW FAST THIS FILE GOES STALE, measured rather than feared. One check holds one
-# thing about it — `install-order.agrees`, in another repository, comparing the
-# manager's own program lists against a sequence below — and nothing in THIS
-# repository holds anything. So a sentence here goes on being read after it stops
-# being true and only a person reading the file finds it: a program name that
-# versions.yaml beside this file stamps no site in, while it stamps four under
-# another name; a `needs` path this repository has renamed; an answer whose value
-# comes from a run. That is the argument for a driver, and it is also the
-# warning: a row here is intent, not behaviour, and it is verified against the
-# programs in the catalogue and against this tree before it is relied on.
+# A ROW HERE IS INTENT, NOT BEHAVIOUR. One check holds one thing about this file
+# — `install-order.agrees`, in another repository, comparing the manager's own
+# program lists against a sequence below — and nothing in THIS repository holds
+# anything. A row is verified against the programs in the catalogue and against
+# this tree before it is relied on.
 #
 # ONE SEQUENCE, ONE ACT: INSTALLING A MACHINE FROM BARE METAL. That is what every
 # list below states, and it is why `needs` is the load-bearing part of this file
@@ -106,14 +95,10 @@
 # slave part has to arrive as a property of the branch the machine already reads,
 # and the machine programs have to act on that branch and not on the one before it.
 #
-# NEITHER ORDER IS WRONG AND NEITHER IS A COPY OF THE OTHER. They answer two
-# questions: what has to be true before a program can run AT ALL, which is what
-# this file states, and which order carries a machine from one state to another,
-# which belongs to the act making the change. A second sequence here naming the
-# second act would be a list derivable from the needs already written above it, and
-# a derivable list is a copy that drifts — which is the thing this file exists
-# against. So it is not here, and the rule is: read the sequence as the order for a
-# machine that carries nothing yet, and read the `needs` for every other case.
+# THE RULE FOR READING BOTH: the sequence is the order for a machine that carries
+# nothing yet, and the `needs` answer every other case. A second sequence here for
+# the second act would be derivable from those needs, and a derivable list drifts
+# from what it was derived from.
 # =============================================================================
 
 # The engine binary, as the path it is installed to. deploy-cluster's
@@ -199,10 +184,9 @@ sequence:
 
     - program: deploy-cluster
       needs:
-        # The cluster map and the secret file, both written by deploy-branch. This
-        # is the edge that contradicted the earlier assumption: deploy-cluster
-        # cannot run before deploy-branch, because it reads two files that do not
-        # exist until deploy-branch has written them.
+        # The cluster map and the secret file, both written by deploy-branch.
+        # deploy-cluster cannot run before deploy-branch, because it reads two
+        # files that do not exist until deploy-branch has written them.
         - /srv/hostyour-cloud/clusters/active/<fqdn>.yaml
         - /srv/hostyour-cloud/secrets/secrets.<stage>
 
@@ -249,14 +233,12 @@ sequence:
   # written out rather than referenced, because this file's grammar is one ordered
   # list per role and a reader of one role must not have to resolve another.
   #
-  # THIS LIST STOOD AT FIVE AND WAS MISSING `tailnet-join-self`, which is a copy that
-  # did not move when the master's list did. It is written back in here because the
-  # rule above is what decides the content — this role IS a master plus a part — and
-  # because that program declares `roles: [master]` (hostyour-deploy
-  # ansiwise/programs/tailnet-join-self.yaml), which a master+slave machine carries.
-  # A master that never joined the network it runs the coordinator for cannot reach
-  # a slave at the address the design tells it to dial, and nothing else notices:
-  # every surface answers over its public name.
+  # `tailnet-join-self` is in this list because a master+slave machine carries the
+  # master part and that program declares `roles: [master]` (hostyour-deploy
+  # ansiwise/programs/tailnet-join-self.yaml). A master that never joined the
+  # network it runs the coordinator for cannot reach a slave at the address the
+  # design tells it to dial, and nothing else notices: every surface answers over
+  # its public name.
   master+slave:
     - program: deploy-host
       needs: []
