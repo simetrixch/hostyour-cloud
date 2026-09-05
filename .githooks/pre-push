@@ -1,220 +1,26 @@
 #!/usr/bin/env bash
-# The checks run here, on this machine, before anything leaves it.
+# NOT A GATE. The push gate of every repository of this organisation is one file, simetrix-gh's
+# hooks/pre-push, and this finds it and hands it git's own standard input unread. Nothing is
+# decided here, so this file cannot come to a different verdict than the one beside it in the
+# next repository.
 #
-# A check somebody else's machine runs is a check the person who wrote the code does not watch:
-# they push, they walk away, and the failure arrives later addressed to nobody. So the charts,
-# the delivery programs and the credential scan run at the push, and a red one keeps the commits
-# local.
+# Installed once per clone with:  git config core.hooksPath .githooks
 #
-# THE COMMIT MESSAGES ARE READ TOO, and the work here stays on master. A commit reaches master
-# with the number of the issue it belongs to written in it — anywhere in the message, subject or
-# body, because on master nothing sorts commits by their opening word and a number in the body is
-# as findable as one in the subject. Three kinds of commit carry no number and are not defects:
-# a release stamp, which belongs to no issue; a commit that only explains, which changes nothing
-# a check can run against; and a commit somebody deliberately asked for outside the tracker,
-# which says so in a No-issue trailer naming who asked.
+# THE NEIGHBOURHOOD IS MEASURED FROM THE MAIN CHECKOUT, NOT FROM THIS TREE. Work is done in a
+# worktree under `../.worktrees/<repo>/`, and the only thing standing beside a worktree is
+# another worktree. `--git-common-dir` points into the main checkout's `.git` from a worktree as
+# well as from the checkout itself, so one line answers for both.
 #
-# Install it once, in this checkout:  git config core.hooksPath .githooks
-
+# THE TOOLING CHECKOUT IS FOUND BY NAME, WITHOUT CASE. A checkout is regularly cased differently
+# from the repository it came from, and an exact match reports a present one as absent.
 set -uo pipefail
-
-root="$(git rev-parse --show-toplevel)" || exit 1
-cd "$root" || exit 1
-# Git exports GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE to a hook. A check that starts git itself in
-# a temporary directory - a test that runs git init and git remote add - would then act on THIS
-# repository instead of its own. The hook has changed into the tree by now, so git finds it by
-# the working directory and nothing below needs the variables.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
-
-head_sha="$(git rev-parse HEAD)" || exit 1
-pushed=0
-unexplained=""
-scan_ranges=""
-
-# Only the files a commit changes decide whether it explains and nothing more. A root commit has
-# no parent to diff against, which `git diff-tree` answers with silence and `git log` answers
-# with the whole tree — so this reads it the second way.
-explains_only() {
-  local commit="$1" file changed=0
-  while IFS= read -r file; do
-    [ -n "$file" ] || continue
-    changed=1
-    case "${file##*/}" in
-      *.md | LICENSE*) ;;
-      *) return 1 ;;
-    esac
-  done <<EOF
-$(git log -1 --format= --name-only "$commit")
-EOF
-  [ "$changed" -eq 1 ]
-}
-
-# Git writes one line per ref being pushed: local ref, local sha, remote ref, remote sha.
-while read -r local_ref local_sha remote_ref remote_sha; do
-  [ -n "${local_ref:-}" ] || continue
-
-  # An all-zero local sha is a branch being deleted. It carries no commit, so it is counted out,
-  # and a push that names nothing else is let through without running the checks.
-  case "$local_sha" in
-    *[!0]*) ;;
-    *) continue ;;
-  esac
-  pushed=$((pushed + 1))
-
-  # The checks below run against the working copy, which is HEAD. A ref that is not HEAD would be
-  # judged by a run that never read it.
-  #
-  # WHAT IS PUSHED IS RESOLVED TO A COMMIT FIRST. An annotated tag hands its own object's sha here,
-  # never the commit it names, so comparing it to HEAD refuses every annotated tag there is -
-  # including the ones lifecycle/release-platform.sh mints. Resolving it asks the question the
-  # refusal below means to ask: does the tree this ref names match the tree the checks read.
-  local_commit="$(git rev-parse --quiet --verify "${local_sha}^{commit}" 2>/dev/null || printf '%s' "$local_sha")"
-  if [ "$local_commit" != "$head_sha" ]; then
-    echo "REFUSED: $local_ref is not the checked-out commit, so its checks did not run."
-    echo "Check out that commit and push it again."
-    exit 1
-  fi
-
-  # A remote sha this checkout does not carry cannot be measured from. git rev-list would fail with
-  # its message silenced, the loop below would read zero commits, and a forced push over an
-  # unfetched remote would pass the message rule with nothing read at all.
-  case "$remote_sha" in
-    *[!0]*)
-      if ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
-        echo "REFUSED: the commit $remote_sha that $remote_ref points at is not in this checkout, so the commits being pushed cannot be listed."
-        echo "Run git fetch, then push again."
-        exit 1
-      fi
-      ;;
-  esac
-
-  # An all-zero remote sha is a ref the remote does not have yet, so there is no "before" to
-  # compare with. Reading that as "everything reachable" judges the whole history - every commit
-  # already published, by whatever rule held when it was written. A TAG is exactly that case: it
-  # names a commit the branch already carries, so what it introduces is nothing at all. Excluding
-  # every remote ref this checkout knows asks the question the loop below means to ask - which
-  # commits does this push add - and answers it with none where none are added.
-  case "$remote_sha" in
-    *[!0]*) range="$remote_sha..$local_sha" ;;
-    *) range="$local_sha --not --remotes=origin" ;;
-  esac
-
-  # THE RANGE IS COLLECTED FOR THE CREDENTIAL SCAN AT THE END. This loop is the only place that
-  # knows what the remote already has, and the scan needs exactly that.
-  #
-  # An all-zero remote sha has no "before", so reading it as "everything reachable" scans the whole
-  # history. What that costs is not only time: the initial commit of this repository carries four
-  # findings of its own in secrets/secrets.example, the file that names every credential an
-  # installation is asked for, and they are in every clone already - no push can take them back
-  # out. Excluding every remote ref this checkout knows leaves exactly what a push can still add,
-  # and leaves a tag naming an already-published commit with nothing to scan.
-  case "$remote_sha" in
-    *[!0]*) pushed_range="$local_sha ^$remote_sha" ;;
-    *) pushed_range="$local_sha --not --remotes=origin" ;;
-  esac
-  scan_ranges="$scan_ranges$pushed_range"$'\n'
-
-  # A merge carries no work of its own and its message is written by git, so it is left out.
-  while IFS= read -r commit; do
-    [ -n "$commit" ] || continue
-
-    message="$(git log -1 --format=%B "$commit")"
-    subject="$(git log -1 --format=%s "$commit")"
-
-    # An issue number anywhere in the message.
-    printf '%s' "$message" | grep -Eq '#[0-9]+' && continue
-
-    # A release stamp. It belongs to no issue: it records that a version was cut.
-    case "$subject" in release:*) continue ;; esac
-
-    # A No-issue trailer, which has to name a reason — the trailer alone says nothing.
-    printf '%s\n' "$message" | grep -Eq '^No-issue:[[:space:]]*[^[:space:]]' && continue
-
-    # A commit that only explains.
-    explains_only "$commit" && continue
-
-    unexplained="$unexplained
-  $(git log -1 --format='%h %s' "$commit")"
-  done <<EOF
-$(git rev-list --no-merges $range 2>/dev/null)
-EOF
+main="$(cd "$(git rev-parse --git-common-dir)/.." && git rev-parse --show-toplevel)"
+for entry in "$(dirname "$main")"/*; do
+  [ -d "$entry" ] || continue
+  [ "$(printf '%s' "${entry##*/}" | tr '[:upper:]' '[:lower:]')" = 'simetrix-gh' ] || continue
+  [ -f "$entry/hooks/pre-push" ] \
+    || { echo "pre-push: REFUSED — $entry/hooks/pre-push is missing, so nothing judged this push." >&2; exit 1; }
+  exec bash "$entry/hooks/pre-push" "$@"
 done
-
-if [ -n "$unexplained" ]; then
-  echo "REFUSED: a commit on master names the issue it belongs to, or says why it has none."
-  echo "These do neither:$unexplained"
-  echo "Each one needs an issue number (#<n>) anywhere in its message, or a 'release:' subject,"
-  echo "or a 'No-issue: <who asked, and when>' trailer. A commit that only changes *.md or"
-  echo "LICENSE* needs none of them. Reword them, then push again."
-  exit 1
-fi
-
-if [ "$pushed" -eq 0 ]; then
-  echo "pre-push: nothing to check, no commits are being pushed."
-  exit 0
-fi
-
-# No push without the three team modes (the language rules). The check lives in the issue tooling
-# beside the main checkout, found by name whatever letter case the checkout was cloned under; a push
-# whose modes cannot be checked does not leave the machine.
-#
-# THE SIBLINGS STAND BESIDE THE MAIN CHECKOUT, and this hook also runs from a worktree. An issue is
-# worked in a worktree under ../.worktrees/<repo>/, whose own parent directory holds nothing but
-# other worktrees, so a search beside the working tree finds no tooling there. The common git
-# directory is the main checkout's .git from either place, and it is what the neighbourhood is
-# measured from.
-modes_check=""
-common="$(git rev-parse --git-common-dir)" || exit 1
-case "$common" in
-  /*|[A-Za-z]:*) ;;
-  *) common="$root/$common" ;;
-esac
-main_checkout="$(cd "$common/.." && pwd)" || exit 1
-for sibling in "$main_checkout"/../*/; do
-  [ -d "$sibling" ] || continue
-  case "$(basename "$sibling" | tr '[:upper:]' '[:lower:]')" in
-    simetrix-gh) modes_check="$(cd "$sibling" && pwd)/bin/team-modes-check.sh" ;;
-  esac
-done
-if [ -z "$modes_check" ]; then
-  echo "REFUSED: the issue tooling is not beside $main_checkout, so the team modes cannot be checked."
-  echo "It is a checkout named simetrix-gh, standing beside that one, holding bin/team-modes-check.sh."
-  exit 1
-fi
-if [ ! -f "$modes_check" ]; then
-  echo "REFUSED: $modes_check does not exist, so the team modes cannot be checked."
-  exit 1
-fi
-bash "$modes_check" || {
-  echo "REFUSED: the team modes are missing; the lines above say which and how to install them."
-  exit 1
-}
-
-echo "pre-push: the charts, lifecycle/test.sh and the credential scan run here. About four minutes."
-bash "$root/scripts/check.sh" || {
-  echo "REFUSED: the line above says which check went red."
-  exit 1
-}
-
-# THE COMMITS ARE SCANNED TOO, not only the working copy. scripts/check.sh reads one state: the
-# files git would let you commit right now. A credential that was committed in one pushed commit
-# and taken out again in a later one is not in that state, and it would leave this machine unread.
-# The commits being pushed are the only place it still stands, and this hook is the only thing that
-# knows which those are.
-echo "pre-push: gitleaks over the commits this push carries."
-command -v gitleaks >/dev/null 2>&1 || {
-  echo "REFUSED: gitleaks is not on this path, so the commits being pushed cannot be read for credentials."
-  exit 1
-}
-while IFS= read -r pushed_range; do
-  [ -n "$pushed_range" ] || continue
-  gitleaks git --no-banner --log-opts="$pushed_range" "$root" || {
-    echo "REFUSED: a credential stands in a commit this push carries. The lines above name the commit, the file and the rule."
-    echo "Take it out of the history — a commit that is pushed cannot be recalled — then push again."
-    exit 1
-  }
-done <<EOF
-$scan_ranges
-EOF
-
-echo "pre-push: every check passed."
+echo "pre-push: REFUSED — no simetrix-gh checkout stands beside $main, and the push gate of every repository lives there, at hooks/pre-push." >&2
+exit 1
