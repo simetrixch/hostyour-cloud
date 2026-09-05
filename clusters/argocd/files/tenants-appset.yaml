@@ -220,7 +220,7 @@ spec:
         #    Reads no platform value, so it loads no $values file; the tenant guid is
         #    what makes the sibling rule this tenant's and not every tenant's.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: __BRANCH__
+          targetRevision: __RELEASE__
           path: clusters/units/networkpolicy
           helm:
             valuesObject:
@@ -235,7 +235,7 @@ spec:
         #    members, so each gets this ceiling and one member filling its own cannot take another's
         #    room.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: __BRANCH__
+          targetRevision: __RELEASE__
           path: clusters/units/quota
           helm:
             valuesObject:

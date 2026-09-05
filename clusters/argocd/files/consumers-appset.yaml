@@ -220,7 +220,7 @@ spec:
         #    registration (an empty list is allowed).
         {{- if has "postgresql" .services }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: __BRANCH__
+          targetRevision: __RELEASE__
           path: clusters/units/postgresql
           helm:
             # Platform globals only — the SAME $values chain source 1 reads.
@@ -271,7 +271,7 @@ spec:
         #    every commit.
         {{- if ne .mongodb "shared" }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: __BRANCH__
+          targetRevision: __RELEASE__
           path: clusters/units/mongodb
           helm:
             # Platform globals only — the SAME $values chain source 1 reads. The
@@ -312,7 +312,7 @@ spec:
         #    tenant-sibling rule its values.yaml carries stays off for a consumer, which
         #    is one namespace with no siblings.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: __BRANCH__
+          targetRevision: __RELEASE__
           path: clusters/units/networkpolicy
         # 4. The platform's own resource ceiling for this consumer's namespace
         #    (clusters/units/quota on the trunk: a ResourceQuota and the LimitRange that keeps it from
@@ -323,7 +323,7 @@ spec:
         #    table when it wrote the file; no $values file and no preset name, because the table lives
         #    in the Manager's database and no cluster can read it.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: __BRANCH__
+          targetRevision: __RELEASE__
           path: clusters/units/quota
           helm:
             valuesObject:

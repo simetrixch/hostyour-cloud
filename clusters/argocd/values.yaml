@@ -13,6 +13,17 @@
 #                                __CLUSTER_ROLE_LAST_PART__, split on "+" so a master+slave machine
 #                                admits both parts (cluster-map.tpl:24). Its first part also
 #                                decides __ARGOCD_NAMESPACE__.
+#   release                      the marker __RELEASE__ — the release tag this cluster stands on.
+#                                Top level of the map, written from cluster-map.tpl:31 and moved by
+#                                lifecycle/release-platform. It is the ref every source that reads a
+#                                CHART of this repository targets, so a release that touched only
+#                                the chart trees reaches the cluster the moment that one line is
+#                                pushed. It is the ONE value here with a default: a map carrying no
+#                                pin reads its charts from global.booksCluster, the install branch,
+#                                which is what every source read before the two were told apart. A
+#                                required guard is refused for it — the Manager writes a slave's map
+#                                without a pin on purpose, and the guard would take that cluster's
+#                                whole reconciler tree down.
 #   global.clusterName           the marker __CLUSTER_NAME__ — the first DNS label of this
 #                                cluster's domain (cluster-map.tpl:38). It is also
 #                                __ARGOCD_NAMESPACE__ on a cluster whose role does not open with

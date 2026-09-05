@@ -44,10 +44,12 @@ spec:
       project: "{{ .values.cluster }}"
       sources:
         - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
-          targetRevision: &branch __BRANCH__
+          # TWO REFS AND NO ANCHOR BETWEEN THEM. The values chain is this installation's own and
+          # stands on its branch; the chart is the product and stands on the release tag.
+          targetRevision: __BRANCH__
           ref: values
         - repoURL: *repo
-          targetRevision: *branch
+          targetRevision: __RELEASE__
           path: clusters/slaves/slave
           helm:
             valueFiles:

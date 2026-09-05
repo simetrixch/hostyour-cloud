@@ -87,14 +87,16 @@ spec:
       sources:
         # 0. Values-only source — makes $values/... resolvable for the chart source.
         - repoURL: &repo https://github.com/simetrixch/hostyour-cloud.git
-          targetRevision: &branch __BRANCH__
+          # TWO REFS AND NO ANCHOR BETWEEN THEM. The values chain is this installation's own and
+          # stands on its branch; the chart below is the product and stands on the release tag.
+          targetRevision: __BRANCH__
           ref: values
         # 1. This same chart in UNIT mode: the registration's fields arrive as
         #    LITERALS via valuesObject — the attested record from master, never
         #    a webhook payload. The platform values reach the chart as global.*
         #    over the SAME $values chain every platform app loads.
         - repoURL: *repo
-          targetRevision: *branch
+          targetRevision: __RELEASE__
           path: clusters/inventories/consumer-build
           helm:
             valueFiles:

@@ -6,7 +6,7 @@ The seven manifests stand in files/ and not in templates/. ArgoCD reads its own
 by Helm first, so a manifest placed there would lose those expressions. This
 template reads each file whole with .Files.Get and puts this cluster's own
 values in place of the markers. The idiom is the one
-clusters/inventories/consumer-build/templates/applicationset.yaml:27 already
+clusters/inventories/consumer-build/templates/applicationset.yaml:34 already
 uses, for the same reason.
 
 A REPLACE HAS NO KEY AND NO KEEP MARKER. `replace` rewrites every occurrence of
@@ -18,6 +18,17 @@ replaced. The word `argocd` stands inside the annotation domain
 argocd.argoproj.io, and the word `master` stands in prose and once as the tenant
 catalog's own branch, so files/ carries __ARGOCD_NAMESPACE__ and __BRANCH__ at
 the sites where those two are values.
+
+__RELEASE__ AND __BRANCH__ ARE TWO REFS, AND WHICH ONE A SOURCE TAKES FOLLOWS
+FROM WHAT IT READS. A source reading a CHART of this repository takes
+__RELEASE__, the release tag the cluster map records, because the tree at the
+tag IS the release: a chart that moved on the trunk then reaches the cluster the
+moment the pin is pushed, with no branch program run. A source reading this
+INSTALLATION'S OWN state -- the values chain, the cluster maps, the
+registrations -- takes __BRANCH__, because that state stands on the install
+branch and nowhere else. A map carrying no pin falls back to __BRANCH__, which
+is what every source read before this split, and the Manager writes a slave's
+map without one on purpose, so that fallback is not a corner case.
 
 __BRANCH__ AND __FQDN__ ARE TWO QUESTIONS THAT WERE ONE WORD. __FQDN__ is what
 this cluster is called — it names the cluster map, and it is a fqdn a selector
@@ -54,6 +65,14 @@ block is bound once here and every key below is read out of the binding.
 {{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role. It carries this installation's registrations AND every cluster map of it, and it is the branch every source of this tree reads from: a cluster carrying only the slave part has no branch of its own" $global.booksCluster }}
 {{- $catalogRepo := required "argocd-apps: global.catalogRepo is required (clusters/active/<fqdn>.yaml) — the tenant catalog as bare owner/name, written inside a URL these files already carry" $global.catalogRepo }}
 {{- $holdsBooks := required "argocd-apps: global.servicesLocal.vault is required (clusters/active/<fqdn>.yaml) — it says whether this cluster keeps the books, and the three files below exist only on the cluster that does" (dig "servicesLocal" "vault" "" $global) }}
+{{- /*
+NO `required` ON THE PIN. `release:` is absent from a map the Manager writes for
+a slave, which takes the pin off on purpose, and from a map made before the line
+existed. A guard here would fail the whole render for such a cluster and take
+every Application of it down; the default leaves it reading its charts from the
+install branch, which is what it read before this split.
+*/ -}}
+{{- $release := .Values.release | default $booksFqdn }}
 {{- $roleParts := splitList "+" $role }}
 {{- /*
 WHERE THIS CLUSTER'S ARGOCD OBJECTS STAND. On a cluster that carries the master
@@ -68,7 +87,7 @@ stands Unknown, and a deployment's verification waits out its clock on it.
 {{- $docs := list }}
 {{- range $name := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "repo-catalog.yaml" "slaves-appset.yaml" "tenants-appset.yaml" }}
 {{- if or $holdsBooks (not (has $name $booksOnly)) }}
-{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__BRANCH__" $booksFqdn | replace "__ARGOCD_NAMESPACE__" $namespace }}
+{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__BRANCH__" $booksFqdn | replace "__RELEASE__" $release | replace "__ARGOCD_NAMESPACE__" $namespace }}
 {{- $docs = append $docs (printf "# file: %s\n%s" $name $doc) }}
 {{- end }}
 {{- end }}

@@ -30,10 +30,13 @@ None of them is started by hand.
 
 A release is TWO acts and they are separate on purpose. `release-platform` puts the tag on the remote
 and writes `release: <tag>` into `clusters/active/<fqdn>.yaml` on the installation's own branch —
-and stops. The installation still stands on the state before it. `regenerate-install-branch` is what
-brings the branch to the pin: it reads the ref off that line rather than being told it again, so the
-pin and the regeneration are one statement instead of two that can disagree. Between the two acts
-somebody can read what the pin now says and stop.
+and stops. That line alone moves every CHART the cluster reads, because every source that reads a
+chart of this repository targets the ref it records. Three trees are read from the install branch
+instead and do not move with it: `clusters/argocd`, `clusters/bootstrap` and `clusters/platform`.
+`regenerate-install-branch` is what carries those: it reads the ref off that same line rather than
+being told it again, so the pin and the regeneration are one statement instead of two that can
+disagree. Between the two acts somebody can read what the pin now says, ask `status` which of those
+three trees this release touched, and stop where it touched none.
 
 # Installing a first master
 

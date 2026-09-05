@@ -20,10 +20,14 @@
 #
 # THIS IS THE SECOND ACT, and release-platform.ps1 beside it is the first. That
 # one writes `release: <tag>` into clusters/active/<fqdn>.yaml on the install
-# branch and stops; a pin is a statement about which state an installation
-# SHOULD stand on, and until a regeneration runs, the machine stands on the one
-# before it. This performs the regeneration, and the two are separate acts on
-# purpose: between them somebody can read what the pin now says and stop.
+# branch and stops. That line alone moves every CHART the cluster reads: the
+# reconciler's own tree fills __RELEASE__ from it, and every source that reads a
+# chart of this repository targets that ref. What it does not move is the three
+# trees the reconciler reads from the install branch itself -- clusters/argocd,
+# clusters/bootstrap and clusters/platform. This performs the regeneration that
+# carries those, and the two are separate acts on purpose: between them somebody
+# can read what the pin now says, ask status.sh which of those trees this release
+# touched, and stop where it touched none.
 #
 # THE REF IS READ OFF THE PIN AND NEVER ASKED FOR. `release:` in that map is
 # where the first act recorded the state, so reading it is what makes the pin and

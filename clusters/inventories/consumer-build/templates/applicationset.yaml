@@ -5,6 +5,10 @@ own {{ }} goTemplate expressions survive Helm rendering untouched). Three
 substitutions, and the two branches are DIFFERENT branches:
 
   __STAGE__  global.env.
+  __RELEASE__ the release tag this cluster stands on, from the map's own
+             `release:` line, which is where the CHART source below reads this
+             chart from. Absent, it falls back to __BRANCH__, which is what
+             that source read before the two were told apart.
   __BRANCH__ global.domain — the install branch of the cluster this build
              plane runs ON, which is where the generated Applications render
              this chart from. app.yaml says runsOn: master, so this chart is
@@ -26,5 +30,6 @@ clusters/inventories/consumer-build/app.yaml says runsOn: master, so the app gen
 it on the build plane and nowhere else.
 */ -}}
 {{- if not .Values.unit }}
-{{- .Files.Get "files/applicationset.yaml" | replace "__CLUSTER__" (required "consumer-build: global.clusterName is required (clusters/active/<fqdn>.yaml) — the build Applications name the cluster they deploy to, and their project allows that name" .Values.global.clusterName) | replace "__STAGE__" .Values.global.env | replace "__BRANCH__" .Values.global.domain | replace "__BOOKS__" (required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksCluster) }}
+{{- $release := .Values.release | default .Values.global.domain }}
+{{- .Files.Get "files/applicationset.yaml" | replace "__RELEASE__" $release | replace "__CLUSTER__" (required "consumer-build: global.clusterName is required (clusters/active/<fqdn>.yaml) — the build Applications name the cluster they deploy to, and their project allows that name" .Values.global.clusterName) | replace "__STAGE__" .Values.global.env | replace "__BRANCH__" .Values.global.domain | replace "__BOOKS__" (required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksCluster) }}
 {{- end }}

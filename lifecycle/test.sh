@@ -167,12 +167,13 @@ mkdir -p "$SEED/clusters/argocd/files" "$SEED/clusters/bootstrap/idp" \
 # The same byte rule the real tree carries, so the fixture's files are stored and
 # checked out LF on every machine.
 echo "* text=auto eol=lf" > "$SEED/.gitattributes"
-# One file in each stamped tree, carrying a marker exactly as the trunk does, and
-# one file outside them — so a commit that touches only the third proves the
-# split in the report is real and not a count of everything.
+# One file in each tree a regeneration carries, and one file outside them all —
+# so a commit that touches only the last proves the split in the report is real
+# and not a count of everything.
 echo "selector: __CLUSTER_ROLE_FIRST_PART__" > "$SEED/clusters/argocd/files/platform-apps-appset.yaml"
-echo "host: idp.example.invalid" > "$SEED/clusters/bootstrap/idp/values.yaml"
+echo "host: idp.<fqdn>" > "$SEED/clusters/bootstrap/idp/ingressroute.tpl"
 echo "platform: 0.0.0" > "$SEED/clusters/platform/versions.yaml"
+echo "# the product tree" > "$SEED/README.md"
 touch "$SEED/clusters/active/.gitkeep"
 git -C "$SEED" add -A
 git -C "$SEED" commit --quiet -m "Seed the trunk"
@@ -296,7 +297,10 @@ advance_master() { # a checkout to commit in and push from
   git -C "$checkout" commit --quiet -m "Move a file only a regeneration carries"
   echo "platform: 0.0.1" >> "$checkout/clusters/platform/versions.yaml"
   git -C "$checkout" add -- clusters/platform/versions.yaml
-  git -C "$checkout" commit --quiet -m "Move a file nothing stamps"
+  git -C "$checkout" commit --quiet -m "Move a second file only a regeneration carries"
+  echo "# and a line nobody reads" >> "$checkout/README.md"
+  git -C "$checkout" add -- README.md
+  git -C "$checkout" commit --quiet -m "Move a file no cluster ever reads"
   git -C "$checkout" push --quiet origin master
 }
 advance_master "$WORK_A"
@@ -304,11 +308,12 @@ advance_master "$WORK_B"
 
 run_bash status
 run_pwsh status
-must "  behind: 2 commits on origin/master since that release, 1 of them under clusters/argocd or clusters/bootstrap" \
-     'the report counts the commits since the pin and the stamped ones among them'
-must "  stamped: clusters/argocd/files/platform-apps-appset.yaml" 'the report names the stamped file that moved'
-must_not "  stamped: clusters/platform/versions.yaml" 'a file outside the stamped trees is not reported as stamped'
-same 'the report with the trunk two commits ahead'
+must "  behind: 3 commits on origin/master since that release, 2 of them under the trees a regeneration carries: clusters/argocd, clusters/bootstrap or clusters/platform" \
+     'the report counts the commits since the pin and the ones a regeneration has to carry among them'
+must "  regenerate: clusters/argocd/files/platform-apps-appset.yaml" 'the report names the file of the reconciler tree that moved'
+must "  regenerate: clusters/platform/versions.yaml" 'and the file of the platform values chain, which nothing stamps and a regeneration still carries'
+must_not "  regenerate: README.md" 'a file no cluster reads is not reported'
+same 'the report with the trunk three commits ahead'
 
 # ── the report, narrowed to one installation ───────────────────────────────
 run_bash status apps3.example.invalid

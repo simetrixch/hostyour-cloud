@@ -369,6 +369,61 @@ if (-not $refused.Contains($refusalSaid, [System.StringComparison]::Ordinal)) {
 }
 Write-Output 'check: a cluster map with no global: block is refused by name, not by a nil pointer.'
 
+# ── Which ref each source of that render stands on ───────────────────────────────────────────
+# A SOURCE READING A CHART STANDS ON THE RELEASE TAG, A SOURCE READING THIS INSTALLATION STANDS ON
+# ITS BRANCH, and the render is valid YAML whichever way round they are. Nothing else here would
+# notice a site left on the branch: the Application would sync, from a ref that carries whatever
+# the last regeneration wrote, and the release would appear to have reached the cluster.
+#
+# THE NUMBERS ARE THE CHECK, and they are meant to go red when a source is ADDED. Whoever adds one
+# says here which of the two refs it stands on, which is the same decision they already made in the
+# manifest. scripts/standin/cluster-map.yaml answers `release` and `global.booksCluster` with two
+# different words, which is what lets them be counted apart.
+# THE REF ON EACH LINE IS COMPARED AS A WHOLE WORD, never as a pattern: the two words carry dots,
+# and a dot in a pattern matches any character. The trailing `  # ...` comment some of these lines
+# carry is cut off first. scripts/check.sh compares the same way, with awk.
+#
+# -cmatch and -ceq throughout, because scripts/check.sh reads these lines with awk and grep, which
+# are case-sensitive; a ref differing from another in case alone would be counted here and not
+# there.
+function Measure-Refs {
+    param([string[]] $Lines, [string] $Ref)
+    $count = 0
+    foreach ($line in $Lines) {
+        $named = [regex]::Match($line, '^[ 	]+(revision|targetRevision): (.*)$')
+        if (-not $named.Success) { continue }
+        $value = $named.Groups[2].Value -creplace '[ 	]+#.*$', ''
+        if ($value -ceq $Ref) { $count++ }
+    }
+    return $count
+}
+$mapLines = [System.IO.File]::ReadAllLines($mapFile)
+$tagRef = (($mapLines | Where-Object { $_ -cmatch '^release:\s' } | Select-Object -First 1) -creplace '^release:\s*', '').Trim()
+$branchRef = (($mapLines | Where-Object { $_ -cmatch '^booksCluster:\s' } | Select-Object -First 1) -creplace '^booksCluster:\s*', '').Trim()
+$aloneLines = $alone -split "`r?`n"
+$onTag = Measure-Refs -Lines $aloneLines -Ref $tagRef
+$onBranch = Measure-Refs -Lines $aloneLines -Ref $branchRef
+if ($onTag -ne 9 -or $onBranch -ne 8) {
+    Write-Output ((@($aloneLines | Where-Object { $_ -cmatch '^\s+(revision|targetRevision):' }) | ForEach-Object { "  $_" }) -join "`n")
+    Stop-Check "the render of clusters/argocd stands on the release tag at $onTag sites and on the install branch at $onBranch, and it has to be 9 and 8 — a source reading a chart of this repository stands on the tag, a source reading this installation's own state stands on its branch"
+}
+
+# AND WITH NO PIN, EVERY ONE OF THEM READS THE BRANCH. A map carrying no `release:` line is not a
+# corner case: the Manager takes the pin off every slave map on purpose, so this is the state a
+# slave's own reconciler tree renders in.
+$unpinned = & helm template argocd-apps clusters/argocd -f $mapFile --set release=null 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+    Write-Output $unpinned.TrimEnd()
+    Stop-Check 'clusters/argocd does not render from a cluster map that records no release pin'
+}
+$unpinnedLines = $unpinned -split "`r?`n"
+$unpinnedCount = Measure-Refs -Lines $unpinnedLines -Ref $branchRef
+if ($unpinnedCount -ne 17) {
+    Write-Output ((@($unpinnedLines | Where-Object { $_ -cmatch '^\s+(revision|targetRevision):' }) | ForEach-Object { "  $_" }) -join "`n")
+    Stop-Check "with no release pin the render of clusters/argocd stands on the install branch at $unpinnedCount sites and it has to be 17 — a cluster whose map records no pin reads its charts from its branch, which is what it read before the tag was told apart from it"
+}
+Write-Output 'check: clusters/argocd reads 9 sources from the release tag and 8 from the install branch, and all 17 from the branch where the map records no pin.'
+
 # ── What clusters/bootstrap must never carry ─────────────────────────────────────────────────
 # NOTHING STAMPS THAT TREE, AND A PLACEHOLDER LEFT IN IT TRAVELS AS TEXT. The seven files under
 # clusters/bootstrap that carry one installation's own domain and short name are TEMPLATES: the
