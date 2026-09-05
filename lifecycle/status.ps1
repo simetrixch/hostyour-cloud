@@ -16,8 +16,7 @@
 # cluster's own domain, carrying `clusters/active/<branch>.yaml` — its cluster
 # map. That file is what makes a branch an installation rather than a working
 # branch, so it is what this looks for, and a branch without one is skipped
-# without comment. migrate-install-branches.sh decides the same question the same
-# way, and nothing holds the two statements of it together.
+# without comment.
 #
 # A PURE SLAVE IS NOT LISTED, AND HAS NOTHING TO LIST. A cluster that carries
 # only the slave part has no install branch of its own: its map stands on the

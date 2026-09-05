@@ -173,9 +173,8 @@ MASTER="$FQDN"
 # ------------------------------------------------- the registration, asked of git
 # ASKED OF THE REMOTE AND NOT OF THIS CHECKOUT, for the reason every act here
 # reads the remote: an install branch moves without this workstation — a release
-# writes its pin onto it, a migration writes its record onto it, a registration
-# writes a map onto it — so a local view of that branch answers about whenever it
-# last looked.
+# writes its pin onto it, a registration writes a map onto it — so a local view of
+# that branch answers about whenever it last looked.
 git ls-remote --exit-code --heads origin "refs/heads/$MASTER" >/dev/null 2>&1 \
   || die "origin has no branch $MASTER, and $CONFIG states that as the master. A master keeps its books on its own install branch, and there is none of that name" 66
 git fetch --quiet origin "refs/heads/$MASTER" \

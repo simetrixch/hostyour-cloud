@@ -5,30 +5,26 @@
 #
 #   bash lifecycle/test.sh
 #
-# THREE ACTS DELIVER A CHANGE TO A RUNNING INSTALLATION and this file measures
-# all three: release-platform cuts a release of the platform tree and pins ONE
-# installation to it, regenerate-install-branch brings that installation's branch
-# onto the pin, and migrate-install-branches corrects what is born on install
-# branches and reachable by neither of the other two. status answers what each
-# installation stands on. remove-slave-from-master is none of those: it takes one
-# slave's registration off the master it stands on, which is the only act here
-# whose subject is a relation between two installations. Every one of them is
-# written twice, in bash and in PowerShell, and the two spellings are held to
-# printing the same bytes.
+# TWO ACTS DELIVER A CHANGE TO A RUNNING INSTALLATION and this file measures
+# both: release-platform cuts a release of the platform tree and pins ONE
+# installation to it, and regenerate-install-branch brings that installation's
+# branch onto the pin. status answers what each installation stands on.
+# remove-slave-from-master is neither: it takes one slave's registration off the
+# master it stands on, which is the only act here whose subject is a relation
+# between two installations. Every one of them is written twice, in bash and in
+# PowerShell, and the two spellings are held to printing the same bytes.
 #
-# WHY TWO ORIGINS PER FIXTURE. release-platform MINTS and a mint pushes; a
-# migration write run PUSHES. Run against one origin the second spelling would
-# find the first's work and take a different path, so the two would be compared
-# on different work. Each spelling gets its own origin, cloned from the same seed
-# so every commit id is the same on both sides, and the two things that
-# legitimately differ — the fourteen digits of a mint stamp and which of the two
-# origins a report names — are normalised away before the comparison.
+# WHY TWO ORIGINS PER FIXTURE. release-platform MINTS and a mint pushes. Run
+# against one origin the second spelling would find the first's work and take a
+# different path, so the two would be compared on different work. Each spelling
+# gets its own origin, cloned from the same seed so every commit id is the same
+# on both sides, and the one thing that legitimately differs — the fourteen
+# digits of a mint stamp — is normalised away before the comparison.
 #
 # WHAT IS COMPARED. Standard output, standard error and the exit code, for every
 # path a person can reach: the mint and the pin, the reuse of a tag that already
-# stands, the four release refusals, the four states a report can be in, the six
-# refusals a regeneration makes before it touches a machine, and the seven states
-# a migration walk can be in.
+# stands, the four release refusals, the four states a report can be in, and the
+# six refusals a regeneration makes before it touches a machine.
 #
 # THE PLANTED DEFECTS. A copy of status.sh with one printed line changed is run
 # against the untouched status.ps1, a copy of regenerate-install-branch.sh with
@@ -36,15 +32,12 @@
 # remove-slave-from-master.sh likewise. All three comparisons must go RED.
 # Without them a green run would only prove that the comparisons found nothing,
 # which is also what a comparison that stopped looking prints. The innocent
-# beside them is every other case here, which must stay green. The migration walk
-# carries a planted defect and a planted innocent of its own in every one of its
-# checks.
+# beside them is every other case here, which must stay green.
 #
 # WHAT THIS FILE CANNOT PROVE, named rather than counted: an authenticated remote
 # (the fixtures' origins are directories, so a push never asks for a credential),
-# two workstations minting the same version and channel at the same moment, two
-# migration runs racing on one branch, a migration that reaches outside the clone
-# it is handed, and the regeneration and the removal themselves — those run on a
+# two workstations minting the same version and channel at the same moment, and
+# the regeneration and the removal themselves — those run on a
 # machine, out of the catalogue repository, and nothing here can stand in for
 # them. Nor a slave that is still ANSWERING, which is what
 # remove-slave-from-master refuses on: a fixture cannot make a machine listen on
@@ -93,10 +86,8 @@ OUT="$WORK/out"
 mkdir -p "$OUT"
 
 # ── running one spelling of one script, and comparing the pair ──────────────
-# The fourteen digits of a mint stamp are by construction different in two runs,
-# and a migration report names the origin it walked, which is a different
-# directory per spelling. Those two are the ONLY things allowed to differ, so
-# they are normalised on both sides.
+# The fourteen digits of a mint stamp are by construction different in two runs.
+# That is the ONLY thing allowed to differ, so it is normalised on both sides.
 #
 # WRITTEN HERE RATHER THAN SHELLED OUT TO, because the filter that normalises is
 # as much part of the measurement as the comparison is. sed on Windows reads its
@@ -108,8 +99,6 @@ normalise() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
     while [[ "$line" =~ ([0-9]{14}) ]]; do line="${line//${BASH_REMATCH[1]}/TS14}"; done
-    line="${line//origin-ma.git/ORIGIN.git}"
-    line="${line//origin-mb.git/ORIGIN.git}"
     printf '%s\n' "$line"
   done
 }
@@ -472,292 +461,7 @@ fi
 ok 'the planted defect was caught — the comparison of the regenerate pair can go red'
 
 # ===========================================================================
-# THREE — migrate-install-branches, against a fixture of its own
-#
-# Every check here carries a planted defect of the shape it is meant to catch
-# and a planted innocent beside it, so a green run means the checks looked and
-# found order — not that nothing was looking. The planted MIGRATION is shaped
-# like the first real candidate this mechanism was designed around (writing a
-# release line into a cluster map that lost its writer), planted here rather
-# than shipped, because no real migration is needed today.
-# ===========================================================================
-ORIGIN_MA="$WORK/origin-ma.git"
-ORIGIN_MB="$WORK/origin-mb.git"
-USERCO_A="$WORK/user-a"
-USERCO_B="$WORK/user-b"
-
-git init --quiet --bare --initial-branch=master "$ORIGIN_MA"
-
-show_origin() { git --git-dir="$1" show "$2"; }
-refs_of_origin() { git ls-remote "$1" | LC_ALL=C sort; }
-
-# ── the fixture: a trunk, two install branches, one other ref ──────────────
-MSEED="$WORK/mseed"
-git init --quiet --initial-branch=master "$MSEED"
-git -C "$MSEED" remote add origin "$ORIGIN_MA"
-mkdir -p "$MSEED/lifecycle/migrations" "$MSEED/clusters/active"
-# The same byte rule the real tree carries, so the fixture's files are stored
-# and checked out LF on every machine, exactly as the files a migration edits.
-echo "* text=auto eol=lf" > "$MSEED/.gitattributes"
-# BOTH SPELLINGS STAND IN THE FIXTURE, because each asks the checkout it walks
-# from whether it is the platform tree, and the answer is the bash spelling
-# standing at lifecycle/. The runs below start the real files beside this test.
-cp "$HERE/migrate-install-branches.sh" "$MSEED/lifecycle/migrate-install-branches.sh"
-cp "$HERE/migrate-install-branches.ps1" "$MSEED/lifecycle/migrate-install-branches.ps1"
-touch "$MSEED/lifecycle/migrations/.gitkeep"
-touch "$MSEED/clusters/active/.gitkeep"
-git -C "$MSEED" add -A
-git -C "$MSEED" commit --quiet -m "Seed the trunk"
-git -C "$MSEED" push --quiet origin master
-
-# Branch one: role master, no release line — the branch the planted migration
-# has work on. Its comments and blank line are the probe that a line edit
-# leaves every other byte alone.
-git -C "$MSEED" checkout --quiet -b one.example.invalid
-cat > "$MSEED/clusters/active/one.example.invalid.yaml" <<'EOF'
-# What this cluster is — a fixture standing in for a real cluster map.
-# The comments and the blank line below are the form a YAML round-trip
-# destroys, and the probe that an edit leaves them byte for byte.
-stage: dev
-role: master
-booksCluster: one.example.invalid
-# THE PIN. The release this cluster stands on. Nothing writes this line any
-# more, which is the fact the planted migration corrects.
-
-global:
-  domain: one.example.invalid
-  booksCluster: one.example.invalid
-EOF
-cp "$MSEED/clusters/active/one.example.invalid.yaml" "$WORK/one-map-before"
-git -C "$MSEED" add -A
-git -C "$MSEED" commit --quiet -m "Cut the first install branch"
-git -C "$MSEED" push --quiet origin one.example.invalid
-
-# Branch two: role slave, release line already standing — the innocent the
-# migration must leave alone while still recording that it looked.
-git -C "$MSEED" checkout --quiet master
-git -C "$MSEED" checkout --quiet -b two.example.invalid
-cat > "$MSEED/clusters/active/two.example.invalid.yaml" <<'EOF'
-stage: dev
-role: slave
-booksCluster: one.example.invalid
-release: 0.0.9-already
-global:
-  domain: two.example.invalid
-EOF
-cp "$MSEED/clusters/active/two.example.invalid.yaml" "$WORK/two-map-before"
-git -C "$MSEED" add -A
-git -C "$MSEED" commit --quiet -m "Cut the second install branch"
-git -C "$MSEED" push --quiet origin two.example.invalid
-
-# A ref that is NOT an install branch — the planted defect of the shape "a
-# ref the walk must skip out loud", because it carries no cluster map.
-git -C "$MSEED" checkout --quiet master
-git -C "$MSEED" checkout --quiet -b not-an-install-branch
-echo "not a cluster" > "$MSEED/notes.txt"
-git -C "$MSEED" add -A
-git -C "$MSEED" commit --quiet -m "A branch of some other kind"
-git -C "$MSEED" push --quiet origin not-an-install-branch
-
-# One origin per spelling, for the reason the release fixture has two: a write
-# run pushes, and a second spelling walking the first's result would be compared
-# on work the first had already done.
-git clone --quiet --bare "$ORIGIN_MA" "$ORIGIN_MB"
-
-# ── the person's checkout, one per spelling, with the same planted migration ─
-git clone --quiet "$ORIGIN_MA" "$USERCO_A"
-git clone --quiet "$ORIGIN_MB" "$USERCO_B"
-for CO in "$USERCO_A" "$USERCO_B"; do
-  cat > "$CO/lifecycle/migrations/0001-write-a-release-line.sh" <<'EOF'
-#!/usr/bin/env bash
-# Planted by test.sh: insert `release: 0.0.9-planted` after the top-level
-# booksCluster line of the branch's own cluster map, where no release line
-# stands. Line by line, so every other byte survives.
-set -euo pipefail
-TREE="$1"
-BRANCH="$2"
-MAP="$TREE/clusters/active/${BRANCH}.yaml"
-[ -f "$MAP" ] || { echo "the branch carries no clusters/active/${BRANCH}.yaml"; exit 1; }
-if grep -qE '^release:' "$MAP"; then
-  echo "a release line already stands in clusters/active/${BRANCH}.yaml"
-  exit 0
-fi
-awk '{ print } /^booksCluster:/ && !seen { print "release: 0.0.9-planted"; seen=1 }' \
-  "$MAP" > "$MAP.writing"
-mv "$MAP.writing" "$MAP"
-echo "wrote release: 0.0.9-planted after the booksCluster line of clusters/active/${BRANCH}.yaml"
-EOF
-  git -C "$CO" add lifecycle/migrations/0001-write-a-release-line.sh
-  git -C "$CO" commit --quiet -m "Plant the first migration"
-done
-
-run_migrate_bash() { # the arguments of the bash spelling
-  A_CODE=0
-  ( cd "$USERCO_A" && bash "$HERE/migrate-install-branches.sh" "$@" ) \
-    > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
-}
-run_migrate_pwsh() { # the arguments of the PowerShell spelling
-  B_CODE=0
-  ( cd "$USERCO_B" && "$PWSH" -NoProfile -NoLogo -File "$HERE/migrate-install-branches.ps1" "$@" ) \
-    > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
-}
-
-# ── 1. a report run looks at everything and writes nothing ─────────────────
-BEFORE_A="$(refs_of_origin "$ORIGIN_MA")"
-BEFORE_B="$(refs_of_origin "$ORIGIN_MB")"
-run_migrate_bash
-run_migrate_pwsh
-[ "$A_CODE" = "0" ] || fail "the report run ended red: $(cat "$OUT/a.err")"
-[ "$BEFORE_A" = "$(refs_of_origin "$ORIGIN_MA")" ] || fail "a run without --write moved origin A"
-[ "$BEFORE_B" = "$(refs_of_origin "$ORIGIN_MB")" ] || fail "a run without --write moved origin B"
-must "one.example.invalid - an install branch; its map states role 'master' and booksCluster 'one.example.invalid'" \
-  "the walk reads a branch's map, not just its name"
-must "two.example.invalid - an install branch; its map states role 'slave'" \
-  "the walk reads the second branch's map too"
-must "not-an-install-branch - skipped: it carries no clusters/active/not-an-install-branch.yaml" \
-  "a ref without a cluster map is skipped with the path it was looked for under"
-must "0001-write-a-release-line.sh: wrote release: 0.0.9-planted" \
-  "the migration reports what it did on the branch that needed it"
-must "nothing to do - a release line already stands" \
-  "the innocent branch is reported as looked at, with the reason nothing was done"
-must "NOT pushed" "a report run says out loud that its commits were discarded"
-same 'a report run, which walks every ref and leaves both remotes byte-identical'
-
-# ── 2. a write run applies, records on the branch, and pushes ──────────────
-run_migrate_bash --write
-run_migrate_pwsh -Write
-[ "$A_CODE" = "0" ] || fail "the write run ended red: $(cat "$OUT/a.err")"
-must "pushed 1 commit(s) to origin/one.example.invalid" "the changed branch was pushed"
-must "pushed 1 commit(s) to origin/two.example.invalid" "the record-only branch was pushed too"
-same 'a write run, which applies, records and pushes'
-
-# WHAT EACH ORIGIN NOW CARRIES, asked of both: identical output proves the two
-# spellings SAID the same, and this proves they DID the same.
-what_the_write_left() { # an origin, and which spelling wrote it
-  local origin="$1" spelling="$2" aftermap afterbooks rec
-  aftermap="$(show_origin "$origin" one.example.invalid:clusters/active/one.example.invalid.yaml)"
-  [ "$(grep -cE '^release:' <<< "$aftermap")" = "1" ] \
-    || fail "$spelling: branch one's map does not carry exactly one release line"
-  afterbooks="$(awk '{ if (prev ~ /^booksCluster:/) { print; exit } prev=$0 }' <<< "$aftermap")"
-  [ "$afterbooks" = "release: 0.0.9-planted" ] \
-    || fail "$spelling: the release line does not stand after the booksCluster line (found: '${afterbooks}')"
-  grep -vxF 'release: 0.0.9-planted' <<< "$aftermap" > "$WORK/one-map-after-minus"
-  diff -u "$WORK/one-map-before" "$WORK/one-map-after-minus" > /dev/null \
-    || fail "$spelling: the migration touched bytes beside the one line it inserted — comments did not survive"
-
-  [ "$(show_origin "$origin" two.example.invalid:clusters/active/two.example.invalid.yaml)" = "$(cat "$WORK/two-map-before")" ] \
-    || fail "$spelling: the innocent branch's map changed although its release line already stood"
-
-  for BR in one.example.invalid two.example.invalid; do
-    rec="$(show_origin "$origin" "${BR}:installation/migrations")" \
-      || fail "$spelling: ${BR} carries no installation/migrations after the write run"
-    grep -qxF "0001-write-a-release-line.sh" <<< "$rec" \
-      || fail "$spelling: ${BR}'s installation/migrations does not record 0001-write-a-release-line.sh"
-  done
-  [ "$(git --git-dir="$origin" log -1 --format=%s one.example.invalid)" = "Apply migration 0001-write-a-release-line" ] \
-    || fail "$spelling: branch one's commit does not name the migration it applied"
-  [ "$(git --git-dir="$origin" log -1 --format=%s two.example.invalid)" = "Record migration 0001-write-a-release-line as applied without effect" ] \
-    || fail "$spelling: branch two's commit does not say the migration ran without effect"
-}
-what_the_write_left "$ORIGIN_MA" 'bash'
-what_the_write_left "$ORIGIN_MB" 'powershell'
-ok 'both spellings edited one line, left every comment and blank line byte for byte, and recorded the migration in commits that name it'
-
-# ── 3. a second write run finds everything recorded and moves nothing ──────
-BEFORE_A="$(refs_of_origin "$ORIGIN_MA")"
-BEFORE_B="$(refs_of_origin "$ORIGIN_MB")"
-run_migrate_bash --write
-run_migrate_pwsh -Write
-[ "$A_CODE" = "0" ] || fail "the second write run ended red: $(cat "$OUT/a.err")"
-[ "$BEFORE_A" = "$(refs_of_origin "$ORIGIN_MA")" ] || fail "a second write run moved origin A — the record did not hold"
-[ "$BEFORE_B" = "$(refs_of_origin "$ORIGIN_MB")" ] || fail "a second write run moved origin B — the record did not hold"
-must "every migration of this checkout is recorded in installation/migrations" \
-  "an applied migration is reported as recorded, not re-run"
-same 'a second write run, which reads the record and pushes nothing'
-
-# ── 4. a failing migration ends the run red, recorded nowhere ──────────────
-for CO in "$USERCO_A" "$USERCO_B"; do
-  cat > "$CO/lifecycle/migrations/0002-fail-on-purpose.sh" <<'EOF'
-#!/usr/bin/env bash
-echo "planted failure: this migration refuses every branch"
-exit 1
-EOF
-  git -C "$CO" add lifecycle/migrations/0002-fail-on-purpose.sh
-  git -C "$CO" commit --quiet -m "Plant a failing migration"
-done
-BEFORE_A="$(refs_of_origin "$ORIGIN_MA")"
-BEFORE_B="$(refs_of_origin "$ORIGIN_MB")"
-run_migrate_bash --write
-run_migrate_pwsh -Write
-[ "$A_CODE" != "0" ] || fail "a failing migration did not end the run red"
-must "0002-fail-on-purpose.sh: FAILED - planted failure" "the failure names the migration and its own words"
-must "the run is RED" "the run's last word is red, not a green summary over a failure"
-[ "$BEFORE_A" = "$(refs_of_origin "$ORIGIN_MA")" ] || fail "a failed migration still moved origin A"
-[ "$BEFORE_B" = "$(refs_of_origin "$ORIGIN_MB")" ] || fail "a failed migration still moved origin B"
-show_origin "$ORIGIN_MA" one.example.invalid:installation/migrations | grep -q "^0002-" \
-  && fail "a failed migration was recorded as applied on origin A"
-show_origin "$ORIGIN_MB" one.example.invalid:installation/migrations | grep -q "^0002-" \
-  && fail "a failed migration was recorded as applied on origin B"
-same 'a failing migration, reported red, recorded nowhere and pushing nothing'
-for CO in "$USERCO_A" "$USERCO_B"; do
-  git -C "$CO" rm --quiet lifecycle/migrations/0002-fail-on-purpose.sh
-  git -C "$CO" commit --quiet -m "Unplant the failing migration"
-done
-
-# ── 5. two migrations sharing a number are refused before any branch ───────
-for CO in "$USERCO_A" "$USERCO_B"; do
-  printf '#!/usr/bin/env bash\necho a\n' > "$CO/lifecycle/migrations/0003-first-of-a-pair.sh"
-  printf '#!/usr/bin/env bash\necho b\n' > "$CO/lifecycle/migrations/0003-second-of-a-pair.sh"
-done
-run_migrate_bash
-run_migrate_pwsh
-[ "$A_CODE" != "0" ] || fail "two migrations sharing a number were not refused"
-must "share the number 0003" "the refusal names the duplicated number"
-must_not "an install branch" "the refusal came before any branch was read"
-same 'a duplicated number, refused before the walk begins'
-for CO in "$USERCO_A" "$USERCO_B"; do
-  rm "$CO/lifecycle/migrations/0003-first-of-a-pair.sh" "$CO/lifecycle/migrations/0003-second-of-a-pair.sh"
-done
-
-# ── 6. a record from a newer trunk is named, not silently trusted ──────────
-scratch_a_record_from_the_future() { # an origin
-  local origin="$1" scratch="$WORK/scratch-$RANDOM"
-  git clone --quiet "$origin" "$scratch"
-  git -C "$scratch" checkout --quiet two.example.invalid
-  echo "0009-from-the-future.sh" >> "$scratch/installation/migrations"
-  git -C "$scratch" add installation/migrations
-  git -C "$scratch" commit --quiet -m "Record a migration this test's checkout never carried"
-  git -C "$scratch" push --quiet origin two.example.invalid
-  rm -rf "$scratch"
-}
-scratch_a_record_from_the_future "$ORIGIN_MA"
-scratch_a_record_from_the_future "$ORIGIN_MB"
-run_migrate_bash
-run_migrate_pwsh
-[ "$A_CODE" = "0" ] || fail "a record line without a script here ended the run red: $(cat "$OUT/a.err")"
-must "records 0009-from-the-future.sh, which this checkout does not carry" \
-  "a record from a newer trunk is reported as the checkout being behind"
-same 'a record line with no script behind it, named as the checkout being behind'
-
-# ── 7. an uncommitted migration is refused a write run ─────────────────────
-for CO in "$USERCO_A" "$USERCO_B"; do
-  printf '#!/usr/bin/env bash\necho "planted draft does nothing"\n' > "$CO/lifecycle/migrations/0004-draft.sh"
-done
-run_migrate_bash --write
-run_migrate_pwsh -Write
-[ "$A_CODE" != "0" ] || fail "an uncommitted migration was allowed to write"
-must "uncommitted" "the refusal says what stands in the way"
-same 'an uncommitted migration, refused a write run'
-run_migrate_bash
-run_migrate_pwsh
-[ "$A_CODE" = "0" ] || fail "an uncommitted migration blocked even a report run: $(cat "$OUT/a.err")"
-same 'a report run, which may carry a draft'
-for CO in "$USERCO_A" "$USERCO_B"; do
-  rm "$CO/lifecycle/migrations/0004-draft.sh"
-done
-
-# ===========================================================================
-# FOUR — remove-slave-from-master, against a fixture of its own
+# THREE — remove-slave-from-master, against a fixture of its own
 #
 # EVERY CASE HERE IS A REFUSAL, for the reason every regeneration case above is
 # one: the act itself opens a session to a master, and there is no master. What
@@ -941,15 +645,10 @@ echo "test:   tag, a tag a refused push left behind — dropped and cut again �
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
 echo "test:   the four states a report can be in and a name that is no installation; the"
 echo "test:   six refusals a regeneration makes before it touches a machine, the pin it reads"
-echo "test:   off the branch, and a launcher without its driver; the migration walk and its"
-echo "test:   skip reasons, the report run's refusal to push, the write run's"
-echo "test:   apply/record/push, the record holding on a second run, a failing migration"
-echo "test:   ending red and unrecorded, a duplicated number refused before the walk, a record"
-echo "test:   from a newer trunk named as such, and an uncommitted migration refused a write"
-echo "test:   run; the eight refusals a removal makes before it touches a master, the"
-echo "test:   registration it reads off the master's branch and the verdict on a slave that is"
-echo "test:   gone. Three planted defects prove the comparison can go red."
-echo "test: not covered — an authenticated remote, two workstations minting at one moment, two"
-echo "test:   migration runs racing on one branch, a migration that reaches outside the clone"
-echo "test:   it is handed, the regeneration and the removal themselves on a machine, a slave"
-echo "test:   that is still answering, and the owner-only guard on a config."
+echo "test:   off the branch, and a launcher without its driver; the eight refusals a removal"
+echo "test:   makes before it touches a master, the registration it reads off the master's"
+echo "test:   branch and the verdict on a slave that is gone. Three planted defects prove the"
+echo "test:   comparison can go red."
+echo "test: not covered — an authenticated remote, two workstations minting at one moment, the"
+echo "test:   regeneration and the removal themselves on a machine, a slave that is still"
+echo "test:   answering, and the owner-only guard on a config."

@@ -263,7 +263,7 @@ decoded="$(wc -l < "$work/decoded.tally" | tr -d ' ')"
 echo "check: no rendered value carries a Helm expression, over $rendered renders and the $decoded base64 values in them."
 
 # ── 2. The delivery programs ────────────────────────────────────────────────────────────────
-echo "check: lifecycle/test.sh — the release, the regeneration, the migration, the report and the slave removal, in both spellings. About a minute."
+echo "check: lifecycle/test.sh — the release, the regeneration, the report and the slave removal, in both spellings. About a minute."
 bash lifecycle/test.sh || fail "lifecycle/test.sh"
 
 # ── 3. The credentials ──────────────────────────────────────────────────────────────────────

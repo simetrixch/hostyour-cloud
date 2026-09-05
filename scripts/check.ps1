@@ -317,7 +317,7 @@ if ($expressions.Count -gt 0) {
 Write-Output "check: no rendered value carries a Helm expression, over $rendered renders and the $script:decodedValues base64 values in them."
 
 # ── 2. The delivery programs ────────────────────────────────────────────────────────────────
-Write-Output 'check: lifecycle/test.sh — the release, the regeneration, the migration, the report and the slave removal, in both spellings. About a minute.'
+Write-Output 'check: lifecycle/test.sh — the release, the regeneration, the report and the slave removal, in both spellings. About a minute.'
 & $bash lifecycle/test.sh
 if ($LASTEXITCODE -ne 0) { Stop-Check 'lifecycle/test.sh' }
 

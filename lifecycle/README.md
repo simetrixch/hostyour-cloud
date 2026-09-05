@@ -1,9 +1,8 @@
 # lifecycle
 
 The life of one installation: the act that brings it into being, every release put on it afterwards,
-the shape-changes of what exists only on its own branch, and the registration one installation holds
-for another taken off again. Everything here runs from an operator's own machine — Windows, Linux or
-macOS — and nothing here runs in a cluster.
+and the registration one installation holds for another taken off again. Everything here runs from
+an operator's own machine — Windows, Linux or macOS — and nothing here runs in a cluster.
 
 **The subject is an installation, not a delivery.** A first install delivers nothing; it creates. The
 acts below share a subject rather than a purpose, which is why they stand in one folder.
@@ -15,7 +14,6 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `install-machine.sh` / `.ps1` | installs a first master from zero: a machine, a branch, a cluster and the platform services on it |
 | `release-platform.sh` / `.ps1` | cuts a release of the platform tree and pins ONE installation to it |
 | `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
-| `migrate-install-branches.sh` / `.ps1` | corrects, across every install branch, the facts that are born there |
 | `remove-slave-from-master.sh` / `.ps1` | takes ONE slave's registration off the master it stands on |
 | `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |
 
@@ -28,9 +26,6 @@ temporary directory.
 all three run ON THE MACHINE, and the launcher beside them carries them over the session it opens.
 None of them is started by hand.
 
-`migrations/NNNN-<what-it-does>.sh` are the numbered migrations, applied once per branch in the order
-their numbers state.
-
 ## The order the acts stand in
 
 A release is TWO acts and they are separate on purpose. `release-platform` puts the tag on the remote
@@ -39,11 +34,6 @@ and stops. The installation still stands on the state before it. `regenerate-ins
 brings the branch to the pin: it reads the ref off that line rather than being told it again, so the
 pin and the regeneration are one statement instead of two that can disagree. Between the two acts
 somebody can read what the pin now says and stop.
-
-`migrate-install-branches` is neither of those. What a merge brings and what a regeneration stamps
-both have a path already; what is born on a branch and exists nowhere else — the cluster maps,
-`configs/config.<stage>`, the files under `installation/` — has none, and that is the only thing a
-migration is for.
 
 # Installing a first master
 
@@ -231,23 +221,3 @@ line, and where the tag that line names is not on the remote; every one of those
 nothing has been changed, because at every one of them nothing has.
 
 The third only answers, and writes nothing at all.
-
-# Migrating what is born on a branch
-
-```
-bash lifecycle/migrate-install-branches.sh            # report; push nothing
-bash lifecycle/migrate-install-branches.sh --write    # the same work, plus the push
-```
-
-A migration is `migrations/NNNN-<what-it-does>.sh`: four digits, unique, applied once per branch, in
-numeric order. It is handed a checkout standing on the branch and the branch's name, reads what the
-branch IS from the branch's own files, does what there is to do or nothing, and prints ONE line
-saying which. Each branch records what it has had in `installation/migrations`, in the same commit as
-the change — the branch is the one carrier every machine of an installation reads the same way.
-
-A report run builds its commits in a throwaway clone and discards them, so its report is a
-measurement of the real work rather than a prediction. `--write` adds the push and nothing else.
-
-The PowerShell twin asks for that push as `-Write`, and it is the one place the two spellings are
-spelled apart: PowerShell binds an argument beginning with a dash as a parameter of its own, so
-`--write` is refused before a line of the script runs.

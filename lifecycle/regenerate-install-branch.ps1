@@ -123,8 +123,8 @@ if ($LASTEXITCODE -ne 0) {
 # ---------------------------------------------------------- the target, asked
 # ASKED OF THE REMOTE AND NOT OF THIS CHECKOUT, for the same reason the first act
 # reads the remote: an install branch moves without this workstation — a release
-# writes its pin onto it, a migration writes its record onto it — so a local view
-# of that branch answers about whenever it last looked.
+# writes its pin onto it — so a local view of that branch answers about whenever it
+# last looked.
 git ls-remote --exit-code --heads origin "refs/heads/$Fqdn" *> $null
 if ($LASTEXITCODE -ne 0) {
   Stop-Here "origin has no branch $Fqdn. An installation is regenerated on its own install branch, and there is none of that name" 66
