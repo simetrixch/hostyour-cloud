@@ -120,6 +120,14 @@ foreach ($standin in $mapFile, $regFile) {
 # WHAT IT CANNOT SEE, named rather than counted: it reads line by line, so an expression written
 # across two lines is not found, and it decodes a value only where the whole value is one base64
 # token on its own line.
+#
+# EVERY COMPARISON BELOW IS SPELLED CASE-SENSITIVELY, and that is what makes this scan the same scan
+# scripts/check.sh runs. PowerShell's `-match`, `-eq`, `-contains` and Select-String all ignore case
+# unless told otherwise, while awk's `~`, grep and sed never do. `.values` and `.chart` are ArgoCD
+# ApplicationSet generator parameters — clusters/argocd/files/slaves-appset.yaml and
+# tenants-appset.yaml carry sixteen of them — and a case-blind matcher reads them as `.Values` and
+# `.Chart` and refuses exactly what the paragraph above says must be allowed. Measured: the two
+# spellings answered differently on the same commit, 48 findings here against none there.
 $script:decodedValues = 0
 
 # One render, already split into lines. Returns the finding records as objects, each carrying the
@@ -131,14 +139,16 @@ function Read-RenderLines {
     $records = @()
     $source = $SourceOf
     foreach ($line in $Lines) {
-        if (-not $SourceOf -and $line.StartsWith('# Source: ')) { $source = $line.Substring(10); continue }
+        # Ordinal, because StartsWith(string) alone compares by CULTURE: a zero-width character in
+        # front of the line makes it answer true, where awk's /^# Source: / reads bytes and does not.
+        if (-not $SourceOf -and $line.StartsWith('# Source: ', [System.StringComparison]::Ordinal)) { $source = $line.Substring(10); continue }
         $key = '-'
         $named = [regex]::Match($line, '^[ \t]*([A-Za-z0-9._/-]+):')
         if ($named.Success) { $key = $named.Groups[1].Value }
         if ($KeyOf) { $key = $KeyOf }
         $found = ''
         foreach ($expression in [regex]::Matches($line, '\{\{[^{}]*\}\}')) {
-            if ($expression.Value -match '\.(Values|Release|Chart|Capabilities|Files|Template)[^A-Za-z0-9_]') {
+            if ($expression.Value -cmatch '\.(Values|Release|Chart|Capabilities|Files|Template)[^A-Za-z0-9_]') {
                 $found = $expression.Value
                 break
             }
@@ -173,7 +183,7 @@ function Find-HelmExpression {
 
 # ── The counter-probe of that scan ──────────────────────────────────────────────────────────
 # THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
-# plants two defects it has to report and two innocents it has to leave alone, and its own header
+# plants two defects it has to report and three innocents it has to leave alone, and its own header
 # says which is which. Without the defects a green run would only mean the scan found nothing,
 # which is also what a scan that stopped looking prints. scripts/check.sh reads the same file and
 # holds it to the same two lines.
@@ -186,8 +196,11 @@ $probeExpected = @(
     '  scripts/counter-probe.yaml, counter-probe/planted-defect-in-base64.yaml, alertmanager.yaml: {{ .Values.global.domain }}'
 )
 $probeReported = Find-HelmExpression -Where 'scripts/counter-probe.yaml' -Lines ([System.IO.File]::ReadAllLines($counterProbe))
-if (($probeReported -join "`n") -ne ($probeExpected -join "`n")) {
-    Write-Output 'The counter-probe plants two defects and two innocents. The scan had to report:'
+# -cne, because the verdict of a case-sensitive scan cannot be read by a case-blind comparison: with
+# -ne a scan reporting `{{ .values.global.env }}` where the line above expects `{{ .Values.global.env }}`
+# is taken for agreement, and the probe goes green over the exact defect it exists to catch.
+if (($probeReported -join "`n") -cne ($probeExpected -join "`n")) {
+    Write-Output 'The counter-probe plants two defects and three innocents. The scan had to report:'
     Write-Output ($probeExpected -join "`n")
     Write-Output 'and it reported:'
     if ($probeReported.Count -gt 0) { Write-Output ($probeReported -join "`n") } else { Write-Output '  (nothing)' }
@@ -233,7 +246,9 @@ foreach ($chart in $chartDirs) {
     # A library chart carries no templates of its own and cannot be rendered alone. It is
     # reached through the application charts that depend on it, which is where a defect in it
     # shows up.
-    if (Select-String -LiteralPath $chartYaml -Pattern '^type:\s*library\s*$' -Quiet) {
+    # -CaseSensitive on every Select-String below, because scripts/check.sh reads these three lines
+    # with grep and sed, which are. Without it `type: Library` is skipped here and rendered there.
+    if (Select-String -LiteralPath $chartYaml -Pattern '^type:\s*library\s*$' -Quiet -CaseSensitive) {
         $skippedLibrary += $name
         continue
     }
@@ -241,7 +256,7 @@ foreach ($chart in $chartDirs) {
     # The dependencies first, or the render finds an empty charts/ directory and reports a
     # missing template rather than a missing dependency. Both things the build writes — charts/
     # and Chart.lock — are ignored by this repository, so this leaves the working copy clean.
-    if (Select-String -LiteralPath $chartYaml -Pattern '^dependencies:' -Quiet) {
+    if (Select-String -LiteralPath $chartYaml -Pattern '^dependencies:' -Quiet -CaseSensitive) {
         $out = & helm dependency build $chart 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) {
             Write-Output $out.TrimEnd()
@@ -255,7 +270,7 @@ foreach ($chart in $chartDirs) {
     $namespace = 'check'
     $appYaml = "$chart/app.yaml"
     if (Test-Path -LiteralPath $appYaml) {
-        $declared = Select-String -LiteralPath $appYaml -Pattern '^namespace:\s*(\S+)' |
+        $declared = Select-String -LiteralPath $appYaml -Pattern '^namespace:\s*(\S+)' -CaseSensitive |
             Select-Object -First 1
         if ($declared) { $namespace = $declared.Matches[0].Groups[1].Value }
     }
@@ -286,7 +301,10 @@ foreach ($chart in $chartDirs) {
         if ($LASTEXITCODE -eq 0) {
             $rendered++
             $expressions += Find-HelmExpression -Where "$name at stage $stage" -Lines ($out -split "`r?`n")
-            if ($neededStandin -notcontains $name) { $neededStandin += $name }
+            # -cnotcontains, because scripts/check.sh holds this list with a case pattern over the
+            # bytes. A chart directory may differ from another in case alone on a case-sensitive
+            # filesystem, and the two spellings print one list or two.
+            if ($neededStandin -cnotcontains $name) { $neededStandin += $name }
             continue
         }
 

@@ -148,7 +148,7 @@ $found"
 
 # ── The counter-probe of that scan ──────────────────────────────────────────────────────────
 # THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
-# plants two defects it has to report and two innocents it has to leave alone, and its own header
+# plants two defects it has to report and three innocents it has to leave alone, and its own header
 # says which is which. Without the defects a green run would only mean the scan found nothing,
 # which is also what a scan that stopped looking prints. scripts/check.ps1 reads the same file and
 # holds it to the same two lines.
@@ -159,7 +159,7 @@ probe_expected="  scripts/counter-probe.yaml, counter-probe/planted-defect-in-th
   scripts/counter-probe.yaml, counter-probe/planted-defect-in-base64.yaml, alertmanager.yaml: {{ .Values.global.domain }}"
 probe_reported="$(scan_render 'scripts/counter-probe.yaml' "$counter_probe")"
 if [ "$probe_reported" != "$probe_expected" ]; then
-  echo "The counter-probe plants two defects and two innocents. The scan had to report:"
+  echo "The counter-probe plants two defects and three innocents. The scan had to report:"
   echo "$probe_expected"
   echo "and it reported:"
   echo "${probe_reported:-  (nothing)}"
