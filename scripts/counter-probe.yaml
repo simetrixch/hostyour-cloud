@@ -1,7 +1,7 @@
 # THE COUNTER-PROBE OF THE SCAN THAT READS A RENDER FOR AN UNRESOLVED HELM EXPRESSION.
-# scripts/check.sh and scripts/check.ps1 both scan this file before they scan a single real chart,
-# and both end the run red unless the scan reports EXACTLY the two planted defects below and says
-# nothing at all about the three planted innocents beside them. Without the defects the scan cannot
+# scripts/check.sh scans this file before it scans a single real chart, and ends the run red unless
+# the scan reports EXACTLY the two planted defects below and says nothing at all about the three
+# planted innocents beside them. Without the defects the scan cannot
 # be shown to go red; without the innocents a clean answer might only mean nobody was looking.
 #
 # THIS IS A RENDER AND NOT A MANIFEST OF THIS PLATFORM. Nothing applies it, no chart produces it,
@@ -30,10 +30,12 @@
 #   5. two more of those parameters, `.values` and `.chart`, which are the names of a Helm object
 #      in the OTHER case. They are copied from clusters/argocd/files/slaves-appset.yaml and
 #      tenants-appset.yaml, where sixteen of them stand. A matcher that ignores case reads them as
-#      `.Values` and `.Chart` and reports all of them: that is what scripts/check.ps1 did, 48
-#      findings against none from scripts/check.sh on the same commit, and this file could not
-#      catch it because every defect planted above is spelled the way the matcher expects. Revert
-#      `-cmatch` to `-match` in scripts/check.ps1 and these two lines alone turn the probe red.
+#      `.Values` and `.Chart` and reports all of them. That is what the PowerShell implementation
+#      of this check once did — 48 findings against none from scripts/check.sh on the same commit —
+#      and this file could not catch it, because every defect planted above is spelled the way the
+#      matcher expects. That implementation is gone: scripts/check.ps1 starts scripts/check.sh, so
+#      there is one matcher. Change its `case` glob to something that folds case and these two
+#      lines alone turn the probe red.
 #                                                                          MUST STAY UNREPORTED
 #
 # Those innocents stand for a real population: twelve of the twenty-four charts render a value

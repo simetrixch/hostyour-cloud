@@ -5,7 +5,7 @@
 # second source for a number the registration already states — so the numbers below are what lets
 # those charts be rendered at all. They bound nothing.
 #
-# scripts/check.sh and scripts/check.ps1 both hand this one file to helm template, so the shape
+# scripts/check.sh hands this one file to helm template, so the shape
 # below is declared once in this repository.
 suspended: false
 quiesced: false

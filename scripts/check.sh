@@ -16,15 +16,15 @@
 # A MISSING TOOL IS NAMED AND THE RUN ENDS RED. It is never passed over: a check that did not
 # run and a check that passed print differently here, because the two mean opposite things.
 #
-# scripts/check.ps1 beside this file runs the same three checks and prints the same lines.
+# scripts/check.ps1 beside this file is the Windows entry point and is a shim that starts THIS
+# file, so the three checks exist once and cannot be run in a second spelling of them.
 
 set -uo pipefail
 
 # THE CHART NAMES ARE PRINTED AS A LIST, AND A LIST IN TWO ORDERS IS TWO LISTS. A glob is sorted
 # by the collation of whatever language the shell was started in, and under some of them a hyphen
 # is ignored — which puts `observability` before `observability-agent` on one machine and after it
-# on the next. Byte order is the one every machine agrees on, and it is the order scripts/check.ps1
-# sorts in.
+# on the next. Byte order is the one every machine agrees on.
 export LC_COLLATE=C
 
 root="$(git rev-parse --show-toplevel)" || exit 1
@@ -51,10 +51,9 @@ trap 'rm -rf "$work"' EXIT
 
 # ── What an installation answers ────────────────────────────────────────────────────────────
 # The two stand-in documents are TRACKED FILES, and each is read here rather than written out.
-# scripts/check.ps1 reads the same two. A copy in each spelling of this check would be a second and
-# a third place to change a key, and a key that moved in one of them would leave this check green
-# while a real install branch failed. Their own comments say what each document is and why the
-# charts need it.
+# A copy of either inside this file would be a second place to change a key, and a key that moved
+# in one of them would leave this check green while a real install branch failed. Their own
+# comments say what each document is and why the charts need it.
 cluster_map="$root/scripts/standin/cluster-map.yaml"
 registration="$root/scripts/standin/registration.yaml"
 for standin in "$cluster_map" "$registration"; do
@@ -150,8 +149,7 @@ $found"
 # THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
 # plants two defects it has to report and three innocents it has to leave alone, and its own header
 # says which is which. Without the defects a green run would only mean the scan found nothing,
-# which is also what a scan that stopped looking prints. scripts/check.ps1 reads the same file and
-# holds it to the same two lines.
+# which is also what a scan that stopped looking prints.
 counter_probe="$root/scripts/counter-probe.yaml"
 [ -f "$counter_probe" ] || fail "$counter_probe is missing, and it is what shows the scan of step 1 can go red"
 
@@ -304,7 +302,7 @@ echo "check: a cluster map with no global: block is refused by name, not by a ni
 # different words, which is what lets them be counted apart.
 # THE REF ON EACH LINE IS COMPARED AS A WHOLE WORD, never as a pattern: the two words carry dots,
 # and a dot in a pattern matches any character. The trailing `  # ...` comment some of these lines
-# carry is cut off first. scripts/check.ps1 compares the same way, case-sensitively.
+# carry is cut off first.
 refs_on() { # $1 the render, $2 the ref
   awk -v ref="$2" '
     /^[ 	]+(revision|targetRevision): / {

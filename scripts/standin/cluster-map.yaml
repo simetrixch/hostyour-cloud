@@ -1,7 +1,7 @@
 # The stand-in cluster map, for the render check only. No cluster ever reads this file.
 #
 # It stands where clusters/active/<fqdn>.yaml stands in every chart's valueFiles chain: last, after
-# the platform globals and the chart's own values. scripts/check.sh and scripts/check.ps1 both hand
+# the platform globals and the chart's own values. scripts/check.sh hands
 # this one file to helm template, so the shape below is declared once in this repository.
 #
 # WITHOUT IT ALMOST NOTHING RENDERS, and that is the trunk working as designed. The endpoint keys in
