@@ -1,0 +1,217 @@
+# What this installation is — the answers a generated branch is made one installation by.
+#
+# THIS FILE IS THE TEMPLATE. It stands on the trunk with every value empty. The run that generates
+# an installation branch copies it to configs/config.<stage> and fills the keys it owns IN PLACE:
+# each value is rewritten on the line this file declares it on, so a key appears exactly once and
+# keeps the paragraph above it, and every other line is copied through untouched. A key this file
+# does not declare cannot be filled at all — the run refuses and names it, rather than appending a
+# bare assignment at the end of a file whose whole value is that each key stands under its
+# explanation.
+#
+# AN EMPTY VALUE MEANS UNANSWERED, WHICH IS WHY EVERY ASSIGNMENT BELOW IS EMPTY. A value that is
+# empty, absent, or still exactly what this template carries counts as no answer. So an example
+# value on one of these lines would be read as somebody's answer and left standing — which is how
+# certificate mail and an identity provider's first account once ended up on a mailbox nobody reads.
+# The same rule runs the other way: a key that carries anything else is NEVER rewritten, so a value
+# you typed survives every re-run of the generator instead of being reset to the answer the run was
+# given.
+#
+# HOW THE CONDITIONS READ IT BACK. Shell assignment syntax, one KEY=value per line: everything after
+# the first `=` is the value, an `export ` prefix is stripped, surrounding quotes are taken off, and
+# blank lines and lines starting with `#` are ignored. Nothing strips a comment from the END of a
+# value line, so `ENABLE_SECRET_STORE=true # switched on` is the value `true # switched on` and not `true`,
+# and the phase behind it stays off — put a remark of your own on a line of its own. A value cannot
+# carry a double quote or a line break: the run refuses such an answer instead of writing a file the
+# next reader would misparse.
+#
+# WHAT IS NOT HERE. The platform's own defaults — the pod network, the addon list, the chart
+# repositories, the timeouts — belong to the product and not to an installation, so nothing asks you
+# for them and nothing writes them here. The credentials belong to the other hand-filled file,
+# secrets/secrets.<stage>.
+
+# ── what this installation is ────────────────────────────────────────────────────────────────────
+
+# Which of the product's three stages this installation runs: dev, test or prod. The generator
+# writes it here from the stage it was told, and that same word names this file's filled copy,
+# configs/config.<stage>. It is also written into this cluster's map under `stage:`, and the step
+# that reduces the branch to one stage refuses to prune while the map and the run disagree — pruning
+# to the wrong stage would leave a branch whose values, secret paths and release names belong to a
+# stage it does not run. A word that is not one of the three is refused when the map is written.
+#
+# NOTHING READS THIS LINE, AND NOTHING READS THIS FILE'S NAME EITHER. The reader lists the configs
+# directory, drops the template by its own name, and takes the one entry that is left — whatever
+# that entry happens to be called. So renaming configs/config.dev to configs/config.prod moves
+# nothing, and a directory holding two such files is refused as a branch that was never reduced to
+# one stage. Every program takes the stage from its own run.
+DEPLOY_ENV=
+
+# The domain name this cluster answers on, as it is reached from outside. The same answer names the
+# git branch this installation is generated on and its cluster map, clusters/active/<domain>.yaml,
+# and is stamped into installation/profile.yaml as `global.domain`, which every platform hostname of this
+# cluster hangs off.
+#
+# THIS KEY IS NOT ONE A LATER RUN READS BACK. FIVE values in this file are read back, counted from `conditions:` in
+# ../hostyour-deploy/ansiwise.yaml and from the one row outside it: CLUSTER_ISSUER, the three ENABLE_
+# switches at the foot, and DEPLOY_REPO, which deploy-platform-services clones the catalogue from
+# through `origin_file`. Every one of those five is an INSTALLATION-wide fact — the same word for
+# every machine of the installation — and that is exactly what one file shared by several machines
+# can carry. This key names ONE MACHINE, and a cluster carrying only the slave part reads this file
+# off the books branch, where it states the books-keeping cluster's domain and not its own. A program
+# asking which machine it is running on therefore asks the RUN (the answers `fqdn`, `books_fqdn` and
+# `build_plane_fqdn`), never this line. What stands here is this installation's record of the answer,
+# like every other key whose paragraph says so.
+CLUSTER_FQDN="apps3.digitacloud.app"
+
+# ── where this installation's units and its mail live ────────────────────────────────────────────
+
+# The public apex the consumers and tenants of this installation are reached below, as
+# <name>.<apex>: a unit called shop under an apex of example.com answers at shop.example.com. Two
+# clusters in one zone share an apex, and that is what lets a unit keep its address when it moves
+# between them; it is usually this cluster's domain without its first label. A value that is not a
+# domain name is refused when the map is written, where the generator records the same answer as
+# `unit-apex`.
+#
+# Nothing reads this line. The same answer is also stamped into installation/profile.yaml as
+# `global.unitApex`, the file every application loads LAST in its values chain, and no chart in this
+# repository reads that key today.
+UNIT_APEX=
+
+# The business domain of this installation — the domain its mail is sent from, and the identity its
+# sender addresses are built on. Usually the same as the unit apex. A value that is not a domain
+# name is refused when the map is written, where the generator records the same answer as
+# `platform-domain`.
+#
+# Nothing reads this line. The same answer is also stamped into installation/profile.yaml as
+# `global.platformDomain`, and no chart in this repository reads that key today.
+PLATFORM_DOMAIN=
+
+# ── where this installation builds, and what its tenants are built from ──────────────────────────
+
+# The domain of the cluster whose image registry and builders this installation pulls from: this
+# cluster's own domain where it carries the build plane itself, another machine's domain where it
+# does not. The comparison that decides which shape the grants in the secret store are written in is
+# made over the run's answers (`build_plane_fqdn` against `fqdn`) and not over this file — the build
+# tier's read policies and its secret-reader role exist only on the cluster that carries the plane,
+# because a build is stage-free and can authenticate only against the one store standing beside it.
+# The registry address every cluster of this installation pulls through is composed from the same
+# answer, as zot.<build-plane> in installation/profile.yaml. An installation has exactly ONE build plane,
+# so every cluster of it is given the SAME value here: two clusters that both named themselves would
+# each build their own copy of what is meant to be one image promoted from stage to stage. Nothing
+# derives this value from anything else.
+# THE CLUSTER THAT KEEPS THE BOOKS — the cluster maps and the registrations of this installation,
+# and with them the ONE secret store and the ONE place people sign in. On the cluster that keeps
+# them this is its own domain; on every other cluster of the same installation it is that cluster's.
+# The relation that tells a program whether the installation-wide services are provided HERE or
+# reached elsewhere is that same comparison, but it is made over the RUN's answers (`books_fqdn`
+# against `fqdn`) and not over this file — see the paragraph on CLUSTER_FQDN above for why a file
+# shared by several machines cannot answer it. What stands here is the record.
+BOOKS_CLUSTER="apps3.digitacloud.app"
+
+BUILD_PLANE_FQDN="apps3.digitacloud.app"
+
+# The repository holding this installation's TENANT charts and their per-stage pins, written as
+# owner/name. It is your own repository and not this platform's, and no rule composes its name out
+# of anything else here. Something that is not an owner and a name is refused when the map is
+# written, where the generator records the same answer as `catalog-repo`. The same answer is also
+# stamped into the reconciler's tenant generators, in place of the marker the trunk carries for it,
+# which is what points them at your catalog. Nothing reads THIS line, so editing it later retargets
+# nothing.
+CATALOG_REPO=
+
+# The repository the DEPLOYMENT PROGRAMS are read from, written as owner/name. It is the platform's
+# own and public, the same for every installation, and the row that clones the catalogue onto this
+# machine reads it from HERE and names no credential beside it. It is not CATALOG_REPO above: that
+# one is your tenant charts, private and reached with a read credential, and a single key for both
+# clones whichever repository the last writer meant.
+DEPLOY_REPO="simetrixch/hostyour-deploy"
+
+# ── the mailboxes ────────────────────────────────────────────────────────────────────────────────
+
+# A real mailbox the certificate authority writes to before a certificate expires and when its
+# policy changes. It is not used to log in anywhere, and nothing judges the address — it is yours,
+# and a rule that recognized an example would refuse an operator whose own mailbox reads like one.
+# The address that is actually registered comes from the answer the cluster run was given: that run
+# writes it into the ClusterIssuer this cluster issues every certificate through, and that object is
+# what the authority knows. This line is this installation's record of the same answer, and nothing
+# reads it — changing it later re-registers nothing.
+LETSENCRYPT_EMAIL=
+
+
+# The mailboxes this installation's platform alerts are sent to — several on ONE line, separated by
+# COMMAS. The comma is the separator on both sides of the answer: what takes the answer splits the
+# text typed into it on commas, and the generator joins the list back with commas to write this
+# line. At least one real address, and each one must be a mailbox: an empty list and anything
+# without an @ and a dotted name after it are refused when the map is written, where the same answer
+# is recorded as `alert-recipients`.
+#
+# Nothing reads this line, and nothing splits it apart again. What the alerting stack delivers to is
+# `global.alertRecipients` in the values chain.
+ALERT_RECIPIENTS=
+
+# ── the three switches ───────────────────────────────────────────────────────────────────────────
+#
+# No step writes these: you answer them here by hand, and they are read straight out of the filled
+# file by the conditions that gate whole phases of the install. A phase that is switched off leaves
+# NOTHING behind — no namespace, no release, no credential file, not a half-built one — because its
+# rows never run, and the plan says which condition skipped each of them instead of showing a row
+# that reported success without doing anything.
+#
+# Only the exact word `true` switches a phase on. `1`, `yes` and `True` are read as a no, and the
+# condition says so: they state something this installation never defined, and taking one for
+# agreement is how a cluster ends up running a component nobody switched on.
+
+# Whether this installation runs the platform's secret store, the one place a credential of this
+# installation comes into being and lives. Its condition gates the whole phase: bringing the store
+# up, unsealing it, creating the mount, every policy and every login role written on it, and every
+# value seeded into it. SAY IT, IN THE WORD true OR THE WORD false: the condition behind it refuses a
+# key that holds nothing at all, because bringing up the platform's only secret store, minting its
+# quorum and writing the one file that holds it is not something a machine should get, or lose, by
+# somebody leaving a line alone.
+ENABLE_SECRET_STORE=true
+
+# Whether this installation runs an identity provider — the one every cluster of the installation
+# authenticates against, and the one the reconciler logs its users in through. A cluster without one
+# stands perfectly well, it simply cannot log anybody in yet. It cannot stand alone, though: the row
+# that puts its credentials on the cluster is gated on the secret store as well, because that is
+# where they come into being — so an installation with the store switched off gets no identity
+# provider either, as a skipped row with its reason and not as a pod that starts and cannot reach its
+# database.
+ENABLE_IDP=true
+
+# Whether this installation hands its cluster over to the reconciler. Its condition gates the
+# reconciler's namespace, its release, its public address — and the handoff itself, the single
+# application from which the reconciler creates the projects, the generators and every platform
+# application below them. That last row is the point of no return: from there the reconciler owns
+# every object of every platform application, and taking that one application away again takes all
+# of them with it. An installation that does not want to hand over writes false here, and until it
+# does the platform applications of this branch simply do not exist on its cluster.
+ENABLE_RECONCILER=true
+
+# WHICH AUTHORITY THIS INSTALLATION'S CERTIFICATES ARE ISSUED BY. Two names, and the name is the
+# whole of the choice:
+#
+#   platform-acme    the public authority. Every browser, every operating system and every container
+#                    image already carries its root, so nothing has to be told to trust it.
+#   platform-local   an authority this cluster mints for itself. Nothing outside this installation
+#                    trusts it, and no request ever leaves the machine - which is what lets an
+#                    installation be built and rebuilt as often as it needs to be, against an
+#                    authority that counts how many certificates it has issued.
+#
+# IT IS A NAME AND NOT A SWITCH, and that is not a matter of taste. The certificate service watches
+# the NAME a certificate is issued by and never the specification behind it. A boolean beside a
+# single name can be turned over while every certificate goes on being signed by the authority that
+# was taken away in the same run, and the cluster then serves certificates whose root it deleted.
+# Changing the NAME is what makes the service issue everything again, by itself, with nothing left
+# to remember.
+#
+# WHAT IT COSTS WHILE IT IS platform-local: the
+# machine is given that authority and every step of the installation verifies normally, but a browser
+# warns on every address of this cluster and workloads that reach it from INSIDE - the secret
+# operator dialling the store, the reconciler exchanging its token - are refused, unless the trust
+# bundle carries it. The five programs run through either way.
+#
+# ANSWERED, UNLIKE THE THREE ABOVE, which is why this line is empty: a key an answer names is
+# written from that answer whenever the two differ, and a value equal to the one standing here
+# would count as no value at all. So the authority is named once, in the installation's own config,
+# and every later run writes what it says.
+CLUSTER_ISSUER="platform-local"
