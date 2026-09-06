@@ -18,17 +18,20 @@
 # the template parameters. The body carries NO guid — the path registrations/<guid>/<stage>.yaml is
 # the identity — so the guid is derived from the file path ONCE, in the generator's values block.
 #
-# The two catalog sources part ways here. The chart source's targetRevision KEEPS master: the member
-# charts are PRODUCT, shared by every installation, and the chart above replaces markers and never a
-# plain word, so the render leaves that word standing. The line also carries the keep marker that
-# exempts a line from a stamp, and no stamp row reaches this tree any more. The generator
-# revision names the BOOKS branch — the install branch of the cluster holding the master role, in
-# the catalog — because that is where the Manager writes the tenant registrations, and a second
-# installation must be able to hold its own without colliding. A tenant only ever lands on a slave,
-# whose own branch does not exist in the catalog at all, so a generator pointed at this branch would
-# evaluate against a ref that is not there. The $values source is the ONE hostyour-cloud line: the
-# chart above fills its marker with global.domain, so the platform values chain follows THIS
-# cluster's install branch.
+# EVERY LINE NAMING THE CATALOG NAMES ONE REVISION OF IT — the BOOKS branch, which is the install
+# branch of the cluster holding the master role, in the catalog. The generator reads the tenant
+# registrations there, the pins source reads this installation's own image versions there, and the
+# chart source reads the member charts there. ArgoCD's repo-server refuses to generate a manifest
+# for an Application whose `ref` source stands on the Application's own repository at another
+# commit, so a chart source on the trunk beside a pins source on this branch produces NOTHING and
+# the tenant never syncs. The branch carries the member charts because the Manager brings the
+# catalog's trunk into it, at the act that creates it — the same shape the platform install branch
+# has, where a release reaches a cluster by a merge and never by a second revision on a source.
+# A tenant only ever lands on a slave, whose own branch does not exist in the catalog at all, so
+# every one of these lines takes the books branch and not this cluster's own. The $values source is
+# the ONE hostyour-cloud line, and it names that same one branch there: the chart above fills
+# __BRANCH__ from global.booksCluster, so the platform values chain follows the installation's
+# install branch too.
 #
 # THE THREE MARKERS IN THIS FILE, AND WHAT PUTS A VALUE IN EACH.
 #
@@ -80,7 +83,7 @@ spec:
         generators:
           - git:
               repoURL: https://github.com/__CATALOG_REPO__.git  # the chart writes global.catalogRepo into the marker — the owner and the name of the repository holding the member charts, named in the cluster map
-              revision: __BOOKS_FQDN__  # the chart fills it from global.booksCluster — the tenant registrations in the catalog stand on the books branch (the CHARTS below stay on the trunk)
+              revision: __BOOKS_FQDN__  # the chart fills it from global.booksCluster — the tenant registrations in the catalog stand on the books branch, and so does every source below
               files:
                 - path: "registrations/*/__STAGE__.yaml"
               values:
@@ -136,26 +139,28 @@ spec:
             {{- end }}
       sources:
         # 0. Values-only source — makes $values/... resolvable for the sources below. Filled
-        #    from global.domain like every other one: the chain follows THIS cluster's branch.
+        #    from global.booksCluster like every other one: the chain follows the install branch.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: __BRANCH__
           ref: values
         # 0b. Pins-only source — this installation's OWN image versions, on the catalog's books
         #    branch. A tag says which version THIS installation runs, so it cannot stand on the
-        #    trunk below, which every installation reads: one installation's build would decide
+        #    catalog's trunk, which every installation reads: one installation's build would decide
         #    another's version, and the next bump would overwrite it. The release pipeline's bump
         #    writes <chart>/pins-__STAGE__.yaml here; until it has, the chart's own values.yaml carries
         #    the product default and the file is simply absent (ignoreMissingValueFiles).
         - repoURL: https://github.com/__CATALOG_REPO__.git  # filled from global.catalogRepo, as the generator above is
-          targetRevision: __BOOKS_FQDN__  # filled from global.booksCluster, the cluster that keeps this installation's books — the pins stand on that branch, the CHARTS below on the trunk
+          targetRevision: __BOOKS_FQDN__  # filled from global.booksCluster, the cluster that keeps this installation's books
           ref: pins
-        # 1..n. The member's own charts on the catalog's trunk, in the order the registration lists
-        #    them. The platform values reach every one of them as global.* over the SAME $values chain
-        #    every platform app loads: platform files first, the chart's own values in between, the
-        #    chart's extra value files after those, this cluster's own map LAST (highest precedence).
+        # 1..n. The member's own charts, in the order the registration lists them, on the SAME
+        #    revision of the catalog the pins above stand on — one repository, one revision, or the
+        #    repo-server generates nothing for this Application. The platform values reach every one
+        #    of them as global.* over the SAME $values chain every platform app loads: platform files
+        #    first, the chart's own values in between, the chart's extra value files after those,
+        #    this cluster's own map LAST (highest precedence).
         {{- range .sources }}
         - repoURL: https://github.com/__CATALOG_REPO__.git  # filled from global.catalogRepo, as the two sources above are
-          targetRevision: master  # set-domain:keep — the member charts live on the catalog's master, never on an install branch
+          targetRevision: __BOOKS_FQDN__  # filled from global.booksCluster — the Manager brings the catalog's trunk into this branch, so it carries the member charts
           path: {{ .chart | quote }}
           helm:
             valueFiles:
@@ -212,7 +217,7 @@ spec:
               {{- end }}
         {{- end }}
         # LAST. The platform's own ingress policy for this member namespace
-        #    (clusters/units/networkpolicy on the trunk, one NetworkPolicy and nothing else):
+        #    (clusters/units/networkpolicy in this repository, one NetworkPolicy and nothing else):
         #    the namespace is deny-by-default inbound, with same-namespace pods, the
         #    tenant's SIBLING members, Traefik and Prometheus open. It rides in the
         #    member's OWN Application on purpose — created, healed and pruned with the
@@ -226,9 +231,9 @@ spec:
             valuesObject:
               tenant:
                 guid: "{{ .values.guid }}"
-        # AND LAST. The platform's own resource ceiling for this member namespace (clusters/units/quota on
-        #    the trunk: a ResourceQuota and the LimitRange that keeps it from rejecting a pod which
-        #    declares no resources of its own). Rides in the member's OWN Application for the same
+        # AND LAST. The platform's own resource ceiling for this member namespace (clusters/units/quota
+        #    in this repository: a ResourceQuota and the LimitRange that keeps it from rejecting a pod
+        #    which declares no resources of its own). Rides in the member's OWN Application for the same
         #    reason the policy above does — created, healed and pruned with the namespace it bounds.
         #    The figures come from the tenant REGISTRATION, resolved there by the Manager from its
         #    size table. PER MEMBER, not per tenant: a tenant owns one namespace for each of its
