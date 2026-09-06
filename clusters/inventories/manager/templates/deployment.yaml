@@ -55,15 +55,53 @@ spec:
         # fsGroup does NOT do this job: it lands on the volume, and a
         # hostPath-backed volume (microk8s-hostpath) is left alone by the kubelet.
         runAsGroup: 65532
-        # Make the PVC group-writable for the non-root uid, where the storage class
-        # manages ownership (microk8s-hostpath dirs are world-writable anyway, so
-        # this is belt-and-braces there). It is also added to the process's
-        # supplementary groups, which happens on every storage class.
+        # Makes the PVC group-writable for the non-root uid ON A STORAGE CLASS THAT
+        # MANAGES OWNERSHIP, and it is added to the process's supplementary groups,
+        # which happens on every storage class. It is NOT what makes /data writable
+        # on microk8s-hostpath: there the volume is hostPath-backed and the kubelet
+        # skips it, so the own-data-dir init container below is what does that job.
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       imagePullSecrets:
         - name: manager-registry-pull
+      # WHO OWNS /data BEFORE THE SERVER OPENS THE DATABASE. The claim below is a
+      # microk8s-hostpath one, and TWO components create its backing directory on the
+      # node: the provisioner makes it 0777, and the kubelet makes it root:root 0755
+      # whenever it is missing at mount time, because that PV carries
+      # hostPath.type: DirectoryOrCreate. uid 65532 can write the first and not the
+      # second, so a Manager whose backing directory was recreated dies at openDb with
+      # "unable to open database file" and crash-loops. fsGroup above cannot close
+      # this, for the reason stated there.
+      initContainers:
+        - name: own-data-dir
+          # The SAME builds[] pin as the app container, so the two can never name two
+          # versions and the node holds one image rather than a second one pinned
+          # nowhere. node:24-slim carries chown (hostyour-manager Containerfile), and
+          # its USER node is overridden by runAsUser below.
+          image: {{ include "common.buildImage" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
+          # NOT -R. Only the mount point's own ownership is missing; a recursive pass
+          # would rewrite every inode of the database on every pod start. chown on a
+          # directory that already carries this owner changes nothing and exits 0.
+          command: ["chown", "65532:65532", "/data"]
+          securityContext:
+            # BOTH lines, and neither is optional. runAsNonRoot: true stands on the pod
+            # above and applies to an init container as much as to the app container, so
+            # runAsUser: 0 alone makes the kubelet refuse this container with "container
+            # has runAsNonRoot and image will run as root" — and the app container then
+            # never starts at all.
+            runAsNonRoot: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              # chown(2) to another uid needs CAP_CHOWN even as root, so dropping ALL
+              # without adding it back leaves the command answering EPERM.
+              drop: ["ALL"]
+              add: ["CHOWN"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
       containers:
         - name: manager
           image: {{ include "common.buildImage" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
