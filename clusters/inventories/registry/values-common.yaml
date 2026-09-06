@@ -22,7 +22,7 @@ app:
     # Bump when config.json below changes so ArgoCD rolls the zot pod and it
     # re-reads the file — zot loads config ONLY at startup, and a ConfigMap mount
     # update alone does not restart it. Value is arbitrary; changing it = a roll.
-    hostyour.cloud/config-revision: "sync-timeout-bounds-the-on-demand-fetch"
+    hostyour.cloud/config-revision: "metrics-acl-grants-the-pull-user"
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
   # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
   # With RollingUpdate, the new pod fails to start until the old pod
@@ -146,11 +146,23 @@ ingress:
 #                 for interactive ops via the Zot web UI.
 #   - push-user → read+create+update+delete on every repo (consumed by
 #                 image-builder's buildah-build-push).
-#   - pull-user → read-only on every repo (consumed by imagePullSecrets).
+#   - pull-user → read-only on every repo (consumed by imagePullSecrets), and the one
+#                 account accessControl.metrics grants /metrics to.
 #   - Anonymous access disabled (defaultPolicy + anonymousPolicy both []).
-# Prometheus metrics extension enabled on /metrics (scraped by the
-# ServiceMonitor below). Default storage: filesystem at /var/lib/registry
-# (bound to the PVC above).
+# Default storage: filesystem at /var/lib/registry (bound to the PVC above).
+#
+# /metrics IS GRANTED BY accessControl.metrics AND BY NOTHING ELSE — the repository policies do not
+# reach that route. zot refuses an anonymous request unless metrics.anonymousPolicy carries "read",
+# and refuses an authenticated user whose name is not in metrics.users (MetricsAuthzHandler,
+# pkg/api/authz.go). So an accessControl with no metrics key answers 401 to every caller, and a
+# refused scrape is up == 0 — which is what the RegistryDown rule below reads as a registry that
+# has stopped, while pulls and pushes go on working.
+#
+# WHY NOT metrics.anonymousPolicy. The Ingress above publishes this listener, and zot serves
+# /metrics on the same port as the distribution API, so an anonymous metrics route is a public
+# one. Four of the metric families zot registers carry a repo label
+# (pkg/extensions/monitoring/extension.go), which would hand anybody the name, the byte size and
+# the pull count of every repository in a private registry.
 #
 # docker.io pull-through cache (extensions.sync, onDemand): a pull of any
 # repo NOT found locally triggers an on-demand fetch from registry-1.docker.io,
@@ -374,6 +386,9 @@ configmap:
                 "users": ["admin"],
                 "actions": ["read", "create", "update", "delete"]
               },
+              "metrics": {
+                "users": ["{{ .Values.global.registryPullUser }}"]
+              },
               "repositories": {
                 "**": {
                   "policies": [
@@ -466,12 +481,25 @@ externalsecret-htpasswd:
     name: zot-htpasswd
     namespace: registry
     targetSecretName: zot-htpasswd
+    #
+    # THE TWO PULL KEYS STAND IN THE TEMPLATE BECAUSE A TEMPLATE REPLACES THE FETCHED DATA.
+    # mergePolicy defaults to Replace (clusters/inventories/external-secrets/templates/crd-externalsecret.yaml),
+    # so a target carrying a template holds the templated keys and nothing else: the four secretKeys
+    # below reach the template and never the Secret. The ServiceMonitor's basicAuth needs the pull
+    # account's name and its password as two keys of a Secret in this namespace — the operator's CRD
+    # takes a Secret key for the username and no literal — so the one ExternalSecret that already
+    # reads those two properties publishes them, rather than a second one over the same Vault path.
+    # Each of the two is a quoted scalar and not a block: the operator sends the key's bytes as they
+    # stand (GetSecretKey, prometheus-operator pkg/assets/store.go), so a trailing newline would
+    # travel into the Authorization header and the login would be refused.
     template:
       engineVersion: v2
       data:
         htpasswd: |-
           {{ .pullUser }}:{{ bcrypt .pullPassword }}
           {{ .pushUser }}:{{ bcrypt .pushPassword }}
+        pullUser: '{{ .pullUser }}'
+        pullPassword: '{{ .pullPassword }}'
     data:
       - secretKey: pullUser
         property: pull-user
@@ -543,6 +571,18 @@ monitoring:
         - port: http
           path: /metrics
           interval: 30s
+          # zot grants /metrics to the accounts in accessControl.metrics and to nobody else, so the
+          # scrape logs in as the pull user. Both keys come from zot-htpasswd, which the
+          # ExternalSecret above materializes in THIS namespace: the Prometheus operator reads a
+          # basicAuth Secret from the ServiceMonitor's own namespace, and its CRD has no field for
+          # another one.
+          basicAuth:
+            username:
+              name: zot-htpasswd
+              key: pullUser
+            password:
+              name: zot-htpasswd
+              key: pullPassword
   prometheusRules:
     registry:
       enabled: true
