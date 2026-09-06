@@ -145,6 +145,101 @@ collect_expressions() {
 $found"
 }
 
+# ── One repository, one revision, per Application ───────────────────────────────────────────
+# AN APPLICATION WHOSE SOURCES RESOLVE ONE REPOSITORY TO TWO COMMITS PRODUCES NO MANIFEST AT ALL.
+# ArgoCD's repo-server checks out every `ref` source that a `$name/...` valueFile of the generated
+# source names, and where that source stands on the same repository at another commit it refuses
+# with "cannot reference a different revision of the same repository". The Application then stands
+# Unknown carrying nothing, the whole tree behind it never syncs, and a deployment's verification
+# waits out its clock on it. There is no setting that permits it.
+#
+# A COUNT OF SITES CANNOT SEE THIS. The defect is a RELATION between two sources of one
+# Application, and each site of it is a valid revision read on its own. A count of how many sources
+# stand on each revision is green on any split that keeps the totals, and it has to be re-edited by
+# whoever adds a source, which turns the number into the answer instead of the question.
+#
+# WHAT IS READ. Every `sources:` block of a render, item by item: each source's repository, its
+# targetRevision, and the YAML anchors either may be written through. A finding is named by the
+# `# file:` line the reconciler chart writes ahead of each document it emits, and by helm's own
+# `# Source:` line where there is none.
+#
+# WHAT IT CANNOT SEE, named rather than counted. A repository written as an ApplicationSet
+# parameter is compared as that text, because the value arrives when the controller creates the
+# Application and no render carries it. Two spellings of one repository are compared lower-cased
+# with a trailing slash and a `.git` suffix cut, which is what ArgoCD's normalization does to the
+# https form this tree writes; an ssh form would read as a second repository here and as the same
+# one there. A single-source Application is not read, because one source cannot disagree with
+# itself.
+revisions_awk='
+function reset() { split("", first); split("", second); split("", order); split("", anchors); n = 0; repo = "" }
+function emit(   i, name, where) {
+  where = (fil != "" ? fil : src)
+  for (i = 1; i <= n; i++) {
+    name = order[i]
+    if (name in second) print where "\t" name "\t" first[name] "\t" second[name]
+  }
+  reset()
+}
+function value(s,   name) {
+  sub(/^[A-Za-z]+:[ \t]*/, "", s)
+  sub(/[ \t]+#.*$/, "", s)
+  sub(/[ \t]+$/, "", s)
+  if (s ~ /^&/) {
+    name = s
+    sub(/^&[^ \t]+[ \t]*/, "", s)
+    sub(/^&/, "", name)
+    sub(/[ \t].*$/, "", name)
+    gsub(/"/, "", s)
+    anchors[name] = s
+    return s
+  }
+  if (s ~ /^\*/) return anchors[substr(s, 2)]
+  gsub(/"/, "", s)
+  return s
+}
+function repository(u) { u = tolower(u); sub(/\/+$/, "", u); sub(/\.git$/, "", u); return u }
+function record(name, revision) {
+  if (name == "" || revision == "") return
+  if (!(name in first)) { first[name] = revision; order[++n] = name }
+  else if (first[name] != revision && !(name in second)) second[name] = revision
+}
+BEGIN { base = -1 }
+/^# file: / { fil = substr($0, 9); next }
+/^# Source: / { src = substr($0, 11); next }
+/^---[ \t]*$/ { emit(); base = -1; fil = ""; next }
+{
+  match($0, /^[ \t]*/)
+  indent = RLENGTH
+  line = substr($0, indent + 1)
+  if (line == "" || substr(line, 1, 1) == "#") next
+  if (base >= 0 && indent <= base) { emit(); base = -1 }
+  item = line
+  sub(/^-[ \t]+/, "", item)
+  if (item ~ /^sources:[ \t]*$/) { emit(); base = indent; next }
+  if (base < 0) next
+  if (item ~ /^repoURL:[ \t]/) { repo = repository(value(item)); next }
+  if (item ~ /^targetRevision:[ \t]/) { record(repo, value(item)); repo = ""; next }
+}
+END { emit() }
+'
+
+# $1 says where the render came from, $2 is a file holding it. One line per finding on stdout.
+sources_disagreeing() {
+  awk "$revisions_awk" "$2" > "$work/revisions" || fail "the render of $1 could not be read"
+  while IFS="$tab" read -r where name one other; do
+    printf '  %s, %s: %s stands at %s and at %s in one Application\n' "$1" "$where" "$name" "$one" "$other"
+  done < "$work/revisions"
+}
+
+# $1 says where the render came from, $2 is the render itself. Adds what it finds to $disagreeing.
+collect_disagreeing() {
+  printf '%s\n' "$2" > "$work/render"
+  found="$(sources_disagreeing "$1" "$work/render")"
+  [ -n "$found" ] || return 0
+  disagreeing="$disagreeing
+$found"
+}
+
 # ── The counter-probe of that scan ──────────────────────────────────────────────────────────
 # THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
 # plants two defects it has to report and three innocents it has to leave alone, and its own header
@@ -166,6 +261,17 @@ fi
 echo "check: the counter-probe reports both planted defects in scripts/counter-probe.yaml and neither planted innocent."
 : > "$work/decoded.tally"
 
+sources_expected='  scripts/counter-probe.yaml, counter-probe/planted-defect-in-two-revisions.yaml: https://github.com/simetrixch/planted stands at planted-branch and at planted-tag in one Application'
+sources_reported="$(sources_disagreeing 'scripts/counter-probe.yaml' "$counter_probe")"
+if [ "$sources_reported" != "$sources_expected" ]; then
+  echo "The counter-probe plants one Application whose sources disagree and two that do not. The scan had to report:"
+  echo "$sources_expected"
+  echo "and it reported:"
+  echo "${sources_reported:-  (nothing)}"
+  fail "the scan for an Application naming one repository at two revisions does not report what scripts/counter-probe.yaml plants"
+fi
+echo "check: the counter-probe reports the planted Application whose sources disagree and neither planted innocent."
+
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
 echo "check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves, and clusters/argocd."
 
@@ -175,6 +281,7 @@ skipped_library=""
 needed_standin=""
 broken=""
 expressions=""
+disagreeing=""
 
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
 # renders the eight manifests of clusters/argocd/files from the cluster map, and it is the only
@@ -219,6 +326,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
     if [ $? -eq 0 ]; then
       rendered=$((rendered + 1))
       collect_expressions "$name at stage $stage" "$trunk_only"
+      collect_disagreeing "$name at stage $stage" "$trunk_only"
       continue
     fi
 
@@ -229,6 +337,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
     if [ $? -eq 0 ]; then
       rendered=$((rendered + 1))
       collect_expressions "$name at stage $stage" "$out"
+      collect_disagreeing "$name at stage $stage" "$out"
       case " $needed_standin " in
         *" $name "*) ;;
         *) needed_standin="$needed_standin $name" ;;
@@ -260,6 +369,12 @@ fi
 decoded="$(wc -l < "$work/decoded.tally" | tr -d ' ')"
 echo "check: no rendered value carries a Helm expression, over $rendered renders and the $decoded base64 values in them."
 
+if [ -n "$disagreeing" ]; then
+  echo "These Applications name one repository at two revisions, and ArgoCD generates no manifest for one:$disagreeing"
+  fail "an Application names one repository at two revisions"
+fi
+echo "check: every Application of those $rendered renders names each repository it uses at one revision."
+
 # ── clusters/argocd as ArgoCD is handed it: the cluster map ALONE ────────────────────────────
 # THE LOOP ABOVE RENDERS IT WITH THE PLATFORM CHAIN, AND NO CLUSTER EVER DOES. clusters/argocd is
 # the one chart of this repository whose whole values chain is a single file:
@@ -289,6 +404,18 @@ case "$refused" in
     ;;
 esac
 echo "check: a cluster map with no global: block is refused by name, not by a nil pointer."
+
+# ── That render read for the one relation ArgoCD refuses ─────────────────────────────────────
+# THIS IS THE RENDER THE DEFECT WOULD REACH A CLUSTER THROUGH. The loop above already reads every
+# chart for it, and this is the same reading over the one chain a reconciler actually gets, where
+# the Applications the map is answered for are the ones a cluster would carry. The header on
+# sources_disagreeing says what the relation is and what ArgoCD does with it.
+argocd_disagreeing="$(sources_disagreeing 'clusters/argocd from the cluster map alone' "$work/argocd-alone")"
+if [ -n "$argocd_disagreeing" ]; then
+  echo "These Applications name one repository at two revisions, and ArgoCD generates no manifest for one:$argocd_disagreeing"
+  fail "an Application of clusters/argocd names one repository at two revisions"
+fi
+echo "check: every Application of clusters/argocd names each repository it uses at one revision."
 
 # ── The per-unit fences, held to the objects they must render ────────────────────────────────
 # NOTHING ELSE HERE WOULD NOTICE ONE MISSING. The chart loop above renders every chart and reads

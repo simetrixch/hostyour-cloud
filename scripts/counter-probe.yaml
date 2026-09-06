@@ -1,8 +1,9 @@
-# THE COUNTER-PROBE OF THE SCAN THAT READS A RENDER FOR AN UNRESOLVED HELM EXPRESSION.
-# scripts/check.sh scans this file before it scans a single real chart, and ends the run red unless
-# the scan reports EXACTLY the two planted defects below and says nothing at all about the three
-# planted innocents beside them. Without the defects the scan cannot
-# be shown to go red; without the innocents a clean answer might only mean nobody was looking.
+# THE COUNTER-PROBE OF THE TWO SCANS THAT READ A RENDER: the one that looks for an unresolved Helm
+# expression, and the one that looks for an Application naming one repository at two revisions.
+# scripts/check.sh runs both over this file before either touches a real chart, and ends the run red
+# unless each reports EXACTLY the defects planted for it below and says nothing at all about the
+# innocents beside them. Without the defects neither scan can be shown to go red; without the
+# innocents a clean answer might only mean nobody was looking.
 #
 # THIS IS A RENDER AND NOT A MANIFEST OF THIS PLATFORM. Nothing applies it, no chart produces it,
 # and no cluster ever sees it. It is shaped like the output of `helm template` — documents split by
@@ -40,6 +41,19 @@
 # carrying a template expression that helm must NOT touch, in five languages — Alertmanager's
 # alert.tmpl, Prometheus rule annotations, ExternalSecret templates, ArgoCD ApplicationSet
 # parameters and Alloy's log-level mapping.
+#
+# WHAT THE SECOND SCAN IS PLANTED, and every shape is one an ApplicationSet of this tree can write:
+#
+#   6. an Application whose two sources name ONE repository at two revisions, written through an
+#      anchor on the repository and two literals on the revision. It is the shape ArgoCD's
+#      repo-server refuses to generate manifests for.                       MUST BE REPORTED
+#   7. an Application whose two sources name TWO repositories at two revisions. Nothing forbids
+#      that: the rule is about one repository resolving to two commits, and a scan that compared
+#      revisions without comparing repositories would report this one.      MUST STAY UNREPORTED
+#   8. an Application whose two sources take BOTH the repository and the revision from one anchor
+#      each. It is the shape this tree writes, and it is what a scan that failed to resolve an
+#      anchor would report, because `*repo` and the URL it stands for are two different words.
+#                                                                          MUST STAY UNREPORTED
 #
 # The two decoded payloads are, in full:
 #
@@ -88,3 +102,54 @@ spec:
         path: {{ .chart | quote }}
       destination:
         namespace: "{{ .values.cluster }}"
+---
+# Source: counter-probe/planted-defect-in-two-revisions.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: planted-defect-in-two-revisions
+spec:
+  sources:
+    - repoURL: &split "https://github.com/simetrixch/planted.git"
+      targetRevision: planted-branch
+      ref: values
+    - repoURL: *split
+      targetRevision: planted-tag
+      path: planted/chart
+      helm:
+        valueFiles:
+          - $values/planted/values.yaml
+---
+# Source: counter-probe/planted-innocent-in-two-repositories.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: planted-innocent-in-two-repositories
+spec:
+  sources:
+    - repoURL: "https://github.com/simetrixch/planted-state.git"
+      targetRevision: planted-branch
+      ref: values
+    - repoURL: "https://github.com/simetrixch/planted-charts.git"
+      targetRevision: planted-tag
+      path: planted/chart
+      helm:
+        valueFiles:
+          - $values/planted/values.yaml
+---
+# Source: counter-probe/planted-innocent-in-one-anchor.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: planted-innocent-in-one-anchor
+spec:
+  sources:
+    - repoURL: &shared "https://github.com/simetrixch/planted.git"
+      targetRevision: &sharedref planted-branch
+      ref: values
+    - repoURL: *shared
+      targetRevision: *sharedref
+      path: planted/chart
+      helm:
+        valueFiles:
+          - $values/planted/values.yaml
