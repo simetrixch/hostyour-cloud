@@ -10,8 +10,8 @@
 # than guessing: what is named here can no longer be swept up, and committing it takes a
 # deliberate `git add -f`, which is somebody choosing rather than somebody slipping.
 #
-# config.example.env is NOT ignored and must not be: it carries no value, it is generated
-# from what the five programs declare, and it is the thing an operator copies.
+# config.example.env is NOT ignored and must not be: it carries no value, and it is the
+# thing an operator copies.
 config.env
 
 # AND ONE PER MACHINE, because a second machine is a second file. `config.apps3.env`
@@ -20,9 +20,9 @@ config.env
 # after the machine it opens.
 config.*.env
 
-# The example is NOT ignored and must not be: it carries no value, it is generated from
-# what the five programs declare, and it is the thing an operator copies. It is named
-# again here because the line above would otherwise sweep it up.
+# The example is NOT ignored and must not be: it carries no value, and it is the thing an
+# operator copies. It is named again here because the line above would otherwise sweep it
+# up.
 !config.example.env
 
 # Where install-machine.sh and install-machine.ps1 put the session transcript and the

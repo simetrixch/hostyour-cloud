@@ -118,9 +118,11 @@ a shell reads it with one `.` and needs no parser, no `jq` and no Python. JSON w
 operator a dependency, and it cannot carry the one thing that file needs most — a sentence saying
 what a value is.
 
-`config.example.env` is generated from what the five programs actually declare, so it cannot drift
-from them silently. `regenerate-install-branch` reads the same file, in the same grammar, for the
-same reason: what an installation is, is stated once.
+`config.example.env` is written by hand, so it can fall behind what the five programs declare. The
+run is what names that: `compose_answers` in `driver.sh` lists, per program, every answer that
+program declares and your config left out, and the engine refuses a missing REQUIRED one before the
+first step. `regenerate-install-branch` reads the same file, in the same grammar, for the same
+reason: what an installation is, is stated once.
 
 ## Which door it opens
 
