@@ -425,9 +425,28 @@ monitoring:
   # --------------------------------------------------------------------------
   # AlertmanagerConfig CRs.
   #
-  # `platform-default` has no matchers — it's the catch-all that delivers any
-  # alert not already null-routed by the global config (Watchdog / InfoInhibitor
-  # / severity=info). With `emails:` omitted, the chart template falls back to
+  # `platform-default` is the entry that MAILS, and ITS ROUTE IS A SIBLING OF
+  # THE NULL-ROUTES UNDER kube-prometheus-stack.alertmanager.config.route.routes
+  # BELOW, NOT A ROUTE BEHIND THEM. The operator adds each AlertmanagerConfig's
+  # route to the generated Alertmanager configuration as a FIRST-LEVEL route and
+  # always overrides its `continue` to true; `spec.route` and
+  # `spec.route.continue` of crd-alertmanagerconfigs.yaml state both, and that
+  # CRD ships inside the kube-prometheus-stack pin Chart.yaml names. So this
+  # route and those three are children of one root, Alertmanager walks the
+  # children in declaration order and takes the first whose matchers all hold,
+  # and the CRD does not say which position among them the operator gives this
+  # one. A catch-all written to rely on a sibling having taken Watchdog away
+  # mails Watchdog on every cluster where that position is first, so the three
+  # labels the platform never delivers are matched HERE too, negatively. The
+  # cost is those three labels standing twice in this file.
+  #
+  # alertmanagerConfigMatcherStrategy.type is None
+  # (kube-prometheus-stack.alertmanager.alertmanagerSpec below), so the operator
+  # injects no `namespace = observability` matcher and this entry catches the
+  # alerts of every namespace on the cluster, not only the ones observability
+  # raises.
+  #
+  # With `emails:` omitted, the chart template falls back to
   # .Values.global.alertRecipients, which the branch program renders into
   # clusters/active/<fqdn>.yaml from the operator's alert_recipients ANSWER while the
   # install branch is generated — the installation's own mailboxes, since
@@ -448,7 +467,19 @@ monitoring:
   alertmanagerConfigs:
     platform-default:
       enabled: true
-      # No matchers → catches every alert that passes the null-routes.
+      # The three the platform never delivers, as this route's OWN negative
+      # matchers. Matchers on one route are ANDed, so the route matches every
+      # alert that is none of the three. `severity != info` also matches an
+      # alert carrying no severity label, because Alertmanager reads an absent
+      # label as the empty string; it is not what keeps Watchdog out, since
+      # kube-prometheus-stack labels Watchdog `severity: none`.
+      matchers:
+        - { name: alertname, matchType: "!=", value: Watchdog }
+        - { name: alertname, matchType: "!=", value: InfoInhibitor }
+        - { name: severity, matchType: "!=", value: info }
+      # How long a still-firing group waits before it is mailed again. The
+      # chart template's default is the same 4h.
+      repeatInterval: 4h
       # No emails → falls back to .Values.global.alertRecipients.
       # The receiver name defaults to the entry key ("platform-default").
 
@@ -617,6 +648,12 @@ kube-prometheus-stack:
         group_wait: 30s
         group_interval: 5m
         repeat_interval: 4h
+        # SIBLINGS of the route the operator builds from the `platform-default`
+        # AlertmanagerConfig, not routes it passes through first: a label added
+        # here and nowhere else is still mailed on every cluster where the
+        # operator places that route ahead of these. Each label here stands a
+        # second time as a negative matcher on
+        # monitoring.alertmanagerConfigs.platform-default above.
         routes:
           - matchers: ['alertname = "Watchdog"']
             receiver: "null"
