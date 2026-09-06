@@ -168,7 +168,7 @@ mkdir -p "$SEED/clusters/argocd/files" "$SEED/clusters/bootstrap/idp" \
 # The same byte rule the real tree carries, so the fixture's files are stored and
 # checked out LF on every machine.
 echo "* text=auto eol=lf" > "$SEED/.gitattributes"
-# One file in each tree a regeneration carries, and one file outside them all —
+# Three files under the tree a regeneration carries, and one file outside it —
 # so a commit that touches only the last proves the split in the report is real
 # and not a count of everything.
 echo "selector: __CLUSTER_ROLE_FIRST_PART__" > "$SEED/clusters/argocd/files/platform-apps-appset.yaml"
@@ -309,7 +309,7 @@ advance_master "$WORK_B"
 
 run_bash status
 run_pwsh status
-must "  behind: 3 commits on origin/master since that release, 2 of them under the trees a regeneration carries: clusters/argocd, clusters/bootstrap or clusters/platform" \
+must "  behind: 3 commits on origin/master since that release, 2 of them under clusters, which a regeneration has to carry" \
      'the report counts the commits since the pin and the ones a regeneration has to carry among them'
 must "  regenerate: clusters/argocd/files/platform-apps-appset.yaml" 'the report names the file of the reconciler tree that moved'
 must "  regenerate: clusters/platform/versions.yaml" 'and the file of the platform values chain, which nothing stamps and a regeneration still carries'

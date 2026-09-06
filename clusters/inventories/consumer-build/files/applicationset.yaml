@@ -7,8 +7,9 @@
 #
 # Emitted VERBATIM by clusters/inventories/consumer-build/templates/applicationset.yaml via
 # .Files.Get (so ArgoCD's own {{ }} goTemplate expressions survive Helm
-# rendering). __STAGE__, __BRANCH__ and __BOOKS__ are substituted by the
-# wrapper (from global.env / global.domain / global.booksCluster).
+# rendering). __STAGE__, __BRANCH__, __BOOKS__ and __CLUSTER__ are substituted
+# by the wrapper (from global.env / global.domain / global.booksCluster /
+# global.clusterName).
 #
 # ONE parameter set per unit BY CONSTRUCTION: a plain files generator over
 # registrations/*/build.yaml, and a unit has exactly one such file. No merge
@@ -87,24 +88,22 @@ spec:
       sources:
         # 0. Values-only source — makes $values/... resolvable for the chart source.
         - repoURL: &repo https://github.com/simetrixch/hostyour-cloud.git
-          # TWO REFS AND NO ANCHOR BETWEEN THEM. The values chain is this installation's own and
-          # stands on its branch; the chart below is the product and stands on the release tag.
-          targetRevision: __BRANCH__
+          targetRevision: &branch __BRANCH__
           ref: values
         # 1. This same chart in UNIT mode: the registration's fields arrive as
         #    LITERALS via valuesObject — the attested record from master, never
         #    a webhook payload. The platform values reach the chart as global.*
         #    over the SAME $values chain every platform app loads.
         - repoURL: *repo
-          targetRevision: __RELEASE__
+          targetRevision: *branch
           path: clusters/inventories/consumer-build
           helm:
             valueFiles:
               - $values/clusters/platform/values-common.yaml
               - $values/clusters/platform/values-__STAGE__.yaml
               - values-common.yaml
-              # __BRANCH__ AND NOT THE LITERAL <fqdn>. The three tokens this file is
-              # substituted through are __STAGE__, __BRANCH__ and __BOOKS__; a <fqdn>
+              # __BRANCH__ AND NOT THE LITERAL <fqdn>. The four tokens this file is
+              # substituted through are __STAGE__, __BRANCH__, __BOOKS__ and __CLUSTER__; a <fqdn>
               # written here is a placeholder nothing replaces, so helm is handed a path
               # that is on no branch and every per-unit build Application fails to
               # render with "open .../clusters/active/<fqdn>.yaml: no such file or

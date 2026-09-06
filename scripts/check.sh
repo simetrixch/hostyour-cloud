@@ -290,50 +290,6 @@ case "$refused" in
 esac
 echo "check: a cluster map with no global: block is refused by name, not by a nil pointer."
 
-# ── Which ref each source of that render stands on ───────────────────────────────────────────
-# A SOURCE READING A CHART STANDS ON THE RELEASE TAG, A SOURCE READING THIS INSTALLATION STANDS ON
-# ITS BRANCH, and the render is valid YAML whichever way round they are. Nothing else here would
-# notice a site left on the branch: the Application would sync, from a ref that carries whatever
-# the last regeneration wrote, and the release would appear to have reached the cluster.
-#
-# THE NUMBERS ARE THE CHECK, and they are meant to go red when a source is ADDED. Whoever adds one
-# says here which of the two refs it stands on, which is the same decision they already made in the
-# manifest. scripts/standin/cluster-map.yaml answers `release` and `global.booksCluster` with two
-# different words, which is what lets them be counted apart.
-# THE REF ON EACH LINE IS COMPARED AS A WHOLE WORD, never as a pattern: the two words carry dots,
-# and a dot in a pattern matches any character. The trailing `  # ...` comment some of these lines
-# carry is cut off first.
-refs_on() { # $1 the render, $2 the ref
-  awk -v ref="$2" '
-    /^[ 	]+(revision|targetRevision): / {
-      value = $0
-      sub(/^[ 	]+(revision|targetRevision): /, "", value)
-      sub(/[ 	]+#.*$/, "", value)
-      if (value == ref) n++
-    }
-    END { print n + 0 }
-  ' "$1"
-}
-tag_ref="$(sed -n 's/^release:[[:space:]]*//p' "$cluster_map" | head -1)"
-branch_ref="$(sed -n 's/^booksCluster:[[:space:]]*//p' "$cluster_map" | head -1)"
-on_tag="$(refs_on "$work/argocd-alone" "$tag_ref")"
-on_branch="$(refs_on "$work/argocd-alone" "$branch_ref")"
-if [ "$on_tag" != 11 ] || [ "$on_branch" != 11 ]; then
-  grep -nE '^[[:space:]]+(revision|targetRevision):' "$work/argocd-alone" | sed 's/^/  /'
-  fail "the render of clusters/argocd stands on the release tag at $on_tag sites and on the install branch at $on_branch, and it has to be 11 and 11 — a source reading a chart of this repository stands on the tag, a source reading this installation's own state stands on its branch"
-fi
-
-# AND WITH NO PIN, EVERY ONE OF THEM READS THE BRANCH. A map carrying no `release:` line is not a
-# corner case: the Manager takes the pin off every slave map on purpose, so this is the state a
-# slave's own reconciler tree renders in.
-helm template argocd-apps clusters/argocd -f "$cluster_map" --set release=null > "$work/argocd-unpinned" 2>&1   || { cat "$work/argocd-unpinned"; fail "clusters/argocd does not render from a cluster map that records no release pin"; }
-unpinned_count="$(refs_on "$work/argocd-unpinned" "$branch_ref")"
-if [ "$unpinned_count" != 22 ]; then
-  grep -nE '^[[:space:]]+(revision|targetRevision):' "$work/argocd-unpinned" | sed 's/^/  /'
-  fail "with no release pin the render of clusters/argocd stands on the install branch at $unpinned_count sites and it has to be 22 — a cluster whose map records no pin reads its charts from its branch, which is what it read before the tag was told apart from it"
-fi
-echo "check: clusters/argocd reads 11 sources from the release tag and 11 from the install branch, and all 22 from the branch where the map records no pin."
-
 # ── The per-unit fences, held to the objects they must render ────────────────────────────────
 # NOTHING ELSE HERE WOULD NOTICE ONE MISSING. The chart loop above renders every chart and reads
 # what came out for a Helm expression, so a chart that rendered one object FEWER renders exactly as

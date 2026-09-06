@@ -11,11 +11,11 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        # THE LIST OF APPLICATIONS STANDS ON THE SAME REF AS THEIR CHARTS. This generator
-        # decides WHICH Applications exist and the chart source below builds each one's path from
-        # the same parameter set, so a generator left on the install branch would create an
-        # Application the tag does not carry, or miss one it does.
-        revision: __RELEASE__
+        # THE LIST OF APPLICATIONS STANDS ON THE SAME REF AS THEIR CHARTS. This generator decides
+        # WHICH Applications exist and the chart source below builds each one's path from the same
+        # parameter set, so a generator on another ref would create an Application whose path the
+        # chart's ref does not carry, or miss one it does.
+        revision: __BRANCH__
         files:
           - path: "clusters/inventories/*/app.yaml"
       # THE SELECTION IS BY PART, NEVER BY ONE ROLE WORD. A cluster's role names every part it
@@ -48,12 +48,10 @@ spec:
       project: "{{ .project }}"
       sources:
         - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
-          # TWO REFS AND NO ANCHOR BETWEEN THEM. The values chain is this installation's own and
-          # stands on its branch; the chart is the product and stands on the release tag.
-          targetRevision: __BRANCH__
+          targetRevision: &branch __BRANCH__
           ref: values
         - repoURL: *repo
-          targetRevision: __RELEASE__
+          targetRevision: *branch
           path: "clusters/inventories/{{ .name }}"
           helm:
             valueFiles:

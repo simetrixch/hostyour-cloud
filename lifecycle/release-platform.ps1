@@ -331,8 +331,7 @@ finally {
 }
 
 if ($Fqdn) {
-  Say "release: $Fqdn is pinned, and its reconciler reads every chart of this repository from $tag as soon as it picks up the map commit this run pushed."
-  Say "release: what a regeneration still carries is the reconciler's own tree, the bootstrap manifests and the platform values chain. bash lifecycle/status.sh $Fqdn names the files of those trees this release moved, and where it names none there is nothing left to do. Where it names one, the second act is performed from a checkout of the platform tree:"
+  Say "release: $Fqdn is pinned, which RECORDS the state and does not carry it. Every source of every Application reads the install branch, so the installation stands on that release once a regeneration has merged $tag into its branch. That is the second act, and it is performed from a checkout of the platform tree:"
   Say "release:     bash lifecycle/regenerate-install-branch.sh $Fqdn"
   Say "release:     pwsh ./lifecycle/regenerate-install-branch.ps1 $Fqdn"
   Say "release: that script reads $tag off the pin this run just wrote, so the ref is stated once and a regeneration cannot be aimed at a state the map does not record."

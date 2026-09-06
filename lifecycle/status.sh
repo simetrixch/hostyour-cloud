@@ -31,41 +31,25 @@
 # whose map records nothing cannot be told apart from one that is level, which is
 # why an absent line is reported as loudly as a stale one.
 #
-# WHY THESE THREE TREES ARE COUNTED ON THEIR OWN. Every OTHER chart of this
-# repository is read by the reconciler from the release tag the map records, so a
-# commit to one of those reaches the cluster the moment the pin moves. These three
-# are read from the install branch and from nowhere else. clusters/bootstrap
-# carries seven TEMPLATES, and a branch program renders each of them onto the
-# branch as the file beside it, filling this installation's own domain and short
-# name; only the rendered file is applied. clusters/argocd carries root-app.yaml,
-# whose branch name and cluster map file name are the placeholder domain the
-# branch programs replace across the whole checkout, and the ApplicationSets that
-# root Application syncs. clusters/platform is the platform's own values chain,
-# which every Application loads through the `$values` source, and that source
-# stands on the branch. So a commit that touches one of the three stays away from
-# the machine until a regeneration runs, and the count of them is the number this
-# whole answer exists for.
+# WHY ONE TREE IS COUNTED ON ITS OWN. Every source of every Application this
+# platform generates targets the INSTALL BRANCH, and a release reaches that
+# branch only when a branch program merges the tag into it. The bootstrap
+# manifests are rendered onto the branch from their own templates, and the
+# cluster maps are written there. So a commit under clusters/ stays away from the
+# machine until a regeneration runs, and the count of those commits is the number
+# this whole answer exists for.
 #
-# WHAT THE PER-FILE LINE MEANS. `regenerate:` names a file under one of those
-# three trees that changed since the pin: it is a file a regeneration has to
-# carry. It does NOT say a stamp row writes that file. Only root-app.yaml is
-# still stamped; the rest of clusters/argocd is a CHART the reconciler renders
-# from the cluster map, clusters/bootstrap is rendered from its own templates, and
-# nothing writes anything into clusters/platform at all. That is why this list is
-# not called the stamped trees: one of the three is stamped in one file, and one
-# of them is never stamped anywhere.
+# WHAT THE PER-FILE LINE MEANS. `regenerate:` names a file under that tree that
+# changed since the pin: it is a file a regeneration has to carry. It does NOT
+# say a stamp row writes that file. Only root-app.yaml is still stamped; the rest
+# of clusters/argocd is a CHART the reconciler renders from the cluster map,
+# clusters/bootstrap is rendered from its own templates, and nothing writes
+# anything into clusters/platform at all.
 #
 # WHAT THE COUNT DOES NOT SAY. The commits it does not count are not all commits
 # that reached the cluster. A commit under lifecycle/, scripts/ or configs/
 # reaches no cluster at all. This counts what a regeneration has to carry, and
 # says nothing about the rest.
-#
-# ONE OF THOSE DIRECTORY NAMES IS ALSO WRITTEN SOMEWHERE ELSE: root-app.yaml is
-# reached by the `stamp_placeholder_in_tracked_files` row of the branch programs
-# in the catalogue repository that names no `tree:` at all and sweeps the whole
-# checkout. Nothing compares that row against this list. A tree a regeneration
-# carries and this list does not name makes every count below too low, and
-# nothing would say so.
 #
 # IT ANSWERS ABOUT THE BRANCH, WHICH IS WHAT THE MACHINE FOLLOWS. The cluster's
 # reconciler tracks the install branch, so for these files the branch is the
@@ -79,10 +63,9 @@
 
 set -uo pipefail
 
-# The trees a regeneration has to carry, because the reconciler reads them from
-# the install branch and never from the release tag. See the header.
-REGENERATION_TREES=(clusters/argocd clusters/bootstrap clusters/platform)
-REGENERATION_TREES_SAID='clusters/argocd, clusters/bootstrap or clusters/platform'
+# The tree a regeneration has to carry, because every cluster reads it from the
+# install branch and from nowhere else. See the header.
+REGENERATION_TREE=clusters
 
 # WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
 # spellings are held to printing the same bytes, and PowerShell writes its output
@@ -177,13 +160,13 @@ for fqdn in "${INSTALLATIONS[@]}"; do
   }
 
   total="$(git rev-list --count "${pin}..origin/master")"
-  carried="$(git rev-list --count "${pin}..origin/master" -- "${REGENERATION_TREES[@]}")"
+  carried="$(git rev-list --count "${pin}..origin/master" -- "$REGENERATION_TREE")"
   if [ "$total" = '0' ]; then
     say '  level: origin/master carries nothing this release does not'
     continue
   fi
-  say "  behind: $total commits on origin/master since that release, $carried of them under the trees a regeneration carries: $REGENERATION_TREES_SAID"
+  say "  behind: $total commits on origin/master since that release, $carried of them under $REGENERATION_TREE, which a regeneration has to carry"
   while IFS= read -r changed; do
     [ -n "$changed" ] && say "  regenerate: $changed"
-  done < <(git diff --name-only "$pin" origin/master -- "${REGENERATION_TREES[@]}")
+  done < <(git diff --name-only "$pin" origin/master -- "$REGENERATION_TREE")
 done
