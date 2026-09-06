@@ -36,12 +36,56 @@ spec:
               - __CLUSTER_ROLE_FIRST_PART__
               - __CLUSTER_ROLE_LAST_PART__
 
+  # WHAT ORDERS ONE APPLICATION AGAINST ANOTHER, and `argocd.argoproj.io/sync-wave` is not it. That
+  # annotation orders the RESOURCES INSIDE one Application's own sync. On an Application generated
+  # here it decides nothing at all, because the controller creates all of them at once and each then
+  # syncs on its own automated policy: an app applying a `tekton.dev/Task` reaches the API before
+  # the app installing that CRD has finished, spends its retry budget on "the Kubernetes API could
+  # not find tekton.dev/Task", and an automated sync does not try a revision whose last attempt
+  # failed, so it stands Missing until the branch gets another commit. RollingSync is what makes the
+  # wave an order: the controller walks these steps and admits the next one only once EVERY
+  # Application of the current step reports Healthy.
+  #
+  # INERT WITHOUT THE CONTROLLER FLAG, AND NOTHING SAYS SO. With
+  # `applicationsetcontroller.enable.progressive.syncs` unset the controller ignores this block
+  # completely, creates every Application at once, and reports no condition about it. The flag
+  # stands in clusters/bootstrap/argocd/values.tpl for the master's own reconciler and in
+  # clusters/slaves/slave/values-common.yaml for the namespaced instance that drives a slave's tree.
+  #
+  # THE STEPS MATCH A LABEL, NEVER AN ANNOTATION, which is why the wave is written as a label on
+  # each generated Application and the annotation is not written at all. The controller reads the
+  # Application's LABELS for each matchExpression key, and the only operators it knows are `In` and
+  # `NotIn`. The label's own key is a marker rather than a word written out, because the steps that
+  # select on it are generated elsewhere: a key changed on one side alone would match no
+  # Application, put every one of them in the catch-all step, and sync them all at once again
+  # without any of this reporting a fault.
+  #
+  # AN APPLICATION MATCHED BY NO STEP IS NEVER SYNCED AT ALL — it is given step -1 and drops out of
+  # the rolling sync, which is the same silent standstill this block exists to remove. So the
+  # generated list ends with a `NotIn` catch-all and a wave outside the generated range syncs LAST
+  # rather than not at all. The steps begin at wave 0, so a NEGATIVE wave lands in that catch-all
+  # and syncs last, which is the opposite of what writing one would mean.
+  #
+  # THE COST IS selfHeal. While this strategy stands the controller sets
+  # `spec.syncPolicy.automated.enabled` false on every Application it generates and triggers the
+  # syncs itself. A new commit still reaches every Application, `prune` still runs, and the retry
+  # budget below is still the one used; what stops is the correction of a change made directly in
+  # the cluster, because that alters neither the Application's revisions nor its spec and so nothing
+  # asks for a fresh sync.
+  #
+  # The steps are written by clusters/argocd/templates/apps.yaml. They state the wave ORDER and
+  # repeat no wave VALUE, so clusters/inventories/*/app.yaml stays the only place a wave is declared.
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps: __SYNC_WAVE_STEPS__
+
   template:
     metadata:
       name: "{{ .name }}-__STAGE__"
       namespace: __ARGOCD_NAMESPACE__
-      annotations:
-        argocd.argoproj.io/sync-wave: "{{ .syncWave }}"
+      labels:
+        __SYNC_WAVE_LABEL__: "{{ .syncWave }}"
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:

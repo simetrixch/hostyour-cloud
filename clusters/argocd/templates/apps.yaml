@@ -76,11 +76,47 @@ compare it at all ("namespace argocd for ... is not managed"), the whole tree
 stands Unknown, and a deployment's verification waits out its clock on it.
 */ -}}
 {{- $namespace := ternary "argocd" $clusterName (eq (first $roleParts) "master") }}
+{{- /*
+THE WAVE ORDER OF THE PLATFORM APPLICATIONS, AS ROLLINGSYNC STEPS. The
+ApplicationSet in files/platform-apps-appset.yaml carries the mechanism and what
+it costs; this builds the ordered list it needs. One step per wave, in ascending
+order, and the applicationset controller admits a step only once every
+Application of the step before it is Healthy.
+
+IT REPEATS NO WAVE VALUE. `clusters/inventories/<name>/app.yaml` is the one
+place a wave is declared, and a step list naming the waves in use would be a
+second one that nothing compares against the first. A step per integer states
+the ORDER instead: a wave that is added, changed or dropped in an inventory
+needs no edit here, and the steps a cluster has no application for stay empty
+and cost a comparison each.
+
+A STEP LIST CANNOT BE COMPUTED FROM THE INVENTORIES. Helm reads files only from
+inside its own chart, and `clusters/inventories/` is outside this one — which is
+why the ApplicationSet reaches those files with a git generator rather than with
+.Files. So the range is fixed here, and the `NotIn` step below is what keeps a
+wave outside it from being an Application that never syncs at all.
+
+THE LABEL KEY IS WRITTEN FROM HERE TOO. The steps select on a label of the
+generated Application, so the key these expressions name and the key the
+Application carries are one value in two places. A key changed on one side alone
+selects nothing, and every Application then falls into the catch-all step and
+syncs at once — the state the steps exist to end, arrived at in silence.
+*/ -}}
+{{- $waveLabel := "hostyour.cloud/sync-wave" }}
+{{- $waveCount := 50 }}
+{{- $waveSteps := list }}
+{{- $waveValues := list }}
+{{- range $wave := until $waveCount }}
+{{- $waveSteps = append $waveSteps (printf "        - matchExpressions: [{ key: %q, operator: In, values: [%q] }]" $waveLabel (toString $wave)) }}
+{{- $waveValues = append $waveValues (quote (toString $wave)) }}
+{{- end }}
+{{- $waveSteps = append $waveSteps (printf "        - matchExpressions: [{ key: %q, operator: NotIn, values: [%s] }]" $waveLabel (join ", " $waveValues)) }}
+{{- $waveStepList := printf "\n%s" (join "\n" $waveSteps) }}
 {{- $booksOnly := list "cluster-self.yaml" "repo-catalog.yaml" "slaves-appset.yaml" }}
 {{- $docs := list }}
 {{- range $name := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "repo-catalog.yaml" "slaves-appset.yaml" "tenants-appset.yaml" "units-appset.yaml" }}
 {{- if or $holdsBooks (not (has $name $booksOnly)) }}
-{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__BRANCH__" $booksFqdn | replace "__ARGOCD_NAMESPACE__" $namespace }}
+{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__BRANCH__" $booksFqdn | replace "__ARGOCD_NAMESPACE__" $namespace | replace "__SYNC_WAVE_LABEL__" $waveLabel | replace "__SYNC_WAVE_STEPS__" $waveStepList }}
 {{- $docs = append $docs (printf "# file: %s\n%s" $name $doc) }}
 {{- end }}
 {{- end }}

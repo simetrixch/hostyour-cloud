@@ -71,6 +71,15 @@ redis:
 configs:
   params:
     server.insecure: true
+    # WITHOUT THIS THE WAVE ORDER OF THE PLATFORM APPLICATIONS IS INERT. The chart writes every key
+    # here into the ConfigMap argocd-cmd-params-cm and wires this one into the applicationset
+    # controller as ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS; with it unset the
+    # controller ignores the RollingSync strategy of
+    # clusters/argocd/files/platform-apps-appset.yaml and creates every Application at once, so an
+    # app applying a custom resource reaches the API before the app installing that CRD is done.
+    # The controller Deployment carries a checksum of this ConfigMap, so the pod restarts on its own
+    # when the value lands.
+    applicationsetcontroller.enable.progressive.syncs: true
   # Disable the built-in `admin` user — OIDC via Authentik is the sole
   # login path. The `argocd-initial-admin-secret` K8s Secret is left in
   # place so emergency CLI access (`argocd login --username admin

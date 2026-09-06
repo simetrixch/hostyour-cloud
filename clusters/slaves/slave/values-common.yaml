@@ -173,6 +173,16 @@ argo-cd:
   configs:
     params:
       server.insecure: true
+      # WITHOUT THIS THE WAVE ORDER OF THE PLATFORM APPLICATIONS IS INERT ON A SLAVE. This instance
+      # reconciles the same platform ApplicationSet the master does, rendered into its own namespace
+      # (clusters/argocd/templates/apps.yaml puts it there when the role does not open with
+      # `master`), and the RollingSync strategy in
+      # clusters/argocd/files/platform-apps-appset.yaml is read only by an applicationset controller
+      # started with ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS. The chart wires that
+      # variable from this key in argocd-cmd-params-cm. A slave's own first wave installs the
+      # external-secrets CRDs that most of its later applications are written against, so the order
+      # matters here for the same reason it does on the master.
+      applicationsetcontroller.enable.progressive.syncs: true
     cm:
       # Local admin login is OFF — OIDC is the only way in. OIDC is wired
       # per-slave (the shared argo-slave Authentik client + the RBAC below),
