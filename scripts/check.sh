@@ -316,7 +316,9 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
     # The valueFiles chain of clusters/argocd/files, in its order: the platform globals, then the
     # chart's own values, then the installation. A chart carries either values-common.yaml or
     # values.yaml, and units carry a size preset instead of a stage file.
-    args=(-f clusters/platform/values-common.yaml)
+    # THE API VERSIONS A CLUSTER SERVES, declared here: clusters/charts/monitoring emits its kinds only
+    # where the destination cluster has them, and helm template alone knows no cluster.
+    args=(--api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 -f clusters/platform/values-common.yaml)
     [ -f "clusters/platform/values-$stage.yaml" ] && args+=(-f "clusters/platform/values-$stage.yaml")
     for values in values-common.yaml values.yaml "values-$stage.yaml" values-size-small.yaml; do
       [ -f "$chart/$values" ] && args+=(-f "$chart/$values")
@@ -463,13 +465,13 @@ ValidatingAdmissionPolicy/consumer-check
 ValidatingAdmissionPolicyBinding/consumer-check'
 : > "$work/fences"
 for chart in clusters/units/reconciler clusters/units/admissionpolicy; do
-  helm template "$(basename "$chart")" "$chart" --namespace check \
+  helm template "$(basename "$chart")" "$chart" --namespace check --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
     -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
     -f "$chart/values.yaml" -f "$cluster_map" -f "$registration" > "$work/fence-render" 2>&1 \
     || { cat "$work/fence-render"; fail "$chart does not render, and it is what fences a unit"; }
   objects_of "$work/fence-render" >> "$work/fences"
 done
-helm template consumer-build clusters/inventories/consumer-build --namespace argocd \
+helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
   -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
   --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[]"}' \

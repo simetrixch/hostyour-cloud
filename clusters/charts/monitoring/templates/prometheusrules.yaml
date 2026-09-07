@@ -7,7 +7,16 @@ Prometheus template variables ({{ $labels.foo }}, {{ $value }}) inside alert
 annotations are NOT Helm — they're Prometheus's own templating, evaluated at
 alert-fire time. They pass through unmolested because values content is data,
 not Helm-rendered.
+
+ONLY WHERE THE CLUSTER SERVES THE KIND. ArgoCD hands helm the destination cluster's API
+versions, and the CRDs of monitoring.coreos.com arrive with observability (wave 30 on a
+master, the agent on a slave). An application before it that renders this kind fails its
+sync's dry run — "could not find monitoring.coreos.com/…" — and under the RollingSync
+its step never ends (measured on apps1: tekton at wave 3 held twelve applications). So
+nothing is emitted until the API has the kind; the next refresh after observability
+renders it, and the controller syncs the difference.
 */ -}}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
 {{- range $name, $cfg := .Values.prometheusRules }}
 {{- if $cfg.enabled }}
 ---
@@ -20,5 +29,6 @@ metadata:
     release: {{ $.Values.prometheusReleaseLabel }}
 spec:
   groups: {{ toYaml $cfg.groups | nindent 4 }}
+{{- end }}
 {{- end }}
 {{- end }}
