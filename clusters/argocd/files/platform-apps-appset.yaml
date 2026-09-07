@@ -18,15 +18,19 @@ spec:
         revision: __BRANCH__
         files:
           - path: "clusters/inventories/*/app.yaml"
-      # THE SELECTION IS BY PART, NEVER BY ONE ROLE WORD. A cluster's role names every part it
-      # carries — `master`, `slave`, or both as `master+slave` — and an app.yaml's `runsOn` names
-      # the ONE part its app belongs to, or `every-cluster`. The two slots below are filled by the
-      # chart above with the FIRST and the LAST part of this cluster's role
-      # (clusters/argocd/templates/apps.yaml splits the map's `role` on `+`),
-      # so a machine carrying both parts admits `master` AND `slave` and renders both
-      # parts' workloads, while a single-part role fills the two slots with the same word — a
-      # duplicate an In match reads as one value. An app.yaml whose runsOn matches neither slot nor
-      # `every-cluster` stays unselected on every cluster, exactly as under the one-slot form.
+      # THE SELECTION IS BY PART, OR BY THE WHOLE ROLE AS ONE WORD. A cluster's role names every
+      # part it carries — `master`, `slave`, or both as `master+slave` — and an app.yaml's `runsOn`
+      # names the ONE part its app belongs to, `every-cluster`, or the whole role. The first two
+      # slots below are filled by the chart above with the FIRST and the LAST part of this cluster's
+      # role (clusters/argocd/templates/apps.yaml splits the map's `role` on `+`), so a machine
+      # carrying both parts admits `master` AND `slave` and renders both parts' workloads, while a
+      # single-part role fills the two slots with the same word — a duplicate an In match reads as
+      # one value. The third slot is the whole role as ONE word: `pure-master` or `pure-slave` on a
+      # single-part role, `master+slave` on a machine carrying both. It is for an application that
+      # belongs to a part only where the OTHER part is absent: observability-agent collects for a
+      # master's observability stack, and on a machine carrying that stack itself the two own the
+      # same DaemonSet, and the agent's sync never ends (hostyour-cloud#188). An app.yaml whose
+      # runsOn matches no slot and not `every-cluster` stays unselected on every cluster.
       selector:
         matchExpressions:
           - key: runsOn
@@ -35,6 +39,7 @@ spec:
               - every-cluster
               - __CLUSTER_ROLE_FIRST_PART__
               - __CLUSTER_ROLE_LAST_PART__
+              - __CLUSTER_ROLE_WHOLE__
 
   # WHAT ORDERS ONE APPLICATION AGAINST ANOTHER, and `argocd.argoproj.io/sync-wave` is not it. That
   # annotation orders the RESOURCES INSIDE one Application's own sync. On an Application generated

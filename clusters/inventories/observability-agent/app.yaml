@@ -4,4 +4,4 @@ syncWave: "30"
 namespace: observability
 prune: "true"
 createNamespace: "true"
-runsOn: slave
+runsOn: pure-slave

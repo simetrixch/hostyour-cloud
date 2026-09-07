@@ -11,8 +11,10 @@
 #                                stage already known, which is the value being read here.
 #   role                         the markers __CLUSTER_ROLE_FIRST_PART__ and
 #                                __CLUSTER_ROLE_LAST_PART__, split on "+" so a master+slave machine
-#                                admits both parts (cluster-map.tpl:24). Its first part also
-#                                decides __ARGOCD_NAMESPACE__.
+#                                admits both parts (cluster-map.tpl:24), and __CLUSTER_ROLE_WHOLE__,
+#                                the role as one word (pure-master, pure-slave or master+slave) for
+#                                an application that belongs to one machine shape only. Its first
+#                                part also decides __ARGOCD_NAMESPACE__.
 #   global.clusterName           the marker __CLUSTER_NAME__ — the first DNS label of this
 #                                cluster's domain (cluster-map.tpl:38). It is also
 #                                __ARGOCD_NAMESPACE__ on a cluster whose role does not open with
