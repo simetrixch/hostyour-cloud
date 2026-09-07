@@ -30,8 +30,12 @@ The alloy sub-chart references this ConfigMap via:
 {{- if .Values.alloyAgent.enabled }}
 {{- $endpoints := default dict .Values.global.endpoints }}
 {{- $obs := default dict $endpoints.observability }}
-{{- $promPush := printf "%s/api/v1/write" ($obs.prometheusPush | default "") }}
-{{- $lokiPush := printf "%s/loki/api/v1/push" ($obs.lokiPush | default "") }}
+{{- /* REQUIRED, NEVER DEFAULTED: an address with no host renders, the agent starts, and every
+       batch is dropped with "unsupported protocol scheme" — measured on apps4, whose map carried
+       no observability endpoint. The cluster map (clusters/active/<fqdn>.yaml, endpoints.observability)
+       is where both stand. */ -}}
+{{- $promPush := printf "%s/api/v1/write" (required "monitoring: global.endpoints.observability.prometheusPush is required (clusters/active/<fqdn>.yaml) — the agent pushes to the books cluster's prom-push route, and an address with no host drops every batch" $obs.prometheusPush) }}
+{{- $lokiPush := printf "%s/loki/api/v1/push" (required "monitoring: global.endpoints.observability.lokiPush is required (clusters/active/<fqdn>.yaml) — the agent pushes to the books cluster's loki-push route, and an address with no host drops every batch" $obs.lokiPush) }}
 {{- $cluster := .Values.global.domain }}
 apiVersion: v1
 kind: ConfigMap

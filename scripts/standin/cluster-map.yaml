@@ -46,6 +46,7 @@ global:
     vault: {url: 'https://vault.check.example.invalid'}
     idp: {url: 'https://idp.check.example.invalid'}
     tailnet: {url: 'https://tale.check.example.invalid'}
+    observability: {prometheusPush: 'https://prom-push.check.example.invalid', lokiPush: 'https://loki-push.check.example.invalid'}
   servicesLocal:
     registry: true
     vault: true

@@ -3,14 +3,15 @@
 # values-{dev,test,prod}.yaml.
 
 # ---------------------------------------------------------------------------
-# Push endpoints + cluster label come from GLOBALS. On a pure slave they are
-# STAMPED by the branch program into clusters/active/<fqdn>.yaml (loaded LAST, wins):
-#   global.endpoints.observability.prometheusPush: https://prom-push.<master-fqdn>
-#   global.endpoints.observability.lokiPush:       https://loki-push.<master-fqdn>
+# Push endpoints + cluster label come from GLOBALS. The branch program writes them into the
+# master's clusters/active/<fqdn>.yaml (endpoints.observability, from ansiwise/templates/cluster-map.tpl
+# in the catalogue), and the Manager's mark-slave carries the block into a slave's map (loaded LAST, wins):
+#   global.endpoints.observability.prometheusPush: https://prom-push.<books-cluster>
+#   global.endpoints.observability.lokiPush:       https://loki-push.<books-cluster>
 #   global.domain:                                 <slave-fqdn>   (the cluster label)
-# The empty defaults below only let `helm template` render without a profile;
-# they deep-merge with platform's global.endpoints.{registry,mail,vault,tailnet}
-# (never clobber them).
+# The chart REQUIRES both: a map without them stops the render by name, because an address
+# with no host renders, starts the agent, and drops every batch. The keys below stand only so
+# the inventory names them; they deep-merge with platform's global.endpoints.{registry,mail,vault,tailnet}.
 # ---------------------------------------------------------------------------
 global:
   endpoints:
