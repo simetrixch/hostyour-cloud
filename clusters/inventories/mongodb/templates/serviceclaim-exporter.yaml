@@ -6,6 +6,11 @@ service-provisioner like any other consumer. Roles-ONLY claim
 MONGODB_URI, path-less URI) that the prometheus-mongodb-exporter Deployment
 consumes via existingSecret (values-common.yaml).
 
+In-app sync wave 2, with the exporter Deployment: the provisioner serves a claim
+only once rs0 has a PRIMARY, which the wave-1 rs-init hook (rs-init-job.yaml)
+provides. Filed earlier, the claim sat unserved while the exporter held the Sync
+phase open on the Secret it would mint (hostyour-cloud#189).
+
 SkipDryRunOnMissingResource: this app stands at sync wave 31, after
 service-provisioner (wave 16) has shipped the ServiceClaim CRD and after
 observability-agent (wave 30) has shipped the monitoring CRDs the exporter's
@@ -38,6 +43,7 @@ metadata:
     app.kubernetes.io/component: exporter
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   service: mongodb
   roles: ["clusterMonitor@admin"]

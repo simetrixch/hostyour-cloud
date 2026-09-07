@@ -20,7 +20,7 @@ mongodb:
     pullPolicy: IfNotPresent
   replicas: 3
   # Self-healing rs0 guard: an idempotent CronJob that re-ensures the replica
-  # set is initiated. The PostSync rs-init Job only runs on an ArgoCD sync, so a
+  # set is initiated. The Sync-hook rs-init Job only runs on an ArgoCD sync, so a
   # manual data wipe (kubectl delete pvc) leaves mongod as RSGhost (no PRIMARY)
   # until the next sync — which blocks the service-provisioner (no primary → no
   # claimed users/Secrets, e.g. the exporter). This CronJob re-initiates rs0 within
@@ -43,7 +43,7 @@ mongodb:
   # the mongodb-replica-set-key materialized from Vault, mode-fixed to
   # 0400/uid-999 by the keyfile-perms initContainer and mounted at
   # /etc/mongo-keyfile/keyfile. TZ is set in templates/statefulset.yaml from
-  # global.timezone; rs0 is configured by the PostSync Job
+  # global.timezone; rs0 is configured by the Sync-hook Job
   # (templates/rs-init-job.yaml), which now authenticates as root.
   args:
     - --replSet
@@ -120,10 +120,14 @@ monitoring:
 # roles-only (clusterMonitor@admin) mongodb user from the generic
 # service-provisioner, which writes the `exporter-mongodb` Secret (key
 # MONGODB_URI) into this namespace. `existingSecret` points the exporter at
-# that Secret. On first deploy the exporter CrashLoops until the
-# service-provisioner (sync wave 16) creates the Secret, then heals — same
-# self-healing pattern as any provisioned consumer.
+# that Secret. The Deployment stands at in-app sync wave 2, after the wave-1
+# rs-init hook has given rs0 a PRIMARY and beside the ServiceClaim, so the
+# provisioner mints the Secret while the exporter starts; at wave 0 the exporter
+# held the Sync phase open on that Secret and a PostSync rs-init never ran
+# (hostyour-cloud#189).
 prometheus-mongodb-exporter:
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
   existingSecret:
     name: exporter-mongodb
     key: MONGODB_URI

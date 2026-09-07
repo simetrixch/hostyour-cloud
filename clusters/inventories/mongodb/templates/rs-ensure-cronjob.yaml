@@ -1,5 +1,5 @@
 {{- if .Values.mongodb.rsEnsure.enabled }}
-# Self-healing replica-set guard. The PostSync rs-init Job (rs-init-job.yaml)
+# Self-healing replica-set guard. The Sync-hook rs-init Job (rs-init-job.yaml)
 # initiates rs0 once per ArgoCD sync; it does NOT re-run when data is wiped out
 # of band (e.g. `kubectl delete pvc`), leaving mongod as RSGhost with no PRIMARY
 # — which silently blocks the service-provisioner (no primary → no claimed users

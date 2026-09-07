@@ -1,8 +1,15 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # ArgoCD PostSync hook: configure replica set rs0 across the StatefulSet's
-  # members. Builds the member list from the stable per-pod DNS
+  # ArgoCD Sync hook at in-app wave 1: configure replica set rs0 across the
+  # StatefulSet's members AFTER the wave-0 resources (the StatefulSet, its
+  # Services, the ExternalSecret) are healthy and BEFORE wave 2 files the
+  # exporter's ServiceClaim and starts the exporter Deployment. As a PostSync
+  # hook it never ran on a fresh install: PostSync waits for every Sync-phase
+  # resource to be healthy, the exporter waited on the Secret the provisioner
+  # mints only once rs0 has a PRIMARY, and rs0 waited on this hook — only the
+  # rs-ensure CronJob broke the circle, five minutes later (hostyour-cloud#189).
+  # Builds the member list from the stable per-pod DNS
   # (mongodb-<env>-<ordinal>.<headless-svc>), waits for every member's mongod,
   # then initiates rs0 (or force-reconfigures the member set if it drifted —
   # e.g. when scaling replicas). Idempotent + self-healing; a plain pod restart
@@ -15,7 +22,8 @@ metadata:
     app.kubernetes.io/name: mongodb
     app.kubernetes.io/component: rs-init
   annotations:
-    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "1"
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
   backoffLimit: 20
