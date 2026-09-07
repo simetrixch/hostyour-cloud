@@ -14,8 +14,9 @@ mongodb:
   image:
     repository: mongo
     # Managed centrally in clusters/platform/versions.yaml (images.mongodb) and stamped by
-    # the version sync — do not hand-edit this tag.
-    tag: "8.0.4"
+    # the version sync — do not hand-edit this tag. It carries the digest of the linux/amd64
+    # manifest, because the registry mirror cannot commit this image's mixed index (see there).
+    tag: "8.0.4@sha256:6b0f3b8898c09d1d15753978cd8a733834f692d70aa3d424f680bccd2896f6a1"
     pullPolicy: IfNotPresent
   replicas: 3
   # Self-healing rs0 guard: an idempotent CronJob that re-ensures the replica

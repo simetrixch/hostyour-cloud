@@ -158,7 +158,12 @@ images:
   # process that serves for half a minute and then segfaults passes them on the
   # way past. A restart count climbing on its own IS this defect.
   mongodb:
-    version: "8.0.4"
+    # THE TAG CARRIES THE DIGEST OF ITS linux/amd64 MANIFEST. Docker Hub's index for this image
+    # mixes OCI manifests with Docker-v2 manifests for Windows, and the registry mirror (zot)
+    # refuses to commit such an index — "invalid manifest content" — so a pull by tag never
+    # arrives on a slave. A pull by digest asks the mirror for one manifest and needs no index.
+    # The digest moves with the tag: read it off the index's linux/amd64 entry when this moves.
+    version: "8.0.4@sha256:6b0f3b8898c09d1d15753978cd8a733834f692d70aa3d424f680bccd2896f6a1"
     note: pinned deliberately until the kernel moves — see the comment above this entry
     upstream:
       kind: docker_hub
