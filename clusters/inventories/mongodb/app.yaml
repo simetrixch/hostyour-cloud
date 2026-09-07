@@ -1,6 +1,6 @@
 name: mongodb
 project: data
-syncWave: "10"
+syncWave: "31"
 namespace: mongodb
 prune: "true"
 createNamespace: "true"

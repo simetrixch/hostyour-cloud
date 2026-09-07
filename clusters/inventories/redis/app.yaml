@@ -1,6 +1,6 @@
 name: redis
 project: data
-syncWave: "20"
+syncWave: "32"
 namespace: redis
 prune: "true"
 createNamespace: "true"

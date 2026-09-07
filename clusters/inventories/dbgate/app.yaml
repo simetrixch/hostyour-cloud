@@ -1,6 +1,6 @@
 name: dbgate
 project: services
-syncWave: "30"
+syncWave: "33"
 namespace: dbgate
 prune: "true"
 createNamespace: "true"

@@ -6,14 +6,16 @@ service-provisioner like any other consumer. Roles-ONLY claim
 MONGODB_URI, path-less URI) that the prometheus-mongodb-exporter Deployment
 consumes via existingSecret (values-common.yaml).
 
-SkipDryRunOnMissingResource: on a FRESH install this app (sync wave 10)
-syncs before service-provisioner (wave 16) ships the ServiceClaim CRD — the
-skip plus ArgoCD's sync retry make this CR apply cleanly once the CRD lands
-(same self-heal pattern as the exporter pod waiting for its Secret).
+SkipDryRunOnMissingResource: this app stands at sync wave 31, after
+service-provisioner (wave 16) has shipped the ServiceClaim CRD and after
+observability-agent (wave 30) has shipped the monitoring CRDs the exporter's
+ServiceMonitor and PrometheusRule name — under the RollingSync a wave whose
+sync names a kind the cluster lacks never completes, and nothing after it is
+admitted. The skip stays for the upgrade case below.
 
 The UPGRADE case is a different, nastier one, and it is worth knowing about
 before adding the next CRD field. Where a fresh install has NO CRD (apply fails
-loudly → retry), an upgrade has a STALE one: wave 10 applies this claim while the
+loudly → retry), an upgrade has a STALE one: wave 31 applies this claim while the
 PREVIOUS schema is still live, so the apiserver PRUNES every field that schema
 does not know — `roles`, here — and the apply SUCCEEDS. No error, nothing to
 retry, and a claim stored as {service, secretName} that the handler then rejects
