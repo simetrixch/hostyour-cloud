@@ -142,8 +142,14 @@ spec:
         automated:
           prune: {{ .prune }}
           selfHeal: false
+        # WITHOUT END, because a RollingSync admits the next step only once every Application of
+        # the current one is Healthy, and ArgoCD never tries a revision again once the retries are
+        # spent: a sync that fails on a cause that later goes away — an image the mirror delivers
+        # late, a CRD a later wave ships — would otherwise stand Failed until a person pressed
+        # Sync, with every later wave Waiting behind it. Below zero means unlimited; the backoff
+        # keeps the attempts three minutes apart.
         retry:
-          limit: 5
+          limit: -1
           backoff:
             duration: 5s
             factor: 2
