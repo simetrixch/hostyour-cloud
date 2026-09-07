@@ -147,6 +147,39 @@ spec:
               value: {{ .Values.adminSocket.mode | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
+            # WHAT THIS PROCESS TRUSTS WHEN IT DIALS THIS INSTALLATION'S OWN ADDRESSES.
+            #
+            # The manager is a CLIENT of the services beside it, not only their operator: it seals
+            # every credential into https://vault.<fqdn> (VAULT_ADDR below) and exchanges every
+            # operator's login with https://idp.<fqdn> (OIDC_ISSUER above). Both certificates come
+            # from whichever authority this installation issues from, and where that is one the
+            # installation minted for itself, no image's root list carries it. The container is
+            # distroless and trusts nothing else, so every one of those calls fails verification.
+            #
+            # Measured: on an installation issuing from its own authority, the boot seed logged
+            # `could not seal/rotate the master SSH key in the credential store — err: "fetch
+            # failed"` 64 times, the master's self-SSH key was never sealed, and deploy-slave to
+            # that master refused at its first step.
+            #
+            # THE SAME SOURCE external-secrets READS, and the same one argocd and vault read: the
+            # `platform-trust` ConfigMap that trust-manager writes into every namespace
+            # (clusters/bootstrap/cert-manager/trust-bundle-public.yaml and its
+            # -with-platform-authority twin). It is a SUPERSET in both states of the certificate
+            # switch — the public roots, the cluster's own kube-root-ca.crt, and this
+            # installation's authority where it has one — so this adds authorities and takes none
+            # away, and nothing here has to know which state the installation is in.
+            #
+            # NODE_EXTRA_CA_CERTS and not SSL_CERT_FILE: Node keeps its own root list and ignores
+            # OpenSSL's variable. This one it reads ONCE at start-up and ADDS to the list it was
+            # built with, which is what makes one setting cover every TLS client in the process —
+            # the Vault client, the OIDC client, and anything reaching outward.
+            #
+            # THE VOLUME BELOW IS NOT `optional`. An absent bundle would mount an empty directory,
+            # Node would warn about the unreadable file and carry on with the image's roots, and
+            # the failure would be exactly the silent one this exists to end. A pod that waits for
+            # the ConfigMap says what is missing instead.
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/platform-trust/ca-certificates.crt
             # Vault secrets backend (config.ts: VAULT_ADDR set => credential
             # VALUES live in Vault KV; auth = kubernetes-auth with the projected
             # SA token above). VAULT_KV_MOUNT/PREFIX keep their config.ts
@@ -439,6 +472,13 @@ spec:
               mountPath: {{ .Values.adminSocket.path | dir | quote }}
             - name: tmp
               mountPath: /tmp
+            # The trust store NODE_EXTRA_CA_CERTS names, at the same path external-secrets mounts
+            # it on (clusters/inventories/external-secrets/values-common.yaml). NEVER add subPath:
+            # a subPath mount is frozen at container start, and this ConfigMap's contents change
+            # when the installation flips which authority it issues from.
+            - name: platform-trust
+              mountPath: /etc/platform-trust
+              readOnly: true
             # The manager-registry-pull dockerconfigjson (externalsecret-registry.yaml) as a
             # FILE: the tenant ensure-images build gate's registry probe (hostyour-manager
             # HttpRegistryProbe) parses its basic auth to GET /v2/<repo>/manifests/<tag> on zot —
@@ -499,6 +539,20 @@ spec:
             type: Directory
         - name: tmp
           emptyDir: {}
+        # The trust store NODE_EXTRA_CA_CERTS names. trust-manager reconciles this ConfigMap into
+        # every namespace of the cluster, including ones created after it
+        # (clusters/bootstrap/cert-manager/trust-bundle-public.yaml and its
+        # -with-platform-authority twin), so it is present in both states of the certificate switch
+        # and its CONTENTS are what differ.
+        #
+        # NOT optional, unlike the two secrets below. An optional ConfigMap that is absent mounts an
+        # EMPTY directory: Node would find no file at NODE_EXTRA_CA_CERTS, warn once, and run on the
+        # image's own root list — which is the state that left 64 seal attempts failing with nothing
+        # naming the cause. A required mount holds the pod at ContainerCreating and the kubelet event
+        # names the missing ConfigMap.
+        - name: platform-trust
+          configMap:
+            name: platform-trust
         # Pull creds for the ensure-images registry probe (mounted read-only above). optional: on
         # a FRESH install ESO has not created the Secret yet — the pod must still start; the probe
         # then fails LOUD at run time (fail-closed, never a guess), instead of blocking boot.
