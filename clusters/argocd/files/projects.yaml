@@ -339,7 +339,15 @@ spec:
       namespace: manager
     # Cross-namespace onboarding grants (Role + RoleBinding only in each):
     #   gate-runner   — gate-run PipelineRun dispatch + report;
-    #   kube-system   — the hostyour-deploy-state ConfigMap reader.
+    #   kube-system   — the hostyour-deploy-state ConfigMap reader;
+    #   the ArgoCD namespace — the repository Secret an onboarding writes so this
+    #                   ArgoCD can read the unit's repository. The per-slave
+    #                   instances stand in namespaces nobody knows ahead of time
+    #                   and their twin of that Role comes from the slave's own
+    #                   chart; this destination is the master's own instance,
+    #                   which always stands here. Missing it, the Role renders and
+    #                   ArgoCD refuses it with "namespace argocd is not permitted
+    #                   in project 'manager'" (hostyour-cloud#195).
     # The Applications read and the Manager-owned AppProjects are NOT here: that
     # grant is cluster-scoped (rbac.yaml, "Cluster scope (was ns argocd)"), so it is
     # a ClusterRole + ClusterRoleBinding, which ArgoCD validates against
@@ -348,6 +356,8 @@ spec:
       namespace: gate-runner
     - name: __CLUSTER_NAME__
       namespace: kube-system
+    - name: __CLUSTER_NAME__
+      namespace: __ARGOCD_NAMESPACE__
   clusterResourceWhitelist:
     # createNamespace=true on the manager Application: ArgoCD validates the
     # auto-created `manager` Namespace against this list on a fresh cluster.
