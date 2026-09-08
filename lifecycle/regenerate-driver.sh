@@ -94,8 +94,9 @@ readonly STAGE="${STAGE:-}"
 readonly FQDN="${FQDN:-}"
 readonly OPERATOR="${OPERATOR_USER:-}"
 readonly PLATFORM_REF="${PLATFORM_REF:-}"
+readonly DEPLOY_REPO="${DEPLOY_REPO:-}"
 
-for named in STAGE FQDN OPERATOR PLATFORM_REF; do
+for named in STAGE FQDN OPERATOR PLATFORM_REF DEPLOY_REPO; do
   [ -n "${!named}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
 [ -n "${ELEVATION_PASSWORD:-}" ] \
@@ -146,6 +147,30 @@ fi
   || die "there is no catalogue at $CATALOG, so the programs a regeneration runs are not on this machine. A machine is given them by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
 [ -x "$ENGINE" ] \
   || die "there is no engine at $ENGINE, and it is what runs a program. A machine is given it by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
+# THE CATALOGUE IS BROUGHT FORWARD BEFORE A PROGRAM IS READ OUT OF IT. A program's
+# rows and the answers it declares move with the catalogue's trunk, and a machine
+# holds the copy its last run left: a regeneration that read that copy would run a
+# program of unknown age and leave out every answer the config states under a name
+# the old copy does not declare — measured on apps1 (hostyour-cloud#193), where the
+# map lost its mail line because the machine's copy still declared the old name.
+# The same act the installation performs (lifecycle/driver.sh), as this account:
+# the tree belongs to the operator so that a fetch needs no elevation, and the
+# repository is public so that it needs no credential. RESET AND NOT MERGE, because
+# nothing on a machine may write this tree. A catalogue that cannot be fetched stops
+# the regeneration by name rather than running a program of unknown age.
+say "bringing $CATALOG onto the published head of its branch"
+want="https://github.com/$DEPLOY_REPO.git"
+have=$(git -C "$CATALOG" remote get-url origin 2>/dev/null || true)
+if [ "$have" != "$want" ]; then
+  git -C "$CATALOG" remote set-url origin "$want"     || die "could not point $CATALOG at $DEPLOY_REPO; nothing has been changed" 69
+  say "$CATALOG followed $have and now follows $DEPLOY_REPO"
+fi
+branch=$(git -C "$CATALOG" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+[ -n "$branch" ] && [ "$branch" != HEAD ] || branch=master
+GIT_TERMINAL_PROMPT=0 git -C "$CATALOG" fetch --quiet origin "$branch"   || die "could not fetch $DEPLOY_REPO into $CATALOG, and a program of unknown age is not run; nothing has been changed" 69
+git -C "$CATALOG" reset --quiet --hard FETCH_HEAD   || die "could not bring $CATALOG onto the published head of $branch; nothing has been changed" 69
+good "$CATALOG stands at $(git -C "$CATALOG" rev-parse --short HEAD 2>/dev/null || echo 'an unreadable commit') on $branch"
+
 [ -r "$DECLARES" ] \
   || die "$DECLARES cannot be read, and it is what states the answers $PROGRAM takes; nothing has been changed" 66
 command -v python3 >/dev/null 2>&1 \
