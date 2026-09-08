@@ -92,3 +92,47 @@ subjects:
   - kind: ServiceAccount
     name: argocd-server
     namespace: {{ .Release.Namespace }}
+---
+{{- /*
+The ArgoCD repository Secret an onboarding writes into THIS instance's namespace so
+this ArgoCD can read the unit's repository. The manager composes its name per
+onboarding — `repo-<unit>-<stage>` — so no resourceNames can bound it; what bounds it
+is this namespace and the absence of `list`, which leaves an account able to read only
+a Secret whose name it already knows. The slave's own cluster credential lives in this
+namespace and stays unenumerable through this Role.
+
+The master's instance holds the same grant in ns argocd, written by the manager chart
+(clusters/inventories/manager/templates/rbac.yaml). It is here rather than there
+because a slave's namespace is not known before the slave exists, and this chart runs
+once per slave in exactly that namespace — the alternative was one cluster-scoped
+Secrets grant covering every namespace on the machine, which the manager's RBAC
+deliberately refuses to hold.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-argocd-repo-credential
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: manager-argocd-repo-credential
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: manager-argocd-repo-credential
+subjects:
+  - kind: ServiceAccount
+    name: manager
+    namespace: manager
+

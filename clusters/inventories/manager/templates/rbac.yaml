@@ -90,6 +90,22 @@ surface of the manager's onboarding adapters:
     beside it, that is cluster-admin by another name. The union above is larger to
     write and strictly bounded: this account can never mint a Role that reaches
     further than these two resources.
+  * manager-argocd-repo-credential (ns argocd) — the ArgoCD repository Secret an
+    onboarding writes so ArgoCD can read the unit's repository. It is named
+    `repo-<unit>-<stage>` and composed per onboarding, so no resourceNames can bound
+    it; what bounds it is the NAMESPACE and the absence of `list`. Without list, an
+    account can only read a Secret whose name it already knows, which is the one it
+    wrote — the cluster credential of a slave that lives in the same namespace is not
+    enumerable through this grant. Missing it, onboarding stops at
+    `secrets "repo-<unit>-<stage>" is forbidden` on the ninth step, measured on a real
+    machine (hostyour-cloud#195).
+
+    NAMESPACED, and this is the one ArgoCD grant that can be: the master's own
+    instance stands in `argocd` and always has. The per-slave instances stand in
+    namespaces nobody knows ahead of time, and their twin of this Role is rendered by
+    the slave's own chart (clusters/slaves/slave/templates/argocd-rbac.yaml), which
+    runs once per slave in exactly that namespace. A cluster-scoped Secrets grant
+    would have covered both in one line and is what this file refuses to hold.
   * manager-argocd-onboarding (ClusterRole) — get,list,patch Applications (deploy
     convergence); get,create,update,delete the manager-OWNED per-consumer AND
     per-tenant isolation AppProjects. NOT applicationsets/secrets. Cluster
@@ -202,6 +218,9 @@ serviceaccount.yaml / deployment.yaml.
       (dict "name" "manager-argocd-onboarding" "rules" (list
         (dict "apiGroups" (list "argoproj.io") "resources" (list "applications") "verbs" (list "get" "list" "patch"))
         (dict "apiGroups" (list "argoproj.io") "resources" (list "appprojects") "verbs" (list "get" "create" "update" "delete"))
+      ))
+      (dict "name" "manager-argocd-repo-credential" "namespace" "argocd" "rules" (list
+        (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "get" "create" "update" "delete"))
       ))
       (dict "name" "manager-build-rbac-writer" "rules" (list
         (dict "apiGroups" (list "rbac.authorization.k8s.io") "resources" (list "roles" "rolebindings") "verbs" (list "get" "create" "update" "delete"))
