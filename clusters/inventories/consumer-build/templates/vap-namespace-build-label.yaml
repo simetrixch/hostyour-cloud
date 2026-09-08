@@ -26,8 +26,9 @@ Two facts about a build namespace that a unit's chart cannot reproduce:
     Application that manages the object, OVERWRITING whatever the manifest
     carried, and the build fan-out names that Application <unit>-build as well
     — the same string as the namespace. A unit's delivery Application is
-    <unit>-<stage> over namespace <unit>, so requiring the two names to agree
-    admits the fan-out and nothing else. The same clause also refuses the
+    <unit>-<stage> over namespace <unit>-<stage>, where the two names agree
+    as well, so the first clause's `-build` suffix is what keeps it out and
+    the agreement is what keeps out every other writer. The same clause also refuses the
     takeover of an EXISTING build namespace: an update pushed by any other
     Application arrives under that Application's tracking id.
 

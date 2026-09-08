@@ -1,5 +1,7 @@
 # The per-unit FENCES — two ApplicationSets over the same registrations the consumer delivery reads,
-# each standing where the objects it renders have to land.
+# each standing where the objects it renders have to land. One of each per cluster: every stage
+# file of a unit is read here, and the stage is read off its file name, so every fence object is
+# rendered per (unit, stage) and named `<name>-<stage>` where the unit's Application is.
 #
 # WHY TWO AND NOT ONE. An Application has ONE destination, and this set does not have one. A unit's
 # isolation AppProject and its argo-sync grant live in the ArgoCD namespace the unit belongs to, which
@@ -37,14 +39,14 @@
 # by neither.
 #
 # THE SYNC WAVE IS EARLIER THAN THE DELIVERY'S, because the generated Application says
-# `project: <name>` and ArgoCD refuses an Application whose project is absent. Between ApplicationSets
-# the wave is a statement of intent rather than an ordering the controller enforces — these
-# Applications are not children of one parent sync — so the retry block below is what actually
+# `project: <name>-<stage>` and ArgoCD refuses an Application whose project is absent. Between
+# ApplicationSets the wave is a statement of intent rather than an ordering the controller enforces —
+# these Applications are not children of one parent sync — so the retry block below is what actually
 # converges it, and whether it does has to be measured on a real onboard.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: unit-reconciler-__STAGE__
+  name: unit-reconciler
   namespace: __ARGOCD_NAMESPACE__
 spec:
   goTemplate: true
@@ -55,13 +57,22 @@ spec:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
         revision: __BOOKS_FQDN__  # the chart fills it from global.booksCluster — the registrations stand on the install branch of the cluster holding the MASTER role
         files:
-          - path: "registrations/*/__STAGE__.yaml"
+          # The three stages named outright, as consumers-appset.yaml names them and for the reasons
+          # it states there: `git ls-files` knows no brace alternation, and `*.yaml` would read the
+          # stage-free build.yaml.
+          - path: "registrations/*/dev.yaml"
+          - path: "registrations/*/test.yaml"
+          - path: "registrations/*/prod.yaml"
+        values:
+          # The unit's stage, read off the file name once — the same derivation consumers-appset.yaml
+          # makes, so the fence and the Application it fences are named from one reading.
+          stage: '{{ trimSuffix ".yaml" .path.filename }}'
       selector:
         matchLabels:
           cluster: __CLUSTER_NAME__  # the chart fills it from global.clusterName — the same field the consumer delivery selects on, so a unit's fences and its Application are generated together or not at all
   template:
     metadata:
-      name: "{{ .name }}-reconciler-__STAGE__"
+      name: "{{ .name }}-reconciler-{{ .values.stage }}"
       namespace: __ARGOCD_NAMESPACE__
       annotations:
         # Before the consumers (50): the Application generated there names this project.
@@ -71,7 +82,7 @@ spec:
     spec:
       project: units
       # ONE SOURCE, BECAUSE THIS CHART READS NO PLATFORM VALUE. Its whole content is the
-      # registration's own two fields plus URLs that are the same for every installation, so there is
+      # registration's own fields plus URLs that are the same for every installation, so there is
       # no $values chain to give it and no cluster map to load. A values-only source added here would
       # be a second ref standing on the install branch for nothing to read.
       source:
@@ -82,6 +93,7 @@ spec:
           valuesObject:
             registration:
               name: "{{ .name }}"
+              stage: "{{ .values.stage }}"
               repoURL: "{{ .repoURL }}"
             argoNamespace: __ARGOCD_NAMESPACE__
       destination:
@@ -105,7 +117,7 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: unit-admissionpolicy-__STAGE__
+  name: unit-admissionpolicy
   namespace: __ARGOCD_NAMESPACE__
 spec:
   goTemplate: true
@@ -116,13 +128,17 @@ spec:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
         revision: __BOOKS_FQDN__
         files:
-          - path: "registrations/*/__STAGE__.yaml"
+          - path: "registrations/*/dev.yaml"
+          - path: "registrations/*/test.yaml"
+          - path: "registrations/*/prod.yaml"
+        values:
+          stage: '{{ trimSuffix ".yaml" .path.filename }}'
       selector:
         matchLabels:
           cluster: __CLUSTER_NAME__
   template:
     metadata:
-      name: "{{ .name }}-admissionpolicy-__STAGE__"
+      name: "{{ .name }}-admissionpolicy-{{ .values.stage }}"
       namespace: __ARGOCD_NAMESPACE__
       annotations:
         # Before the consumers (50): the boundary is armed before the unit deploys anything into it.
@@ -138,21 +154,23 @@ spec:
           # stands on its branch; the chart is the product and stands on the release tag.
           targetRevision: __BRANCH__
           ref: values
-        # 1. The boundary itself. It reads exactly two platform values — global.unitApex, which
-        #    composes the one FQDN every unit is granted, and global.env, which is the stage the
-        #    unit's Application is named after and therefore the prefix of every tracking id the
-        #    Namespace clauses read.
+        # 1. The boundary itself. It reads ONE platform value — global.unitApex, which composes
+        #    the one FQDN every unit is granted — and takes the stage from the registration below,
+        #    which is the same stage the unit's Application is named after and therefore the prefix
+        #    of every tracking id the Namespace clauses read. The chain still loads the platform's
+        #    file of the UNIT'S stage, as every source of the unit does.
         - repoURL: *repo
           targetRevision: __BRANCH__
           path: clusters/units/admissionpolicy
           helm:
             valueFiles:
               - $values/clusters/platform/values-common.yaml
-              - $values/clusters/platform/values-__STAGE__.yaml
+              - "$values/clusters/platform/values-{{ .values.stage }}.yaml"
               - $values/clusters/active/__FQDN__.yaml
             valuesObject:
               registration:
                 name: "{{ .name }}"
+                stage: "{{ .values.stage }}"
                 # THE ATTESTED EXTRA FQDN, and it is optional in the registration. `dig` answers ""
                 # where the field is absent, which is what the chart reads as "granted nothing beyond
                 # the platform address" — a bare `{{ .fqdn }}` under missingkey=error would produce

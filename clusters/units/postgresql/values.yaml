@@ -293,10 +293,11 @@ postgres-data:
 # ── APPSET ANCHOR ────────────────────────────────────────────────────────────
 # The renderer (the platform's PostgreSQL source in
 # clusters/argocd/files/consumers-appset.yaml) MUST SET this per consumer on its
-# valuesObject, a per-stage LITERAL in each per-stage appset file:
+# valuesObject, from the unit's own stage, which that set reads off the
+# registration path:
 #     externalsecret-postgres:
 #       externalSecret:
-#         vaultPath: "<stage>/consumer/{{ .name }}/postgres"
+#         vaultPath: "{{ .values.stage }}/consumer/{{ .name }}/postgres"
 # → remoteRef.key = "<stage>/consumer/<name>/postgres". Same shape as the manager's
 # own app ExternalSecret, which builds "<env>/app/manager" from
 # `printf "%s/app/manager" .Values.global.env` (clusters/inventories/manager/templates/
@@ -367,10 +368,14 @@ externalsecret-postgres:
 #
 # Vault binding: role `consumer-eso` — NOT the subchart default `external-secrets`,
 # which is the platform-namespace role. A consumer namespace is authorised only for
-# the label-bound `consumer-eso` role, whose read policy is templated on the
-# NAMESPACE, not the ServiceAccount, so `postgres-eso` reads exactly what
-# `external-secrets-sa` reads in the same namespace and nothing more. This requires
-# the consumer-eso Vault role to admit the second SA name
+# the label-bound `consumer-eso` role, one role at every stage, whose read policy is
+# templated on the login alias: the unit and the stage the calling ServiceAccount
+# claims in its `vault.hashicorp.com/alias-metadata-unit` and `-stage` annotations,
+# which the PostgreSQL source in clusters/argocd/files/consumers-appset.yaml hands
+# this dependency's `annotations` map per unit, and the unit's admission policy
+# holds to the unit's own name and stage. So `postgres-eso` reads exactly what
+# `external-secrets-sa` reads beside it and nothing more. This requires the
+# consumer-eso Vault role to admit the second SA name
 # (bound_service_account_names=external-secrets-sa,postgres-eso) — a Vault-side
 # change, made where the cluster's Vault is seeded and not by this chart.
 # The Vault address / KV mount / auth mount all arrive through the platform globals the
@@ -388,7 +393,9 @@ secret-store:
   enabled: true
   # Wave -21 — clusters/charts/secret-store applies this one `.annotations` map to BOTH the
   # SecretStore and the ServiceAccount it renders (they are one ESO unit). See the
-  # header block above for why the whole credential trio sits at -21.
+  # header block above for why the whole credential trio sits at -21. The renderer
+  # merges the two Vault alias annotations onto this map; they name the unit and
+  # its stage, which this template cannot know.
   annotations:
     argocd.argoproj.io/sync-wave: "-21"
   # DISTINCT platform names — must NOT equal the consumer's `vault-backend` /
@@ -396,8 +403,9 @@ secret-store:
   # two-owners-one-object collision.
   name: vault-backend-postgres
   serviceAccountName: postgres-eso
-  # The same Vault role the consumer's own store uses (namespace-templated read
-  # policy) — overrides the subchart default `external-secrets`.
+  # The same Vault role the consumer's own store uses, at every stage — the
+  # stage is in the alias, not in the role — overriding the subchart default
+  # `external-secrets`.
   role: consumer-eso
 
 # =============================================================================

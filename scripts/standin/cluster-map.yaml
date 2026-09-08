@@ -42,7 +42,7 @@ global:
   endpoints:
     registry:
       host: zot.check.example.invalid
-    mail: {url: 'https://mail.check.example.invalid'}
+    mail: {unit: check}
     vault: {url: 'https://vault.check.example.invalid'}
     idp: {url: 'https://idp.check.example.invalid'}
     tailnet: {url: 'https://tale.check.example.invalid'}

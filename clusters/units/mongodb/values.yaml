@@ -173,14 +173,18 @@ externalsecret-mongodb:
 
 secret-store:
   enabled: true
+  # The renderer merges the two Vault alias annotations onto this map — the unit and
+  # its stage, which this template cannot know; clusters/units/postgresql/values.yaml
+  # states the binding at length.
   annotations:
     argocd.argoproj.io/sync-wave: "-21"
   # DISTINCT platform names — must NOT equal the consumer's own `vault-backend` /
   # `external-secrets-sa`.
   name: vault-backend-mongodb
   serviceAccountName: mongodb-eso
-  # The same namespace-templated read policy the consumer's own store uses, which
-  # already covers <stage>/consumer/<namespace>/* — so this path needs no grant
-  # of its own to be READ. Writing it is the Manager's seed-mongodb-instance
+  # The same role the consumer's own store uses, at every stage: its read policy is
+  # templated on the unit and the stage the ServiceAccount's alias annotations
+  # claim, and already covers <stage>/consumer/<unit>/* — so this path needs no
+  # grant of its own to be READ. Writing it is the Manager's seed-mongodb-instance
   # step, which has its own narrow policy.
   role: consumer-eso

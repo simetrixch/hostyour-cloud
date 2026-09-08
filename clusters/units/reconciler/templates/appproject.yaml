@@ -1,12 +1,14 @@
 {{- /*
-The unit's isolation AppProject — what it may SUBMIT to the reconciler.
+The unit's isolation AppProject — what it may SUBMIT to the reconciler. One per (unit, stage), named
+`<name>-<stage>` like the namespace it fences and the Application that names it.
 
 IT STANDS BEFORE THE UNIT'S OWN APPLICATION CAN SYNC, and that ordering is the whole reason this is
 a separate Application rather than one more source of the unit's own. The Application
-clusters/argocd/files/consumers-appset.yaml generates says `project: {{ .name }}`, and ArgoCD refuses
-an Application whose project is absent — so a chart carrying this object inside that Application
-would have to exist before itself. The ApplicationSet that renders this one therefore stands at an
-earlier sync wave, in the reconciler's own namespace, under the platform's `units` project.
+clusters/argocd/files/consumers-appset.yaml generates says `project: <name>-<stage>`, and ArgoCD
+refuses an Application whose project is absent — so a chart carrying this object inside that
+Application would have to exist before itself. The ApplicationSet that renders this one therefore
+stands at an earlier sync wave, in the reconciler's own namespace, under the platform's `units`
+project.
 
 WHAT IT FENCES, and each of the four is a whole answer:
 
@@ -17,10 +19,10 @@ WHAT IT FENCES, and each of the four is a whole answer:
                              be allowed or the sync is rejected. The appset TEMPLATE pins the paths
                              under this platform's repository, so allowing the repository cannot let
                              a unit redirect its chart source.
-  destinations               the unit's namespace, on any server. `server: "*"` is deliberate here
-                             and is NOT the server-versus-name confusion projects.yaml warns about:
-                             the ApplicationSet chooses the cluster, and the isolation this object
-                             draws is the NAMESPACE.
+  destinations               the unit's namespace `<name>-<stage>`, on any server. `server: "*"` is
+                             deliberate here and is NOT the server-versus-name confusion
+                             projects.yaml warns about: the ApplicationSet chooses the cluster, and
+                             the isolation this object draws is the NAMESPACE.
   clusterResourceWhitelist   `Namespace` alone. ArgoCD creates the unit's namespace itself
                              (CreateNamespace + managedNamespaceMetadata), so the kind has to be
                              permitted — and the per-unit ValidatingAdmissionPolicy beside this
@@ -33,29 +35,27 @@ WHAT IT FENCES, and each of the four is a whole answer:
                              could write a Secret would put crypto material in git AND could
                              overwrite what the store materialises from Vault, so the value the
                              workload reads would be the unit's rather than the platform's.
-
-RENDERED FIELD FOR FIELD AS THE MANAGER WRITES IT TODAY, labels included, because both writers stand
-until hostyour-manager#107 lands: an object that differs by one field is one the two writers take
-turns overwriting.
 */ -}}
-{{- $name := required "unit-reconciler: registration.name is required — it is the unit's name, its namespace and this project's name, and it arrives from registrations/<unit>/<stage>.yaml through clusters/argocd/files/units-appset.yaml" .Values.registration.name }}
+{{- $name := required "unit-reconciler: registration.name is required — with the stage it is the unit's namespace and this project's name, and it arrives from registrations/<unit>/<stage>.yaml through clusters/argocd/files/units-appset.yaml" .Values.registration.name }}
+{{- $stage := required "unit-reconciler: registration.stage is required — the unit's own stage, read off registrations/<unit>/<stage>.yaml by clusters/argocd/files/units-appset.yaml; the namespace and this project are <name>-<stage>" .Values.registration.stage }}
 {{- $repoUrl := required "unit-reconciler: registration.repoURL is required — the unit's own chart repository, which this project must allow or the generated Application cannot fetch its chart at all" .Values.registration.repoURL }}
+{{- $namespace := printf "%s-%s" $name $stage }}
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: {{ $name }}
+  name: {{ $namespace }}
   namespace: {{ required "unit-reconciler: argoNamespace is required — the reconciler namespace this unit belongs to, `argocd` on a master and the slave's own short name on a pure slave" .Values.argoNamespace }}
   labels:
     hostyour.cloud/consumer: "true"
 spec:
-  description: Per-consumer isolation project for {{ $name }} (hostyour-cloud onboarding).
+  description: Per-consumer isolation project for {{ $name }} at stage {{ $stage }} (hostyour-cloud onboarding).
   sourceRepos:
     - {{ $repoUrl | quote }}
     - {{ required "unit-reconciler: platformRepoUrl is required — the generated Application reads its whole $values chain from this repository" .Values.platformRepoUrl | quote }}
     - {{ required "unit-reconciler: exporterChartsUrl is required — ArgoCD builds the per-unit PostgreSQL's Helm dependencies from it, and a source repository it may not reach is a sync it refuses" .Values.exporterChartsUrl | quote }}
   destinations:
     - server: "*"
-      namespace: {{ $name }}
+      namespace: {{ $namespace }}
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace

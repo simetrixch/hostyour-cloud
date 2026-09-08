@@ -4,13 +4,19 @@
 # be a second source for a grant the registration already carries, and a fence rendered against a
 # guessed value is a fence that reports itself armed while admitting the wrong thing.
 registration:
-  # The unit's name. It is also its namespace, and it composes both its platform address
-  # `<name>.<unitApex>` and the prefix of every tracking id its Application owns.
+  # The unit's name. With the stage below it composes the unit's namespace `<name>-<stage>`, its
+  # platform address `<name>-<stage>.<unitApex>` and the prefix of every tracking id its
+  # Application owns.
   name: ""
-  # The unit's ATTESTED extra public FQDN, admitted IN ADDITION to `<name>.<unitApex>`. EMPTY for
-  # almost every unit: the onboard writes it into the stage registration only after refusing every
-  # name the platform already serves, so an empty value here means "granted nothing beyond the
-  # platform address" and never "not asked yet".
+  # The unit's stage: dev, test or prod, read off the registration's path
+  # registrations/<unit>/<stage>.yaml by the ApplicationSet. It is the unit's and not the
+  # cluster's — one cluster fences a test instance of a unit beside its prod instance, each by its
+  # own policy.
+  stage: ""
+  # The unit's ATTESTED extra public FQDN, admitted IN ADDITION to `<name>-<stage>.<unitApex>`.
+  # EMPTY for almost every unit: the onboard writes it into the stage registration only after
+  # refusing every name the platform already serves, so an empty value here means "granted nothing
+  # beyond the platform address" and never "not asked yet".
   fqdn: ""
   # The unit's ATTESTED service claims, as the JSON array the ApplicationSet stamps
   # (`{{ .services | toJson }}` — a rendered list would not survive Helm's own YAML parse of this

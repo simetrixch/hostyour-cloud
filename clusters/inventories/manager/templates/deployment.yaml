@@ -390,7 +390,7 @@ spec:
                   optional: true
             {{- end }}
             # The provision-dns onboard step writes one record per unit through the
-            # Cloudflare API — <name>.<unitApex> for a consumer, a wildcard under the
+            # Cloudflare API — <name>-<stage>.<unitApex> for a consumer, a wildcard under the
             # subdomain for a tenant — and offboard removes it. Sourced from the
             # manager-cloudflare-dns Secret (externalsecret-cloudflare-dns.yaml),
             # a DNS-edit-only token. optional:true so a missing or unsynced secret

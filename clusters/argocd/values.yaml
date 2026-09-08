@@ -5,8 +5,13 @@
 # default here would be a second place to carry an installation's own name, and the installation
 # that inherited it would never learn which of the two it was running on.
 #
-#   stage                        the marker __STAGE__. Top level of the map, written from
-#                                cluster-map.tpl:23. NOT global.env: global.env stands in
+#   stage                        the marker __STAGE__ — the PLATFORM'S stage, standing in
+#                                platform-apps-appset.yaml, slaves-appset.yaml and projects.yaml
+#                                alone. The three unit sets carry no marker for it: a unit's stage
+#                                is its registration's, read off the path
+#                                registrations/<unit>/<stage>.yaml by each set's own generator.
+#                                Top level of the map, written from cluster-map.tpl:23. NOT
+#                                global.env: global.env stands in
 #                                clusters/platform/values-<stage>.yaml, and reaching it needs the
 #                                stage already known, which is the value being read here.
 #   role                         the markers __CLUSTER_ROLE_FIRST_PART__ and

@@ -15,11 +15,14 @@ quiesced: false
 # reading one that this file does not carry says so by name at the render.
 #
 # `fqdn` STANDS EMPTY ON PURPOSE, and it is not an unanswered key: most units serve only
-# `<name>.<unitApex>`, and the onboard writes an extra FQDN into a stage registration only after
+# `<name>-<stage>.<unitApex>`, and the onboard writes an extra FQDN into a stage registration only after
 # refusing every name the platform already serves. Empty is what the common case looks like, so it is
 # the case this check renders.
 registration:
   name: check
+  # The unit's own stage, which the ApplicationSet reads off the registration's file name. The
+  # fences are named for the pair, so scripts/check.sh holds them as `check-dev`.
+  stage: dev
   repoURL: https://github.com/check/check.git
   fqdn: ""
   servicesJson: "[]"

@@ -430,7 +430,9 @@ echo "check: every Application of clusters/argocd names each repository it uses 
 #
 # HELD AS THE OBJECTS AND NOT AS A COUNT, because a count is satisfied by any nine. Each is a `kind`
 # and the name under the `metadata:` block that follows it, which is the object's own identity and
-# never the name a roleRef or a subject repeats further down.
+# never the name a roleRef or a subject repeats further down. The stage-bound seven carry the
+# stand-in's stage in their name — a unit's fences are per (unit, stage), and the two build grants
+# are the stage-free ones.
 #
 # THE THREE GRANTS STAND IN TWO PLACES AND THAT IS THE RULE, not an accident: a fence is rendered by
 # the reconciler that manages the namespace it lands in. The two build-namespace grants come from
@@ -454,15 +456,15 @@ objects_of() { # $1 a file holding a render. One `kind/name` per object on stdou
     inmeta && /^  name: / { print kind "/" substr($0, 9); inmeta = 0 }
   ' "$1"
 }
-fences_expected='AppProject/check
-Role/check-argo-sync
+fences_expected='AppProject/check-dev
+Role/check-dev-argo-sync
 Role/eventlistener-create-pipelineruns
 Role/manager-read-pipelineruns
-RoleBinding/check-argo-sync
+RoleBinding/check-dev-argo-sync
 RoleBinding/eventlistener-create-pipelineruns
 RoleBinding/manager-read-pipelineruns
-ValidatingAdmissionPolicy/consumer-check
-ValidatingAdmissionPolicyBinding/consumer-check'
+ValidatingAdmissionPolicy/consumer-check-dev
+ValidatingAdmissionPolicyBinding/consumer-check-dev'
 : > "$work/fences"
 for chart in clusters/units/reconciler clusters/units/admissionpolicy; do
   helm template "$(basename "$chart")" "$chart" --namespace check --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \

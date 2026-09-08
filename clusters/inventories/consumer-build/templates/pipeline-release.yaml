@@ -857,10 +857,9 @@ spec:
               # this installation's books: the consumer registrations class (a)
               # searches, which the Manager writes there and nothing takes
               # away. One clone cannot serve both: the trunk carries no customer
-              # registration at all, and an install branch's argocd/ tree has
-              # already had __STAGE__, __CLUSTER_NAME__, __BOOKS_FQDN__ and
-              # __CATALOG_REPO__ stamped into it for the one stage that branch
-              # is, so the tenant render below could not simulate any other.
+              # registration at all, and the tenant render below reads the
+              # product's ApplicationSets as released, not as one installation's
+              # branch carries them.
               git clone -q --depth 1 --branch master "${CLOUD_URL}" "${WORK}/hostyour-cloud"
               # Fail-closed for the same reason the carrier clone below is: a
               # search whose source cannot be read is not a search that found
@@ -1135,24 +1134,23 @@ spec:
                   } > "${SIM}/templates/patch.yaml"
                   helm template appset-sim "${SIM}" -f "$2"
                 }
-                # ONE parameterized argocd tree, not three per-stage ones: the
-                # appsets stand at clusters/argocd/files/*.yaml and carry the stage as the
-                # marker __STAGE__, which the chart at clusters/argocd renders
-                # from the cluster map. This is the trunk clone, so the marker is
-                # still standing, and the sim fills it for the stage being bumped
-                # before reading anything out of the file — the Application name
-                # is "<guid>-<member>-__STAGE__", and an unfilled marker there
-                # fails the shape check on every member. The other six markers of
-                # this tree (__CLUSTER_NAME__, __BOOKS_FQDN__, __CATALOG_REPO__,
-                # __BRANCH__, __FQDN__ and __ARGOCD_NAMESPACE__) stand in the
-                # generator, the selector, the namespace, the source repoURLs,
-                # the targetRevisions and a valueFiles entry, none of which this
-                # derivation reads.
-                for src in "${WORK}"/hostyour-cloud/clusters/argocd/files/*.yaml; do
-                  [ -f "${src}" ] || continue
-                  asname="$(basename "${src}")"
-                  as="${WORK}/filled-${asname}"
-                  sed "s/__STAGE__/${STAGE}/g" "${src}" > "${as}"
+                # ONE argocd tree for every stage: the appsets stand at
+                # clusters/argocd/files/*.yaml and carry NO stage of their own —
+                # a tenant's stage is its registration's, which the tenant
+                # generator derives from the file path into values.stage, and
+                # the template reads it from there alone. The sim evaluates
+                # the template and not the generator, so it hands values.stage
+                # for the stage being bumped in the params below, beside the
+                # guid the generator would derive the same way. The Application
+                # name is then "<guid>-<member>-<stage>", which the shape check
+                # holds. The six markers of this tree (__CLUSTER_NAME__,
+                # __BOOKS_FQDN__, __CATALOG_REPO__, __BRANCH__, __FQDN__ and
+                # __ARGOCD_NAMESPACE__) stand in the generator, the selector,
+                # the namespace, the source repoURLs, the targetRevisions and a
+                # valueFiles entry, none of which this derivation reads.
+                for as in "${WORK}"/hostyour-cloud/clusters/argocd/files/*.yaml; do
+                  [ -f "${as}" ] || continue
+                  asname="$(basename "${as}")"
                   [ "$(yq eval '.kind // ""' "${as}")" = "ApplicationSet" ] || continue
                   # Only the tenant fan-out labels its Applications
                   # platform/tenant; every other appset in the directory is
@@ -1180,10 +1178,10 @@ spec:
                     for i in ${IDX}; do
                       PARAMS="${WORK}/params.yaml"
                       if [ "${i}" = "-" ]; then
-                        yq eval ". as \$r | {\"params\": (\$r * {\"values\": {\"guid\": \"${guid}\"}, \"path\": {\"segments\": [\"registrations\", \"${guid}\"]}})}" \
+                        yq eval ". as \$r | {\"params\": (\$r * {\"values\": {\"guid\": \"${guid}\", \"stage\": \"${STAGE}\"}, \"path\": {\"segments\": [\"registrations\", \"${guid}\"], \"filename\": \"${STAGE}.yaml\"}})}" \
                           "${reg}" > "${PARAMS}"
                       else
-                        yq eval ". as \$r | {\"params\": ((\$r * .${LEG}[${i}]) * {\"values\": {\"guid\": \"${guid}\"}, \"path\": {\"segments\": [\"registrations\", \"${guid}\"]}})}" \
+                        yq eval ". as \$r | {\"params\": ((\$r * .${LEG}[${i}]) * {\"values\": {\"guid\": \"${guid}\", \"stage\": \"${STAGE}\"}, \"path\": {\"segments\": [\"registrations\", \"${guid}\"], \"filename\": \"${STAGE}.yaml\"}})}" \
                           "${reg}" > "${PARAMS}"
                       fi
                       RENDERED="$(render_member "${as}" "${PARAMS}")"

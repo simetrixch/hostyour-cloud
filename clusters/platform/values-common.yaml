@@ -100,12 +100,15 @@ global:
       # cluster this is the build cluster's host, e.g. zot.m1.example.com.
       host: ""
     mail:
-      # Where units on this cluster reach the installation's shared mail
-      # service. Empty ONLY on the trunk: the post_url answer is mandatory
-      # (an install is refused without it, because every tenant's auth and
-      # report chart hard-requires this value), and the branch program writes
-      # it on every branch.
-      url: ""
+      # The unit that is the installation's shared mail service, by its unit
+      # name and never by an address: a unit composes the address
+      # https://<unit>-<its own stage>.<unit apex> itself, so each stage
+      # reaches the mail service of its own stage. Empty on the trunk; the
+      # branch program writes the mail_unit answer here, and leaves the key
+      # out on an installation that runs no mail service, so a tenant's auth
+      # and report charts stop their render naming it rather than sending
+      # nowhere.
+      unit: ""
     vault:
       # The ONE Vault of this installation, as vault.<master>: it stands on the
       # cluster carrying the master part and every cluster's SecretStores dial

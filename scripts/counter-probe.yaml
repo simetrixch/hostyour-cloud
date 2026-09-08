@@ -30,7 +30,7 @@
 #      the Application, so helm leaving it alone is correct.                MUST STAY UNREPORTED
 #   5. two more of those parameters, `.values` and `.chart`, which are the names of a Helm object
 #      in the OTHER case. They are copied from clusters/argocd/files/slaves-appset.yaml and
-#      tenants-appset.yaml, where sixteen of them stand. A matcher that ignores case reads them as
+#      tenants-appset.yaml. A matcher that ignores case reads them as
 #      `.Values` and `.Chart` and reports all of them. Every defect planted above is spelled the
 #      way the matcher expects, so these two lines are the only thing in this file that catches a
 #      matcher folding case. There is ONE matcher — scripts/check.ps1 starts scripts/check.sh —
@@ -95,7 +95,7 @@ metadata:
 spec:
   template:
     metadata:
-      name: "{{ .name }}-prod"
+      name: "{{ .name }}-{{ .values.stage }}"
     spec:
       source:
         repoURL: "{{ .repoURL }}"
