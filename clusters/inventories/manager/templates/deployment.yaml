@@ -403,6 +403,34 @@ spec:
                   name: manager-cloudflare-dns
                   key: api-token
                   optional: true
+            # THE OBJECT STORAGE A TENANT'S UPLOADS GO TO. create-tenant makes the bucket
+            # named by the tenant guid with this MANAGING token and mints a key scoped to
+            # that one bucket, which is the only object-storage credential the tenant ever
+            # sees — so a key leaking out of one tenant's pod reaches that tenant's objects
+            # and nothing else. Sourced from the manager-cloudflare-r2 Secret
+            # (externalsecret-cloudflare-r2.yaml). All three or none: a token without the
+            # account it signs for addresses nothing. optional:true so a missing or unsynced
+            # Secret never blocks manager boot; create-tenant fails LOUD without them, which
+            # is the right place to notice, because a tenant whose engine cannot reach its
+            # bucket refuses to boot in the first place.
+            - name: CLOUDFLARE_R2_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: manager-cloudflare-r2
+                  key: api-token
+                  optional: true
+            - name: CLOUDFLARE_R2_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: manager-cloudflare-r2
+                  key: account-id
+                  optional: true
+            - name: CLOUDFLARE_R2_JURISDICTION
+              valueFrom:
+                secretKeyRef:
+                  name: manager-cloudflare-r2
+                  key: jurisdiction
+                  optional: true
             # The pinned dbtools job image (config.ts DBTOOLS_IMAGE): the
             # manager puts this full ref into every move/backup/restore
             # jobSpec — the dumps, restores and listings run as in-cluster
