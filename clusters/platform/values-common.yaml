@@ -63,6 +63,20 @@ global:
   # exact string.
   clusterIssuer: platform-acme
 
+  # WHERE A TENANT'S UPLOADS ARE KEPT — the Cloudflare account the platform makes each tenant's
+  # bucket in, and the jurisdiction it makes them under. Written per installation into
+  # clusters/active/<fqdn>.yaml by the installer, from the answers the machine was given.
+  #
+  # EMPTY HERE, AND THAT IS THE POINT OF THE KEY EXISTING AT ALL. An installation that answered no
+  # object storage writes NO objectStorage key into its map, and a chart reading
+  # global.objectStorage.r2.accountId would then fail to render rather than render an engine that
+  # says what it lacks. So the chain carries the key empty and the engine's own boot guard is what
+  # refuses — one installation-wide fact, stated in one place, and the refusal where it can be read.
+  objectStorage:
+    r2:
+      accountId: ""
+      jurisdiction: ""
+
   # The ONE Vault KV-v2 mount every SecretStore reads. Word-identical on every
   # cluster and every role — what differs per cluster is only the Kubernetes
   # auth mount (global.vaultKubernetesAuthPath, clusters/active/<fqdn>.yaml).
