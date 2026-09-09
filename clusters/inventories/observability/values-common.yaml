@@ -422,6 +422,48 @@ monitoring:
                   `journalctl -u hostyour-vault-unseal -n 50` first, then
                   `kubectl describe pod -n vault {{ $labels.pod }}`.
 
+    node-clock:
+      enabled: true
+      groups:
+        - name: node-clock
+          interval: 60s
+          # WHY THE KERNEL AND NOT THE OFFSET. node_timex_offset_seconds is what chrony last handed
+          # the kernel, and chrony corrects a large error through the FREQUENCY: measured on apps1 on
+          # 2026-09-09 that gauge read 0 while the machine stood 55 seconds ahead of real time. So the
+          # two readings below are the kernel's own verdict — whether it considers itself in step at
+          # all, and the bound it puts on how wrong it may be. On the same machine, in the same
+          # minute, maxerror read 16 and rising.
+          #
+          # WHY FIFTEEN MINUTES. A machine restored from a snapshot comes back with its clock out and
+          # chrony slews it at 8.3 per cent, so a minute of error takes about twelve to close. Below
+          # that, an installation would page somebody for a machine that is repairing itself.
+          rules:
+            - alert: NodeClockNotSynchronised
+              expr: node_timex_sync_status == 0
+              for: 15m
+              labels:
+                severity: critical
+              annotations:
+                summary: "{{ $labels.instance }} holds no time it can trust"
+                description: >-
+                  The kernel reports no synchronised time source. Everything this platform issues or
+                  verifies carries a time: a certificate whose notBefore lies in a verifier's future
+                  is refused, a token is judged expired early, and a release tag is stamped with the
+                  wrong second. Ask the machine `chronyc sources` — a source at `reach 0` is one it
+                  cannot get to at all, and `chronyc tracking` says how far out it stands.
+            - alert: NodeClockErrorBoundHigh
+              expr: node_timex_maxerror_seconds > 1
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $labels.instance }} may be {{ $value }}s wrong"
+                description: >-
+                  The kernel's own bound on the clock's error exceeds a second and has for fifteen
+                  minutes. It grows while nothing corrects the clock, so this is the same condition as
+                  the alert above seen from the other side, and it also catches a machine whose source
+                  answers but disagrees.
+
   # --------------------------------------------------------------------------
   # AlertmanagerConfig CRs.
   #
