@@ -110,6 +110,10 @@ pod — the one pod in the namespace that runs kubectl (the argo-sync patch on
 the unit's own Applications) and runs no unit code. Same post-DNAT reasoning
 as the gate-runner report-writer pinhole.
 */}}
+{{- $nodeCidrs := .Values.global.nodeCidrs | default list -}}
+{{- if not $nodeCidrs }}
+{{- fail "global.nodeCidrs is empty, so the bump's apiserver pinhole has no address to admit and the release cycle would push every pin and then fail to refresh the unit's Application - after the writes, which is the worst place to stop. Write the CIDRs of this cluster's nodes into clusters/active/<fqdn>.yaml (global.nodeCidrs); the branch program measures them off the machine and writes them there." }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -126,9 +130,22 @@ spec:
   policyTypes:
     - Egress
   egress:
+    # Post-DNAT apiserver endpoint, on the apiserver ports only (443 service VIP,
+    # 6443 kubeadm, 16443 microk8s) — see values-common.yaml bump.apiServer.ports.
+    #
+    # WHICH ADDRESS IS NOT STATED TWICE, the rule the gate-runner's own pinhole
+    # follows: this reads global.nodeCidrs, the SAME list the fence above carves
+    # out of its 0.0.0.0/0 rule, so the two cannot disagree. A value written here
+    # instead was a guess about the shape of an installation — it named 10.0.0.0/8,
+    # which is true of a cluster on a private LAN and false of a bare cloud machine
+    # whose node carries a public address. On such a machine the bump reached no
+    # API server at all and the release cycle died AFTER pushing every pin
+    # (simetrixch/hostyour-cloud#201).
     - to:
+        {{- range $nodeCidrs }}
         - ipBlock:
-            cidr: {{ .Values.bump.apiServer.cidr }}
+            cidr: {{ . }}
+        {{- end }}
       ports:
         {{- range .Values.bump.apiServer.ports }}
         - protocol: TCP

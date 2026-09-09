@@ -85,7 +85,6 @@ npm:
 # 16443) on an install branch if desired.
 bump:
   apiServer:
-    cidr: 10.0.0.0/8
     ports:
       - 443
       - 6443
