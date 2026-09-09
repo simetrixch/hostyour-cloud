@@ -234,6 +234,22 @@ spec:
                   {{- range .databases }}
                   - "{{ . }}"
                   {{- end }}
+              # THE REDIS GRANT, the sibling of the databases above and injected for the same
+              # reason: one redis serves every consumer of this cluster out of ONE keyspace, so the
+              # patterns an ACL user may touch are a claim on a shared name the way a database name
+              # is. The chart passes them through to its redis ServiceClaim, the provisioner grants
+              # EXACTLY these, and the unit's own fence refuses a claim asking for anything else —
+              # so a chart cannot grant itself a neighbour's keys.
+              #
+              # `dig` rather than bare, unlike databases: this field is OPTIONAL in the
+              # registration, and a registration written before it existed must still generate its
+              # Application. Absent reads as granted nothing, which is what a unit claiming no redis
+              # carries anyway.
+              redis:
+                keyPatterns:
+                  {{- range (dig "keyPatterns" (list) .) }}
+                  - "{{ . }}"
+                  {{- end }}
         # 2. Per-consumer PostgreSQL instance (clusters/units/postgresql), rendered ONLY
         #    when the registration's services[] includes "postgresql": a
         #    consumer that claims postgresql gets its OWN instance in its OWN
