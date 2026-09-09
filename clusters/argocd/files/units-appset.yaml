@@ -180,6 +180,12 @@ spec:
                 # its output as YAML, and a quoted scalar survives that parse where a rendered list
                 # would not. The same shape the build fan-out stamps its builds[] in.
                 servicesJson: "{{ .services | toJson }}"
+                # THE REDIS GRANT, and the fence holds every ServiceClaim of this namespace to it.
+                # A JSON string for the same reason servicesJson is one. `dig` answers "[]" where
+                # the field is absent, which the chart reads as granted NOTHING — the direction that
+                # matters, because a unit whose registration predates the field must not come out
+                # granted every key in a shared keyspace.
+                keyPatternsJson: "{{ dig \"keyPatterns\" (list) . | toJson }}"
       destination:
         # THE UNIT'S OWN CLUSTER, by name — a cluster-scoped policy has to stand where the workloads
         # it admits or refuses run, and for a per-slave instance that is a remote cluster.

@@ -63,6 +63,7 @@ four admits an apostrophe.
 {{- $unitApex := required "unit-admissionpolicy: global.unitApex is required (clusters/active/<fqdn>.yaml) — a unit's platform address is <name>-<stage>.<unitApex>, and a host clause rendered against a guessed apex fences the unit off its own ingress" .Values.global.unitApex }}
 {{- $trackingId := required "unit-admissionpolicy: trackingIdAnnotation is required — without it the cluster-scoped clauses would reach every namespace on the cluster instead of the ones this unit owns" .Values.trackingIdAnnotation }}
 {{- $services := required "unit-admissionpolicy: registration.servicesJson is required — the attested claim list decides two of the granted namespace labels, and an absent one would grant them to a unit that never claimed them" .Values.registration.servicesJson | fromJsonArray }}
+{{- $keyPatterns := required "unit-admissionpolicy: registration.keyPatternsJson is required — it is the granted set every ServiceClaim of this namespace is held to, and an absent one would leave the clause comparing against nothing" .Values.registration.keyPatternsJson | fromJsonArray }}
 {{- $namespace := printf "%s-%s" $name $stage }}
 {{- $policyName := printf "consumer-%s" $namespace }}
 {{- $host := printf "%s.%s" $namespace $unitApex }}
@@ -71,6 +72,14 @@ four admits an apostrophe.
 {{- $fqdns = append $fqdns .Values.registration.fqdn }}
 {{- end }}
 {{- $ownedByUnit := printf "has(object.metadata.annotations) && '%s' in object.metadata.annotations && object.metadata.annotations['%s'].startsWith('%s:')" $trackingId $trackingId $namespace }}
+{{- /* The granted patterns as ONE CEL list literal. Written as a list rather than a chain of
+       comparisons because the clause asks whether every pattern a claim names is IN it, which is
+       the shape `all(p, p in [...])` wants. An empty registration renders `[]`, and every claim
+       naming a pattern is then refused - the fail-closed direction. */}}
+{{- $grantedPatterns := list }}
+{{- range $keyPatterns }}
+{{- $grantedPatterns = append $grantedPatterns (printf "'%s'" .) }}
+{{- end }}
 {{- $ruleHosts := list }}
 {{- $tlsHosts := list }}
 {{- range $fqdns }}
@@ -130,6 +139,10 @@ spec:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["namespaces"]
+      - apiGroups: ["platform.hostyour.cloud"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["serviceclaims"]
   matchConditions:
     - name: unit-scope
       expression: {{ printf "request.resource.resource == 'namespaces' || request.namespace == '%s'" $namespace | quote }}
@@ -142,6 +155,8 @@ spec:
       message: {{ printf "the platform FQDN %s must stand in a tls entry of its own — a shared entry is one atomic certificate order, and a name pointed elsewhere would block its renewal" $host | quote }}
     - expression: "request.resource.resource != 'services' || !has(object.spec.type) || object.spec.type == 'ClusterIP'"
       message: "a consumer Service must be of type ClusterIP"
+    - expression: {{ printf "request.resource.resource != 'serviceclaims' || !has(object.spec.keyPatterns) || object.spec.keyPatterns.all(p, p in [%s])" (join ", " $grantedPatterns) | quote }}
+      message: {{ printf "a consumer ServiceClaim may ask for the redis key patterns its registration grants and no others (%s) — one redis serves every consumer of this cluster out of ONE keyspace, and the patterns an ACL user may touch are the only thing that separates two of them in it, so a pattern a chart wrote for itself is a self-granted read of a neighbour's keys" (default "none" (join ", " $keyPatterns)) | quote }}
     - expression: {{ printf "request.resource.resource != 'serviceaccounts' || !has(object.metadata.annotations) || (%s)" $aliasClaims | quote }}
       message: {{ printf "a consumer ServiceAccount may claim %s only as %s and %s only as %s — the Vault login alias reads that pair, and the consumer policy opens secret/<stage>/consumer/<unit>/* on it" $aliasUnit $name $aliasStage $stage | quote }}
     - expression: {{ printf "request.resource.resource != 'namespaces' || !(%s) || object.metadata.name == '%s'" $ownedByUnit $namespace | quote }}

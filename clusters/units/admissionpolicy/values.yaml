@@ -24,6 +24,14 @@ registration:
   # are reached without authenticating the caller, so REACH is the grant, and a unit that never
   # claimed one must not be able to write itself into that NetworkPolicy's selector.
   servicesJson: "[]"
+  # The unit's ATTESTED redis key patterns, as the JSON array the ApplicationSet stamps — the same
+  # shape and the same reason as servicesJson above. This is the GRANTED SET a ServiceClaim of this
+  # namespace is held to: one redis serves every consumer of a cluster out of one keyspace, and the
+  # patterns are the only thing separating two of them inside it. EMPTY means granted nothing, which
+  # is what a unit claiming no redis carries — and a claim asking for a pattern is then refused,
+  # which is the fail-closed direction: a unit that never declared a pattern must not be able to
+  # write one into its own claim.
+  keyPatternsJson: "[]"
 
 # The three label namespaces the PLATFORM decides on. A unit's own Namespace object may carry nothing
 # under them beyond the value-exact pairs below: Vault binds ESO roles by a namespace label selector,
