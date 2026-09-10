@@ -1,6 +1,12 @@
 name: headscale
 project: services
-syncWave: "42"
+# WAVE 0: the coordinator waits for nothing the reconciler brings. Its chart pulls a public image,
+# a claim on the platform StorageClass and an Ingress signed by the bootstrap's ClusterIssuer — all
+# of it delivered before the root Application exists. The manager (wave 40) mints every slave's
+# credential by exec into this Deployment, so it stands AFTER its dependency here; and the fifth
+# install program waits 600 s for this Deployment to be Available, a budget that at wave 42 raced
+# the whole platform's health and lost on every first run (#206).
+syncWave: "0"
 namespace: headscale
 prune: "true"
 createNamespace: "true"
