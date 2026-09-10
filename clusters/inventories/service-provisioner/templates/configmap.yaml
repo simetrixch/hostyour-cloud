@@ -232,6 +232,20 @@ data:
         body = client.V1Secret(metadata=meta, string_data=payload, type=secret_type)
         existing = read_own_secret(core, ns, secret_name)  # raises if not ours
         if existing is not None:
+            # WRITE ONLY WHAT DIFFERS. The reconcile loop runs every handler on every
+            # pass, so this is reached every POLL_INTERVAL seconds for every claim
+            # on the cluster; a patch on every pass is an etcd revision every 15 s
+            # per Secret for values nobody changed (17,280 a day per consumer with
+            # three claims), and an INFO line each time that buries the one line
+            # that matters — a deprovision, a refusal — under thousands of
+            # identical ones. What stands is compared decoded, key by key, against
+            # what the handler produced; a credential rotated by hand upstream
+            # still differs and is still written (#203).
+            held = {k: base64.b64decode(v).decode("utf-8")
+                    for k, v in (existing.data or {}).items()}
+            if held == dict(payload) and (existing.type or "Opaque") == secret_type:
+                log.debug("secret %s/%s unchanged", ns, secret_name)
+                return
             core.patch_namespaced_secret(secret_name, ns, body)
             log.info("patched secret %s/%s", ns, secret_name)
         else:
