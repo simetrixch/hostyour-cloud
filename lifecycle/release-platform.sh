@@ -268,9 +268,13 @@ if [ -n "$FQDN" ]; then
     say "release: $MAP already records $TAG, so it is left as it stands"
   else
     write_value_in_file "$WORK/$MAP" release "$TAG"
+    # THE SUBJECT OPENS WITH `release:` because the push gate excuses a release stamp from naming
+    # an issue by that word and by nothing else. $WORK is a fresh clone and carries no hooks, so
+    # the gate never judges this commit here — it judges it wherever the same commit is pushed
+    # from a checkout that does (simetrixch/hostyour-manager#132).
     git -C "$WORK" add -- "$MAP" \
       || die "the pin could not be staged in $MAP"
-    git -C "$WORK" commit --quiet -m "Pin $FQDN to $TAG" -m 'Written by the release of the platform tree, once the tag stood on the remote.' \
+    git -C "$WORK" commit --quiet -m "release: pin $FQDN to $TAG" -m 'Written by the release of the platform tree, once the tag stood on the remote.' \
       || die "the pin of $FQDN to $TAG could not be committed"
     git -C "$WORK" push --quiet origin "$FQDN" \
       || die "the pin of $FQDN to $TAG could not be pushed, so it is a pin only this machine believes" 74

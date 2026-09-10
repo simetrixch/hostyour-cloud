@@ -314,9 +314,13 @@ try {
     }
     else {
       Write-FileValue $mapPath 'release' $tag
+      # THE SUBJECT OPENS WITH `release:` because the push gate excuses a release stamp from naming
+      # an issue by that word and by nothing else. $work is a fresh clone and carries no hooks, so
+      # the gate never judges this commit here — it judges it wherever the same commit is pushed
+      # from a checkout that does (simetrixch/hostyour-manager#132).
       git -C $work add -- $map
       if ($LASTEXITCODE -ne 0) { Stop-Here "the pin could not be staged in $map" }
-      git -C $work commit --quiet -m "Pin $Fqdn to $tag" -m 'Written by the release of the platform tree, once the tag stood on the remote.'
+      git -C $work commit --quiet -m "release: pin $Fqdn to $tag" -m 'Written by the release of the platform tree, once the tag stood on the remote.'
       if ($LASTEXITCODE -ne 0) { Stop-Here "the pin of $Fqdn to $tag could not be committed" }
       git -C $work push --quiet origin $Fqdn
       if ($LASTEXITCODE -ne 0) {
