@@ -29,7 +29,7 @@ global:
   buildPlane: apps3.digitacloud.app
   booksCluster: apps3.digitacloud.app
   master: apps3.digitacloud.app
-  apiHost: apps4.digitacloud.app
+  apiHost: 100.64.0.2
   apiPort: 16443
   unitApex: digitacloud.app
   platformDomain: digitaldelivery.ch
