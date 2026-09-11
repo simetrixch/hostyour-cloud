@@ -16,8 +16,8 @@
 # second Secret claiming the same cluster name with server
 # kubernetes.default.svc — the MASTER's apiserver from the instance's point
 # of view — would point the tenant Applications at the wrong apiserver.
-# THE CHART ABOVE IS WHAT KEEPS IT OFF ONE: it emits this file, slaves-appset.yaml
-# and repo-catalog.yaml only where the map says global.servicesLocal.vault, which
+# THE CHART ABOVE IS WHAT KEEPS IT OFF ONE: it emits this file and slaves-appset.yaml
+# only where the map says global.servicesLocal.vault, which
 # is the cluster that keeps the books. A pure slave's map says false, so its
 # reconciler never sees this Secret, and no file has to be deleted from a branch
 # for that to hold.

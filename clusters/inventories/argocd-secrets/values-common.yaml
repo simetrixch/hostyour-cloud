@@ -1,5 +1,16 @@
 # The SecretStore this namespace reads through, rendered by the shared chart exactly as every other
 # workload namespace renders one: the cluster's own auth mount, its own ServiceAccount, its own role.
+# Its address and its auth mount come off the cluster map through the $values chain
+# (global.endpoints.vault.url, global.vaultKubernetesAuthPath), its KV mount off
+# clusters/platform/values-common.yaml (global.vaultKvMount).
+secret-store: {}
+
+# The catalogue credential is templates/externalsecret-repo-catalog.yaml, the twin of the slave
+# instance's; it reads global.catalogUrl off the same map.
+repo:
+  # ArgoCD sends a personal access token as the password of a fixed username; GitHub reads the
+  # token and ignores the name. The Manager's own reader of the same catalogue uses the same word.
+  username: x-access-token
 
 # WHERE THE CLIENT SECRET STANDS. `<env>/idp/bootstrap` is written when the identity provider is
 # seeded, on the cluster that keeps the books, and every cluster of the installation reads that one

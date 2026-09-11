@@ -1,0 +1,42 @@
+apiVersion: v2
+name: argocd-secrets
+version: 1.0.0
+description: |
+  THE SECRETS THE RECONCILER ITSELF READS, and the store it reads them through — everything the
+  `argocd` namespace holds that came out of Vault:
+
+    * `argocd-oidc`, key `clientSecret`, which clusters/bootstrap/argocd/values.tpl resolves as
+      `$argocd-oidc:clientSecret` in its oidc.config. Without it the sign-in reaches the token
+      exchange and is answered `invalid_client`, because an unresolved reference is sent as an empty
+      secret; and the local account is off, so there is no password form to fall back to.
+    * `repo-catalog`, the credential the repo-server reads the PRIVATE tenant catalogue with. The
+      tenants ApplicationSet generates its parameters from that catalogue over git; without the
+      credential GitHub answers "Repository not found", which reads like a wrong URL and is a
+      missing credential.
+    * `SecretStore/vault-backend` and `ServiceAccount/external-secrets-sa`, through which both are
+      read: this cluster's own auth mount, its own ServiceAccount, its own role — the shared chart,
+      rendered exactly as every other workload namespace renders it.
+
+  THEY ARE READ, NOT WRITTEN IN. Placing them with a row of deploy-platform-services holding the
+  store's ROOT TOKEN cannot work: that token exists only on the cluster that keeps the books, so a
+  cluster keeping none cannot have it at all and the run dies at that row.
+
+  WHY THE STORE STANDS HERE AND NOT UNDER root-applications, where it stood until #207. The store's
+  CRD is installed by `external-secrets`, an Application of the ApplicationSet that root itself
+  creates. Root applied the store before that CRD existed, failed on it, and then waited on the
+  ApplicationSet's health to retry — while the ApplicationSet's rollout waited at this wave for the
+  store. A resource whose CRD a child of root delivers cannot be a resource of root; here it lands
+  at wave 5, after external-secrets at wave 1, with its CRD long in place.
+dependencies:
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-oidc
+  # The namespace's own store and ServiceAccount, the pair every workload namespace renders.
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  # Shared named templates the two library charts above resolve their names through.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

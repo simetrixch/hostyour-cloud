@@ -65,9 +65,10 @@ spec:
   destinations:
     - name: __CLUSTER_NAME__
       namespace: external-secrets
-    # The reconciler's own namespace, for the ONE object of it this project delivers: the client
-    # secret a person signs in with (clusters/inventories/argocd-signin). It is read out of the
-    # store like every other secret, so it belongs to the tier that carries the store's operator.
+    # The reconciler's own namespace, for the secrets the reconciler itself reads — the client
+    # secret a person signs in with and the catalogue credential — and the store they are read
+    # through (clusters/inventories/argocd-secrets). Read out of the store like every other secret,
+    # so they belong to the tier that carries the store's operator.
     - name: __CLUSTER_NAME__
       namespace: __ARGOCD_NAMESPACE__
     - name: __CLUSTER_NAME__
