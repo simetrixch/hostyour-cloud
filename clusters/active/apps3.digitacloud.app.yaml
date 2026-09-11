@@ -21,7 +21,7 @@
 # spelling is identical on both sides on purpose: a reader comparing them by eye should not have to
 # know a mapping to see that they agree.
 stage: prod
-role: master
+role: master+slave
 booksCluster: apps3.digitacloud.app
 # THE PIN. The release this cluster stands on, in the one release grammar. A regeneration reads
 # this line off the map and hands it back as the ref it merges, so the field and the branch state
@@ -105,7 +105,6 @@ global:
   # storage writes no key here, and the charts resolve the platform's own empty default through the
   # values chain. Written as two lines, the parent would stand with nothing under it, and a key
   # holding null overrides a default instead of leaving it alone.
-  objectStorage: {r2: {accountId: '7d6b0eaa4cff67abf485661f0022e065', jurisdiction: 'eu'}}
   # WHERE THE MACHINES OF THIS CLUSTER CAN BE REACHED, each address on its own as a /32.
   #
   # A boundary drawn in address terms has to name the machine it is drawn around, and a cloud
@@ -120,7 +119,7 @@ global:
   #
   # A /32 and not the prefix the interface carries: a node configured 10.1.1.7/24 shares that /24
   # with every other host on the wire, and what a boundary needs is the machine, not the segment.
-  nodeCidrs: [157.90.201.153/32]
+  nodeCidrs: [157.90.201.153/32, 100.64.0.1/32]
   # WHERE THE SHARED SERVICES ANSWER, one map and one shape per service. Each is that service plus
   # the domain of the cluster that runs it — the books-keeping cluster for everything an
   # installation has exactly one of, the build plane for the registry.
