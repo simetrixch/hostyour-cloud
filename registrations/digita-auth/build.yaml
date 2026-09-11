@@ -1,0 +1,8 @@
+name: "digita-auth"
+repoURL: "https://github.com/digitaplatform/digita-auth.git"
+repoCredentialId: "cred_01M298MGXP78VZFYC1CV0E16WM"
+owner: "simetrix"
+onboardedAt: "2026-09-11T22:17:24.395Z"
+suspended: false
+quiesced: false
+builds: ["digita-auth-backend","digita-auth-frontend"]
