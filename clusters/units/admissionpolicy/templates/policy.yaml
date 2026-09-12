@@ -6,10 +6,10 @@ everything this file pins to it.
 
 SEVEN CLAUSES, FOUR RESOURCES, AND EACH CLAUSE IS A WHOLE ANSWER:
 
-  Ingress         every rule's FQDN is one the platform GRANTED: `<name>-<stage>.<unitApex>` always,
+  Ingress         every rule's FQDN is one the platform GRANTED: `<label>.<stage apex>` always,
                   plus the unit's attested `fqdn` where its stage registration carries one. A rule
                   with no host serves every FQDN that reaches the ingress, so an absent field is a
-                  violation and not an exemption. NOT `*.<name>-<stage>`: the platform's DNS carries
+                  violation and not an exemption. NOT `*.<label>`: the platform's DNS carries
                   one record per unit and stage, so no resolver exists for a sub-host.
   Ingress         spec.tls is held to the SAME granted set, because a tls host drives an ACME order
                   against the shared cluster-issuer — a name is a claim there even when no rule
@@ -60,13 +60,16 @@ four admits an apostrophe.
 */ -}}
 {{- $name := required "unit-admissionpolicy: registration.name is required — it names the policy, the namespace the clauses fence, and the platform address they admit" .Values.registration.name }}
 {{- $stage := required "unit-admissionpolicy: registration.stage is required — it is read off registrations/<unit>/<stage>.yaml by clusters/argocd/files/units-appset.yaml; the unit's namespace and Application are <name>-<stage>, and that name is the prefix of every tracking id the Namespace clauses read" .Values.registration.stage }}
-{{- $unitApex := required "unit-admissionpolicy: global.unitApex is required (clusters/active/<fqdn>.yaml) — a unit's platform address is <name>-<stage>.<unitApex>, and a host clause rendered against a guessed apex fences the unit off its own ingress" .Values.global.unitApex }}
 {{- $trackingId := required "unit-admissionpolicy: trackingIdAnnotation is required — without it the cluster-scoped clauses would reach every namespace on the cluster instead of the ones this unit owns" .Values.trackingIdAnnotation }}
 {{- $services := required "unit-admissionpolicy: registration.servicesJson is required — the attested claim list decides two of the granted namespace labels, and an absent one would grant them to a unit that never claimed them" .Values.registration.servicesJson | fromJsonArray }}
 {{- $keyPatterns := required "unit-admissionpolicy: registration.keyPatternsJson is required — it is the granted set every ServiceClaim of this namespace is held to, and an absent one would leave the clause comparing against nothing" .Values.registration.keyPatternsJson | fromJsonArray }}
 {{- $namespace := printf "%s-%s" $name $stage }}
 {{- $policyName := printf "consumer-%s" $namespace }}
-{{- $host := printf "%s.%s" $namespace $unitApex }}
+{{- /* THE PLATFORM HOST IS DELIVERED, never composed here: `<label>.<stage apex>`, handed in by
+clusters/argocd/files/units-appset.yaml from the same markers the consumers ApplicationSet hands the
+chart its unitHost from, so the host this fence admits and the host the chart serves are one string
+by construction (simetrixch/hostyour-cloud#208). */ -}}
+{{- $host := required "unit-admissionpolicy: registration.host is required — it is the unit's platform address, <label>.<stage apex>, delivered by clusters/argocd/files/units-appset.yaml; a host clause rendered against a guessed one would fence the unit off its own address" .Values.registration.host }}
 {{- $fqdns := list $host }}
 {{- if .Values.registration.fqdn }}
 {{- $fqdns = append $fqdns .Values.registration.fqdn }}

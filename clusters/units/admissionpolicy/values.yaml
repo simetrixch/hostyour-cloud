@@ -4,16 +4,20 @@
 # be a second source for a grant the registration already carries, and a fence rendered against a
 # guessed value is a fence that reports itself armed while admitting the wrong thing.
 registration:
-  # The unit's name. With the stage below it composes the unit's namespace `<name>-<stage>`, its
-  # platform address `<name>-<stage>.<unitApex>` and the prefix of every tracking id its
-  # Application owns.
+  # The unit's name. With the stage below it composes the unit's namespace `<name>-<stage>` and
+  # the prefix of every tracking id its Application owns.
   name: ""
   # The unit's stage: dev, test or prod, read off the registration's path
   # registrations/<unit>/<stage>.yaml by the ApplicationSet. It is the unit's and not the
   # cluster's — one cluster fences a test instance of a unit beside its prod instance, each by its
   # own policy.
   stage: ""
-  # The unit's ATTESTED extra public FQDN, admitted IN ADDITION to `<name>-<stage>.<unitApex>`.
+  # The unit's PLATFORM ADDRESS, `<label>.<stage apex>` — delivered finished by the ApplicationSet
+  # from the registration's attested host label and the stage's zone, the same string the consumers
+  # ApplicationSet hands the unit's chart as unitHost. This fence admits exactly it (plus the fqdn
+  # below) and composes nothing.
+  host: ""
+  # The unit's ATTESTED extra public FQDN, admitted IN ADDITION to the platform address above.
   # EMPTY for almost every unit: the onboard writes it into the stage registration only after
   # refusing every name the platform already serves, so an empty value here means "granted nothing
   # beyond the platform address" and never "not asked yet".

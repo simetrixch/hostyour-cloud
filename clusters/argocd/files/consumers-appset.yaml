@@ -108,10 +108,10 @@ spec:
         # the master even when the unit belongs to a slave.
         name: __CLUSTER_NAME__
         # One unit at one stage, one namespace: `<name>-<stage>`, prod included, so two stages of
-        # one unit stand apart on one cluster. The ingress host `<name>-<stage>.<unitApex>` keys on
-        # the namespace; the Vault path `<stage>/consumer/<name>/*` keys on the name and the stage
-        # separately, which is why the two travel to Vault as two alias annotations (sources 2
-        # and 2b below) and not as the namespace.
+        # one unit stand apart on one cluster. The ingress host is `<label>.<stage apex>`, delivered
+        # as unitHost below and keyed on nothing here; the Vault path `<stage>/consumer/<name>/*`
+        # keys on the name and the stage separately, which is why the two travel to Vault as two
+        # alias annotations (sources 2 and 2b below) and not as the namespace.
         namespace: "{{ .name }}-{{ .values.stage }}"
       syncPolicy:
         automated:
@@ -220,6 +220,17 @@ spec:
               # explicitly by the Manager every time.
               suspended: {{ .suspended }}
               quiesced: {{ .quiesced }}
+              # THE UNIT'S PUBLIC HOST, DELIVERED — a chart composes no host (#208). The label is the
+              # registration's attested `host`, or the unit's name where a registration written
+              # before the field existed carries none, which is exactly what a manifest declaring no
+              # `host` means; the zone is the stage's, picked off the markers the chart at
+              # clusters/argocd fills from the map's unitApex, so the rule "prod is the apex, the
+              # others are <stage>.<apex>" is spelled there and nowhere in this file.
+              unitHost: "{{ dig \"host\" .name . }}.{{ index (dict \"dev\" \"__STAGE_APEX_DEV__\" \"test\" \"__STAGE_APEX_TEST__\" \"prod\" \"__STAGE_APEX_PROD__\") .values.stage }}"
+              global:
+                # The zone this unit's stage lives in: what an identity provider scopes its session
+                # cookie to, and what a chart composes a NEIGHBOUR's host from (`<label>.<stageApex>`).
+                stageApex: "{{ index (dict \"dev\" \"__STAGE_APEX_DEV__\" \"test\" \"__STAGE_APEX_TEST__\" \"prod\" \"__STAGE_APEX_PROD__\") .values.stage }}"
               # DB-name contract: the registration's `databases` (copied
               # VERBATIM from the consumer's platform.yaml `databases:`)
               # reaches the chart as .Values.mongodb.databases — the LITERAL

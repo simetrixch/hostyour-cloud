@@ -208,10 +208,15 @@ spec:
                 # gets its own name here, which those charts never look at.
                 appName: "{{ $.name }}"
                 subdomain: "{{ $.subdomain }}"
-                # The tenant's stage, off the registration path: a member's host is
-                # <member>-<stage>.<subdomain>.<unitApex>, composed by the chart from this and the
-                # two above.
+                # The tenant's stage, off the registration path.
                 stage: "{{ $.values.stage }}"
+                # THE TENANT'S ZONE, DELIVERED: `<subdomain>.<stage apex>`, where the stage apex is
+                # the unit apex itself for prod and `<stage>.<unit apex>` otherwise — picked off the
+                # markers the chart at clusters/argocd fills from the map (#208). Every member stands
+                # one level below it, `<member>.<zone>`, and the identity provider scopes the
+                # tenant's session cookie to it; a member chart composes its host from this and its
+                # own member word, never from the subdomain and the apex.
+                zone: "{{ $.subdomain }}.{{ index (dict \"dev\" \"__STAGE_APEX_DEV__\" \"test\" \"__STAGE_APEX_TEST__\" \"prod\" \"__STAGE_APEX_PROD__\") $.values.stage }}"
                 # suspended pauses the tenant; quiesced closes it for a move or backup. The chart
                 # renders the off state from these two values (replicas 0, no Ingress) — see the
                 # prune note in the header.

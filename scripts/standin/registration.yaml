@@ -24,6 +24,9 @@ registration:
   # fences are named for the pair, so scripts/check.sh holds them as `check-dev`.
   stage: dev
   repoURL: https://github.com/check/check.git
+  # The platform address the fence pins, as clusters/argocd/files/units-appset.yaml delivers it:
+  # `<label>.<stage apex>` — the label is the name here, the stage's zone is dev's.
+  host: check.dev.check.example.invalid
   fqdn: ""
   servicesJson: "[]"
 # The reconciler namespace a unit's AppProject and argo-sync grant stand in. `argocd` here, which is
@@ -36,6 +39,8 @@ tenant:
   appName: check
   subdomain: check
   stage: dev
+  # The tenant\'s zone, as clusters/argocd/files/tenants-appset.yaml delivers it: `<subdomain>.<stage apex>`.
+  zone: check.dev.check.example.invalid
 quota:
   requestsCpu: "1"
   requestsMemory: 1Gi

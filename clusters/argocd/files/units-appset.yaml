@@ -171,6 +171,11 @@ spec:
               registration:
                 name: "{{ .name }}"
                 stage: "{{ .values.stage }}"
+                # THE PLATFORM HOST THE FENCE PINS, delivered finished (#208): `<label>.<stage apex>`,
+                # the label being the attested `host` or the unit's name where the registration
+                # carries none, the zone the stage's — the same string the consumers ApplicationSet
+                # hands the chart as unitHost, composed from the same markers.
+                host: "{{ dig \"host\" .name . }}.{{ index (dict \"dev\" \"__STAGE_APEX_DEV__\" \"test\" \"__STAGE_APEX_TEST__\" \"prod\" \"__STAGE_APEX_PROD__\") .values.stage }}"
                 # THE ATTESTED EXTRA FQDN, and it is optional in the registration. `dig` answers ""
                 # where the field is absent, which is what the chart reads as "granted nothing beyond
                 # the platform address" — a bare `{{ .fqdn }}` under missingkey=error would produce
