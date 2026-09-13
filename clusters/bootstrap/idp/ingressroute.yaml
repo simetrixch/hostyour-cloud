@@ -1,0 +1,25 @@
+# IngressRoute for the Authentik UI. Its certificate is the base layer's one, served by the
+# TLSStore bootstrap/ingress/certificate.yaml puts in Traefik's own namespace.
+# Pattern matches manifests/vault/{certificate,ingressroute}.yaml — Traefik
+# CRD-native rather than k8s Ingress with annotations, so middlewares,
+# entryPoints, and TLS handling all live in the spec.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: idp
+  namespace: idp
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`idp.apps3.digitacloud.app`)
+      kind: Rule
+      services:
+        # Chart names the Service `{release}-authentik-{component}` —
+        # `idp-authentik-server` for our release.
+        - name: idp-authentik-server
+          port: 80
+  tls:
+    store:
+      name: default
+      namespace: vault
