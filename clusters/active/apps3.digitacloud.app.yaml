@@ -50,7 +50,7 @@ global:
   # The public apex units serve under: a unit's own name, then this.
   unitApex: digitacloud.app
   # This installation's business domain: the mail sender identity and the relay's own name.
-  platformDomain: digitaldelivery.ch
+  platformDomain: digitaplatform.com
   # WHERE THIS INSTALLATION'S CERTIFICATES COME FROM, and the mailbox that authority writes to. The
   # same three for every cluster of one installation — a slave added later reads them here rather
   # than being asked again, as it does timeSources below, which is the difference between one

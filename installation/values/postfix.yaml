@@ -10,4 +10,4 @@
 postfix:
   config:
     general:
-      ALLOWED_SENDER_DOMAINS: "digitaldelivery.ch digitacloud.app"
+      ALLOWED_SENDER_DOMAINS: "digitaplatform.com digitacloud.app"
