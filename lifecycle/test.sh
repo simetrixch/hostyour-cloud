@@ -6,9 +6,11 @@
 #   bash lifecycle/test.sh
 #
 # TWO ACTS DELIVER A CHANGE TO A RUNNING INSTALLATION and this file measures
-# both: release-platform cuts a release of the platform tree and pins ONE
-# installation to it, and regenerate-install-branch brings that installation's
-# branch onto the pin. status answers what each installation stands on.
+# both: release-platform cuts a release of the platform tree and pins every
+# installation the channel admits to it (or the one named), and
+# regenerate-install-branch brings an installation's branch onto the pin — which
+# the release itself performs where the installation's config stands beside the
+# tree. status answers what each installation stands on.
 # remove-slave-from-master is neither: it takes one slave's registration off the
 # master it stands on, which is the only act here whose subject is a relation
 # between two installations. Every one of them is written twice, in bash and in
@@ -388,34 +390,46 @@ same 'a tag that never reached origin but names the released commit'
   || fail 'the reused tag never reached origin, so the run resumed nothing'
 ok 'a leftover naming the released commit is reused and pushed, not cut again'
 
-# ── the mint that names no installation, which a FIRST machine needs ────────
-# THE STATE A FIRST MACHINE IS IN. It has no install branch, because the branch is
-# cut by deploy-branch on the machine itself, and that program fetches
-# PLATFORM_REF as a TAG rather than a commit. So the tag has to stand on the
-# remote before the installation exists, and the form that mints one names no
-# installation. Three things are measured that the printed line alone cannot
-# prove: the tag reached both origins, no branch on either moved, and the run
-# SAID the channel ceiling went unmeasured rather than passing silently — that
-# ceiling reads the stage off an installation's own map, and there is none.
+# ── the mint that names no installation, which pins every one ───────────────
+# THE FORM A RELEASE IS CUT IN. It names no installation, and every installation
+# origin carries takes the release: each branch carrying a map is pinned, each
+# against the ceiling its own map's stage measures, and a branch carrying no map
+# is no installation. A FIRST machine has no branch yet — the branch is cut by
+# deploy-branch on the machine itself, which fetches PLATFORM_REF as a TAG — so
+# the tag stands on the remote before that installation exists, and the configs
+# beside the tree name it as PLATFORM_REF (the fixture carries none, and the run
+# says so). What the printed lines alone cannot prove is measured: the tag reached
+# both origins, every map records it, and the ref without a map did not move.
 HEADS_A="$(git --git-dir="$ORIGIN_A" for-each-ref --format='%(refname) %(objectname)' refs/heads)"
 HEADS_B="$(git --git-dir="$ORIGIN_B" for-each-ref --format='%(refname) %(objectname)' refs/heads)"
-run_bash release-platform 0.4.0 stable
-run_pwsh release-platform 0.4.0 stable
-must "release: minted 0.4.0-stable-" 'a run naming no installation mints'
+run_bash release-platform 0.4.0 alpha
+run_pwsh release-platform 0.4.0 alpha
+must "release: minted 0.4.0-alpha-" 'a run naming no installation mints'
 must "release: the tag stands on the remote" 'and reads the tag back off the remote'
-must "no channel ceiling was checked" 'and says the ceiling went unmeasured rather than passing silently'
-must "as PLATFORM_REF" 'and names what a first machine does with the tag'
-must_not "release: pinned" 'a run naming no installation pins nothing'
-must_not "regenerate-install-branch" 'and names no regeneration, because there is no installation to bring onto anything'
+for each in apps3 apps4; do
+  must "release: pinned $each.example.invalid to 0.4.0-alpha-" "every installation the channel admits is pinned — $each is dev"
+  must "regenerate-install-branch.sh $each.example.invalid <config>" "and the regeneration of $each is named, because no config for it stands beside this tree"
+done
+must "release: apps5.example.invalid is stage test and channel alpha admits only: dev - left as it stands" 'a test installation is left as it stands by an alpha release, and said so'
+must "release: apps9.example.invalid is stage prod and channel alpha admits only: dev - left as it stands" 'and so is the prod installation'
+must_not "release: pinned apps5" 'the test installation is not pinned by an alpha release'
+must_not "release: pinned apps9" 'nor is the prod installation'
+must "no config beside this tree names a PLATFORM_REF, so none was written" 'the fixture carries no machine config, and the run says so instead of writing one'
+must_not "work/no-map" 'a branch carrying no map is no installation and is not pinned'
 same 'the mint that names no installation'
-[ -n "$(git --git-dir="$ORIGIN_A" tag -l '0.4.0-stable-*')" ] || fail 'the mint that names no installation put no tag on origin A'
-[ -n "$(git --git-dir="$ORIGIN_B" tag -l '0.4.0-stable-*')" ] || fail 'the mint that names no installation put no tag on origin B'
-[ "$(git --git-dir="$ORIGIN_A" for-each-ref --format='%(refname) %(objectname)' refs/heads)" = "$HEADS_A" ] \
-  || fail 'the mint that names no installation moved a branch on origin A'
-[ "$(git --git-dir="$ORIGIN_B" for-each-ref --format='%(refname) %(objectname)' refs/heads)" = "$HEADS_B" ] \
-  || fail 'the mint that names no installation moved a branch on origin B'
-ok 'the mint that names no installation reached both origins and moved no branch'
-
+[ -n "$(git --git-dir="$ORIGIN_A" tag -l '0.4.0-alpha-*')" ] || fail 'the mint that names no installation put no tag on origin A'
+[ -n "$(git --git-dir="$ORIGIN_B" tag -l '0.4.0-alpha-*')" ] || fail 'the mint that names no installation put no tag on origin B'
+for ref in work/no-map apps5.example.invalid apps9.example.invalid; do
+  [ "$(git --git-dir="$ORIGIN_A" rev-parse "refs/heads/$ref")" = "$(grep "^refs/heads/$ref " <<< "$HEADS_A" | cut -d' ' -f2)" ] \
+    || fail "the release moved $ref, which it had no business touching"
+done
+for each in apps3 apps4; do
+  git --git-dir="$ORIGIN_A" show "$each.example.invalid:clusters/active/$each.example.invalid.yaml" | grep -q '^release: 0.4.0-alpha-' \
+    || fail "the map of $each does not record the release on origin A"
+  git --git-dir="$ORIGIN_B" show "$each.example.invalid:clusters/active/$each.example.invalid.yaml" | grep -q '^release: 0.4.0-alpha-' \
+    || fail "the map of $each does not record the release on origin B"
+done
+ok 'the mint that names no installation reached both origins, pinned the installations its channel admits, and moved nothing else'
 # ── the counter-probes: ONE argument became optional, and no more ───────────
 # Without these the case above would only prove that the arity check was
 # loosened, not that it was loosened by exactly one argument.
@@ -474,7 +488,7 @@ same 'a pin naming a tag that is not on the remote'
 # before a session is opened, so the line above it is measured without a machine.
 run_bash regenerate-install-branch apps3.example.invalid "$NOCONFIG"
 run_pwsh regenerate-install-branch apps3.example.invalid "$NOCONFIG"
-must "regenerate: apps3.example.invalid is pinned to 0.1.0-alpha-" 'the pin is read off the branch and named'
+must "regenerate: apps3.example.invalid is pinned to 0.4.0-alpha-" 'the pin is read off the branch and named'
 must "there is no config at" 'a run with no config to state the installation is refused'
 [ "$A_CODE" = '66' ] || fail "a missing config must end with 66, got $A_CODE"
 same 'the pin read off the branch, and a missing config'

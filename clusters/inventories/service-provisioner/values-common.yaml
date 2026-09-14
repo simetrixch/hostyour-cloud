@@ -10,12 +10,12 @@
 # states that rule. clusters/inventories/mongodb/app.yaml and clusters/inventories/redis/app.yaml say
 # runsOn: slave, so on a cluster running neither, the two hosts below name
 # Services that cluster has not got. A redis claim there ends in an Error on
-# .status, the way a `registry` claim does off the build cluster. A mongodb claim
+# .status. A mongodb claim
 # does NOT, when the claim's own namespace carries a mongodb-credentials Secret:
 # templates/configmap.yaml resolves that case namespace-locally and never reads
 # MONGO_HOST. What serves there in every case is postgresql — no host at all,
-# resolved from the claim's own namespace — and registry wherever
-# global.servicesLocal.registry.
+# resolved from the claim's own namespace — and registry, whose pull secret stands
+# on every cluster.
 
 controller:
   serviceAccountName: service-provisioner
@@ -70,30 +70,19 @@ controller:
     credentialsKey: redis-password
 
   registry:
-    # Build-cluster identity (the ONE cluster running clusters/inventories/registry, i.e.
-    # global.servicesLocal.registry — at any stage). The `registry` ServiceClaim
-    # backend copies the pull dockerconfigjson (Vault <env>/app/registry,
-    # property pull-dockerconfigjson) from this source Secret — materialised by
-    # registrySource below, gated on the build cluster — into consumer
-    # namespaces. Harmless on non-build clusters: registrySource is off there, so
-    # the source Secret doesn't exist and a `registry` claim reports a clear
-    # "not available" / "not configured" Error instead of provisioning — both
-    # phrasings come from handle_registry in templates/configmap.yaml, which raises
-    # "registry source secret not configured" when the two keys below are empty
-    # and "registry pull dockerconfigjson not available yet" when the Secret they
-    # name is absent or holds no sourceKey. What materialises that Secret is
-    # templates/externalsecret-registry-pull.yaml.
+    # The `registry` ServiceClaim backend copies the pull dockerconfigjson (Vault
+    # <env>/app/registry) from this source Secret into consumer namespaces. The
+    # Secret stands on EVERY cluster — templates/externalsecret-registry-pull.yaml
+    # materialises it wherever this chart runs — because a consumer deploys on a
+    # slave and pulls from the build cluster's registry across clusters. handle_registry
+    # in templates/configmap.yaml raises "registry source secret not configured" when
+    # the two keys below are empty and "registry pull dockerconfigjson not available
+    # yet" while the Secret they name is absent or holds no sourceKey — the state a
+    # claim reports until ESO has delivered it.
     sourceNamespace: service-provisioner
     sourceSecret: registry-pull-source
     sourceKey: .dockerconfigjson
 
-# Materialize the shared registry pull dockerconfigjson so the `registry`
-# ServiceClaim backend has a source Secret. The ExternalSecret + its SecretStore
-# are gated on the build cluster (global.servicesLocal.registry), so they follow
-# the registry to whichever ONE cluster runs it, at any stage — `enabled` here is
-# just an extra manual override.
-registrySource:
-  enabled: false
-# Per-namespace SecretStore for that ESO source (external-secrets app-tier role;
-# vaultUrl from global). Rendered on the build cluster (see Chart.yaml condition).
+# Per-namespace SecretStore for the registry-pull ESO source (external-secrets
+# app-tier role; vaultUrl from global), on every cluster like the source itself.
 secret-store: {}
