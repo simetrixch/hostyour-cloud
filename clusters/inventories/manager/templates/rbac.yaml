@@ -90,6 +90,16 @@ surface of the manager's onboarding adapters:
     beside it, that is cluster-admin by another name. The union above is larger to
     write and strictly bounded: this account can never mint a Role that reaches
     further than these two resources.
+  * manager-smtp-ops-grant-writer (ns postfix) — the same escalation rule, for the ONE
+    grant build-rbac.ts writes outside a build namespace: a unit that claims `smtp-ops`
+    gets a Role in `postfix` reading and exec-ing the relay's pods (hostyour-manager
+    build-rbac.ts renderSmtpOpsGrant: pods get,list; pods/log get; pods/exec
+    create,get), and the API server lets this account write that Role only while it
+    holds those verbs itself. Held here, in `postfix` alone, so the account can mint
+    the grant nowhere else. Measured on apps3 without it (hostyour-cloud#215): the
+    first unit claiming smtp-ops stopped at provision-smtp-ops-grant, and
+    `kubectl auth can-i` for the account in postfix answered create roles yes,
+    get pods NO, get pods/log NO, create pods/exec NO.
   * manager-argocd-repo-credential (ns argocd) — the ArgoCD repository Secret an
     onboarding writes so ArgoCD can read the unit's repository. It is named
     `repo-<unit>-<stage>` and composed per onboarding, so no resourceNames can bound
@@ -225,6 +235,11 @@ serviceaccount.yaml / deployment.yaml.
       (dict "name" "manager-build-rbac-writer" "rules" (list
         (dict "apiGroups" (list "rbac.authorization.k8s.io") "resources" (list "roles" "rolebindings") "verbs" (list "get" "create" "update" "delete"))
         (dict "apiGroups" (list "tekton.dev") "resources" (list "pipelineruns") "verbs" (list "create" "get" "list" "watch"))
+      ))
+      (dict "name" "manager-smtp-ops-grant-writer" "namespace" "postfix" "rules" (list
+        (dict "apiGroups" (list "") "resources" (list "pods") "verbs" (list "get" "list"))
+        (dict "apiGroups" (list "") "resources" (list "pods/log") "verbs" (list "get"))
+        (dict "apiGroups" (list "") "resources" (list "pods/exec") "verbs" (list "create" "get"))
       ))
       (dict "name" "manager-deploy-state-reader" "namespace" "kube-system" "rules" (list
         (dict "apiGroups" (list "") "resources" (list "configmaps") "resourceNames" (list "hostyour-deploy-state") "verbs" (list "get"))
