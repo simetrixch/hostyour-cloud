@@ -1,0 +1,17 @@
+name: "digita-auth"
+repoURL: "https://github.com/digitaplatform/digita-auth.git"
+repoCredentialId: "cred_01M2GP5CPXSD5THKAXQP4BDM8F"
+owner: "simetrix"
+onboardedAt: "2026-09-14T19:27:56.821Z"
+suspended: false
+quiesced: false
+removing: false
+chartPath: "deploy/chart"
+cluster: "apps4"
+databases: ["digita_auth"]
+keyPatterns: ["digita:auth:*"]
+services: ["mongodb","registry-pull","redis"]
+size: "small"
+mongodb: "shared"
+quota: {"requestsCpu":"400m","requestsMemory":"1Gi","limitsCpu":"1500m","limitsMemory":"2Gi","pods":8,"persistentVolumeClaims":1}
+host: "auth"
