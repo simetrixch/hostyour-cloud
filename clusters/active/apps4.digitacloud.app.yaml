@@ -32,7 +32,7 @@ global:
   apiHost: 100.64.0.2
   apiPort: 16443
   unitApex: digitacloud.app
-  platformDomain: digitaldelivery.ch
+  platformDomain: digitaplatform.com
   alertRecipients: ['info@simetrix.ch']
   catalogUrl: https://github.com/digitaplatform/digita-deploy.git
   clusterIssuer: platform-acme
@@ -58,12 +58,9 @@ global:
   clusterName: apps4
   catalogRepo: digitaplatform/digita-deploy
   vaultKubernetesAuthPath: kubernetes-apps4
-  objectStorage:
-    r2:
-      accountId: 7d6b0eaa4cff67abf485661f0022e065
-      jurisdiction: eu
   nodeCidrs:
     - 157.90.201.150/32
+    - 100.64.0.2/32
   servicesLocal:
     registry: false
     vault: false
