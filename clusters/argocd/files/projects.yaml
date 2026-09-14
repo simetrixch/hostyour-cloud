@@ -349,6 +349,13 @@ spec:
     #                   which always stands here. Missing it, the Role renders and
     #                   ArgoCD refuses it with "namespace argocd is not permitted
     #                   in project 'manager'" (hostyour-cloud#195).
+    #   postfix       — the mail-ops grant writer (rbac.yaml
+    #                   manager-smtp-ops-grant-writer): the verbs the per-unit
+    #                   smtp-ops Role hands out, held in the relay's namespace so the
+    #                   Manager may write that Role there. Missing it, manager-prod's
+    #                   sync retried "one or more synchronization tasks are not
+    #                   valid" for good and the first unit claiming smtp-ops stopped
+    #                   at provision-smtp-ops-grant (hostyour-cloud#215).
     # The Applications read and the Manager-owned AppProjects are NOT here: that
     # grant is cluster-scoped (rbac.yaml, "Cluster scope (was ns argocd)"), so it is
     # a ClusterRole + ClusterRoleBinding, which ArgoCD validates against
@@ -359,6 +366,8 @@ spec:
       namespace: kube-system
     - name: __CLUSTER_NAME__
       namespace: __ARGOCD_NAMESPACE__
+    - name: __CLUSTER_NAME__
+      namespace: postfix
   clusterResourceWhitelist:
     # createNamespace=true on the manager Application: ArgoCD validates the
     # auto-created `manager` Namespace against this list on a fresh cluster.
