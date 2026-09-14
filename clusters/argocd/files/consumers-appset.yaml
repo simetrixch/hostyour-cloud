@@ -14,8 +14,8 @@
 # stay at the stage the cluster map states.
 #
 # The registration's fields (name, repoURL, chartPath, cluster, suspended,
-# quiesced, databases, services) become the template parameters. NOTE the
-# field is chartPath, NOT path — the git files generator reserves .path for
+# quiesced, removing, databases, services) become the template parameters. NOTE
+# the field is chartPath, NOT path — the git files generator reserves .path for
 # file metadata.
 #
 # No commit SHA and no image tag of a consumer lives in this repo: source 1
@@ -47,6 +47,16 @@
 # (clusters/inventories/service-provisioner/templates/configmap.yaml), and drops the user
 # AND the databases — a prune-based suspend would be destructive by
 # construction.
+#
+# removing IS a selector and DOES prune — the one registration field that does, because a
+# removal is exactly where that teardown is supposed to run. The Manager writes `removing: true`
+# as the first step of offboard, purge and the onboard abort, and this generator drops the
+# Application: ArgoCD prunes it, cascade included, while its AppProject and its admission
+# policy — generated off the SAME file by units-appset.yaml, which does not select on the
+# field — still stand. The file itself goes only once ArgoCD reports the Application gone.
+# Removing the file first pruned the three together, and an Application whose project is
+# gone is one ArgoCD refuses to reconcile, its own deletion included: the Application stood
+# with its deletionTimestamp for good and the namespace kept serving (hostyour-cloud#213).
 #
 # ArgoCD creates the Namespace (CreateNamespace) with platform-enforced
 # restricted PSA + the consumer-eso label + Delete=false via
@@ -86,6 +96,13 @@ spec:
       selector:
         matchLabels:
           cluster: __CLUSTER_NAME__  # the chart fills it from global.clusterName — the short name is DERIVED from the fqdn, not answered
+        # NotIn rather than a `removing: "false"` match: a registration written before the field
+        # existed carries none, and it must keep generating — a selector that reads absence as
+        # removal would prune every standing consumer at the platform release that introduced it.
+        matchExpressions:
+          - key: removing
+            operator: NotIn
+            values: ["true"]
   template:
     metadata:
       name: "{{ .name }}-{{ .values.stage }}"
