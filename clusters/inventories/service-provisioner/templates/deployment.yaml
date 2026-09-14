@@ -108,7 +108,7 @@ spec:
               value: {{ .Values.controller.redis.credentialsSecret | quote }}
             - name: REDIS_CREDENTIALS_KEY
               value: {{ .Values.controller.redis.credentialsKey | quote }}
-            # --- Registry backend — source wired on the build cluster (global.servicesLocal.registry), optional elsewhere ---
+            # --- Registry backend — the source Secret ESO materialises on every cluster ---
             - name: REGISTRY_SOURCE_NAMESPACE
               value: {{ .Values.controller.registry.sourceNamespace | quote }}
             - name: REGISTRY_SOURCE_SECRET

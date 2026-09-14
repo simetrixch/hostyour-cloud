@@ -14,14 +14,12 @@ type: application
 appVersion: "1.0.0"
 dependencies:
   # Per-namespace SecretStore backing the registry-pull ESO source (the
-  # `registry` ServiceClaim backend). Gated on the build cluster
-  # (global.servicesLocal.registry), so it renders in lockstep with the
-  # ExternalSecret in templates/externalsecret-registry-pull.yaml and follows the
-  # registry-pull source to whichever ONE cluster runs clusters/inventories/registry, at any stage.
+  # `registry` ServiceClaim backend), on every cluster — a consumer on a slave
+  # pulls from the build cluster's registry, so the source it copies from stands
+  # beside every claim (templates/externalsecret-registry-pull.yaml).
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store
-    condition: global.servicesLocal.registry
   # Shared named templates (common.labels etc.).
   - name: common
     version: 1.0.0
