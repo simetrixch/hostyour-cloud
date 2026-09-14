@@ -1,0 +1,17 @@
+name: "digita-post"
+repoURL: "https://github.com/digitaplatform/digita-post.git"
+repoCredentialId: "cred_01M2GCQGPC9E27MPY2DAXGE1PJ"
+owner: "simetirx"
+onboardedAt: "2026-09-14T16:43:25.197Z"
+suspended: false
+quiesced: false
+removing: false
+chartPath: "deploy/chart"
+cluster: "apps4"
+databases: ["digita_post"]
+keyPatterns: []
+services: ["mongodb","registry-pull","postfix","smtp-ops"]
+size: "small"
+mongodb: "shared"
+quota: {"requestsCpu":"400m","requestsMemory":"1Gi","limitsCpu":"1500m","limitsMemory":"2Gi","pods":8,"persistentVolumeClaims":1}
+host: "post"
