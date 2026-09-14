@@ -70,6 +70,27 @@ spec:
       selector:
         matchLabels:
           cluster: __CLUSTER_NAME__  # the chart fills it from global.clusterName — the same field the consumer delivery selects on, so a unit's fences and its Application are generated together or not at all
+    # THE SAME FILES A SECOND TIME, FOR THE CLUSTER A UNIT IS LEAVING. A move repoints `cluster`
+    # onto the target, and the delivery ApplicationSet (which selects on `cluster` alone) prunes the
+    # source Application at once — as it must. Its deletion needs the AppProject this set renders:
+    # an Application whose project is pruned under it is one ArgoCD refuses to reconcile, deletion
+    # included, and the move's verify-source-released then waits for a Missing that never comes
+    # (hostyour-cloud#214, the shape #213 fixed for offboard). So the Manager writes `leaving` with
+    # the source's name at the repoint, this generator keeps the source's two fences standing while
+    # the field names it, and clear-source takes the field off once the source Application is gone.
+    # Two generators are a union; a unit is never `cluster` and `leaving` on one cluster at once.
+    - git:
+        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        revision: __BOOKS_FQDN__
+        files:
+          - path: "registrations/*/dev.yaml"
+          - path: "registrations/*/test.yaml"
+          - path: "registrations/*/prod.yaml"
+        values:
+          stage: '{{ trimSuffix ".yaml" .path.filename }}'
+      selector:
+        matchLabels:
+          leaving: __CLUSTER_NAME__
   template:
     metadata:
       name: "{{ .name }}-reconciler-{{ .values.stage }}"
@@ -136,6 +157,20 @@ spec:
       selector:
         matchLabels:
           cluster: __CLUSTER_NAME__
+    # The cluster a unit is LEAVING keeps its admission policy too, for the reason the reconciler's
+    # second generator states above: the fences stand until the source Application is gone.
+    - git:
+        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        revision: __BOOKS_FQDN__
+        files:
+          - path: "registrations/*/dev.yaml"
+          - path: "registrations/*/test.yaml"
+          - path: "registrations/*/prod.yaml"
+        values:
+          stage: '{{ trimSuffix ".yaml" .path.filename }}'
+      selector:
+        matchLabels:
+          leaving: __CLUSTER_NAME__
   template:
     metadata:
       name: "{{ .name }}-admissionpolicy-{{ .values.stage }}"

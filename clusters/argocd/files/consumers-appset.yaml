@@ -13,7 +13,7 @@
 # carries a test instance of a unit beside its prod instance, and the platform's own applications
 # stay at the stage the cluster map states.
 #
-# The registration's fields (name, repoURL, chartPath, cluster, suspended,
+# The registration's fields (name, repoURL, chartPath, cluster, leaving, suspended,
 # quiesced, removing, databases, services) become the template parameters. NOTE
 # the field is chartPath, NOT path — the git files generator reserves .path for
 # file metadata.
