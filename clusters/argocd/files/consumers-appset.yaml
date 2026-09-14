@@ -226,11 +226,11 @@ spec:
               # `host` means; the zone is the stage's, picked off the markers the chart at
               # clusters/argocd fills from the map's unitApex, so the rule "prod is the apex, the
               # others are <stage>.<apex>" is spelled there and nowhere in this file.
-              unitHost: "{{ dig \"host\" .name . }}.{{ index (dict \"dev\" \"__STAGE_APEX_DEV__\" \"test\" \"__STAGE_APEX_TEST__\" \"prod\" \"__STAGE_APEX_PROD__\") .values.stage }}"
+              unitHost: "{{ dig "host" .name . }}.{{ index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") .values.stage }}"
               global:
                 # The zone this unit's stage lives in: what an identity provider scopes its session
                 # cookie to, and what a chart composes a NEIGHBOUR's host from (`<label>.<stageApex>`).
-                stageApex: "{{ index (dict \"dev\" \"__STAGE_APEX_DEV__\" \"test\" \"__STAGE_APEX_TEST__\" \"prod\" \"__STAGE_APEX_PROD__\") .values.stage }}"
+                stageApex: "{{ index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") .values.stage }}"
               # DB-name contract: the registration's `databases` (copied
               # VERBATIM from the consumer's platform.yaml `databases:`)
               # reaches the chart as .Values.mongodb.databases — the LITERAL

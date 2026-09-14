@@ -216,11 +216,11 @@ spec:
                 # one level below it, `<member>.<zone>`, and the identity provider scopes the
                 # tenant's session cookie to it; a member chart composes its host from this and its
                 # own member word, never from the subdomain and the apex.
-                zone: "{{ $.subdomain }}.{{ index (dict \"dev\" \"__STAGE_APEX_DEV__\" \"test\" \"__STAGE_APEX_TEST__\" \"prod\" \"__STAGE_APEX_PROD__\") $.values.stage }}"
+                zone: "{{ $.subdomain }}.{{ index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") $.values.stage }}"
               global:
                 # The zone the tenant's stage lives in — what a member composes a NEIGHBOUR unit's
                 # host from (the installation's mail service at `<endpoints.mail.host>.<stageApex>`).
-                stageApex: "{{ index (dict \"dev\" \"__STAGE_APEX_DEV__\" \"test\" \"__STAGE_APEX_TEST__\" \"prod\" \"__STAGE_APEX_PROD__\") $.values.stage }}"
+                stageApex: "{{ index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") $.values.stage }}"
                 # suspended pauses the tenant; quiesced closes it for a move or backup. The chart
                 # renders the off state from these two values (replicas 0, no Ingress) — see the
                 # prune note in the header.
