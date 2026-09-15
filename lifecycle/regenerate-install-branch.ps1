@@ -156,6 +156,15 @@ if ($onRemote.Count -eq 0) {
 }
 
 Say "regenerate: $Fqdn is pinned to $pin in $map, and that is the state this brings it to"
+# THE ROLE IS READ OFF THE MAP TOO, AND IT OVERRULES THE CONFIG'S. The map is the writable place:
+# a master that took the slave part through the Manager states `master+slave` there while its
+# config still says the role it was born with, and a regeneration answered off the config alone
+# would write the birth role back and take the slave part with it (hostyour-cloud#220).
+$role = Read-MapValue $mapText 'role'
+if (-not $role) {
+  Stop-Here "$map on branch $Fqdn carries no role line, so nothing records which parts this installation carries; every map states one" 65
+}
+Say "regenerate: $Fqdn carries role $role in $map, and the branch is regenerated as that; the config's ROLE seeds a first installation only"
 
 # ------------------------------------------------------- the config, and its guards
 # THE SAME FILE install-machine.ps1 IS GIVEN, in the same grammar and under the
@@ -279,11 +288,11 @@ else {
 # process listing. The heredoc marker cannot collide with anything in the config,
 # because the guard above admits no line but a comment and NAME='value'.
 #
-# THE PIN IS APPENDED AS THE LAST LINE, in the config's own grammar, so the
-# driver composes it into the answers exactly as it composes every other value and
-# holds no special case for it. Last, because the composer reads the file top to
-# bottom and a later line wins: a config that states a PLATFORM_REF of its own is
-# a stale ref, and the pin on the branch is the one this act is about.
+# THE PIN AND THE ROLE ARE APPENDED AS THE LAST LINES, in the config's own grammar,
+# so the driver composes them into the answers exactly as it composes every other
+# value and holds no special case for them. Last, because the composer reads the
+# file top to bottom and a later line wins: a config that states a PLATFORM_REF or
+# a ROLE of its own is a stale one, and the map on the branch is what this act is about.
 #
 # A CARRIAGE RETURN IS TAKEN OFF BOTH, and on Windows that is not a formality: the
 # config is written in whatever editor the operator has and Notepad writes CRLF,
@@ -292,6 +301,7 @@ $lf = "`n"
 $stream = ("umask 077${lf}cat > `"`$1`" <<'AW_CONFIG_END'${lf}" +
            ((Get-Content -Raw -Path $ConfigFile) -replace "`r", '') + $lf +
            "PLATFORM_REF='$pin'${lf}" +
+           "ROLE='$role'${lf}" +
            "AW_CONFIG_END${lf}" +
            ((Get-Content -Raw -Path $driver) -replace "`r", ''))
 
