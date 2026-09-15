@@ -29,7 +29,7 @@ global:
   buildPlane: apps7.digitacloud.app
   booksCluster: apps7.digitacloud.app
   master: apps7.digitacloud.app
-  apiHost: apps8.digitacloud.app
+  apiHost: 100.64.0.2
   apiPort: 16443
   unitApex: digitacloud.app
   platformDomain: digitaplatform.com
