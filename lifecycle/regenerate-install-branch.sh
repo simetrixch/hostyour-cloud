@@ -137,6 +137,14 @@ PIN="$(printf '%s\n' "$MAPTEXT" | value_in_text release)"
   || die "origin carries no $PIN, and that is what $MAP pins $FQDN to. The machine fetches from origin, so a state only this workstation knows is a state it cannot reach" 69
 
 say "regenerate: $FQDN is pinned to $PIN in $MAP, and that is the state this brings it to"
+# THE ROLE IS READ OFF THE MAP TOO, AND IT OVERRULES THE CONFIG'S. The map is the writable place:
+# a master that took the slave part through the Manager states `master+slave` there while its
+# config still says the role it was born with, and a regeneration answered off the config alone
+# would write the birth role back and take the slave part with it (hostyour-cloud#220).
+ROLE="$(printf '%s\n' "$MAPTEXT" | value_in_text role)"
+[ -n "$ROLE" ] \
+  || die "$MAP on branch $FQDN carries no role line, so nothing records which parts this installation carries; every map states one" 65
+say "regenerate: $FQDN carries role $ROLE in $MAP, and the branch is regenerated as that; the config's ROLE seeds a first installation only"
 
 # ------------------------------------------------------- the config, and its guards
 # THE SAME FILE install-machine.sh IS GIVEN, in the same grammar and under the
@@ -237,11 +245,11 @@ fi
 # process listing. The heredoc marker cannot collide with anything in the config,
 # because the guard above admits no line but a comment and NAME='value'.
 #
-# THE PIN IS APPENDED AS THE LAST LINE, in the config's own grammar, so the
-# driver composes it into the answers exactly as it composes every other value and
-# holds no special case for it. Last, because the composer reads the file top to
-# bottom and a later line wins: a config that states a PLATFORM_REF of its own is
-# a stale ref, and the pin on the branch is the one this act is about.
+# THE PIN AND THE ROLE ARE APPENDED AS THE LAST LINES, in the config's own grammar,
+# so the driver composes them into the answers exactly as it composes every other
+# value and holds no special case for them. Last, because the composer reads the
+# file top to bottom and a later line wins: a config that states a PLATFORM_REF or
+# a ROLE of its own is a stale one, and the map on the branch is what this act is about.
 #
 # A CARRIAGE RETURN IS TAKEN OFF. This repository stores LF, but the config is
 # written by an operator in whatever editor they have and Notepad writes CRLF,
@@ -250,6 +258,7 @@ fi
   printf 'umask 077\ncat > "$1" <<%sAW_CONFIG_END%s\n' "'" "'"
   tr -d $'\r' < "$CONFIG"
   printf "PLATFORM_REF='%s'\n" "$PIN"
+  printf "ROLE='%s'\n" "$ROLE"
   printf 'AW_CONFIG_END\n'
   tr -d $'\r' < "$DRIVER"
 } | ssh "${BASE[@]}" "${DOOR[@]}" "$TARGET" "bash -s -- \"\$HOME/.aw-regenerate.env\" $DISCARD"

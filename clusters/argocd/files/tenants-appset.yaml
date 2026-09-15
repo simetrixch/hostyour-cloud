@@ -30,8 +30,8 @@
 # the tenant never syncs. The branch carries the member charts because the Manager brings the
 # catalog's trunk into it, at the act that creates it — the same shape the platform install branch
 # has, where a release reaches a cluster by a merge and never by a second revision on a source.
-# A tenant only ever lands on a slave, whose own branch does not exist in the catalog at all, so
-# every one of these lines takes the books branch and not this cluster's own. The $values source is
+# A tenant lands on a cluster carrying the slave part, and a cluster's own branch does not exist
+# in the catalog at all, so every one of these lines takes the books branch and not this cluster's own. The $values source is
 # the ONE hostyour-cloud line, and it names that same one branch there: the chart above fills
 # __BRANCH__ from global.booksCluster, so the platform values chain follows the installation's
 # install branch too.
@@ -217,10 +217,6 @@ spec:
                 # tenant's session cookie to it; a member chart composes its host from this and its
                 # own member word, never from the subdomain and the apex.
                 zone: "{{ $.subdomain }}.{{ index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") $.values.stage }}"
-              global:
-                # The zone the tenant's stage lives in — what a member composes a NEIGHBOUR unit's
-                # host from (the installation's mail service at `<endpoints.mail.host>.<stageApex>`).
-                stageApex: "{{ index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") $.values.stage }}"
                 # suspended pauses the tenant; quiesced closes it for a move or backup. The chart
                 # renders the off state from these two values (replicas 0, no Ingress) — see the
                 # prune note in the header.
@@ -232,6 +228,10 @@ spec:
                 # an app's engine reads its own seed tiers out of the list by appName.
                 seedUsers: {{ $.seedUsers }}
                 apps: {{ $.apps | toJson }}
+              global:
+                # The zone the tenant's stage lives in — what a member composes a NEIGHBOUR unit's
+                # host from (the installation's mail service at `<endpoints.mail.host>.<stageApex>`).
+                stageApex: "{{ index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") $.values.stage }}"
               # The member's own values, out of the registration — the product's keys, resolved by
               # the Manager from the product's manifest. Rendered LAST so a product may override
               # anything above for one member.
