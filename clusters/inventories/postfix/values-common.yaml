@@ -96,11 +96,11 @@ postfix:
     - name: dkim-keys-secret
       secret:
         secretName: postfix-dkim-key
-        # OPTIONAL, because signing is. An installation that has not published a DKIM record has no
-        # key to sign with, and a relay that signs nothing is a relay that works — its mail is simply
-        # unsigned until the record and the key exist together. Mounted as required, the whole mail
-        # service does not start, and what an operator sees is a platform with no mail rather than
-        # mail without a signature.
+        # OPTIONAL, so the relay starts before the store has delivered the key. The key pair exists
+        # from the first install (deploy-platform-services mints it where the store is seeded), and
+        # the ExternalSecret below delivers it; between the two the pod must not sit in
+        # ContainerCreating for a volume that is on its way. Mail sent in that window is unsigned,
+        # which is the honest state of a relay whose key has not arrived yet.
         optional: true
         defaultMode: 0400
         # THE PATH IS REQUIRED HERE. A secret volume without `items` does land each key
@@ -126,6 +126,15 @@ postfix:
   # boky's mail subchart consumes extraInitContainers (tpl'd STRING), not
   # pod.initContainers (which silently renders nothing). chown to opendkim
   # (101:104) so opendkim can read the key.
+  #
+  # ONE FILE PER SENDER DOMAIN, NAMED FOR THE DOMAIN. The image builds its signing tables per domain
+  # of ALLOWED_SENDER_DOMAINS and expects each domain's key at /etc/opendkim/keys/<domain>.private
+  # (bokysan docker-postfix, scripts/functions.sh); a domain without its file is sent unsigned.
+  # The two sender domains of an installation are the two globals the relay's allowlist is
+  # rendered from — customer mail as the platform domain, alerts as the unit apex — and one key
+  # pair serves both (an installation whose two are one name copies the same file twice). Named for
+  # the cluster's own domain, as this once was, the file matched no sender domain and the relay
+  # signed nothing while holding a key.
   extraInitContainers: |
     - name: fix-dkim-permissions
       image: busybox:latest
@@ -133,14 +142,16 @@ postfix:
         - sh
         - -c
         - |
-          # The key may not be there: signing is optional and the volume is mounted that way.
-          # Without it the relay starts and its mail is unsigned, which is the honest state of
-          # an installation that has published no DKIM record yet.
+          # The key may not be there yet: the volume is mounted optional so the relay starts
+          # before the store has delivered it. Without it the relay's mail is unsigned.
           if [ -f /dkim-source/dkim-private-key ]; then
-          cp /dkim-source/dkim-private-key /dkim-keys/{{ .Values.global.domain }}.private
-          chown 101:104 /dkim-keys /dkim-keys/{{ .Values.global.domain }}.private
+          for domain in "{{ .Values.global.platformDomain }}" "{{ .Values.global.unitApex }}"; do
+          cp /dkim-source/dkim-private-key "/dkim-keys/$domain.private"
+          chown 101:104 "/dkim-keys/$domain.private"
+          chmod 600 "/dkim-keys/$domain.private"
+          done
+          chown 101:104 /dkim-keys
           chmod 700 /dkim-keys
-          chmod 600 /dkim-keys/{{ .Values.global.domain }}.private
           fi
       volumeMounts:
         - name: dkim-keys-secret
@@ -178,20 +189,29 @@ monitoring:
                 summary: "Mail relay deferred queue growing for 30 minutes"
 
 # Per-namespace SecretStore (visible as an ArgoCD-managed resource under this app).
-secret-store: {}
+# IN-APP SYNC WAVES ORDER THE KEY AHEAD OF THE RELAY: the store at -2, the ExternalSecret below at
+# -1, the relay at 0. ArgoCD holds each wave until the one before it is healthy, so the Secret the
+# relay's init container copies the key out of stands before the pod starts — an ExternalSecret
+# applied beside the pod is materialized seconds after it, the init container has already run, and
+# the relay signs nothing until its next restart. On an installation whose store holds no pair yet,
+# the sync stops at the ExternalSecret and the relay that runs keeps running.
+secret-store:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
 
-# ExternalSecret (external-secret) — pulls DKIM key from Vault. The Vault path is the
+# ExternalSecret (external-secret) — pulls the DKIM private key from Vault. The Vault path is the
 # one thing about it that is per-stage and stands in values-{dev,test,prod}.yaml.
 external-secret:
   externalSecret:
-    # OFF UNLESS AN INSTALLATION SUPPLIES A SIGNING KEY, matching what the rest of this file already
-    # says about that key: the volume carrying it is mounted optional and the init that installs it
-    # is guarded on the file being there, because mail relays without DKIM and signs when it can.
-    #
-    # An ExternalSecret has no per-property optionality — it names the property and fails whole when
-    # it is absent — so an installation with no key carried a secret that could never sync and an app
-    # that stood Degraded forever, while the relay beside it ran and delivered mail.
-    enabled: false
+    # ALWAYS ON. The key pair is minted where the store is seeded, at install, before this chart is
+    # rendered (hostyour-deploy deploy-platform-services, vault_kv_dkim_key_pair), so every
+    # installation holds the property this names. An ExternalSecret has no per-property
+    # optionality — it fails whole when the property is absent — which is why it stood off while
+    # the key had no writer; an installation from before that writer stands Degraded here until
+    # its store is seeded again.
+    enabled: true
+    annotations:
+      argocd.argoproj.io/sync-wave: "-1"
     name: postfix-dkim-key
     namespace: postfix
     secretStoreKind: SecretStore
