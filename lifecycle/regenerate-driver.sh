@@ -32,6 +32,15 @@
 # PLATFORM_REF, read off the `release:` line of this cluster's own map. The
 # launcher reads the pin so that nobody states the ref a second time.
 #
+# THE ENGINE IS PLACED BEFORE THE CATALOGUE IS READ, the same act the installation
+# performs (driver.sh, phase 1). The catalogue's trunk names the steps of the
+# engine the platform repository pins, and a machine holds the engine its last run
+# left: a regeneration that ran the new catalogue on the old engine was refused
+# before its first step, every program held against a registry lacking the steps
+# the trunk had gained (hostyour-cloud#216, measured on apps3 after the 0.8.182
+# engine release). The Manager places the engine before every program it drives;
+# this is the one path that did not.
+#
 # It is read once, mode 0600, and shredded before this exits — on every path,
 # including a failure. What is left on the machine afterwards carries no
 # credential this put there.
@@ -101,6 +110,14 @@ for named in STAGE FQDN OPERATOR PLATFORM_REF DEPLOY_REPO; do
 done
 [ -n "${ELEVATION_PASSWORD:-}" ] \
   || die 'the config states no ELEVATION_PASSWORD, and a regeneration is run elevated' 64
+readonly PLATFORM_REPO="${PLATFORM_REPO:-}"
+[ -n "$PLATFORM_REPO" ] \
+  || die 'the config says nothing under PLATFORM_REPO, and the engine pin is read off that repository' 64
+
+# Every elevated command goes through here, and the password reaches it on
+# STANDARD INPUT - never an argument list, which stands in this machine's own
+# process listing for anyone on it to read.
+root() { printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 
 readonly CATALOG=/srv/ansiwise-catalog
 readonly ENGINE=/usr/local/bin/ansiwise
@@ -147,6 +164,47 @@ fi
   || die "there is no catalogue at $CATALOG, so the programs a regeneration runs are not on this machine. A machine is given them by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
 [ -x "$ENGINE" ] \
   || die "there is no engine at $ENGINE, and it is what runs a program. A machine is given it by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
+
+# THE ENGINE, AT THE VERSION THE PLATFORM REPOSITORY PINS. Read off the public
+# platform repository by this machine, fetched from the public release, placed
+# elevated and read back off the machine - the shape driver.sh gives it, so a
+# regeneration and an installation put the same engine in front of the same
+# catalogue. Nothing is fetched where the machine already answers the pin.
+readonly RELEASES=https://github.com/simetrixch/ansiwise-cli/releases/download
+readonly PIN_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/versions.yaml"
+say "reading the engine pin from $PIN_URL"
+PIN_YAML=$(curl -fsSL "$PIN_URL") || die "$PIN_URL could not be read from this machine; nothing has been changed" 69
+# SINGLE-QUOTED FOR THE SHELL, so every dollar and every quote below belongs to
+# python and not to bash. The regexes therefore use double quotes throughout and
+# never a single one.
+PIN=$(printf '%s' "$PIN_YAML" | python3 -c 'import sys, re
+text = sys.stdin.read()
+block = re.search(r"^cliTools:\s*$.*?(?=^\S|\Z)", text, re.S | re.M)
+found = re.search(r"^  ansiwise:\s*$\s*^\s+version:\s*\"([^\"]+)\"", block.group(0) if block else "", re.M)
+sys.stdout.write(found.group(1) if found else "")')
+[ -n "$PIN" ] || die "$PIN_URL says nothing under cliTools.ansiwise.version; nothing has been changed" 65
+ENGINE_ANSWERS=$("$ENGINE" --version 2>/dev/null || true)
+if [ "$ENGINE_ANSWERS" = "$PIN" ]; then
+  good "$ENGINE already answers $PIN - nothing fetched"
+else
+  say "$ENGINE answers ${ENGINE_ANSWERS:-nothing}, and the pin is $PIN"
+  for tool in ansiwise ansiwise-rest; do
+    url="$RELEASES/$PIN/$tool-$PIN-linux-x64"
+    say "fetching $tool from $url"
+    curl -fsSL -o "/tmp/$tool" "$url" || die "$url served nothing - check the release carries an asset under that name; nothing has been changed" 69
+    [ -s "/tmp/$tool" ] || die "$url served an empty file, and an empty executable answers every command with a shell error; nothing has been changed" 69
+    root install -m 755 "/tmp/$tool" "/usr/local/bin/$tool" || die "could not place $tool in /usr/local/bin" 73
+    rm -f "/tmp/$tool"
+  done
+  # READ BACK OFF THE MACHINE, never off this script's own claim: a truncated
+  # transfer, an asset that is an error page and an architecture this machine
+  # cannot execute are all one answer here - not the pin.
+  for tool in ansiwise ansiwise-rest; do
+    answered=$("/usr/local/bin/$tool" --version 2>/dev/null || true)
+    [ "$answered" = "$PIN" ] || die "/usr/local/bin/$tool answers ${answered:-nothing} after being placed, not $PIN" 69
+  done
+  good "/usr/local/bin/ansiwise and /usr/local/bin/ansiwise-rest answer $PIN"
+fi
 # THE CATALOGUE IS BROUGHT FORWARD BEFORE A PROGRAM IS READ OUT OF IT. A program's
 # rows and the answers it declares move with the catalogue's trunk, and a machine
 # holds the copy its last run left: a regeneration that read that copy would run a
