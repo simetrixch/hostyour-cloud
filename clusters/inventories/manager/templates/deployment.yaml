@@ -474,14 +474,34 @@ spec:
                 secretKeyRef:
                   name: manager-app
                   key: oidc-client-secret
+          # PROBE TIMING, stated rather than defaulted. A Manager boot opens the database and its
+          # migrations, the credential store, the units and the self-checks before it listens —
+          # tens of seconds on the first container of a rollout — and a busy single-threaded
+          # process under limits.cpu does not always answer within Kubernetes' 1 s default, so
+          # the defaults killed the first container of every rollout (hostyour-manager#166) and
+          # would kill a run mid-flight on one slow answer. The startup probe covers the boot
+          # (up to five minutes) before liveness starts counting; liveness and readiness then
+          # tolerate a slow answer and need three misses in a row to act (#221).
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8484
+            periodSeconds: 10
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /readyz
               port: 8484
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8484
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
