@@ -479,6 +479,14 @@ helm template consumer-build clusters/inventories/consumer-build --namespace arg
   --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[]"}' \
   > "$work/fence-render" 2>&1 \
   || { cat "$work/fence-render"; fail "clusters/inventories/consumer-build does not render in unit mode, which is where a unit's build grants stand"; }
+# The build's .npmrc routes the unit's OWN scope — the owner of its repository — to GitHub
+# Packages with the unit's PAT (templates/externalsecret-npmrc.yaml). The stand-in unit is
+# github.com/check/check.git, so its scope is @check; a fixed scope here would build no unit
+# of another organisation.
+for line in '@check:registry=https://npm.pkg.github.com' '//npm.pkg.github.com/:_authToken={{ .pat }}'; do
+  grep -qF -- "$line" "$work/fence-render" \
+    || { grep -A3 -F '.npmrc: |' "$work/fence-render"; fail "the build .npmrc of unit check does not carry '$line' — a unit's private packages would resolve against registry.npmjs.org and 404"; }
+done
 objects_of "$work/fence-render" \
   | grep -E '^(Role|RoleBinding)/(eventlistener-create-pipelineruns|manager-read-pipelineruns)$' >> "$work/fences"
 fences_rendered="$(sort "$work/fences")"

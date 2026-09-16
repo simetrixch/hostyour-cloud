@@ -52,28 +52,12 @@ manager:
   serviceAccountName: manager
   namespace: manager
 
-# npm registries the per-unit .npmrc points at (templates/externalsecret-npmrc.yaml).
-# Only PRIVATE scopes are configured:
-#   • The DEFAULT (unscoped) registry is deliberately NOT set, so pnpm resolves
-#     public deps from its own default, registry.npmjs.org. The build's egress is
-#     outward-open (templates/networkpolicy.yaml), and pnpm MUST resolve from
-#     npmjs directly, or the tarball URLs in the unit's COMMITTED lockfile stop
-#     matching (ERR_PNPM_TARBALL_URL_MISMATCH).
-#   • privateScopes[] — per-scope PRIVATE routes, each DIRECT to its registry.
-#     Per entry:
-#       scope         npm scope WITHOUT the leading @.
-#       registry      full https registry URL for that scope.
-#       authProperty  (optional) property name on the unit's ONE Vault entry
-#                     secret/build/<name>/repo-pat whose value becomes that
-#                     registry's _authToken. Omit for a scoped registry that
-#                     needs no auth. Only the property NAME is a value — the
-#                     credential is fetched by ESO in-cluster and never passes
-#                     through the values chain.
-npm:
-  privateScopes:
-    - scope: simetrixch
-      registry: https://npm.pkg.github.com
-      authProperty: pat
+# The per-unit .npmrc (templates/externalsecret-npmrc.yaml) states no value here: the
+# unit's own scope is the owner of its repository, routed to GitHub Packages with the
+# unit's PAT, and the DEFAULT (unscoped) registry is deliberately NOT set, so pnpm
+# resolves public deps from its own default, registry.npmjs.org — the build's egress is
+# outward-open (templates/networkpolicy.yaml), and the tarball URLs in the unit's
+# COMMITTED lockfile were written against npmjs (else ERR_PNPM_TARBALL_URL_MISMATCH).
 
 # Post-DNAT API-server egress pinhole for the BUMP pod only (second
 # NetworkPolicy in templates/networkpolicy.yaml — the gate-runner
