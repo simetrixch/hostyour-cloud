@@ -37,10 +37,17 @@ THAT registration's OWN credential, which the bump reads out of Vault at run
 time (see the class-(a) note in the search below), (b) the catalog's
 per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded the
 first time from the chart's builds[] at the placeholder tag and bumped in
-place after, (c) hostyour-cloud master clusters/inventories/<app>/values-<S>.yaml — and bumps every
-hit. An image with NO hit anywhere fails the run loudly: a release nothing
-pins deploys nowhere, and silently succeeding would hide exactly the rot the
-derived reach exists to prevent.
+place after, (c) hostyour-cloud master clusters/inventories/<app>/values-<S>.yaml, (d) the
+tenant registrations registrations/<guid>/<S>.yaml on THAT SAME books branch
+of the catalog, where a tenant's own apps bundle is pinned as appsImageTag
+beside the appsImage that names it — and bumps every hit. An image with NO hit
+anywhere fails the run loudly: a release nothing pins deploys nowhere, and
+silently succeeding would hide exactly the rot the derived reach exists to
+prevent. The ONE exception is the bundle's first release: the manifest names
+its bundle build as appsBundle, the run creating the tenant builds it BEFORE
+it writes the registration, and that run pins it off this run's image-tag
+result. So an image with zero hits is accepted only when it is the declared
+appsBundle, and the log says so.
 
 Class (b) is the one that does NOT write where it reads. A tag says which
 version this installation runs, so writing it to the catalog's trunk — which
@@ -52,8 +59,10 @@ THE SYNC FOLLOWS THE SAME DERIVATION: a class-(a) hit is the unit's own
 Application; a class-(b) hit is a catalog chart that tenant member
 Applications render, and WHICH member Applications is derived from the tenant
 ApplicationSets + the registrations on the books branch, never from a member
-list. Class-(c) pins are never synced from here — they live on master and the
-cluster release delivers them.
+list; a class-(d) hit is one tenant at one stage, and its reach is EVERY
+member Application of that tenant, derived the same way. Class-(c) pins are
+never synced from here — they live on master and the cluster release delivers
+them.
 
 The shared Tasks (git-clone, credential-scan, buildah-build-push) stay in ns
 image-builder and are resolved via the cluster resolver; they RUN in this
@@ -739,6 +748,19 @@ spec:
               # The declared images of this release — the manifest in the
               # tagged workspace, already attested by the builds task.
               IMAGES="$(yq eval '.builds[].name' "${SRC}/deploy/platform.yaml")"
+              # The build this manifest declares as a tenant's apps bundle, or
+              # nothing. A bundle is pinned by class (d) below and by no chart's
+              # builds[]; the Manager writes the declaration into the tenant
+              # repository's manifest (hostyour-manager tenant-apps-tree.ts
+              # tenantAppsManifest) and its schema holds it to one of
+              # builds[].name. Held again here, because the manifest at the tag
+              # is what this run releases: a bundle naming no build of this
+              # release is a pin nothing could ever write.
+              APPS_BUNDLE="$(yq eval '.appsBundle // ""' "${SRC}/deploy/platform.yaml")"
+              if [ -n "${APPS_BUNDLE}" ] && ! printf '%s\n' "${IMAGES}" | grep -qxF "${APPS_BUNDLE}"; then
+                echo "bump: FAIL — ${SRC}/deploy/platform.yaml declares appsBundle '${APPS_BUNDLE}', which is not one of its builds[].name ($(printf '%s' "${IMAGES:-<none>}" | tr '\n' ',')); a tenant's apps bundle is one of the builds this release ships" >&2
+                exit 1
+              fi
 
               # A MANIFEST WITH NO builds[] IS VALID, in two shapes: a
               # self-contained unit that declares a chart and nothing to build,
@@ -775,8 +797,11 @@ spec:
 
               WORK="$(mktemp -d)"
               : > "${HITS_FILE}"
-              declare -A HIT_COUNT
-              for P in ${IMAGES}; do HIT_COUNT[$P]=0; done
+              # HIT_COUNT is every pin bumped for an image over all four
+              # classes; BUNDLE_HIT_COUNT is the class-(d) share of it, the
+              # tenant registrations whose appsImage names the image.
+              declare -A HIT_COUNT BUNDLE_HIT_COUNT
+              for P in ${IMAGES}; do HIT_COUNT[$P]=0; BUNDLE_HIT_COUNT[$P]=0; done
 
               # bump_file <values file> — bumps every declared image's pin in
               # the file. Called directly, never in a command substitution:
@@ -1054,6 +1079,7 @@ spec:
               # nothing.
               git clone -q --depth 1 --branch master "${DEPLOY_URL}" "${WORK}/catalog"
               BUMPED_CHARTS=""
+              BUNDLE_HIT_GUIDS=""
               TENANT_REGS=""
               if ! DEPLOY_HEADS="$(git ls-remote --heads "${DEPLOY_URL}" "${BOOKS_BRANCH}")"; then
                 echo "bump: FAIL — cannot reach ${DEPLOY_URL} to look for the books branch ${BOOKS_BRANCH}; this installation's tenant pins can neither be read nor written" >&2
@@ -1103,15 +1129,42 @@ spec:
                     rm -f "${pins}"
                   fi
                 done
-                commit_push "${WORK}/catalog-books" "${BOOKS_BRANCH}" "catalog per-chart pins-${STAGE}.yaml"
+
+                # ── class (d): the tenant bundles, pinned on the registrations ─
+                # A tenant's own apps bundle `<subdomain>-apps` is declared by no
+                # chart's builds[] and stands in no pins file: its pin is
+                # appsImageTag on the tenant registration, beside the appsImage
+                # that names the flat build (hostyour-manager shared/tenant.ts
+                # appsBundleFields — the registration carries all three of
+                # appsRepo, appsImage and appsImageTag, or "" for none). So a
+                # registration whose appsImage names a declared image is a
+                # carrier of the same one-image pin, bumped in place on the
+                # books clone above and pushed in the ONE commit with the
+                # class-(b) pins. A registration with the empty pair, or with
+                # neither key, mounts no bundle and is never written.
+                for reg in "${TENANT_REGS}"/*/"${STAGE}.yaml"; do
+                  [ -f "${reg}" ] || continue
+                  rimage="$(yq eval '.appsImage // ""' "${reg}")"
+                  [ -n "${rimage}" ] || continue
+                  for P in ${IMAGES}; do
+                    [ "${rimage}" = "${P}" ] || continue
+                    yq eval -i ".appsImageTag = \"${IMAGE_TAG}\"" "${reg}"
+                    HIT_COUNT[$P]=$(( ${HIT_COUNT[$P]} + 1 ))
+                    BUNDLE_HIT_COUNT[$P]=$(( ${BUNDLE_HIT_COUNT[$P]} + 1 ))
+                    BUNDLE_HIT_GUIDS="${BUNDLE_HIT_GUIDS} $(basename "$(dirname "${reg}")")"
+                  done
+                done
+                commit_push "${WORK}/catalog-books" "${BOOKS_BRANCH}" "catalog charts/*/pins-${STAGE}.yaml and registrations/*/${STAGE}.yaml"
               fi
 
-              # ── tenant hits: who renders a bumped catalog chart ────────────
+              # ── tenant hits: who renders a bumped catalog chart or a bumped
+              #    tenant bundle ──────────────────────────────────────────────
               # A class-(b) hit changes a chart that tenant member Applications
-              # render. WHICH ones is derived, never listed: the tenant
-              # ApplicationSets under clusters/argocd/files/ state which member
-              # sources which chart and how its Application is named, and the
-              # tenant registrations state which tenants exist on which
+              # render; a class-(d) hit changes the bundle every member of ONE
+              # tenant mounts. WHICH Applications is derived, never listed: the
+              # tenant ApplicationSets under clusters/argocd/files/ state which
+              # member sources which chart and how its Application is named,
+              # and the tenant registrations state which tenants exist on which
               # cluster. Those registrations are NOT on the catalog's trunk —
               # the Manager writes them onto this installation's books
               # branch there, the same name hostyour-cloud's books carry, and the
@@ -1127,7 +1180,7 @@ spec:
               # The trunk appsets are read (the per-cluster selector is only
               # WHERE an Application lives, which the registration's cluster
               # field answers for the sync below).
-              if [ -n "${BUMPED_CHARTS}" ]; then
+              if [ -n "${BUMPED_CHARTS}" ] || [ -n "${BUNDLE_HIT_GUIDS}" ]; then
                 SIM="${WORK}/appset-sim"
                 mkdir -p "${SIM}/templates"
                 printf 'apiVersion: v2\nname: appset-sim\nversion: 0.0.0\n' > "${SIM}/Chart.yaml"
@@ -1229,12 +1282,19 @@ spec:
                           echo "bump: FAIL — ${asname} derived Application name '${ANAME}' against ${reg#"${WORK}/"}, not <guid>-<member>-<stage> — a generator param did not resolve" >&2
                           exit 1 ;;
                       esac
+                      # A member is reached by a class-(d) hit on its own
+                      # tenant, whatever it renders — the bundle reaches every
+                      # member through the registration — and by a class-(b)
+                      # hit on a chart it renders.
+                      HIT=0
+                      case " ${BUNDLE_HIT_GUIDS} " in *" ${guid} "*) HIT=1 ;; esac
                       for C in ${BUMPED_CHARTS}; do
-                        if printf '%s\n' "${APATHS}" | grep -qx "charts/${C}"; then
-                          grep -qxF "tenant ${ANAME} ${rcluster}" "${HITS_FILE}" \
-                            || echo "tenant ${ANAME} ${rcluster}" >> "${HITS_FILE}"
-                        fi
+                        if printf '%s\n' "${APATHS}" | grep -qx "charts/${C}"; then HIT=1; fi
                       done
+                      if [ "${HIT}" = "1" ]; then
+                        grep -qxF "tenant ${ANAME} ${rcluster}" "${HITS_FILE}" \
+                          || echo "tenant ${ANAME} ${rcluster}" >> "${HITS_FILE}"
+                      fi
                     done
                   done
                 done
@@ -1250,19 +1310,33 @@ spec:
               commit_push "${WORK}/hostyour-cloud" master "hostyour-cloud clusters/inventories/*/values-${STAGE}.yaml"
 
               # ── the reach must exist: an image nothing pins is a defect ────
+              # With ONE exception, and it is named by the manifest: the
+              # declared appsBundle at its first release. The run creating the
+              # tenant builds the bundle before it writes the registration
+              # (the registration cannot name a tag that does not exist yet),
+              # and pins it there off this run's image-tag result. Every other
+              # zero-hit image fails as before.
               MISSING=""
               for P in ${IMAGES}; do
-                echo "bump: ${P} — ${HIT_COUNT[$P]} pin(s) bumped to ${IMAGE_TAG} for ${STAGE}"
-                [ "${HIT_COUNT[$P]}" != "0" ] || MISSING="${MISSING} ${P}"
+                echo "bump: ${P} — ${HIT_COUNT[$P]} pin(s) bumped to ${IMAGE_TAG} for ${STAGE}, ${BUNDLE_HIT_COUNT[$P]} of them tenant registrations (d)"
+                [ "${HIT_COUNT[$P]}" = "0" ] || continue
+                if [ "${P}" = "${APPS_BUNDLE}" ]; then
+                  echo "bump: ${P} is the tenant bundle ${APPS_BUNDLE} (deploy/platform.yaml appsBundle) and no tenant registration names it yet — accepted with no pin: the run creating the tenant reads this run's image-tag result (${IMAGE_TAG}) and writes it as appsImageTag on the registration"
+                  continue
+                fi
+                MISSING="${MISSING} ${P}"
               done
               if [ -n "${MISSING}" ]; then
                 echo "bump: FAIL — no pin found for builds[].image ==${MISSING}:" >&2
                 echo "  searched (a) registrations with chartPath on ${CLOUD_URL} ${BOOKS_BRANCH}," >&2
                 echo "           (b) ${DEPLOY_URL} charts/*/ declaring the image, pinned on ${BOOKS_BRANCH}," >&2
-                echo "           (c) ${CLOUD_URL} master clusters/inventories/*/values-${STAGE}.yaml." >&2
+                echo "           (c) ${CLOUD_URL} master clusters/inventories/*/values-${STAGE}.yaml," >&2
+                echo "           (d) ${DEPLOY_URL} registrations/*/${STAGE}.yaml on ${BOOKS_BRANCH} whose appsImage names the image." >&2
                 echo "  A release nothing pins deploys nowhere — add the pin or drop the build." >&2
-                echo "  With (b): a catalog image is pinned only once this installation has registered" >&2
-                echo "  a tenant, because the pin stands on the books branch beside the registrations." >&2
+                echo "  With (b) and (d): a catalog image or a tenant bundle is pinned only once this installation" >&2
+                echo "  has registered a tenant, because the pin stands on the books branch beside or in the" >&2
+                echo "  registrations. A tenant bundle at its FIRST release, before its registration exists," >&2
+                echo "  is accepted only when the manifest declares it as appsBundle." >&2
                 exit 1
               fi
             computeResources:
