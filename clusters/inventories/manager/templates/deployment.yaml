@@ -403,6 +403,39 @@ spec:
                   name: manager-cloudflare-dns
                   key: api-token
                   optional: true
+            {{- if .Values.githubApp.appId }}
+            # THE PLATFORM'S GITHUB APP (config.ts githubApp, all three or none): the
+            # identity the tenant-apps-repo run creates a tenant's own apps repository
+            # under, in the customer's organisation, and mints the installation token
+            # the runs that build and deploy that repository push with. Sourced from the
+            # manager-github-app Secret (externalsecret-github-app.yaml). The private key
+            # arrives as ONE line with `\n` where the PEM breaks a line, because the
+            # hand-filled input it comes from holds one line per value; config.ts turns
+            # them back. Rendered only where githubApp.appId is set
+            # (installation/values/manager.yaml), for the reason that file states.
+            # optional:true so an unsynced Secret never blocks manager boot; the runs
+            # that need the App refuse at their plan without it, by name, which is the
+            # right place to notice, because a tenant repository nothing can create is
+            # not a tenant.
+            - name: GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: manager-github-app
+                  key: app-id
+                  optional: true
+            - name: GITHUB_APP_INSTALLATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: manager-github-app
+                  key: installation-id
+                  optional: true
+            - name: GITHUB_APP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: manager-github-app
+                  key: private-key
+                  optional: true
+            {{- end }}
             # THE OBJECT STORAGE A TENANT'S UPLOADS GO TO. create-tenant makes the bucket
             # named by the tenant guid with this MANAGING token and mints a key scoped to
             # that one bucket, which is the only object-storage credential the tenant ever

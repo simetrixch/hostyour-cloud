@@ -158,6 +158,29 @@ github:
   # clusters/argocd/files/platform-apps-appset.yaml loads after this file.
   deployRepo: ""
 
+# The platform's GitHub App, installed in the customer's organisation: what the
+# tenant-apps-repo run creates a tenant's own apps repository under. Its three
+# values — App id, installation id, private key — travel like every platform
+# secret, seeded at secret/<stage>/app/github-app and materialized by
+# externalsecret-github-app.yaml as the pod env GITHUB_APP_ID,
+# GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (config.ts githubApp).
+#
+# appId IS THE SWITCH, and it is EMPTY here on purpose: whether an installation
+# has the App is installation state, so it stands in installation/values/manager.yaml
+# beside master.sshUser, written by the branch program from the App id the
+# installation was answered (hostyour-deploy ansiwise/templates/manager-values.tpl,
+# an optional slot: unanswered, the line is dropped whole). Empty means the
+# ExternalSecret and the three env are not rendered at all, and the runs that need
+# the App refuse at their plan. Rendered against an entry the seed never wrote, the
+# ExternalSecret would fail whole and hold the manager Application Degraded — the
+# registry's Docker Hub secret stood that way once.
+#
+# WHAT HOLDS THE KEY IN PLACE. Taking this block away fails the render: the two
+# templates read `.Values.githubApp.appId` bare, and helm answers "nil pointer
+# evaluating interface {}.appId" on an absent map.
+githubApp:
+  appId: ""
+
 # Consumer onboarding (config.ts, onboarding.md §6). Chart validation runs as an in-cluster
 # `gate-run` Tekton PipelineRun in the locked-down `gate-runner` namespace (clusters/inventories/gate-runner) —
 # NOT a host Quadlet. The manager dispatches the run + reads the report ConfigMap over its POD
