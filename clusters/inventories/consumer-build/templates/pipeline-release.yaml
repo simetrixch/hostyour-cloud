@@ -35,9 +35,9 @@ bump searches every carrier of the one pin grammar builds[]{name,image,tag} —
 hostyour-cloud, read at <repoURL>@deploy/<S>:<chartPath>/values-<S>.yaml under
 THAT registration's OWN credential, which the bump reads out of Vault at run
 time (see the class-(a) note in the search below), (b) the catalog's
-per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded from
-the chart's product default on the trunk the first time and bumped in place
-after, (c) hostyour-cloud master clusters/inventories/<app>/values-<S>.yaml — and bumps every
+per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded the
+first time from the chart's builds[] at the placeholder tag and bumped in
+place after, (c) hostyour-cloud master clusters/inventories/<app>/values-<S>.yaml — and bumps every
 hit. An image with NO hit anywhere fails the run loudly: a release nothing
 pins deploys nowhere, and silently succeeding would hide exactly the rot the
 derived reach exists to prevent.
@@ -638,6 +638,13 @@ spec:
                 value: $(params.release-tag)
               - name: IMAGE_TAG
                 value: $(params.image-tag)
+              # The tag a pin carries before its first release. The seed of a
+              # chart's first pins-<stage>.yaml writes it for every image this
+              # release did not build, and clusters/charts/common
+              # common.buildTag refuses to render it, so an unbuilt image is
+              # named by the render rather than pulled.
+              - name: PLACEHOLDER_TAG
+                value: {{ required "consumer-build: global.placeholderTag is required (clusters/platform/values-common.yaml via the $values chain — the tag the pins seed writes for every image this release did not build)" .Values.global.placeholderTag | quote }}
               - name: CLUSTER_NAME
                 value: {{ .Values.global.clusterName | default "" | quote }}
               - name: HITS_FILE
@@ -696,7 +703,8 @@ spec:
               set -euo pipefail
               # ── the §9.3 search: derive the reach, bump every hit ──────────
               # Inputs (env): UNIT CLOUD_URL BOOKS_BRANCH DEPLOY_URL
-              # CHANNEL_STAGES SRC STAGE RELEASE_TAG IMAGE_TAG CLUSTER_NAME
+              # CHANNEL_STAGES SRC STAGE RELEASE_TAG IMAGE_TAG PLACEHOLDER_TAG
+              # CLUSTER_NAME
               # HITS_FILE VAULT_ADDR VAULT_AUTH_MOUNT VAULT_KV_MOUNT VAULT_ROLE
               # VAULT_TOKEN_FILE [GITCREDENTIALS].
 
@@ -1069,14 +1077,18 @@ spec:
                     # First pin for this chart on this installation. helm
                     # REPLACES a list rather than merging it, so the file must
                     # carry the WHOLE builds[] or the render loses the entries
-                    # it does not name — it is therefore seeded from the chart's
-                    # product default and only then bumped.
+                    # it does not name. Every entry is seeded at the placeholder
+                    # tag and only then bumped: the trunk's own tag says what
+                    # some other installation built, and an image this release
+                    # does not build has no tag here to pin — the placeholder
+                    # stops the render by name until a release writes it.
                     mkdir -p "$(dirname "${pins}")"
                     { printf '# %s image pins for %s in THIS installation, written by the release\n' "${cname}" "${STAGE}"
                       printf '# pipeline. The catalog trunk carries the product default; this file carries what\n'
                       printf '# this installation built, and the tenants ApplicationSet layers it over the chart.\n'
-                      printf '# The list is COMPLETE because helm replaces a list rather than merging it.\n'
-                      yq eval '{"builds": .builds}' "${cdir}values.yaml"
+                      printf '# The list is COMPLETE because helm replaces a list rather than merging it; an entry\n'
+                      printf '# at %s names an image no release of this installation has built yet.\n' "${PLACEHOLDER_TAG}"
+                      yq eval "{\"builds\": (.builds | map(.tag = \"${PLACEHOLDER_TAG}\"))}" "${cdir}values.yaml"
                     } > "${pins}"
                     SEEDED=1
                   fi
