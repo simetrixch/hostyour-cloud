@@ -37,6 +37,8 @@ tenant:
   guid: 00000000-0000-0000-0000-000000000000
   member: check
   appName: check
+  appsImage: ""
+  appsImageTag: ""
   subdomain: check
   stage: dev
   # The tenant\'s zone, as clusters/argocd/files/tenants-appset.yaml delivers it: `<subdomain>.<stage apex>`.

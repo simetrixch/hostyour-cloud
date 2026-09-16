@@ -16,7 +16,7 @@
 # isolation project, the sync policy, and the tenant facts each chart is handed. What a member IS
 # comes out of the registration.
 #
-# The registration's flat fields (cluster, subdomain, apps, seedUsers, suspended, quiesced) become
+# The registration's flat fields (cluster, subdomain, apps, seedUsers, appsImage, appsImageTag, suspended, quiesced) become
 # the template parameters. The body carries NO guid and NO stage — the path
 # registrations/<guid>/<stage>.yaml is the identity — so both are derived from the file path ONCE,
 # in the generator's values block: the guid from the directory, the stage from the file name.
@@ -228,6 +228,13 @@ spec:
                 # an app's engine reads its own seed tiers out of the list by appName.
                 seedUsers: {{ $.seedUsers }}
                 apps: {{ $.apps | toJson }}
+                # THE TENANT'S OWN APPS BUNDLE: the image `<subdomain>-apps` its engines, its IdP and its
+                # report mount, and the pin the Manager resolved from that bundle's own release — the
+                # engine chart's pins file never carries a tenant bundle, so the tag is delivered, not
+                # layered. Empty where the tenant has no bundle (no apps); the Manager writes both on
+                # every commit, so missingkey=error is met.
+                appsImage: "{{ $.appsImage }}"
+                appsImageTag: "{{ $.appsImageTag }}"
               global:
                 # The zone the tenant's stage lives in — what a member composes a NEIGHBOUR unit's
                 # host from (the installation's mail service at `<endpoints.mail.host>.<stageApex>`).
