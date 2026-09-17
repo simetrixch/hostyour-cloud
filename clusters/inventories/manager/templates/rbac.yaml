@@ -183,6 +183,16 @@ surface of the manager's onboarding adapters:
     another's starting pod. Writing without reading is what keeps this from
     being a way to read the unit's own Secrets; the database credentials still
     ride the Job spec as secretKeyRef and are resolved by kubelet.
+    The same delete has a SECOND reader: hostyour-manager's App-token refresh
+    (domains/units/app-token-refresh.ts deleteBuildSecrets, on its 45-minute
+    timer and in the refresh-repo-pat step of a release re-run) deletes
+    build-git-https, bump-git-https and build-npmrc in <unit>-build after every
+    rewrite of secret/build/<unit>/repo-pat, because the consumer-build
+    ExternalSecrets are OnChange and read Vault again only when their target
+    is gone. Narrowing this grant to a namespace or dropping delete breaks
+    every release of a unit whose credential is the GitHub App an hour after
+    its onboarding. Still no get: the return is read off the ExternalSecrets'
+    refreshTime through manager-smoke-reader's list (hostyour-manager#189).
   * manager-workload-restarter (ClusterRole) — patch on deployments and
     statefulsets, cluster scope (unit namespaces are dynamic, the same reason
     manager-smoke-reader has it). It is the last of the three acts that put a
