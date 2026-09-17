@@ -226,6 +226,8 @@ spec:
                 # matters, because a unit whose registration predates the field must not come out
                 # granted every key in a shared keyspace.
                 keyPatternsJson: "{{ dig \"keyPatterns\" (list) . | toJson }}"
+                # The Pub/Sub half of the same grant, same shape, same reading of an absent field.
+                channelPatternsJson: "{{ dig \"channelPatterns\" (list) . | toJson }}"
       destination:
         # THE UNIT'S OWN CLUSTER, by name — a cluster-scoped policy has to stand where the workloads
         # it admits or refuses run, and for a per-slave instance that is a remote cluster.
