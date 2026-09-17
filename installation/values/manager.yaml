@@ -41,4 +41,3 @@ onboarding:
 # three env only where this key is set, because an installation may have no App and the seed
 # then writes no entry for one — and an ExternalSecret naming an entry that is not there holds
 # the manager Application Degraded. An optional slot: unanswered, the line is dropped whole.
-githubApp: {appId: '4982222'}
