@@ -13,8 +13,11 @@
 # tree. status answers what each installation stands on.
 # remove-slave-from-master is neither: it takes one slave's registration off the
 # master it stands on, which is the only act here whose subject is a relation
-# between two installations. Every one of them is written twice, in bash and in
-# PowerShell, and the two spellings are held to printing the same bytes.
+# between two installations. abandon-installation is the end of one: it takes
+# down what an installation whose machines are gone left outside them, which is
+# its DNS records, its branches on origin and its books branch in the catalog.
+# Every one of them is written twice, in bash and in PowerShell, and the two
+# spellings are held to printing the same bytes.
 #
 # WHY TWO ORIGINS PER FIXTURE. release-platform MINTS and a mint pushes. Run
 # against one origin the second spelling would find the first's work and take a
@@ -32,10 +35,20 @@
 # THE PLANTED DEFECTS. A copy of status.sh with one printed line changed is run
 # against the untouched status.ps1, a copy of regenerate-install-branch.sh with
 # one printed line changed against the untouched .ps1, and a copy of
-# remove-slave-from-master.sh likewise. All three comparisons must go RED.
-# Without them a green run would only prove that the comparisons found nothing,
-# which is also what a comparison that stopped looking prints. The innocent
-# beside them is every other case here, which must stay green.
+# remove-slave-from-master.sh and of abandon-installation.sh likewise. All four
+# comparisons must go RED. Without them a green run would only prove that the
+# comparisons found nothing, which is also what a comparison that stopped looking
+# prints. The innocent beside them is every other case here, which must stay
+# green.
+#
+# THE ABANDONMENT IS DRIVEN END TO END, in section FIVE, because everything it
+# writes to is a fixture: the branches stand in directory origins, and the DNS
+# provider and the liveness probe are one stand-in curl on the path, which
+# answers the zone's records out of a table, takes a deletion out of it, and
+# logs every call so the exact calls can be asserted rather than the printed
+# lines alone. The stand-in is a bash script, and a .cmd shim beside it is what
+# PowerShell on Windows finds under the same name; off Windows the shim is never
+# looked at.
 #
 # WHAT THIS FILE CANNOT PROVE, named rather than counted: an authenticated remote
 # (the fixtures' origins are directories, so a push never asks for a credential),
@@ -905,6 +918,398 @@ must "regenerate: $PROBE is mode 644 and carries credentials, the elevation pass
 [ "$A_CODE" = '77' ] || fail "the regeneration must refuse mode 644 with 77, got $A_CODE"
 ok 'the three launchers refuse a readable config in their own sentence, built from the one guard'
 
+# ===========================================================================
+# FIVE — abandon-installation, against a fixture of an installation that is gone
+#
+# ONE INSTALLATION AS ITS BRANCH RECORDS IT: a master whose map lists two
+# addresses in the flow spelling the branch program writes, one slave whose map
+# lists one in the block spelling the Manager writes, two consumer registrations
+# at two stages (and a build.yaml, which names no stage and must be passed
+# over), a slave's own install branch of the earlier layout, and one tenant
+# registration on the catalog's books branch of the same name. The zone carries
+# what such an installation leaves: its wildcards and one platform host name at
+# its addresses, both unit records, the tenant's wildcard, the sender domains'
+# address records and SPF, and beside them everything the act must NOT touch —
+# a foreign address under a unit's own name, the machine's own address record,
+# a DKIM key, a DMARC policy, an SPF merged with another sender's include, and
+# an MX. The second zone is the platform domain's, so the zone walk is measured
+# across two zones.
+#
+# TWO OF EVERYTHING, for the reason section ONE has two origins: the act deletes,
+# so the second spelling gets its own origin, its own catalog and its own copy
+# of the zone tables, seeded identically, and the two call logs are compared as
+# closely as the two outputs.
+# ===========================================================================
+ABANDON="$WORK/abandon"
+mkdir -p "$ABANDON"
+AORIGIN_A="$ABANDON/origin-a.git"; AORIGIN_B="$ABANDON/origin-b.git"
+ACATALOG_A="$ABANDON/catalog-a.git"; ACATALOG_B="$ABANDON/catalog-b.git"
+AWORK_A="$ABANDON/checkout-a"; AWORK_B="$ABANDON/checkout-b"
+ASEED="$ABANDON/seed"; ACSEED="$ABANDON/cseed"
+
+git init --quiet --bare --initial-branch=master "$AORIGIN_A"
+git init --quiet --bare --initial-branch=master "$ACATALOG_A"
+git init --quiet --initial-branch=master "$ASEED"
+git -C "$ASEED" remote add origin "$AORIGIN_A"
+mkdir -p "$ASEED/clusters/active"
+echo "* text=auto eol=lf" > "$ASEED/.gitattributes"
+touch "$ASEED/clusters/active/.gitkeep"
+git -C "$ASEED" add -A
+git -C "$ASEED" commit --quiet -m "Seed the trunk"
+git -C "$ASEED" push --quiet origin master
+git -C "$ASEED" checkout --quiet -b apps6.example.invalid master
+{
+  echo "stage: prod"
+  echo "role: master"
+  echo "booksCluster: apps6.example.invalid"
+  echo "release: 0.1.0-stable-19700101000000"
+  echo ""
+  echo "global:"
+  echo "  domain: apps6.example.invalid"
+  echo "  clusterName: apps6"
+  echo "  unitApex: example.invalid"
+  echo "  platformDomain: platform.invalid"
+  echo "  nodeCidrs: [203.0.113.6/32, 100.64.0.1/32]"
+} > "$ASEED/clusters/active/apps6.example.invalid.yaml"
+{
+  echo "stage: prod"
+  echo "role: slave"
+  echo "booksCluster: apps6.example.invalid"
+  echo ""
+  echo "global:"
+  echo "  domain: apps7.example.invalid"
+  echo "  clusterName: apps7"
+  echo "  unitApex: example.invalid"
+  echo "  nodeCidrs:"
+  echo "    - 203.0.113.7/32"
+} > "$ASEED/clusters/active/apps7.example.invalid.yaml"
+mkdir -p "$ASEED/registrations/digita-post" "$ASEED/registrations/digita-auth"
+printf 'name: "digita-post"\ncluster: "apps6"\nhost: "post"\n' > "$ASEED/registrations/digita-post/prod.yaml"
+printf 'name: "digita-post"\nrepoURL: "https://example.invalid/post.git"\n' > "$ASEED/registrations/digita-post/build.yaml"
+printf 'name: "digita-auth"\ncluster: "apps7"\nhost: "auth"\n' > "$ASEED/registrations/digita-auth/dev.yaml"
+git -C "$ASEED" add -A
+git -C "$ASEED" commit --quiet -m "Cut the branch of apps6 with the books it keeps"
+git -C "$ASEED" push --quiet origin apps6.example.invalid
+git -C "$ASEED" checkout --quiet -b apps7.example.invalid master
+echo "role: slave" > "$ASEED/clusters/active/apps7.example.invalid.yaml"
+git -C "$ASEED" add -A
+git -C "$ASEED" commit --quiet -m "A slave's own branch, as the earlier layout cut it"
+git -C "$ASEED" push --quiet origin apps7.example.invalid
+git -C "$ASEED" checkout --quiet master
+
+git init --quiet --initial-branch=master "$ACSEED"
+git -C "$ACSEED" remote add origin "$ACATALOG_A"
+echo "* text=auto eol=lf" > "$ACSEED/.gitattributes"
+echo "# the tenant catalog" > "$ACSEED/README.md"
+git -C "$ACSEED" add -A
+git -C "$ACSEED" commit --quiet -m "Seed the catalog"
+git -C "$ACSEED" push --quiet origin master
+git -C "$ACSEED" checkout --quiet -b apps6.example.invalid master
+mkdir -p "$ACSEED/registrations/t_01acme"
+printf 'cluster: "apps7"\nsubdomain: "acme"\n' > "$ACSEED/registrations/t_01acme/prod.yaml"
+git -C "$ACSEED" add -A
+git -C "$ACSEED" commit --quiet -m "Register a tenant"
+git -C "$ACSEED" push --quiet origin apps6.example.invalid
+
+git clone --quiet --bare "$AORIGIN_A" "$AORIGIN_B"
+git clone --quiet --bare "$ACATALOG_A" "$ACATALOG_B"
+git clone --quiet "$AORIGIN_A" "$AWORK_A"
+git clone --quiet "$AORIGIN_B" "$AWORK_B"
+
+# THE CATALOG IS REACHED BY THE ADDRESS THE ACT COMPOSES, https://github.com/<repo>.git,
+# and git is told to read that address as the fixture's directory: each spelling
+# gets a global git config of its own, handed over as GIT_CONFIG_GLOBAL, so the
+# act composes the real address and no test-only switch stands in it.
+git config --file "$ABANDON/gitconfig-a" "url.$ACATALOG_A.insteadOf" 'https://github.com/acme/catalog.git'
+git config --file "$ABANDON/gitconfig-b" "url.$ACATALOG_B.insteadOf" 'https://github.com/acme/catalog.git'
+
+# THE INSTALLATION'S CONFIG, read for two values and never run: it states the
+# token the stand-in expects and the catalog.
+ACFG="$ABANDON/config.apps6.env"
+{
+  echo "FQDN='apps6.example.invalid'"
+  echo "CLOUDFLARE_DNS_API_TOKEN='cf-token-of-the-fixture'"
+  echo "CATALOG_REPO='acme/catalog'"
+  echo "STAGE='prod' #[dev, test, prod]"
+} > "$ACFG"
+OTHERCFG="$ABANDON/config.apps9.env"
+sed "s/^FQDN=.*/FQDN='apps9.example.invalid'/" "$ACFG" > "$OTHERCFG"
+
+# THE STAND-IN FOR curl, answering two things by the address it is given: the
+# liveness probe on the API port, alive while the state directory holds a file
+# named alive and connection-refused (7) otherwise; and the DNS provider's v4
+# API, out of one table per zone. Every call is logged as its method, its path
+# and the name it asked for, and the token is required on every API call the
+# way the real API requires it.
+ASTUB="$ABANDON/stub"
+mkdir -p "$ASTUB"
+cat > "$ASTUB/curl" <<'EOF'
+#!/usr/bin/env bash
+state="$ABANDON_STUB"
+method=GET; url=''; name=''; stdin=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X) method="$2"; shift ;;
+    --data-urlencode) case "$2" in name=*) name="${2#name=}" ;; esac; shift ;;
+    -K) shift; stdin="$(cat)" ;;
+    https://*) url="$1" ;;
+  esac
+  shift
+done
+case "$url" in
+  https://*:16443/) printf 'PROBE %s\n' "${url#https://}" >> "$state/log"; [ -f "$state/alive" ] && exit 0 || exit 7 ;;
+esac
+path="${url#https://api.cloudflare.com/client/v4}"
+printf '%s\n' "$method $path${name:+ name=$name}" >> "$state/log"
+case "$stdin" in
+  *'Authorization: Bearer cf-token-of-the-fixture'*) ;;
+  *) printf '{"result":null,"success":false,"errors":[{"code":10000,"message":"Authentication error"}],"messages":[]}'; exit 0 ;;
+esac
+json_records() { # zone id, name -> the records at that name, as the API answers a listing
+  local first=1 id n type content
+  printf '{"result":['
+  while IFS=$'\t' read -r id n type content; do
+    [ "$n" = "$2" ] || continue
+    [ "$first" = 1 ] || printf ','
+    first=0
+    content="${content//\\/\\\\}"; content="${content//\"/\\\"}"
+    printf '{"id":"%s","zone_id":"%s","zone_name":"z","name":"%s","type":"%s","content":"%s","proxiable":true,"proxied":false,"ttl":1,"settings":{},"meta":{},"comment":null,"tags":[],"created_on":"2026-01-01T00:00:00Z","modified_on":"2026-01-01T00:00:00Z"}' "$id" "$1" "$n" "$type" "$content"
+  done < "$state/zone-$1.tsv"
+  printf '],"success":true,"errors":[],"messages":[],"result_info":{"page":1,"per_page":100,"count":0,"total_count":0}}'
+}
+case "$method $path" in
+  'GET /zones')
+    case "$name" in
+      example.invalid) printf '{"result":[{"id":"11111111111111111111111111111111","name":"example.invalid"}],"success":true,"errors":[],"messages":[]}' ;;
+      platform.invalid) printf '{"result":[{"id":"22222222222222222222222222222222","name":"platform.invalid"}],"success":true,"errors":[],"messages":[]}' ;;
+      *) printf '{"result":[],"success":true,"errors":[],"messages":[]}' ;;
+    esac ;;
+  'GET /zones/'*'/dns_records')
+    zone="${path#/zones/}"; zone="${zone%%/*}"
+    json_records "$zone" "$name" ;;
+  'DELETE /zones/'*'/dns_records/'*)
+    zone="${path#/zones/}"; zone="${zone%%/*}"; rid="${path##*/}"
+    grep -v "^$rid	" "$state/zone-$zone.tsv" > "$state/zone-$zone.tsv.new"
+    mv "$state/zone-$zone.tsv.new" "$state/zone-$zone.tsv"
+    printf '{"result":{"id":"%s"},"success":true,"errors":[],"messages":[]}' "$rid" ;;
+  *) printf '{"result":null,"success":false,"errors":[{"code":7003,"message":"no route for %s %s"}],"messages":[]}' "$method" "$path" ;;
+esac
+EOF
+printf '@bash "%%~dp0curl" %%*\r\n' > "$ASTUB/curl.cmd"
+chmod +x "$ASTUB/curl"
+ASTUB_PATH="$ASTUB"
+if command -v cygpath >/dev/null 2>&1; then ASTUB_PATH="$(cygpath -u "$ASTUB")"; fi
+
+# THE ZONES, one table each, as they stand before the act. The first column is
+# the record id the act has to delete by.
+seed_zones() { # the state directory to seed
+  mkdir -p "$1"
+  printf '%s\t%s\t%s\t%s\n' \
+    a0000000000000000000000000000001 '*.apps6.example.invalid' A 203.0.113.6 \
+    a0000000000000000000000000000002 argo.apps6.example.invalid A 203.0.113.6 \
+    a0000000000000000000000000000003 '*.apps7.example.invalid' A 203.0.113.7 \
+    a0000000000000000000000000000004 post.example.invalid A 203.0.113.6 \
+    a0000000000000000000000000000005 post.example.invalid A 198.51.100.9 \
+    a0000000000000000000000000000006 auth.dev.example.invalid A 203.0.113.7 \
+    a0000000000000000000000000000007 '*.acme.example.invalid' A 203.0.113.7 \
+    a0000000000000000000000000000008 apps6.example.invalid A 203.0.113.6 \
+    a0000000000000000000000000000009 example.invalid A 203.0.113.6 \
+    a0000000000000000000000000000010 example.invalid TXT '"v=spf1 ip4:203.0.113.6 -all"' \
+    a0000000000000000000000000000011 prod._domainkey.example.invalid TXT '"v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA" "xyz"' \
+    a0000000000000000000000000000012 _dmarc.example.invalid TXT '"v=DMARC1; p=none; rua=mailto:dmarc@example.invalid"' \
+    > "$1/zone-11111111111111111111111111111111.tsv"
+  printf '%s\t%s\t%s\t%s\n' \
+    b0000000000000000000000000000001 platform.invalid A 203.0.113.6 \
+    b0000000000000000000000000000002 platform.invalid TXT '"v=spf1 include:_spf.other.invalid ip4:203.0.113.6 -all"' \
+    b0000000000000000000000000000003 platform.invalid MX '10 mx.other.invalid' \
+    > "$1/zone-22222222222222222222222222222222.tsv"
+  : > "$1/log"
+}
+seed_zones "$ABANDON/state-a"
+seed_zones "$ABANDON/state-b"
+ok "fixture built — two origins and two catalogs carrying one installation, two zones carrying what it left, and a stand-in curl"
+
+# The first argument is what the operator types at the confirmation; the rest
+# are the act's own arguments.
+run_abandon_bash() {
+  local answer="$1"; shift
+  A_CODE=0
+  ( cd "$AWORK_A" && export GIT_CONFIG_GLOBAL="$ABANDON/gitconfig-a" ABANDON_STUB="$ABANDON/state-a" PATH="$ASTUB_PATH:$PATH" \
+    && printf '%s\n' "$answer" | bash "$HERE/abandon-installation.sh" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+run_abandon_pwsh() {
+  local answer="$1"; shift
+  B_CODE=0
+  ( cd "$AWORK_B" && export GIT_CONFIG_GLOBAL="$ABANDON/gitconfig-b" ABANDON_STUB="$ABANDON/state-b" PATH="$ASTUB_PATH:$PATH" \
+    && printf '%s\n' "$answer" | "$PWSH" -NoProfile -NoLogo -File "$HERE/abandon-installation.ps1" "$@" ) > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
+}
+untouched() { # what was being checked -> every origin, catalog and zone table stands as seeded
+  local label="$1"
+  for origin in "$AORIGIN_A" "$AORIGIN_B"; do
+    [ "$(git --git-dir="$origin" for-each-ref --format='%(refname)' refs/heads | wc -l)" = '3' ] || fail "$label — a branch of the platform origin moved"
+  done
+  for catalog in "$ACATALOG_A" "$ACATALOG_B"; do
+    [ "$(git --git-dir="$catalog" for-each-ref --format='%(refname)' refs/heads | wc -l)" = '2' ] || fail "$label — a branch of the catalog moved"
+  done
+  for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
+    [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '12' ] || fail "$label — a record of the first zone went"
+    [ "$(wc -l < "$state/zone-22222222222222222222222222222222.tsv")" = '3' ] || fail "$label — a record of the second zone went"
+    ! grep -q '^DELETE' "$state/log" || fail "$label — a deletion reached the DNS provider"
+  done
+}
+
+run_abandon_bash ''
+run_abandon_pwsh ''
+must "usage: lifecycle/abandon-installation.sh <master-fqdn>" 'a run naming no installation is refused'
+[ "$A_CODE" = '64' ] || fail "a run naming no installation must end with 64, got $A_CODE"
+same_code 'a run naming no installation'
+
+run_abandon_bash '' apps6.example.invalid "$NOCONFIG"
+run_abandon_pwsh '' apps6.example.invalid "$NOCONFIG"
+must "there is no config at" 'a run with no config to read the token from is refused'
+[ "$A_CODE" = '66' ] || fail "a missing config must end with 66, got $A_CODE"
+same 'a run with no config'
+
+run_abandon_bash '' apps6.example.invalid "$OTHERCFG"
+run_abandon_pwsh '' apps6.example.invalid "$OTHERCFG"
+must "states FQDN='apps9.example.invalid', and this abandons apps6.example.invalid" 'a config of another installation is refused by name'
+[ "$A_CODE" = '65' ] || fail "another installation's config must end with 65, got $A_CODE"
+same "another installation's config"
+untouched 'the three refusals'
+
+# ── the guard: a cluster whose API still answers refuses before any write ────
+touch "$ABANDON/state-a/alive" "$ABANDON/state-b/alive"
+run_abandon_bash apps6.example.invalid apps6.example.invalid "$ACFG"
+run_abandon_pwsh apps6.example.invalid apps6.example.invalid "$ACFG"
+must "abandon: apps6.example.invalid keeps its books on branch apps6.example.invalid of origin" 'the books are read off origin and said so'
+must "abandon: clusters/active/apps6.example.invalid.yaml records apps6.example.invalid as master at 203.0.113.6, 100.64.0.1" 'the master and its two addresses are read off its map, in the flow spelling'
+must "abandon: clusters/active/apps7.example.invalid.yaml records apps7.example.invalid as slave at 203.0.113.7" 'the slave and its address are read off its map, in the block spelling'
+must "abandon: apps6.example.invalid answers on port 16443 at 203.0.113.6 (curl exit 0), so this is a LIVING installation" 'a cluster whose API answers refuses, naming the cluster and the address'
+must "Nothing has been changed" 'and the refusal says nothing has been changed'
+[ "$A_CODE" = '69' ] || fail "a living installation must refuse with 69, got $A_CODE"
+same 'a living installation'
+for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
+  [ "$(grep -c '^PROBE' "$state/log")" = '1' ] || fail 'the guard asked more than the first address that answered'
+  ! grep -q '^GET\|^DELETE' "$state/log" || fail 'a living installation was refused and the DNS provider was still asked'
+done
+untouched 'a living installation'
+rm -f "$ABANDON/state-a/alive" "$ABANDON/state-b/alive"
+: > "$ABANDON/state-a/log"; : > "$ABANDON/state-b/log"
+
+# ── the confirmation: anything but the master's domain stops before any write ─
+run_abandon_bash no apps6.example.invalid "$ACFG"
+run_abandon_pwsh no apps6.example.invalid "$ACFG"
+must "abandon: registrations/digita-post/prod.yaml stands at post.example.invalid" 'a prod consumer stands at its label under the apex'
+must "abandon: registrations/digita-auth/dev.yaml stands at auth.dev.example.invalid" 'a dev consumer stands at its label under the dev zone'
+must_not "registrations/digita-post/build.yaml" 'a build registration names no stage and derives no record'
+must "abandon: the catalog's books branch apps6.example.invalid carries registrations/t_01acme/prod.yaml, which stands at *.acme.example.invalid" 'the tenant wildcard is derived off the catalog branch'
+must "abandon: the mail records of platform.invalid: platform.invalid (its address and SPF), prod._domainkey.platform.invalid (DKIM), _dmarc.platform.invalid (DMARC)" 'the mail records of the platform domain are named, the DKIM one under the stage'
+must "abandon: the mail records of example.invalid:" 'and those of the unit apex'
+must "abandon: apps6.example.invalid itself is the machine's name and not the installation's, so its own address record stays" "the machine's own address record is named as staying"
+must "abandon: 40 names derived" 'every derived name is counted'
+must "abandon: apps6.example.invalid does not answer on port 16443 at 203.0.113.6" 'the master is asked at its public address'
+must "abandon: apps6.example.invalid does not answer on port 16443 at 100.64.0.1" 'and at its tailnet address'
+must "abandon: apps7.example.invalid does not answer on port 16443 at 203.0.113.7" 'and the slave at its address'
+must "abandon: this workstation can push a branch deletion to origin and to the catalog" 'the push access is proven before anything is written'
+must "abandon: what goes: every record above that proves itself this installation's, the branches apps6.example.invalid apps7.example.invalid on origin, and the books branch apps6.example.invalid of the catalog https://github.com/acme/catalog.git. Type apps6.example.invalid to confirm" 'the operator is told what goes and asked to type the domain'
+must "abandon: the answer was not apps6.example.invalid, so this stops. Nothing has been changed" 'any other answer stops the act'
+[ "$A_CODE" = '65' ] || fail "a declined confirmation must end with 65, got $A_CODE"
+same 'the derivation, the guard on an installation that is gone, and a declined confirmation'
+untouched 'a declined confirmation'
+: > "$ABANDON/state-a/log"; : > "$ABANDON/state-b/log"
+
+# ── the planted defect for this pair, on the state nothing has changed yet ───
+PLANTED_A="$WORK/planted-abandon.sh"
+sed 's/keeps its books on branch/keeps its books at branch/' "$HERE/abandon-installation.sh" > "$PLANTED_A"
+grep -q 'keeps its books at branch' "$PLANTED_A" || fail 'the planted line was not planted — the probe proves nothing'
+A_CODE=0
+( cd "$AWORK_A" && export GIT_CONFIG_GLOBAL="$ABANDON/gitconfig-a" ABANDON_STUB="$ABANDON/state-a" PATH="$ASTUB_PATH:$PATH" \
+  && printf 'no\n' | bash "$PLANTED_A" apps6.example.invalid "$ACFG" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+grep -q 'keeps its books at branch' "$OUT/a.out" || fail 'the planted spelling printed no books line — the probe was aimed at a line the fixture does not reach'
+run_abandon_pwsh no apps6.example.invalid "$ACFG"
+normalise < "$OUT/a.out" > "$OUT/a.out.n"; normalise < "$OUT/b.out" > "$OUT/b.out.n"
+if diff -q "$OUT/a.out.n" "$OUT/b.out.n" >/dev/null; then
+  fail 'a spelling with one line changed compared EQUAL to the other — the comparison above proves nothing'
+fi
+ok 'the planted defect was caught — the comparison of the abandon pair can go red'
+untouched 'the planted run'
+: > "$ABANDON/state-a/log"; : > "$ABANDON/state-b/log"
+
+# ── the act itself: the records that prove themselves go, the rest is listed ─
+run_abandon_bash apps6.example.invalid apps6.example.invalid "$ACFG"
+run_abandon_pwsh apps6.example.invalid apps6.example.invalid "$ACFG"
+must "abandon: zone example.invalid: deleted A *.apps6.example.invalid -> 203.0.113.6, the platform host names of apps6.example.invalid" "the master's wildcard at its address goes"
+must "abandon: zone example.invalid: deleted A argo.apps6.example.invalid -> 203.0.113.6, a platform host name of apps6.example.invalid" 'and a platform host name written on its own'
+must "abandon: zone example.invalid: deleted A *.apps7.example.invalid -> 203.0.113.7, the platform host names of apps7.example.invalid" "the slave's wildcard at the slave's address goes"
+must "abandon: zone example.invalid: deleted A post.example.invalid -> 203.0.113.6, the consumer digita-post at prod" "the prod consumer's record at the master goes"
+must "abandon: zone example.invalid: left A post.example.invalid -> 198.51.100.9, an address this installation never had" 'the foreign record under the same name is left and named'
+must "abandon: zone example.invalid: deleted A auth.dev.example.invalid -> 203.0.113.7, the consumer digita-auth at dev" "the dev consumer's record at the slave goes"
+must "abandon: zone example.invalid: deleted A *.acme.example.invalid -> 203.0.113.7, the tenant t_01acme at prod" "the tenant's wildcard goes"
+must "abandon: zone platform.invalid: deleted A platform.invalid -> 203.0.113.6, the sender domain platform.invalid" "the sender domain's address record at the egress goes"
+must "abandon: zone example.invalid: deleted TXT example.invalid (v=spf1 ip4:203.0.113.6 -all), the sender domain example.invalid" "an SPF that authorises the installation's address alone goes"
+must "abandon: zone platform.invalid: left TXT platform.invalid (v=spf1 include:_spf.other.invalid ip4:203.0.113.6 -all): it authorises senders beside this installation" 'an SPF merged with another sender is left and named'
+must "abandon: zone example.invalid: left TXT prod._domainkey.example.invalid (v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ): nothing on the branch proves that content the installation's" 'the DKIM key is left, because nothing on the branch proves it'
+must "abandon: zone example.invalid: left TXT _dmarc.example.invalid (v=DMARC1; p=none; rua=mailto:dmarc@example.inval): nothing on the branch proves that content the installation's" 'and so is the DMARC policy'
+must "abandon: zone platform.invalid: left MX platform.invalid -> 10 mx.other.invalid: this act judges A, AAAA and TXT records only" 'a record of another type is left and named'
+must "abandon: 9 records deleted, 5 left standing and listed above, 30 of the derived names carried nothing" 'the count says what went, what stayed and how many names were empty'
+must "abandon: deleted branch apps6.example.invalid on origin" "the master's branch goes"
+must "abandon: deleted branch apps7.example.invalid on origin" "the slave's branch goes"
+must "abandon: deleted the books branch apps6.example.invalid of the catalog https://github.com/acme/catalog.git" "the catalog's books branch goes"
+must "abandon: $ACFG stays. A local config is the record of the answers a machine was installed with" 'the config is named and stays'
+[ "$A_CODE" = '0' ] || fail "the act must end with 0, got $A_CODE"
+same 'the act on an installation that is gone'
+# THE ORDER OF THE THREE BRANCHES, read off the output rather than assumed.
+[ "$(grep -o 'deleted branch apps6.example.invalid on origin\|deleted branch apps7.example.invalid on origin\|deleted the books branch apps6.example.invalid' "$OUT/a.out" | tr '\n' '|')" = \
+  'deleted branch apps6.example.invalid on origin|deleted branch apps7.example.invalid on origin|deleted the books branch apps6.example.invalid|' ] \
+  || fail 'the three branches were not deleted in the order master, slave, catalog, or not exactly three'
+[ -f "$ACFG" ] || fail 'the config is gone'
+# THE CALLS THAT REACHED THE PROVIDER, exactly: nine deletions in the order the
+# names were derived, forty listings — one per derived name — and never a
+# listing of the machine's own name.
+EXPECTED_DELETES="DELETE /zones/11111111111111111111111111111111/dns_records/a0000000000000000000000000000001
+DELETE /zones/11111111111111111111111111111111/dns_records/a0000000000000000000000000000002
+DELETE /zones/11111111111111111111111111111111/dns_records/a0000000000000000000000000000003
+DELETE /zones/11111111111111111111111111111111/dns_records/a0000000000000000000000000000006
+DELETE /zones/11111111111111111111111111111111/dns_records/a0000000000000000000000000000004
+DELETE /zones/22222222222222222222222222222222/dns_records/b0000000000000000000000000000001
+DELETE /zones/11111111111111111111111111111111/dns_records/a0000000000000000000000000000009
+DELETE /zones/11111111111111111111111111111111/dns_records/a0000000000000000000000000000010
+DELETE /zones/11111111111111111111111111111111/dns_records/a0000000000000000000000000000007"
+for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
+  [ "$(grep '^DELETE' "$state/log")" = "$EXPECTED_DELETES" ] \
+    || fail "the deletions that reached the provider are not the nine expected, in order: $(grep '^DELETE' "$state/log" | tr '\n' ' ')"
+  [ "$(grep -c '/dns_records name=' "$state/log")" = '40' ] || fail 'not every derived name was listed at the provider, or one was listed twice'
+  ! grep -q 'dns_records name=apps6.example.invalid$' "$state/log" || fail "the machine's own address record was asked for"
+  [ "$(grep -c '^PROBE' "$state/log")" = '3' ] || fail 'the three addresses were not each asked once'
+  [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '4' ] || fail 'the first zone does not keep exactly the foreign record, the own address record, the DKIM key and the DMARC policy'
+  grep -q '^a0000000000000000000000000000008	apps6.example.invalid	A	203.0.113.6$' "$state/zone-11111111111111111111111111111111.tsv" \
+    || fail "the machine's own address record is gone"
+  [ "$(wc -l < "$state/zone-22222222222222222222222222222222.tsv")" = '2' ] || fail 'the second zone does not keep exactly the merged SPF and the MX'
+done
+diff -u "$ABANDON/state-a/log" "$ABANDON/state-b/log" >/dev/null || fail 'the two spellings made different calls to the provider'
+for origin in "$AORIGIN_A" "$AORIGIN_B"; do
+  [ "$(git --git-dir="$origin" for-each-ref --format='%(refname)' refs/heads)" = 'refs/heads/master' ] || fail 'the platform origin still carries a branch of the installation'
+done
+for catalog in "$ACATALOG_A" "$ACATALOG_B"; do
+  [ "$(git --git-dir="$catalog" for-each-ref --format='%(refname)' refs/heads)" = 'refs/heads/master' ] || fail 'the catalog still carries the books branch'
+done
+ok 'the nine attributable records went in the derived order, the six the act cannot attribute stand and are named, the three branches went in order on both origins, and both spellings made the same calls'
+
+# ── the second run on what the first left: nothing to do, and exit 0 ─────────
+: > "$ABANDON/state-a/log"; : > "$ABANDON/state-b/log"
+run_abandon_bash apps6.example.invalid apps6.example.invalid "$ACFG"
+run_abandon_pwsh apps6.example.invalid apps6.example.invalid "$ACFG"
+must "abandon: origin carries no branch apps6.example.invalid, so no map, no address and no registration of it can be read" 'a second run finds no branch and says what that means'
+must "abandon: the catalog https://github.com/acme/catalog.git carries no books branch apps6.example.invalid" 'and no books branch in the catalog'
+must "nothing to do" 'and stops with nothing to do'
+must "abandon: $ACFG stays" 'and still names the config as staying'
+[ "$A_CODE" = '0' ] || fail "a second run with nothing to do must end with 0, got $A_CODE"
+same 'a second run on what the first left'
+for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
+  [ ! -s "$state/log" ] || fail 'a second run with no branch to derive from still reached the provider'
+done
+ok 'a second run derives nothing, touches nothing and ends with 0'
+
 echo "test: GREEN — every case above was measured on both spellings and answered identically,"
 echo "test:   and the owner-only guard on the bash spelling alone."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
@@ -920,7 +1325,15 @@ echo "test:   off the branch, and a launcher without its driver; the eight refus
 echo "test:   makes before it touches a master, the registration it reads off the master's"
 echo "test:   branch and the verdict on a slave that is gone; the owner-only guard on both of"
 echo "test:   its branches, against stubbed tools, and the sentence each of the three launchers"
-echo "test:   builds from it. Three planted defects prove the comparison can go red."
+echo "test:   builds from it; the three refusals an abandonment makes before it reads a zone,"
+echo "test:   the names it derives off the install branch and the catalog's books branch, the"
+echo "test:   guard that refuses a cluster whose API still answers, the confirmation, the nine"
+echo "test:   records it deletes against a stand-in provider and the six it lists and leaves,"
+echo "test:   the three branches it deletes in order, the config it names as staying, and a"
+echo "test:   second run that finds nothing to do. Four planted defects prove the comparison"
+echo "test:   can go red."
 echo "test: not covered — an authenticated remote, two workstations minting at one moment, the"
 echo "test:   regeneration and the removal themselves on a machine, a slave that is still"
-echo "test:   answering, and the PowerShell spelling's own reading of an access list."
+echo "test:   answering, the PowerShell spelling's own reading of an access list, a branch"
+echo "test:   deletion a remote refuses (a directory origin refuses none), and a DNS provider"
+echo "test:   that fails in the middle of the abandonment."

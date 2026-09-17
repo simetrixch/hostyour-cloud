@@ -1,8 +1,9 @@
 # lifecycle
 
 The life of one installation: the act that brings it into being, every release put on it afterwards,
-and the registration one installation holds for another taken off again. Everything here runs from
-an operator's own machine — Windows, Linux or macOS — and nothing here runs in a cluster.
+the registration one installation holds for another taken off again, and what an installation whose
+machines are gone left outside them taken down. Everything here runs from an operator's own machine —
+Windows, Linux or macOS — and nothing here runs in a cluster.
 
 **The subject is an installation, not a delivery.** A first install delivers nothing; it creates. The
 acts below share a subject rather than a purpose, which is why they stand in one folder.
@@ -15,6 +16,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `release-platform.sh` / `.ps1` | with an fqdn, cuts a release of the platform tree and pins ONE installation to it; without one, cuts the release and pins nothing, which is what a first machine names as `PLATFORM_REF` |
 | `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` / `.ps1` | takes ONE slave's registration off the master it stands on |
+| `abandon-installation.sh` / `.ps1` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the catalog; the config stays |
 | `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |
 
 Every one of them is written twice, and the two spellings are held to doing the same in the same
@@ -233,3 +235,43 @@ line, and where the tag that line names is not on the remote; every one of those
 nothing has been changed, because at every one of them nothing has.
 
 The third only answers, and writes nothing at all.
+
+# Abandoning an installation
+
+```
+bash lifecycle/abandon-installation.sh apps4.example.com lifecycle/config.apps4.env
+```
+
+For an installation whose machines are gone — restored to their bare points, or taken away — and
+never for one that still runs: a living installation is offboarded through the Manager and taken
+back with `remove-slave-from-master` and the reset. Restoring a machine takes back everything on it
+and nothing beside it, and this act is for what stands beside it.
+
+Everything is derived from the install branch on origin, never typed: the cluster map of the master
+and of every slave it records give the machines and their addresses (`nodeCidrs`), the consumer
+registrations on the same branch and the tenant registrations on the catalog's books branch of the
+same name give the unit names, and the map's two sender domains give the mail records. From those it
+names every record the installation wrote — the platform host names of each cluster, every consumer's
+`<label>.<stage apex>`, every tenant's `*.<subdomain>.<stage apex>`, and the address, SPF, DKIM and
+DMARC records of each sender domain — and asks the DNS provider, with the token in the config, what
+stands under each name. A record is deleted only where its content proves it the installation's: an A
+or AAAA at one of the installation's addresses, or an SPF that authorises those addresses and nobody
+else. Everything else under a derived name is listed by name and left, because nothing on the branch
+proves it — a foreign address under a unit's name, a DKIM key whose private half lived in the Vault
+that is gone, a DMARC policy, an SPF merged with another sender's mechanisms. The machine's own
+address record is not among the derived names: it is the machine's, and the next installation of
+that name reaches the machine by it.
+
+The order is read, guard, confirm, DNS, branches. The guard asks every address of every cluster
+whether the cluster's API still answers there, on the API port and deliberately not on the ssh port:
+a machine restored to its bare point still answers on 22, so that port cannot tell an installation
+that is gone from a bare machine standing at the same address. A cluster that answers refuses the
+whole act. Then the operator types the master's domain, and only then is anything written: the
+records first, because the branch is what they are derived from, then the master's install branch,
+its slaves' branches where the earlier layout cut them, and the books branch in the catalog, each
+named. A failure in the DNS phase stops before the branches and says so; every run is safe to repeat,
+because an absent record and an absent branch are not errors.
+
+The config is read for two values, the DNS token and the catalog, and never run. It stays: a local
+config is the record of the answers a machine was installed with, and the next machine of that name
+is installed from it.
