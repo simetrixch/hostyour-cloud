@@ -9,7 +9,7 @@
 #   3. gitleaks over the files git would let you commit
 #
 # THE ORDER IS THE COST. The charts are the thing that is edited daily and they render in
-# seconds; the lifecycle test builds git fixtures and drives both spellings of five programs,
+# seconds; the lifecycle test builds git fixtures and drives both spellings of six programs,
 # which is a minute; the credential scan is under a second and stands last because a leak is
 # a stop-everything finding and is worth reading on its own.
 #
@@ -516,7 +516,7 @@ fi
 echo "check: no file under clusters/bootstrap carries a placeholder, which nothing there would replace."
 
 # ── 2. The delivery programs ────────────────────────────────────────────────────────────────
-echo "check: lifecycle/test.sh — the release, the regeneration, the report and the slave removal, in both spellings. About a minute."
+echo "check: lifecycle/test.sh — the release, the regeneration, the report, the slave removal, the abandonment and the GitHub App, in both spellings. About two minutes."
 bash lifecycle/test.sh || fail "lifecycle/test.sh"
 
 # ── 3. The credentials ──────────────────────────────────────────────────────────────────────
