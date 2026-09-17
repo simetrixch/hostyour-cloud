@@ -46,13 +46,17 @@
 # remove-slave-from-master refuses on: a fixture cannot make a machine listen on
 # port 22, so what is measured is the other verdict, that the slave is gone.
 #
-# NOR THE OWNER-ONLY GUARD ON A CONFIG, in either act that has one: Windows
-# states a file's reach as an access list and every other system as a mode, so
-# the two spellings ask one question and can only answer it in their own words.
-# The guard beside it — a config standing in a git working tree that does not
-# ignore it — is refused in the SAME words by both, and that is the one the
-# removal's fixture config trips, which is what lets a case run all the way to
-# the slave being asked whether it answers.
+# THE OWNER-ONLY GUARD ON A CONFIG is measured on the bash spelling alone, in
+# section FOUR: Windows states a file's reach as an access list and every other
+# system as a mode, and require-owner-only.sh reads whichever the platform it
+# runs on keeps. Its cases are driven with icacls, cygpath, stat and uname stood
+# in for by stubs, so they run and answer the same on every platform, and once
+# with the real tools, after a release has rewritten a config in place. The
+# PowerShell spelling's Get-Acl is not driven, because a fixture cannot make it
+# answer on a system that keeps no access lists. The guard beside it — a config
+# standing in a git working tree that does not ignore it — is refused in the SAME
+# words by both, and that is the one the removal's fixture config trips, which is
+# what lets a case run all the way to the slave being asked whether it answers.
 # ===========================================================================
 set -euo pipefail
 
@@ -75,6 +79,11 @@ fi
 
 PWSH="$(command -v pwsh || true)"
 [ -n "$PWSH" ] || fail 'pwsh is not on this path, and half of what this measures is written in it'
+
+# THE GUARD THE LAUNCHERS PUT ON A CONFIG, read here so a fixture can be asked the
+# same question a launcher asks, with the same tools.
+# shellcheck disable=SC1091
+. "$HERE/require-owner-only.sh" || fail 'require-owner-only.sh is not beside this file'
 
 # Commits of the fixtures and of the scripts' own throwaway clones both need an
 # identity, and the machine's own must not leak into a test. The dates are fixed
@@ -447,6 +456,49 @@ must_not "release: reusing" 'and it is refused before the tag it would have reus
 [ "$A_CODE" = '66' ] || fail "a domain that names no install branch must still end with 66, got $A_CODE"
 same 'a domain with no install branch, now that the third argument is optional'
 
+# ── the configs beside the tree take the tag and keep their access list ─────
+# A RELEASE REWRITES PLATFORM_REF IN PLACE, in every lifecycle/config.*.env
+# beside the tree it runs in, the example excepted, and a launcher then demands
+# that the file is still owner-only. The write truncates the file where it
+# stands rather than moving a copy over it, which on Windows would carry the
+# copy's access list. So each fixture config is made owner-only with the real
+# tools of this platform, the release runs, and the guard the launchers use is
+# asked again with the same real tools. The config is named after no
+# installation, so no regeneration is started over a session, and the release
+# names apps4, whose pin no case below reads back.
+make_owner_only() { # a file -> nobody but the owner reaches it, in this platform's own words
+  if [ -n "${MSYSTEM:-}" ] || [ "$(uname -o 2>/dev/null)" = 'Msys' ]; then
+    icacls "$(cygpath -aw "$1")" /inheritance:r /grant:r "$USERNAME:(F)" >/dev/null
+  else
+    chmod 600 "$1"
+  fi
+}
+for side in "$WORK_A" "$WORK_B"; do
+  mkdir -p "$side/lifecycle"
+  printf "PLATFORM_REF=''\n" > "$side/lifecycle/config.example.env"
+  printf "PLATFORM_REF='0.0.0-alpha-19700101000000'\nFQDN='other.example.invalid'\n" > "$side/lifecycle/config.other.env"
+  make_owner_only "$side/lifecycle/config.other.env"
+  require_owner_only "$side/lifecycle/config.other.env" \
+    || fail "the fixture config under $side could not be made owner-only: it $REACH"
+done
+run_bash release-platform 0.6.0 alpha apps4.example.invalid
+run_pwsh release-platform 0.6.0 alpha apps4.example.invalid
+must "release: pinned apps4.example.invalid to 0.6.0-alpha-" 'the named installation is pinned'
+must "release: PLATFORM_REF=0.6.0-alpha-" 'the tag is written into the config beside the tree'
+must "written into 1 config(s) under lifecycle/" 'and the example beside it is not counted'
+same 'the mint that rewrites the config beside the tree'
+for side in "$WORK_A" "$WORK_B"; do
+  grep -q "^PLATFORM_REF='0.6.0-alpha-" "$side/lifecycle/config.other.env" \
+    || fail "the config under $side does not carry the tag as PLATFORM_REF"
+  grep -q "^FQDN='other.example.invalid'\$" "$side/lifecycle/config.other.env" \
+    || fail "the rewrite disturbed a line of the config under $side"
+  grep -q "^PLATFORM_REF=''\$" "$side/lifecycle/config.example.env" \
+    || fail "the rewrite touched the example under $side"
+  require_owner_only "$side/lifecycle/config.other.env" \
+    || fail "the rewrite took the access list off the config under $side: it $REACH"
+done
+ok 'the release rewrote PLATFORM_REF in place, left the example alone, and both configs still pass the owner-only guard asked with the real tools'
+
 # ===========================================================================
 # TWO — regenerate-install-branch, on the fixture the release above pinned
 #
@@ -522,7 +574,8 @@ same 'a launcher standing without its driver'
 
 # ── the planted defect for this pair ────────────────────────────────────────
 PLANTED_R="$WORK/planted-regenerate.sh"
-cp "$HERE/regenerate-driver.sh" "$WORK/regenerate-driver.sh"
+# The planted copy looks beside itself for its driver and for the guard it reads.
+cp "$HERE/regenerate-driver.sh" "$HERE/require-owner-only.sh" "$WORK/"
 sed 's/is pinned to/is pinned at/' "$HERE/regenerate-install-branch.sh" > "$PLANTED_R"
 grep -q 'is pinned at' "$PLANTED_R" || fail 'the planted line was not planted — the probe proves nothing'
 A_CODE=0
@@ -714,19 +767,160 @@ if diff -q "$OUT/a.out.n" "$OUT/b.out.n" >/dev/null; then
 fi
 ok 'the planted defect was caught — the comparison of the remove-slave pair can go red'
 
-echo "test: GREEN — every case above was measured on both spellings and answered identically."
+# ===========================================================================
+# FOUR — the owner-only guard, on the bash spelling alone
+#
+# ONE QUESTION, AND THE PLATFORM SAYS WHERE THE ANSWER IS. On Windows a mode says
+# nothing: Git Bash mounts every drive noacl, so stat answers 644 for every
+# writable file and chmod 600 changes nothing, and the access list read with
+# icacls is what counts. Everywhere else the mode is the answer. Both branches
+# are driven here with icacls, cygpath, stat and uname stood in for by stubs on
+# the path, so every case runs on every platform and answers the same. MSYSTEM
+# is set to pick the Windows branch and set EMPTY to leave it, because the MSYS
+# runtime puts the variable back when it is merely unset. Section ONE asked the
+# real tools once already, after the release's rewrite.
+#
+# WHAT PROVES THE STUBS ARE THE ONES ANSWERING: on Windows the real icacls would
+# refuse the probe, which inherits its directory's list, so a pass on the first
+# case can only come from the stub; and the real stat there answers 644, so a
+# pass on mode 600 can only come from the stub. On Linux and macOS there is no
+# icacls and no cygpath at all.
+# ===========================================================================
+STUB="$WORK/stub"
+STUB_PATH="$STUB"
+if command -v cygpath >/dev/null 2>&1; then STUB_PATH="$(cygpath -u "$STUB")"; fi
+mkdir -p "$STUB"
+# icacls prints the path it was given, a space and the first entry, then one
+# entry per line under it, a blank line and a count — the shape measured on
+# Windows 11. The entries come from the file STUB_ACL names.
+cat > "$STUB/icacls" <<'EOF'
+#!/usr/bin/env bash
+first=1
+while IFS= read -r entry; do
+  if [ "$first" = 1 ]; then printf '%s %s\n' "$1" "$entry"; first=0; else printf '%*s %s\n' "${#1}" '' "$entry"; fi
+done < "$STUB_ACL"
+printf '\nSuccessfully processed 1 files; Failed processing 0 files\n'
+EOF
+cat > "$STUB/cygpath" <<'EOF'
+#!/usr/bin/env bash
+shift $(($# - 1))
+printf '%s\n' "$1"
+EOF
+cat > "$STUB/stat" <<'EOF'
+#!/usr/bin/env bash
+case "$2" in '%U') printf 'mkadm\n' ;; '%a') printf '%s\n' "$STUB_MODE" ;; *) exit 1 ;; esac
+EOF
+cat > "$STUB/uname" <<'EOF'
+#!/usr/bin/env bash
+printf 'GNU/Linux\n'
+EOF
+chmod +x "$STUB"/*
+PROBE="$WORK/probe.env"
+printf "X='1'\n" > "$PROBE"
+
+guard() { # MSYSTEM value, the stubbed access list, the stubbed mode -> A_CODE, a.out, a.err
+  printf '%s\n' "$2" > "$STUB/acl"
+  A_CODE=0
+  MSYSTEM="$1" USERNAME=mkadm STUB_ACL="$STUB/acl" STUB_MODE="$3" PATH="$STUB_PATH:$PATH" \
+    bash -c '. "$1/require-owner-only.sh"; require_owner_only "$2" && echo passes || { echo "refused: $2 $REACH. Run: $OWNER_ONLY_COMMAND"; exit 1; }' _ "$HERE" "$PROBE" \
+    > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+ICACLS_LINE="icacls \"$PROBE\" /inheritance:r /grant:r \"mkadm:(F)\""
+
+guard MINGW64 'VPC1\mkadm:(F)' 644
+must 'passes' 'the owner alone passes on Windows, whatever the mode says'
+[ "$A_CODE" = '0' ] || fail "the owner alone must pass, got $A_CODE"
+[ ! -s "$OUT/a.err" ] || fail "the guard wrote to standard error: $(cat "$OUT/a.err")"
+
+guard MINGW64 $'BUILTIN\\Administrators:(I)(F)\nNT AUTHORITY\\SYSTEM:(I)(F)\nVPC1\\mkadm:(I)(F)' 644
+must 'passes' 'the owner beside SYSTEM and Administrators passes, inherited or not'
+[ "$A_CODE" = '0' ] || fail "owner, SYSTEM and Administrators must pass, got $A_CODE"
+
+guard MINGW64 $'vpc1\\MKADM:(F)\nnt authority\\system:(F)' 644
+must 'passes' 'the names are compared without case, the way Windows compares them'
+[ "$A_CODE" = '0' ] || fail "an account name in another case must still be the owner, got $A_CODE"
+
+guard MINGW64 $'Everyone:(R)\nVPC1\\mkadm:(F)' 644
+must "refused: $PROBE can be read by Everyone. Run: $ICACLS_LINE" \
+  'a stranger is refused by name, with the icacls line the PowerShell spelling prints'
+[ "$A_CODE" = '1' ] || fail "a stranger must refuse, got $A_CODE"
+
+guard MINGW64 $'VPC1\\CodexSandboxUsers:(I)(M)\nVPC1\\CodexSandboxUsers:(OI)(CI)(IO)(M)\nS-1-5-21-2543673324-2585280709-58404866-2868637010:(I)(M)\nNT AUTHORITY\\SYSTEM:(I)(F)\nBUILTIN\\Administrators:(I)(F)\nVPC1\\mkadm:(I)(F)' 644
+must "can be read by VPC1\\CodexSandboxUsers, S-1-5-21-2543673324-2585280709-58404866-2868637010. Run:" \
+  'every stranger is named once, in the order icacls lists them, and an unresolved SID is a stranger too'
+[ "$A_CODE" = '1' ] || fail "an inherited list with strangers must refuse, got $A_CODE"
+
+guard MINGW64 '' 644
+must "refused: $PROBE has an access list icacls did not answer. Run: $ICACLS_LINE" \
+  'an icacls that lists nobody is a refusal, not a pass'
+[ "$A_CODE" = '1' ] || fail "an empty icacls answer must refuse, got $A_CODE"
+
+guard '' 'Everyone:(R)' 600
+must 'passes' 'off Windows, mode 600 passes and the access list is never read'
+[ "$A_CODE" = '0' ] || fail "mode 600 must pass off Windows, got $A_CODE"
+
+guard '' 'VPC1\mkadm:(F)' 400
+must 'passes' 'and so does mode 400'
+[ "$A_CODE" = '0' ] || fail "mode 400 must pass off Windows, got $A_CODE"
+
+guard '' 'VPC1\mkadm:(F)' 644
+must "refused: $PROBE is mode 644. Run: chmod 600 $PROBE" 'off Windows, mode 644 is refused with the mode sentence as it stands'
+[ "$A_CODE" = '1' ] || fail "mode 644 must refuse off Windows, got $A_CODE"
+ok 'the guard: owner alone, owner with SYSTEM and Administrators, and another case pass; a stranger, an inherited list and an empty answer refuse by name with the icacls line; off Windows 600 and 400 pass and 644 refuses with the mode sentence'
+
+# ── the three launchers refuse in their own sentence, from the one guard ────
+# EACH LAUNCHER SAYS WHICH CREDENTIALS THE FILE CARRIES and the guard says who
+# can read it and what to run. The stranger case is driven through each of the
+# three, and the mode case through one, so the sentences are measured as a
+# person meets them and not only as the pieces they are built from.
+printf 'Everyone:(R)\nVPC1\\mkadm:(F)\n' > "$STUB/acl"
+run_guarded() { # the directory to stand in, MSYSTEM value, the stubbed mode, then the script and its arguments
+  local in="$1" msystem="$2" mode="$3"; shift 3
+  A_CODE=0
+  ( cd "$in" && MSYSTEM="$msystem" USERNAME=mkadm STUB_ACL="$STUB/acl" STUB_MODE="$mode" PATH="$STUB_PATH:$PATH" bash "$@" ) \
+    > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+run_guarded "$WORK_A" MINGW64 644 "$HERE/regenerate-install-branch.sh" apps3.example.invalid "$PROBE"
+must "regenerate: $PROBE can be read by Everyone and carries credentials, the elevation password of the machine among them. Run: $ICACLS_LINE. Nothing has been changed" \
+  'the regeneration refuses a stranger in its own sentence'
+[ "$A_CODE" = '77' ] || fail "the regeneration must refuse a readable config with 77, got $A_CODE"
+
+run_guarded "$WORK_A" MINGW64 644 "$HERE/install-machine.sh" "$PROBE"
+must "$PROBE can be read by Everyone and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: $ICACLS_LINE" \
+  'the launcher refuses a stranger in its own sentence'
+[ "$A_CODE" = '77' ] || fail "the launcher must refuse a readable config with 77, got $A_CODE"
+
+# The removal reads the master's branch and asks the slave first, so its config
+# stands outside every git tree and the guard is the refusal it reaches.
+REMOVECFG="$WORK/remove-config.env"
+cp "$MASTERCFG" "$REMOVECFG"
+run_guarded "$SLAVEWORK_A" MINGW64 644 "$HERE/remove-slave-from-master.sh" apps7.example.invalid "$REMOVECFG"
+must "remove-slave: $REMOVECFG can be read by Everyone and carries credentials, the elevation password of the machine among them. Run: icacls \"$REMOVECFG\" /inheritance:r /grant:r \"mkadm:(F)\". Nothing has been changed" \
+  'the removal refuses a stranger in its own sentence'
+[ "$A_CODE" = '77' ] || fail "the removal must refuse a readable config with 77, got $A_CODE"
+
+run_guarded "$WORK_A" '' 644 "$HERE/regenerate-install-branch.sh" apps3.example.invalid "$PROBE"
+must "regenerate: $PROBE is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 $PROBE. Nothing has been changed" \
+  'off Windows the regeneration refuses with the mode sentence as it stands'
+[ "$A_CODE" = '77' ] || fail "the regeneration must refuse mode 644 with 77, got $A_CODE"
+ok 'the three launchers refuse a readable config in their own sentence, built from the one guard'
+
+echo "test: GREEN — every case above was measured on both spellings and answered identically,"
+echo "test:   and the owner-only guard on the bash spelling alone."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
 echo "test:   the mint that names no installation — which pins nothing, moves no branch and"
 echo "test:   says the channel ceiling went unmeasured — beside the two counter-probes that"
-echo "test:   one argument and no more became optional,"
+echo "test:   one argument and no more became optional, the config beside the tree that a"
+echo "test:   release rewrites in place and that still passes the owner-only guard afterwards,"
 echo "test:   the four states a report can be in and a name that is no installation; the"
 echo "test:   six refusals a regeneration makes before it touches a machine, the pin it reads"
 echo "test:   off the branch, and a launcher without its driver; the eight refusals a removal"
 echo "test:   makes before it touches a master, the registration it reads off the master's"
-echo "test:   branch and the verdict on a slave that is gone. Three planted defects prove the"
-echo "test:   comparison can go red."
+echo "test:   branch and the verdict on a slave that is gone; the owner-only guard on both of"
+echo "test:   its branches, against stubbed tools, and the sentence each of the three launchers"
+echo "test:   builds from it. Three planted defects prove the comparison can go red."
 echo "test: not covered — an authenticated remote, two workstations minting at one moment, the"
 echo "test:   regeneration and the removal themselves on a machine, a slave that is still"
-echo "test:   answering, and the owner-only guard on a config."
+echo "test:   answering, and the PowerShell spelling's own reading of an access list."

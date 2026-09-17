@@ -293,7 +293,9 @@ if ($LASTEXITCODE -eq 0) {
 # OWNER-ONLY OR NOTHING. Windows says this with an access list rather than a mode,
 # so the question asked here is the one the bash twin asks and only the answer is
 # read differently: which accounts hold rights on it, beyond the owner and the
-# system.
+# system. require-owner-only.sh beside this file applies the same rule for the
+# bash twin on Windows; a principal admitted here is admitted there in the same
+# change.
 $acl = Get-Acl -Path $ConfigFile
 $owner = $acl.Owner
 $strangers = @($acl.Access | Where-Object {

@@ -105,6 +105,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRIVER="$HERE/regenerate-driver.sh"
 [ -r "$DRIVER" ] \
   || die 'regenerate-driver.sh is not beside this file. It IS the regeneration on the machine, and this only starts it' 66
+# shellcheck disable=SC1091
+. "$HERE/require-owner-only.sh" \
+  || die 'require-owner-only.sh is not beside this file. It is the guard every launcher puts on a config' 66
 
 command -v git >/dev/null 2>&1 \
   || die 'git is not on this path, and everything read below is read out of git'
@@ -155,13 +158,10 @@ say "regenerate: $FQDN carries role $ROLE in $MAP, and the branch is regenerated
 [ -r "$CONFIG" ] \
   || die "there is no config at $CONFIG. It states the installation this regenerates: copy config.example.env beside it, fill it in, and name it as the second argument" 66
 
-# OWNER-ONLY OR NOTHING. `stat` spells its arguments differently on Linux and on
-# macOS, and both are asked rather than one being assumed.
-MODE=$(stat -c '%a' "$CONFIG" 2>/dev/null || stat -f '%Lp' "$CONFIG" 2>/dev/null)
-case "$MODE" in
-  600|400) ;;
-  *) die "$CONFIG is mode ${MODE:-unknown} and carries credentials, the elevation password of the machine among them. Run: chmod 600 $CONFIG" 77 ;;
-esac
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
+# Windows, where a mode says nothing, and the mode everywhere else.
+require_owner_only "$CONFIG" \
+  || die "$CONFIG $REACH and carries credentials, the elevation password of the machine among them. Run: $OWNER_ONLY_COMMAND" 77
 
 # INSIDE A GIT TREE AND NOT IGNORED BY IT is refused: the mistake is made once and
 # cannot be taken back, because a token that reached a remote must be rotated.

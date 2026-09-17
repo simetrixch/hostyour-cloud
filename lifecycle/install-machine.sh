@@ -39,16 +39,15 @@ readonly DRIVER="$HERE/driver.sh"
 fail() { printf '\n  %s\n\n' "$*" >&2; exit "${2:-65}"; }
 
 [ -r "$DRIVER" ] || fail 'driver.sh is not beside this file — it IS the installation, and this only starts it' 66
+# shellcheck disable=SC1091
+. "$HERE/require-owner-only.sh" || fail 'require-owner-only.sh is not beside this file — it is the guard every launcher puts on a config' 66
 [ -r "$FILE" ]   || fail "there is no config at $FILE. Copy config.example.env, fill it in, then chmod 600 it" 66
 
 # ------------------------------------------------------- the file, and its guards
-# OWNER-ONLY OR NOTHING. `stat` spells its arguments differently on Linux and on
-# macOS, and both are asked rather than one being assumed.
-MODE=$(stat -c '%a' "$FILE" 2>/dev/null || stat -f '%Lp' "$FILE" 2>/dev/null)
-case "$MODE" in
-  600|400) ;;
-  *) fail "$FILE is mode ${MODE:-unknown} and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 $FILE" 77 ;;
-esac
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
+# Windows, where a mode says nothing, and the mode everywhere else.
+require_owner_only "$FILE" \
+  || fail "$FILE $REACH and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: $OWNER_ONLY_COMMAND" 77
 
 # INSIDE A GIT TREE AND NOT IGNORED BY IT is refused: the mistake is made once and
 # cannot be taken back, because a token that reached a remote must be rotated.

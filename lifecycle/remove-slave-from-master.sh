@@ -126,6 +126,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRIVER="$HERE/remove-slave-driver.sh"
 [ -r "$DRIVER" ] \
   || die 'remove-slave-driver.sh is not beside this file. It IS the removal on the machine, and this only starts it' 66
+# shellcheck disable=SC1091
+. "$HERE/require-owner-only.sh" \
+  || die 'require-owner-only.sh is not beside this file. It is the guard every launcher puts on a config' 66
 
 command -v git >/dev/null 2>&1 \
   || die 'git is not on this path, and the master keeps its books in git'
@@ -255,13 +258,10 @@ if git -C "$CONFIG_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
     || die "$CONFIG stands inside a git working tree that does not ignore it. A file of credentials belongs nowhere a commit can reach it: move it out, or name it in that tree's .gitignore" 77
 fi
 
-# OWNER-ONLY OR NOTHING. `stat` spells its arguments differently on Linux and on
-# macOS, and both are asked rather than one being assumed.
-MODE=$(stat -c '%a' "$CONFIG" 2>/dev/null || stat -f '%Lp' "$CONFIG" 2>/dev/null)
-case "$MODE" in
-  600|400) ;;
-  *) die "$CONFIG is mode ${MODE:-unknown} and carries credentials, the elevation password of the machine among them. Run: chmod 600 $CONFIG" 77 ;;
-esac
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
+# Windows, where a mode says nothing, and the mode everywhere else.
+require_owner_only "$CONFIG" \
+  || die "$CONFIG $REACH and carries credentials, the elevation password of the machine among them. Run: $OWNER_ONLY_COMMAND" 77
 
 # ------------------------------------------------------------- the machine
 # A MACHINE IS ADDRESSED BY ITS NAME, and by nothing else — the name in the map,
