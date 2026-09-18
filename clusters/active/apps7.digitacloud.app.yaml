@@ -21,7 +21,7 @@
 # spelling is identical on both sides on purpose: a reader comparing them by eye should not have to
 # know a mapping to see that they agree.
 stage: prod
-role: master+slave
+role: master
 booksCluster: apps7.digitacloud.app
 # THE PIN. The release this cluster stands on, in the one release grammar. A regeneration reads
 # this line off the map and hands it back as the ref it merges, so the field and the branch state
