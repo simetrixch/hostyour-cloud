@@ -1112,7 +1112,8 @@ seed_zones() { # the state directory to seed
   printf '%s\t%s\t%s\t%s\n' \
     a0000000000000000000000000000001 '*.apps6.example.invalid' A 203.0.113.6 \
     a0000000000000000000000000000002 argo.apps6.example.invalid A 203.0.113.6 \
-    a0000000000000000000000000000003 '*.apps7.example.invalid' A 203.0.113.7 \
+    a0000000000000000000000000000003 '*.apps7.example.invalid' CNAME apps7.example.invalid \
+    a0000000000000000000000000000014 vault.apps7.example.invalid CNAME other.invalid \
     a0000000000000000000000000000004 post.example.invalid A 203.0.113.6 \
     a0000000000000000000000000000005 post.example.invalid A 198.51.100.9 \
     a0000000000000000000000000000006 auth.dev.example.invalid A 203.0.113.7 \
@@ -1157,7 +1158,7 @@ untouched() { # what was being checked -> every origin, catalog and zone table s
     [ "$(git --git-dir="$catalog" for-each-ref --format='%(refname)' refs/heads | wc -l)" = '2' ] || fail "$label — a branch of the catalog moved"
   done
   for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
-    [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '12' ] || fail "$label — a record of the first zone went"
+    [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '13' ] || fail "$label — a record of the first zone went"
     [ "$(wc -l < "$state/zone-22222222222222222222222222222222.tsv")" = '3' ] || fail "$label — a record of the second zone went"
     ! grep -q '^DELETE' "$state/log" || fail "$label — a deletion reached the DNS provider"
   done
@@ -1245,7 +1246,8 @@ run_abandon_bash apps6.example.invalid apps6.example.invalid "$ACFG"
 run_abandon_pwsh apps6.example.invalid apps6.example.invalid "$ACFG"
 must "abandon: zone example.invalid: deleted A *.apps6.example.invalid -> 203.0.113.6, the platform host names of apps6.example.invalid" "the master's wildcard at its address goes"
 must "abandon: zone example.invalid: deleted A argo.apps6.example.invalid -> 203.0.113.6, a platform host name of apps6.example.invalid" 'and a platform host name written on its own'
-must "abandon: zone example.invalid: deleted A *.apps7.example.invalid -> 203.0.113.7, the platform host names of apps7.example.invalid" "the slave's wildcard at the slave's address goes"
+must "abandon: zone example.invalid: deleted CNAME *.apps7.example.invalid -> apps7.example.invalid, the platform host names of apps7.example.invalid" "the slave's wildcard, the CNAME deploy-branch writes, goes"
+must "abandon: zone example.invalid: left CNAME vault.apps7.example.invalid -> other.invalid, an alias to a name that is no cluster of this installation" 'an alias to a foreign name under a platform host name is left and named'
 must "abandon: zone example.invalid: deleted A post.example.invalid -> 203.0.113.6, the consumer digita-post at prod" "the prod consumer's record at the master goes"
 must "abandon: zone example.invalid: left A post.example.invalid -> 198.51.100.9, an address this installation never had" 'the foreign record under the same name is left and named'
 must "abandon: zone example.invalid: deleted A auth.dev.example.invalid -> 203.0.113.7, the consumer digita-auth at dev" "the dev consumer's record at the slave goes"
@@ -1255,8 +1257,8 @@ must "abandon: zone example.invalid: deleted TXT example.invalid (v=spf1 ip4:203
 must "abandon: zone platform.invalid: left TXT platform.invalid (v=spf1 include:_spf.other.invalid ip4:203.0.113.6 -all): it authorises senders beside this installation" 'an SPF merged with another sender is left and named'
 must "abandon: zone example.invalid: left TXT prod._domainkey.example.invalid (v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ): nothing on the branch proves that content the installation's" 'the DKIM key is left, because nothing on the branch proves it'
 must "abandon: zone example.invalid: left TXT _dmarc.example.invalid (v=DMARC1; p=none; rua=mailto:dmarc@example.inval): nothing on the branch proves that content the installation's" 'and so is the DMARC policy'
-must "abandon: zone platform.invalid: left MX platform.invalid -> 10 mx.other.invalid: this act judges A, AAAA and TXT records only" 'a record of another type is left and named'
-must "abandon: 9 records deleted, 5 left standing and listed above, 30 of the derived names carried nothing" 'the count says what went, what stayed and how many names were empty'
+must "abandon: zone platform.invalid: left MX platform.invalid -> 10 mx.other.invalid: this act judges A, AAAA, CNAME and TXT records only" 'a record of another type is left and named'
+must "abandon: 9 records deleted, 6 left standing and listed above, 29 of the derived names carried nothing" 'the count says what went, what stayed and how many names were empty'
 must "abandon: deleted branch apps6.example.invalid on origin" "the master's branch goes"
 must "abandon: deleted branch apps7.example.invalid on origin" "the slave's branch goes"
 must "abandon: deleted the books branch apps6.example.invalid of the catalog https://github.com/acme/catalog.git" "the catalog's books branch goes"
@@ -1286,7 +1288,7 @@ for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
   [ "$(grep -c '/dns_records name=' "$state/log")" = '40' ] || fail 'not every derived name was listed at the provider, or one was listed twice'
   ! grep -q 'dns_records name=apps6.example.invalid$' "$state/log" || fail "the machine's own address record was asked for"
   [ "$(grep -c '^PROBE' "$state/log")" = '3' ] || fail 'the three addresses were not each asked once'
-  [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '4' ] || fail 'the first zone does not keep exactly the foreign record, the own address record, the DKIM key and the DMARC policy'
+  [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '5' ] || fail 'the first zone does not keep exactly the foreign record, the foreign alias, the own address record, the DKIM key and the DMARC policy'
   grep -q '^a0000000000000000000000000000008	apps6.example.invalid	A	203.0.113.6$' "$state/zone-11111111111111111111111111111111.tsv" \
     || fail "the machine's own address record is gone"
   [ "$(wc -l < "$state/zone-22222222222222222222222222222222.tsv")" = '2' ] || fail 'the second zone does not keep exactly the merged SPF and the MX'

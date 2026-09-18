@@ -35,6 +35,9 @@ global:
   alertRecipients: ['check@check.example.invalid']
   catalogUrl: https://github.com/check/check.git
   catalogRepo: check/check
+  # The platform's GitHub App, answered: the catalog credentials render in their App form, the
+  # shape every installation with the App carries; the token form is the same templates' else.
+  githubApp: {appId: '4982222'}
   vaultKubernetesAuthPath: kubernetes-check
   registryPullUser: check-pull
   registryPushUser: check-push

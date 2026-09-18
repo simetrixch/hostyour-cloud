@@ -209,6 +209,9 @@ ADDRESSES=''  # every address of the installation, space-separated
 CLUSTERS=''   # every cluster of the installation, one line each: fqdn, a tab, its addresses
 add_name() { NAMES="${NAMES}${1}"$'\t'"${2}"$'\n'; NAME_COUNT=$((NAME_COUNT + 1)); }
 is_address() { case " $ADDRESSES " in *" $1 "*) return 0 ;; esac; return 1; }
+# A CNAME whose content is one of this installation's own cluster names is the installation's: the
+# wildcard deploy-branch writes, `*.<fqdn>` -> `<fqdn>` (hostyour-deploy#35).
+is_cluster_name() { case "$CLUSTERS" in *"$1"$'\t'*) return 0 ;; esac; return 1; }
 stage_apex() { case "$1" in prod) printf '%s\n' "$UNIT_APEX" ;; *) printf '%s.%s\n' "$1" "$UNIT_APEX" ;; esac; }
 
 if [ "$BOOKS" = yes ]; then
@@ -332,7 +335,7 @@ fi
 
 if [ "$BOOKS" = yes ]; then
   say "abandon: $MASTER itself is the machine's name and not the installation's, so its own address record stays"
-  say "abandon: $NAME_COUNT names derived; an A or AAAA record among them at ${ADDRESSES// /, } is this installation's, and so is an SPF that authorises those addresses and nobody else"
+  say "abandon: $NAME_COUNT names derived; an A or AAAA record among them at ${ADDRESSES// /, } is this installation's, so is a CNAME to one of its own cluster names, and so is an SPF that authorises those addresses and nobody else"
 fi
 
 # ================================================================== GUARD
@@ -485,6 +488,9 @@ if [ "$BOOKS" = yes ]; then
         A|AAAA)
           if is_address "$content"; then ours=yes; shown="$type $name -> $content"
           else say "abandon: zone $ZONE_NAME: left $type $name -> $content, an address this installation never had"; fi ;;
+        CNAME)
+          if is_cluster_name "$content"; then ours=yes; shown="$type $name -> $content"
+          else say "abandon: zone $ZONE_NAME: left $type $name -> $content, an alias to a name that is no cluster of this installation"; fi ;;
         TXT)
           text="$(txt_text "$content")"
           lowered="$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')"
@@ -494,7 +500,7 @@ if [ "$BOOKS" = yes ]; then
               else say "abandon: zone $ZONE_NAME: left TXT $name ($text): it authorises senders beside this installation, or none of its addresses; take its mechanism out by hand"; fi ;;
             *) say "abandon: zone $ZONE_NAME: left TXT $name (${text:0:48}): nothing on the branch proves that content the installation's" ;;
           esac ;;
-        *) say "abandon: zone $ZONE_NAME: left $type $name -> $content: this act judges A, AAAA and TXT records only" ;;
+        *) say "abandon: zone $ZONE_NAME: left $type $name -> $content: this act judges A, AAAA, CNAME and TXT records only" ;;
       esac
       if [ "$ours" = yes ]; then
         cf DELETE "/zones/$ZONE_ID/dns_records/$id" || die "$WHY. $STANDS" 69

@@ -61,3 +61,6 @@ AGENTS.md
 # nothing true about the product, and a merge onto an install branch carries it to
 # every machine.
 install-transcripts/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
