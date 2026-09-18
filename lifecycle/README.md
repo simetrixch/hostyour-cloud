@@ -286,7 +286,9 @@ names every record the installation wrote — the platform host names of each cl
 `<label>.<stage apex>`, every tenant's `*.<subdomain>.<stage apex>`, and the address, SPF, DKIM and
 DMARC records of each sender domain — and asks the DNS provider, with the token in the config, what
 stands under each name. A record is deleted only where its content proves it the installation's: an A
-or AAAA at one of the installation's addresses, or an SPF that authorises those addresses and nobody
+or AAAA at one of the installation's addresses, a CNAME to one of its own cluster names (the wildcard
+`*.<fqdn>` deploy-branch writes as an alias to `<fqdn>`, so every platform name under the installation
+answers what the machine's own record answers), or an SPF that authorises those addresses and nobody
 else. Everything else under a derived name is listed by name and left, because nothing on the branch
 proves it — a foreign address under a unit's name, a DKIM key whose private half lived in the Vault
 that is gone, a DMARC policy, an SPF merged with another sender's mechanisms. The machine's own
