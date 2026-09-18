@@ -36,6 +36,9 @@ registration:
   # which is the fail-closed direction: a unit that never declared a pattern must not be able to
   # write one into its own claim.
   keyPatternsJson: "[]"
+  # The Pub/Sub half of the redis grant, same shape and same fail-closed reading: a claim naming a
+  # channel outside this set is refused, and EMPTY refuses every channel a claim would name.
+  channelPatternsJson: "[]"
 
 # The three label namespaces the PLATFORM decides on. A unit's own Namespace object may carry nothing
 # under them beyond the value-exact pairs below: Vault binds ESO roles by a namespace label selector,

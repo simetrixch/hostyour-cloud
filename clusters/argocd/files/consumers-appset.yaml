@@ -278,6 +278,12 @@ spec:
                   {{- range (dig "keyPatterns" (list) .) }}
                   - "{{ . }}"
                   {{- end }}
+                # The Pub/Sub channels the same user may open — a channel is not a key, so the
+                # grant is a second list, read the same way (#229).
+                channelPatterns:
+                  {{- range (dig "channelPatterns" (list) .) }}
+                  - "{{ . }}"
+                  {{- end }}
         # 2. Per-consumer PostgreSQL instance (clusters/units/postgresql), rendered ONLY
         #    when the registration's services[] includes "postgresql": a
         #    consumer that claims postgresql gets its OWN instance in its OWN

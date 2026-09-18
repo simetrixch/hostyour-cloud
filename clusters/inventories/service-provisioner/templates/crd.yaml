@@ -77,6 +77,19 @@ spec:
                     fail-closed — a claim naming none is an Error, never a user that
                     reaches every key. Read back out of the credentials Secret as
                     REDIS_KEY_PATTERNS rather than re-derived by the reader.
+                channelPatterns:
+                  type: array
+                  items: { type: string }
+                  description: >-
+                    redis — the LITERAL Pub/Sub channel patterns the claim's ACL user may
+                    PUBLISH to and SUBSCRIBE, each written as redis writes one after `&`
+                    (`example:notify:*`). A channel is not a key: a user granted every key
+                    it asked for still gets NOPERM on PUBLISH, because the ACL rule starts
+                    with `resetchannels` and only a `&` rule opens a channel. Same contract
+                    as keyPatterns — VERBATIM, platform-controlled, held by the unit's
+                    fence — and OPTIONAL: a claim naming none keeps `resetchannels`, which
+                    is what every unit standing before the field ran with. Read back out
+                    of the credentials Secret as REDIS_CHANNEL_PATTERNS.
                 secretName:
                   type: string
                   description: name of the credentials Secret to write (default "<claim>-<service>")
