@@ -141,7 +141,7 @@ PIN="$(printf '%s\n' "$MAPTEXT" | value_in_text release)"
 
 say "regenerate: $FQDN is pinned to $PIN in $MAP, and that is the state this brings it to"
 # THE ROLE IS READ OFF THE MAP TOO, AND IT OVERRULES THE CONFIG'S. The map is the writable place:
-# a master that took the slave part through the Manager states `master+slave` there while its
+# a map may state a role its config never said while its
 # config still says the role it was born with, and a regeneration answered off the config alone
 # would write the birth role back and take the slave part with it (hostyour-cloud#220).
 ROLE="$(printf '%s\n' "$MAPTEXT" | value_in_text role)"

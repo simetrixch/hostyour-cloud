@@ -157,7 +157,7 @@ if ($onRemote.Count -eq 0) {
 
 Say "regenerate: $Fqdn is pinned to $pin in $map, and that is the state this brings it to"
 # THE ROLE IS READ OFF THE MAP TOO, AND IT OVERRULES THE CONFIG'S. The map is the writable place:
-# a master that took the slave part through the Manager states `master+slave` there while its
+# a map may state a role its config never said while its
 # config still says the role it was born with, and a regeneration answered off the config alone
 # would write the birth role back and take the slave part with it (hostyour-cloud#220).
 $role = Read-MapValue $mapText 'role'

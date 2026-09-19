@@ -29,8 +29,8 @@ description: |
       <mount>/<stage>/app/observability-agent/*.
 
   Placed by clusters/inventories/observability-agent/app.yaml — runsOn: pure-slave, so the app
-  generator creates it only on a cluster whose role is exactly slave. A master+slave machine carries
-  the full stack below, which scrapes its own slave-side workloads; an agent beside it would own the
+  generator creates it only on a cluster whose role is slave. A master carries the full stack
+  below, which scrapes its own slave-side workloads; an agent beside it would own the
   same DaemonSet `alloy` and never finish syncing (hostyour-cloud#188). Catalog entry in
   clusters/argocd/files/platform-apps-appset.yaml (project observability, wave 30),
   deployed into the `observability` namespace — the observability plane on this

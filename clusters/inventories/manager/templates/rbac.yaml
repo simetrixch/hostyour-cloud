@@ -152,7 +152,7 @@ surface of the manager's onboarding adapters:
     because the object is: a guid-named cluster-scoped CR has no namespace to
     bind a Role in. On a SLAVE the purge runs over the harvested cluster-admin
     bearer, which already covers this; on a cluster the manager reaches with
-    its OWN pod ServiceAccount — the master, and a master+slave — nothing granted
+    its OWN pod ServiceAccount — the master — nothing granted
     it operator.hostyour.cloud, so the delete would 403 mid-run.
   * manager-tenant-bootstrap-reader (ClusterRole) — get on Secrets, narrowed
     by resourceNames to the ONE name `hostyour-app-secrets`. The tenant first-admin
