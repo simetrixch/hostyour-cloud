@@ -160,9 +160,15 @@ Say "regenerate: $Fqdn is pinned to $pin in $map, and that is the state this bri
 # a map may state a role its config never said while its
 # config still says the role it was born with, and a regeneration answered off the config alone
 # would write the birth role back and take the slave part with it (hostyour-cloud#220).
+# A map stating `master+slave` was written before hostyour-cloud#232 retired the word: a master
+# carries the slave part as well, so that map names a master, and the branch is regenerated as one.
 $role = Read-MapValue $mapText 'role'
 if (-not $role) {
   Stop-Here "$map on branch $Fqdn carries no role line, so nothing records which parts this installation carries; every map states one" 65
+}
+if ($role -eq 'master+slave') {
+  Say "regenerate: $Fqdn carries role master+slave in $map, a word retired by hostyour-cloud#232: a master carries the slave part as well, so it is regenerated as role master"
+  $role = 'master'
 }
 Say "regenerate: $Fqdn carries role $role in $map, and the branch is regenerated as that; the config's ROLE seeds a first installation only"
 

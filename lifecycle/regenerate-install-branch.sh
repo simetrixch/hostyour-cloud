@@ -144,9 +144,15 @@ say "regenerate: $FQDN is pinned to $PIN in $MAP, and that is the state this bri
 # a map may state a role its config never said while its
 # config still says the role it was born with, and a regeneration answered off the config alone
 # would write the birth role back and take the slave part with it (hostyour-cloud#220).
+# A map stating `master+slave` was written before hostyour-cloud#232 retired the word: a master
+# carries the slave part as well, so that map names a master, and the branch is regenerated as one.
 ROLE="$(printf '%s\n' "$MAPTEXT" | value_in_text role)"
 [ -n "$ROLE" ] \
   || die "$MAP on branch $FQDN carries no role line, so nothing records which parts this installation carries; every map states one" 65
+if [ "$ROLE" = 'master+slave' ]; then
+  say "regenerate: $FQDN carries role master+slave in $MAP, a word retired by hostyour-cloud#232: a master carries the slave part as well, so it is regenerated as role master"
+  ROLE=master
+fi
 say "regenerate: $FQDN carries role $ROLE in $MAP, and the branch is regenerated as that; the config's ROLE seeds a first installation only"
 
 # ------------------------------------------------------- the config, and its guards
