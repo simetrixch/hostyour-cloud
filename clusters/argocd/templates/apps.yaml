@@ -76,10 +76,14 @@ no appset spells the rule again; hostyour-manager's shared/unit-host.ts composes
 {{- $stageApexDev := printf "dev.%s" $unitApex }}
 {{- $stageApexTest := printf "test.%s" $unitApex }}
 {{- $stageApexProd := $unitApex }}
-{{- $roleParts := splitList "+" $role }}
-{{- /* The role as ONE word for the selector's third slot: `pure-master` or `pure-slave` on a
-single-part role, `master+slave` verbatim on a machine carrying both. */ -}}
-{{- $roleWhole := ternary (printf "pure-%s" $role) $role (eq (len $roleParts) 1) }}
+{{- /* THE PARTS A ROLE CARRIES. A master carries the slave part as well (hostyour-cloud#232): the
+data services and every workload a slave runs stand on it too, so a unit can be placed on any
+cluster of the installation. So `master` fills the two part slots with `master` and `slave`, and a
+`slave` with `slave` twice. The third slot is the role as ONE word, for an application that belongs
+to one machine shape only: `pure-slave` on a slave — observability-agent collects for a master's
+stack, and a master carries that stack itself — and `master` on a master. */ -}}
+{{- $roleParts := ternary (list "master" "slave") (list $role) (eq $role "master") }}
+{{- $roleWhole := ternary "pure-slave" $role (eq $role "slave") }}
 {{- /*
 WHERE THIS CLUSTER'S ARGOCD OBJECTS STAND. On a cluster that carries the master
 part the reconciler runs in the namespace `argocd`. A slave's instance does not:

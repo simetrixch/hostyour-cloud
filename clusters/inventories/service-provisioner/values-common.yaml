@@ -8,14 +8,11 @@
 # THE SAME VALUES ON EVERY CLUSTER. app.yaml says runsOn: every-cluster, and a
 # values file cannot see the cluster's role — clusters/inventories/deploy-state/values-common.yaml
 # states that rule. clusters/inventories/mongodb/app.yaml and clusters/inventories/redis/app.yaml say
-# runsOn: slave, so on a cluster running neither, the two hosts below name
-# Services that cluster has not got. A redis claim there ends in an Error on
-# .status. A mongodb claim
-# does NOT, when the claim's own namespace carries a mongodb-credentials Secret:
-# templates/configmap.yaml resolves that case namespace-locally and never reads
-# MONGO_HOST. What serves there in every case is postgresql — no host at all,
-# resolved from the claim's own namespace — and registry, whose pull secret stands
-# on every cluster.
+# runsOn: slave, and a master carries the slave part as well (hostyour-cloud#232), so the two hosts
+# below name Services every cluster of the installation has got. A mongodb claim in a namespace
+# carrying a mongodb-credentials Secret is resolved namespace-locally by templates/configmap.yaml,
+# which never reads MONGO_HOST for it. postgresql is served with no host at all, resolved from the
+# claim's own namespace, and registry from the pull secret that stands on every cluster.
 
 controller:
   serviceAccountName: service-provisioner

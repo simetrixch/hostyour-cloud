@@ -233,8 +233,8 @@ seed_installation apps9.example.invalid prod ''
 # The fourth exists so the mint cases at the end of this section have an installation
 # nothing else reads: every one of the three above is load-bearing somewhere — apps3's
 # pin, apps9's missing pin and apps5's unresolvable one are each asserted in TWO.
-# A master that took the slave part: its map says so, and a regeneration has to read it there.
-seed_installation apps4.example.invalid dev '' master+slave
+# Its map states a role its config never said, and a regeneration has to read it there.
+seed_installation apps4.example.invalid dev '' slave
 git -C "$SEED" checkout --quiet -b work/no-map master
 git -C "$SEED" push --quiet origin work/no-map
 git -C "$SEED" checkout --quiet master
@@ -565,13 +565,12 @@ must "there is no config at" 'a run with no config to state the installation is 
 [ "$A_CODE" = '66' ] || fail "a missing config must end with 66, got $A_CODE"
 same 'the pin read off the branch, and a missing config'
 
-# THE ROLE IS THE MAP'S AND NOT THE CONFIG'S. A master that took the slave part
-# through the Manager states master+slave on its branch while its config still
-# says master; the regeneration names the map's role, which is what it appends
-# behind the config so that the map keeps both parts (hostyour-cloud#220).
+# THE ROLE IS THE MAP'S AND NOT THE CONFIG'S. apps4's branch states slave while
+# its config says master; the regeneration names the map's role, which is what it
+# appends behind the config so that the map keeps it (hostyour-cloud#220).
 run_bash regenerate-install-branch apps4.example.invalid "$NOCONFIG"
 run_pwsh regenerate-install-branch apps4.example.invalid "$NOCONFIG"
-must "regenerate: apps4.example.invalid carries role master+slave in clusters/active/apps4.example.invalid.yaml" 'a map stating master+slave is named as such, whatever a config would say'
+must "regenerate: apps4.example.invalid carries role slave in clusters/active/apps4.example.invalid.yaml" 'a map stating slave is named as such, whatever a config would say'
 must "there is no config at" 'and the run still stops on the config, before a session is opened'
 same 'the role read off the branch of a master that took the slave part'
 

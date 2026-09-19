@@ -131,9 +131,8 @@ ANSWERS_DIR="/home/$OPERATOR/.regenerate-answers"
 # the books stand on the master's branch, which is the branch this regenerates —
 # so master is the only role it admits. What every part of this machine carries
 # is the `role` ANSWER, which the launcher reads off the map on the branch and
-# appends to the config (the map is the writable place — a master that took the
-# slave part states `master+slave` there — and the config's ROLE seeds a first
-# installation only), and the stamps below write.
+# appends to the config (the map is the writable place, and the config's ROLE
+# seeds a first installation only), and the stamps below write.
 readonly RUN_ROLE=master
 # THE TREE THE MERGE HAPPENS IN. The program names it on every `repository:` row
 # of its own; this names it once, to look at before the program is started.
