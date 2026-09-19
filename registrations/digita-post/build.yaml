@@ -1,0 +1,9 @@
+name: "digita-post"
+repoURL: "https://github.com/digitaplatform/digita-post.git"
+repoCredentialId: "cred_01M2VKVDRX5HD4RV8X7SRDWDHQ"
+owner: "simetrix"
+onboardedAt: "2026-09-19T01:19:42.809Z"
+suspended: false
+quiesced: false
+removing: false
+builds: ["digita-post"]
