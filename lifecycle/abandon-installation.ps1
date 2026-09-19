@@ -225,6 +225,9 @@ $addresses = @()                                            # every address of t
 $clusters = [System.Collections.Generic.List[object]]::new() # every cluster of the installation, with its addresses
 function Add-Name([string] $Name, [string] $What) { $script:names.Add(@{ name = $Name; what = $What }) }
 function Test-Address([string] $Content) { return ($script:addresses -contains $Content) }
+# A CNAME whose content is one of this installation's own cluster names is the installation's: the
+# wildcard deploy-branch writes, `*.<fqdn>` -> `<fqdn>` (hostyour-deploy#35).
+function Test-ClusterName([string] $Content) { return [bool] ($script:clusters | Where-Object { $_.fqdn -ceq $Content }) }
 function Get-StageApex([string] $Stage) { if ($Stage -eq 'prod') { return $script:unitApex } else { return "$Stage.$script:unitApex" } }
 
 $stage = ''; $unitApex = ''; $platformDomain = ''
@@ -359,7 +362,7 @@ try {
 
   if ($books) {
     Say "abandon: $MasterFqdn itself is the machine's name and not the installation's, so its own address record stays"
-    Say "abandon: $($names.Count) names derived; an A or AAAA record among them at $($addresses -join ', ') is this installation's, and so is an SPF that authorises those addresses and nobody else"
+    Say "abandon: $($names.Count) names derived; an A or AAAA record among them at $($addresses -join ', ') is this installation's, so is a CNAME to one of its own cluster names, and so is an SPF that authorises those addresses and nobody else"
   }
 
   # ================================================================== GUARD
@@ -535,6 +538,11 @@ try {
             else { Say "abandon: zone ${zoneName}: left $type $name -> $content, an address this installation never had" }
             break
           }
+          'CNAME' {
+            if (Test-ClusterName $content) { $ours = $true; $shown = "$type $name -> $content" }
+            else { Say "abandon: zone ${zoneName}: left $type $name -> $content, an alias to a name that is no cluster of this installation" }
+            break
+          }
           'TXT' {
             $text = Get-TxtText $content
             $lowered = $text.ToLowerInvariant()
@@ -547,7 +555,7 @@ try {
             }
             break
           }
-          default { Say "abandon: zone ${zoneName}: left $type $name -> ${content}: this act judges A, AAAA and TXT records only" }
+          default { Say "abandon: zone ${zoneName}: left $type $name -> ${content}: this act judges A, AAAA, CNAME and TXT records only" }
         }
         if ($ours) {
           if (-not (Invoke-Cf 'DELETE' "/zones/$zoneId/dns_records/$id")) { Stop-Here "$script:Why. $stands" 69 }

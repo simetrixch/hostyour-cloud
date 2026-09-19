@@ -264,16 +264,21 @@ spec:
             # reads, so one installation still names its catalog once.
             - name: CATALOG_REPO
               value: {{ .Values.github.deployRepo | default (required "manager: global.catalogUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.catalogUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
+            {{- if not .Values.githubApp.appId }}
             # The write half pushes tenant pointers to the tenant catalog@master. It REUSES the
-            # same org GITOPS_REPO_PAT, which must therefore carry write scope for the catalog too; its
-            # presence is the discriminator that registers the tenant Run family (config.ts). The
-            # family's kube access rides the pod ServiceAccount in-cluster (grants shipped with this
-            # chart: templates/rbac.yaml).
+            # same org GITOPS_REPO_PAT, which must therefore carry write scope for the catalog too.
+            # ONLY WHERE THE INSTALLATION HAS NO GITHUB APP: with the App answered the Manager
+            # writes the catalog with the App's own token, minted at every open (hostyour-manager#194),
+            # and a PAT delivered beside it is the one thing its readiness row catalog.identity
+            # turns red on. CATALOG_REPO above is what registers the tenant Run family (config.ts).
+            # The family's kube access rides the pod ServiceAccount in-cluster (grants shipped with
+            # this chart: templates/rbac.yaml).
             - name: CATALOG_WRITE_PAT
               valueFrom:
                 secretKeyRef:
                   name: manager-github
                   key: write-pat
+            {{- end }}
             {{- end }}
             {{- end }}
             # How this manager reaches the ansiwise deployment engine on a machine

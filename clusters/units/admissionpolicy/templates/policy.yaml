@@ -63,6 +63,7 @@ four admits an apostrophe.
 {{- $trackingId := required "unit-admissionpolicy: trackingIdAnnotation is required — without it the cluster-scoped clauses would reach every namespace on the cluster instead of the ones this unit owns" .Values.trackingIdAnnotation }}
 {{- $services := required "unit-admissionpolicy: registration.servicesJson is required — the attested claim list decides two of the granted namespace labels, and an absent one would grant them to a unit that never claimed them" .Values.registration.servicesJson | fromJsonArray }}
 {{- $keyPatterns := required "unit-admissionpolicy: registration.keyPatternsJson is required — it is the granted set every ServiceClaim of this namespace is held to, and an absent one would leave the clause comparing against nothing" .Values.registration.keyPatternsJson | fromJsonArray }}
+{{- $channelPatterns := required "unit-admissionpolicy: registration.channelPatternsJson is required — the Pub/Sub half of the same granted set, read the same way" .Values.registration.channelPatternsJson | fromJsonArray }}
 {{- $namespace := printf "%s-%s" $name $stage }}
 {{- $policyName := printf "consumer-%s" $namespace }}
 {{- /* THE PLATFORM HOST IS DELIVERED, never composed here: `<label>.<stage apex>`, handed in by
@@ -82,6 +83,10 @@ by construction (simetrixch/hostyour-cloud#208). */ -}}
 {{- $grantedPatterns := list }}
 {{- range $keyPatterns }}
 {{- $grantedPatterns = append $grantedPatterns (printf "'%s'" .) }}
+{{- end }}
+{{- $grantedChannels := list }}
+{{- range $channelPatterns }}
+{{- $grantedChannels = append $grantedChannels (printf "'%s'" .) }}
 {{- end }}
 {{- $ruleHosts := list }}
 {{- $tlsHosts := list }}
@@ -160,6 +165,8 @@ spec:
       message: "a consumer Service must be of type ClusterIP"
     - expression: {{ printf "request.resource.resource != 'serviceclaims' || !has(object.spec.keyPatterns) || object.spec.keyPatterns.all(p, p in [%s])" (join ", " $grantedPatterns) | quote }}
       message: {{ printf "a consumer ServiceClaim may ask for the redis key patterns its registration grants and no others (%s) — one redis serves every consumer of this cluster out of ONE keyspace, and the patterns an ACL user may touch are the only thing that separates two of them in it, so a pattern a chart wrote for itself is a self-granted read of a neighbour's keys" (default "none" (join ", " $keyPatterns)) | quote }}
+    - expression: {{ printf "request.resource.resource != 'serviceclaims' || !has(object.spec.channelPatterns) || object.spec.channelPatterns.all(c, c in [%s])" (join ", " $grantedChannels) | quote }}
+      message: {{ printf "a consumer ServiceClaim may ask for the redis channel patterns its registration grants and no others (%s) — a channel is not a key, and a Pub/Sub channel a chart opened for itself would read a neighbour's notifications out of the one redis" (default "none" (join ", " $channelPatterns)) | quote }}
     - expression: {{ printf "request.resource.resource != 'serviceaccounts' || !has(object.metadata.annotations) || (%s)" $aliasClaims | quote }}
       message: {{ printf "a consumer ServiceAccount may claim %s only as %s and %s only as %s — the Vault login alias reads that pair, and the consumer policy opens secret/<stage>/consumer/<unit>/* on it" $aliasUnit $name $aliasStage $stage | quote }}
     - expression: {{ printf "request.resource.resource != 'namespaces' || !(%s) || object.metadata.name == '%s'" $ownedByUnit $namespace | quote }}

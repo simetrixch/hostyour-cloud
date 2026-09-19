@@ -1,9 +1,9 @@
 # lifecycle
 
-The life of one installation: the act that brings it into being, every release put on it afterwards,
-the registration one installation holds for another taken off again, and what an installation whose
-machines are gone left outside them taken down. Everything here runs from an operator's own machine —
-Windows, Linux or macOS — and nothing here runs in a cluster.
+The life of one installation: the GitHub App it acts under, the act that brings it into being, every
+release put on it afterwards, the registration one installation holds for another taken off again, and
+what an installation whose machines are gone left outside them taken down. Everything here runs from
+an operator's own machine — Windows, Linux or macOS — and nothing here runs in a cluster.
 
 **The subject is an installation, not a delivery.** A first install delivers nothing; it creates. The
 acts below share a subject rather than a purpose, which is why they stand in one folder.
@@ -12,6 +12,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 
 | act | what it does |
 |---|---|
+| `create-github-app.sh` / `.ps1` | creates the platform's GitHub App in the customer's organisation, installs it there, and writes `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PRIVATE_KEY` into the config; two clicks in the browser stay |
 | `install-machine.sh` / `.ps1` | installs a first master from zero: a machine, a branch, a cluster and the platform services on it |
 | `release-platform.sh` / `.ps1` | with an fqdn, cuts a release of the platform tree and pins ONE installation to it; without one, cuts the release and pins nothing, which is what a first machine names as `PLATFORM_REF` |
 | `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
@@ -38,6 +39,36 @@ generates targets the install branch. `regenerate-install-branch` is what brings
 pin, by merging the tag into it. It reads the ref off that same line rather than being told it
 again, so the pin and the regeneration are one statement instead of two that can disagree. Between
 the two acts somebody can read what the pin now says and stop.
+
+# Creating the platform's GitHub App
+
+```
+bash lifecycle/create-github-app.sh lifecycle/config.apps4.env           # or:  pwsh ./lifecycle/create-github-app.ps1 ...
+bash lifecycle/create-github-app.sh lifecycle/config.apps4.env acme      # the organisation named, not read off CATALOG_REPO
+```
+
+The three answers `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PRIVATE_KEY` of the
+config are what the Manager creates a tenant's own apps repository under, and no API creates a GitHub
+App from nothing or installs one on an organisation. This act does what an API can do and leaves the
+two clicks GitHub keeps for a person. It starts a listener on `127.0.0.1`, opens the browser on a page
+that posts the App's manifest to the organisation's new-App page — the name `<organisation>-platform-manager`,
+the homepage `https://manager.<UNIT_APEX>`, the six repository permissions `actions`, `administration`,
+`contents`, `webhooks` and `workflows` at write and `metadata` at read, no webhook, private — and waits.
+The first click is GitHub's own **Create GitHub App**. GitHub sends the browser back with a code, the
+act turns the code into the App, refuses when the answered permissions are not the six asked, and
+writes `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` into the config at once, in place, the key as one
+line with `\n` for each line break. It then opens the App's installation page for the second click,
+**Install** with **All repositories**, asks GitHub every five seconds with a JWT signed by the key
+until the installation stands, refuses one made on selected repositories, and writes
+`GITHUB_APP_INSTALLATION_ID`. The organisation is the owner of `CATALOG_REPO` unless named as the
+second argument. The browser is `$BROWSER` where that is set, and the platform's own opener otherwise.
+
+The key is written the moment the App stands, because it exists in that run's memory and in the
+config and nowhere else. So a run that ends between the two clicks — the ten-minute bound, a closed
+browser, an installation on selected repositories — leaves a config carrying the App's id and key,
+and the next run finds them, skips the creation, and installs. A config carrying all three refuses.
+The config is asked before the browser opens whether anybody but the owner can read it, and again
+after each write, with the same guard every launcher applies.
 
 # Installing a first master
 
@@ -255,7 +286,9 @@ names every record the installation wrote — the platform host names of each cl
 `<label>.<stage apex>`, every tenant's `*.<subdomain>.<stage apex>`, and the address, SPF, DKIM and
 DMARC records of each sender domain — and asks the DNS provider, with the token in the config, what
 stands under each name. A record is deleted only where its content proves it the installation's: an A
-or AAAA at one of the installation's addresses, or an SPF that authorises those addresses and nobody
+or AAAA at one of the installation's addresses, a CNAME to one of its own cluster names (the wildcard
+`*.<fqdn>` deploy-branch writes as an alias to `<fqdn>`, so every platform name under the installation
+answers what the machine's own record answers), or an SPF that authorises those addresses and nobody
 else. Everything else under a derived name is listed by name and left, because nothing on the branch
 proves it — a foreign address under a unit's name, a DKIM key whose private half lived in the Vault
 that is gone, a DMARC policy, an SPF merged with another sender's mechanisms. The machine's own

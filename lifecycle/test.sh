@@ -16,6 +16,9 @@
 # between two installations. abandon-installation is the end of one: it takes
 # down what an installation whose machines are gone left outside them, which is
 # its DNS records, its branches on origin and its books branch in the catalog.
+# create-github-app is what makes an installation's GitHub App: it creates the
+# App in the customer's organisation through the manifest flow, installs it
+# there, and writes the three answers into the config.
 # Every one of them is written twice, in bash and in PowerShell, and the two
 # spellings are held to printing the same bytes.
 #
@@ -35,11 +38,11 @@
 # THE PLANTED DEFECTS. A copy of status.sh with one printed line changed is run
 # against the untouched status.ps1, a copy of regenerate-install-branch.sh with
 # one printed line changed against the untouched .ps1, and a copy of
-# remove-slave-from-master.sh and of abandon-installation.sh likewise. All four
-# comparisons must go RED. Without them a green run would only prove that the
-# comparisons found nothing, which is also what a comparison that stopped looking
-# prints. The innocent beside them is every other case here, which must stay
-# green.
+# remove-slave-from-master.sh, of abandon-installation.sh and of
+# create-github-app.sh likewise. All five comparisons must go RED. Without them
+# a green run would only prove that the comparisons found nothing, which is
+# also what a comparison that stopped looking prints. The innocent beside them
+# is every other case here, which must stay green.
 #
 # THE ABANDONMENT IS DRIVEN END TO END, in section FIVE, because everything it
 # writes to is a fixture: the branches stand in directory origins, and the DNS
@@ -48,7 +51,9 @@
 # logs every call so the exact calls can be asserted rather than the printed
 # lines alone. The stand-in is a bash script, and a .cmd shim beside it is what
 # PowerShell on Windows finds under the same name; off Windows the shim is never
-# looked at.
+# looked at. The GitHub App act is driven the same way, in section SIX: GitHub
+# is a second stand-in curl that verifies every JWT it is shown, and the browser
+# is a stand-in named by BROWSER that drives the act's own listener.
 #
 # WHAT THIS FILE CANNOT PROVE, named rather than counted: an authenticated remote
 # (the fixtures' origins are directories, so a push never asks for a credential),
@@ -228,8 +233,8 @@ seed_installation apps9.example.invalid prod ''
 # The fourth exists so the mint cases at the end of this section have an installation
 # nothing else reads: every one of the three above is load-bearing somewhere — apps3's
 # pin, apps9's missing pin and apps5's unresolvable one are each asserted in TWO.
-# A master that took the slave part: its map says so, and a regeneration has to read it there.
-seed_installation apps4.example.invalid dev '' master+slave
+# Its map states a role its config never said, and a regeneration has to read it there.
+seed_installation apps4.example.invalid dev '' slave
 git -C "$SEED" checkout --quiet -b work/no-map master
 git -C "$SEED" push --quiet origin work/no-map
 git -C "$SEED" checkout --quiet master
@@ -560,13 +565,12 @@ must "there is no config at" 'a run with no config to state the installation is 
 [ "$A_CODE" = '66' ] || fail "a missing config must end with 66, got $A_CODE"
 same 'the pin read off the branch, and a missing config'
 
-# THE ROLE IS THE MAP'S AND NOT THE CONFIG'S. A master that took the slave part
-# through the Manager states master+slave on its branch while its config still
-# says master; the regeneration names the map's role, which is what it appends
-# behind the config so that the map keeps both parts (hostyour-cloud#220).
+# THE ROLE IS THE MAP'S AND NOT THE CONFIG'S. apps4's branch states slave while
+# its config says master; the regeneration names the map's role, which is what it
+# appends behind the config so that the map keeps it (hostyour-cloud#220).
 run_bash regenerate-install-branch apps4.example.invalid "$NOCONFIG"
 run_pwsh regenerate-install-branch apps4.example.invalid "$NOCONFIG"
-must "regenerate: apps4.example.invalid carries role master+slave in clusters/active/apps4.example.invalid.yaml" 'a map stating master+slave is named as such, whatever a config would say'
+must "regenerate: apps4.example.invalid carries role slave in clusters/active/apps4.example.invalid.yaml" 'a map stating slave is named as such, whatever a config would say'
 must "there is no config at" 'and the run still stops on the config, before a session is opened'
 same 'the role read off the branch of a master that took the slave part'
 
@@ -1107,7 +1111,8 @@ seed_zones() { # the state directory to seed
   printf '%s\t%s\t%s\t%s\n' \
     a0000000000000000000000000000001 '*.apps6.example.invalid' A 203.0.113.6 \
     a0000000000000000000000000000002 argo.apps6.example.invalid A 203.0.113.6 \
-    a0000000000000000000000000000003 '*.apps7.example.invalid' A 203.0.113.7 \
+    a0000000000000000000000000000003 '*.apps7.example.invalid' CNAME apps7.example.invalid \
+    a0000000000000000000000000000014 vault.apps7.example.invalid CNAME other.invalid \
     a0000000000000000000000000000004 post.example.invalid A 203.0.113.6 \
     a0000000000000000000000000000005 post.example.invalid A 198.51.100.9 \
     a0000000000000000000000000000006 auth.dev.example.invalid A 203.0.113.7 \
@@ -1152,7 +1157,7 @@ untouched() { # what was being checked -> every origin, catalog and zone table s
     [ "$(git --git-dir="$catalog" for-each-ref --format='%(refname)' refs/heads | wc -l)" = '2' ] || fail "$label — a branch of the catalog moved"
   done
   for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
-    [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '12' ] || fail "$label — a record of the first zone went"
+    [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '13' ] || fail "$label — a record of the first zone went"
     [ "$(wc -l < "$state/zone-22222222222222222222222222222222.tsv")" = '3' ] || fail "$label — a record of the second zone went"
     ! grep -q '^DELETE' "$state/log" || fail "$label — a deletion reached the DNS provider"
   done
@@ -1240,7 +1245,8 @@ run_abandon_bash apps6.example.invalid apps6.example.invalid "$ACFG"
 run_abandon_pwsh apps6.example.invalid apps6.example.invalid "$ACFG"
 must "abandon: zone example.invalid: deleted A *.apps6.example.invalid -> 203.0.113.6, the platform host names of apps6.example.invalid" "the master's wildcard at its address goes"
 must "abandon: zone example.invalid: deleted A argo.apps6.example.invalid -> 203.0.113.6, a platform host name of apps6.example.invalid" 'and a platform host name written on its own'
-must "abandon: zone example.invalid: deleted A *.apps7.example.invalid -> 203.0.113.7, the platform host names of apps7.example.invalid" "the slave's wildcard at the slave's address goes"
+must "abandon: zone example.invalid: deleted CNAME *.apps7.example.invalid -> apps7.example.invalid, the platform host names of apps7.example.invalid" "the slave's wildcard, the CNAME deploy-branch writes, goes"
+must "abandon: zone example.invalid: left CNAME vault.apps7.example.invalid -> other.invalid, an alias to a name that is no cluster of this installation" 'an alias to a foreign name under a platform host name is left and named'
 must "abandon: zone example.invalid: deleted A post.example.invalid -> 203.0.113.6, the consumer digita-post at prod" "the prod consumer's record at the master goes"
 must "abandon: zone example.invalid: left A post.example.invalid -> 198.51.100.9, an address this installation never had" 'the foreign record under the same name is left and named'
 must "abandon: zone example.invalid: deleted A auth.dev.example.invalid -> 203.0.113.7, the consumer digita-auth at dev" "the dev consumer's record at the slave goes"
@@ -1250,8 +1256,8 @@ must "abandon: zone example.invalid: deleted TXT example.invalid (v=spf1 ip4:203
 must "abandon: zone platform.invalid: left TXT platform.invalid (v=spf1 include:_spf.other.invalid ip4:203.0.113.6 -all): it authorises senders beside this installation" 'an SPF merged with another sender is left and named'
 must "abandon: zone example.invalid: left TXT prod._domainkey.example.invalid (v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ): nothing on the branch proves that content the installation's" 'the DKIM key is left, because nothing on the branch proves it'
 must "abandon: zone example.invalid: left TXT _dmarc.example.invalid (v=DMARC1; p=none; rua=mailto:dmarc@example.inval): nothing on the branch proves that content the installation's" 'and so is the DMARC policy'
-must "abandon: zone platform.invalid: left MX platform.invalid -> 10 mx.other.invalid: this act judges A, AAAA and TXT records only" 'a record of another type is left and named'
-must "abandon: 9 records deleted, 5 left standing and listed above, 30 of the derived names carried nothing" 'the count says what went, what stayed and how many names were empty'
+must "abandon: zone platform.invalid: left MX platform.invalid -> 10 mx.other.invalid: this act judges A, AAAA, CNAME and TXT records only" 'a record of another type is left and named'
+must "abandon: 9 records deleted, 6 left standing and listed above, 29 of the derived names carried nothing" 'the count says what went, what stayed and how many names were empty'
 must "abandon: deleted branch apps6.example.invalid on origin" "the master's branch goes"
 must "abandon: deleted branch apps7.example.invalid on origin" "the slave's branch goes"
 must "abandon: deleted the books branch apps6.example.invalid of the catalog https://github.com/acme/catalog.git" "the catalog's books branch goes"
@@ -1281,7 +1287,7 @@ for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
   [ "$(grep -c '/dns_records name=' "$state/log")" = '40' ] || fail 'not every derived name was listed at the provider, or one was listed twice'
   ! grep -q 'dns_records name=apps6.example.invalid$' "$state/log" || fail "the machine's own address record was asked for"
   [ "$(grep -c '^PROBE' "$state/log")" = '3' ] || fail 'the three addresses were not each asked once'
-  [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '4' ] || fail 'the first zone does not keep exactly the foreign record, the own address record, the DKIM key and the DMARC policy'
+  [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '5' ] || fail 'the first zone does not keep exactly the foreign record, the foreign alias, the own address record, the DKIM key and the DMARC policy'
   grep -q '^a0000000000000000000000000000008	apps6.example.invalid	A	203.0.113.6$' "$state/zone-11111111111111111111111111111111.tsv" \
     || fail "the machine's own address record is gone"
   [ "$(wc -l < "$state/zone-22222222222222222222222222222222.tsv")" = '2' ] || fail 'the second zone does not keep exactly the merged SPF and the MX'
@@ -1310,6 +1316,391 @@ for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
 done
 ok 'a second run derives nothing, touches nothing and ends with 0'
 
+# ===========================================================================
+# SIX — create-github-app, against a stand-in GitHub and a stand-in browser
+#
+# EVERYTHING THE ACT REACHES IS A FIXTURE: GitHub's API is a stand-in curl on
+# the path, which answers the conversion of the fixture's code with an App whose
+# key was minted here, verifies every JWT it is shown against that key's public
+# half with openssl, and answers the installation out of a state file; the
+# browser is a stand-in named by BROWSER, which fetches the manifest page off
+# the act's own listener the way a browser would, reads the state the form
+# carries, and sends the browser back with the code — so the listener, the
+# page, the nonce and the conversion are all driven end to end. The stand-in
+# browser does its work behind and returns at once, the way a real opener does,
+# because the PowerShell spelling listens in the same process that asked for
+# the browser. Each spelling gets its own state directory and its own config,
+# at the same relative path, because the act writes into the config and names
+# it as typed.
+#
+# WHAT THIS CANNOT PROVE, named rather than counted: GitHub's own answers — the
+# shape of the conversion, whether the manifest's hook_attributes without a url
+# is accepted, and the real redirect —, a real browser, and the two ten-minute
+# bounds. The key minted here is whatever this openssl writes; GitHub hands out
+# a PKCS#1 one, and both signers read both.
+# ===========================================================================
+GHAPP="$WORK/github-app"
+GSTUB="$GHAPP/stub"
+mkdir -p "$GSTUB" "$GHAPP/a" "$GHAPP/b"
+REAL_CURL="$(command -v curl)"
+openssl genrsa 2048 > "$GHAPP/key.pem" 2>/dev/null || fail 'openssl could not mint the fixture key'
+openssl rsa -in "$GHAPP/key.pem" -pubout > "$GHAPP/pub.pem" 2>/dev/null || fail 'openssl could not derive the public half of the fixture key'
+# The key as GitHub's JSON spells it: one line, \n for each line break.
+awk '{ printf "%s\\n", $0 }' "$GHAPP/key.pem" > "$GHAPP/pem.json"
+SIX_PERMISSIONS='"actions":"write","administration":"write","contents":"write","metadata":"read","webhooks":"write","workflows":"write"'
+FIVE_PERMISSIONS='"actions":"write","administration":"write","contents":"write","metadata":"read","workflows":"write"'
+
+# THE STAND-IN FOR curl against api.github.com. Every call is logged as its
+# method and path, and a call carrying a JWT logs the verdict on it: the
+# signature against the public half, the header, and the claims.
+cat > "$GSTUB/curl" <<'EOF'
+#!/usr/bin/env bash
+state="$GITHUB_STUB"
+method=GET; url=''; stdin=''; wantstatus=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X) method="$2"; shift ;;
+    -K) shift; stdin="$(cat)" ;;
+    -w) shift; wantstatus=1 ;;
+    -H) shift ;;
+    https://*) url="$1" ;;
+  esac
+  shift
+done
+path="${url#https://api.github.com}"
+b64url_decode() { tr '_-' '/+' | awk '{ n = length($0) % 4; if (n == 2) print $0 "=="; else if (n == 3) print $0 "="; else print $0 }' | openssl base64 -d -A; }
+verdict='none'
+case "$stdin" in
+  *'Authorization: Bearer '*)
+    jwt="${stdin#*Authorization: Bearer }"; jwt="${jwt%%\"*}"
+    h="${jwt%%.*}"; s="${jwt##*.}"; p="${jwt#*.}"; p="${p%.*}"
+    printf '%s.%s' "$h" "$p" > "$state/signing-input"
+    printf '%s' "$s" | b64url_decode > "$state/signature"
+    if ! openssl dgst -sha256 -verify "$GITHUB_PUB" -signature "$state/signature" "$state/signing-input" >/dev/null 2>&1; then verdict='bad: signature'
+    elif [ "$(printf '%s' "$h" | b64url_decode)" != '{"alg":"RS256","typ":"JWT"}' ]; then verdict='bad: header'
+    else
+      claims="$(printf '%s' "$p" | b64url_decode)"
+      if [[ $claims =~ ^\{\"iat\":([0-9]+),\"exp\":([0-9]+),\"iss\":\"([0-9]+)\"\}$ ]]; then
+        iat="${BASH_REMATCH[1]}"; exp="${BASH_REMATCH[2]}"; iss="${BASH_REMATCH[3]}"; now="$(date +%s)"
+        if [ $((exp - iat)) -ne 600 ] || [ "$iat" -gt "$now" ] || [ $((now - iat)) -gt 120 ]; then verdict="bad: claims $claims at $now"
+        else verdict="verified iss=$iss"; fi
+      else verdict="bad: claims $claims"; fi
+    fi ;;
+esac
+log() { printf '%s\n' "$1" >> "$state/log"; }
+owner='"owner":{"login":"acme","id":99,"node_id":"O_99","avatar_url":"https://avatars.githubusercontent.com/u/99","html_url":"https://github.com/acme","type":"Organization","site_admin":false}'
+case "$method $path" in
+  'POST /app-manifests/'*'/conversions')
+    code="${path#/app-manifests/}"; code="${code%/conversions}"
+    log "POST /app-manifests/$code/conversions"
+    if [ "$code" != "$(cat "$state/code")" ]; then
+      status=404; body='{"message":"Not Found","documentation_url":"https://docs.github.com/rest/apps/apps#create-a-github-app-from-a-manifest","status":"404"}'
+    else
+      status=201
+      body="{\"id\":4711,\"slug\":\"acme-platform-manager\",\"node_id\":\"A_4711\",$owner,\"name\":\"acme-platform-manager\",\"description\":null,\"external_url\":\"https://manager.example.invalid\",\"html_url\":\"https://github.com/apps/acme-platform-manager\",\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\"permissions\":{$(cat "$state/permissions")},\"events\":[],\"client_id\":\"Iv1.fixture\",\"client_secret\":\"fixture-client-secret\",\"webhook_secret\":null,\"pem\":\"$(cat "$GITHUB_PEM_JSON")\"}"
+    fi ;;
+  'GET /app')
+    log "GET /app jwt=$verdict"
+    case "$verdict" in
+      verified*) status=200; body="{\"id\":4711,\"slug\":\"acme-platform-manager\",\"node_id\":\"A_4711\",$owner,\"name\":\"acme-platform-manager\",\"description\":null,\"external_url\":\"https://manager.example.invalid\",\"html_url\":\"https://github.com/apps/acme-platform-manager\",\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\"permissions\":{$(cat "$state/permissions")},\"events\":[]}" ;;
+      *) status=401; body='{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest","status":"401"}' ;;
+    esac ;;
+  'GET /orgs/'*'/installation')
+    org="${path#/orgs/}"; org="${org%/installation}"
+    log "GET /orgs/$org/installation jwt=$verdict"
+    installed="$(cat "$state/installation")"
+    case "$verdict" in verified*) ;; *) installed=unauthorised ;; esac
+    case "$installed" in
+      absent-then-all) printf 'all' > "$state/installation"; status=404; body='{"message":"Not Found","documentation_url":"https://docs.github.com/rest/apps/apps#get-an-organization-installation-for-the-authenticated-app","status":"404"}' ;;
+      absent) status=404; body='{"message":"Not Found","documentation_url":"https://docs.github.com/rest/apps/apps#get-an-organization-installation-for-the-authenticated-app","status":"404"}' ;;
+      unauthorised) status=401; body='{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest","status":"401"}' ;;
+      *) status=200; body="{\"id\":815,\"account\":{\"login\":\"$org\",\"id\":99,\"node_id\":\"O_99\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/99\",\"html_url\":\"https://github.com/$org\",\"type\":\"Organization\",\"site_admin\":false},\"repository_selection\":\"$installed\",\"access_tokens_url\":\"https://api.github.com/app/installations/815/access_tokens\",\"repositories_url\":\"https://api.github.com/installation/repositories\",\"html_url\":\"https://github.com/organizations/$org/settings/installations/815\",\"app_id\":4711,\"app_slug\":\"acme-platform-manager\",\"target_id\":99,\"target_type\":\"Organization\",\"permissions\":{$(cat "$state/permissions")},\"events\":[],\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\"single_file_name\":null,\"has_multiple_single_files\":false,\"single_file_paths\":[],\"suspended_by\":null,\"suspended_at\":null}" ;;
+    esac ;;
+  *) log "$method $path"; status=404; body='{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}' ;;
+esac
+printf '%s' "$body"
+[ "$wantstatus" = 1 ] && printf '\n%s' "$status"
+exit 0
+EOF
+printf '@bash "%%~dp0curl" %%*\r\n' > "$GSTUB/curl.cmd"
+
+# THE STAND-IN FOR THE BROWSER. Given the listener's address it fetches the
+# manifest page, keeps a copy, reads the state the form carries — or sends a
+# wrong one where the state directory says so — and sends the browser back
+# with the fixture's code, the way GitHub would after the click, keeping the
+# listener's answer. Given any other address it only records it.
+cat > "$GSTUB/browser" <<'EOF'
+#!/usr/bin/env bash
+state="$GITHUB_STUB"
+printf '%s\n' "$1" >> "$state/opened"
+case "$1" in
+  http://127.0.0.1:*/)
+    (
+      "$REAL_CURL" -sS -o "$state/page.html" "$1"
+      nonce="$(sed -n 's/.*settings\/apps\/new?state=\([0-9a-f]*\)".*/\1/p' "$state/page.html")"
+      [ -f "$state/wrong-state" ] && nonce=not-this-runs
+      "$REAL_CURL" -sS -o "$state/answer" "$1?code=$(cat "$state/code")&state=$nonce"
+    ) < /dev/null > "$state/browser.log" 2>&1 &
+    ;;
+esac
+exit 0
+EOF
+printf '@bash "%%~dp0browser" %%*\r\n' > "$GSTUB/browser.cmd"
+chmod +x "$GSTUB/curl" "$GSTUB/browser"
+GSTUB_PATH="$GSTUB"
+if command -v cygpath >/dev/null 2>&1; then GSTUB_PATH="$(cygpath -u "$GSTUB")"; fi
+
+seed_github() { # the state directory, the permissions the conversion answers, the installation's state
+  mkdir -p "$1"
+  rm -f "$1"/*
+  printf 'c0de0fthefixture' > "$1/code"
+  printf '%s' "$2" > "$1/permissions"
+  printf '%s' "$3" > "$1/installation"
+  : > "$1/log"
+}
+seed_config() { # the side's directory -> config.apps6.env there, owner-only, with the three keys empty
+  {
+    echo "FQDN='apps6.example.invalid'"
+    echo "GITHUB_APP_PRIVATE_KEY=''"
+    echo "UNIT_APEX='example.invalid'"
+    echo "CATALOG_REPO='acme/catalog'"
+    echo "GITHUB_APP_ID=''"
+    echo "GITHUB_APP_INSTALLATION_ID=''"
+  } > "$1/config.apps6.env"
+  make_owner_only "$1/config.apps6.env"
+  require_owner_only "$1/config.apps6.env" || fail "the fixture config under $1 could not be made owner-only: it $REACH"
+}
+run_app_bash() {
+  A_CODE=0
+  ( cd "$GHAPP/a" && export GITHUB_STUB="$GHAPP/state-a" GITHUB_PUB="$GHAPP/pub.pem" GITHUB_PEM_JSON="$GHAPP/pem.json" REAL_CURL="$REAL_CURL" BROWSER=browser PATH="$GSTUB_PATH:$PATH" \
+    && bash "$HERE/create-github-app.sh" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+run_app_pwsh() {
+  B_CODE=0
+  ( cd "$GHAPP/b" && export GITHUB_STUB="$GHAPP/state-b" GITHUB_PUB="$GHAPP/pub.pem" GITHUB_PEM_JSON="$GHAPP/pem.json" REAL_CURL="$REAL_CURL" BROWSER=browser PATH="$GSTUB_PATH:$PATH" \
+    && "$PWSH" -NoProfile -NoLogo -File "$HERE/create-github-app.ps1" "$@" ) > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
+}
+config_line() { # the side, the key -> the value of that key in the side's config
+  sed -n "s/^$2='\(.*\)'\$/\1/p" "$GHAPP/$1/config.apps6.env"
+}
+nothing_written() { # what was being checked -> both configs stand as seeded and nothing reached GitHub's writes
+  for side in a b; do
+    [ "$(config_line "$side" GITHUB_APP_ID)" = '' ] || fail "$1 — GITHUB_APP_ID was written under $side"
+    [ "$(config_line "$side" GITHUB_APP_INSTALLATION_ID)" = '' ] || fail "$1 — GITHUB_APP_INSTALLATION_ID was written under $side"
+    [ "$(config_line "$side" GITHUB_APP_PRIVATE_KEY)" = '' ] || fail "$1 — GITHUB_APP_PRIVATE_KEY was written under $side"
+  done
+}
+page_holds() { # what was being checked -> both spellings served a page carrying the manifest asked for, and the same page
+  for side in a b; do
+    local page="$GHAPP/state-$side/page.html"
+    [ -s "$page" ] || fail "$1 — the stand-in browser fetched no page from the listener of $side"
+    grep -qF '<form method="post" action="https://github.com/organizations/acme/settings/apps/new?state=' "$page" || fail "$1 — the page of $side does not post to the organisation's new-App page with a state"
+    if grep -qF '&quot;' "$page"; then fail "$1 — the page of $side escaped the manifest's quotes, which a single-quoted attribute does not need"; fi
+    grep -qF "\"default_permissions\":{$SIX_PERMISSIONS}" "$page" || fail "$1 — the manifest of $side does not carry exactly the six permissions"
+    grep -qF '"hook_attributes":{"active":false}' "$page" || fail "$1 — the manifest of $side does not switch the webhook off"
+    grep -qF '"public":false' "$page" || fail "$1 — the manifest of $side does not make the App private"
+    grep -qF '"name":"acme-platform-manager","url":"https://manager.example.invalid","redirect_url":"http://127.0.0.1:' "$page" || fail "$1 — the manifest of $side does not name the App, its homepage and the listener"
+    grep -qF 'onload="document.forms[0].submit()"' "$page" || fail "$1 — the page of $side does not submit itself"
+    [ "$(cat "$GHAPP/state-$side/answer")" = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>done</title></head><body>done, back to the terminal</body></html>' ] \
+      || fail "$1 — the listener of $side did not answer the redirect with the one line"
+  done
+  sed -E 's/127\.0\.0\.1:[0-9]+/127.0.0.1:PORT/; s/state=[0-9a-f]+/state=NONCE/' "$GHAPP/state-a/page.html" > "$OUT/page-a"
+  sed -E 's/127\.0\.0\.1:[0-9]+/127.0.0.1:PORT/; s/state=[0-9a-f]+/state=NONCE/' "$GHAPP/state-b/page.html" > "$OUT/page-b"
+  diff -u "$OUT/page-a" "$OUT/page-b" || fail "$1 — the two spellings served different pages"
+}
+seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" all
+seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" all
+seed_config "$GHAPP/a"
+seed_config "$GHAPP/b"
+ok 'fixture built — a key, a stand-in GitHub that verifies every JWT against it, a stand-in browser, and two owner-only configs'
+
+# ── the refusals before anything is reached ─────────────────────────────────
+run_app_bash
+run_app_pwsh
+must 'usage: lifecycle/create-github-app.sh <config> [organisation]' 'a run naming no config is refused'
+[ "$A_CODE" = '64' ] || fail "a run naming no config must end with 64, got $A_CODE"
+same_code 'a run naming no config'
+
+run_app_bash "$NOCONFIG"
+run_app_pwsh "$NOCONFIG"
+must "there is no config at $NOCONFIG" 'a run with no config is refused'
+[ "$A_CODE" = '66' ] || fail "a missing config must end with 66, got $A_CODE"
+same 'a run with no config'
+
+FULLCFG="$GHAPP/config.full.env"
+printf "GITHUB_APP_ID='1'\nGITHUB_APP_INSTALLATION_ID='2'\nGITHUB_APP_PRIVATE_KEY='k'\nCATALOG_REPO='acme/catalog'\nUNIT_APEX='example.invalid'\n" > "$FULLCFG"
+run_app_bash "$FULLCFG"
+run_app_pwsh "$FULLCFG"
+must "create-github-app: $FULLCFG already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY. Nothing has been changed" 'a config carrying the three answers is refused by name'
+[ "$A_CODE" = '65' ] || fail "a config carrying the three answers must end with 65, got $A_CODE"
+same 'a config carrying the three answers'
+
+PARTCFG="$GHAPP/config.part.env"
+printf "GITHUB_APP_ID=''\nGITHUB_APP_INSTALLATION_ID=''\nGITHUB_APP_PRIVATE_KEY='k'\nCATALOG_REPO='acme/catalog'\nUNIT_APEX='example.invalid'\n" > "$PARTCFG"
+run_app_bash "$PARTCFG"
+run_app_pwsh "$PARTCFG"
+must "create-github-app: $PARTCFG carries GITHUB_APP_PRIVATE_KEY and not GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and this act cannot tell which App they belong to" 'a config carrying a key and no id is refused, naming what stands and what does not'
+[ "$A_CODE" = '65' ] || fail "a config carrying one of the three must end with 65, got $A_CODE"
+same 'a config carrying one of the three answers'
+
+NOORGCFG="$GHAPP/config.noorg.env"
+printf "GITHUB_APP_ID=''\nGITHUB_APP_INSTALLATION_ID=''\nGITHUB_APP_PRIVATE_KEY=''\nUNIT_APEX='example.invalid'\n" > "$NOORGCFG"
+run_app_bash "$NOORGCFG"
+run_app_pwsh "$NOORGCFG"
+must "create-github-app: $NOORGCFG states no CATALOG_REPO, and the organisation the App is created in is its owner" 'a config with no CATALOG_REPO and no organisation argument is refused'
+[ "$A_CODE" = '65' ] || fail "a config with no organisation must end with 65, got $A_CODE"
+same 'a config with no organisation'
+for state in "$GHAPP/state-a" "$GHAPP/state-b"; do
+  [ ! -s "$state/log" ] || fail 'a refusal before the browser still reached GitHub'
+  [ ! -f "$state/opened" ] || fail 'a refusal before the browser still opened one'
+done
+
+# ── the owner-only guard, before the browser, on the bash spelling alone ─────
+printf 'Everyone:(R)\nVPC1\\mkadm:(F)\n' > "$STUB/acl"
+run_guarded "$GHAPP/a" MINGW64 644 "$HERE/create-github-app.sh" config.apps6.env
+must "create-github-app: config.apps6.env can be read by Everyone and is where the App's private key lands. Run: icacls \"config.apps6.env\" /inheritance:r /grant:r \"mkadm:(F)\". Nothing has been changed" \
+  'a readable config is refused before the browser opens, in the act`s own sentence'
+[ "$A_CODE" = '77' ] || fail "a readable config must refuse with 77, got $A_CODE"
+[ ! -f "$GHAPP/state-a/opened" ] || fail 'a readable config was refused and the browser was still opened'
+nothing_written 'the owner-only guard'
+ok 'the five refusals before the browser, and the guard on a readable config, on both spellings'
+
+# ── the state GitHub sends back is held to this run's ────────────────────────
+touch "$GHAPP/state-a/wrong-state" "$GHAPP/state-b/wrong-state"
+run_app_bash config.apps6.env
+run_app_pwsh config.apps6.env
+must 'create-github-app: the App acme-platform-manager is created in the organisation acme, the owner of CATALOG_REPO in config.apps6.env, with its homepage https://manager.example.invalid' 'the organisation is read off CATALOG_REPO and said so'
+must 'create-github-app: listening on 127.0.0.1 for GitHub to send the browser back, for up to 10 minutes' 'the listener is announced'
+must 'create-github-app: opened the manifest page in the browser; it posts to https://github.com/organizations/acme/settings/apps/new. In the browser: click Create GitHub App' 'the person is told the one click'
+must "create-github-app: GitHub sent the browser back with a state that is not this run's, so the code is not trusted. Nothing has been written" 'a redirect carrying another state is refused'
+[ "$A_CODE" = '65' ] || fail "a wrong state must refuse with 65, got $A_CODE"
+same 'a redirect carrying another state'
+page_holds 'a redirect carrying another state'
+for state in "$GHAPP/state-a" "$GHAPP/state-b"; do
+  [ ! -s "$state/log" ] || fail 'a wrong state was refused and the code was still sent to GitHub'
+done
+nothing_written 'a redirect carrying another state'
+rm -f "$GHAPP/state-a/wrong-state" "$GHAPP/state-b/wrong-state"
+ok 'the manifest page carries the six permissions, no webhook, private, the listener, and submits itself; the listener answers the redirect with one line; a redirect with another state is refused before the code reaches GitHub'
+
+# ── an App answered with five permissions is refused, and named ─────────────
+seed_github "$GHAPP/state-a" "$FIVE_PERMISSIONS" all
+seed_github "$GHAPP/state-b" "$FIVE_PERMISSIONS" all
+run_app_bash config.apps6.env
+run_app_pwsh config.apps6.env
+must "create-github-app: GitHub sent the browser back with a code, and the state is this run's" 'the code and the state are taken off the redirect'
+must 'create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions actions:write administration:write contents:write metadata:read workflows:write and not the six asked: actions:write administration:write contents:write metadata:read webhooks:write workflows:write. Delete it there and run this again. Nothing has been written' \
+  'an App answered with five permissions is refused, both lists named'
+[ "$A_CODE" = '65' ] || fail "five permissions must refuse with 65, got $A_CODE"
+same 'an App answered with five permissions'
+for state in "$GHAPP/state-a" "$GHAPP/state-b"; do
+  [ "$(cat "$state/log")" = 'POST /app-manifests/c0de0fthefixture/conversions' ] || fail "the conversion was not the one call, or not with the fixture's code: $(tr '\n' ' ' < "$state/log")"
+done
+nothing_written 'an App answered with five permissions'
+ok 'the conversion is asked with the code off the redirect, and an App answered with five permissions is refused by both lists with nothing written'
+
+# ── the act itself, both clicks in one run ──────────────────────────────────
+seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" all
+seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" all
+run_app_bash config.apps6.env
+run_app_pwsh config.apps6.env
+must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the six permissions actions:write administration:write contents:write metadata:read webhooks:write workflows:write' 'the App is named with its id and its permissions'
+must 'create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into config.apps6.env in place' 'the id and the key are written before the installation is asked for'
+must 'create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install' 'the person is told the second click'
+must 'create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes' 'the poll is announced'
+must 'create-github-app: installed in acme on all repositories, installation 815: https://github.com/organizations/acme/settings/installations/815' 'the installation is named with its page'
+must 'create-github-app: GITHUB_APP_INSTALLATION_ID written into config.apps6.env in place' 'the installation id is written'
+must 'create-github-app: config.apps6.env carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY, and nobody but the owner can read it. The App: https://github.com/apps/acme-platform-manager. Its installation: https://github.com/organizations/acme/settings/installations/815' 'the three keys are named, never a value'
+must_not 'BEGIN' 'no line of the key is printed'
+[ "$A_CODE" = '0' ] || fail "the act must end with 0, got $A_CODE"
+same 'the act, both clicks in one run'
+page_holds 'the act'
+for side in a b; do
+  state="$GHAPP/state-$side"
+  [ "$(cat "$state/log")" = "POST /app-manifests/c0de0fthefixture/conversions
+GET /orgs/acme/installation jwt=verified iss=4711" ] || fail "the calls of $side are not the conversion and one installation question with a verified JWT: $(tr '\n' ' ' < "$state/log")"
+  [ "$(cat "$state/opened")" = "http://127.0.0.1:$(sed -n 's/.*redirect_url":"http:\/\/127.0.0.1:\([0-9]*\)\/.*/\1/p' "$state/page.html")/
+https://github.com/apps/acme-platform-manager/installations/new" ] || fail "the browser of $side was not opened on the listener and then on the installation page: $(tr '\n' ' ' < "$state/opened")"
+  [ "$(config_line "$side" GITHUB_APP_ID)" = '4711' ] || fail "the config of $side does not carry the App id"
+  [ "$(config_line "$side" GITHUB_APP_INSTALLATION_ID)" = '815' ] || fail "the config of $side does not carry the installation id"
+  [ "$(config_line "$side" GITHUB_APP_PRIVATE_KEY)" = "$(cat "$GHAPP/pem.json")" ] || fail "the config of $side does not carry the key as one line with \\n for each line break"
+  config_line "$side" GITHUB_APP_PRIVATE_KEY | perl -pe 's/\\n/\n/g' | openssl rsa -check -noout >/dev/null 2>&1 || fail "the key in the config of $side, its line breaks turned back, is not a key openssl reads"
+  [ "$(grep -c . "$GHAPP/$side/config.apps6.env")" = '6' ] || fail "the config of $side gained or lost a line"
+  grep -q "^FQDN='apps6.example.invalid'\$" "$GHAPP/$side/config.apps6.env" || fail "the rewrite disturbed a line of the config of $side"
+  [ "$(sed -n '2p' "$GHAPP/$side/config.apps6.env" | cut -c1-24)" = "GITHUB_APP_PRIVATE_KEY='" ] || fail "the key of $side was not written on the line the template declares it on"
+  require_owner_only "$GHAPP/$side/config.apps6.env" || fail "the rewrite took the access list off the config of $side: it $REACH"
+done
+ok 'the act: the page, the redirect, the conversion, the two writes in place on the lines the template declares, the JWT verified with the key`s public half, the installation read, and both configs still owner-only with the real tools'
+
+# ── a second run on what the first wrote refuses ────────────────────────────
+run_app_bash config.apps6.env
+run_app_pwsh config.apps6.env
+must 'create-github-app: config.apps6.env already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY. Nothing has been changed' 'a second run on a config the first filled is refused'
+[ "$A_CODE" = '65' ] || fail "a second run must refuse with 65, got $A_CODE"
+same 'a second run on what the first wrote'
+
+# ── an installation on selected repositories refuses, and the next run fills what is missing ─
+seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" selected
+seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" selected
+seed_config "$GHAPP/a"
+seed_config "$GHAPP/b"
+run_app_bash config.apps6.env
+run_app_pwsh config.apps6.env
+must 'create-github-app: the App is installed in acme with repository_selection selected, and the Manager needs all. Choose All repositories at https://github.com/organizations/acme/settings/installations/815, then run this again: The App stands, and config.apps6.env carries GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, and the next run writes GITHUB_APP_INSTALLATION_ID' \
+  'an installation on selected repositories is refused, naming what stands and what the next run does'
+[ "$A_CODE" = '65' ] || fail "selected repositories must refuse with 65, got $A_CODE"
+same 'an installation on selected repositories'
+for side in a b; do
+  [ "$(config_line "$side" GITHUB_APP_ID)" = '4711' ] || fail "the config of $side does not carry the App id after the refusal"
+  [ "$(config_line "$side" GITHUB_APP_PRIVATE_KEY)" = "$(cat "$GHAPP/pem.json")" ] || fail "the config of $side does not carry the key after the refusal"
+  [ "$(config_line "$side" GITHUB_APP_INSTALLATION_ID)" = '' ] || fail "the config of $side carries an installation id the refusal should not have written"
+done
+# THE NEXT RUN finds the App in the config, asks GitHub for it with the key,
+# and installs — polling once through a 404 before the installation appears.
+seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" absent-then-all
+seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" absent-then-all
+run_app_bash config.apps6.env
+run_app_pwsh config.apps6.env
+must 'create-github-app: config.apps6.env carries GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY and no GITHUB_APP_INSTALLATION_ID, so the App stands and this run installs it' 'a config carrying the App and no installation skips the creation'
+must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711)' 'the App is asked of GitHub with the key and named'
+must 'create-github-app: installed in acme on all repositories, installation 815: https://github.com/organizations/acme/settings/installations/815' 'the installation is found'
+must 'create-github-app: GITHUB_APP_INSTALLATION_ID written into config.apps6.env in place' 'and its id written'
+must_not 'the manifest page' 'no page is served on a run that only installs'
+[ "$A_CODE" = '0' ] || fail "the installing run must end with 0, got $A_CODE"
+same 'the run that only installs'
+for side in a b; do
+  state="$GHAPP/state-$side"
+  [ "$(cat "$state/log")" = 'GET /app jwt=verified iss=4711
+GET /orgs/acme/installation jwt=verified iss=4711
+GET /orgs/acme/installation jwt=verified iss=4711' ] || fail "the calls of $side are not the App question and two installation questions, every JWT verified: $(tr '\n' ' ' < "$state/log")"
+  [ "$(cat "$state/opened")" = 'https://github.com/apps/acme-platform-manager/installations/new' ] || fail "the browser of $side was not opened on the installation page alone: $(tr '\n' ' ' < "$state/opened")"
+  [ "$(config_line "$side" GITHUB_APP_INSTALLATION_ID)" = '815' ] || fail "the config of $side does not carry the installation id"
+  require_owner_only "$GHAPP/$side/config.apps6.env" || fail "the rewrite took the access list off the config of $side: it $REACH"
+done
+ok 'an installation on selected repositories is refused with the id and the key already written; the next run signs with the key out of the config, polls through a 404, and writes the installation id'
+
+# ── the planted defect for this pair ────────────────────────────────────────
+PLANTED_G="$WORK/planted-create-github-app.sh"
+cp "$HERE/require-owner-only.sh" "$WORK/"
+sed 's/so the App stands and this run installs it/so the App stands and this run will install it/' "$HERE/create-github-app.sh" > "$PLANTED_G"
+grep -q 'this run will install it' "$PLANTED_G" || fail 'the planted line was not planted — the probe proves nothing'
+seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" all
+seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" all
+for side in a b; do
+  sed -i.bak "s/^GITHUB_APP_INSTALLATION_ID=.*/GITHUB_APP_INSTALLATION_ID=''/" "$GHAPP/$side/config.apps6.env" && rm -f "$GHAPP/$side/config.apps6.env.bak"
+  make_owner_only "$GHAPP/$side/config.apps6.env"
+done
+A_CODE=0
+( cd "$GHAPP/a" && export GITHUB_STUB="$GHAPP/state-a" GITHUB_PUB="$GHAPP/pub.pem" GITHUB_PEM_JSON="$GHAPP/pem.json" REAL_CURL="$REAL_CURL" BROWSER=browser PATH="$GSTUB_PATH:$PATH" \
+  && bash "$PLANTED_G" config.apps6.env ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+grep -q 'this run will install it' "$OUT/a.out" || fail 'the planted spelling printed no installing line — the probe was aimed at a line the fixture does not reach'
+run_app_pwsh config.apps6.env
+normalise < "$OUT/a.out" > "$OUT/a.out.n"; normalise < "$OUT/b.out" > "$OUT/b.out.n"
+if diff -q "$OUT/a.out.n" "$OUT/b.out.n" >/dev/null; then
+  fail 'a spelling with one line changed compared EQUAL to the other — the comparison above proves nothing'
+fi
+ok 'the planted defect was caught — the comparison of the create-github-app pair can go red'
+
 echo "test: GREEN — every case above was measured on both spellings and answered identically,"
 echo "test:   and the owner-only guard on the bash spelling alone."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
@@ -1330,10 +1721,18 @@ echo "test:   the names it derives off the install branch and the catalog's book
 echo "test:   guard that refuses a cluster whose API still answers, the confirmation, the nine"
 echo "test:   records it deletes against a stand-in provider and the six it lists and leaves,"
 echo "test:   the three branches it deletes in order, the config it names as staying, and a"
-echo "test:   second run that finds nothing to do. Four planted defects prove the comparison"
-echo "test:   can go red."
+echo "test:   second run that finds nothing to do; the five refusals the GitHub App act makes"
+echo "test:   before it opens a browser and its guard on a readable config, the manifest page"
+echo "test:   it serves with the six permissions and no webhook, the redirect it holds to its"
+echo "test:   own state, an App answered with five permissions, the App created and installed"
+echo "test:   in one run with every JWT verified against the key's public half and the three"
+echo "test:   answers written in place under a kept access list, a second run refused, an"
+echo "test:   installation on selected repositories refused with two answers written, and the"
+echo "test:   run after it that installs alone. Five planted defects prove the comparison can"
+echo "test:   go red."
 echo "test: not covered — an authenticated remote, two workstations minting at one moment, the"
 echo "test:   regeneration and the removal themselves on a machine, a slave that is still"
-echo "test:   answering, the PowerShell spelling's own reading of an access list, a branch"
-echo "test:   deletion a remote refuses (a directory origin refuses none), and a DNS provider"
-echo "test:   that fails in the middle of the abandonment."
+echo "test:   answering, the PowerShell spelling's own refusal of a readable config, a branch"
+echo "test:   deletion a remote refuses (a directory origin refuses none), a DNS provider"
+echo "test:   that fails in the middle of the abandonment, GitHub's own answers to a manifest"
+echo "test:   and a real browser, and the two ten-minute bounds of the GitHub App act."

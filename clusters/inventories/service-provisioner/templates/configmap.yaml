@@ -359,6 +359,12 @@ data:
         the answer for a claim that named none is an Error rather than every key."""
         return [p for p in (spec.get("keyPatterns") or []) if p]
 
+    def _channel_patterns(spec):
+        """The LITERAL redis Pub/Sub channel patterns a claim asks for — spec.channelPatterns
+        used VERBATIM like _key_patterns. Empty ⇒ [] and the user keeps `resetchannels`:
+        a channel is opt-in, and a claim that named none is served without one."""
+        return [c for c in (spec.get("channelPatterns") or []) if c]
+
     # EXTRA `role@db` grants a mongodb claim may request WITHOUT owning a
     # database (spec.roles). STRICT WHITELIST — mirrors the CRD enum: a claim
     # must never be able to self-grant an arbitrary role (root@admin,
@@ -583,21 +589,25 @@ data:
     #   on >password   — enabled, with the generate-once password read back out of the
     #                    namespace-local Secret (reconcile, get_existing_password).
     #   ~<pattern>     — the keys the user may touch, VERBATIM from the claim.
-    #   resetchannels  — no pub/sub channel at all. A claim that needs one is refused
-    #                    with redis' own NOPERM rather than served silently, because a
-    #                    channel is not a key and no field of this CRD asks for one.
+    #   resetchannels  — no pub/sub channel unless the claim names one: a channel is not
+    #                    a key, so a `~` rule opens none, and a claim naming no channel
+    #                    is refused with redis' own NOPERM rather than served silently.
+    #   &<pattern>     — the channels the user may PUBLISH to and SUBSCRIBE, VERBATIM from
+    #                    spec.channelPatterns, written AFTER resetchannels because the
+    #                    rules apply in order and resetchannels would erase them.
     #   +@all          — every command, minus the two categories below.
     #   -@dangerous    — FLUSHALL, FLUSHDB, KEYS and the rest of that category.
     #                    FLUSHALL takes NO key argument, so the key patterns above
     #                    cannot stop it and only a command rule can: this is the line
     #                    that answers "any pod there can open redis and issue FLUSHALL".
     #   -@admin        — CONFIG, SHUTDOWN, ACL, REPLICAOF and the rest of that category.
-    REDIS_ACL_TAIL = ["resetchannels", "+@all", "-@dangerous", "-@admin"]
+    REDIS_ACL_TAIL = ["+@all", "-@dangerous", "-@admin"]
 
-    def _redis_acl_rules(password, patterns):
+    def _redis_acl_rules(password, patterns, channels=()):
         """The full `ACL SETUSER` argument list for a claim, in the order the rule above
         states it. Built in one place so create and any later reader see one rule."""
-        return ["reset", "on", ">" + password] + ["~" + p for p in patterns] + REDIS_ACL_TAIL
+        return (["reset", "on", ">" + password] + ["~" + p for p in patterns]
+                + ["resetchannels"] + ["&" + c for c in channels] + REDIS_ACL_TAIL)
 
     def _redis_admin(core):
         """WHERE a redis claim is served from: (host, port, the `default` user's password).
@@ -640,14 +650,15 @@ data:
             raise RuntimeError(
                 "claim needs at least one key pattern (spec.keyPatterns) — a redis ACL "
                 "user must be told which keys it may touch")
+        channels = _channel_patterns(spec)
         conn = redis_client.Redis(
             host=host, port=port, username=REDIS_ADMIN_USER, password=admin_pw,
             socket_connect_timeout=10, socket_timeout=10, decode_responses=True)
         try:
             # ACL SETUSER applies every rule atomically or none of them, so the user is
             # never left half-written by a rule the server rejects.
-            conn.execute_command("ACL", "SETUSER", user, *_redis_acl_rules(password, patterns))
-            log.info("set redis acl user %s on %s", user, ", ".join(patterns))
+            conn.execute_command("ACL", "SETUSER", user, *_redis_acl_rules(password, patterns, channels))
+            log.info("set redis acl user %s on keys %s, channels %s", user, ", ".join(patterns), ", ".join(channels) or "none")
         finally:
             conn.close()
         return ({
@@ -657,6 +668,7 @@ data:
             "REDIS_HOST": host,
             "REDIS_PORT": str(port),
             "REDIS_KEY_PATTERNS": ",".join(patterns),
+            "REDIS_CHANNEL_PATTERNS": ",".join(channels),
             "REDIS_URI": _redis_uri(user, password, host, port),
         }, "Opaque")
 
