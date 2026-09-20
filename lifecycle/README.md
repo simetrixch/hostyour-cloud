@@ -52,10 +52,14 @@ config are what the Manager creates a tenant's own apps repository under, and no
 App from nothing or installs one on an organisation. This act does what an API can do and leaves the
 two clicks GitHub keeps for a person. It starts a listener on `127.0.0.1`, opens the browser on a page
 that posts the App's manifest to the organisation's new-App page — the name `<organisation>-platform-manager`,
-the homepage `https://manager.<UNIT_APEX>`, the six repository permissions `actions`, `administration`,
-`contents`, `webhooks` and `workflows` at write and `metadata` at read, no webhook, private — and waits.
+the homepage `https://manager.<UNIT_APEX>`, the seven repository permissions `actions`, `administration`,
+`contents`, `webhooks` and `workflows` at write and `metadata` and `packages` at read, no webhook, private
+— and waits. `packages` at read is what lets the App's own token install a unit's private npm packages,
+so a unit of the App's organisation is onboarded with no PAT at all; an App created before it carried
+that permission is given it once on github.com (the App's permissions page, then the installation's
+approval), the two clicks GitHub keeps for a person.
 The first click is GitHub's own **Create GitHub App**. GitHub sends the browser back with a code, the
-act turns the code into the App, refuses when the answered permissions are not the six asked, and
+act turns the code into the App, refuses when the answered permissions are not the seven asked, and
 writes `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` into the config at once, in place, the key as one
 line with `\n` for each line break. It then opens the App's installation page for the second click,
 **Install** with **All repositories**, asks GitHub every five seconds with a JWT signed by the key

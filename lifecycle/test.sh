@@ -1348,8 +1348,8 @@ openssl genrsa 2048 > "$GHAPP/key.pem" 2>/dev/null || fail 'openssl could not mi
 openssl rsa -in "$GHAPP/key.pem" -pubout > "$GHAPP/pub.pem" 2>/dev/null || fail 'openssl could not derive the public half of the fixture key'
 # The key as GitHub's JSON spells it: one line, \n for each line break.
 awk '{ printf "%s\\n", $0 }' "$GHAPP/key.pem" > "$GHAPP/pem.json"
-SIX_PERMISSIONS='"actions":"write","administration":"write","contents":"write","metadata":"read","webhooks":"write","workflows":"write"'
-FIVE_PERMISSIONS='"actions":"write","administration":"write","contents":"write","metadata":"read","workflows":"write"'
+SEVEN_PERMISSIONS='"actions":"write","administration":"write","contents":"write","metadata":"read","packages":"read","webhooks":"write","workflows":"write"'
+SIX_PERMISSIONS='"actions":"write","administration":"write","contents":"write","metadata":"read","packages":"read","workflows":"write"'
 
 # THE STAND-IN FOR curl against api.github.com. Every call is logged as its
 # method and path, and a call carrying a JWT logs the verdict on it: the
@@ -1497,7 +1497,7 @@ page_holds() { # what was being checked -> both spellings served a page carrying
     [ -s "$page" ] || fail "$1 — the stand-in browser fetched no page from the listener of $side"
     grep -qF '<form method="post" action="https://github.com/organizations/acme/settings/apps/new?state=' "$page" || fail "$1 — the page of $side does not post to the organisation's new-App page with a state"
     if grep -qF '&quot;' "$page"; then fail "$1 — the page of $side escaped the manifest's quotes, which a single-quoted attribute does not need"; fi
-    grep -qF "\"default_permissions\":{$SIX_PERMISSIONS}" "$page" || fail "$1 — the manifest of $side does not carry exactly the six permissions"
+    grep -qF "\"default_permissions\":{$SEVEN_PERMISSIONS}" "$page" || fail "$1 — the manifest of $side does not carry exactly the seven permissions"
     grep -qF '"hook_attributes":{"active":false}' "$page" || fail "$1 — the manifest of $side does not switch the webhook off"
     grep -qF '"public":false' "$page" || fail "$1 — the manifest of $side does not make the App private"
     grep -qF '"name":"acme-platform-manager","url":"https://manager.example.invalid","redirect_url":"http://127.0.0.1:' "$page" || fail "$1 — the manifest of $side does not name the App, its homepage and the listener"
@@ -1509,8 +1509,8 @@ page_holds() { # what was being checked -> both spellings served a page carrying
   sed -E 's/127\.0\.0\.1:[0-9]+/127.0.0.1:PORT/; s/state=[0-9a-f]+/state=NONCE/' "$GHAPP/state-b/page.html" > "$OUT/page-b"
   diff -u "$OUT/page-a" "$OUT/page-b" || fail "$1 — the two spellings served different pages"
 }
-seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" all
-seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" all
+seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" all
+seed_github "$GHAPP/state-b" "$SEVEN_PERMISSIONS" all
 seed_config "$GHAPP/a"
 seed_config "$GHAPP/b"
 ok 'fixture built — a key, a stand-in GitHub that verifies every JWT against it, a stand-in browser, and two owner-only configs'
@@ -1582,30 +1582,30 @@ for state in "$GHAPP/state-a" "$GHAPP/state-b"; do
 done
 nothing_written 'a redirect carrying another state'
 rm -f "$GHAPP/state-a/wrong-state" "$GHAPP/state-b/wrong-state"
-ok 'the manifest page carries the six permissions, no webhook, private, the listener, and submits itself; the listener answers the redirect with one line; a redirect with another state is refused before the code reaches GitHub'
+ok 'the manifest page carries the seven permissions, no webhook, private, the listener, and submits itself; the listener answers the redirect with one line; a redirect with another state is refused before the code reaches GitHub'
 
-# ── an App answered with five permissions is refused, and named ─────────────
-seed_github "$GHAPP/state-a" "$FIVE_PERMISSIONS" all
-seed_github "$GHAPP/state-b" "$FIVE_PERMISSIONS" all
-run_app_bash config.apps6.env
-run_app_pwsh config.apps6.env
-must "create-github-app: GitHub sent the browser back with a code, and the state is this run's" 'the code and the state are taken off the redirect'
-must 'create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions actions:write administration:write contents:write metadata:read workflows:write and not the six asked: actions:write administration:write contents:write metadata:read webhooks:write workflows:write. Delete it there and run this again. Nothing has been written' \
-  'an App answered with five permissions is refused, both lists named'
-[ "$A_CODE" = '65' ] || fail "five permissions must refuse with 65, got $A_CODE"
-same 'an App answered with five permissions'
-for state in "$GHAPP/state-a" "$GHAPP/state-b"; do
-  [ "$(cat "$state/log")" = 'POST /app-manifests/c0de0fthefixture/conversions' ] || fail "the conversion was not the one call, or not with the fixture's code: $(tr '\n' ' ' < "$state/log")"
-done
-nothing_written 'an App answered with five permissions'
-ok 'the conversion is asked with the code off the redirect, and an App answered with five permissions is refused by both lists with nothing written'
-
-# ── the act itself, both clicks in one run ──────────────────────────────────
+# ── an App answered with six permissions is refused, and named ─────────────
 seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" all
 seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" all
 run_app_bash config.apps6.env
 run_app_pwsh config.apps6.env
-must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the six permissions actions:write administration:write contents:write metadata:read webhooks:write workflows:write' 'the App is named with its id and its permissions'
+must "create-github-app: GitHub sent the browser back with a code, and the state is this run's" 'the code and the state are taken off the redirect'
+must 'create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions actions:write administration:write contents:write metadata:read packages:read workflows:write and not the seven asked: actions:write administration:write contents:write metadata:read packages:read webhooks:write workflows:write. Delete it there and run this again. Nothing has been written' \
+  'an App answered with six permissions is refused, both lists named'
+[ "$A_CODE" = '65' ] || fail "six permissions must refuse with 65, got $A_CODE"
+same 'an App answered with six permissions'
+for state in "$GHAPP/state-a" "$GHAPP/state-b"; do
+  [ "$(cat "$state/log")" = 'POST /app-manifests/c0de0fthefixture/conversions' ] || fail "the conversion was not the one call, or not with the fixture's code: $(tr '\n' ' ' < "$state/log")"
+done
+nothing_written 'an App answered with six permissions'
+ok 'the conversion is asked with the code off the redirect, and an App answered with six permissions is refused by both lists with nothing written'
+
+# ── the act itself, both clicks in one run ──────────────────────────────────
+seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" all
+seed_github "$GHAPP/state-b" "$SEVEN_PERMISSIONS" all
+run_app_bash config.apps6.env
+run_app_pwsh config.apps6.env
+must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the seven permissions actions:write administration:write contents:write metadata:read packages:read webhooks:write workflows:write' 'the App is named with its id and its permissions'
 must 'create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into config.apps6.env in place' 'the id and the key are written before the installation is asked for'
 must 'create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install' 'the person is told the second click'
 must 'create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes' 'the poll is announced'
@@ -1641,8 +1641,8 @@ must 'create-github-app: config.apps6.env already carries GITHUB_APP_ID, GITHUB_
 same 'a second run on what the first wrote'
 
 # ── an installation on selected repositories refuses, and the next run fills what is missing ─
-seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" selected
-seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" selected
+seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" selected
+seed_github "$GHAPP/state-b" "$SEVEN_PERMISSIONS" selected
 seed_config "$GHAPP/a"
 seed_config "$GHAPP/b"
 run_app_bash config.apps6.env
@@ -1658,8 +1658,8 @@ for side in a b; do
 done
 # THE NEXT RUN finds the App in the config, asks GitHub for it with the key,
 # and installs — polling once through a 404 before the installation appears.
-seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" absent-then-all
-seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" absent-then-all
+seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" absent-then-all
+seed_github "$GHAPP/state-b" "$SEVEN_PERMISSIONS" absent-then-all
 run_app_bash config.apps6.env
 run_app_pwsh config.apps6.env
 must 'create-github-app: config.apps6.env carries GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY and no GITHUB_APP_INSTALLATION_ID, so the App stands and this run installs it' 'a config carrying the App and no installation skips the creation'
@@ -1685,8 +1685,8 @@ PLANTED_G="$WORK/planted-create-github-app.sh"
 cp "$HERE/require-owner-only.sh" "$WORK/"
 sed 's/so the App stands and this run installs it/so the App stands and this run will install it/' "$HERE/create-github-app.sh" > "$PLANTED_G"
 grep -q 'this run will install it' "$PLANTED_G" || fail 'the planted line was not planted — the probe proves nothing'
-seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" all
-seed_github "$GHAPP/state-b" "$SIX_PERMISSIONS" all
+seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" all
+seed_github "$GHAPP/state-b" "$SEVEN_PERMISSIONS" all
 for side in a b; do
   sed -i.bak "s/^GITHUB_APP_INSTALLATION_ID=.*/GITHUB_APP_INSTALLATION_ID=''/" "$GHAPP/$side/config.apps6.env" && rm -f "$GHAPP/$side/config.apps6.env.bak"
   make_owner_only "$GHAPP/$side/config.apps6.env"
@@ -1724,8 +1724,8 @@ echo "test:   records it deletes against a stand-in provider and the six it list
 echo "test:   the three branches it deletes in order, the config it names as staying, and a"
 echo "test:   second run that finds nothing to do; the five refusals the GitHub App act makes"
 echo "test:   before it opens a browser and its guard on a readable config, the manifest page"
-echo "test:   it serves with the six permissions and no webhook, the redirect it holds to its"
-echo "test:   own state, an App answered with five permissions, the App created and installed"
+echo "test:   it serves with the seven permissions and no webhook, the redirect it holds to its"
+echo "test:   own state, an App answered with six permissions, the App created and installed"
 echo "test:   in one run with every JWT verified against the key's public half and the three"
 echo "test:   answers written in place under a kept access list, a second run refused, an"
 echo "test:   installation on selected repositories refused with two answers written, and the"
