@@ -224,6 +224,14 @@ clusters/argocd/files/platform-apps-appset.yaml admits every-cluster and the par
 role rendered into __CLUSTER_ROLE_FIRST_PART__ / __CLUSTER_ROLE_LAST_PART__, and nothing
 else) — no separate toggle, exactly like
 serviceaccount.yaml / deployment.yaml.
+
+  * manager-admission-policy (ClusterRole) — the admission policy every tenant
+    member is fenced by (clusters/units/admissionpolicy) and its binding, both
+    cluster-scoped: create-tenant's apply-appprojects WRITES them and the orphan
+    scan LISTS them — over the harvested cluster-admin bearer on a slave, and over
+    this ServiceAccount on the master's own cluster, which held no such right
+    until hostyour-cloud#234 and refused a tenant onboarded onto a master with a
+    403. `list` on appprojects is the scan's too (hostyour-manager#190).
 */ -}}
 {{- include "rbac.grants" (dict
     "root" $
@@ -237,7 +245,10 @@ serviceaccount.yaml / deployment.yaml.
       ))
       (dict "name" "manager-argocd-onboarding" "rules" (list
         (dict "apiGroups" (list "argoproj.io") "resources" (list "applications") "verbs" (list "get" "list" "patch"))
-        (dict "apiGroups" (list "argoproj.io") "resources" (list "appprojects") "verbs" (list "get" "create" "update" "delete"))
+        (dict "apiGroups" (list "argoproj.io") "resources" (list "appprojects") "verbs" (list "get" "list" "create" "update" "delete"))
+      ))
+      (dict "name" "manager-admission-policy" "rules" (list
+        (dict "apiGroups" (list "admissionregistration.k8s.io") "resources" (list "validatingadmissionpolicies" "validatingadmissionpolicybindings") "verbs" (list "get" "list" "create" "update" "delete"))
       ))
       (dict "name" "manager-argocd-repo-credential" "namespace" "argocd" "rules" (list
         (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "get" "create" "update" "delete"))

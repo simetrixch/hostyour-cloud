@@ -276,7 +276,11 @@ bash lifecycle/abandon-installation.sh apps4.example.com lifecycle/config.apps4.
 For an installation whose machines are gone — restored to their bare points, or taken away — and
 never for one that still runs: a living installation is offboarded through the Manager and taken
 back with `remove-slave-from-master` and the reset. Restoring a machine takes back everything on it
-and nothing beside it, and this act is for what stands beside it.
+and nothing beside it, and this act is for what stands beside it. What it does not touch: a
+consumer's build webhook on its repository. That hook is the consumer's, written by the Manager's
+onboarding under the consumer's own credential, and the next onboarding re-sets it to the new
+installation's secret (hostyour-manager#198) — an installation that deleted it would reach into a
+repository it holds no credential for.
 
 Everything is derived from the install branch on origin, never typed: the cluster map of the master
 and of every slave it records give the machines and their addresses (`nodeCidrs`), the consumer
