@@ -54,7 +54,8 @@ manager:
 
 # The per-unit .npmrc (templates/externalsecret-npmrc.yaml) states no value here: the
 # unit's own scope is the owner of its repository, routed to GitHub Packages with the
-# unit's PAT, and the DEFAULT (unscoped) registry is deliberately NOT set, so pnpm
+# organisation's packages reader (the `packages` property of the unit's build entry,
+# hostyour-manager#220), and the DEFAULT (unscoped) registry is deliberately NOT set, so pnpm
 # resolves public deps from its own default, registry.npmjs.org — the build's egress is
 # outward-open (templates/networkpolicy.yaml), and the tarball URLs in the unit's
 # COMMITTED lockfile were written against npmjs (else ERR_PNPM_TARBALL_URL_MISMATCH).

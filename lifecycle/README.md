@@ -54,10 +54,10 @@ two clicks GitHub keeps for a person. It starts a listener on `127.0.0.1`, opens
 that posts the App's manifest to the organisation's new-App page — the name `<organisation>-platform-manager`,
 the homepage `https://manager.<UNIT_APEX>`, the seven repository permissions `actions`, `administration`,
 `contents`, `webhooks` and `workflows` at write and `metadata` and `packages` at read, no webhook, private
-— and waits. `packages` at read is what lets the App's own token install a unit's private npm packages,
-so a unit of the App's organisation is onboarded with no PAT at all; an App created before it carried
-that permission is given it once on github.com (the App's permissions page, then the installation's
-approval), the two clicks GitHub keeps for a person.
+— and waits. `packages` at read does NOT let the App's token install a private npm package: GitHub
+grants an installation token no access to a private package whatever the App's permissions say, so
+a build's `.npmrc` carries the organisation's PACKAGES READER — a PAT recorded once on the Manager's
+Organisations page (hostyour-manager#218) — while the App stays the identity of every repository.
 The first click is GitHub's own **Create GitHub App**. GitHub sends the browser back with a code, the
 act turns the code into the App, refuses when the answered permissions are not the seven asked, and
 writes `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` into the config at once, in place, the key as one
