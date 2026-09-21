@@ -69,6 +69,7 @@ install-transcripts/
 /GEMINI.md
 /.mcp.json
 /.agents/
+/.codex/
 /.openhands/microagents/
 /.gemini/
 /.cursorrules
