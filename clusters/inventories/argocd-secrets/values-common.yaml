@@ -6,11 +6,7 @@
 secret-store: {}
 
 # The catalogue credential is templates/externalsecret-repo-catalog.yaml, the twin of the slave
-# instance's; it reads global.catalogUrl off the same map.
-repo:
-  # ArgoCD sends a personal access token as the password of a fixed username; GitHub reads the
-  # token and ignores the name. The Manager's own reader of the same catalogue uses the same word.
-  username: x-access-token
+# instance's; it reads global.catalogUrl off the same map and holds the platform's GitHub App.
 
 # WHERE THE CLIENT SECRET STANDS. `<env>/idp/bootstrap` is written when the identity provider is
 # seeded, on the cluster that keeps the books, and every cluster of the installation reads that one

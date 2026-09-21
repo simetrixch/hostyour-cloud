@@ -73,8 +73,7 @@ repo:
   # (clusters/argocd/files/tenants-appset.yaml, synced by the handoff root
   # Application) and read the catalog through this instance's repo-server, so
   # the instance needs the credential even though no template here renders
-  # them. The username pairs with the org PAT at secret/<stage>/slaves/
-  # <name>/deploy-repo-pat (seeded when the slave is added).
+  # them. The credential is the platform's GitHub App, read out of <stage>/app/github-app.
   #
   # WHICH repository the catalog is, is installation state and is not settable
   # here: clusters/active/<fqdn>.yaml carries it as global.catalogUrl, and
@@ -83,7 +82,6 @@ repo:
   # repository. There is no per-slave override to write it into: the generator
   # clusters/argocd/files/slaves-appset.yaml names no installation/values/<app>.yaml
   # for this chart, and this file is product, byte-identical everywhere.
-  deployUsername: hostyour-cloud
 
 # ---------------------------------------------------------------------------
 # kube (dashboard): deliberately NOT in this chart. ONE SHARED master Headlamp

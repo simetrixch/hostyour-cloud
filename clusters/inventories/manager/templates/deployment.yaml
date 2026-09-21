@@ -258,27 +258,12 @@ spec:
                 secretKeyRef:
                   name: manager-github
                   key: write-pat
-            # CATALOG_REPO AND CATALOG_WRITE_PAT, and both, because the two are refused unless
-            # they arrive together: the catalogue is the INSTALLATION's own repository and there is
-            # no default that could name it. The address is trimmed off the same value the reaper
-            # reads, so one installation still names its catalog once.
+            # CATALOG_REPO: the catalogue is the INSTALLATION's own repository and there is no
+            # default that could name it; the Manager reads and writes it with the App's own token,
+            # minted at every open (hostyour-manager#194). The address is trimmed off the same value
+            # the reaper reads, so one installation still names its catalog once.
             - name: CATALOG_REPO
               value: {{ .Values.github.deployRepo | default (required "manager: global.catalogUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.catalogUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
-            {{- if not .Values.githubApp.appId }}
-            # The write half pushes tenant pointers to the tenant catalog@master. It REUSES the
-            # same org GITOPS_REPO_PAT, which must therefore carry write scope for the catalog too.
-            # ONLY WHERE THE INSTALLATION HAS NO GITHUB APP: with the App answered the Manager
-            # writes the catalog with the App's own token, minted at every open (hostyour-manager#194),
-            # and a PAT delivered beside it is the one thing its readiness row catalog.identity
-            # turns red on. CATALOG_REPO above is what registers the tenant Run family (config.ts).
-            # The family's kube access rides the pod ServiceAccount in-cluster (grants shipped with
-            # this chart: templates/rbac.yaml).
-            - name: CATALOG_WRITE_PAT
-              valueFrom:
-                secretKeyRef:
-                  name: manager-github
-                  key: write-pat
-            {{- end }}
             {{- end }}
             {{- end }}
             # How this manager reaches the ansiwise deployment engine on a machine
@@ -408,20 +393,15 @@ spec:
                   name: manager-cloudflare-dns
                   key: api-token
                   optional: true
-            {{- if .Values.githubApp.appId }}
-            # THE PLATFORM'S GITHUB APP (config.ts githubApp, all three or none): the
+            # THE PLATFORM'S GITHUB APP (config.ts githubApp, all three required): the
             # identity the tenant-apps-repo run creates a tenant's own apps repository
             # under, in the customer's organisation, and mints the installation token
             # the runs that build and deploy that repository push with. Sourced from the
             # manager-github-app Secret (externalsecret-github-app.yaml). The private key
             # arrives as ONE line with `\n` where the PEM breaks a line, because the
             # hand-filled input it comes from holds one line per value; config.ts turns
-            # them back. Rendered only where githubApp.appId is set
-            # (installation/values/manager.yaml), for the reason that file states.
-            # optional:true so an unsynced Secret never blocks manager boot; the runs
-            # that need the App refuse at their plan without it, by name, which is the
-            # right place to notice, because a tenant repository nothing can create is
-            # not a tenant.
+            # them back. optional:true so an unsynced Secret never blocks manager boot;
+            # the Manager refuses at boot without all three (config.ts), by name.
             - name: GITHUB_APP_ID
               valueFrom:
                 secretKeyRef:
@@ -440,7 +420,6 @@ spec:
                   name: manager-github-app
                   key: private-key
                   optional: true
-            {{- end }}
             # THE OBJECT STORAGE A TENANT'S UPLOADS GO TO. create-tenant makes the bucket
             # named by the tenant guid with this MANAGING token and mints a key scoped to
             # that one bucket, which is the only object-storage credential the tenant ever

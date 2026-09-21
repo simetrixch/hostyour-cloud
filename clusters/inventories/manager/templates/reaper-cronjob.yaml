@@ -124,9 +124,7 @@ spec:
                       key: write-pat
                 # The catalog repo — the floor's second carrier class is
                 # the CATALOG's per-chart values-<stage>.yaml on every
-                # branch, read with that repository's own PAT
-                # (externalsecret-deploy-repo-pat.yaml, from the stage-free
-                # secret/build/catalog/repo-pat). Addressed by owner/name because
+                # branch, read with the App's token. Addressed by owner/name because
                 # the reaper goes through the GitHub API, not by clone.
                 #
                 # READ OFF global.catalogUrl, WHICH IS THE KEY THE INSTALLATION ACTUALLY WRITES.
@@ -140,7 +138,6 @@ spec:
                 # one installation naming its catalog twice is two spellings that can disagree.
                 - name: CATALOG_REPO
                   value: {{ .Values.github.deployRepo | default (required "manager: global.catalogUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map's catalog-repo)" .Values.global.catalogUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
-                {{- if .Values.githubApp.appId }}
                 # The catalog is read with the App's token, minted once per run of this job
                 # (registry-reaper.ts); the three env are the Manager's own, from the same Secret.
                 - name: GITHUB_APP_ID
@@ -158,13 +155,6 @@ spec:
                     secretKeyRef:
                       name: manager-github-app
                       key: private-key
-                {{- else }}
-                - name: CATALOG_WRITE_PAT
-                  valueFrom:
-                    secretKeyRef:
-                      name: manager-deploy-repo-pat
-                      key: pat
-                {{- end }}
                 {{- if .Values.master.sshUser }}
                 # ── where this installation keeps its books ────────────────────────────────────────
                 # The floor's first carrier class is the consumer registrations, and they stand on the
