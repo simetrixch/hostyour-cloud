@@ -902,10 +902,10 @@ spec:
 
               # ── the carrier credentials: ONE PER REGISTRATION ──────────────
               # The Manager's own copy of this search opens each carrier
-              # under THAT registration's credential and under no other
+              # under THAT unit's identity and under no other
               # (hostyour-manager server/domains/registry-cleanup/search.ts,
-              # readUnitChart: cloneAtRef with entry.repoCredentialId when the
-              # registration carries one, unauthenticated when it does not).
+              # readUnitChart: the owner's identity resolved from the URL,
+              # hostyour-manager#226 - every unit is private, none is public).
               # This is the same shape read from the other end: the Manager
               # holds a sealed credential store, this pod holds a Vault login,
               # and both resolve to the ONE PAT per unit that onboarding seeds
@@ -1011,31 +1011,23 @@ spec:
                 rrepo="$(yq eval '.repoURL' "${reg}")"
                 rchart="$(yq eval '.chartPath // ""' "${reg}")"
                 rcluster="$(yq eval '.cluster // ""' "${reg}")"
-                # The registration's own answer to "is this repository private":
-                # ConsumerRegistrationSchema (hostyour-manager shared/consumer.ts)
-                # carries repoCredentialId for a private repo and omits it for a
-                # public one, and the Manager's search branches on exactly
-                # this field.
-                rcred="$(yq eval '.repoCredentialId // ""' "${reg}")"
+                # EVERY unit is private and EVERY unit has its entry: the Manager
+                # writes build/<unit>/repo-pat for every build registration from
+                # the owner's identity (hostyour-manager#230, #226), so the
+                # carrier's own entry is presented unconditionally. The field a
+                # registration once carried for this (repoCredentialId) is gone.
                 [ -n "${rchart}" ] || continue
-                # An `if`, not a `||` list: a command on the right of `||` runs
-                # in a condition context, where set -e does NOT fire, so a
-                # carrier whose credential Vault refused would fall through to
-                # the clone as though it had none — the exact silence this
-                # change exists to end.
-                if [ -n "${rcred}" ]; then
-                  carrier_credential "${rname}" "${rrepo}"
-                fi
+                # A plain statement under set -e, never the right of a `||`: a
+                # command there runs in a condition context where set -e does
+                # NOT fire, and a carrier whose credential Vault refused would
+                # fall through to the clone as though it had none.
+                carrier_credential "${rname}" "${rrepo}"
                 dest="${WORK}/carrier-${rname}"
                 # Fail-closed: a registered stage whose delivery branch cannot
                 # be read is a search we cannot complete — not completed-ok.
                 git clone -q --depth 1 --branch "deploy/${STAGE}" "${rrepo}" "${dest}" \
                   || { echo "bump: FAIL — cannot read ${rrepo}@deploy/${STAGE} (registration ${rname}); the search over its pins is impossible." >&2
-                       if [ -n "${rcred}" ]; then
-                         echo "  This run presented ${rname}'s OWN PAT, read from ${VAULT_KV_MOUNT}/build/${rname}/repo-pat, so what was refused is the branch or that PAT — not the choice of credential." >&2
-                       else
-                         echo "  ${rname}'s registration carries no repoCredentialId, so it was cloned unauthenticated; a repository that has become private since it was registered is refused here." >&2
-                       fi
+                       echo "  This run presented ${rname}'s OWN PAT, read from ${VAULT_KV_MOUNT}/build/${rname}/repo-pat, so what was refused is the branch or that PAT — not the choice of credential." >&2
                        exit 1; }
                 vf="${dest}/${rchart}/values-${STAGE}.yaml"
                 [ -f "${vf}" ] || { echo "bump: ${rname} has no ${rchart}/values-${STAGE}.yaml — no pin surface, skipping"; continue; }
