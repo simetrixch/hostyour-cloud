@@ -4,11 +4,11 @@
 builds:
   - name: manager
     image: manager
-    tag: "0.8.235-stable-20260920203321-513be5a"
+    tag: "0.8.236-stable-20260921150706-696d340"
   # The dbtools job image (hostyour-manager/docker/dbtools.Dockerfile): the
   # Deployment projects it as DBTOOLS_IMAGE and the manager runs every
   # move/backup/restore Job on it. It builds in hostyour-manager because that
   # is where its caller lives, so a hostyour-manager release bumps this pin.
   - name: dbtools
     image: dbtools
-    tag: "0.8.235-stable-20260920203321-513be5a"
+    tag: "0.8.236-stable-20260921150706-696d340"
