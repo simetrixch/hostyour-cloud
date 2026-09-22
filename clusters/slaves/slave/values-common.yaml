@@ -202,6 +202,37 @@ argo-cd:
         hs.status = "Healthy"
         hs.message = ""
         return hs
+      # A SERVICE CLAIM IS HEALTHY WHEN THE PROVISIONER HAS ANSWERED IT, and ArgoCD
+      # has to be told, because it knows no custom resource of ours. Without this it
+      # takes every ServiceClaim for Healthy the moment the object exists, walks on to
+      # the next sync wave, and a workload that needs what the claim delivers starts
+      # before it is there: swissbookai's migrate Job (its chart's wave -1) came up
+      # ahead of its own registry-pull claim (wave -3) and could not pull at all —
+      # "no basic auth credentials", because the pull Secret was not in the namespace
+      # yet. The kubelet's backoff healed it a minute later, which is a race healing
+      # itself rather than an order being kept.
+      #
+      # `.status.phase` is the provisioner's own answer (service-provisioner crd.yaml:
+      # Pending | Ready | Error | Deleting | Orphaned, written by set_status in its
+      # configmap.yaml), so this reads what that controller states and invents nothing.
+      # A claim carrying no status at all is Progressing, never Healthy: the absence of
+      # an answer is not an answer, and treating it as one is the very defect above.
+      resource.customizations.health.platform.hostyour.cloud_ServiceClaim: |
+        hs = {}
+        if obj.status ~= nil and obj.status.phase ~= nil then
+          if obj.status.phase == "Ready" then
+            hs.status = "Healthy"
+          elseif obj.status.phase == "Error" or obj.status.phase == "Orphaned" then
+            hs.status = "Degraded"
+          else
+            hs.status = "Progressing"
+          end
+          hs.message = obj.status.message or obj.status.phase
+        else
+          hs.status = "Progressing"
+          hs.message = "the service provisioner has not answered this claim yet"
+        end
+        return hs
     # OIDC login via the controller's Authentik (the oidc.config itself is
     # injected PER SLAVE by slaves-appset.yaml — it needs slave.masterFqdn for
     # the issuer host). This RBAC is static, so it lives here: map the
