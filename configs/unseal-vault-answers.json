@@ -1,0 +1,6 @@
+{
+  "answers": {
+    "fqdn": "master.digitacloud.app",
+    "stage": "prod"
+  }
+}
