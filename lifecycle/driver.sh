@@ -324,9 +324,9 @@ fi
 # So where origin carries no branch for this name — the one reading that says this machine has
 # never been installed — whatever the programs would meet is named and taken off before any of
 # them runs: the set the Manager's leave-host takes off a machine that leaves (hostyour-manager
-# leave-host.kit.ts), the two engine executables, and the two places helm keeps root's
-# repositories and indexes, which no row of any program declares. A later run finds the branch and
-# converges on what stands, as before.
+# leave-host.kit.ts), the two engine executables, the two places helm keeps root's repositories
+# and indexes, which no row of any program declares, and what the earlier cluster painted into the
+# kernel (the paragraph below). A later run finds the branch and converges on what stands, as before.
 FOUND_ON_THE_MACHINE=("$CATALOG" /srv/hostyour-cloud /var/lib/ansiwise /usr/local/bin/ansiwise /usr/local/bin/ansiwise-rest /root/.config/helm /root/.cache/helm)
 if [ -n "$FIRST" ]; then
   FOUND=()
@@ -336,17 +336,48 @@ if [ -n "$FIRST" ]; then
   if command -v snap >/dev/null 2>&1 && snap list microk8s >/dev/null 2>&1; then
     FOUND+=('the microk8s snap')
   fi
+  # THE KERNEL KEEPS WHAT THE SNAP DOES NOT. A cluster paints its packet filter into the kernel —
+  # the network agent's cali- chains, the service proxy's KUBE- chains — in whichever of the two
+  # iptables backends it chose, and `snap remove --purge` takes the snap's files and leaves the
+  # kernel as it stands. That set stays frozen with the interfaces of pods that are gone and ends in
+  # a DROP for every other one; the next cluster's agent paints its own set into the other backend,
+  # the kernel evaluates both, and every new pod is unreachable from its own node. Measured on
+  # master1 (2026-09-22): 7358 packets dropped as "Unknown interface" by the set of the cluster
+  # taken off an hour before, and the cert-manager addon timing out on pods nothing could reach.
+  # The agent's links and routes stay the same way. So the kernel is measured and cleared here
+  # with the snap: every rule naming a cali- or KUBE- chain in either backend, the agent's links,
+  # and the routes it programmed (protocol 80 is the agent's own).
+  for backend in iptables-legacy iptables-nft ip6tables-legacy ip6tables-nft; do
+    command -v "$backend-save" >/dev/null 2>&1 || continue
+    root "$backend-save" 2>/dev/null | grep -qE 'cali|KUBE-' && FOUND+=("the $backend rules of an earlier cluster")
+  done
+  ip -br link 2>/dev/null | awk '{print $1}' | sed 's/@.*//' | grep -qE '^(vxlan[.]calico|cali[0-9a-f]{11})$' \
+    && FOUND+=('the links of an earlier pod network')
+  [ -n "$(ip route show proto 80 2>/dev/null)" ] && FOUND+=('the routes of an earlier pod network')
   if [ ${#FOUND[@]} -eq 0 ]; then
     good 'this machine is bare — nothing a program would meet stands here'
   else
     warn "a first installation, and this machine is not bare: ${FOUND[*]} — taken off before any program runs"
     for found in "${FOUND[@]}"; do
-      if [ "$found" = 'the microk8s snap' ]; then
-        root snap remove --purge microk8s >/dev/null 2>&1 || die 'the microk8s snap of an earlier life could not be removed, and deploy-cluster would build on it' 70
-      else
-        root rm -rf -- "$found"
-        root test -e "$found" && die "$found could not be taken off, and a program would act on it" 70
-      fi
+      case "$found" in
+        'the microk8s snap')
+          root snap remove --purge microk8s >/dev/null 2>&1 \
+            || die 'the microk8s snap of an earlier life could not be removed, and deploy-cluster would build on it' 70 ;;
+        'the '*' rules of an earlier cluster')
+          backend=${found#the }
+          backend=${backend%% *}
+          root sh -c "$backend-save | grep -vE 'cali|KUBE-' | $backend-restore" \
+            || die "$found could not be taken off, and every new pod's traffic would end in their DROP" 70 ;;
+        'the links of an earlier pod network')
+          for link in $(ip -br link 2>/dev/null | awk '{print $1}' | sed 's/@.*//' | grep -E '^(vxlan[.]calico|cali[0-9a-f]{11})$'); do
+            root ip link delete "$link" || die "the link $link could not be taken off" 70
+          done ;;
+        'the routes of an earlier pod network')
+          root ip route flush proto 80 || die "$found could not be taken off" 70 ;;
+        *)
+          root rm -rf -- "$found"
+          root test -e "$found" && die "$found could not be taken off, and a program would act on it" 70 ;;
+      esac
       good "took off $found"
     done
   fi
