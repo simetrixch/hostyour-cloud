@@ -829,6 +829,24 @@ for program in "${PROGRAMS[@]}"; do
       exit 1
     }
   done
+
+  # A RESTORE STANDS BETWEEN THE CLUSTER AND THE SERVICES, AND ONLY THERE. master-restore stages a
+  # master's backup on this machine and leaves a mark; the data of every platform store is placed
+  # once the cluster stands and before deploy-platform-services creates the claims, because a
+  # volume's directory is named after the claim's uid, which exists only then — so the placement
+  # binds each claim ahead of time to a volume already holding the store (a PersistentVolume with
+  # a claimRef, which the claim binds to instead of being provisioned empty). Vault then starts on
+  # its own data and deploy-platform-services finds it initialized and its quorum in secrets/,
+  # which is the branch that program takes on an installation that already stands. No mark, no act:
+  # a first installation never sees this row.
+  if [ "$program" = deploy-cluster ] && root test -e /var/lib/master-restore/pending; then
+    phase "$step / ${#PROGRAMS[@]}   the platform stores, from the staged backup"
+    if root bash /var/lib/master-restore/restore-data.sh; then
+      good 'every platform store is placed and bound ahead of its claim — deploy-platform-services finds them standing'
+    else
+      die 'the staged backup could not be placed; nothing after deploy-cluster was started, and the mark stands so a second run tries again' 1
+    fi
+  fi
 done
 
 phase 'done'

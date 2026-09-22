@@ -1702,6 +1702,140 @@ if diff -q "$OUT/a.out.n" "$OUT/b.out.n" >/dev/null; then
 fi
 ok 'the planted defect was caught — the comparison of the create-github-app pair can go red'
 
+# ===========================================================================
+# SEVEN — master-backup and master-restore, up to the session they would open
+# ===========================================================================
+# THE ACTS THEMSELVES RUN ON A MACHINE, and no fixture here is one: what is
+# measured is everything a launcher decides BEFORE it opens its session — the
+# usage, the config it refuses and why, the door it composes — on both
+# spellings, plus the one probe that proves the door: a config naming a
+# MACHINE_HOST that resolves to nothing makes both spellings print ssh's own
+# sentence about THAT name, not the FQDN. The two drivers are held to one list
+# of stores, because a store taken by one and unknown to the other would be
+# backed up and never placed.
+MASTER="$WORK/master"
+mkdir -p "$MASTER"
+MCFG="$MASTER/config.master.env"
+{
+  echo "FQDN='master.example.invalid'"
+  echo "MACHINE_HOST='door.example.invalid'"
+  echo "OPERATOR_USER='op'"
+  echo "STAGE='prod'"
+  echo "ELEVATION_PASSWORD='x'"
+  echo "PLATFORM_REPO='acme/cloud'"
+  echo "PLATFORM_BRANCH='master'"
+  echo "PLATFORM_REPO_READ_PAT='t'"
+  echo "STORAGE_BOX_HOST='box.example.invalid'"
+  echo "STORAGE_BOX_USER='u'"
+  echo "STORAGE_BOX_PASSWORD='p'"
+  echo "BACKUP_PASSPHRASE='s'"
+} > "$MCFG"
+make_owner_only "$MCFG"
+MNOPASS="$MASTER/config.nopass.env"
+grep -v '^BACKUP_PASSPHRASE=' "$MCFG" > "$MNOPASS"
+make_owner_only "$MNOPASS"
+MNOBOX="$MASTER/config.nobox.env"
+grep -v '^STORAGE_BOX_USER=' "$MCFG" > "$MNOBOX"
+make_owner_only "$MNOBOX"
+MNOCONFIG="$MASTER/there-is-no-config.env"
+
+run_master_bash() { # script base name, then its arguments
+  local base="$1"; shift
+  A_CODE=0
+  ( cd "$MASTER" && bash "$HERE/$base.sh" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+run_master_pwsh() {
+  local base="$1"; shift
+  B_CODE=0
+  ( cd "$MASTER" && "$PWSH" -NoProfile -NoLogo -File "$HERE/$base.ps1" "$@" ) > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
+}
+
+for act in master-backup master-restore; do
+  run_master_bash "$act"
+  run_master_pwsh "$act"
+  must "usage: lifecycle/$act.sh <config>" "$act: a run naming no config is refused"
+  [ "$A_CODE" = '64' ] || fail "$act: a run naming no config must end with 64, got $A_CODE"
+  same_code "$act: a run naming no config"
+
+  run_master_bash "$act" "$MNOCONFIG"
+  run_master_pwsh "$act" "$MNOCONFIG"
+  must "there is no config at $MNOCONFIG" "$act: a config that is not there is refused"
+  must "Nothing has been changed" "$act: a refusal says that nothing has been changed"
+  [ "$A_CODE" = '66' ] || fail "$act: a missing config must end with 66, got $A_CODE"
+  same "$act: a config that is not there"
+
+  run_master_bash "$act" "$MNOPASS"
+  run_master_pwsh "$act" "$MNOPASS"
+  must "states no BACKUP_PASSPHRASE" "$act: a config without the passphrase is refused"
+  [ "$A_CODE" = '65' ] || fail "$act: a config without the passphrase must end with 65, got $A_CODE"
+  same "$act: a config without the passphrase"
+
+  run_master_bash "$act" "$MNOBOX"
+  run_master_pwsh "$act" "$MNOBOX"
+  must "states no STORAGE_BOX_USER" "$act: a config without the storage box is refused"
+  [ "$A_CODE" = '65' ] || fail "$act: a config without the storage box must end with 65, got $A_CODE"
+  same "$act: a config without the storage box"
+
+  # THE DOOR IS MACHINE_HOST. The name resolves to nothing, so ssh refuses at once and names it:
+  # both spellings composed the session to the door and not to the identity.
+  run_master_bash "$act" "$MCFG"
+  run_master_pwsh "$act" "$MCFG"
+  must "op@door.example.invalid could not be reached" "$act: the session is opened to MACHINE_HOST, never to the FQDN"
+  must_not "op@master.example.invalid" "$act: the identity is not the door"
+  [ "$A_CODE" = '69' ] || fail "$act: a door that resolves to nothing must end with 69, got $A_CODE"
+  same "$act: the door composed from MACHINE_HOST, refused by name"
+
+  mkdir -p "$MASTER/driverless"
+  cp "$HERE/$act.sh" "$HERE/$act.ps1" "$MASTER/driverless/"
+  A_CODE=0
+  ( cd "$MASTER" && bash "$MASTER/driverless/$act.sh" "$MCFG" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  B_CODE=0
+  ( cd "$MASTER" && "$PWSH" -NoProfile -NoLogo -File "$MASTER/driverless/$act.ps1" "$MCFG" ) > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
+  must "$act-driver.sh is not beside this file" "$act: a launcher without its driver is refused"
+  [ "$A_CODE" = '66' ] || fail "$act: a missing driver must end with 66, got $A_CODE"
+  same "$act: a launcher standing without its driver"
+done
+
+run_master_bash master-restore "$MCFG" nope
+run_master_pwsh master-restore "$MCFG" nope
+must 'a backup is named by the moment it was taken' 'restore: an id that is no moment is refused'
+[ "$A_CODE" = '64' ] || fail "restore: an id that is no moment must end with 64, got $A_CODE"
+same 'restore: an id that is no moment'
+
+run_master_bash master-backup "$MCFG" extra
+run_master_pwsh master-backup "$MCFG" extra
+must 'was given more than it takes: extra' 'backup: a third argument is refused'
+[ "$A_CODE" = '64' ] || fail "backup: a third argument must end with 64, got $A_CODE"
+same_code 'backup: a third argument'
+
+# ── one list of stores in both drivers ───────────────────────────────────────
+# master-backup-driver.sh names namespace|claim|workload|kind, master-restore-driver.sh
+# namespace|claim|size: the namespace and the claim, in order, have to be the same rows.
+stores_of() { sed -n '/^STORES=($/,/^)$/p' "$1" | grep -E '^  "' | sed 's/^  "//; s/"$//' | cut -d'|' -f1,2; }
+stores_of "$HERE/master-backup-driver.sh" > "$OUT/stores-backup"
+stores_of "$HERE/master-restore-driver.sh" > "$OUT/stores-restore"
+[ -s "$OUT/stores-backup" ] || fail 'the backup driver names no store — the list it takes from could not be read'
+diff -u "$OUT/stores-backup" "$OUT/stores-restore" \
+  || fail 'the two drivers name different stores — a store taken by one and unknown to the other is backed up and never placed'
+ok "the two drivers name the same $(wc -l < "$OUT/stores-backup" | tr -d ' ') stores, in the same order"
+
+# ── the planted defects for this pair ────────────────────────────────────────
+for act in master-backup master-restore; do
+  PLANTED_M="$MASTER/planted-$act.sh"
+  sed 's/could not be reached: /could not be reached — /' "$HERE/$act.sh" > "$PLANTED_M"
+  cp "$HERE/$act-driver.sh" "$HERE/require-owner-only.sh" "$MASTER/" 2>/dev/null || true
+  grep -q 'could not be reached — ' "$PLANTED_M" || fail "the planted line was not planted in $act — the probe proves nothing"
+  A_CODE=0
+  ( cd "$MASTER" && bash "$PLANTED_M" "$MCFG" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  grep -q 'could not be reached' "$OUT/a.err" || fail "the planted $act spelling printed no reach line — the probe was aimed at a line the fixture does not reach"
+  run_master_pwsh "$act" "$MCFG"
+  normalise < "$OUT/a.err" > "$OUT/a.err.n"; normalise < "$OUT/b.err" > "$OUT/b.err.n"
+  if diff -q "$OUT/a.err.n" "$OUT/b.err.n" >/dev/null; then
+    fail "a $act spelling with one line changed compared EQUAL to the other — the comparison above proves nothing"
+  fi
+  ok "the planted defect was caught — the comparison of the $act pair can go red"
+done
+
 echo "test: GREEN — every case above was measured on both spellings and answered identically,"
 echo "test:   and the owner-only guard on the bash spelling alone."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
@@ -1729,11 +1863,14 @@ echo "test:   own state, an App answered with six permissions, the App created a
 echo "test:   in one run with every JWT verified against the key's public half and the three"
 echo "test:   answers written in place under a kept access list, a second run refused, an"
 echo "test:   installation on selected repositories refused with two answers written, and the"
-echo "test:   run after it that installs alone. Five planted defects prove the comparison can"
-echo "test:   go red."
+echo "test:   run after it that installs alone; the refusals a master backup and a master restore"
+echo "test:   make before they open a session, the door each composes from MACHINE_HOST and not"
+echo "test:   from the identity, the id a restore refuses, and the one list of stores both drivers"
+echo "test:   carry. Seven planted defects prove the comparison can go red."
 echo "test: not covered — an authenticated remote, two workstations minting at one moment, the"
 echo "test:   regeneration and the removal themselves on a machine, a slave that is still"
 echo "test:   answering, the PowerShell spelling's own refusal of a readable config, a branch"
 echo "test:   deletion a remote refuses (a directory origin refuses none), a DNS provider"
 echo "test:   that fails in the middle of the abandonment, GitHub's own answers to a manifest"
-echo "test:   and a real browser, and the two ten-minute bounds of the GitHub App act."
+echo "test:   and a real browser, the two ten-minute bounds of the GitHub App act, and the backup"
+echo "test:   and the restore themselves on a machine — the drill on two masters is what proves those."

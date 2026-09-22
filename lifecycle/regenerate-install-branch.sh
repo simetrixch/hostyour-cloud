@@ -214,7 +214,10 @@ done
 # A MACHINE IS ADDRESSED BY ITS NAME, and by nothing else — the name in the map,
 # which is the name of the branch and the name on the certificate.
 PORT=22
-TARGET="$OPERATOR_USER@$FQDN"
+# The door is MACHINE_HOST where the config states one — a standby master kept through its own name
+# while the identity points at the live one (install-machine.sh says why) — and the identity where not.
+DOOR_HOST="${MACHINE_HOST:-$FQDN}"
+TARGET="$OPERATOR_USER@$DOOR_HOST"
 BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 
 # WHICH DOOR THIS MACHINE OPENS, asked before anything is sent. An installation
@@ -233,7 +236,7 @@ else
       # NOT ACCEPTED SILENTLY, and accept-new deliberately does not cover it: a
       # machine whose host key changed is either one that was rebuilt or one that
       # is not the machine any more, and only the operator knows which.
-      die "$FQDN answers with a host key this machine does not recognise. A restore gives a machine a NEW host key: if you have just restored it, forget the old one with ssh-keygen -R $FQDN and start again. If you have not, clear nothing: something else is answering for $FQDN" 74 ;;
+      die "$DOOR_HOST answers with a host key this machine does not recognise. A restore gives a machine a NEW host key: if you have just restored it, forget the old one with ssh-keygen -R $DOOR_HOST and start again. If you have not, clear nothing: something else is answering for $DOOR_HOST" 74 ;;
     *'Permission denied'*)
       [ -t 0 ] \
         || die "$TARGET refuses the operator key, so this could only be a password session, and there is no terminal here to ask on. Start it from a terminal" 69

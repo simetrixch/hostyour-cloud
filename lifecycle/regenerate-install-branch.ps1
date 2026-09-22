@@ -258,7 +258,11 @@ if ((Stated 'FQDN') -ne $Fqdn) {
 # A MACHINE IS ADDRESSED BY ITS NAME, and by nothing else — the name in the map,
 # which is the name of the branch and the name on the certificate.
 $port = 22
-$target = '{0}@{1}' -f (Stated 'OPERATOR_USER'), $Fqdn
+# The door is MACHINE_HOST where the config states one — a standby master kept through its own name
+# while the identity points at the live one (install-machine.ps1 says why) — and the identity where not.
+$doorHost = Stated 'MACHINE_HOST'
+if (-not $doorHost) { $doorHost = $Fqdn }
+$target = '{0}@{1}' -f (Stated 'OPERATOR_USER'), $doorHost
 $base = @('-p', "$port", '-o', 'ConnectTimeout=20', '-o', 'StrictHostKeyChecking=accept-new')
 
 # WHICH DOOR THIS MACHINE OPENS, asked before anything is sent. An installation
@@ -276,7 +280,7 @@ elseif ($probe -match 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verificat
   # NOT ACCEPTED SILENTLY, and accept-new deliberately does not cover it: a
   # machine whose host key changed is either one that was rebuilt or one that is
   # not the machine any more, and only the operator knows which.
-  Stop-Here "$Fqdn answers with a host key this machine does not recognise. A restore gives a machine a NEW host key: if you have just restored it, forget the old one with ssh-keygen -R $Fqdn and start again. If you have not, clear nothing: something else is answering for $Fqdn" 74
+  Stop-Here "$doorHost answers with a host key this machine does not recognise. A restore gives a machine a NEW host key: if you have just restored it, forget the old one with ssh-keygen -R $doorHost and start again. If you have not, clear nothing: something else is answering for $doorHost" 74
 }
 elseif ($probe -match 'Permission denied') {
   if ([Console]::IsInputRedirected) {

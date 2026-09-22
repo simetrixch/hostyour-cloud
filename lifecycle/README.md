@@ -18,16 +18,18 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` / `.ps1` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` / `.ps1` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the catalog; the config stays |
+| `master-backup.sh` / `.ps1` | takes a master's stores and Vault's quorum, sealed, to the storage box under `master/<fqdn>/<id>/` |
+| `master-restore.sh` / `.ps1` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |
 
 Every one of them is written twice, and the two spellings are held to doing the same in the same
 order and printing the same bytes. `test.sh` is what measures that, against fixtures it builds in a
 temporary directory.
 
-**Three files here are not a person's entry point.** `driver.sh` is the installation itself,
-`regenerate-driver.sh` is the regeneration itself and `remove-slave-driver.sh` is the removal itself:
-all three run ON THE MACHINE, and the launcher beside them carries them over the session it opens.
-None of them is started by hand.
+**Five files here are not a person's entry point.** `driver.sh` is the installation itself,
+`regenerate-driver.sh` the regeneration, `remove-slave-driver.sh` the removal, `master-backup-driver.sh`
+the backup and `master-restore-driver.sh` the staging of a restore: all five run ON THE MACHINE, and the
+launcher beside each carries it over the session it opens. None of them is started by hand.
 
 ## The order the acts stand in
 
@@ -270,6 +272,65 @@ line, and where the tag that line names is not on the remote; every one of those
 nothing has been changed, because at every one of them nothing has.
 
 The third only answers, and writes nothing at all.
+
+# Backing up a master, and restoring it onto another machine
+
+```
+bash lifecycle/master-backup.sh  lifecycle/config.master.env                      # prints BACKUP <id>
+bash lifecycle/master-restore.sh lifecycle/config.master.env                      # lists the backups
+bash lifecycle/master-restore.sh lifecycle/config.master.env 20260922T031500Z     # stages one
+bash lifecycle/install-machine.sh lifecycle/config.master.env                     # installs onto it
+```
+
+## What a master holds that nothing else holds
+
+The install branch, the registrations and the catalog stand on origin; the images are rebuilt by the
+release cycles; every certificate is issued again for the name. What lives on the master alone is its
+stores — Vault with every unit's secrets, the Manager's database, the IdP's accounts, Headscale's
+nodes, the master's own MongoDB, Redis, mail queue, registry and dbgate — and, beside them on the
+host, `secrets/vault-<stage>.txt`, the file Vault's quorum was written to once. `master-backup` takes
+exactly that set: each store is stopped for its own copy and started again with the replicas it had
+(a database copied under a running process is a copy with a write in flight), every archive is
+sealed with `BACKUP_PASSPHRASE` before it leaves, and the whole goes to the storage box under
+`master/<fqdn>/<id>/` with a manifest of checksums. The Manager is among the stores stopped, so a run
+in flight when the backup starts is a run it interrupts: start it at a quiet hour.
+
+## The identity is the name, and the name is a CNAME
+
+A master's FQDN is the installation: the branch, `vault.<fqdn>`, `idp.<fqdn>`, `zot.<fqdn>`,
+`tale.<fqdn>`, every slave's `global.master`, every certificate. A restore that changed it would be a
+rebuild of everything that names it. So the identity is a name that can move — `master.<apex>` as a
+CNAME onto `master1.<apex>` today and `master2.<apex>` tomorrow, with `*.master.<apex>` beside it
+because a CNAME covers no subdomain — and the machines keep their own names and addresses. The
+config states both: `FQDN` is the identity, `MACHINE_HOST` the door the launchers knock at, so a
+standby is installed and kept through its own name while the identity still points at the live one.
+
+## The order a restore stands in
+
+1. `master-restore <config> <id>` on the bare machine. It fetches the backup, checks every checksum,
+   places the platform checkout at `/srv/hostyour-cloud` with the installation's branch fetched into
+   it — `driver.sh` refuses a machine that carries no checkout beside a branch that exists, because
+   `deploy-branch` would cut a second one — puts `secrets/vault-<stage>.txt` back beside it, opens
+   every store into a root-only staging directory, and leaves the mark `/var/lib/master-restore/pending`.
+2. `install-machine <config>`, unchanged, all five programs. Right after `deploy-cluster`, `driver.sh`
+   sees the mark and places the stores: each into a volume of its own under the storage root, bound
+   ahead of its claim through a `PersistentVolume` with a `claimRef` — a volume's directory is named
+   after the claim's uid, which exists only once the claim does, which is why the placement cannot
+   come earlier and the mark is what carries it. `deploy-platform-services` then finds Vault
+   initialized with its quorum in `secrets/`, unseals it with the keys in the file, and rewrites every
+   mount and role for this cluster.
+3. The name: `master.<apex>` and `*.master.<apex>` onto the new machine, once the run is green.
+
+The drill is the same three steps while the first master still lives, and it is the only thing that
+proves a backup: a backup that was never restored is a file.
+
+## What it refuses
+
+A mark already standing (a restore is staged once); a machine already carrying the platform's claims
+(a restore comes before the services, and an installation that stands is not overwritten); a backup
+whose checksums do not hold; a backup taken from another identity or stage; a passphrase that does
+not open the quorum — each before anything is placed. Given no id, `master-restore` lists what the
+storage box holds for the installation and stops.
 
 # Abandoning an installation
 

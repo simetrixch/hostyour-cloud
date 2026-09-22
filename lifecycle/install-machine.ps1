@@ -135,6 +135,12 @@ if (-not (Stated 'ELEVATION_PASSWORD')) {
 # the one the certificate will carry and the one the cluster is reached by, so a
 # session opened to anything else is a session opened to a machine we cannot name.
 $fqdn = Stated 'FQDN'
+# THE DOOR IS THE MACHINE'S OWN NAME WHERE THE IDENTITY POINTS ELSEWHERE (MACHINE_HOST): a standby
+# master is installed through master2.<apex> while master.<apex> still names the live one. Where
+# nothing is stated the identity is the door. Only this session and the host-key sentence read it;
+# the transcript, the branch and every certificate carry the identity.
+$doorHost = Stated 'MACHINE_HOST'
+if (-not $doorHost) { $doorHost = $fqdn }
 $port = 22
 
 # --------------------------------------------------------------- the transcript
@@ -149,7 +155,7 @@ Write-Host ''
 Write-Host "  $fqdn  ·  stage $(Stated 'STAGE')" -ForegroundColor Cyan
 Write-Host "  Everything said here is also kept in $transcript" -ForegroundColor DarkGray
 
-$target = '{0}@{1}' -f (Stated 'OPERATOR_USER'), $fqdn
+$target = '{0}@{1}' -f (Stated 'OPERATOR_USER'), $doorHost
 $base   = @('-p', "$port", '-o', 'ConnectTimeout=20', '-o', 'StrictHostKeyChecking=accept-new')
 
 # WHICH DOOR THIS MACHINE OPENS, asked before anything is sent, because the two cases
@@ -171,14 +177,14 @@ elseif ($probe -match 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verificat
   # whose host key changed is either one that was rebuilt or one that is not the
   # machine any more, and only the operator knows which.
   Stop-Here (@(
-    "$fqdn answers with a host key this machine does not recognise."
+    "$doorHost answers with a host key this machine does not recognise."
     ''
     'A restore gives a machine a NEW host key, so if you have just restored it that is'
     'expected. Forget the old one and start again:'
     ''
-    "  ssh-keygen -R $fqdn"
+    "  ssh-keygen -R $doorHost"
     ''
-    "If you have NOT restored it, clear nothing: something else is answering for $fqdn."
+    "If you have NOT restored it, clear nothing: something else is answering for $doorHost."
   ) -join [Environment]::NewLine) 74
 }
 elseif ($probe -match 'Permission denied') {

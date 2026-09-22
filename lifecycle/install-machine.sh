@@ -96,7 +96,12 @@ TRANSCRIPT="$SESSION/session.log"
 printf '\n  %s  ·  stage %s\n' "$FQDN" "$STAGE" >&2
 printf '  Everything said here is also kept in %s\n' "$TRANSCRIPT" >&2
 
-TARGET="$OPERATOR_USER@$FQDN"
+# THE DOOR IS THE MACHINE'S OWN NAME WHERE THE IDENTITY POINTS ELSEWHERE (MACHINE_HOST): a standby
+# master is installed through master2.<apex> while master.<apex> still names the live one. Where
+# nothing is stated the identity is the door. Only this session and the host-key sentence read it;
+# the transcript, the branch and every certificate carry the identity.
+DOOR_HOST="${MACHINE_HOST:-$FQDN}"
+TARGET="$OPERATOR_USER@$DOOR_HOST"
 BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 
 # WHICH DOOR THIS MACHINE OPENS, asked before anything is sent, because the two
@@ -118,14 +123,14 @@ else
       # NOT ACCEPTED SILENTLY, and accept-new deliberately does not cover it: a
       # machine whose host key changed is either one that was rebuilt or one that
       # is not the machine any more, and only the operator knows which.
-      fail "$FQDN answers with a host key this machine does not recognise.
+      fail "$DOOR_HOST answers with a host key this machine does not recognise.
 
 A restore gives a machine a NEW host key, so if you have just restored it that is
 expected. Forget the old one and start again:
 
-  ssh-keygen -R $FQDN
+  ssh-keygen -R $DOOR_HOST
 
-If you have NOT restored it, clear nothing: something else is answering for $FQDN." 74 ;;
+If you have NOT restored it, clear nothing: something else is answering for $DOOR_HOST." 74 ;;
     *'Permission denied'*)
       [ -t 0 ] || fail "$TARGET carries no operator key yet, so this can only be a password session — and there is no terminal here to ask on. Start it from a terminal." 69
       DOOR=(-o BatchMode=no -o NumberOfPasswordPrompts=1)
