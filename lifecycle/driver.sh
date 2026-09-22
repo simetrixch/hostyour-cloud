@@ -327,7 +327,29 @@ fi
 # leave-host.kit.ts), the two engine executables, the two places helm keeps root's repositories
 # and indexes, which no row of any program declares, and what the earlier cluster painted into the
 # kernel (the paragraph below). A later run finds the branch and converges on what stands, as before.
-FOUND_ON_THE_MACHINE=("$CATALOG" /srv/hostyour-cloud /var/lib/ansiwise /usr/local/bin/ansiwise /usr/local/bin/ansiwise-rest /root/.config/helm /root/.cache/helm)
+FOUND_ON_THE_MACHINE=("$CATALOG" /srv/hostyour-cloud /var/lib/ansiwise /usr/local/bin/ansiwise /usr/local/bin/ansiwise-rest /root/.config/helm /root/.cache/helm /etc/systemd/system/hostyour-manager-admin-socket.service)
+# THE KERNEL KEEPS WHAT THE SNAP DOES NOT. A cluster paints its packet filter into the kernel — the
+# network agent's cali- chains and the kubelet's KUBE- chains through iptables, in whichever of the
+# two backends each chose, and the service proxy's own nft tables named kube-proxy — and
+# `snap remove --purge` takes the snap's files and leaves the kernel as it stands. A set frozen that
+# way still names the interfaces of pods that are gone and ends in a DROP for every other one; the
+# next cluster's agent paints its own set into the other backend, the kernel evaluates both, and
+# every new pod is unreachable from its own node. Measured on master1 (2026-09-22): 18983 packets
+# dropped as "Unknown interface" by the set of a cluster taken off two hours before, and the
+# cert-manager addon timing out on pods nothing could reach. The agent's links and routes stay the
+# same way (protocol 80 marks the routes as its own). So all of it is measured and cleared here,
+# with the snap.
+#
+# EVERY READING TAKES THE WHOLE STREAM, and every "took off" below is a reading taken afterwards.
+# A `grep -q` in a pipe ends the writer with SIGPIPE the moment it matches, and under pipefail the
+# pipeline then answers 141 — which is how a run of this cleaner reported three of the four rule
+# sets as absent while they stood (run 5 of the same day), and the run after it died the same way.
+packet_filter_lines() { # <backend> — how many lines of its rule set name a cali- or KUBE- chain
+  root "$1-save" 2>/dev/null | grep -cE 'cali|KUBE-'
+}
+cluster_tables() { root nft list tables 2>/dev/null | awk '$1 == "table" && ($3 == "kube-proxy" || $3 == "calico") {print $2 "/" $3}'; }
+cluster_links()  { ip -br link 2>/dev/null | awk '{print $1}' | sed 's/@.*//' | grep -E '^(vxlan[.]calico|cali[0-9a-f]{11})$'; }
+cluster_routes() { ip route show proto 80 2>/dev/null; }
 if [ -n "$FIRST" ]; then
   FOUND=()
   for path in "${FOUND_ON_THE_MACHINE[@]}"; do
@@ -336,48 +358,51 @@ if [ -n "$FIRST" ]; then
   if command -v snap >/dev/null 2>&1 && snap list microk8s >/dev/null 2>&1; then
     FOUND+=('the microk8s snap')
   fi
-  # THE KERNEL KEEPS WHAT THE SNAP DOES NOT. A cluster paints its packet filter into the kernel —
-  # the network agent's cali- chains, the service proxy's KUBE- chains — in whichever of the two
-  # iptables backends it chose, and `snap remove --purge` takes the snap's files and leaves the
-  # kernel as it stands. That set stays frozen with the interfaces of pods that are gone and ends in
-  # a DROP for every other one; the next cluster's agent paints its own set into the other backend,
-  # the kernel evaluates both, and every new pod is unreachable from its own node. Measured on
-  # master1 (2026-09-22): 7358 packets dropped as "Unknown interface" by the set of the cluster
-  # taken off an hour before, and the cert-manager addon timing out on pods nothing could reach.
-  # The agent's links and routes stay the same way. So the kernel is measured and cleared here
-  # with the snap: every rule naming a cali- or KUBE- chain in either backend, the agent's links,
-  # and the routes it programmed (protocol 80 is the agent's own).
   for backend in iptables-legacy iptables-nft ip6tables-legacy ip6tables-nft; do
     command -v "$backend-save" >/dev/null 2>&1 || continue
-    root "$backend-save" 2>/dev/null | grep -qE 'cali|KUBE-' && FOUND+=("the $backend rules of an earlier cluster")
+    [ "$(packet_filter_lines "$backend")" -gt 0 ] && FOUND+=("the $backend rules of an earlier cluster")
   done
-  ip -br link 2>/dev/null | awk '{print $1}' | sed 's/@.*//' | grep -qE '^(vxlan[.]calico|cali[0-9a-f]{11})$' \
-    && FOUND+=('the links of an earlier pod network')
-  [ -n "$(ip route show proto 80 2>/dev/null)" ] && FOUND+=('the routes of an earlier pod network')
+  [ -n "$(cluster_tables)" ] && FOUND+=('the nft tables of an earlier cluster')
+  [ -n "$(cluster_links)" ]  && FOUND+=('the links of an earlier pod network')
+  [ -n "$(cluster_routes)" ] && FOUND+=('the routes of an earlier pod network')
   if [ ${#FOUND[@]} -eq 0 ]; then
     good 'this machine is bare — nothing a program would meet stands here'
   else
     warn "a first installation, and this machine is not bare: ${FOUND[*]} — taken off before any program runs"
     for found in "${FOUND[@]}"; do
+      left=''
       case "$found" in
         'the microk8s snap')
-          root snap remove --purge microk8s >/dev/null 2>&1 \
-            || die 'the microk8s snap of an earlier life could not be removed, and deploy-cluster would build on it' 70 ;;
+          root snap remove --purge microk8s >/dev/null 2>&1
+          snap list microk8s >/dev/null 2>&1 && left='the snap is still installed' ;;
         'the '*' rules of an earlier cluster')
           backend=${found#the }
           backend=${backend%% *}
-          root sh -c "$backend-save | grep -vE 'cali|KUBE-' | $backend-restore" \
-            || die "$found could not be taken off, and every new pod's traffic would end in their DROP" 70 ;;
+          root sh -c "$backend-save | grep -vE 'cali|KUBE-' | $backend-restore"
+          n=$(packet_filter_lines "$backend")
+          [ "$n" -eq 0 ] || left="$n line(s) still name a cali- or KUBE- chain" ;;
+        'the nft tables of an earlier cluster')
+          for table in $(cluster_tables); do root nft delete table "${table%/*}" "${table#*/}"; done
+          n=$(cluster_tables | wc -l)
+          [ "$n" -eq 0 ] || left="$n table(s) still stand" ;;
         'the links of an earlier pod network')
-          for link in $(ip -br link 2>/dev/null | awk '{print $1}' | sed 's/@.*//' | grep -E '^(vxlan[.]calico|cali[0-9a-f]{11})$'); do
-            root ip link delete "$link" || die "the link $link could not be taken off" 70
-          done ;;
+          for link in $(cluster_links); do root ip link delete "$link"; done
+          n=$(cluster_links | wc -l)
+          [ "$n" -eq 0 ] || left="$n link(s) still stand" ;;
         'the routes of an earlier pod network')
-          root ip route flush proto 80 || die "$found could not be taken off" 70 ;;
+          root ip route flush proto 80
+          n=$(cluster_routes | wc -l)
+          [ "$n" -eq 0 ] || left="$n route(s) still stand" ;;
+        /etc/systemd/system/*.service)
+          root systemctl disable --now "$(basename "$found")" >/dev/null 2>&1
+          root rm -f -- "$found"
+          root systemctl daemon-reload
+          root test -e "$found" && left='the unit file is still there' ;;
         *)
           root rm -rf -- "$found"
-          root test -e "$found" && die "$found could not be taken off, and a program would act on it" 70 ;;
+          root test -e "$found" && left='it is still there' ;;
       esac
+      [ -z "$left" ] || die "$found could not be taken off — $left — and a program would act on it" 70
       good "took off $found"
     done
   fi
