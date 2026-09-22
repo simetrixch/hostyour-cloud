@@ -226,6 +226,7 @@ good 'the elevation password raises a command'
 BRANCH_TIP=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads \
   "https://github.com/$PLATFORM_REPO.git" "refs/heads/$FQDN" 2>/dev/null | awk '{print $1}')
 STATUS=$?
+FIRST=''
 
 if [ -n "$BRANCH_TIP" ]; then
   # A BRANCH STANDING THERE IS NOT YET A PROBLEM. Treating it as one makes the
@@ -310,14 +311,53 @@ WHICH OF THESE IT IS, ONLY YOU KNOW:
 elif [ $STATUS -ne 0 ]; then
   warn "could not ask whether $PLATFORM_REPO already carries a branch named $FQDN. If it does, deploy-branch is refused at its last step"
 else
+  FIRST=1
   good "$PLATFORM_REPO carries no branch named $FQDN — this machine's is cut fresh"
 fi
 
-for path in "$CATALOG" /srv/hostyour-cloud /var/lib/ansiwise; do
-  [ -e "$path" ] && warn "$path already stands here — this is not a bare machine, and what follows will act on what is there"
-done
+# A FIRST INSTALLATION IS PROMISED A BARE MACHINE, AND THE PROMISE IS KEPT HERE. Every program
+# below converges: it measures what stands and does only what is missing, which is what lets a
+# second run continue a first one and a later run carry a release — and it is also why no program
+# can tell a thing this platform left from a thing an earlier life of the machine left. A
+# repository root's helm already held, with an index from that life, passed the repository row as
+# satisfied and stopped the release row twelve steps on (the first bare-metal master, 2026-09-22).
+# So where origin carries no branch for this name — the one reading that says this machine has
+# never been installed — whatever the programs would meet is named and taken off before any of
+# them runs: the set the Manager's leave-host takes off a machine that leaves (hostyour-manager
+# leave-host.kit.ts), the two engine executables, and the two places helm keeps root's
+# repositories and indexes, which no row of any program declares. A later run finds the branch and
+# converges on what stands, as before.
+FOUND_ON_THE_MACHINE=("$CATALOG" /srv/hostyour-cloud /var/lib/ansiwise /usr/local/bin/ansiwise /usr/local/bin/ansiwise-rest /root/.config/helm /root/.cache/helm)
+if [ -n "$FIRST" ]; then
+  FOUND=()
+  for path in "${FOUND_ON_THE_MACHINE[@]}"; do
+    root test -e "$path" && FOUND+=("$path")
+  done
+  if command -v snap >/dev/null 2>&1 && snap list microk8s >/dev/null 2>&1; then
+    FOUND+=('the microk8s snap')
+  fi
+  if [ ${#FOUND[@]} -eq 0 ]; then
+    good 'this machine is bare — nothing a program would meet stands here'
+  else
+    warn "a first installation, and this machine is not bare: ${FOUND[*]} — taken off before any program runs"
+    for found in "${FOUND[@]}"; do
+      if [ "$found" = 'the microk8s snap' ]; then
+        root snap remove --purge microk8s >/dev/null 2>&1 || die 'the microk8s snap of an earlier life could not be removed, and deploy-cluster would build on it' 70
+      else
+        root rm -rf -- "$found"
+        root test -e "$found" && die "$found could not be taken off, and a program would act on it" 70
+      fi
+      good "took off $found"
+    done
+  fi
+else
+  for path in "${FOUND_ON_THE_MACHINE[@]}"; do
+    root test -e "$path" && warn "$path already stands here — this is not a bare machine, and what follows will act on what is there"
+  done
+fi
 
-# THE PACKAGE MANAGER, ASKED WHETHER IT IS FREE BEFORE ANY PROGRAM WANTS IT. Ubuntu
+# THE PACKAGE MANAGER, ASKED WHETHER IT IS FREE AND THEN BROUGHT UP TO DATE, BEFORE ANY
+# PROGRAM WANTS IT. Ubuntu
 # starts unattended-upgrades on its own shortly after boot, so a machine that was just
 # restored is holding the dpkg lock through the first minutes of its life — which is
 # exactly when deploy-host reaches install_packages, four rows into the first program.
@@ -331,9 +371,12 @@ done
 # second question with the first: it also parses every package list, and a list a third-party
 # source had published broken (NVIDIA's CUDA index of 2026-09-15) failed it at once, with no
 # lock held, in a loop that counted the seconds apt would have waited for the lock and had not.
-# A stale or broken list is deploy-host's to put right: install_packages refreshes the lists
-# before it installs (ansiwise-host install_packages.dart), and refuses with apt's own words
-# where the refresh does not heal them.
+# A stale or broken list is put right HERE, once, by the refresh below. The programs' test pass
+# reads the lists before any apply refreshes them (install_packages does, ansiwise-host
+# install_packages.dart, but only when it installs), and that broken index stopped deploy-host's
+# test pass twelve rows in, at remove_unused_packages, with no way past it but a refresh nobody in
+# the run makes. Refreshing has no target state and changes nothing an installation owns; where
+# it fails, apt's own words name the source, before anything is touched.
 #
 # NOTHING IS STOPPED OR MASKED. unattended-upgrades is a machine's security updates
 # doing their job, and switching them off to make an installation quieter is not a
@@ -394,13 +437,24 @@ something else holds it. What to look at:
 done
 good "the package manager is free${PACKAGES_WAITED:+ after ${PACKAGES_WAITED}s}"
 
+REFUSED=$(root env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 update -qq 2>&1 >/dev/null) \
+  || die "the package lists could not be brought up to date, and every program's install reads them:
+
+$REFUSED
+
+A source this machine names publishes an index apt cannot read, or cannot be reached. What to look at:
+
+  ls /etc/apt/sources.list.d/
+  sudo apt-get update" 75
+good 'the package lists are up to date'
+
 MISSING=()
 for tool in git curl python3; do command -v "$tool" >/dev/null 2>&1 || MISSING+=("$tool"); done
 if [ ${#MISSING[@]} -gt 0 ]; then
   say "this machine carries no ${MISSING[*]} — and the catalogue every program is READ FROM cannot be"
   say 'cloned without git, so the first program cannot run without it. This is the one'
   say "change here that no program makes, and deploy-host's install_packages row makes it again"
-  root bash -c 'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 update -qq && DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -qq git curl python3' \
+  root env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -qq git curl python3 \
     || die "apt-get would not install ${MISSING[*]}" 70
   good "installed ${MISSING[*]}"
 else
