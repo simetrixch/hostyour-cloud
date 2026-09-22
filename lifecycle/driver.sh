@@ -325,9 +325,15 @@ done
 # "Could not get lock /var/lib/dpkg/lock-frontend. It is held by process <pid>
 # (unattended-upgr)", and the same run a minute later is green.
 #
-# APT ITSELF DOES THE WAITING. DPkg::Lock::Timeout makes it block for the lock rather
-# than fail on it, so this asks in short turns and reports between them instead of
-# holding a silent session. `check` is the cheapest thing apt does that takes the lock.
+# THE LOCK IS THE QUESTION, AND ONLY THE LOCK. Every apt and dpkg command holds one of the
+# three lock files while it runs, so a process holding one is what "busy" means, and fuser
+# names one or nobody. Asking `apt-get check` instead, as this did until 2026-09-22, asked a
+# second question with the first: it also parses every package list, and a list a third-party
+# source had published broken (NVIDIA's CUDA index of 2026-09-15) failed it at once, with no
+# lock held, in a loop that counted the seconds apt would have waited for the lock and had not.
+# A stale or broken list is deploy-host's to put right: install_packages refreshes the lists
+# before it installs (ansiwise-host install_packages.dart), and refuses with apt's own words
+# where the refresh does not heal them.
 #
 # NOTHING IS STOPPED OR MASKED. unattended-upgrades is a machine's security updates
 # doing their job, and switching them off to make an installation quieter is not a
@@ -370,7 +376,7 @@ done
 good "this machine has finished starting${STARTED_WAITED:+ after ${STARTED_WAITED}s}"
 
 PACKAGES_WAITED=0
-until root apt-get -o DPkg::Lock::Timeout=5 check >/dev/null 2>&1; do
+while root fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
   if [ "$PACKAGES_WAITED" -ge 600 ]; then
     die "the package manager has been busy for ${PACKAGES_WAITED}s and deploy-host installs packages four rows in.
 
@@ -379,10 +385,11 @@ normal and it finishes on its own. Ten minutes is longer than it should take, so
 something else holds it. What to look at:
 
   ps -o pid,etime,cmd -C unattended-upgrade
-  sudo fuser -v /var/lib/dpkg/lock-frontend" 75
+  sudo fuser -v /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock" 75
   fi
   [ $(( PACKAGES_WAITED % 60 )) -eq 0 ] \
     && say "the package manager is busy — a freshly booted Ubuntu runs unattended-upgrades; waited ${PACKAGES_WAITED}s"
+  sleep 5
   PACKAGES_WAITED=$(( PACKAGES_WAITED + 5 ))
 done
 good "the package manager is free${PACKAGES_WAITED:+ after ${PACKAGES_WAITED}s}"
