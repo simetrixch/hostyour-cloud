@@ -120,7 +120,7 @@ global:
   #
   # A /32 and not the prefix the interface carries: a node configured 10.1.1.7/24 shares that /24
   # with every other host on the wire, and what a boundary needs is the machine, not the segment.
-  nodeCidrs: [192.168.0.250/32]
+  nodeCidrs: [192.168.0.250/32, 100.64.0.1/32]
   # WHERE THE SHARED SERVICES ANSWER, one map and one shape per service. Each is that service plus
   # the domain of the cluster that runs it — the books-keeping cluster for everything an
   # installation has exactly one of, the build plane for the registry.
