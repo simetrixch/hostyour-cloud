@@ -35,7 +35,6 @@ booksCluster: master.digitacloud.app
 release: 0.8.257-stable-20260923140911
 
 global:
-  apiHost: 100.64.0.1
   # This cluster's own public domain name, which is also the name of its install branch.
   domain: master.digitacloud.app
   # The first DNS label of that domain. Everything named per cluster carries it — the Vault auth
