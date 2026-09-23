@@ -7,13 +7,20 @@
 # =============================================================================
 #
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not
-# change: it composes the answers deploy-branch is told with and invokes the
-# program, once per mode. The regeneration itself is deploy-branch.yaml in
-# the catalogue standing on this machine, and every decision about what a branch
-# becomes is a row of that file. That one program carries both acts: it cuts the
-# branch where the remote publishes none and stands the checkout on the one it
-# does, so what tells a birth from a regeneration is the remote and not the name
-# of the program.
+# change: it composes the answers each program is told with and invokes it, once
+# per mode. The regeneration itself is deploy-branch.yaml in the catalogue
+# standing on this machine, and every decision about what a branch becomes is a
+# row of that file. That one program carries both acts: it cuts the branch where
+# the remote publishes none and stands the checkout on the one it does, so what
+# tells a birth from a regeneration is the remote and not the name of the
+# program.
+#
+# AND tailnet-join-self AFTER IT, which the installation runs last as well. On a
+# master that stands it joins nothing — the machine is on its network already —
+# and records the address it holds there as `global.apiHost` in its own map, the
+# fact the fence of a mail sender's SMTP entry admits (hostyour-cloud#242). A
+# master installed before that row existed gains it here, and every later
+# regeneration keeps it true.
 #
 # WHY IT IS A FILE OF ITS OWN RATHER THAN TEXT INSIDE THE TWO LAUNCHERS. The
 # answers are composed HERE, out of the program's own declaration, and the
@@ -22,9 +29,9 @@
 # time one was corrected. One file, streamed by both, cannot.
 #
 # WHY THE ANSWERS ARE COMPOSED ON THIS MACHINE AND NOT ON THE WORKSTATION. The
-# names are read off deploy-branch.yaml in the catalogue standing here, so
+# names are read off each program's file in the catalogue standing here, so
 # nothing on the workstation holds a list of answers that could fall behind what
-# the program declares. The catalogue is on this machine and not on that one.
+# a program declares. The catalogue is on this machine and not on that one.
 #
 # WHAT IT IS TOLD, and it is the only thing that reaches it from outside: the
 # same key=value config file the operator filled in for the installation, carried
@@ -122,14 +129,13 @@ root() { printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 readonly CATALOG=/srv/ansiwise-catalog
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
-readonly PROGRAM=deploy-branch
-readonly DECLARES="$CATALOG/ansiwise/programs/$PROGRAM.yaml"
+readonly PROGRAMS=(deploy-branch tailnet-join-self)
 ANSWERS_DIR="/home/$OPERATOR/.regenerate-answers"
 
 # THE ROLE THE RUN IS STARTED UNDER IS master, AND IT IS NOT THIS MACHINE'S OWN
-# ROLE. deploy-branch.yaml states `roles: [master]` — the cluster maps and
-# the books stand on the master's branch, which is the branch this regenerates —
-# so master is the only role it admits. What every part of this machine carries
+# ROLE. Both programs state `roles: [master]` — the cluster maps and the books
+# stand on the master's branch, which is the branch this regenerates — so master
+# is the only role they admit. What every part of this machine carries
 # is the `role` ANSWER, which the launcher reads off the map on the branch and
 # appends to the config (the map is the writable place, and the config's ROLE
 # seeds a first installation only), and the stamps below write.
@@ -231,8 +237,10 @@ GIT_TERMINAL_PROMPT=0 git -C "$CATALOG" fetch --quiet origin "$branch"   || die 
 git -C "$CATALOG" reset --quiet --hard FETCH_HEAD   || die "could not bring $CATALOG onto the published head of $branch; nothing has been changed" 69
 good "$CATALOG stands at $(git -C "$CATALOG" rev-parse --short HEAD 2>/dev/null || echo 'an unreadable commit') on $branch"
 
-[ -r "$DECLARES" ] \
-  || die "$DECLARES cannot be read, and it is what states the answers $PROGRAM takes; nothing has been changed" 66
+for program in "${PROGRAMS[@]}"; do
+  [ -r "$CATALOG/ansiwise/programs/$program.yaml" ] \
+    || die "$CATALOG/ansiwise/programs/$program.yaml cannot be read, and it is what states the answers $program takes; nothing has been changed" 66
+done
 command -v python3 >/dev/null 2>&1 \
   || die 'python3 is not on this path, and the answers envelope is composed with it; nothing has been changed' 66
 
@@ -267,8 +275,9 @@ say "$FQDN, stage $STAGE, regenerated onto $PLATFORM_REF"
 mkdir -p "$ANSWERS_DIR" && chmod 700 "$ANSWERS_DIR" \
   || die "could not make $ANSWERS_DIR, and the answers are written there" 73
 
+for PROGRAM in "${PROGRAMS[@]}"; do
 ANSWERS="$ANSWERS_DIR/$PROGRAM.json"
-COUNTED=$(python3 - "$CONFIG" "$DECLARES" "$ANSWERS" <<'COMPOSE'
+COUNTED=$(python3 - "$CONFIG" "$CATALOG/ansiwise/programs/$PROGRAM.yaml" "$ANSWERS" <<'COMPOSE'
 import json, re, sys
 
 BESIDE = 'elevation_password'
@@ -331,6 +340,7 @@ COMPOSE
 
 chmod 600 "$ANSWERS" || die "could not close $ANSWERS to this account alone" 73
 say "$PROGRAM is told $COUNTED"
+done
 
 # THE REF IT WAS TOLD, SAID OUT LOUD. It is the one answer that did not come from
 # the operator's config, and it is what this whole act is about.
@@ -342,6 +352,8 @@ say "platform_ref is $PLATFORM_REF, read off the pin in clusters/active/$FQDN.ya
 # the same input. A mode that is not green stops this here rather than carrying a
 # doubt into the next one.
 # =============================================================================
+for PROGRAM in "${PROGRAMS[@]}"; do
+ANSWERS="$ANSWERS_DIR/$PROGRAM.json"
 RAN=0
 for mode in test dry run; do
   printf '\n   %s %s\n' "$PROGRAM" "$mode"
@@ -381,9 +393,10 @@ for mode in test dry run; do
   good "$PROGRAM $mode is green (${TOOK}s)"
   [ "$mode" = run ] && RAN=1
 done
+done
 
 printf '\n'
-good "$FQDN stands on $PLATFORM_REF: its branch is merged, stamped, committed and pushed"
+good "$FQDN stands on $PLATFORM_REF: its branch is merged, stamped, committed and pushed, and its map states its tailnet address"
 say "the machine's own records stand under $RUNS"
 
 # THIS FILE IS READ FROM STANDARD INPUT, so what follows it on that stream is

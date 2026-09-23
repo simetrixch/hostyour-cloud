@@ -264,8 +264,9 @@ installation's own cluster map. It refuses before it mints anything where the br
 where the map states no stage, or where the channel's ceiling does not admit that installation's
 stage: `alpha` reaches a dev installation only, `beta` dev and test, `stable` any.
 
-The second opens one session to the machine and runs `deploy-branch` there, in the three modes
-that gate one another. It takes the domain and nothing else — the ref comes off the pin, and the
+The second opens one session to the machine and runs `deploy-branch` there, then
+`tailnet-join-self`, each in the three modes that gate one another. On a standing master the second
+joins nothing and records the machine's tailnet address in its map as `global.apiHost` (#242). It takes the domain and nothing else — the ref comes off the pin, and the
 answers come from the same `NAME='value'` config an installation was installed with. It refuses,
 before it touches the machine, where the branch does not exist, where the map carries no `release:`
 line, and where the tag that line names is not on the remote; every one of those refusals says that
