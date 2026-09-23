@@ -1,0 +1,17 @@
+name: "digita-auth"
+repoURL: "https://github.com/digitaplatform/digita-auth.git"
+owner: "digita"
+onboardedAt: "2026-09-23T21:14:26.492Z"
+suspended: false
+quiesced: false
+removing: false
+chartPath: "deploy/chart"
+cluster: "apps1"
+databases: ["digita_auth"]
+keyPatterns: ["digita:auth:*"]
+channelPatterns: []
+services: ["mongodb","registry-pull","redis"]
+size: "medium"
+mongodb: "shared"
+quota: {"requestsCpu":"800m","requestsMemory":"2Gi","limitsCpu":"3","limitsMemory":"4Gi","pods":16,"persistentVolumeClaims":2}
+host: "auth"
