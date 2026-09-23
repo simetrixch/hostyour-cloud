@@ -31,6 +31,14 @@ WHAT STAYS OPEN, and why each one has to:
      guid label the tenant ApplicationSet stamps on every member namespace
      (clusters/argocd/files/tenants-appset.yaml, platform/tenant), so it admits
      exactly the members of THIS tenant and no other tenant's.
+  4. the books cluster's tailnet address, on one port, when the unit declares an
+     SMTP entry (.Values.smtpEntry.port). The installation's mail relay runs on
+     the books cluster and hands its mail to the entry over the tailnet, so it
+     arrives from that one address. The address is `global.apiHost` of the books
+     cluster's own map, which the consumer ApplicationSet loads for this alone.
+     The port is the POD'S port: a NetworkPolicy names the port on the pod, not
+     the Service's, so the entry's Service must expose the pod's port under the
+     same number, or the relay dials one port and this rule admits another.
 
 WHAT NEEDS NO RULE. The kubelet's liveness/readiness probes originate on the NODE,
 not in a pod, and Calico allows every connection a host makes to a workload
@@ -69,3 +77,11 @@ spec:
             matchLabels:
               platform/tenant: {{ . | quote }}
         {{- end }}
+    {{- with .Values.smtpEntry.port }}
+    - from:
+        - ipBlock:
+            cidr: {{ printf "%s/32" (required "unit-networkpolicy: global.apiHost is required where the unit declares an SMTP entry — it is the tailnet address of the books cluster, the one source the entry admits, and the books cluster's map (clusters/active/<books fqdn>.yaml) carries none: tailnet-join-self writes it there" $.Values.global.apiHost) | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ . }}
+    {{- end }}

@@ -4,7 +4,7 @@ submit. The two hold together whatever the unit deploys, which is what makes a p
 unnecessary. One policy per (unit, stage): the unit's namespace is `<name>-<stage>`, and so is
 everything this file pins to it.
 
-SEVEN CLAUSES, FOUR RESOURCES, AND EACH CLAUSE IS A WHOLE ANSWER:
+TEN CLAUSES, FIVE RESOURCES, AND EACH CLAUSE IS A WHOLE ANSWER:
 
   Ingress         every rule's FQDN is one the platform GRANTED: `<label>.<stage apex>` always,
                   plus the unit's attested `fqdn` where its stage registration carries one. A rule
@@ -21,6 +21,16 @@ SEVEN CLAUSES, FOUR RESOURCES, AND EACH CLAUSE IS A WHOLE ANSWER:
                   weeks after an onboard nobody remembers.
   Service         type ClusterIP only. A LoadBalancer or a NodePort reaches past the ingress the
                   host clauses just pinned, and past the NetworkPolicy that follows the namespace.
+  Service         no external IP, except on the Service the unit's SMTP entry names, and there
+                  exactly this cluster's tailnet address with externalTrafficPolicy Local. A
+                  ClusterIP Service may still carry externalIPs, and every node then accepts
+                  traffic for those addresses, the public one or a neighbour's included. The
+                  entry is opened on the tailnet alone, and Local keeps the relay's own source
+                  address, the one the unit's fence admits on the entry's port.
+  ServiceClaim    the redis key patterns a claim asks for are the ones the registration grants.
+                  One redis serves every consumer of a cluster out of one keyspace, so a pattern a
+                  chart wrote for itself is a read of a neighbour's keys.
+  ServiceClaim    the redis channel patterns likewise, because a channel is not a key.
   ServiceAccount  the two Vault alias annotations may claim only this unit and this stage. The
                   Kubernetes auth mount lifts `vault.hashicorp.com/alias-metadata-unit` and
                   `vault.hashicorp.com/alias-metadata-stage` off the calling ServiceAccount into
@@ -55,8 +65,10 @@ stage a second source named.
 
 WHY THE VALUES CANNOT ESCAPE THE SINGLE-QUOTED CEL LITERALS: every one of them comes from a validated
 grammar before it is written into a registration — the unit name alphabet, the stage vocabulary, the
-public-FQDN grammar the onboard's attestation applies, and a fixed service vocabulary. None of the
-four admits an apostrophe.
+public-FQDN grammar the onboard's attestation applies, a fixed service vocabulary, and the DNS-label
+grammar of an SMTP entry's Service name. None of them admits an apostrophe. The one value from the
+cluster map, its tailnet address, is the address the program that joined the cluster to the tailnet
+measured.
 */ -}}
 {{- $name := required "unit-admissionpolicy: registration.name is required — it names the policy, the namespace the clauses fence, and the platform address they admit" .Values.registration.name }}
 {{- $stage := required "unit-admissionpolicy: registration.stage is required — it is read off registrations/<unit>/<stage>.yaml by clusters/argocd/files/units-appset.yaml; the unit's namespace and Application are <name>-<stage>, and that name is the prefix of every tracking id the Namespace clauses read" .Values.registration.stage }}
@@ -64,6 +76,7 @@ four admits an apostrophe.
 {{- $services := required "unit-admissionpolicy: registration.servicesJson is required — the attested claim list decides two of the granted namespace labels, and an absent one would grant them to a unit that never claimed them" .Values.registration.servicesJson | fromJsonArray }}
 {{- $keyPatterns := required "unit-admissionpolicy: registration.keyPatternsJson is required — it is the granted set every ServiceClaim of this namespace is held to, and an absent one would leave the clause comparing against nothing" .Values.registration.keyPatternsJson | fromJsonArray }}
 {{- $channelPatterns := required "unit-admissionpolicy: registration.channelPatternsJson is required — the Pub/Sub half of the same granted set, read the same way" .Values.registration.channelPatternsJson | fromJsonArray }}
+{{- $smtpEntry := required "unit-admissionpolicy: registration.smtpEntryJson is required — it names the one Service that may carry an external IP, and a unit that declares no SMTP entry is handed {}, which names none" .Values.registration.smtpEntryJson | fromJson }}
 {{- $namespace := printf "%s-%s" $name $stage }}
 {{- $policyName := printf "consumer-%s" $namespace }}
 {{- /* THE PLATFORM HOST IS DELIVERED, never composed here: `<label>.<stage apex>`, handed in by
@@ -121,6 +134,17 @@ by construction (simetrixch/hostyour-cloud#208). */ -}}
 {{- $aliasUnit := "vault.hashicorp.com/alias-metadata-unit" }}
 {{- $aliasStage := "vault.hashicorp.com/alias-metadata-stage" }}
 {{- $aliasClaims := printf "(!('%s' in object.metadata.annotations) || object.metadata.annotations['%s'] == '%s') && (!('%s' in object.metadata.annotations) || object.metadata.annotations['%s'] == '%s')" $aliasUnit $aliasUnit $name $aliasStage $aliasStage $stage }}
+{{- /* THE ONE EXTERNAL IP A UNIT MAY OPEN. global.apiHost is this cluster's own tailnet address:
+the ApplicationSet loads the map of the cluster the unit runs on last. It is required inside the
+entry's branch alone, so a cluster whose map carries no tailnet address yet still fences every
+unit that declares no entry. */ -}}
+{{- $externalIPs := "!has(object.spec.externalIPs) || object.spec.externalIPs.size() == 0" }}
+{{- $externalIPsSaid := "a consumer Service may carry no external IP — every node of the cluster accepts traffic for an address named there, whoever the address belongs to" }}
+{{- with $smtpEntry.service }}
+{{- $tailnetAddress := required "unit-admissionpolicy: global.apiHost is required where the registration declares an SMTP entry — it is this cluster's tailnet address, the one external IP the entry's Service may carry, and the cluster map (clusters/active/<fqdn>.yaml) carries none" $.Values.global.apiHost }}
+{{- $externalIPs = printf "%s || (object.metadata.name == '%s' && object.spec.externalIPs == ['%s'] && has(object.spec.externalTrafficPolicy) && object.spec.externalTrafficPolicy == 'Local')" $externalIPs . $tailnetAddress }}
+{{- $externalIPsSaid = printf "a consumer Service may carry no external IP but its SMTP entry %s, and that one only %s, this cluster's tailnet address, with externalTrafficPolicy Local — every node accepts traffic for an address named there, and Local keeps the relay's own source address, the one the unit's fence admits" . $tailnetAddress }}
+{{- end }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -163,6 +187,8 @@ spec:
       message: {{ printf "the platform FQDN %s must stand in a tls entry of its own — a shared entry is one atomic certificate order, and a name pointed elsewhere would block its renewal" $host | quote }}
     - expression: "request.resource.resource != 'services' || !has(object.spec.type) || object.spec.type == 'ClusterIP'"
       message: "a consumer Service must be of type ClusterIP"
+    - expression: {{ printf "request.resource.resource != 'services' || %s" $externalIPs | quote }}
+      message: {{ $externalIPsSaid | quote }}
     - expression: {{ printf "request.resource.resource != 'serviceclaims' || !has(object.spec.keyPatterns) || object.spec.keyPatterns.all(p, p in [%s])" (join ", " $grantedPatterns) | quote }}
       message: {{ printf "a consumer ServiceClaim may ask for the redis key patterns its registration grants and no others (%s) — one redis serves every consumer of this cluster out of ONE keyspace, and the patterns an ACL user may touch are the only thing that separates two of them in it, so a pattern a chart wrote for itself is a self-granted read of a neighbour's keys" (default "none" (join ", " $keyPatterns)) | quote }}
     - expression: {{ printf "request.resource.resource != 'serviceclaims' || !has(object.spec.channelPatterns) || object.spec.channelPatterns.all(c, c in [%s])" (join ", " $grantedChannels) | quote }}

@@ -23,3 +23,9 @@ tenant:
   # from the registration; EMPTY for a consumer, which is a single namespace with
   # no siblings. See the sibling rule in templates/networkpolicy.yaml.
   guid: ""
+
+# The unit's SMTP entry, when its registration declares one: `port` alone, set by the consumer
+# ApplicationSet, which also loads the books cluster's map for the address it admits. EMPTY for
+# every other unit, and a tenant member never has one. See the fourth opening in
+# templates/networkpolicy.yaml.
+smtpEntry: {}
