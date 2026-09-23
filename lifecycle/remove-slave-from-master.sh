@@ -227,7 +227,9 @@ fi
 # longer matches. Which account is asked with does not matter and the master's
 # own is used, because no credential of the slave's is anywhere near this act.
 PORT=22
-ANSWER=$(ssh -p "$PORT" -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
+# OpenSSH then stays after `true` has ended until a key is pressed.
+ANSWER=$(ssh -n -p "$PORT" -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
              -o BatchMode=yes "$OPERATOR_USER@$SLAVE" true 2>&1)
 ANSWERED=$?
 case "$ANSWER" in
@@ -277,7 +279,9 @@ BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 # the case here, and the password is the exception a machine still at its birth
 # would need. The key is tried first and the password only where the key is
 # refused, so neither case needs a flag.
-PROBE=$(ssh "${BASE[@]}" -o BatchMode=yes "$TARGET" true 2>&1)
+# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
+# OpenSSH then stays after `true` has ended until a key is pressed.
+PROBE=$(ssh "${BASE[@]}" -n -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)
   say "remove-slave: $TARGET opens to the operator key"

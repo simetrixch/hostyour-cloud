@@ -75,7 +75,9 @@ DOOR_HOST="${MACHINE_HOST:-$FQDN}"
 PORT=22
 TARGET="$OPERATOR_USER@$DOOR_HOST"
 BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new -o BatchMode=yes)
-PROBE=$(ssh "${BASE[@]}" "$TARGET" true 2>&1)
+# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
+# OpenSSH then stays after `true` has ended until a key is pressed.
+PROBE=$(ssh "${BASE[@]}" -n "$TARGET" true 2>&1)
 if [ $? -ne 0 ]; then
   case "$PROBE" in
     *'REMOTE HOST IDENTIFICATION HAS CHANGED'*|*'Host key verification failed'*)

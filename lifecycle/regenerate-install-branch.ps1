@@ -271,7 +271,9 @@ $base = @('-p', "$port", '-o', 'ConnectTimeout=20', '-o', 'StrictHostKeyChecking
 # the case here, and the password is the exception a machine still at its birth
 # would need. The key is tried first and the password only where the key is
 # refused, so neither case needs a flag.
-$probe = (& ssh @base -o BatchMode=yes $target true 2>&1 | Out-String)
+# `-n`: THE PROBE READS NOTHING, and without it ssh reads this console. Windows' own
+# OpenSSH then stays after `true` has ended until a key is pressed.
+$probe = (& ssh @base -n -o BatchMode=yes $target true 2>&1 | Out-String)
 if ($LASTEXITCODE -eq 0) {
   $door = @('-o', 'BatchMode=yes')
   Say "regenerate: $target opens to the operator key"
