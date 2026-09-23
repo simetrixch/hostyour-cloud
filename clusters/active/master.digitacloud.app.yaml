@@ -32,7 +32,7 @@ booksCluster: master.digitacloud.app
 # cut or into the one that already stands — so the run that writes this line is the run that made it
 # true. The slot is required: a map naming no release is one the Manager cannot
 # regenerate and cannot give a slave, and the run that would leave it empty is refused instead.
-release: 0.8.249-stable-20260922161709
+release: 0.8.257-stable-20260923140911
 
 global:
   # This cluster's own public domain name, which is also the name of its install branch.
