@@ -502,10 +502,10 @@ echo "check: all 9 per-unit fences render, over clusters/units/reconciler, clust
 
 # ── A unit that declares an SMTP entry, and a unit that does not ─────────────────────────────
 # THE STAND-IN REGISTRATION DECLARES NO ENTRY, because almost no unit does, so every render above
-# takes the branch without one. A unit that declares one gets two lines more: an ingress rule in its
-# fence admitting the books cluster's tailnet address on the entry's port, and an exception in its
-# admission boundary letting the entry's Service alone carry this cluster's tailnet address as its
-# external IP. Both charts are rendered here with the entry and without it, in the shape each
+# takes the branch without one. A unit that declares one gets three lines more: an ingress rule in
+# its fence admitting the books cluster's tailnet address and the relay's own namespace on the
+# entry's port, and an exception in its admission boundary letting the entry's Service alone carry
+# this cluster's tailnet address as its external IP. Both charts are rendered here with the entry and without it, in the shape each
 # ApplicationSet hands it, and held to those two lines: a branch that fell through would render
 # exactly as green as one that was taken. The stand-in map is both clusters at once, so one address
 # stands for the books cluster's and the unit cluster's.
@@ -527,13 +527,13 @@ for entry in none declared; do
       --set-json "registration.smtpEntryJson=$boundary_entry"
   } > "$work/entry-render" 2>&1 \
     || { cat "$work/entry-render"; fail "a unit's fence or admission boundary does not render where the SMTP entry is $entry"; }
-  opened="$(grep -cF -e "cidr: \"$tailnet_address/32\"" \
+  opened="$(grep -cF -e "cidr: \"$tailnet_address/32\"" -e 'kubernetes.io/metadata.name: "postfix"' \
     -e "object.metadata.name == 'check-mta' && object.spec.externalIPs == ['$tailnet_address']" "$work/entry-render")"
   expected=0
-  [ "$entry" = declared ] && expected=2
+  [ "$entry" = declared ] && expected=3
   if [ "$opened" != "$expected" ]; then
     cat "$work/entry-render"
-    fail "where the SMTP entry is $entry, the fence and the admission boundary carry $opened of the 2 lines that open it, and they have to carry $expected"
+    fail "where the SMTP entry is $entry, the fence and the admission boundary carry $opened of the 3 lines that open it, and they have to carry $expected"
   fi
 done
 echo "check: an SMTP entry opens a unit's fence and admission boundary where one is declared, and nowhere else."

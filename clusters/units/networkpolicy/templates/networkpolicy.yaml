@@ -39,6 +39,10 @@ WHAT STAYS OPEN, and why each one has to:
      The port is the POD'S port: a NetworkPolicy names the port on the pod, not
      the Service's, so the entry's Service must expose the pod's port under the
      same number, or the relay dials one port and this rule admits another.
+     The relay's own namespace (.Values.relayNamespace) is admitted on the same
+     port: where the unit stands on the books cluster itself, the relay's packets
+     never cross the tailnet and carry the relay pod's address, not the tailnet
+     one. On any other cluster that namespace does not exist.
 
 WHAT NEEDS NO RULE. The kubelet's liveness/readiness probes originate on the NODE,
 not in a pod, and Calico allows every connection a host makes to a workload
@@ -81,6 +85,9 @@ spec:
     - from:
         - ipBlock:
             cidr: {{ printf "%s/32" (required "unit-networkpolicy: global.apiHost is required where the unit declares an SMTP entry — it is the tailnet address of the books cluster, the one source the entry admits, and the books cluster's map (clusters/active/<books fqdn>.yaml) carries none: tailnet-join-self writes it there" $.Values.global.apiHost) | quote }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.relayNamespace | quote }}
       ports:
         - protocol: TCP
           port: {{ . }}

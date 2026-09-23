@@ -29,3 +29,8 @@ tenant:
 # every other unit, and a tenant member never has one. See the fourth opening in
 # templates/networkpolicy.yaml.
 smtpEntry: {}
+
+# The namespace the installation's mail relay runs in (clusters/inventories/postfix/app.yaml), admitted
+# on the SMTP entry's port beside the books cluster's tailnet address — for a unit that stands on the
+# books cluster itself. See the fourth opening in templates/networkpolicy.yaml.
+relayNamespace: postfix
