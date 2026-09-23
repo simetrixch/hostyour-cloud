@@ -111,6 +111,10 @@ spec:
               - values-common.yaml
               - values-__STAGE__.yaml
               - $values/installation/values/{{ .name }}.yaml
+              # The per-stage values of this installation for one application, written by the
+              # Manager where it derives them from the books. The relay's RELAYHOST is the first:
+              # installation/values/postfix-<stage>.yaml, `postfix.config.general.RELAYHOST`.
+              - $values/installation/values/{{ .name }}-__STAGE__.yaml
               - $values/clusters/active/__FQDN__.yaml
             ignoreMissingValueFiles: true
       # BY NAME, NOT "IN-CLUSTER". The apps of this appset belong to the cluster this branch

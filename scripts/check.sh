@@ -500,6 +500,44 @@ if [ "$fences_rendered" != "$fences_expected" ]; then
 fi
 echo "check: all 9 per-unit fences render, over clusters/units/reconciler, clusters/units/admissionpolicy and clusters/inventories/consumer-build in unit mode."
 
+# ── A unit that declares an SMTP entry, and a unit that does not ─────────────────────────────
+# THE STAND-IN REGISTRATION DECLARES NO ENTRY, because almost no unit does, so every render above
+# takes the branch without one. A unit that declares one gets three lines more: an ingress rule in
+# its fence admitting the books cluster's tailnet address and the relay's own namespace on the
+# entry's port, and an exception in its admission boundary letting the entry's Service alone carry
+# this cluster's tailnet address as its external IP. Both charts are rendered here with the entry and without it, in the shape each
+# ApplicationSet hands it, and held to those two lines: a branch that fell through would render
+# exactly as green as one that was taken. The stand-in map is both clusters at once, so one address
+# stands for the books cluster's and the unit cluster's.
+echo "check: a unit's fence and admission boundary, with an SMTP entry and without one."
+tailnet_address="$(sed -n 's/^  apiHost:[[:space:]]*//p' "$cluster_map")"
+[ -n "$tailnet_address" ] || fail "$cluster_map carries no global.apiHost, the tailnet address an SMTP entry is opened on and admitted from"
+for entry in none declared; do
+  fence_entry='{}'
+  boundary_entry='"{}"'
+  if [ "$entry" = declared ]; then
+    fence_entry='{"port":2525}'
+    boundary_entry='"{\"service\":\"check-mta\",\"port\":2525}"'
+  fi
+  { helm template unit-networkpolicy clusters/units/networkpolicy --namespace check-dev \
+      -f clusters/units/networkpolicy/values.yaml -f "$cluster_map" --set-json "smtpEntry=$fence_entry" \
+    && helm template unit-admissionpolicy clusters/units/admissionpolicy --namespace check-dev \
+      -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+      -f clusters/units/admissionpolicy/values.yaml -f "$cluster_map" -f "$registration" \
+      --set-json "registration.smtpEntryJson=$boundary_entry"
+  } > "$work/entry-render" 2>&1 \
+    || { cat "$work/entry-render"; fail "a unit's fence or admission boundary does not render where the SMTP entry is $entry"; }
+  opened="$(grep -cF -e "cidr: \"$tailnet_address/32\"" -e 'kubernetes.io/metadata.name: "postfix"' \
+    -e "object.metadata.name == 'check-mta' && object.spec.externalIPs == ['$tailnet_address']" "$work/entry-render")"
+  expected=0
+  [ "$entry" = declared ] && expected=3
+  if [ "$opened" != "$expected" ]; then
+    cat "$work/entry-render"
+    fail "where the SMTP entry is $entry, the fence and the admission boundary carry $opened of the 3 lines that open it, and they have to carry $expected"
+  fi
+done
+echo "check: an SMTP entry opens a unit's fence and admission boundary where one is declared, and nowhere else."
+
 # ── What clusters/bootstrap must never carry ─────────────────────────────────────────────────
 # NOTHING STAMPS THAT TREE, AND A PLACEHOLDER LEFT IN IT TRAVELS AS TEXT. The seven files under
 # clusters/bootstrap that carry one installation's own domain and short name are TEMPLATES: the

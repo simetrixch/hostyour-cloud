@@ -189,8 +189,9 @@ spec:
           # stands on its branch; the chart is the product and stands on the release tag.
           targetRevision: __BRANCH__
           ref: values
-        # 1. The boundary itself. It reads ONE platform value — global.unitApex, which composes
-        #    the one FQDN every unit is granted — and takes the stage from the registration below,
+        # 1. The boundary itself. It reads ONE platform value, and only for a unit that declares an
+        #    SMTP entry — global.apiHost, this cluster's tailnet address, the one external IP the
+        #    entry's Service may carry — and takes the stage from the registration below,
         #    which is the same stage the unit's Application is named after and therefore the prefix
         #    of every tracking id the Namespace clauses read. The chain still loads the platform's
         #    file of the UNIT'S stage, as every source of the unit does.
@@ -228,6 +229,10 @@ spec:
                 keyPatternsJson: "{{ dig \"keyPatterns\" (list) . | toJson }}"
                 # The Pub/Sub half of the same grant, same shape, same reading of an absent field.
                 channelPatternsJson: "{{ dig \"channelPatterns\" (list) . | toJson }}"
+                # THE SMTP ENTRY, whose Service alone may carry an external IP. A JSON string for the
+                # reason servicesJson is one. `dig` answers "{}" where the registration declares no
+                # entry, which the chart reads as "no Service of this unit carries an external IP".
+                smtpEntryJson: "{{ dig \"smtpEntry\" (dict) . | toJson }}"
       destination:
         # THE UNIT'S OWN CLUSTER, by name — a cluster-scoped policy has to stand where the workloads
         # it admits or refuses run, and for a per-slave instance that is a remote cluster.

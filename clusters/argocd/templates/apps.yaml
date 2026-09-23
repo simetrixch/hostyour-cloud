@@ -66,6 +66,10 @@ block is bound once here and every key below is read out of the binding.
 {{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role. It carries this installation's registrations AND every cluster map of it, and it is the branch every source of this tree reads from: a cluster carrying only the slave part has no branch of its own" $global.booksCluster }}
 {{- $catalogRepo := required "argocd-apps: global.catalogRepo is required (clusters/active/<fqdn>.yaml) — the tenant catalog as bare owner/name, written inside a URL these files already carry" $global.catalogRepo }}
 {{- $holdsBooks := required "argocd-apps: global.servicesLocal.vault is required (clusters/active/<fqdn>.yaml) — it says whether this cluster keeps the books, and the two files below exist only on the cluster that does" (dig "servicesLocal" "vault" "" $global) }}
+{{- /* THIS CLUSTER'S TAILNET ADDRESS, read by consumers-appset.yaml alone: a unit that declares an
+SMTP entry gets it as the address its chart opens the entry on. A slave's map carries it from
+deploy-slave, a master's once tailnet-join-self has written it; a map without it fills "". */ -}}
+{{- $apiHost := dig "apiHost" "" $global }}
 {{- /* THE STAGE ZONES, composed ONCE for the whole tree (simetrixch/hostyour-cloud#208). A unit's
 public host is `<label>.<stage apex>` and a tenant's members stand at `<member>.<subdomain>.<stage
 apex>`, where the stage apex is the unit apex itself for prod and `<stage>.<unit apex>` otherwise.
@@ -133,7 +137,7 @@ syncs at once — the state the steps exist to end, arrived at in silence.
 {{- $docs := list }}
 {{- range $name := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "slaves-appset.yaml" "tenants-appset.yaml" "units-appset.yaml" }}
 {{- if or $holdsBooks (not (has $name $booksOnly)) }}
-{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__CLUSTER_ROLE_WHOLE__" $roleWhole | replace "__BRANCH__" $booksFqdn | replace "__ARGOCD_NAMESPACE__" $namespace | replace "__SYNC_WAVE_LABEL__" $waveLabel | replace "__SYNC_WAVE_STEPS__" $waveStepList | replace "__STAGE_APEX_DEV__" $stageApexDev | replace "__STAGE_APEX_TEST__" $stageApexTest | replace "__STAGE_APEX_PROD__" $stageApexProd }}
+{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__CATALOG_REPO__" $catalogRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__CLUSTER_ROLE_WHOLE__" $roleWhole | replace "__BRANCH__" $booksFqdn | replace "__ARGOCD_NAMESPACE__" $namespace | replace "__SYNC_WAVE_LABEL__" $waveLabel | replace "__SYNC_WAVE_STEPS__" $waveStepList | replace "__STAGE_APEX_DEV__" $stageApexDev | replace "__STAGE_APEX_TEST__" $stageApexTest | replace "__STAGE_APEX_PROD__" $stageApexProd | replace "__API_HOST__" $apiHost }}
 {{- $docs = append $docs (printf "# file: %s\n%s" $name $doc) }}
 {{- end }}
 {{- end }}

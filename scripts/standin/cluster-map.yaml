@@ -26,6 +26,9 @@ release: 0.0.0-placeholder
 global:
   domain: check.example.invalid
   clusterName: check
+  # This cluster's tailnet address: a slave's map carries it from deploy-slave, a master's from
+  # tailnet-join-self. A unit's SMTP entry is opened on it and admits only the books cluster's.
+  apiHost: 10.0.0.2
   booksCluster: check.example.invalid
   buildPlane: check.example.invalid
   unitApex: check.example.invalid

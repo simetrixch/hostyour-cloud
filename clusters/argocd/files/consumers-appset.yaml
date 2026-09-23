@@ -284,6 +284,19 @@ spec:
                   {{- range (dig "channelPatterns" (list) .) }}
                   - "{{ . }}"
                   {{- end }}
+              # THE SMTP ENTRY, delivered only where the registration attests one: the Service of the
+              # unit's MTA, its port, and the address the chart opens it on. That address is this
+              # cluster's tailnet address, filled by the chart at clusters/argocd from the map's
+              # apiHost. The chart sets `externalIPs: [address]` and `externalTrafficPolicy: Local`
+              # on that one Service. Local keeps the relay's own source address, and that address on
+              # this port is what the unit's fence (source 3) admits. `dig`, because most
+              # registrations carry no entry, and then nothing is delivered.
+              {{- with dig "smtpEntry" "" . }}
+              smtpEntry:
+                service: "{{ .service }}"
+                port: {{ .port }}
+                address: "__API_HOST__"
+              {{- end }}
         # 2. Per-consumer PostgreSQL instance (clusters/units/postgresql), rendered ONLY
         #    when the registration's services[] includes "postgresql": a
         #    consumer that claims postgresql gets its OWN instance in its OWN
@@ -404,12 +417,25 @@ spec:
         #    policy is the gap this closes, so a consumer that claims no service is
         #    exactly the case that must not be skipped. It rides in the consumer's OWN
         #    Application so it is created, healed and pruned with the namespace it
-        #    protects. No $values file: the chart reads no platform value, and the
-        #    tenant-sibling rule its values.yaml carries stays off for a consumer, which
-        #    is one namespace with no siblings.
+        #    protects. The tenant-sibling rule its values.yaml carries stays off for a
+        #    consumer, which is one namespace with no siblings.
+        #
+        #    A $values FILE ONLY FOR A UNIT THAT DECLARES AN SMTP ENTRY. The fence then
+        #    admits the entry's port from the books cluster's tailnet address, because the
+        #    relay runs there. The address is read out of the books cluster's own map, on
+        #    the books branch the `values` ref reads. Without an entry the chart reads no
+        #    platform value and is handed nothing.
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: __BRANCH__
           path: clusters/units/networkpolicy
+          {{- with dig "smtpEntry" "" . }}
+          helm:
+            valueFiles:
+              - $values/clusters/active/__BOOKS_FQDN__.yaml
+            valuesObject:
+              smtpEntry:
+                port: {{ .port }}
+          {{- end }}
         # 4. The platform's own resource ceiling for this consumer's namespace
         #    (clusters/units/quota on the trunk: a ResourceQuota and the LimitRange that keeps it from
         #    rejecting a pod which declares no resources of its own). UNCONDITIONAL, like the policy

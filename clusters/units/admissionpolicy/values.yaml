@@ -39,6 +39,12 @@ registration:
   # The Pub/Sub half of the redis grant, same shape and same fail-closed reading: a claim naming a
   # channel outside this set is refused, and EMPTY refuses every channel a claim would name.
   channelPatternsJson: "[]"
+  # The unit's ATTESTED SMTP entry, as the JSON object the ApplicationSet stamps — the same shape
+  # and the same reason as servicesJson above. `{}` for almost every unit, and then no Service of
+  # the unit may carry an external IP. Where it names a Service, that one Service may carry exactly
+  # this cluster's tailnet address, `global.apiHost` of the cluster map, with
+  # externalTrafficPolicy Local.
+  smtpEntryJson: "{}"
 
 # The three label namespaces the PLATFORM decides on. A unit's own Namespace object may carry nothing
 # under them beyond the value-exact pairs below: Vault binds ESO roles by a namespace label selector,

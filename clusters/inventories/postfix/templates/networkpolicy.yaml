@@ -47,6 +47,18 @@ spec:
           port: 25
         - protocol: TCP
           port: 587
+    {{- with .Values.relayTarget }}
+    # THE ONE ENTRY THIS RELAY HANDS ITS MAIL TO, where a unit of this stage declares an SMTP entry
+    # (hostyour-cloud#242): the Manager writes its address and port beside RELAYHOST into
+    # installation/values/postfix-<stage>.yaml, and exactly that destination opens here — the entry
+    # listens on a port of its own, which the two above do not name.
+    - to:
+        - ipBlock:
+            cidr: {{ printf "%s/32" (required "relayTarget.address is required beside relayTarget.port — the Manager writes both into installation/values/postfix-<stage>.yaml" .address) | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ required "relayTarget.port is required beside relayTarget.address — the Manager writes both into installation/values/postfix-<stage>.yaml" .port }}
+    {{- end }}
     - ports:
         - protocol: UDP
           port: 53

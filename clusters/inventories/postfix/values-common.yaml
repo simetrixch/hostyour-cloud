@@ -26,6 +26,14 @@ postfix:
       # The bokysan chart consumes it without tpl (charts/mail statefulset.yaml
       # renders the env verbatim), so it cannot read a global either — an
       # installation-class file is the only place it fits.
+      # RELAYHOST is not set here either. Where a unit of this stage declares an SMTP
+      # entry, the Manager writes it into installation/values/postfix-<stage>.yaml as
+      # `[<apiHost of the unit's cluster>]:<port>`, and the relay hands every mail to
+      # that entry over the tailnet; without one it delivers directly. Either way the
+      # relay signs with its DKIM key before the mail leaves it. No SASL: the tailnet
+      # address and the one source the unit's fence admits are the boundary. The same
+      # file states the target a second time as `relayTarget` below, for the relay's own
+      # NetworkPolicy, which opens exactly that destination.
     postfix:
       smtp_tls_security_level: "may"
       smtp_tls_CApath: "/etc/ssl/certs"
@@ -159,6 +167,11 @@ postfix:
           readOnly: true
         - name: dkim-keys
           mountPath: /dkim-keys
+
+# THE ENTRY THIS RELAY HANDS ITS MAIL TO, as templates/networkpolicy.yaml opens it: `address` and
+# `port`, written by the Manager beside RELAYHOST into installation/values/postfix-<stage>.yaml where a
+# unit of this stage declares an SMTP entry. Empty here, so a relay without one opens nothing more.
+relayTarget: {}
 
 # Monitoring chart — the relay's alert rules are pre-written but disabled because
 # this chart doesn't ship a postfix-exporter yet (the postfix_* metrics they
