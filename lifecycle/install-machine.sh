@@ -11,7 +11,7 @@
 # this deliberately cannot do any of it. What it installs is the one machine that
 # has to exist before the Manager does.
 #
-# NO OPTIONS. Every value the five programs are answered with reaches them from one file.
+# NO OPTIONS. Every value the six programs are answered with reaches them from one file.
 # A command line long
 # enough to carry them is one nobody can read back, nobody can diff, and whose
 # every value stands in this machine's process listing. One file states the whole
@@ -135,7 +135,7 @@ If you have NOT restored it, clear nothing: something else is answering for $DOO
       [ -t 0 ] || fail "$TARGET carries no operator key yet, so this can only be a password session — and there is no terminal here to ask on. Start it from a terminal." 69
       DOOR=(-o BatchMode=no -o NumberOfPasswordPrompts=1)
       printf '\n  %s carries no operator key yet. deploy-host is what puts it there,\n' "$TARGET" >&2
-      printf '  and it is one of the five programs this is about to run.\n\n' >&2
+      printf '  and it is one of the six programs this is about to run.\n\n' >&2
       printf '  ssh will ask for the login password ONCE, on this terminal. It is not read\n' >&2
       printf '  from the config, it is not kept, and it does not reach the transcript.\n' >&2 ;;
     *)

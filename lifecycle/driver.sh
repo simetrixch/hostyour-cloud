@@ -766,7 +766,7 @@ COMPOSE
 }
 
 # =============================================================================
-# The five programs that MAKE A MASTER, each of them test then dry then run — the
+# The six programs that MAKE A MASTER, each of them test then dry then run — the
 # three modes gate one another, and a mode that is not green stops the whole
 # installation here rather than carrying a doubt into the next program.
 #
@@ -790,7 +790,7 @@ COMPOSE
 # the first thing done IN the manager, by hand, and not the last thing done to it by a
 # script.
 # =============================================================================
-readonly PROGRAMS=(deploy-host deploy-branch deploy-cluster deploy-platform-services tailnet-join-self)
+readonly PROGRAMS=(deploy-host deploy-branch deploy-cluster deploy-platform-services tailnet-join-self tailnet-record-address)
 
 run_program() {
   local program="$1" mode="$2" ordinal="$3"
