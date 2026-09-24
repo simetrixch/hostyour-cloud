@@ -117,6 +117,10 @@ spec:
                 # materialized here; both-or-neither with GITHUB_REPO (config.ts refine).
                 - name: GITHUB_REPO
                   value: {{ .Values.github.repo | quote }}
+                # Where the deployment programs are cloned from (config.ts DEPLOY_PROGRAMS_REPO):
+                # the reaper loads the same configuration as the app, which requires it.
+                - name: DEPLOY_PROGRAMS_REPO
+                  value: {{ required "manager: github.programsRepo is required" .Values.github.programsRepo | quote }}
                 - name: GITHUB_WRITE_PAT
                   valueFrom:
                     secretKeyRef:
