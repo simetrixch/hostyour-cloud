@@ -1,0 +1,8 @@
+name: "swissbookai"
+repoURL: "https://github.com/ahkutun/swissbookai.git"
+owner: "swissbookai"
+onboardedAt: "2026-09-24T12:47:27.467Z"
+suspended: false
+quiesced: false
+removing: false
+builds: ["swissbookai-api","swissbookai-web","swissbookai-worker","swissbookai-migrate"]
