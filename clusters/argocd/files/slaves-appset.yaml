@@ -14,7 +14,12 @@ spec:
         files:
           - path: "clusters/active/*.yaml"
         values:
-          cluster: '{{ index (splitList "." .global.domain) 0 }}'
+          # THE CLUSTER'S NAME, as its map records it: global.clusterName, fixed when the cluster
+          # is adopted. Never worked out of global.domain - a rename moves a slave's domain and
+          # leaves its name, and the Application, the AppProject and the per-slave plane below are
+          # all named after it, so a name worked out of the new domain would generate a second
+          # slave beside the one that stands and prune that one with every workload on it.
+          cluster: '{{ .global.clusterName }}'
       selector:
         matchLabels:
           # EXACTLY the word `slave`, and the exactness is load-bearing: a master carries the

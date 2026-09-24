@@ -6,7 +6,7 @@
 # =============================================================================
 #
 # USAGE (run from anywhere inside a hostyour-cloud checkout)
-#   pwsh ./lifecycle/remove-slave-from-master.ps1 <slave-fqdn> [config] [-EvenIfRunning]
+#   pwsh ./lifecycle/remove-slave-from-master.ps1 <slave-fqdn> [config] [-Name <slave-name>] [-EvenIfRunning]
 #
 # THE TWO INPUTS
 #   slave-fqdn — WHICH SLAVE is taken off. It is the domain of the slave's
@@ -81,6 +81,10 @@
 param(
   [Parameter(Position = 0)][string] $SlaveFqdn = '',
   [Parameter(Position = 1)][string] $ConfigFile = '',
+  # THE SLAVE'S NAME, which its map records. The twin takes --name where this
+  # takes -Name; it is asked for where that map is gone, and where the map stands
+  # the two must agree.
+  [string] $Name = '',
   # A RUNNING SLAVE GOES ONLY WHEN SAID. The twin takes --even-if-running where
   # this takes -EvenIfRunning: PowerShell binds a double dash as a parameter name
   # of its own.
@@ -132,7 +136,7 @@ function Read-MapValue([string[]] $Text, [string] $Key) {
 }
 
 if (-not $SlaveFqdn) {
-  Stop-Here 'usage: lifecycle/remove-slave-from-master.ps1 <slave-fqdn> [config] [-EvenIfRunning]' 64
+  Stop-Here 'usage: lifecycle/remove-slave-from-master.ps1 <slave-fqdn> [config] [-Name <slave-name>] [-EvenIfRunning]' 64
 }
 
 $driver = Join-Path $PSScriptRoot 'remove-slave-driver.sh'
@@ -225,7 +229,14 @@ if ($LASTEXITCODE -ne 0) {
   # mount kubernetes-<name>, the three policies, the three consumables, the coordinator user, the
   # project. A name nothing was registered under therefore removes nothing, and each row says so.
   # Where the map stands it adds the two checks below; where it does not, this says as much.
-  Say "remove-slave: branch $master keeps no $map, which is what the git side of a removal leaves behind. Nothing here confirms $SlaveFqdn stood as a slave of $master, and every row names objects after it, so a name nothing holds removes nothing"
+  #
+  # AND THE NAME STANDS NOWHERE ELSE. Every object of the registration is named after the slave's
+  # name, which its map recorded when the slave was adopted; a rename moved the slave's domain and
+  # left the name, so the name is stated and never worked out of the domain.
+  if (-not $Name) {
+    Stop-Here "branch $master keeps no $map, and the slave's name stood only there: state it with --name <slave-name>, which the PowerShell spelling writes -Name <slave-name> - the name every object of its registration carries" 64
+  }
+  Say "remove-slave: branch $master keeps no $map, which is what the git side of a removal leaves behind. Nothing here confirms $SlaveFqdn stood as a slave of $master, and every row names objects after the name $Name, so a name nothing holds removes nothing"
 }
 else {
   # WHAT THAT MAP SAYS THE CLUSTER IS. A role is one or several parts joined by a plus, and what this
@@ -246,7 +257,19 @@ else {
     Stop-Here "$map on branch $master states booksCluster '$said', and $ConfigFile states the master $master. A slave is registered on the master its books name. Nothing has been changed" 65
   }
 
+  # AND THE NAME IT STANDS UNDER, which the map records under global: - fixed at the slave's
+  # adoption and left by a rename of its domain, so it is read here and never worked out of the
+  # domain. Asked with its indentation, because the key stands under global:.
+  $mapName = Read-MapValue $mapText '  clusterName'
+  if (-not $mapName) {
+    Stop-Here "$map on branch $master states no clusterName, and every object of the slave's registration is named after it" 65
+  }
+  if ($Name -and $Name -cne $mapName) {
+    Stop-Here "$map on branch $master records the name '$mapName', and --name says '$Name'. The registration stands under the name the map records" 65
+  }
+  $Name = $mapName
   Say "remove-slave: $map on branch $master records $SlaveFqdn as a slave of $master, and its registration on that master is what this takes off"
+  Say "remove-slave: the name it stands under is $Name, and every object the removal takes is named after it"
 }
 
 # --------------------------------------------------- the slave itself, asked
@@ -371,6 +394,7 @@ $stream = ("umask 077${lf}cat > `"`$1`" <<'AW_CONFIG_END'${lf}" +
            ((Get-Content -Raw -Path $ConfigFile) -replace "`r", '') + $lf +
            "MASTER_FQDN='$master'${lf}" +
            "SLAVE_FQDN='$SlaveFqdn'${lf}" +
+           "SLAVE_CLUSTER_NAME='$Name'${lf}" +
            "AW_CONFIG_END${lf}" +
            ((Get-Content -Raw -Path $driver) -replace "`r", ''))
 

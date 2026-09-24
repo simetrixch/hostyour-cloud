@@ -269,7 +269,13 @@ if ($books) {
     Add-Name "*.$fqdn" "the platform host names of $fqdn"
     foreach ($label in $platformHostLabels -split ' ') { Add-Name "$label.$fqdn" "a platform host name of $fqdn" }
     if ($fqdn -ne $MasterFqdn) {
-      $short = ($fqdn -split '\.')[0]
+      # THE SLAVE'S RECONCILER IS NAMED AFTER THE SLAVE'S NAME, which its map records under global:
+      # - fixed at its adoption and left by a rename of its domain, so it is read and never worked
+      # out of the domain.
+      $short = Read-Value $text '  clusterName'
+      if (-not $short) {
+        Stop-Here "$file on branch $MasterFqdn states no clusterName, and the reconciler of the slave $fqdn on its master is named after it" 65
+      }
       Add-Name "argo-$short.$MasterFqdn" "the reconciler of the slave $fqdn on its master"
       Say "abandon: the platform host names of ${fqdn}: *.$fqdn, argo-$short.$MasterFqdn and the labels $platformHostLabels below $fqdn"
     }

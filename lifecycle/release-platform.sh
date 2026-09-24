@@ -77,8 +77,12 @@
 #
 # THE TAG GOES ON origin/master AND NEVER ON THE LOCAL BRANCH. What is released
 # is what the remote publishes; a local master may carry commits nobody else has,
-# and a tag on one of those names a tree no installation could ever fetch. Where
-# the local master is ahead, this says how many commits are being left out.
+# and a tag on one of those names a tree no installation could ever fetch. And the
+# push gate lets through only the commit that is checked out, so the checkout is
+# brought onto origin/master before anything is cut: a master that only lags -
+# every unit's release pins master behind it - is fast-forwarded, and one that
+# carries commits of its own, or another branch checked out, stops the run before
+# a tag exists.
 # =============================================================================
 
 set -uo pipefail
@@ -192,6 +196,14 @@ git fetch --quiet --tags origin \
   || die 'origin could not be fetched, so neither the tag nor the pin would be about what the remote carries' 69
 git rev-parse --verify --quiet origin/master >/dev/null \
   || die 'origin carries no master, and master is what a platform release is cut from' 69
+if [ "$(git rev-parse --verify HEAD)" != "$(git rev-parse --verify origin/master)" ]; then
+  if [ "$(git symbolic-ref --quiet --short HEAD)" != master ] || ! git merge-base --is-ancestor HEAD origin/master; then
+    die 'this checkout is not master, or carries commits origin/master does not, so it cannot be brought onto origin/master: the tag goes there and the push gate lets through only what is checked out. Check out master and push or drop its own commits, then release again'
+  fi
+  git merge --quiet --ff-only origin/master \
+    || die 'master lags origin/master and could not be fast-forwarded onto it - the lines above say why. The tag goes on origin/master and the push gate lets through only what is checked out'
+  say 'release: master is fast-forwarded onto origin/master, where the tag goes - the push gate lets through only what is checked out'
+fi
 
 # EVERYTHING THAT NEEDS AN INSTALLATION STANDS IN THE BLOCK BELOW, and a run that
 # names none skips it. What is skipped is the clone, the map, the channel ceiling

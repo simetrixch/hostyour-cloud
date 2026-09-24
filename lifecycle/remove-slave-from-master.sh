@@ -7,7 +7,7 @@
 # =============================================================================
 #
 # USAGE (run from anywhere inside a hostyour-cloud checkout)
-#   bash lifecycle/remove-slave-from-master.sh <slave-fqdn> [config] [--even-if-running]
+#   bash lifecycle/remove-slave-from-master.sh <slave-fqdn> [config] [--name <slave-name>] [--even-if-running]
 #
 # THE TWO INPUTS
 #   slave-fqdn — WHICH SLAVE is taken off. It is the domain of the slave's
@@ -109,18 +109,25 @@ value_in_text() {
 SLAVE=""
 CONFIG=""
 RUNNING=""
-# --even-if-running IS TAKEN FROM ANY POSITION, because it is the argument a
-# person adds to a command they have already typed once and had refused.
-for arg in "$@"; do
-  case "$arg" in
-    --even-if-running) RUNNING=yes ;;
-    *) if [ -z "$SLAVE" ]; then SLAVE="$arg"; elif [ -z "$CONFIG" ]; then CONFIG="$arg"; else
-         die "lifecycle/remove-slave-from-master.sh was given more than it takes: $arg" 64; fi ;;
+NAME=""
+# --even-if-running AND --name ARE TAKEN FROM ANY POSITION, because each is an
+# argument a person adds to a command they have already typed once and had
+# refused. --name is the slave's name, which its map records: it is asked for
+# where that map is gone, and where the map stands the two must agree.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --even-if-running) RUNNING=yes; shift ;;
+    --name)
+      [ "$#" -ge 2 ] || die 'lifecycle/remove-slave-from-master.sh was given --name and no name after it' 64
+      NAME="$2"; shift 2 ;;
+    *) if [ -z "$SLAVE" ]; then SLAVE="$1"; elif [ -z "$CONFIG" ]; then CONFIG="$1"; else
+         die "lifecycle/remove-slave-from-master.sh was given more than it takes: $1" 64; fi
+       shift ;;
   esac
 done
 
 [ -n "$SLAVE" ] \
-  || die 'usage: lifecycle/remove-slave-from-master.sh <slave-fqdn> [config] [--even-if-running]' 64
+  || die 'usage: lifecycle/remove-slave-from-master.sh <slave-fqdn> [config] [--name <slave-name>] [--even-if-running]' 64
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRIVER="$HERE/remove-slave-driver.sh"
@@ -159,11 +166,12 @@ BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?
 # a running one may go are the last that should be reachable from a file.
 # Positional parameters are not assignable from a sourced file, and the shape
 # check above admits no line that could call set.
-set -- "$SLAVE" "$RUNNING"
+set -- "$SLAVE" "$RUNNING" "$NAME"
 # shellcheck disable=SC1090
 . "$CONFIG"
 SLAVE="$1"
 RUNNING="$2"
+NAME="$3"
 
 for named in FQDN OPERATOR_USER STAGE; do
   [ -n "${!named:-}" ] || die "$CONFIG states no $named, and nothing here may choose one" 65
@@ -200,7 +208,13 @@ if [ -z "$MAPTEXT" ]; then
   # mount kubernetes-<name>, the three policies, the three consumables, the coordinator user, the
   # project. A name nothing was registered under therefore removes nothing, and each row says so.
   # Where the map stands it adds the two checks below; where it does not, this says as much.
-  say "remove-slave: branch $MASTER keeps no $MAP, which is what the git side of a removal leaves behind. Nothing here confirms $SLAVE stood as a slave of $MASTER, and every row names objects after it, so a name nothing holds removes nothing"
+  #
+  # AND THE NAME STANDS NOWHERE ELSE. Every object of the registration is named after the slave's
+  # name, which its map recorded when the slave was adopted; a rename moved the slave's domain and
+  # left the name, so the name is stated and never worked out of the domain.
+  [ -n "$NAME" ] \
+    || die "branch $MASTER keeps no $MAP, and the slave's name stood only there: state it with --name <slave-name>, which the PowerShell spelling writes -Name <slave-name> - the name every object of its registration carries" 64
+  say "remove-slave: branch $MASTER keeps no $MAP, which is what the git side of a removal leaves behind. Nothing here confirms $SLAVE stood as a slave of $MASTER, and every row names objects after the name $NAME, so a name nothing holds removes nothing"
 else
   # WHAT THAT MAP SAYS THE CLUSTER IS. A role is one or several parts joined by a plus, and what this
   # removal is about is the slave part — so the parts are read rather than the whole word compared,
@@ -217,7 +231,18 @@ else
   BOOKS="$(printf '%s
 ' "$MAPTEXT" | value_in_text booksCluster)"
   [ "$BOOKS" = "$MASTER" ]     || die "$MAP on branch $MASTER states booksCluster '${BOOKS:-none}', and $CONFIG states the master $MASTER. A slave is registered on the master its books name. Nothing has been changed" 65
+  # AND THE NAME IT STANDS UNDER, which the map records under global: - fixed at
+  # the slave's adoption and left by a rename of its domain, so it is read here
+  # and never worked out of the domain. Asked with its indentation, because the
+  # key stands under global:.
+  MAPNAME="$(printf '%s
+' "$MAPTEXT" | value_in_text '  clusterName')"
+  [ -n "$MAPNAME" ] || die "$MAP on branch $MASTER states no clusterName, and every object of the slave's registration is named after it" 65
+  [ -z "$NAME" ] || [ "$NAME" = "$MAPNAME" ] \
+    || die "$MAP on branch $MASTER records the name '$MAPNAME', and --name says '$NAME'. The registration stands under the name the map records" 65
+  NAME="$MAPNAME"
   say "remove-slave: $MAP on branch $MASTER records $SLAVE as a slave of $MASTER, and its registration on that master is what this takes off"
+  say "remove-slave: the name it stands under is $NAME, and every object the removal takes is named after it"
 fi
 
 # --------------------------------------------------- the slave itself, asked
@@ -309,11 +334,12 @@ fi
 # process listing. The heredoc marker cannot collide with anything in the config,
 # because the guard above admits no line but a comment and NAME='value'.
 #
-# THE TWO NAMES THE PROGRAM TAKES ARE APPENDED AS THE LAST LINES, in the config's
+# THE THREE FACTS THE PROGRAM TAKES ARE APPENDED AS THE LAST LINES, in the config's
 # own grammar, so the driver composes them into the answers exactly as it composes
-# every other value and holds no special case for either. MASTER_FQDN is this
-# config's own FQDN under the name remove-slave declares for it, and SLAVE_FQDN is
-# the argument. Last, because the composer reads the file top to bottom and a
+# every other value and holds no special case for any. MASTER_FQDN is this
+# config's own FQDN under the name remove-slave declares for it, SLAVE_FQDN is
+# the argument, and SLAVE_CLUSTER_NAME is the name read off the slave's map above
+# or stated with --name. Last, because the composer reads the file top to bottom and a
 # later line wins: a config that states either of them itself is stating a fact
 # about some other run, and the two this act is about are these.
 #
@@ -325,6 +351,7 @@ fi
   tr -d $'\r' < "$CONFIG"
   printf "MASTER_FQDN='%s'\n" "$MASTER"
   printf "SLAVE_FQDN='%s'\n" "$SLAVE"
+  printf "SLAVE_CLUSTER_NAME='%s'\n" "$NAME"
   printf 'AW_CONFIG_END\n'
   tr -d $'\r' < "$DRIVER"
 } | ssh "${BASE[@]}" "${DOOR[@]}" "$TARGET" "bash -s -- \"\$HOME/.aw-remove-slave.env\""
