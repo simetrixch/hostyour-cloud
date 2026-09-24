@@ -675,8 +675,8 @@ git -C "$SSEED" push --quiet origin master
 
 # A cluster map as the catalogue's template writes one: the three top-level keys
 # a reader outside Helm selects on, then the block a chart resolves through.
-seed_map() { # fqdn, role, the cluster that keeps its books
-  local fqdn="$1" role="$2" books="$3"
+seed_map() { # fqdn, role, the cluster that keeps its books, the name (the first label unless said)
+  local fqdn="$1" role="$2" books="$3" name="${4:-${1%%.*}}"
   {
     echo "stage: prod"
     echo "role: $role"
@@ -684,7 +684,7 @@ seed_map() { # fqdn, role, the cluster that keeps its books
     echo ""
     echo "global:"
     echo "  domain: $fqdn"
-    echo "  clusterName: ${fqdn%%.*}"
+    echo "  clusterName: $name"
     echo "  booksCluster: $books"
   } > "$SSEED/clusters/active/$fqdn.yaml"
 }
@@ -694,7 +694,9 @@ seed_map() { # fqdn, role, the cluster that keeps its books
 # whose books are somebody else's.
 git -C "$SSEED" checkout --quiet -b apps6.example.invalid master
 seed_map apps6.example.invalid master apps6.example.invalid
-seed_map apps7.example.invalid slave apps6.example.invalid
+# A SLAVE RENAMED SINCE ITS ADOPTION: its name is not the first label of the domain it stands on now,
+# so a spelling that worked the name out of the domain would name what goes wrongly.
+seed_map apps7.example.invalid slave apps6.example.invalid s7
 seed_map apps8.example.invalid master apps8.example.invalid
 seed_map apps9.example.invalid slave other.example.invalid
 git -C "$SSEED" add -A
@@ -769,12 +771,28 @@ same 'a config naming a master with no install branch'
 
 run_remove_bash nosuch.example.invalid "$MASTERCFG"
 run_remove_pwsh nosuch.example.invalid "$MASTERCFG"
-# A MAP THAT IS GONE IS NOT A REFUSAL. Dropping the slave's part of the books is the git side of a
-# removal and the program's header says the caller does it FIRST, so by the time the rest is wanted
-# the map has left. What a run does instead is say so, and say what still protects a typed name.
+# WHERE THE MAP IS GONE, THE NAME IS STATED. The name stood only in the map, and working it out of the
+# domain names the wrong objects for a slave that was renamed.
+must "keeps no clusters/active/nosuch.example.invalid.yaml, and the slave's name stood only there" \
+  'a slave the master keeps no map for is refused until its name is stated'
+[ "$A_CODE" = '64' ] || fail "a missing map with no name stated must end with 64, got $A_CODE"
+same 'a slave the master keeps no map for, and no name stated'
+
+run_remove_bash nosuch.example.invalid "$MASTERCFG" --name nosuch
+run_remove_pwsh nosuch.example.invalid "$MASTERCFG" -Name nosuch
+# A MAP THAT IS GONE IS NOT A REFUSAL once the name is stated. Dropping the slave's part of the books
+# is the git side of a removal and the program's header says the caller does it FIRST, so by the
+# time the rest is wanted the map has left. What a run does instead is say so, and say what still
+# protects a typed name.
 must "keeps no clusters/active/nosuch.example.invalid.yaml"   'a slave the master keeps no map for is named rather than refused'
-must "a name nothing holds removes nothing"   'and the run says what protects a typed name where the map cannot'
+must "every row names objects after the name nosuch, so a name nothing holds removes nothing"   'and the run says what protects a typed name where the map cannot'
 same 'a slave the master keeps no map for'
+
+run_remove_bash apps7.example.invalid "$MASTERCFG" --name apps7
+run_remove_pwsh apps7.example.invalid "$MASTERCFG" -Name apps7
+must "records the name 's7', and --name says 'apps7'" 'a stated name the map contradicts is refused'
+[ "$A_CODE" = '65' ] || fail "a stated name the map contradicts must end with 65, got $A_CODE"
+same 'a stated name the map contradicts'
 
 run_remove_bash apps8.example.invalid "$MASTERCFG"
 run_remove_pwsh apps8.example.invalid "$MASTERCFG"
@@ -799,6 +817,8 @@ run_remove_bash apps7.example.invalid "$MASTERCFG"
 run_remove_pwsh apps7.example.invalid "$MASTERCFG"
 must "remove-slave: clusters/active/apps7.example.invalid.yaml on branch apps6.example.invalid records apps7.example.invalid as a slave of apps6.example.invalid" \
   'the registration is read off the master branch and named'
+must "remove-slave: the name it stands under is s7" \
+  "the name is the map's, not the first label of the slave's domain"
 must "remove-slave: apps7.example.invalid does not answer on port 22" \
   'the slave is asked whether it is still there, and the verdict is printed'
 must "stands inside a git working tree that does not ignore it" \
@@ -1020,7 +1040,7 @@ git -C "$ASEED" checkout --quiet -b apps6.example.invalid master
   echo ""
   echo "global:"
   echo "  domain: apps7.example.invalid"
-  echo "  clusterName: apps7"
+  echo "  clusterName: s7"
   echo "  unitApex: example.invalid"
   echo "  nodeCidrs:"
   echo "    - 203.0.113.7/32"
@@ -1028,7 +1048,7 @@ git -C "$ASEED" checkout --quiet -b apps6.example.invalid master
 mkdir -p "$ASEED/registrations/digita-post" "$ASEED/registrations/digita-auth"
 printf 'name: "digita-post"\ncluster: "apps6"\nhost: "post"\n' > "$ASEED/registrations/digita-post/prod.yaml"
 printf 'name: "digita-post"\nrepoURL: "https://example.invalid/post.git"\n' > "$ASEED/registrations/digita-post/build.yaml"
-printf 'name: "digita-auth"\ncluster: "apps7"\nhost: "auth"\n' > "$ASEED/registrations/digita-auth/dev.yaml"
+printf 'name: "digita-auth"\ncluster: "s7"\nhost: "auth"\n' > "$ASEED/registrations/digita-auth/dev.yaml"
 git -C "$ASEED" add -A
 git -C "$ASEED" commit --quiet -m "Cut the branch of apps6 with the books it keeps"
 git -C "$ASEED" push --quiet origin apps6.example.invalid
@@ -1048,7 +1068,7 @@ git -C "$ACSEED" commit --quiet -m "Seed the catalog"
 git -C "$ACSEED" push --quiet origin master
 git -C "$ACSEED" checkout --quiet -b apps6.example.invalid master
 mkdir -p "$ACSEED/registrations/t_01acme"
-printf 'cluster: "apps7"\nsubdomain: "acme"\n' > "$ACSEED/registrations/t_01acme/prod.yaml"
+printf 'cluster: "s7"\nsubdomain: "acme"\n' > "$ACSEED/registrations/t_01acme/prod.yaml"
 git -C "$ACSEED" add -A
 git -C "$ACSEED" commit --quiet -m "Register a tenant"
 git -C "$ACSEED" push --quiet origin apps6.example.invalid
@@ -1227,6 +1247,7 @@ run_abandon_pwsh apps6.example.invalid apps6.example.invalid "$ACFG"
 must "abandon: apps6.example.invalid keeps its books on branch apps6.example.invalid of origin" 'the books are read off origin and said so'
 must "abandon: clusters/active/apps6.example.invalid.yaml records apps6.example.invalid as master at 203.0.113.6, 100.64.0.1" 'the master and its two addresses are read off its map, in the flow spelling'
 must "abandon: clusters/active/apps7.example.invalid.yaml records apps7.example.invalid as slave at 203.0.113.7" 'the slave and its address are read off its map, in the block spelling'
+must "abandon: the platform host names of apps7.example.invalid: *.apps7.example.invalid, argo-s7.apps6.example.invalid"   "the slave's reconciler is named after the name its map records, not the first label of its domain"
 must "abandon: apps6.example.invalid answers on port 16443 at 203.0.113.6 (curl exit 0), so this is a LIVING installation" 'a cluster whose API answers refuses, naming the cluster and the address'
 must "Nothing has been changed" 'and the refusal says nothing has been changed'
 [ "$A_CODE" = '69' ] || fail "a living installation must refuse with 69, got $A_CODE"

@@ -23,13 +23,12 @@
 # on the workstation holds a list of answers that could fall behind what the
 # program declares. The catalogue is on this machine and not on that one.
 #
-# AND ONE OF THOSE NAMES IS NOBODY'S TO ANSWER. remove-slave declares
-# slave_cluster_name as the first DNS label of slave_fqdn, and the engine refuses
-# an envelope that carries a derived answer as well — supplying it is supplying a
-# second version of a fact already stated, and a pair that does not match is
-# exactly what deriving it prevents. So the composer below reads `derived:` off
-# the declaration and leaves every answer it marks out, and says which ones it
-# left out rather than being silent about them.
+# AND AN ANSWER THE PROGRAM WORKS OUT ITSELF IS NOBODY'S TO ANSWER. remove-slave
+# asks slave_cluster_name, the name the slave's map records, which the launcher
+# appends; a catalogue from before that question works it out of slave_fqdn, and
+# the engine refuses an envelope that carries a derived answer as well. So the
+# composer below reads `derived:` off the declaration and leaves every answer it
+# marks out, and says which ones it left out rather than being silent about them.
 #
 # WHAT IT IS TOLD, and it is the only thing that reaches it from outside: the
 # same key=value config file the operator filled in for the MASTER, carried over
@@ -245,7 +244,7 @@ say "$PROGRAM is told $COUNTED"
 # WHICH SLAVE THIS IS ABOUT, SAID OUT LOUD. It is the one answer that did not
 # come from the operator's config, and every object the program removes is named
 # after the label the program works out of it.
-say "slave_fqdn is $SLAVE_FQDN, so what goes is named after ${SLAVE_FQDN%%.*}"
+say "slave_fqdn is $SLAVE_FQDN, and its name is ${SLAVE_CLUSTER_NAME:-unstated}: every object that goes is named after that name"
 
 # =============================================================================
 # THE THREE MODES, which gate one another: a test that measures, a dry run that

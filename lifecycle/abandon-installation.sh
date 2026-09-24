@@ -249,8 +249,13 @@ if [ "$BOOKS" = yes ]; then
     add_name "*.$fqdn" "the platform host names of $fqdn"
     for label in $PLATFORM_HOST_LABELS; do add_name "$label.$fqdn" "a platform host name of $fqdn"; done
     if [ "$fqdn" != "$MASTER" ]; then
-      add_name "argo-${fqdn%%.*}.$MASTER" "the reconciler of the slave $fqdn on its master"
-      say "abandon: the platform host names of $fqdn: *.$fqdn, argo-${fqdn%%.*}.$MASTER and the labels $PLATFORM_HOST_LABELS below $fqdn"
+      # THE SLAVE'S RECONCILER IS NAMED AFTER THE SLAVE'S NAME, which its map
+      # records under global: - fixed at its adoption and left by a rename of its
+      # domain, so it is read and never worked out of the domain.
+      name="$(printf '%s\n' "$text" | value_in_text '  clusterName')"
+      [ -n "$name" ] || die "$file on branch $MASTER states no clusterName, and the reconciler of the slave $fqdn on its master is named after it" 65
+      add_name "argo-$name.$MASTER" "the reconciler of the slave $fqdn on its master"
+      say "abandon: the platform host names of $fqdn: *.$fqdn, argo-$name.$MASTER and the labels $PLATFORM_HOST_LABELS below $fqdn"
     else
       say "abandon: the platform host names of $fqdn: *.$fqdn and the labels $PLATFORM_HOST_LABELS below it"
     fi
