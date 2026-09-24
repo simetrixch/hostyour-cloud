@@ -1,0 +1,8 @@
+name: "digita-post"
+repoURL: "https://github.com/digitaplatform/digita-post.git"
+owner: "digita"
+onboardedAt: "2026-09-24T10:27:19.823Z"
+suspended: false
+quiesced: false
+removing: false
+builds: ["digita-post","digita-post-mta"]
