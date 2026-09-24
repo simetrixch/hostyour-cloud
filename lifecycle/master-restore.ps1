@@ -103,7 +103,9 @@ if (-not $doorHost) { $doorHost = $fqdn }
 $port = 22
 $target = '{0}@{1}' -f (Stated 'OPERATOR_USER'), $doorHost
 $base = @('-p', "$port", '-o', 'ConnectTimeout=20', '-o', 'StrictHostKeyChecking=accept-new')
-$probe = (& ssh @base -o BatchMode=yes $target true 2>&1 | Out-String)
+# `-n`: THE PROBE READS NOTHING, and without it ssh reads this console. Windows' own
+# OpenSSH then stays after `true` has ended until a key is pressed.
+$probe = (& ssh @base -n -o BatchMode=yes $target true 2>&1 | Out-String)
 if ($LASTEXITCODE -eq 0) {
   $door = @('-o', 'BatchMode=yes')
   Say "restore: $target opens to the operator key"

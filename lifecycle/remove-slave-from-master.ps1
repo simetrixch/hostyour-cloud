@@ -257,7 +257,9 @@ else {
 # own is used, because no credential of the slave's is anywhere near this act.
 $port = 22
 $asked = @('-p', "$port", '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes')
-$answer = (& ssh @asked ('{0}@{1}' -f $operator, $SlaveFqdn) true 2>&1 | Out-String)
+# `-n`: THE PROBE READS NOTHING, and without it ssh reads this console. Windows' own
+# OpenSSH then stays after `true` has ended until a key is pressed.
+$answer = (& ssh @asked -n ('{0}@{1}' -f $operator, $SlaveFqdn) true 2>&1 | Out-String)
 $answered = ($LASTEXITCODE -eq 0) -or
             ($answer -match 'Permission denied|REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed')
 
@@ -322,7 +324,9 @@ $base = @('-p', "$port", '-o', 'ConnectTimeout=20', '-o', 'StrictHostKeyChecking
 # the case here, and the password is the exception a machine still at its birth
 # would need. The key is tried first and the password only where the key is
 # refused, so neither case needs a flag.
-$probe = (& ssh @base -o BatchMode=yes $target true 2>&1 | Out-String)
+# `-n`: THE PROBE READS NOTHING, and without it ssh reads this console. Windows' own
+# OpenSSH then stays after `true` has ended until a key is pressed.
+$probe = (& ssh @base -n -o BatchMode=yes $target true 2>&1 | Out-String)
 if ($LASTEXITCODE -eq 0) {
   $door = @('-o', 'BatchMode=yes')
   Say "remove-slave: $target opens to the operator key"

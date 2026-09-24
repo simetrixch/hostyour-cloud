@@ -77,7 +77,9 @@ DOOR_HOST="${MACHINE_HOST:-$FQDN}"
 PORT=22
 TARGET="$OPERATOR_USER@$DOOR_HOST"
 BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
-PROBE=$(ssh "${BASE[@]}" -o BatchMode=yes "$TARGET" true 2>&1)
+# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
+# OpenSSH then stays after `true` has ended until a key is pressed.
+PROBE=$(ssh "${BASE[@]}" -n -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)
   say "restore: $TARGET opens to the operator key"

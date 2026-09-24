@@ -15,12 +15,13 @@
 # tells a birth from a regeneration is the remote and not the name of the
 # program.
 #
-# AND tailnet-join-self AFTER IT, which the installation runs last as well. On a
-# master that stands it joins nothing — the machine is on its network already —
-# and records the address it holds there as `global.apiHost` in its own map, the
-# fact the fence of a mail sender's SMTP entry admits (hostyour-cloud#242). A
-# master installed before that row existed gains it here, and every later
-# regeneration keeps it true.
+# AND tailnet-record-address AFTER IT, which the installation runs last as well.
+# It records the address this master holds on its private network as
+# `global.apiHost` in its own map, the fact the fence of a mail sender's SMTP
+# entry admits (hostyour-cloud#242). A master installed before that program
+# existed gains it here, and every later regeneration keeps it true. The join
+# itself is not run again: the machine is on its network already, and a join key
+# minted for it would stand unused until it expires.
 #
 # WHY IT IS A FILE OF ITS OWN RATHER THAN TEXT INSIDE THE TWO LAUNCHERS. The
 # answers are composed HERE, out of the program's own declaration, and the
@@ -129,7 +130,7 @@ root() { printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 readonly CATALOG=/srv/ansiwise-catalog
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
-readonly PROGRAMS=(deploy-branch tailnet-join-self)
+readonly PROGRAMS=(deploy-branch tailnet-record-address)
 ANSWERS_DIR="/home/$OPERATOR/.regenerate-answers"
 
 # THE ROLE THE RUN IS STARTED UNDER IS master, AND IT IS NOT THIS MACHINE'S OWN
@@ -269,7 +270,7 @@ say "$FQDN, stage $STAGE, regenerated onto $PLATFORM_REF"
 # refuses an envelope carrying it among the answers by name.
 #
 # driver.sh beside this file composes the same envelope out of the same config grammar
-# for the five programs that make a master. The two are two statements of one
+# for the six programs that make a master. The two are two statements of one
 # grammar, and nothing holds them against each other.
 # =============================================================================
 mkdir -p "$ANSWERS_DIR" && chmod 700 "$ANSWERS_DIR" \

@@ -123,7 +123,7 @@ by a script.
 
 | file | where it runs | what it does |
 |---|---|---|
-| `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the five programs |
+| `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the six programs |
 | `install-machine.ps1` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
 | `install-machine.sh` | the operator's machine | the same, for Linux and macOS |
 
@@ -157,7 +157,7 @@ a shell reads it with one `.` and needs no parser, no `jq` and no Python. JSON w
 operator a dependency, and it cannot carry the one thing that file needs most — a sentence saying
 what a value is.
 
-`config.example.env` is written by hand, so it can fall behind what the five programs declare. The
+`config.example.env` is written by hand, so it can fall behind what the six programs declare. The
 run is what names that: `compose_answers` in `driver.sh` lists, per program, every answer that
 program declares and your config left out, and the engine refuses a missing REQUIRED one before the
 first step. `regenerate-install-branch` reads the same file, in the same grammar, for the same
@@ -171,7 +171,7 @@ no flag from you:
 - **A machine this platform installed** carries the operator key, and `disable-password-login` has
   shut its password door. The key is tried first, so this is the normal path and nothing is asked.
 - **A machine at its birth carries no key at all.** `deploy-host`'s `install_authorized_key` row is
-  what puts it there, and that row is one of the five programs this is about to run — so the very
+  what puts it there, and that row is one of the six programs this is about to run — so the very
   first session can only be a password session. Where the key is refused, `ssh` asks for the login
   password **once, on your terminal**. It is not read from the config, it is not kept, and it does
   not reach the transcript.
@@ -265,8 +265,8 @@ where the map states no stage, or where the channel's ceiling does not admit tha
 stage: `alpha` reaches a dev installation only, `beta` dev and test, `stable` any.
 
 The second opens one session to the machine and runs `deploy-branch` there, then
-`tailnet-join-self`, each in the three modes that gate one another. On a standing master the second
-joins nothing and records the machine's tailnet address in its map as `global.apiHost` (#242). It takes the domain and nothing else — the ref comes off the pin, and the
+`tailnet-record-address`, each in the three modes that gate one another. The second records the
+machine's tailnet address in its map as `global.apiHost` (#242); the join is not run again. It takes the domain and nothing else — the ref comes off the pin, and the
 answers come from the same `NAME='value'` config an installation was installed with. It refuses,
 before it touches the machine, where the branch does not exist, where the map carries no `release:`
 line, and where the tag that line names is not on the remote; every one of those refusals says that
@@ -313,7 +313,7 @@ standby is installed and kept through its own name while the identity still poin
    it — `driver.sh` refuses a machine that carries no checkout beside a branch that exists, because
    `deploy-branch` would cut a second one — puts `secrets/vault-<stage>.txt` back beside it, opens
    every store into a root-only staging directory, and leaves the mark `/var/lib/master-restore/pending`.
-2. `install-machine <config>`, unchanged, all five programs. Right after `deploy-cluster`, `driver.sh`
+2. `install-machine <config>`, unchanged, all six programs. Right after `deploy-cluster`, `driver.sh`
    sees the mark and places the stores: each into a volume of its own under the storage root, bound
    ahead of its claim through a `PersistentVolume` with a `claimRef` — a volume's directory is named
    after the claim's uid, which exists only once the claim does, which is why the placement cannot

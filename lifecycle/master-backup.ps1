@@ -95,7 +95,9 @@ if (-not $doorHost) { $doorHost = $fqdn }
 $port = 22
 $target = '{0}@{1}' -f (Stated 'OPERATOR_USER'), $doorHost
 $base = @('-p', "$port", '-o', 'ConnectTimeout=20', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes')
-$probe = (& ssh @base $target true 2>&1 | Out-String)
+# `-n`: THE PROBE READS NOTHING, and without it ssh reads this console. Windows' own
+# OpenSSH then stays after `true` has ended until a key is pressed.
+$probe = (& ssh @base -n $target true 2>&1 | Out-String)
 if ($LASTEXITCODE -ne 0) {
   if ($probe -match 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed') {
     Stop-Here "$doorHost answers with a host key this machine does not recognise. A restore gives a machine a NEW host key: if you have just restored it, forget the old one with ssh-keygen -R $doorHost and start again. If you have not, clear nothing: something else is answering for $doorHost" 74
