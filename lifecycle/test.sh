@@ -517,6 +517,43 @@ for side in "$WORK_A" "$WORK_B"; do
 done
 ok 'the release rewrote PLATFORM_REF in place, left the example alone, and both configs still pass the owner-only guard asked with the real tools'
 
+# ── a checkout that lags origin/master is brought onto it before the mint ───
+# THE PUSH GATE LETS THROUGH ONLY WHAT IS CHECKED OUT, and the tag goes on
+# origin/master: a unit's release pins master behind the checkout's back, and a
+# mint from the lagging checkout had its tag refused after it was cut. The
+# fixture's origins carry no gate, so what is measured is the precondition the
+# gate holds the push to: HEAD stands on origin/master when the tag is pushed.
+for side in "$WORK_A" "$WORK_B"; do git -C "$side" reset --quiet --hard HEAD~1; done
+run_bash release-platform 0.7.0 alpha apps4.example.invalid
+run_pwsh release-platform 0.7.0 alpha apps4.example.invalid
+must "release: master is fast-forwarded onto origin/master" 'a lagging master is brought onto origin/master'
+must "release: minted 0.7.0-alpha-" 'and the run goes on to mint'
+same 'a checkout whose master lags origin/master'
+for side in "$WORK_A" "$WORK_B"; do
+  [ "$(git -C "$side" rev-parse HEAD)" = "$(git -C "$side" rev-parse origin/master)" ] \
+    || fail "the checkout under $side does not stand on origin/master after the run"
+done
+ok 'the lagging checkout stands on origin/master, the commit the tag names'
+
+# ── a checkout with commits of its own stops before anything is cut ─────────
+for side in "$WORK_A" "$WORK_B"; do
+  echo "# a line only this checkout has" >> "$side/README.md"
+  git -C "$side" commit --quiet -am "A commit origin does not carry"
+done
+run_bash release-platform 0.8.0 alpha apps4.example.invalid
+run_pwsh release-platform 0.8.0 alpha apps4.example.invalid
+must "carries commits origin/master does not" 'a master ahead of origin/master is refused'
+must_not "release: minted" 'the refusal comes before the mint'
+[ "$A_CODE" = '65' ] || fail "a checkout that cannot be brought onto origin/master must end with 65, got $A_CODE"
+same 'a checkout whose master carries its own commits'
+for side in "$WORK_A" "$WORK_B"; do
+  [ -z "$(git -C "$side" tag -l '0.8.0-*')" ] || fail "the refused run left a tag under $side"
+  git -C "$side" reset --quiet --hard origin/master
+done
+[ -z "$(git --git-dir="$ORIGIN_A" tag -l '0.8.0-*')$(git --git-dir="$ORIGIN_B" tag -l '0.8.0-*')" ] \
+  || fail 'the refused run pushed a tag'
+ok 'the refused run cut no tag, here or on either origin'
+
 # ===========================================================================
 # TWO — regenerate-install-branch, on the fixture the release above pinned
 #
