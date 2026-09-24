@@ -1,0 +1,8 @@
+name: "digita-apps-simetrix"
+repoURL: "https://github.com/digitaplatform/digita-apps-simetrix.git"
+owner: "simetrix"
+onboardedAt: "2026-09-24T20:30:08.227Z"
+suspended: false
+quiesced: false
+removing: false
+builds: ["digita-apps-simetrix"]
