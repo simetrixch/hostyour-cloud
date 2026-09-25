@@ -224,6 +224,9 @@ spec:
                 # tenant, it replaces the zone as the tenant's one host (the zone then redirects to it).
                 # The Manager's tenant-set-own-domain sets and switches it.
                 ownDomain: "{{ $.ownDomain }}"
+                # The hosts that answer with a redirect to the own domain; empty without one. Named
+                # by the operator in the Manager's tenant-set-own-domain, never derived.
+                ownDomainRedirects: {{ $.ownDomainRedirects | toJson }}
                 # suspended pauses the tenant; quiesced closes it for a move or backup. The chart
                 # renders the off state from these two values (replicas 0, no Ingress) — see the
                 # prune note in the header.
