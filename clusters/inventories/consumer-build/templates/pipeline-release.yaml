@@ -34,12 +34,12 @@ bump searches every carrier of the one pin grammar builds[]{name,image,tag} —
 (a) every registration with a chartPath on THIS INSTALLATION'S books branch of
 hostyour-cloud, read at <repoURL>@deploy/<S>:<chartPath>/values-<S>.yaml under
 THAT registration's OWN credential, which the bump reads out of Vault at run
-time (see the class-(a) note in the search below), (b) the catalog's
+time (see the class-(a) note in the search below), (b) the deploy repository's
 per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded the
 first time from the chart's builds[] at the placeholder tag and bumped in
 place after, (c) hostyour-cloud master clusters/inventories/<app>/values-<S>.yaml, (d) the
 tenant registrations registrations/<guid>/<S>.yaml on THAT SAME books branch
-of the catalog, where a tenant's own apps bundle is pinned as appsImageTag
+of the deploy repository, where a tenant's own apps bundle is pinned as appsImageTag
 beside the appsImage that names it — and bumps every hit. An image with NO hit
 anywhere fails the run loudly: a release nothing pins deploys nowhere, and
 silently succeeding would hide exactly the rot the derived reach exists to
@@ -50,13 +50,13 @@ result. So an image with zero hits is accepted only when it is the declared
 appsBundle, and the log says so.
 
 Class (b) is the one that does NOT write where it reads. A tag says which
-version this installation runs, so writing it to the catalog's trunk — which
+version this installation runs, so writing it to the deploy repository's trunk — which
 every installation reads — would let one installation's build decide another's
 version and let the next bump overwrite it. The charts stay product on the
 trunk; the pin goes to the books branch beside the tenant registrations.
 
 THE SYNC FOLLOWS THE SAME DERIVATION: a class-(a) hit is the unit's own
-Application; a class-(b) hit is a catalog chart that tenant member
+Application; a class-(b) hit is a deploy repository chart that tenant member
 Applications render, and WHICH member Applications is derived from the tenant
 ApplicationSets + the registrations on the books branch, never from a member
 list; a class-(d) hit is one tenant at one stage, and its reach is EVERY
@@ -617,7 +617,7 @@ spec:
               # branch is placed from its release tag below.
               - name: REPO_URL
                 value: {{ $repoURL | quote }}
-              # The branch of hostyour-cloud and of the catalog that carries
+              # The branch of hostyour-cloud and of the deploy repository that carries
               # THIS installation's books — the consumer registrations the
               # class-(a) search reads and the tenant registrations the
               # class-(b) reach is derived from. It is global.booksCluster and
@@ -633,11 +633,11 @@ spec:
               # the trunk is what every future installation is cut from.
               - name: BOOKS_BRANCH
                 value: {{ required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksCluster | quote }}
-              # The tenant catalog this installation deploys from — one repository
+              # The deploy repository this installation deploys from — one repository
               # per installation, composed once by the branch program into
               # clusters/active/<fqdn>.yaml. Required, never defaulted: a bump that
               # pushed the tenant pins to a repository picked by this chart would
-              # write into somebody else's catalog.
+              # write into somebody else's deploy repository.
               - name: DEPLOY_URL
                 value: {{ required "consumer-build: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map's deploy-repo — the repository holding this installation's tenant charts)" .Values.global.deployUrl | quote }}
               # toJson for the same newline-preserving reason as in gate-stage.
@@ -801,7 +801,7 @@ spec:
               # Such a release ships no image, and all three carrier classes
               # below are keyed on a declared image, so the search has no
               # subject. Running it anyway would clone every registered carrier
-              # and the catalog to bump nothing, and would fail the run closed on
+              # and the deploy repository to bump nothing, and would fail the run closed on
               # a carrier branch this release does not touch. The empty hits file
               # is what argo-sync reads.
               if [ -z "${IMAGES}" ]; then
@@ -859,7 +859,7 @@ spec:
 
               # commit_push <dir> <branch> <what> — several release
               # PipelineRuns can bump the same shared branch at once
-              # (hostyour-cloud and the catalog's master, a carrier's
+              # (hostyour-cloud and the deploy repository's master, a carrier's
               # deploy/<stage>), and nothing serializes them, so a
               # non-fast-forward rejection is a normal outcome here, not a
               # defect. The one bump commit is rebased onto the freshly
@@ -1032,7 +1032,7 @@ spec:
               # Each carrier is cloned and pushed under ITS OWN credential, so a
               # foreign PRIVATE repository is inside this search instead of
               # refusing it. What the three ESO records cover is the set of
-              # repositories every run writes — this unit's own, the catalog's
+              # repositories every run writes — this unit's own, the deploy repository's
               # and hostyour-cloud's; a carrier's record is added here, for the
               # one registration being read.
               #
@@ -1097,13 +1097,13 @@ spec:
               fi
 
               # ── class (b): this installation's tenant pins ─────────────────
-              # The charts are read off the catalog's trunk — they are product,
+              # The charts are read off the deploy repository's trunk — they are product,
               # shared by every installation — but the pin is NOT written there.
               # A tag says which version THIS installation runs, and a tag on a
               # branch every installation reads means one installation's build
               # decides another's version, with the next bump overwriting it. So
-              # the pin stands per stage in the catalog's per-chart pins-<stage>.yaml on
-              # this installation's books branch in the catalog, which the
+              # the pin stands per stage in the deploy repository's per-chart pins-<stage>.yaml on
+              # this installation's books branch in the deploy repository, which the
               # tenants ApplicationSet layers over the chart's own values.yaml.
               #
               # "Absent" and "unreadable" are two different answers and are
@@ -1111,11 +1111,11 @@ spec:
               # all, and a books branch that does not exist yet means this
               # installation has never registered a tenant — a real, empty
               # reach, announced, and nothing to pin because nothing of the
-              # catalog is deployed. Anything else (network, credential, a
+              # deploy repository is deployed. Anything else (network, credential, a
               # wedged remote) is a search that could not be made, and a search
               # that could not be made is never reported as one that found
               # nothing.
-              git clone -q --depth 1 --branch master "${DEPLOY_URL}" "${WORK}/catalog"
+              git clone -q --depth 1 --branch master "${DEPLOY_URL}" "${WORK}/deploy"
               BUMPED_CHARTS=""
               BUNDLE_HIT_GUIDS=""
               TENANT_REGS=""
@@ -1124,18 +1124,18 @@ spec:
                 exit 1
               fi
               if [ -z "${DEPLOY_HEADS}" ]; then
-                echo "bump: ${DEPLOY_URL} carries no branch ${BOOKS_BRANCH} — this installation has registered no tenant, so there is no tenant pin to write and a catalog bump reaches none"
+                echo "bump: ${DEPLOY_URL} carries no branch ${BOOKS_BRANCH} — this installation has registered no tenant, so there is no tenant pin to write and a deploy repository bump reaches none"
               else
-                git clone -q --depth 1 --branch "${BOOKS_BRANCH}" "${DEPLOY_URL}" "${WORK}/catalog-books" \
+                git clone -q --depth 1 --branch "${BOOKS_BRANCH}" "${DEPLOY_URL}" "${WORK}/deploy-books" \
                   || { echo "bump: FAIL — cannot read ${DEPLOY_URL}@${BOOKS_BRANCH}, this installation's tenant pins and registrations; neither the write nor the reach is possible" >&2; exit 1; }
-                TENANT_REGS="${WORK}/catalog-books/registrations"
-                for cdir in "${WORK}"/catalog/charts/*/; do
+                TENANT_REGS="${WORK}/deploy-books/registrations"
+                for cdir in "${WORK}"/deploy/charts/*/; do
                   cname="$(basename "${cdir}")"
                   # A chart with no builds[] of its own ships no image (the
                   # library chart is the case) and has no pin surface.
                   [ -f "${cdir}values.yaml" ] || continue
                   [ "$(yq eval '.builds // "" | length' "${cdir}values.yaml")" != "0" ] || continue
-                  pins="${WORK}/catalog-books/charts/${cname}/pins-${STAGE}.yaml"
+                  pins="${WORK}/deploy-books/charts/${cname}/pins-${STAGE}.yaml"
                   SEEDED=0
                   if [ ! -f "${pins}" ]; then
                     # First pin for this chart on this installation. helm
@@ -1148,7 +1148,7 @@ spec:
                     # stops the render by name until a release writes it.
                     mkdir -p "$(dirname "${pins}")"
                     { printf '# %s image pins for %s in THIS installation, written by the release\n' "${cname}" "${STAGE}"
-                      printf '# pipeline. The catalog trunk carries the product default; this file carries what\n'
+                      printf '# pipeline. The deploy repository trunk carries the product default; this file carries what\n'
                       printf '# this installation built, and the tenants ApplicationSet layers it over the chart.\n'
                       printf '# The list is COMPLETE because helm replaces a list rather than merging it; an entry\n'
                       printf '# at %s names an image no release of this installation has built yet.\n' "${PLACEHOLDER_TAG}"
@@ -1192,10 +1192,10 @@ spec:
                     BUNDLE_HIT_GUIDS="${BUNDLE_HIT_GUIDS} $(basename "$(dirname "${reg}")")"
                   done
                 done
-                commit_push "${WORK}/catalog-books" "${BOOKS_BRANCH}" "catalog charts/*/pins-${STAGE}.yaml and registrations/*/${STAGE}.yaml"
+                commit_push "${WORK}/deploy-books" "${BOOKS_BRANCH}" "deploy repository charts/*/pins-${STAGE}.yaml and registrations/*/${STAGE}.yaml"
               fi
 
-              # ── tenant hits: who renders a bumped catalog chart or a bumped
+              # ── tenant hits: who renders a bumped deploy repository chart or a bumped
               #    tenant bundle ──────────────────────────────────────────────
               # A class-(b) hit changes a chart that tenant member Applications
               # render; a class-(d) hit changes the bundle every member of ONE
@@ -1203,7 +1203,7 @@ spec:
               # tenant ApplicationSets under clusters/argocd/files/ state which
               # member sources which chart and how its Application is named,
               # and the tenant registrations state which tenants exist on which
-              # cluster. Those registrations are NOT on the catalog's trunk —
+              # cluster. Those registrations are NOT on the deploy repository's trunk —
               # the Manager writes them onto this installation's books
               # branch there, the same name hostyour-cloud's books carry, and the
               # pin written above stands beside them. TENANT_REGS points into
@@ -1371,7 +1371,7 @@ spec:
                 echo "           (c) ${CLOUD_URL} master clusters/inventories/*/values-${STAGE}.yaml," >&2
                 echo "           (d) ${DEPLOY_URL} registrations/*/${STAGE}.yaml on ${BOOKS_BRANCH} whose appsImage names the image." >&2
                 echo "  A release nothing pins deploys nowhere — add the pin or drop the build." >&2
-                echo "  With (b) and (d): a catalog image or a tenant bundle is pinned only once this installation" >&2
+                echo "  With (b) and (d): a deploy repository image or a tenant bundle is pinned only once this installation" >&2
                 echo "  has registered a tenant, because the pin stands on the books branch beside or in the" >&2
                 echo "  registrations. A tenant bundle at its FIRST release, before its registration exists," >&2
                 echo "  is accepted only when the manifest declares it as appsBundle." >&2

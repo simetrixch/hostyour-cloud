@@ -6,7 +6,7 @@ stamps on every <unit>-build namespace).
 MODE: ENFORCING — validationActions is [Deny], and failurePolicy is Fail, so a
 PipelineRun that breaks any clause below is refused at admission. The
 namespaces it covers hold the ExternalSecret bump-git-https, i.e. the unit's
-PAT plus the write PATs of hostyour-cloud and of the tenant catalog; a run that reaches
+PAT plus the write PATs of hostyour-cloud and of the deploy repository; a run that reaches
 them under its own definition holds the platform's GitOps credentials.
 
 The namespaceSelector reads hostyour.cloud/build, which is admitted only on a
