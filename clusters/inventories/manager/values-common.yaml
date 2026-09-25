@@ -156,11 +156,10 @@ github:
   # catalog sets deployRepo in installation/values/manager.yaml, which
   # clusters/argocd/files/platform-apps-appset.yaml loads after this file.
   deployRepo: ""
-  # The repository a machine's deployment programs are cloned from (config.ts
-  # DEPLOY_PROGRAMS_REPO, required, no default in the Manager). Product state: every
-  # installation of this platform runs the same programs, so the name stands here; an
-  # installation that runs a fork sets it in installation/values/manager.yaml.
-  programsRepo: "simetrixch/hostyour-deploy"
+  # programsRepo — the repository a machine's deployment programs are cloned from (config.ts
+  # DEPLOY_PROGRAMS_REPO) — is NOT here: it is the installation's own deploy_repo answer, which
+  # deploy-branch writes into installation/values/manager.yaml, and the chart's `required` refuses
+  # a render without it.
 
 # The platform's GitHub App — installed with the owner of the catalog and of every tenant
 # repository, required of every installation (hostyour-cloud#237) — travels like every platform
