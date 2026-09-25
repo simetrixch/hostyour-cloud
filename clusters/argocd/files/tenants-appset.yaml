@@ -1,6 +1,6 @@
 # Tenant fan-out — ONE Application "<guid>-<member>-<stage>" per (tenant, stage, member), from the
-# tenant registrations registrations/<guid>/<stage>.yaml IN THIS INSTALLATION'S BOOKS, in the tenant
-# catalog. A tenant's stage file there IS the deployment of that tenant at that stage; the Manager
+# tenant registrations registrations/<guid>/<stage>.yaml IN THIS INSTALLATION'S BOOKS, in the deploy
+# repository. A tenant's stage file there IS the deployment of that tenant at that stage; the Manager
 # writes and removes it, and removing it offboards the whole fan-out of that stage. One
 # ApplicationSet per cluster reads every stage file, so a tenant may stand at more than one stage
 # under one guid, each stage in namespaces of its own.
@@ -21,24 +21,24 @@
 # registrations/<guid>/<stage>.yaml is the identity — so both are derived from the file path ONCE,
 # in the generator's values block: the guid from the directory, the stage from the file name.
 #
-# EVERY LINE NAMING THE CATALOG NAMES ONE REVISION OF IT — the BOOKS branch, which is the install
-# branch of the cluster holding the master role, in the catalog. The generator reads the tenant
+# EVERY LINE NAMING THE DEPLOY REPOSITORY NAMES ONE REVISION OF IT — the BOOKS branch, which is the install
+# branch of the cluster holding the master role, in the deploy repository. The generator reads the tenant
 # registrations there, the pins source reads this installation's own image versions there, and the
 # chart source reads the member charts there. ArgoCD's repo-server refuses to generate a manifest
 # for an Application whose `ref` source stands on the Application's own repository at another
 # commit, so a chart source on the trunk beside a pins source on this branch produces NOTHING and
 # the tenant never syncs. The branch carries the member charts because the Manager brings the
-# catalog's trunk into it, at the act that creates it — the same shape the platform install branch
+# deploy repository's trunk into it, at the act that creates it — the same shape the platform install branch
 # has, where a release reaches a cluster by a merge and never by a second revision on a source.
 # A tenant lands on a cluster carrying the slave part, and a cluster's own branch does not exist
-# in the catalog at all, so every one of these lines takes the books branch and not this cluster's own. The $values source is
+# in the deploy repository at all, so every one of these lines takes the books branch and not this cluster's own. The $values source is
 # the ONE hostyour-cloud line, and it names that same one branch there: the chart above fills
 # __BRANCH__ from global.booksCluster, so the platform values chain follows the installation's
 # install branch too.
 #
 # THE THREE MARKERS IN THIS FILE, AND WHAT PUTS A VALUE IN EACH.
 #
-# The generator's repoURL carries the catalog marker, and the chart above fills it from the map's
+# The generator's repoURL carries the deploy repository marker, and the chart above fills it from the map's
 # global.deployRepo — an owner and a name, with the forge
 # and the .git suffix staying as the lines below write them. That marker is deliberately NOT spelled
 # out anywhere else in this file: the replace rewrites every occurrence of it on any line it reaches,
@@ -86,7 +86,7 @@ spec:
         generators:
           - git:
               repoURL: https://github.com/__DEPLOY_REPO__.git  # the chart writes global.deployRepo into the marker — the owner and the name of the repository holding the member charts, named in the cluster map
-              revision: __BOOKS_FQDN__  # the chart fills it from global.booksCluster — the tenant registrations in the catalog stand on the books branch, and so does every source below
+              revision: __BOOKS_FQDN__  # the chart fills it from global.booksCluster — the tenant registrations in the deploy repository stand on the books branch, and so does every source below
               files:
                 # The three stages named outright, as consumers-appset.yaml names them and for the
                 # reasons it states there.
@@ -153,9 +153,9 @@ spec:
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: __BRANCH__
           ref: values
-        # 0b. Pins-only source — this installation's OWN image versions, on the catalog's books
+        # 0b. Pins-only source — this installation's OWN image versions, on the deploy repository's books
         #    branch. A tag says which version THIS installation runs, so it cannot stand on the
-        #    catalog's trunk, which every installation reads: one installation's build would decide
+        #    deploy repository's trunk, which every installation reads: one installation's build would decide
         #    another's version, and the next bump would overwrite it. The release pipeline's bump
         #    writes <chart>/pins-<stage>.yaml here; until it has, the chart's own values.yaml carries
         #    the product default and the file is simply absent (ignoreMissingValueFiles).
@@ -163,7 +163,7 @@ spec:
           targetRevision: __BOOKS_FQDN__  # filled from global.booksCluster, the cluster that keeps this installation's books
           ref: pins
         # 1..n. The member's own charts, in the order the registration lists them, on the SAME
-        #    revision of the catalog the pins above stand on — one repository, one revision, or the
+        #    revision of the deploy repository the pins above stand on — one repository, one revision, or the
         #    repo-server generates nothing for this Application. The platform values reach every one
         #    of them as global.* over the SAME $values chain every platform app loads: platform files
         #    first, the chart's own values in between, the chart's extra value files after those,
@@ -171,7 +171,7 @@ spec:
         #    TENANT'S, read off the registration path, so global.env is the tenant's stage here.
         {{- range .sources }}
         - repoURL: https://github.com/__DEPLOY_REPO__.git  # filled from global.deployRepo, as the two sources above are
-          targetRevision: __BOOKS_FQDN__  # filled from global.booksCluster — the Manager brings the catalog's trunk into this branch, so it carries the member charts
+          targetRevision: __BOOKS_FQDN__  # filled from global.booksCluster — the Manager brings the deploy repository's trunk into this branch, so it carries the member charts
           path: {{ .chart | quote }}
           helm:
             valueFiles:
@@ -192,7 +192,7 @@ spec:
             # left, with no sync error anywhere. NOTHING GUARDS EITHER HALF of this list — no audit
             # requires a $values/ path named here to exist in this repository, and the member
             # chart's own values.yaml, its stage file and whatever the registration's valueFiles
-            # adds are read by nothing here, since they stand in the tenant catalog. So the flag is
+            # adds are read by nothing here, since they stand in the deploy repository. So the flag is
             # a silence an installation accepts, on every path in the list.
             ignoreMissingValueFiles: true
             valuesObject:

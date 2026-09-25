@@ -15,8 +15,8 @@ the value of one key the way the `keys:` argument of the
 stamp_placeholder_in_tracked_files step narrows a stamp row. So every value this
 template writes stands behind a marker of its own, and no plain word is
 replaced. The word `argocd` stands inside the annotation domain
-argocd.argoproj.io, and the word `master` stands in prose and once as the tenant
-catalog's own branch, so files/ carries __ARGOCD_NAMESPACE__ and __BRANCH__ at
+argocd.argoproj.io, and the word `master` stands in prose and once as the deploy
+repository's own branch, so files/ carries __ARGOCD_NAMESPACE__ and __BRANCH__ at
 the sites where those two are values.
 
 ONE REPOSITORY, ONE REVISION, PER APPLICATION. Every source of one Application
