@@ -262,11 +262,11 @@ spec:
                 secretKeyRef:
                   name: manager-github
                   key: write-pat
-            # CATALOG_REPO: the catalogue is the INSTALLATION's own repository and there is no
+            # DEPLOY_REPO: the deploy repository is the INSTALLATION's own repository and there is no
             # default that could name it; the Manager reads and writes it with the App's own token,
             # minted at every open (hostyour-manager#194). The address is trimmed off the same value
-            # the reaper reads, so one installation still names its catalog once.
-            - name: CATALOG_REPO
+            # the reaper reads, so one installation still names its deploy repository once.
+            - name: DEPLOY_REPO
               value: {{ .Values.github.deployRepo | default (required "manager: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.deployUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
             {{- end }}
             {{- end }}

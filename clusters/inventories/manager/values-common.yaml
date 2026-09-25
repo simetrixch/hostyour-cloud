@@ -39,7 +39,7 @@ replicas: 1
 # header). It runs THIS manager image + code (server/jobs/registry-reaper.ts)
 # and reuses the manager-github write-pat + manager-registry-pull +
 # manager-app secrets that already live in this namespace, plus the
-# App's own secret for the catalog (externalsecret-github-app.yaml). Rendered only
+# App's own secret for the deploy repository (externalsecret-github-app.yaml). Rendered only
 # on the control/build host: gated on master.sshUser (the same toggle that
 # materializes manager-github) AND github.repo.
 #
@@ -141,19 +141,19 @@ adminSocket:
 # in config.ts: when repo is set the deployment injects BOTH env vars.
 github:
   repo: "simetrixch/hostyour-cloud"
-  # The tenant CATALOG the registry-reaper's floor also searches
-  # (reaper-cronjob.yaml CATALOG_REPO). EMPTY here on purpose: which
+  # The DEPLOY REPOSITORY the registry-reaper's floor also searches
+  # (reaper-cronjob.yaml DEPLOY_REPO). EMPTY here on purpose: which
   # repository it is, is installation state — clusters/active/<fqdn>.yaml carries it as
   # global.deployUrl and loads LAST, and the template falls back to that with a
   # `required` on it and trims the owner/name off the address, so a branch naming no
-  # catalog fails its render instead of starting a reaper whose floor cannot see the
-  # catalog's pins.
+  # deploy repository fails its render instead of starting a reaper whose floor cannot see the
+  # deploy repository's pins.
   # NOTHING HOLDS THIS KEY IN PLACE. `default` reads an absent key and an empty
   # string alike, so removing the line renders the identical CronJob, and the
   # render check never reaches the line at all: the CronJob stands behind
   # master.sshUser, which is on an install branch only. What the key states is
   # where the override goes — an installation pointing THIS app at another
-  # catalog sets deployRepo in installation/values/manager.yaml, which
+  # deploy repository sets deployRepo in installation/values/manager.yaml, which
   # clusters/argocd/files/platform-apps-appset.yaml loads after this file.
   deployRepo: ""
   # programsRepo — the repository a machine's deployment programs are cloned from (config.ts
@@ -161,7 +161,7 @@ github:
   # deploy-branch writes into installation/values/manager.yaml, and the chart's `required` refuses
   # a render without it.
 
-# The platform's GitHub App — installed with the owner of the catalog and of every tenant
+# The platform's GitHub App — installed with the owner of the deploy repository and of every tenant
 # repository, required of every installation (hostyour-cloud#237) — travels like every platform
 # secret, seeded at secret/<stage>/app/github-app and materialized by externalsecret-github-app.yaml
 # as the pod env GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (config.ts
