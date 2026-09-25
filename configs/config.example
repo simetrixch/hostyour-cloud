@@ -112,10 +112,10 @@ BUILD_PLANE_FQDN=
 # The repository holding this installation's TENANT charts and their per-stage pins, written as
 # owner/name. It is your own repository and not this platform's, and no rule composes its name out
 # of anything else here. Something that is not an owner and a name is refused when the map is
-# written, where the generator records the same answer as `catalog-repo`. The same answer is also
+# written, where the generator records the same answer as `deploy-repo`. The same answer is also
 # stamped into the reconciler's tenant generators, in place of the marker the trunk carries for it,
-# which is what points them at your catalog. Nothing reads THIS line, so editing it later retargets
-# nothing.
+# which is what points them at your deploy repository. Nothing reads THIS line, so editing it later
+# retargets nothing.
 CATALOG_REPO=
 
 # The repository the DEPLOYMENT PROGRAMS are read from, written as owner/name. It is the platform's
