@@ -117,6 +117,10 @@ spec:
             # silent default, so a forgotten value fails the pod at boot.
             - name: MANAGER_VERSION
               value: {{ include "common.buildTag" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
+            # Where a machine's deployment programs are cloned from (config.ts
+            # DEPLOY_PROGRAMS_REPO): required by the app, so it is rendered unconditionally.
+            - name: DEPLOY_PROGRAMS_REPO
+              value: {{ required "manager: github.programsRepo is required" .Values.github.programsRepo | quote }}
             - name: PUBLIC_URL
               value: {{ printf "https://manager.%s" .Values.global.domain | quote }}
             - name: OIDC_ISSUER
@@ -211,13 +215,9 @@ spec:
             {{- end }}
             # The master is ALSO a cluster in the manager's inventory (seed-master.ts seeds a
             # clusters row for this control host, slaveId=NULL). MASTER_STAGE is that self-cluster's
-            # stage — the deployed environment, which IS global.env (dev|test|prod). MASTER_TIER is
-            # its promotion tier; it defaults to "rehearsal" because the crypto gate O-GATE-1 refuses
-            # onboarding to a non-rehearsal cluster under a plaintext keystore.
+            # stage — the deployed environment, which IS global.env (dev|test|prod).
             - name: MASTER_STAGE
               value: {{ .Values.global.env | quote }}
-            - name: MASTER_TIER
-              value: {{ .Values.master.tier | default "rehearsal" | quote }}
             # The ESO-materialized private key (manager-master-key Secret, from the
             # dedicated vault-backend-manager SecretStore) mounted below; seed-master.ts
             # reads it at boot and re-reads it during the bounded background reconcile,

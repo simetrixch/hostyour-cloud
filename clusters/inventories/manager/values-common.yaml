@@ -156,6 +156,11 @@ github:
   # catalog sets deployRepo in installation/values/manager.yaml, which
   # clusters/argocd/files/platform-apps-appset.yaml loads after this file.
   deployRepo: ""
+  # The repository a machine's deployment programs are cloned from (config.ts
+  # DEPLOY_PROGRAMS_REPO, required, no default in the Manager). Product state: every
+  # installation of this platform runs the same programs, so the name stands here; an
+  # installation that runs a fork sets it in installation/values/manager.yaml.
+  programsRepo: "simetrixch/hostyour-deploy"
 
 # The platform's GitHub App — installed with the owner of the catalog and of every tenant
 # repository, required of every installation (hostyour-cloud#237) — travels like every platform
@@ -199,11 +204,6 @@ onboarding:
 master:
   # SSH port of the master's sshd.
   sshPort: 22
-  # The promotion tier of the master self-cluster row seed-master.ts seeds for this control host
-  # (config.ts MASTER_TIER / clusters.tier). Keep "rehearsal": the crypto gate O-GATE-1 refuses
-  # onboarding to a non-rehearsal cluster while the keystore is plaintext, so the control host stays rehearsal
-  # until the keystore is hardened. Promotion to "real" is a one-way audited step (R-13).
-  tier: "rehearsal"
 
 # The ansiwise deployment engine, as this manager reaches it on a machine
 # (config.ts ANSIWISE_DOWNLOAD_URL + ANSIWISE_SERVE_COMMAND). Both are PRODUCT
