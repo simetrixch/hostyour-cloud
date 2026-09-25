@@ -9,8 +9,8 @@ description: |
       `$argocd-oidc:clientSecret` in its oidc.config. Without it the sign-in reaches the token
       exchange and is answered `invalid_client`, because an unresolved reference is sent as an empty
       secret; and the local account is off, so there is no password form to fall back to.
-    * `repo-catalog`, the credential the repo-server reads the PRIVATE tenant catalogue with. The
-      tenants ApplicationSet generates its parameters from that catalogue over git; without the
+    * `repo-deploy`, the credential the repo-server reads the PRIVATE deploy repository with. The
+      tenants ApplicationSet generates its parameters from that repository over git; without the
       credential GitHub answers "Repository not found", which reads like a wrong URL and is a
       missing credential.
     * `SecretStore/vault-backend` and `ServiceAccount/external-secrets-sa`, through which both are

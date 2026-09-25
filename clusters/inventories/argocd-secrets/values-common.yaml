@@ -5,8 +5,8 @@
 # clusters/platform/values-common.yaml (global.vaultKvMount).
 secret-store: {}
 
-# The catalogue credential is templates/externalsecret-repo-catalog.yaml, the twin of the slave
-# instance's; it reads global.deployUrl off the same map and holds the platform's GitHub App.
+# The deploy repository credential is templates/externalsecret-repo-deploy.yaml, the twin of the
+# slave instance's; it reads global.deployUrl off the same map and holds the platform's GitHub App.
 
 # WHERE THE CLIENT SECRET STANDS. `<env>/idp/bootstrap` is written when the identity provider is
 # seeded, on the cluster that keeps the books, and every cluster of the installation reads that one
