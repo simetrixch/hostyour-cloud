@@ -50,13 +50,14 @@ work="$(mktemp -d)" || fail "no temporary directory could be made"
 trap 'rm -rf "$work"' EXIT
 
 # ── What an installation answers ────────────────────────────────────────────────────────────
-# The two stand-in documents are TRACKED FILES, and each is read here rather than written out.
+# The three stand-in documents are TRACKED FILES, and each is read here rather than written out.
 # A copy of either inside this file would be a second place to change a key, and a key that moved
 # in one of them would leave this check green while a real install branch failed. Their own
 # comments say what each document is and why the charts need it.
 cluster_map="$root/scripts/standin/cluster-map.yaml"
 registration="$root/scripts/standin/registration.yaml"
-for standin in "$cluster_map" "$registration"; do
+installation_values="$root/scripts/standin/installation-values.yaml"
+for standin in "$cluster_map" "$registration" "$installation_values"; do
   [ -f "$standin" ] || fail "$standin is missing, and it is what lets the charts of an installation render here"
 done
 
@@ -335,7 +336,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
     # It did not render from what the trunk carries. That is the normal case and not yet a
     # finding: the installation's own answers load last in the chain, and the trunk has none.
     out="$(helm template "$name" "$chart" --namespace "$namespace" \
-      "${args[@]}" -f "$cluster_map" -f "$registration" 2>&1)"
+      "${args[@]}" -f "$installation_values" -f "$cluster_map" -f "$registration" 2>&1)"
     if [ $? -eq 0 ]; then
       rendered=$((rendered + 1))
       collect_expressions "$name at stage $stage" "$out"

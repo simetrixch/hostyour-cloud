@@ -1,0 +1,12 @@
+# The stand-in installation values, for the render check only. No cluster ever reads this file.
+#
+# It stands where installation/values/<chart>.yaml stands in a chart's valueFiles chain: after the
+# chart's own values and before the cluster map. deploy-branch writes those files on an install
+# branch from the answers the run was given; the trunk carries none. scripts/check.sh hands this one
+# file to every render that needs an installation's own answers.
+#
+# THE ANSWERS ARE STAND-INS AND NAME NOTHING REAL: the owner and the repository below exist nowhere.
+github:
+  # The repository the deployment programs are read from (the deploy_repo answer), which the
+  # manager chart requires.
+  programsRepo: check-owner/check-programs
