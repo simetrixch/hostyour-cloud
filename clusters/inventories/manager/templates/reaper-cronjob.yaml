@@ -109,6 +109,11 @@ spec:
                   value: {{ include "common.buildTag" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
                 - name: DATA_DIR
                   value: /data
+                # Required by the configuration the reaper loads (config.ts
+                # ADMIN_SOCKET_PATH, no default). The reaper never binds the socket; it
+                # carries the app's value so that configuration loads.
+                - name: ADMIN_SOCKET_PATH
+                  value: {{ .Values.adminSocket.path | quote }}
                 - name: LOG_LEVEL
                   value: {{ .Values.logLevel | quote }}
                 # ── GitHub access ──────────────────────────────────────────────────────────────────
