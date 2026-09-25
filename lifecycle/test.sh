@@ -15,7 +15,7 @@
 # master it stands on, which is the only act here whose subject is a relation
 # between two installations. abandon-installation is the end of one: it takes
 # down what an installation whose machines are gone left outside them, which is
-# its DNS records, its branches on origin and its books branch in the catalog.
+# its DNS records, its branches on origin and its books branch in the deploy repository.
 # create-github-app is what makes an installation's GitHub App: it creates the
 # App in the customer's organisation through the manifest flow, installs it
 # there, and writes the three answers into the config.
@@ -988,7 +988,7 @@ ok 'the three launchers refuse a readable config in their own sentence, built fr
 # lists one in the block spelling the Manager writes, two consumer registrations
 # at two stages (and a build.yaml, which names no stage and must be passed
 # over), a slave's own install branch of the earlier layout, and one tenant
-# registration on the catalog's books branch of the same name. The zone carries
+# registration on the deploy repository's books branch of the same name. The zone carries
 # what such an installation leaves: its wildcards and one platform host name at
 # its addresses, both unit records, the tenant's wildcard, the sender domains'
 # address records and SPF, and beside them everything the act must NOT touch —
@@ -998,19 +998,19 @@ ok 'the three launchers refuse a readable config in their own sentence, built fr
 # across two zones.
 #
 # TWO OF EVERYTHING, for the reason section ONE has two origins: the act deletes,
-# so the second spelling gets its own origin, its own catalog and its own copy
+# so the second spelling gets its own origin, its own deploy repository and its own copy
 # of the zone tables, seeded identically, and the two call logs are compared as
 # closely as the two outputs.
 # ===========================================================================
 ABANDON="$WORK/abandon"
 mkdir -p "$ABANDON"
 AORIGIN_A="$ABANDON/origin-a.git"; AORIGIN_B="$ABANDON/origin-b.git"
-ACATALOG_A="$ABANDON/catalog-a.git"; ACATALOG_B="$ABANDON/catalog-b.git"
+ADEPLOY_A="$ABANDON/deploy-a.git"; ADEPLOY_B="$ABANDON/deploy-b.git"
 AWORK_A="$ABANDON/checkout-a"; AWORK_B="$ABANDON/checkout-b"
 ASEED="$ABANDON/seed"; ACSEED="$ABANDON/cseed"
 
 git init --quiet --bare --initial-branch=master "$AORIGIN_A"
-git init --quiet --bare --initial-branch=master "$ACATALOG_A"
+git init --quiet --bare --initial-branch=master "$ADEPLOY_A"
 git init --quiet --initial-branch=master "$ASEED"
 git -C "$ASEED" remote add origin "$AORIGIN_A"
 mkdir -p "$ASEED/clusters/active"
@@ -1060,11 +1060,11 @@ git -C "$ASEED" push --quiet origin apps7.example.invalid
 git -C "$ASEED" checkout --quiet master
 
 git init --quiet --initial-branch=master "$ACSEED"
-git -C "$ACSEED" remote add origin "$ACATALOG_A"
+git -C "$ACSEED" remote add origin "$ADEPLOY_A"
 echo "* text=auto eol=lf" > "$ACSEED/.gitattributes"
-echo "# the tenant catalog" > "$ACSEED/README.md"
+echo "# the deploy repository" > "$ACSEED/README.md"
 git -C "$ACSEED" add -A
-git -C "$ACSEED" commit --quiet -m "Seed the catalog"
+git -C "$ACSEED" commit --quiet -m "Seed the deploy repository"
 git -C "$ACSEED" push --quiet origin master
 git -C "$ACSEED" checkout --quiet -b apps6.example.invalid master
 mkdir -p "$ACSEED/registrations/t_01acme"
@@ -1074,24 +1074,24 @@ git -C "$ACSEED" commit --quiet -m "Register a tenant"
 git -C "$ACSEED" push --quiet origin apps6.example.invalid
 
 git clone --quiet --bare "$AORIGIN_A" "$AORIGIN_B"
-git clone --quiet --bare "$ACATALOG_A" "$ACATALOG_B"
+git clone --quiet --bare "$ADEPLOY_A" "$ADEPLOY_B"
 git clone --quiet "$AORIGIN_A" "$AWORK_A"
 git clone --quiet "$AORIGIN_B" "$AWORK_B"
 
-# THE CATALOG IS REACHED BY THE ADDRESS THE ACT COMPOSES, https://github.com/<repo>.git,
+# THE DEPLOY REPOSITORY IS REACHED BY THE ADDRESS THE ACT COMPOSES, https://github.com/<repo>.git,
 # and git is told to read that address as the fixture's directory: each spelling
 # gets a global git config of its own, handed over as GIT_CONFIG_GLOBAL, so the
 # act composes the real address and no test-only switch stands in it.
-git config --file "$ABANDON/gitconfig-a" "url.$ACATALOG_A.insteadOf" 'https://github.com/acme/catalog.git'
-git config --file "$ABANDON/gitconfig-b" "url.$ACATALOG_B.insteadOf" 'https://github.com/acme/catalog.git'
+git config --file "$ABANDON/gitconfig-a" "url.$ADEPLOY_A.insteadOf" 'https://github.com/acme/deploy.git'
+git config --file "$ABANDON/gitconfig-b" "url.$ADEPLOY_B.insteadOf" 'https://github.com/acme/deploy.git'
 
 # THE INSTALLATION'S CONFIG, read for two values and never run: it states the
-# token the stand-in expects and the catalog.
+# token the stand-in expects and the deploy repository.
 ACFG="$ABANDON/config.apps6.env"
 {
   echo "FQDN='apps6.example.invalid'"
   echo "CLOUDFLARE_DNS_API_TOKEN='cf-token-of-the-fixture'"
-  echo "CATALOG_REPO='acme/catalog'"
+  echo "CATALOG_REPO='acme/deploy'"
   echo "STAGE='prod' #[dev, test, prod]"
 } > "$ACFG"
 OTHERCFG="$ABANDON/config.apps9.env"
@@ -1190,7 +1190,7 @@ seed_zones() { # the state directory to seed
 }
 seed_zones "$ABANDON/state-a"
 seed_zones "$ABANDON/state-b"
-ok "fixture built — two origins and two catalogs carrying one installation, two zones carrying what it left, and a stand-in curl"
+ok "fixture built — two origins and two deploy repositories carrying one installation, two zones carrying what it left, and a stand-in curl"
 
 # The first argument is what the operator types at the confirmation; the rest
 # are the act's own arguments.
@@ -1206,13 +1206,13 @@ run_abandon_pwsh() {
   ( cd "$AWORK_B" && export GIT_CONFIG_GLOBAL="$ABANDON/gitconfig-b" ABANDON_STUB="$ABANDON/state-b" PATH="$ASTUB_PATH:$PATH" \
     && printf '%s\n' "$answer" | "$PWSH" -NoProfile -NoLogo -File "$HERE/abandon-installation.ps1" "$@" ) > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
 }
-untouched() { # what was being checked -> every origin, catalog and zone table stands as seeded
+untouched() { # what was being checked -> every origin, deploy repository and zone table stands as seeded
   local label="$1"
   for origin in "$AORIGIN_A" "$AORIGIN_B"; do
     [ "$(git --git-dir="$origin" for-each-ref --format='%(refname)' refs/heads | wc -l)" = '3' ] || fail "$label — a branch of the platform origin moved"
   done
-  for catalog in "$ACATALOG_A" "$ACATALOG_B"; do
-    [ "$(git --git-dir="$catalog" for-each-ref --format='%(refname)' refs/heads | wc -l)" = '2' ] || fail "$label — a branch of the catalog moved"
+  for deploy in "$ADEPLOY_A" "$ADEPLOY_B"; do
+    [ "$(git --git-dir="$deploy" for-each-ref --format='%(refname)' refs/heads | wc -l)" = '2' ] || fail "$label — a branch of the deploy repository moved"
   done
   for state in "$ABANDON/state-a" "$ABANDON/state-b"; do
     [ "$(wc -l < "$state/zone-11111111111111111111111111111111.tsv")" = '13' ] || fail "$label — a record of the first zone went"
@@ -1266,7 +1266,7 @@ run_abandon_pwsh no apps6.example.invalid "$ACFG"
 must "abandon: registrations/digita-post/prod.yaml stands at post.example.invalid" 'a prod consumer stands at its label under the apex'
 must "abandon: registrations/digita-auth/dev.yaml stands at auth.dev.example.invalid" 'a dev consumer stands at its label under the dev zone'
 must_not "registrations/digita-post/build.yaml" 'a build registration names no stage and derives no record'
-must "abandon: the catalog's books branch apps6.example.invalid carries registrations/t_01acme/prod.yaml, which stands at *.acme.example.invalid" 'the tenant wildcard is derived off the catalog branch'
+must "abandon: the deploy repository's books branch apps6.example.invalid carries registrations/t_01acme/prod.yaml, which stands at *.acme.example.invalid" 'the tenant wildcard is derived off the deploy repository branch'
 must "abandon: the mail records of platform.invalid: platform.invalid (its address and SPF), prod._domainkey.platform.invalid (DKIM), _dmarc.platform.invalid (DMARC)" 'the mail records of the platform domain are named, the DKIM one under the stage'
 must "abandon: the mail records of example.invalid:" 'and those of the unit apex'
 must "abandon: apps6.example.invalid itself is the machine's name and not the installation's, so its own address record stays" "the machine's own address record is named as staying"
@@ -1274,8 +1274,8 @@ must "abandon: 40 names derived" 'every derived name is counted'
 must "abandon: apps6.example.invalid does not answer on port 16443 at 203.0.113.6" 'the master is asked at its public address'
 must "abandon: apps6.example.invalid does not answer on port 16443 at 100.64.0.1" 'and at its tailnet address'
 must "abandon: apps7.example.invalid does not answer on port 16443 at 203.0.113.7" 'and the slave at its address'
-must "abandon: this workstation can push a branch deletion to origin and to the catalog" 'the push access is proven before anything is written'
-must "abandon: what goes: every record above that proves itself this installation's, the branches apps6.example.invalid apps7.example.invalid on origin, and the books branch apps6.example.invalid of the catalog https://github.com/acme/catalog.git. Type apps6.example.invalid to confirm" 'the operator is told what goes and asked to type the domain'
+must "abandon: this workstation can push a branch deletion to origin and to the deploy repository" 'the push access is proven before anything is written'
+must "abandon: what goes: every record above that proves itself this installation's, the branches apps6.example.invalid apps7.example.invalid on origin, and the books branch apps6.example.invalid of the deploy repository https://github.com/acme/deploy.git. Type apps6.example.invalid to confirm" 'the operator is told what goes and asked to type the domain'
 must "abandon: the answer was not apps6.example.invalid, so this stops. Nothing has been changed" 'any other answer stops the act'
 [ "$A_CODE" = '65' ] || fail "a declined confirmation must end with 65, got $A_CODE"
 same 'the derivation, the guard on an installation that is gone, and a declined confirmation'
@@ -1319,14 +1319,14 @@ must "abandon: zone platform.invalid: left MX platform.invalid -> 10 mx.other.in
 must "abandon: 9 records deleted, 6 left standing and listed above, 29 of the derived names carried nothing" 'the count says what went, what stayed and how many names were empty'
 must "abandon: deleted branch apps6.example.invalid on origin" "the master's branch goes"
 must "abandon: deleted branch apps7.example.invalid on origin" "the slave's branch goes"
-must "abandon: deleted the books branch apps6.example.invalid of the catalog https://github.com/acme/catalog.git" "the catalog's books branch goes"
+must "abandon: deleted the books branch apps6.example.invalid of the deploy repository https://github.com/acme/deploy.git" "the deploy repository's books branch goes"
 must "abandon: $ACFG stays. A local config is the record of the answers a machine was installed with" 'the config is named and stays'
 [ "$A_CODE" = '0' ] || fail "the act must end with 0, got $A_CODE"
 same 'the act on an installation that is gone'
 # THE ORDER OF THE THREE BRANCHES, read off the output rather than assumed.
 [ "$(grep -o 'deleted branch apps6.example.invalid on origin\|deleted branch apps7.example.invalid on origin\|deleted the books branch apps6.example.invalid' "$OUT/a.out" | tr '\n' '|')" = \
   'deleted branch apps6.example.invalid on origin|deleted branch apps7.example.invalid on origin|deleted the books branch apps6.example.invalid|' ] \
-  || fail 'the three branches were not deleted in the order master, slave, catalog, or not exactly three'
+  || fail 'the three branches were not deleted in the order master, slave, deploy repository, or not exactly three'
 [ -f "$ACFG" ] || fail 'the config is gone'
 # THE CALLS THAT REACHED THE PROVIDER, exactly: nine deletions in the order the
 # names were derived, forty listings — one per derived name — and never a
@@ -1355,8 +1355,8 @@ diff -u "$ABANDON/state-a/log" "$ABANDON/state-b/log" >/dev/null || fail 'the tw
 for origin in "$AORIGIN_A" "$AORIGIN_B"; do
   [ "$(git --git-dir="$origin" for-each-ref --format='%(refname)' refs/heads)" = 'refs/heads/master' ] || fail 'the platform origin still carries a branch of the installation'
 done
-for catalog in "$ACATALOG_A" "$ACATALOG_B"; do
-  [ "$(git --git-dir="$catalog" for-each-ref --format='%(refname)' refs/heads)" = 'refs/heads/master' ] || fail 'the catalog still carries the books branch'
+for deploy in "$ADEPLOY_A" "$ADEPLOY_B"; do
+  [ "$(git --git-dir="$deploy" for-each-ref --format='%(refname)' refs/heads)" = 'refs/heads/master' ] || fail 'the deploy repository still carries the books branch'
 done
 ok 'the nine attributable records went in the derived order, the six the act cannot attribute stand and are named, the three branches went in order on both origins, and both spellings made the same calls'
 
@@ -1365,7 +1365,7 @@ ok 'the nine attributable records went in the derived order, the six the act can
 run_abandon_bash apps6.example.invalid apps6.example.invalid "$ACFG"
 run_abandon_pwsh apps6.example.invalid apps6.example.invalid "$ACFG"
 must "abandon: origin carries no branch apps6.example.invalid, so no map, no address and no registration of it can be read" 'a second run finds no branch and says what that means'
-must "abandon: the catalog https://github.com/acme/catalog.git carries no books branch apps6.example.invalid" 'and no books branch in the catalog'
+must "abandon: the deploy repository https://github.com/acme/deploy.git carries no books branch apps6.example.invalid" 'and no books branch in the deploy repository'
 must "nothing to do" 'and stops with nothing to do'
 must "abandon: $ACFG stays" 'and still names the config as staying'
 [ "$A_CODE" = '0' ] || fail "a second run with nothing to do must end with 0, got $A_CODE"
@@ -1522,7 +1522,7 @@ seed_config() { # the side's directory -> config.apps6.env there, owner-only, wi
     echo "FQDN='apps6.example.invalid'"
     echo "GITHUB_APP_PRIVATE_KEY=''"
     echo "UNIT_APEX='example.invalid'"
-    echo "CATALOG_REPO='acme/catalog'"
+    echo "CATALOG_REPO='acme/deploy'"
     echo "GITHUB_APP_ID=''"
     echo "GITHUB_APP_INSTALLATION_ID=''"
   } > "$1/config.apps6.env"
@@ -1587,7 +1587,7 @@ must "there is no config at $NOCONFIG" 'a run with no config is refused'
 same 'a run with no config'
 
 FULLCFG="$GHAPP/config.full.env"
-printf "GITHUB_APP_ID='1'\nGITHUB_APP_INSTALLATION_ID='2'\nGITHUB_APP_PRIVATE_KEY='k'\nCATALOG_REPO='acme/catalog'\nUNIT_APEX='example.invalid'\n" > "$FULLCFG"
+printf "GITHUB_APP_ID='1'\nGITHUB_APP_INSTALLATION_ID='2'\nGITHUB_APP_PRIVATE_KEY='k'\nCATALOG_REPO='acme/deploy'\nUNIT_APEX='example.invalid'\n" > "$FULLCFG"
 run_app_bash "$FULLCFG"
 run_app_pwsh "$FULLCFG"
 must "create-github-app: $FULLCFG already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY. Nothing has been changed" 'a config carrying the three answers is refused by name'
@@ -1595,7 +1595,7 @@ must "create-github-app: $FULLCFG already carries GITHUB_APP_ID, GITHUB_APP_INST
 same 'a config carrying the three answers'
 
 PARTCFG="$GHAPP/config.part.env"
-printf "GITHUB_APP_ID=''\nGITHUB_APP_INSTALLATION_ID=''\nGITHUB_APP_PRIVATE_KEY='k'\nCATALOG_REPO='acme/catalog'\nUNIT_APEX='example.invalid'\n" > "$PARTCFG"
+printf "GITHUB_APP_ID=''\nGITHUB_APP_INSTALLATION_ID=''\nGITHUB_APP_PRIVATE_KEY='k'\nCATALOG_REPO='acme/deploy'\nUNIT_APEX='example.invalid'\n" > "$PARTCFG"
 run_app_bash "$PARTCFG"
 run_app_pwsh "$PARTCFG"
 must "create-github-app: $PARTCFG carries GITHUB_APP_PRIVATE_KEY and not GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and this act cannot tell which App they belong to" 'a config carrying a key and no id is refused, naming what stands and what does not'
@@ -1910,7 +1910,7 @@ echo "test:   makes before it touches a master, the registration it reads off th
 echo "test:   branch and the verdict on a slave that is gone; the owner-only guard on both of"
 echo "test:   its branches, against stubbed tools, and the sentence each of the three launchers"
 echo "test:   builds from it; the three refusals an abandonment makes before it reads a zone,"
-echo "test:   the names it derives off the install branch and the catalog's books branch, the"
+echo "test:   the names it derives off the install branch and the deploy repository's books branch, the"
 echo "test:   guard that refuses a cluster whose API still answers, the confirmation, the nine"
 echo "test:   records it deletes against a stand-in provider and the six it lists and leaves,"
 echo "test:   the three branches it deletes in order, the config it names as staying, and a"

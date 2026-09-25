@@ -5,7 +5,7 @@
 # Started by master-backup.sh / master-backup.ps1 over the one session they open, with the config
 # ahead of it on the same standard input. Never started by hand.
 #
-# WHAT A MASTER IS THAT NOTHING ELSE HOLDS. The install branch, the registrations and the catalog
+# WHAT A MASTER IS THAT NOTHING ELSE HOLDS. The install branch, the registrations and the deploy repository
 # stand on origin; the images are rebuilt by the release cycles; every certificate is issued again
 # for the name. What lives on this machine alone is the platform's stores — Vault with every secret
 # of every unit, the Manager's database, the IdP's accounts, Headscale's nodes, the master's own
