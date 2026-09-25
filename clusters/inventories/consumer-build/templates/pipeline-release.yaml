@@ -639,7 +639,7 @@ spec:
               # pushed the tenant pins to a repository picked by this chart would
               # write into somebody else's catalog.
               - name: DEPLOY_URL
-                value: {{ required "consumer-build: global.catalogUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map's catalog-repo — the repository holding this installation's tenant charts)" .Values.global.catalogUrl | quote }}
+                value: {{ required "consumer-build: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map's deploy-repo — the repository holding this installation's tenant charts)" .Values.global.deployUrl | quote }}
               # toJson for the same newline-preserving reason as in gate-stage.
               - name: CHANNEL_STAGES
                 value: {{ $channelTable | toJson }}
@@ -1247,7 +1247,7 @@ spec:
                 # guid the generator would derive the same way. The Application
                 # name is then "<guid>-<member>-<stage>", which the shape check
                 # holds. The six markers of this tree (__CLUSTER_NAME__,
-                # __BOOKS_FQDN__, __CATALOG_REPO__, __BRANCH__, __FQDN__ and
+                # __BOOKS_FQDN__, __DEPLOY_REPO__, __BRANCH__, __FQDN__ and
                 # __ARGOCD_NAMESPACE__) stand in the generator, the selector,
                 # the namespace, the source repoURLs, the targetRevisions and a
                 # valueFiles entry, none of which this derivation reads.

@@ -36,10 +36,8 @@ global:
   letsencryptEmail: check@check.example.invalid
   letsencryptServer: https://acme-staging-v02.api.letsencrypt.org/directory
   alertRecipients: ['check@check.example.invalid']
-  catalogUrl: https://github.com/check/check.git
-  catalogRepo: check/check
-  # The platform's GitHub App, answered: the catalog credentials render in their App form, the
-  # shape every installation with the App carries; the token form is the same templates' else.
+  deployUrl: https://github.com/check/check.git
+  deployRepo: check/check
   vaultKubernetesAuthPath: kubernetes-check
   registryPullUser: check-pull
   registryPushUser: check-push

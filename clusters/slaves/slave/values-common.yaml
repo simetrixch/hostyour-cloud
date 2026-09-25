@@ -76,7 +76,7 @@ repo:
   # them. The credential is the platform's GitHub App, read out of <stage>/app/github-app.
   #
   # WHICH repository the catalog is, is installation state and is not settable
-  # here: clusters/active/<fqdn>.yaml carries it as global.catalogUrl, and
+  # here: clusters/active/<fqdn>.yaml carries it as global.deployUrl, and
   # templates/externalsecret-repo-catalog.yaml requires it — a branch naming no
   # catalog fails its render instead of materializing a credential for no
   # repository. There is no per-slave override to write it into: the generator

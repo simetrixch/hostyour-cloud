@@ -267,7 +267,7 @@ spec:
             # minted at every open (hostyour-manager#194). The address is trimmed off the same value
             # the reaper reads, so one installation still names its catalog once.
             - name: CATALOG_REPO
-              value: {{ .Values.github.deployRepo | default (required "manager: global.catalogUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.catalogUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
+              value: {{ .Values.github.deployRepo | default (required "manager: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.deployUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
             {{- end }}
             {{- end }}
             # How this manager reaches the ansiwise deployment engine on a machine
