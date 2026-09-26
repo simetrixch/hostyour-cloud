@@ -227,6 +227,10 @@ spec:
                 # The hosts that answer with a redirect to the own domain; empty without one. Named
                 # by the operator in the Manager's tenant-set-own-domain, never derived.
                 ownDomainRedirects: {{ $.ownDomainRedirects | toJson }}
+                # The image tags approved for this tenant alone, per app and build
+                # (`<app>: {<build>: <tag>}`); a build with none follows the stage pin. Set only by the
+                # Manager's tenant-set-approved-tag.
+                approvedTags: {{ $.approvedTags | toJson }}
                 # suspended pauses the tenant; quiesced closes it for a move or backup. The chart
                 # renders the off state from these two values (replicas 0, no Ingress) — see the
                 # prune note in the header.

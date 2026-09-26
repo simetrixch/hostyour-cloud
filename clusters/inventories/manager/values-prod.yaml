@@ -1,6 +1,9 @@
 # PROD pins of the manager app's images — the ONE grammar the release bump
 # searches (builds[]{name,image,tag}; `image` is the FLAT build name). The
 # tag is written by the bump on a release; edit it by hand only to roll back.
+# The manager entry also carries `plugins`, which the release writes with the
+# tag: a rollback also removes or changes `plugins` to match the older image,
+# because an image refuses a PLUGINS naming a plugin it does not carry.
 builds:
   - name: manager
     image: manager

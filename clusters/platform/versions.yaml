@@ -127,7 +127,7 @@ images:
         anchor: 'repository: postgres'
       - kind: dockerfile_arg
         tree: manager
-        file: docker/dbtools.Dockerfile
+        file: plugins/unit/docker/dbtools.Dockerfile
         argument: PG_MAJOR
         segments: 1
   # THIS PIN PROTECTS NOTHING. Measured by
@@ -182,7 +182,7 @@ images:
         anchor: 'repository: mongo'
       - kind: dockerfile_arg
         tree: manager
-        file: docker/dbtools.Dockerfile
+        file: plugins/unit/docker/dbtools.Dockerfile
         argument: MONGO_SERIES
         segments: 2
   redis:
@@ -434,7 +434,7 @@ baseImages:
     stamps:
       - kind: dockerfile_from
         tree: manager
-        file: docker/dbtools.Dockerfile
+        file: plugins/unit/docker/dbtools.Dockerfile
         image: library/debian
 
 # The SDKs our own source is BUILT with. Neither an image nor a tool on a host:

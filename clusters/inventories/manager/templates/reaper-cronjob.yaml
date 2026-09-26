@@ -107,6 +107,10 @@ spec:
                       key: oidc-client-secret
                 - name: MANAGER_VERSION
                   value: {{ include "common.buildTag" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
+                {{- with include "manager.plugins" . }}
+                - name: PLUGINS
+                  value: {{ . | quote }}
+                {{- end }}
                 - name: DATA_DIR
                   value: /data
                 # Required by the configuration the reaper loads (config.ts
