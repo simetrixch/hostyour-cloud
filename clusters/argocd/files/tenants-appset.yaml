@@ -231,6 +231,10 @@ spec:
                 # (`<app>: {<build>: <tag>}`); a build with none follows the stage pin. Set only by the
                 # Manager's tenant-set-approved-tag.
                 approvedTags: {{ $.approvedTags | toJson }}
+                # The domain the tenant's mail is sent as, or "" for the platform's own; the product's
+                # charts send as no-reply@<senderDomain> where it is set. Set only by the Manager's
+                # tenant-set-sender-domain, after the product's check answered that its mail is signed.
+                senderDomain: "{{ $.senderDomain }}"
                 # suspended pauses the tenant; quiesced closes it for a move or backup. The chart
                 # renders the off state from these two values (replicas 0, no Ingress) — see the
                 # prune note in the header.
