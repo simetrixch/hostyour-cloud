@@ -1,11 +1,14 @@
 # TEST pins of the manager app's images — the ONE grammar the release bump
 # searches (builds[]{name,image,tag}; `image` is the FLAT build name). The
 # tag is written by the bump on a release; edit it by hand only to roll back.
+# The manager entry also carries `plugins`, which the release writes with the
+# tag: a rollback also removes or changes `plugins` to match the older image,
+# because an image refuses a PLUGINS naming a plugin it does not carry.
 builds:
   - name: manager
     image: manager
     tag: "0.8.150-stable-20260909104131-e344b6e"
-  # The dbtools job image (hostyour-manager/docker/dbtools.Dockerfile): the
+  # The dbtools job image (hostyour-manager/plugins/unit/docker/dbtools.Dockerfile): the
   # Deployment projects it as DBTOOLS_IMAGE and the manager runs every
   # move/backup/restore Job on it. It builds in hostyour-manager because that
   # is where its caller lives, so a hostyour-manager release bumps this pin.
