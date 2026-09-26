@@ -5,4 +5,4 @@ onboardedAt: "2026-09-24T20:24:03.821Z"
 suspended: false
 quiesced: false
 removing: false
-builds: ["digita-engine","digita-ui","digita-web"]
+builds: ["digita-engine","digita-app","digita-web"]
