@@ -623,6 +623,10 @@ spec:
                 value: {{ $unit | quote }}
               - name: CLOUD_URL
                 value: https://github.com/simetrixch/hostyour-cloud.git
+              # This unit's own repository, the pinned repoURL: its delivery
+              # branch is placed from its release tag below.
+              - name: REPO_URL
+                value: {{ $repoURL | quote }}
               # The branch of hostyour-cloud and of the catalog that carries
               # THIS installation's books — the consumer registrations the
               # class-(a) search reads and the tenant registrations the
@@ -772,6 +776,32 @@ spec:
                 exit 1
               fi
 
+              # ── this unit's OWN delivery branch, placed only now ───────────
+              # deploy/<stage> is the branch the unit's Application renders its
+              # chart off. The release kit does not move it (hostyour-manager#293):
+              # it is placed HERE, once every image of this release exists, on
+              # the release commit plus the pin commit, in one push. ArgoCD
+              # therefore never renders the release tree with its placeholder
+              # tags, and a run that dies before this point leaves the unit on
+              # what it ran. MOVED AND NOT MERGED, as always: the platform owns
+              # the branch, and each release replaces it.
+              OWN_CHART="$(yq eval '.chart.path // ""' "${SRC}/deploy/platform.yaml")"
+              # own_checkout <dir> — this unit's release commit, cloned at its tag.
+              own_checkout() {
+                git clone -q --depth 1 --branch "${RELEASE_TAG}" "${REPO_URL}" "$1"                   || { echo "bump: FAIL — cannot clone ${REPO_URL} at its release tag ${RELEASE_TAG}; deploy/${STAGE} stands where it was" >&2; exit 1; }
+              }
+              # place_delivery_branch <dir> — commit whatever pins were written
+              # into the checkout, then force deploy/<stage> onto the result.
+              place_delivery_branch() {
+                local dir="$1" err
+                err="$(mktemp)"
+                ( cd "${dir}"
+                  git add -A
+                  git diff --cached --quiet || git commit -q -m "release: ${UNIT} ${RELEASE_TAG} — pin ${IMAGE_TAG} (${STAGE})"
+                  git push -q --force origin "HEAD:refs/heads/deploy/${STAGE}" 2>"${err}" )                   || { echo "bump: FAIL — deploy/${STAGE} of ${REPO_URL} could not be placed at ${RELEASE_TAG}; it stands where it was. git said:" >&2; cat "${err}" >&2; exit 1; }
+                echo "bump: deploy/${STAGE} placed at ${RELEASE_TAG} with its pins"
+              }
+
               # A MANIFEST WITH NO builds[] IS VALID, in two shapes: a
               # self-contained unit that declares a chart and nothing to build,
               # and a fan-out repo that declares a tenant: block. The manifest
@@ -801,6 +831,13 @@ spec:
                   exit 1
                 fi
                 : > "${HITS_FILE}"
+                # A chart-only release still has to reach its cluster: its
+                # delivery branch is placed on the release commit, with no pin.
+                if [ -n "${OWN_CHART}" ]; then
+                  OWN_DIR="$(mktemp -d)/own"
+                  own_checkout "${OWN_DIR}"
+                  place_delivery_branch "${OWN_DIR}"
+                fi
                 echo "bump: ${SRC}/deploy/platform.yaml declares no builds — this release ships no image, so there is no pin to write and no Application this run can derive; what this unit deploys reaches the cluster on ArgoCD's next poll of the ref it follows"
                 exit 0
               fi
@@ -1009,12 +1046,11 @@ spec:
               # and hostyour-cloud's; a carrier's record is added here, for the
               # one registration being read.
               #
-              # THIS UNIT'S OWN REGISTRATION IS READ LIKE ANY OTHER, with no arm
-              # of its own: its record is appended after the ESO one, git's store
-              # answers with the FIRST match, and both name the same repository
-              # and the same secret/build/<unit>/repo-pat entry. A special case
-              # here would be a second rule to keep true against the first, for a
-              # saving of one read.
+              # THIS UNIT'S OWN REGISTRATION has an arm of its own: its delivery
+              # branch is not read, it is placed from the release commit
+              # (place_delivery_branch above), so the pins land on this release's
+              # tree and the branch moves once, after the images exist. Its
+              # repository is written under the ESO record every run carries.
               for reg in "${WORK}"/books/registrations/*/"${STAGE}.yaml"; do
                 [ -f "${reg}" ] || continue
                 rname="$(yq eval '.name' "${reg}")"
@@ -1027,6 +1063,16 @@ spec:
                 # carrier's own entry is presented unconditionally. The field a
                 # registration once carried for this (repoCredentialId) is gone.
                 [ -n "${rchart}" ] || continue
+                if [ "${rname}" = "${UNIT}" ]; then
+                  dest="${WORK}/own"
+                  own_checkout "${dest}"
+                  BUMPED=0
+                  vf="${dest}/${rchart}/values-${STAGE}.yaml"
+                  [ -f "${vf}" ] && bump_file "${vf}"
+                  place_delivery_branch "${dest}"
+                  [ "${BUMPED}" = "1" ] && echo "consumer ${rname} ${rcluster}" >> "${HITS_FILE}"
+                  continue
+                fi
                 # A plain statement under set -e, never the right of a `||`: a
                 # command there runs in a condition context where set -e does
                 # NOT fire, and a carrier whose credential Vault refused would
