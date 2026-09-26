@@ -117,6 +117,10 @@ spec:
             # silent default, so a forgotten value fails the pod at boot.
             - name: MANAGER_VERSION
               value: {{ include "common.buildTag" (dict "root" $ "builds" .Values.builds "name" "manager") | quote }}
+            {{- with include "manager.plugins" . }}
+            - name: PLUGINS
+              value: {{ . | quote }}
+            {{- end }}
             # Where a machine's deployment programs are cloned from (config.ts
             # DEPLOY_PROGRAMS_REPO): required by the app, so it is rendered unconditionally.
             - name: DEPLOY_PROGRAMS_REPO
