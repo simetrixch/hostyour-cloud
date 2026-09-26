@@ -204,7 +204,8 @@ spec:
           - { name: namespace, value: image-builder }
       params:
         - { name: url, value: {{ $repoURL | quote }} }
-        - { name: revision, value: "deploy/$(params.stage)/$(params.release-tag)" }
+        # The ref that fired this run: deploy/<stage>/<tag>, or build/<stage>/<tag> for a build that pins nothing.
+        - { name: revision, value: "$(params.target)/$(params.stage)/$(params.release-tag)" }
         # Full clone so annotated-tag peeling + rev-parse are reliable.
         - { name: depth, value: "0" }
         # The unit's OWN clone credential (templates/externalsecret-git-https.yaml)
