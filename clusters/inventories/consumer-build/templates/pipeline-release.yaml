@@ -102,6 +102,11 @@ spec:
     - name: stage
       type: string
       default: ""
+    # deploy writes the stage's pin (the bump below); build writes none, and the
+    # Manager records the built tag for one tenant (hostyour-manager#289).
+    - name: target
+      type: string
+      default: deploy
     - name: git-url
       type: string
       default: ""
@@ -536,6 +541,10 @@ spec:
     # platform PATs live ONLY in this task (bump-git-https), and the task
     # runs no unit code.
     - name: bump
+      when:
+        - input: "$(params.target)"
+          operator: in
+          values: ["deploy"]
       runAfter:
         # builds and scan are named directly, not left to the build tasks to
         # imply. A unit with NO attested build renders none of them, and the

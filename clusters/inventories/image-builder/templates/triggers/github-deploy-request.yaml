@@ -2,7 +2,10 @@
 {{- /*
 GitHub DEPLOY-REQUEST push → the unit's own release pipeline. The ONE entry
 point of the release cycle: a push of the ref deploy/<stage>/<release-tag>
-fires ONE PipelineRun in the unit's build namespace. The release tag itself is
+fires ONE PipelineRun in the unit's build namespace. A push of
+build/<stage>/<release-tag> fires the same run with target build: it builds,
+scans and verifies for the stage and writes no pin — the Manager's build for
+one tenant, which records the built tag for that tenant alone (hostyour-manager#289). The release tag itself is
 STAGE-FREE (one image per release, never one per stage) — the stage travels in
 the REF and reaches the pipeline as a param; putting the same release on a
 further stage is a re-push of the same tag under another stage ref, which the
@@ -63,9 +66,11 @@ spec:
             - key: unit
               expression: body.repository.name.lowerAscii()
             # The pushed ref splits as
-            # ["refs","tags","deploy","<stage>","<release-tag>"] — the filter
+            # ["refs","tags","<target>","<stage>","<release-tag>"] — the filter
             # below has already proven exactly that shape, and the tag itself
             # contains no '/'.
+            - key: target
+              expression: body.ref.split('/')[2]
             - key: stage
               expression: body.ref.split('/')[3]
             - key: release-tag
@@ -76,7 +81,7 @@ spec:
               expression: body.repository.clone_url
         - name: filter
           value: >-
-            body.ref.matches(r'^refs/tags/deploy/(dev|test|prod)/{{ .Values.global.releaseTagFilter }}$') &&
+            body.ref.matches(r'^refs/tags/(deploy|build)/(dev|test|prod)/{{ .Values.global.releaseTagFilter }}$') &&
             !(has(body.deleted) && body.deleted)
   bindings:
     - ref: github-deploy-request-binding
@@ -96,6 +101,8 @@ spec:
   params:
     - name: unit
       value: $(extensions.unit)
+    - name: target
+      value: $(extensions.target)
     - name: stage
       value: $(extensions.stage)
     - name: release-tag
@@ -115,6 +122,7 @@ metadata:
 spec:
   params:
     - name: unit
+    - name: target
     - name: stage
     - name: release-tag
     - name: git-url
@@ -142,6 +150,8 @@ spec:
         params:
           - name: release-tag
             value: $(tt.params.release-tag)
+          - name: target
+            value: $(tt.params.target)
           - name: stage
             value: $(tt.params.stage)
           - name: git-url
