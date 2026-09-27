@@ -91,10 +91,10 @@ git rev-parse --verify --quiet origin/master >/dev/null \
   || die 'origin carries no master, and the trunk is what every installation is measured against' 69
 
 # THE VALUE OF ONE TOP-LEVEL KEY of one installation's map, read the way the
-# catalogue's own step writes it: a line beginning at column one with the key and
+# programs checkout's own step writes it: a line beginning at column one with the key and
 # a colon. A key of the same name indented under `global:` is a different key and
 # is deliberately not seen here. Surrounding quotes are the notation's and are
-# taken off, which is what the catalogue's reading step does too.
+# taken off, which is what the programs checkout's reading step does too.
 value_in_map() {
   local ref="$1" key="$2" line value
   while IFS= read -r line; do

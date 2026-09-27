@@ -8,7 +8,7 @@
 #
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not
 # change: it composes the answers remove-slave is told with and invokes the
-# program, once per mode. The removal itself is remove-slave.yaml in the catalogue
+# program, once per mode. The removal itself is remove-slave.yaml in the programs checkout
 # standing on this machine, and every decision about what goes and what stays is a
 # row of that file.
 #
@@ -19,13 +19,13 @@
 # time one was corrected. One file, streamed by both, cannot.
 #
 # WHY THE ANSWERS ARE COMPOSED ON THIS MACHINE AND NOT ON THE WORKSTATION. The
-# names are read off remove-slave.yaml in the catalogue standing here, so nothing
+# names are read off remove-slave.yaml in the programs checkout standing here, so nothing
 # on the workstation holds a list of answers that could fall behind what the
-# program declares. The catalogue is on this machine and not on that one.
+# program declares. The programs checkout is on this machine and not on that one.
 #
 # AND AN ANSWER THE PROGRAM WORKS OUT ITSELF IS NOBODY'S TO ANSWER. remove-slave
 # asks slave_cluster_name, the name the slave's map records, which the launcher
-# appends; a catalogue from before that question works it out of slave_fqdn, and
+# appends; a programs checkout from before that question works it out of slave_fqdn, and
 # the engine refuses an envelope that carries a derived answer as well. So the
 # composer below reads `derived:` off the declaration and leaves every answer it
 # marks out, and says which ones it left out rather than being silent about them.
@@ -100,11 +100,11 @@ done
 [ -n "${ELEVATION_PASSWORD:-}" ] \
   || die 'the config states no ELEVATION_PASSWORD, and a removal is run elevated' 64
 
-readonly CATALOG=/srv/ansiwise-catalog
+readonly PROGRAMS_CHECKOUT=/srv/ansiwise-programs
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
 readonly PROGRAM=remove-slave
-readonly DECLARES="$CATALOG/ansiwise/programs/$PROGRAM.yaml"
+readonly DECLARES="$PROGRAMS_CHECKOUT/ansiwise/programs/$PROGRAM.yaml"
 ANSWERS_DIR="/home/$OPERATOR/.remove-slave-answers"
 
 # THE ROLE THE RUN IS STARTED UNDER IS master, AND IT IS THIS MACHINE'S OWN.
@@ -122,8 +122,8 @@ readonly PLATFORM=/srv/hostyour-cloud
 # deploy-host at an installation's birth, and this is a removal: a machine
 # carrying none of them is a machine nothing has installed, and there is nothing
 # on it for a slave to have been registered against.
-[ -d "$CATALOG" ] \
-  || die "there is no catalogue at $CATALOG, so the programs a removal runs are not on this machine. A machine is given them by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
+[ -d "$PROGRAMS_CHECKOUT" ] \
+  || die "there is no programs checkout at $PROGRAMS_CHECKOUT, so the programs a removal runs are not on this machine. A machine is given them by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
 [ -x "$ENGINE" ] \
   || die "there is no engine at $ENGINE, and it is what runs a program. A machine is given it by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
 [ -r "$DECLARES" ] \
@@ -138,7 +138,7 @@ say "$SLAVE_FQDN, stage $STAGE, taken off $MASTER_FQDN"
 # =============================================================================
 # THE ANSWERS, composed out of the config and the program's own declaration.
 #
-# THE NAMES ARE READ OFF THE PROGRAM ITSELF, out of the catalogue standing on
+# THE NAMES ARE READ OFF THE PROGRAM ITSELF, out of the programs checkout standing on
 # this machine, so nothing here holds a list that could fall behind what the
 # program declares. The config's names are those names in upper case, which is
 # what the launcher's two appended lines are written as.
@@ -266,9 +266,9 @@ for mode in test dry run; do
   #
   # THE PASSWORD REACHES sudo ON STANDARD INPUT and is never an argument, which
   # would stand in this machine's own process listing for anyone on it to read.
-  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$CATALOG" && sudo -S -p '' -u "$OPERATOR" "$ENGINE" "$PROGRAM" \
-      --programs "$CATALOG/ansiwise/programs" \
-      --config "$CATALOG/ansiwise.yaml" \
+  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$PROGRAMS_CHECKOUT" && sudo -S -p '' -u "$OPERATOR" "$ENGINE" "$PROGRAM" \
+      --programs "$PROGRAMS_CHECKOUT/ansiwise/programs" \
+      --config "$PROGRAMS_CHECKOUT/ansiwise.yaml" \
       --answers "$ANSWERS" \
       --runs "$RUNS" \
       --role "$RUN_ROLE" --stage "$STAGE" --fqdn "$FQDN" \

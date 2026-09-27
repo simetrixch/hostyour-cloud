@@ -229,19 +229,19 @@ ansiwise:
   # standing in its own directory, so this command works only on a machine
   # carrying both halves of the release above.
   #
-  # IT READS THE CATALOGUE THE PLACEMENT WROTE. /srv/ansiwise-catalog is
-  # CATALOG_CHECKOUT in hostyour-manager server/domains/runs/defs/place-ansiwise.ts
+  # IT READS THE PROGRAMS CHECKOUT THE PLACEMENT WROTE. /srv/ansiwise-programs is
+  # PROGRAMS_CHECKOUT in hostyour-manager server/domains/runs/defs/place-ansiwise.ts
   # — the checkout that placement clones the installation repository into, and the
   # one path a command reading anywhere else would serve different programs than
   # were placed. It is CHANGED INTO rather than merely named, because the working
   # directory is what every relative path of a program resolves against: the
   # `ansiwise.yaml` naming the active plugins, and each `template:` a step renders.
   # `--programs` is named on top of that because its default is `programs` beside
-  # the working directory, and the catalogue keeps them under `ansiwise/programs`.
+  # the working directory, and the programs checkout keeps them under `ansiwise/programs`.
   # The resident service the same placement installs is started with exactly these
   # two facts (ansiwise-cli lib/service_installation.dart composes its ExecStart
   # and WorkingDirectory from them), so the session door and the address door
-  # serve one catalogue rather than two that agree by accident.
+  # serve one programs checkout rather than two that agree by accident.
   #
   # A BARE NAME, AND IT IS SAFE BECAUSE ONE STEP NOW OWNS THAT PATH. The placement
   # transfers both executables into the operating account's home — SFTP
@@ -254,7 +254,7 @@ ansiwise:
   # version serving programs written for this one. Naming the path is what makes
   # THIS door, the resident door
   # and deploy-cluster's require_cli_tool_versions row all ask the same file.
-  serveCommand: "cd /srv/ansiwise-catalog && ansiwise-rest serve --programs /srv/ansiwise-catalog/ansiwise/programs"
+  serveCommand: "cd /srv/ansiwise-programs && ansiwise-rest serve --programs /srv/ansiwise-programs/ansiwise/programs"
 
 # WHERE THIS MANAGER ASKS WHETHER A SLAVE IS REPORTING METRICS (config.ts
 # METRICS_QUERY_URL). The deploy-slave run ends with a soft probe that asks one

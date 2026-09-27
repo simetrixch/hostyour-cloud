@@ -106,7 +106,7 @@ function Stop-Here([string] $Because, [int] $Code = 65) {
 }
 function Say([string] $Line) { [Console]::Out.Write("$Line`n") }
 
-# THE VALUE OF ONE KEY of a map or a registration, read the way the catalogue's
+# THE VALUE OF ONE KEY of a map or a registration, read the way the programs checkout's
 # own step writes it: a line beginning at column one with the key and a colon. A
 # key under `global:` is asked for WITH its two spaces of indentation, so a key
 # of the same name at the top level is a different key and is not seen.
@@ -492,7 +492,7 @@ try {
 
   # A TXT VALUE AS THE ONE TEXT IT IS, however the zone stored it: the API answers
   # a long TXT as quoted chunks, so the outer quotes come off and the chunk seams
-  # are joined, the way the Manager and the catalogue's plugin read the same
+  # are joined, the way the Manager and the programs checkout's plugin read the same
   # records.
   function Get-TxtText([string] $Value) {
     $v = $Value

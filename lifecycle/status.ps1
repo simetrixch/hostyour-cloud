@@ -115,10 +115,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # THE VALUE OF ONE TOP-LEVEL KEY of one installation's map, read the way the
-# catalogue's own step writes it: a line beginning at column one with the key and
+# programs checkout's own step writes it: a line beginning at column one with the key and
 # a colon. A key of the same name indented under `global:` is a different key and
 # is deliberately not seen here. Surrounding quotes are the notation's and are
-# taken off, which is what the catalogue's reading step does too.
+# taken off, which is what the programs checkout's reading step does too.
 function Read-MapValue([string] $Ref, [string] $Key) {
   $map = (git show "origin/${Ref}:clusters/active/${Ref}.yaml" 2>$null)
   if ($LASTEXITCODE -ne 0 -or $null -eq $map) { return '' }

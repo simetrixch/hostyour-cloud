@@ -24,7 +24,7 @@
 # THE TERMINAL ISSUER CARRIES ITS OWN NAME, `platform-local`, and the public one carries
 # `platform-acme`. Which of the two every certificate references is written into
 # clusters/platform/values-common.yaml on every run, and the base layer's certificate is rendered
-# from the catalogue's own template with the same answer — so the name in the tree cannot fall
+# from the programs checkout's own template with the same answer — so the name in the tree cannot fall
 # behind the installation.
 #
 # ONE name for both forms makes the switch unturnable: the certificate service watches the name a

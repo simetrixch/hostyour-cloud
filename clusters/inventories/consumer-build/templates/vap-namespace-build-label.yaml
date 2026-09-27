@@ -7,7 +7,7 @@ seeded with the cluster:
 
   - build-eso, which a ServiceAccount named external-secrets-sa in ANY namespace
     carrying the label assumes to read the two platform GitOps PATs
-    (build/hostyour-cloud/repo-pat, build/catalog/repo-pat) plus the build tier
+    (build/hostyour-cloud/repo-pat, build/deploy/repo-pat) plus the build tier
     of whatever unit its own alias-metadata annotation names;
   - build-bump, which a ServiceAccount named pipeline-sa in such a namespace
     assumes to read build/<any unit>/repo-pat — the per-registration carrier

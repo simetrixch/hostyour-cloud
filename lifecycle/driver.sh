@@ -4,7 +4,7 @@
 # =============================================================================
 #
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not
-# change: it puts the two things a program cannot put there itself — the engine and the catalogue —
+# change: it puts the two things a program cannot put there itself — the engine and the programs checkout —
 # and then invokes the programs of the master sequence, each of them three times.
 # install-order.yaml states that division in its own words: "THIS FILE STATES THE
 # ORDER. IT DOES NOT RUN IT. A driver reads the sequence and invokes the programs
@@ -27,14 +27,14 @@
 #
 # WHY IT RUNS HERE AND NOT ON THE OPERATOR'S MACHINE. Everything it fetches is
 # fetched by THIS machine, and every one of the three is public: the pin out of the
-# platform repository, the two executables out of the release, the catalogue out of
+# platform repository, the two executables out of the release, the programs checkout out of
 # the repository the deployment programs stand in. Nothing is carried from the
 # operator's own disk, so what stands here afterwards is what the repositories say
 # and not what somebody's checkout happened to hold.
 #
 # THE ONE THING IT DOES THAT NO PROGRAM DOES: it
 # installs `git`, `curl` and `python3` when they are missing. deploy-host's
-# install_packages row installs all three — and the catalogue those programs are
+# install_packages row installs all three — and the programs checkout those programs are
 # READ FROM cannot be cloned without git, so the first of them cannot run without
 # it. That is the whole of the exception, it is reported before it happens, and a
 # machine that already carries all three is not touched.
@@ -108,7 +108,7 @@ summary() {
   # elevated, so the engine creates /var/lib/ansiwise as root on a machine that has
   # never carried it — and the launcher fetches over a session opened as this
   # account, which then reads nothing. /var/lib/ansiwise and its runs directory
-  # belong to this account, the same rule the catalogue follows.
+  # belong to this account, the same rule the programs checkout follows.
   #
   # IN THE SUMMARY BECAUSE THE SUMMARY RUNS ON BOTH PATHS. A failed installation is
   # the one whose records are read, so handing them over only on success would take
@@ -179,7 +179,7 @@ done
 # this says where releases are.
 readonly RELEASES=https://github.com/simetrixch/ansiwise-cli/releases/download
 
-readonly CATALOG=/srv/ansiwise-catalog
+readonly PROGRAMS_CHECKOUT=/srv/ansiwise-programs
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
 readonly ANSWERS_DIR=/home/$OPERATOR/.installer-answers
@@ -327,7 +327,7 @@ fi
 # leave-host.kit.ts), the two engine executables, the two places helm keeps root's repositories
 # and indexes, which no row of any program declares, and what the earlier cluster painted into the
 # kernel (the paragraph below). A later run finds the branch and converges on what stands, as before.
-FOUND_ON_THE_MACHINE=("$CATALOG" /srv/hostyour-cloud /var/lib/ansiwise /usr/local/bin/ansiwise /usr/local/bin/ansiwise-rest /root/.config/helm /root/.cache/helm /etc/systemd/system/hostyour-manager-admin-socket.service)
+FOUND_ON_THE_MACHINE=("$PROGRAMS_CHECKOUT" /srv/hostyour-cloud /var/lib/ansiwise /usr/local/bin/ansiwise /usr/local/bin/ansiwise-rest /root/.config/helm /root/.cache/helm /etc/systemd/system/hostyour-manager-admin-socket.service)
 # THE KERNEL KEEPS WHAT THE SNAP DOES NOT. A cluster paints its packet filter into the kernel — the
 # network agent's cali- chains and the kubelet's KUBE- chains through iptables, in whichever of the
 # two backends each chose, and the service proxy's own nft tables named kube-proxy — and
@@ -507,7 +507,7 @@ good 'the package lists are up to date'
 MISSING=()
 for tool in git curl python3; do command -v "$tool" >/dev/null 2>&1 || MISSING+=("$tool"); done
 if [ ${#MISSING[@]} -gt 0 ]; then
-  say "this machine carries no ${MISSING[*]} — and the catalogue every program is READ FROM cannot be"
+  say "this machine carries no ${MISSING[*]} — and the programs checkout every program is READ FROM cannot be"
   say 'cloned without git, so the first program cannot run without it. This is the one'
   say "change here that no program makes, and deploy-host's install_packages row makes it again"
   root env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -qq git curl python3 \
@@ -566,7 +566,7 @@ else
 fi
 
 # =============================================================================
-phase '2 / 4   the catalogue every program is read out of'
+phase '2 / 4   the programs checkout every program is read out of'
 # =============================================================================
 # install-order.yaml names four things that must stand under this ONE path, and
 # says why it is not free: hostyour-vault-unseal.service's WorkingDirectory and
@@ -582,23 +582,23 @@ phase '2 / 4   the catalogue every program is read out of'
 # a prompt for a username, and a prompt on a session nobody is watching hangs an
 # installation instead of failing it.
 #
-# ASKED WITH ELEVATION, because a catalogue an elevated clone left behind is root's
+# ASKED WITH ELEVATION, because a programs checkout an elevated clone left behind is root's
 # and an unelevated test would answer "not a checkout" about a checkout standing
 # right there — sending this into a clone that dies on a non-empty directory.
-if root test -d "$CATALOG/.git"; then
+if root test -d "$PROGRAMS_CHECKOUT/.git"; then
   # BROUGHT FORWARD, NOT LEFT WHERE IT STANDS. This phase and the one before it are
   # two halves of one statement: the binary is placed at the pin the platform
-  # repository names, and the catalogue carries the row that HOLDS a machine to that
+  # repository names, and the programs checkout carries the row that HOLDS a machine to that
   # pin. A run that moved the first and left the second stale puts the two into
-  # contradiction, and the machine is then refused by its own catalogue —
+  # contradiction, and the machine is then refused by its own programs checkout —
   # "ansiwise is at <the new one> and the program pins <the old one>", at the last
   # step of deploy-cluster.
   #
-  # ELEVATED AND NOT AUTHENTICATED. The catalogue repository is public, so the fetch
+  # ELEVATED AND NOT AUTHENTICATED. The programs repository is public, so the fetch
   # itself asks for nothing; what needs raising is the WRITE — /srv is root's, and a
   # checkout an earlier elevated clone left there belongs to root until the chown
   # below hands it over.
-  say "bringing $CATALOG onto the published head of its branch"
+  say "bringing $PROGRAMS_CHECKOUT onto the published head of its branch"
   # THE ORIGIN IS STATED, NOT INHERITED. A checkout standing here was cloned from
   # whatever repository this machine was told to read at the time, and a fetch goes
   # to that one for ever unless something says otherwise — to a remote this machine
@@ -608,22 +608,22 @@ if root test -d "$CATALOG/.git"; then
   # follows, and stating it costs one command on every run and nothing when it already
   # agrees.
   want="https://github.com/$PROGRAMS_REPO.git"
-  have=$(root git -C "$CATALOG" remote get-url origin 2>/dev/null || true)
+  have=$(root git -C "$PROGRAMS_CHECKOUT" remote get-url origin 2>/dev/null || true)
   if [ "$have" != "$want" ]; then
-    root git -C "$CATALOG" remote set-url origin "$want"       || die "could not point $CATALOG at $PROGRAMS_REPO" 69
-    say "$CATALOG followed $have and now follows $PROGRAMS_REPO"
+    root git -C "$PROGRAMS_CHECKOUT" remote set-url origin "$want"       || die "could not point $PROGRAMS_CHECKOUT at $PROGRAMS_REPO" 69
+    say "$PROGRAMS_CHECKOUT followed $have and now follows $PROGRAMS_REPO"
   fi
-  branch=$(root git -C "$CATALOG" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  branch=$(root git -C "$PROGRAMS_CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
   [ -n "$branch" ] && [ "$branch" != HEAD ] || branch=master
-  root bash -c "GIT_TERMINAL_PROMPT=0 git -C '$CATALOG' fetch --quiet origin '$branch'"     || die "could not fetch $PROGRAMS_REPO into $CATALOG — check that the repository exists and is reachable from this machine" 69
+  root bash -c "GIT_TERMINAL_PROMPT=0 git -C '$PROGRAMS_CHECKOUT' fetch --quiet origin '$branch'"     || die "could not fetch $PROGRAMS_REPO into $PROGRAMS_CHECKOUT — check that the repository exists and is reachable from this machine" 69
   # RESET AND NOT MERGE: nothing on a machine may write this tree, so the published
   # head is the whole of what it should carry, and anything else standing here is
   # debris a merge would try to keep.
-  root git -C "$CATALOG" reset --quiet --hard FETCH_HEAD     || die "could not bring $CATALOG onto the published head of $branch" 69
-  good "$CATALOG stands at $(root git -C "$CATALOG" rev-parse --short HEAD 2>/dev/null || echo 'an unreadable commit') on $branch"
+  root git -C "$PROGRAMS_CHECKOUT" reset --quiet --hard FETCH_HEAD     || die "could not bring $PROGRAMS_CHECKOUT onto the published head of $branch" 69
+  good "$PROGRAMS_CHECKOUT stands at $(root git -C "$PROGRAMS_CHECKOUT" rev-parse --short HEAD 2>/dev/null || echo 'an unreadable commit') on $branch"
 else
-  say "cloning $PROGRAMS_REPO into $CATALOG"
-  root bash -c "GIT_TERMINAL_PROMPT=0 git clone --quiet 'https://github.com/$PROGRAMS_REPO.git' '$CATALOG'"
+  say "cloning $PROGRAMS_REPO into $PROGRAMS_CHECKOUT"
+  root bash -c "GIT_TERMINAL_PROMPT=0 git clone --quiet 'https://github.com/$PROGRAMS_REPO.git' '$PROGRAMS_CHECKOUT'"
   status=$?
   [ $status -eq 0 ] || die "could not clone $PROGRAMS_REPO — check that the repository exists and is reachable from this machine" 69
   good "cloned $PROGRAMS_REPO"
@@ -633,30 +633,30 @@ fi
 # what an elevated clone leaves behind belongs to root — including one left by an
 # earlier run. Two things need it not to:
 #
-# This account reads the catalogue on the very next line, and every program is read
+# This account reads the programs checkout on the very next line, and every program is read
 # out of it afterwards. And the Manager REFRESHES this checkout later WITHOUT
 # elevation, on purpose — a tree it cannot write is a tree it cannot bring forward.
 # That fetch needs no credential of its own, because the repository the programs
 # stand in is public; what it needs is a tree this account owns, and an elevated
 # clone leaves one belonging to root.
-root chown -R "$OPERATOR:$OPERATOR" "$CATALOG" \
-  || die "could not hand $CATALOG to $OPERATOR, and the programs run as that account" 73
-good "$CATALOG belongs to $OPERATOR"
+root chown -R "$OPERATOR:$OPERATOR" "$PROGRAMS_CHECKOUT" \
+  || die "could not hand $PROGRAMS_CHECKOUT to $OPERATOR, and the programs run as that account" 73
+good "$PROGRAMS_CHECKOUT belongs to $OPERATOR"
 
 # WHAT THIS ACCOUNT CAN SEE, ASKED BEFORE WHAT IS MISSING. A directory this account
 # cannot enter answers every question with "not there", so a check that only reports
 # absence sends the reader looking in the repository for a file that is sitting on
 # the machine.
-[ -d "$CATALOG" ]  || die "$CATALOG is not a directory" 66
-[ -r "$CATALOG" ] && [ -x "$CATALOG" ] \
-  || die "$CATALOG cannot be read by $(id -un) — it stands as $(ls -ld "$CATALOG" 2>/dev/null | awk '{print $1, $3, $4}'). Nothing is missing from it; this account cannot look inside" 77
+[ -d "$PROGRAMS_CHECKOUT" ]  || die "$PROGRAMS_CHECKOUT is not a directory" 66
+[ -r "$PROGRAMS_CHECKOUT" ] && [ -x "$PROGRAMS_CHECKOUT" ] \
+  || die "$PROGRAMS_CHECKOUT cannot be read by $(id -un) — it stands as $(ls -ld "$PROGRAMS_CHECKOUT" 2>/dev/null | awk '{print $1, $3, $4}'). Nothing is missing from it; this account cannot look inside" 77
 
 for needed in ansiwise.yaml ansiwise/programs ansiwise-boot.yaml ansiwise/boot-programs; do
-  [ -e "$CATALOG/$needed" ] \
-    || die "$CATALOG carries no $needed, and install-order.yaml names it as one of the four that must stand there. What does stand there: $(ls -A "$CATALOG" 2>/dev/null | tr '\n' ' ')" 66
+  [ -e "$PROGRAMS_CHECKOUT/$needed" ] \
+    || die "$PROGRAMS_CHECKOUT carries no $needed, and install-order.yaml names it as one of the four that must stand there. What does stand there: $(ls -A "$PROGRAMS_CHECKOUT" 2>/dev/null | tr '\n' ' ')" 66
 done
-good 'all four things install-order.yaml names stand in the catalogue'
-say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+good 'all four things install-order.yaml names stand in the programs checkout'
+say "programs checkout at $(cd "$PROGRAMS_CHECKOUT" && git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
 
 # The answers, written HERE and never carried: mode 0600 and this account's own,
 # because every program reads them and nothing else may.
@@ -670,7 +670,7 @@ say "catalogue at $(cd "$CATALOG" && git rev-parse --short HEAD 2>/dev/null || e
 # The Manager composes per program in exactly this way, and its hostAnswers() is
 # deploy-host's own (hostyour-manager/server/domains/runs/defs/deploy-slave.ts).
 #
-# THE NAMES ARE READ OFF THE PROGRAM ITSELF, out of the catalogue standing on this
+# THE NAMES ARE READ OFF THE PROGRAM ITSELF, out of the programs checkout standing on this
 # machine, so nothing here holds a list that could fall behind what the programs
 # declare. The config's names are those names in upper case.
 #
@@ -693,7 +693,7 @@ mkdir -p "$ANSWERS_DIR" && chmod 700 "$ANSWERS_DIR" \
 
 compose_answers() {
   local program="$1"
-  local declares="$CATALOG/ansiwise/programs/$program.yaml"
+  local declares="$PROGRAMS_CHECKOUT/ansiwise/programs/$program.yaml"
   [ -r "$declares" ] || { bad "$declares cannot be read, and it is what states the answers $program takes"; return 1; }
 
   ANSWERS="$ANSWERS_DIR/$program.json"
@@ -829,7 +829,7 @@ run_program() {
   # with git answering "not a git repository". What needs root is raised one command at a
   # time, by the tool, from the row that needs it (ansiwise-core domain/shell.dart
   # `Command.elevated`), with the password that rides beside the answers (BESIDE above; the
-  # catalogue's ansiwise.yaml says `password_from_caller: true`).
+  # programs checkout's ansiwise.yaml says `password_from_caller: true`).
   #
   # THE RUN'S OWN OUTPUT ON THIS PIPELINE, AS IT HAPPENS. Capturing it to a file and
   # printing it when the program ends shows nothing for as long as a run of ninety
@@ -837,9 +837,9 @@ run_program() {
   #
   # The file is kept all the same: tee writes the one the failing-record reader and
   # the summary both read afterwards.
-  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$CATALOG" && sudo -S -p '' -u "$OPERATOR" "$ENGINE" "$program" \
-      --programs "$CATALOG/ansiwise/programs" \
-      --config "$CATALOG/ansiwise.yaml" \
+  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$PROGRAMS_CHECKOUT" && sudo -S -p '' -u "$OPERATOR" "$ENGINE" "$program" \
+      --programs "$PROGRAMS_CHECKOUT/ansiwise/programs" \
+      --config "$PROGRAMS_CHECKOUT/ansiwise.yaml" \
       --answers "$ANSWERS" \
       --runs "$RUNS" \
       --role "$ROLE" --stage "$STAGE" --fqdn "$FQDN" \

@@ -5,7 +5,7 @@
 # ---------------------------------------------------------------------------
 # Push endpoints + cluster label come from GLOBALS. The branch program writes them into the
 # master's clusters/active/<fqdn>.yaml (endpoints.observability, from ansiwise/templates/cluster-map.tpl
-# in the catalogue), and the Manager's mark-slave carries the block into a slave's map (loaded LAST, wins):
+# in the programs checkout), and the Manager's mark-slave carries the block into a slave's map (loaded LAST, wins):
 #   global.endpoints.observability.prometheusPush: https://prom-push.<books-cluster>
 #   global.endpoints.observability.lokiPush:       https://loki-push.<books-cluster>
 #   global.domain:                                 <slave-fqdn>   (the cluster label)

@@ -61,7 +61,7 @@
 # WHAT THIS DOES NOT DO. It does not stamp anything, and it touches no file under
 # clusters/argocd or clusters/bootstrap. The root-app.yaml beside clusters/argocd
 # carries one installation's own domain where this tree carries a placeholder, and
-# writing it is the branch programs' act in the catalogue repository — re-run by
+# writing it is the branch programs' act in the programs repository — re-run by
 # deploy-branch, which regenerate-install-branch.sh beside this file performs on
 # the machine, and which is the act a person performs after this one. A second
 # implementation of that stamping beside them would disagree with them the first
@@ -95,7 +95,7 @@ set -uo pipefail
 die() { printf 'release: %s\n' "$1" >&2; exit "${2:-65}"; }
 say() { printf '%s\n' "$1"; }
 
-# THE VALUE OF ONE TOP-LEVEL KEY, read the way the catalogue's own step writes
+# THE VALUE OF ONE TOP-LEVEL KEY, read the way the programs checkout's own step writes
 # it: a line beginning at column one with the key and a colon. A key of the same
 # name indented under `global:` is a different key and is deliberately not seen.
 # Surrounding quotes are the notation's and are taken off.
@@ -120,7 +120,7 @@ value_in_file() {
 }
 
 # THE LINE IS REPLACED WHERE IT STANDS AND APPENDED ONLY WHERE THE FILE HAS NONE,
-# which is the grammar the catalogue's writing step uses. Appending regardless
+# which is the grammar the programs checkout's writing step uses. Appending regardless
 # would leave two lines for one key, and whatever reads them takes one.
 write_value_in_file() {
   local file="$1" key="$2" value="$3" line i found=0

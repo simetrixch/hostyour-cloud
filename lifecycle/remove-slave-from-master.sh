@@ -58,7 +58,7 @@
 # or to ask a slave whether it is alive — so they stand immediately before the
 # file leaves this workstation, which is the thing they are about.
 #
-# WHAT ACTUALLY REMOVES A REGISTRATION is remove-slave.yaml in the catalogue
+# WHAT ACTUALLY REMOVES A REGISTRATION is remove-slave.yaml in the programs checkout
 # repository, run by the engine on the master. This opens ONE session, carries
 # the config over it, and starts remove-slave-driver.sh there — the same shape
 # install-machine.sh uses to start driver.sh, and for the same reason: what runs
@@ -81,11 +81,11 @@ set -uo pipefail
 die() { printf 'remove-slave: %s. Nothing has been changed\n' "$1" >&2; exit "${2:-65}"; }
 say() { printf '%s\n' "$1"; }
 
-# THE VALUE OF ONE TOP-LEVEL KEY of a cluster map, read the way the catalogue's
+# THE VALUE OF ONE TOP-LEVEL KEY of a cluster map, read the way the programs checkout's
 # own step writes it: a line beginning at column one with the key and a colon. A
 # key of the same name indented under `global:` is a different key and is
 # deliberately not seen. Surrounding quotes are the notation's and are taken off,
-# which is what the catalogue's reading step does too.
+# which is what the programs checkout's reading step does too.
 value_in_text() {
   local key="$1" line value
   while IFS= read -r line; do

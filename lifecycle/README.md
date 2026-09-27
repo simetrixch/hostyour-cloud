@@ -83,7 +83,7 @@ A first master, installed from zero, from an operator's own machine.
 ## What this is, and what it is not
 
 It is a **driver**. It runs no step and decides nothing an answer should decide: it puts the two
-things a program cannot put there itself — the engine and the catalogue — and then invokes the five
+things a program cannot put there itself — the engine and the programs checkout — and then invokes the five
 programs that make a master, each of them three times.
 [`clusters/platform/install-order.yaml`](../clusters/platform/install-order.yaml) states that
 division in its own words:
@@ -123,7 +123,7 @@ by a script.
 
 | file | where it runs | what it does |
 |---|---|---|
-| `driver.sh` | **on the machine** | the whole installation: preconditions, engine, catalogue, the six programs |
+| `driver.sh` | **on the machine** | the whole installation: preconditions, engine, programs checkout, the six programs |
 | `install-machine.ps1` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
 | `install-machine.sh` | the operator's machine | the same, for Linux and macOS |
 
@@ -134,7 +134,7 @@ with a mode and read it with `stat`.
 
 The two launchers are thin on purpose. **Everything is fetched by the machine itself, and all three
 are public**: the pin out of the platform repository, the two executables out of the release, the
-catalogue out of `hostyour-deploy`, the repository the deployment programs stand in. Nothing is
+programs checkout out of `hostyour-deploy`, the repository the deployment programs stand in. Nothing is
 carried from the operator's disk, so what stands on the machine afterwards is what the repositories
 say rather than what somebody's checkout happened to hold.
 
@@ -218,7 +218,7 @@ because at a machine's birth there is nothing to compare it against. A **changed
 ## The one thing it does that no program does
 
 It installs `git`, `curl` and `python3` when they are missing. `deploy-host`'s `install_packages` row
-installs them too — and the catalogue those programs are *read from* cannot be cloned without git, so
+installs them too — and the programs checkout those programs are *read from* cannot be cloned without git, so
 the first of them cannot run without it. That is the whole of the exception, it is reported before it
 happens, and a machine already carrying all three is not touched.
 
@@ -242,7 +242,7 @@ install-transcripts/apps4.example.com-20260827-141522/
 
 One of them is `driver.sh`'s own, and it never stands in an argument list: the elevation password,
 which raises every command that has to run as root and reaches `sudo` on standard input. Fetching
-the catalogue needs none — the repository the deployment programs stand in is public, so the clone
+the programs checkout needs none — the repository the deployment programs stand in is public, so the clone
 and the fetch are made on the machine's certificate store alone. Every other credential in the
 config is an answer a program declares; each lands in that program's own answer file at mode 0600,
 and all of them are shredded with the config on every path `driver.sh` can end on.

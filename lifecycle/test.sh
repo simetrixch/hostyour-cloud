@@ -59,7 +59,7 @@
 # (the fixtures' origins are directories, so a push never asks for a credential),
 # two workstations minting the same version and channel at the same moment, and
 # the regeneration and the removal themselves — those run on a
-# machine, out of the catalogue repository, and nothing here can stand in for
+# machine, out of the programs repository, and nothing here can stand in for
 # them. Nor a slave that is still ANSWERING, which is what
 # remove-slave-from-master refuses on: a fixture cannot make a machine listen on
 # port 22, so what is measured is the other verdict, that the slave is gone.
@@ -292,7 +292,7 @@ TAG_B="$(git --git-dir="$ORIGIN_B" tag -l)"
 ok "each origin carries exactly one tag — A $TAG_A, B $TAG_B"
 
 # THE PIN IS ONE LINE AT COLUMN ONE, and the map is otherwise as it was: the
-# grammar the catalogue's own writing step uses, so a map written by either hand
+# grammar the programs checkout's own writing step uses, so a map written by either hand
 # reads the same to whatever reads it next.
 PINNED="$(git --git-dir="$ORIGIN_A" show "apps3.example.invalid:clusters/active/apps3.example.invalid.yaml")"
 [ "$(grep -c '^release: ' <<< "$PINNED")" = '1' ] || fail 'the map does not carry exactly one top-level release line'
@@ -673,7 +673,7 @@ git -C "$SSEED" add -A
 git -C "$SSEED" commit --quiet -m "Seed the trunk"
 git -C "$SSEED" push --quiet origin master
 
-# A cluster map as the catalogue's template writes one: the three top-level keys
+# A cluster map as the programs checkout's template writes one: the three top-level keys
 # a reader outside Helm selects on, then the block a chart resolves through.
 seed_map() { # fqdn, role, the cluster that keeps its books, the name (the first label unless said)
   local fqdn="$1" role="$2" books="$3" name="${4:-${1%%.*}}"

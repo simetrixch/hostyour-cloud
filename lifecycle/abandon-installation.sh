@@ -80,7 +80,7 @@ set -uo pipefail
 die() { printf 'abandon: %s\n' "$1" >&2; exit "${2:-65}"; }
 say() { printf '%s\n' "$1"; }
 
-# THE VALUE OF ONE KEY of a map or a registration, read the way the catalogue's
+# THE VALUE OF ONE KEY of a map or a registration, read the way the programs checkout's
 # own step writes it: a line beginning at column one with the key and a colon. A
 # key under `global:` is asked for WITH its two spaces of indentation, so a key
 # of the same name at the top level is a different key and is not seen.
@@ -448,7 +448,7 @@ zone_for() { # name -> ZONE_ID and ZONE_NAME, ZONE_ID empty where the token reac
 
 # A TXT VALUE AS THE ONE TEXT IT IS, however the zone stored it: the API answers
 # a long TXT as quoted chunks, so the outer quotes come off and the chunk seams
-# are joined, the way the Manager and the catalogue's plugin read the same
+# are joined, the way the Manager and the programs checkout's plugin read the same
 # records.
 txt_text() { local v="$1"; v="${v#\"}"; v="${v%\"}"; printf '%s\n' "${v//\" \"/}"; }
 

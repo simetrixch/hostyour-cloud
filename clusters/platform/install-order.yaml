@@ -34,13 +34,13 @@
 # every READER and no RUN, and that is the distinction to hold on to: this file
 # tells people what an installation does, and nothing here makes it do it.
 #
-# WHY IT STANDS HERE AND NOT IN THE CATALOGUE. The catalogue holds the programs;
+# WHY IT STANDS HERE AND NOT IN THE PROGRAMS CHECKOUT. The programs checkout holds the programs;
 # it belongs to the installation that was handed it, and every installation gets
 # its own. A sequence written there is written once per customer and drifts once
 # per customer. This repository is the trunk every installation is cut from, so a
 # fact that has to be one fact for all of them belongs on it. `versions.yaml`
 # beside this file already works that way: it pins versions that are stamped into
-# the catalogue's own program files (`tree: deploy`) and into the manager's tree
+# the programs checkout's own program files (`tree: deploy`) and into the manager's tree
 # (`tree: manager`), so a cross-repository statement about an installation
 # already has a home, and this is the same kind of statement about the same
 # programs.
@@ -49,7 +49,7 @@
 #
 #   engine        where the deployment engine binary stands on the machine.
 #   catalog.path  the directory every program of this sequence is run FROM, and
-#                 the directory the catalogue is checked out into.
+#                 the directory the programs checkout is checked out into.
 #   catalog.files what has to stand inside that directory, as paths relative to
 #                 it, before the first program runs.
 #   elevated      whether the whole sequence runs elevated.
@@ -61,7 +61,7 @@
 #
 # WHAT IS DELIBERATELY NOT HERE: THE ANSWERS EACH PROGRAM REQUIRES. Every program
 # declares its own answers, which of them are required, which carry a default and
-# which are derived, in its own file in the catalogue. Copying that list here
+# which are derived, in its own file in the programs checkout. Copying that list here
 # would be a second source of it, and the first edit to a program would make this
 # copy wrong while it went on being read. NOTHING about the answers is stated
 # here.
@@ -74,7 +74,7 @@
 # A ROW HERE IS INTENT, NOT BEHAVIOUR. One check holds one thing about this file
 # — `install-order.agrees`, in another repository, comparing the manager's own
 # program lists against a sequence below — and nothing in THIS repository holds
-# anything. A row is verified against the programs in the catalogue and against
+# anything. A row is verified against the programs in the programs checkout and against
 # this tree before it is relied on.
 #
 # ONE SEQUENCE, ONE ACT: INSTALLING A MACHINE FROM BARE METAL. That is what every
@@ -112,27 +112,27 @@ engine: /usr/local/bin/ansiwise
 # a PathAccessException that names the path and says nothing about permissions.
 elevated: true
 
-catalog:
+programs:
   # ONE path, and it is not free. deploy-platform-services writes
   # /etc/systemd/system/hostyour-vault-unseal.service, whose WorkingDirectory is
-  # /srv/ansiwise-catalog and whose two ExecStart lines name files under it. On an
-  # installation whose catalogue stands elsewhere the enable fails with
+  # /srv/ansiwise-programs and whose two ExecStart lines name files under it. On an
+  # installation whose programs checkout stands elsewhere the enable fails with
   # "Changing to the requested working directory failed: No such file or directory",
   # the run ends at that row, and the unwind takes the unit file back with it — so
   # `systemctl cat` afterwards answers "No files found" and the cause is gone from
-  # the machine. The same path is CATALOG_CHECKOUT in hostyour-manager
+  # the machine. The same path is PROGRAMS_CHECKOUT in hostyour-manager
   # server/domains/runs/defs/place-ansiwise.ts, which is what maintains the checkout
   # once the manager exists; on a FIRST master the manager does not exist yet, and
   # nothing creates the directory before the unit needs it.
   #
   # It is also the working directory the programs are RUN from, because
   # `write_file_from_template` resolves its template against the working directory.
-  path: /srv/ansiwise-catalog
+  path: /srv/ansiwise-programs
   files:
     # The installation configuration the run is given with --config.
     - ansiwise.yaml
     # The programs, named with --programs. The default is `programs` beside the
-    # working directory and the catalogue keeps them one level down.
+    # working directory and the programs checkout keeps them one level down.
     - ansiwise/programs
     # BOTH OF THE NEXT TWO ARE NAMED BY hostyour-vault-unseal.service's ExecStart
     # lines, and neither travels with `ansiwise/` plus `ansiwise.yaml`. A bootstrap
