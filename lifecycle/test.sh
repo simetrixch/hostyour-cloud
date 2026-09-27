@@ -1091,7 +1091,7 @@ ACFG="$ABANDON/config.apps6.env"
 {
   echo "FQDN='apps6.example.invalid'"
   echo "CLOUDFLARE_DNS_API_TOKEN='cf-token-of-the-fixture'"
-  echo "CATALOG_REPO='acme/deploy'"
+  echo "DEPLOY_REPO='acme/deploy'"
   echo "STAGE='prod' #[dev, test, prod]"
 } > "$ACFG"
 OTHERCFG="$ABANDON/config.apps9.env"
@@ -1522,7 +1522,7 @@ seed_config() { # the side's directory -> config.apps6.env there, owner-only, wi
     echo "FQDN='apps6.example.invalid'"
     echo "GITHUB_APP_PRIVATE_KEY=''"
     echo "UNIT_APEX='example.invalid'"
-    echo "CATALOG_REPO='acme/deploy'"
+    echo "DEPLOY_REPO='acme/deploy'"
     echo "GITHUB_APP_ID=''"
     echo "GITHUB_APP_INSTALLATION_ID=''"
   } > "$1/config.apps6.env"
@@ -1606,7 +1606,7 @@ NOORGCFG="$GHAPP/config.noorg.env"
 printf "GITHUB_APP_ID=''\nGITHUB_APP_INSTALLATION_ID=''\nGITHUB_APP_PRIVATE_KEY=''\nUNIT_APEX='example.invalid'\n" > "$NOORGCFG"
 run_app_bash "$NOORGCFG"
 run_app_pwsh "$NOORGCFG"
-must "create-github-app: $NOORGCFG states no CATALOG_REPO, and the organisation the App is created in is its owner" 'a config with no CATALOG_REPO and no organisation argument is refused'
+must "create-github-app: $NOORGCFG states no DEPLOY_REPO, and the organisation the App is created in is its owner" 'a config with no DEPLOY_REPO and no organisation argument is refused'
 [ "$A_CODE" = '65' ] || fail "a config with no organisation must end with 65, got $A_CODE"
 same 'a config with no organisation'
 for state in "$GHAPP/state-a" "$GHAPP/state-b"; do
@@ -1628,7 +1628,7 @@ ok 'the five refusals before the browser, and the guard on a readable config, on
 touch "$GHAPP/state-a/wrong-state" "$GHAPP/state-b/wrong-state"
 run_app_bash config.apps6.env
 run_app_pwsh config.apps6.env
-must 'create-github-app: the App acme-platform-manager is created in the organisation acme, the owner of CATALOG_REPO in config.apps6.env, with its homepage https://manager.example.invalid' 'the organisation is read off CATALOG_REPO and said so'
+must 'create-github-app: the App acme-platform-manager is created in the organisation acme, the owner of DEPLOY_REPO in config.apps6.env, with its homepage https://manager.example.invalid' 'the organisation is read off DEPLOY_REPO and said so'
 must 'create-github-app: listening on 127.0.0.1 for GitHub to send the browser back, for up to 10 minutes' 'the listener is announced'
 must 'create-github-app: opened the manifest page in the browser; it posts to https://github.com/organizations/acme/settings/apps/new. In the browser: click Create GitHub App' 'the person is told the one click'
 must "create-github-app: GitHub sent the browser back with a state that is not this run's, so the code is not trusted. Nothing has been written" 'a redirect carrying another state is refused'

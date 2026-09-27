@@ -46,7 +46,7 @@ the two acts somebody can read what the pin now says and stop.
 
 ```
 bash lifecycle/create-github-app.sh lifecycle/config.apps4.env           # or:  pwsh ./lifecycle/create-github-app.ps1 ...
-bash lifecycle/create-github-app.sh lifecycle/config.apps4.env acme      # the organisation named, not read off CATALOG_REPO
+bash lifecycle/create-github-app.sh lifecycle/config.apps4.env acme      # the organisation named, not read off DEPLOY_REPO
 ```
 
 The three answers `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PRIVATE_KEY` of the
@@ -66,7 +66,7 @@ writes `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` into the config at once, in 
 line with `\n` for each line break. It then opens the App's installation page for the second click,
 **Install** with **All repositories**, asks GitHub every five seconds with a JWT signed by the key
 until the installation stands, refuses one made on selected repositories, and writes
-`GITHUB_APP_INSTALLATION_ID`. The organisation is the owner of `CATALOG_REPO` unless named as the
+`GITHUB_APP_INSTALLATION_ID`. The organisation is the owner of `DEPLOY_REPO` unless named as the
 second argument. The browser is `$BROWSER` where that is set, and the platform's own opener otherwise.
 
 The key is written the moment the App stands, because it exists in that run's memory and in the

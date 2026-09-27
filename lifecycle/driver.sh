@@ -162,14 +162,14 @@ BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?
 . "$CONFIG"
 
 readonly STAGE="${STAGE:-}"
-readonly CATALOG_REPO="${CATALOG_REPO:-}"
 readonly DEPLOY_REPO="${DEPLOY_REPO:-}"
+readonly PROGRAMS_REPO="${PROGRAMS_REPO:-}"
 readonly PLATFORM_REPO="${PLATFORM_REPO:-}"
 readonly OPERATOR="${OPERATOR_USER:-}"
 readonly FQDN="${FQDN:-}"
 readonly ROLE="${ROLE:-}"
 
-for named in STAGE CATALOG_REPO DEPLOY_REPO PLATFORM_REPO OPERATOR FQDN ROLE; do
+for named in STAGE DEPLOY_REPO PROGRAMS_REPO PLATFORM_REPO OPERATOR FQDN ROLE; do
   [ -n "${!named}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
 
@@ -604,29 +604,29 @@ if root test -d "$CATALOG/.git"; then
   # to that one for ever unless something says otherwise — to a remote this machine
   # now has no credential for, or to one that no longer carries the programs. Either
   # way the refusal names github.com and a missing username, which says nothing about
-  # the cause. DEPLOY_REPO is what this machine reads, so it is what this checkout
+  # the cause. PROGRAMS_REPO is what this machine reads, so it is what this checkout
   # follows, and stating it costs one command on every run and nothing when it already
   # agrees.
-  want="https://github.com/$DEPLOY_REPO.git"
+  want="https://github.com/$PROGRAMS_REPO.git"
   have=$(root git -C "$CATALOG" remote get-url origin 2>/dev/null || true)
   if [ "$have" != "$want" ]; then
-    root git -C "$CATALOG" remote set-url origin "$want"       || die "could not point $CATALOG at $DEPLOY_REPO" 69
-    say "$CATALOG followed $have and now follows $DEPLOY_REPO"
+    root git -C "$CATALOG" remote set-url origin "$want"       || die "could not point $CATALOG at $PROGRAMS_REPO" 69
+    say "$CATALOG followed $have and now follows $PROGRAMS_REPO"
   fi
   branch=$(root git -C "$CATALOG" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
   [ -n "$branch" ] && [ "$branch" != HEAD ] || branch=master
-  root bash -c "GIT_TERMINAL_PROMPT=0 git -C '$CATALOG' fetch --quiet origin '$branch'"     || die "could not fetch $DEPLOY_REPO into $CATALOG — check that the repository exists and is reachable from this machine" 69
+  root bash -c "GIT_TERMINAL_PROMPT=0 git -C '$CATALOG' fetch --quiet origin '$branch'"     || die "could not fetch $PROGRAMS_REPO into $CATALOG — check that the repository exists and is reachable from this machine" 69
   # RESET AND NOT MERGE: nothing on a machine may write this tree, so the published
   # head is the whole of what it should carry, and anything else standing here is
   # debris a merge would try to keep.
   root git -C "$CATALOG" reset --quiet --hard FETCH_HEAD     || die "could not bring $CATALOG onto the published head of $branch" 69
   good "$CATALOG stands at $(root git -C "$CATALOG" rev-parse --short HEAD 2>/dev/null || echo 'an unreadable commit') on $branch"
 else
-  say "cloning $DEPLOY_REPO into $CATALOG"
-  root bash -c "GIT_TERMINAL_PROMPT=0 git clone --quiet 'https://github.com/$DEPLOY_REPO.git' '$CATALOG'"
+  say "cloning $PROGRAMS_REPO into $CATALOG"
+  root bash -c "GIT_TERMINAL_PROMPT=0 git clone --quiet 'https://github.com/$PROGRAMS_REPO.git' '$CATALOG'"
   status=$?
-  [ $status -eq 0 ] || die "could not clone $DEPLOY_REPO — check that the repository exists and is reachable from this machine" 69
-  good "cloned $DEPLOY_REPO"
+  [ $status -eq 0 ] || die "could not clone $PROGRAMS_REPO — check that the repository exists and is reachable from this machine" 69
+  good "cloned $PROGRAMS_REPO"
 fi
 
 # HANDED TO THIS ACCOUNT, on both paths, because the clone had to be elevated and

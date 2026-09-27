@@ -11,11 +11,11 @@
 # THE TWO INPUTS
 #   config        — the installation's own key=value file, the one
 #                   install-machine.ps1 is given and in the same grammar. Read
-#                   for CATALOG_REPO and UNIT_APEX and never run. The three
+#                   for DEPLOY_REPO and UNIT_APEX and never run. The three
 #                   answers GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and
 #                   GITHUB_APP_PRIVATE_KEY are written into it in place.
 #   organisation  — the GitHub organisation the App is created in and installed
-#                   on. Defaults to the owner of CATALOG_REPO, because that is
+#                   on. Defaults to the owner of DEPLOY_REPO, because that is
 #                   the customer's organisation the tenant repositories live in.
 #
 # WHAT GITHUB ALLOWS, AND WHY TWO CLICKS STAY. No API creates an App from
@@ -205,12 +205,12 @@ if ($org) {
   $orgFrom = 'named as the second argument'
 }
 else {
-  $catalogRepo = Read-ConfigValue 'CATALOG_REPO'
-  if (-not $catalogRepo) {
-    Stop-Here "$ConfigFile states no CATALOG_REPO, and the organisation the App is created in is its owner: state it, or name the organisation as the second argument" 65
+  $deployRepo = Read-ConfigValue 'DEPLOY_REPO'
+  if (-not $deployRepo) {
+    Stop-Here "$ConfigFile states no DEPLOY_REPO, and the organisation the App is created in is its owner: state it, or name the organisation as the second argument" 65
   }
-  $org = ($catalogRepo -split '/')[0]
-  $orgFrom = "the owner of CATALOG_REPO in $ConfigFile"
+  $org = ($deployRepo -split '/')[0]
+  $orgFrom = "the owner of DEPLOY_REPO in $ConfigFile"
 }
 if ($org -notmatch '^[A-Za-z0-9-]+$') {
   Stop-Here "'$org' is not a GitHub organisation name, which is letters, digits and hyphens" 65

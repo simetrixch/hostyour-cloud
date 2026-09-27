@@ -177,10 +177,10 @@ CONFIG_FQDN="$(config_value FQDN)"
 TOKEN="$(config_value CLOUDFLARE_DNS_API_TOKEN)"
 [ -n "$TOKEN" ] \
   || die "$CONFIG states no CLOUDFLARE_DNS_API_TOKEN, and the records were written with it" 65
-CATALOG_REPO="$(config_value CATALOG_REPO)"
-[ -n "$CATALOG_REPO" ] \
-  || die "$CONFIG states no CATALOG_REPO, and the installation's books branch stands in that repository" 65
-DEPLOY_URL="https://github.com/${CATALOG_REPO}.git"
+DEPLOY_REPO="$(config_value DEPLOY_REPO)"
+[ -n "$DEPLOY_REPO" ] \
+  || die "$CONFIG states no DEPLOY_REPO, and the installation's books branch stands in that repository" 65
+DEPLOY_URL="https://github.com/${DEPLOY_REPO}.git"
 
 # The MicroK8s API port — a constant of the distribution, the same the Manager
 # and the cluster maps carry — and where the DNS provider answers for everybody.

@@ -194,11 +194,11 @@ $token = Stated 'CLOUDFLARE_DNS_API_TOKEN'
 if (-not $token) {
   Stop-Here "$ConfigFile states no CLOUDFLARE_DNS_API_TOKEN, and the records were written with it" 65
 }
-$catalogRepo = Stated 'CATALOG_REPO'
-if (-not $catalogRepo) {
-  Stop-Here "$ConfigFile states no CATALOG_REPO, and the installation's books branch stands in that repository" 65
+$deployRepo = Stated 'DEPLOY_REPO'
+if (-not $deployRepo) {
+  Stop-Here "$ConfigFile states no DEPLOY_REPO, and the installation's books branch stands in that repository" 65
 }
-$deployUrl = "https://github.com/$catalogRepo.git"
+$deployUrl = "https://github.com/$deployRepo.git"
 
 # The MicroK8s API port — a constant of the distribution, the same the Manager
 # and the cluster maps carry — and where the DNS provider answers for everybody.

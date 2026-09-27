@@ -111,9 +111,9 @@ readonly STAGE="${STAGE:-}"
 readonly FQDN="${FQDN:-}"
 readonly OPERATOR="${OPERATOR_USER:-}"
 readonly PLATFORM_REF="${PLATFORM_REF:-}"
-readonly DEPLOY_REPO="${DEPLOY_REPO:-}"
+readonly PROGRAMS_REPO="${PROGRAMS_REPO:-}"
 
-for named in STAGE FQDN OPERATOR PLATFORM_REF DEPLOY_REPO; do
+for named in STAGE FQDN OPERATOR PLATFORM_REF PROGRAMS_REPO; do
   [ -n "${!named}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
 [ -n "${ELEVATION_PASSWORD:-}" ] \
@@ -226,15 +226,15 @@ fi
 # nothing on a machine may write this tree. A catalogue that cannot be fetched stops
 # the regeneration by name rather than running a program of unknown age.
 say "bringing $CATALOG onto the published head of its branch"
-want="https://github.com/$DEPLOY_REPO.git"
+want="https://github.com/$PROGRAMS_REPO.git"
 have=$(git -C "$CATALOG" remote get-url origin 2>/dev/null || true)
 if [ "$have" != "$want" ]; then
-  git -C "$CATALOG" remote set-url origin "$want"     || die "could not point $CATALOG at $DEPLOY_REPO; nothing has been changed" 69
-  say "$CATALOG followed $have and now follows $DEPLOY_REPO"
+  git -C "$CATALOG" remote set-url origin "$want"     || die "could not point $CATALOG at $PROGRAMS_REPO; nothing has been changed" 69
+  say "$CATALOG followed $have and now follows $PROGRAMS_REPO"
 fi
 branch=$(git -C "$CATALOG" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 [ -n "$branch" ] && [ "$branch" != HEAD ] || branch=master
-GIT_TERMINAL_PROMPT=0 git -C "$CATALOG" fetch --quiet origin "$branch"   || die "could not fetch $DEPLOY_REPO into $CATALOG, and a program of unknown age is not run; nothing has been changed" 69
+GIT_TERMINAL_PROMPT=0 git -C "$CATALOG" fetch --quiet origin "$branch"   || die "could not fetch $PROGRAMS_REPO into $CATALOG, and a program of unknown age is not run; nothing has been changed" 69
 git -C "$CATALOG" reset --quiet --hard FETCH_HEAD   || die "could not bring $CATALOG onto the published head of $branch; nothing has been changed" 69
 good "$CATALOG stands at $(git -C "$CATALOG" rev-parse --short HEAD 2>/dev/null || echo 'an unreadable commit') on $branch"
 

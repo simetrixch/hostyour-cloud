@@ -157,7 +157,7 @@ github:
   # clusters/argocd/files/platform-apps-appset.yaml loads after this file.
   deployRepo: ""
   # programsRepo — the repository a machine's deployment programs are cloned from (config.ts
-  # DEPLOY_PROGRAMS_REPO) — is NOT here: it is the installation's own deploy_repo answer, which
+  # DEPLOY_PROGRAMS_REPO) — is NOT here: it is the installation's own programs_repo answer, which
   # deploy-branch writes into installation/values/manager.yaml, and the chart's `required` refuses
   # a render without it.
 
