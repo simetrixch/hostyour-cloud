@@ -34,7 +34,7 @@ global:
   unitApex: digitacloud.app
   platformDomain: digitaplatform.com
   alertRecipients: ['info@simetrix.ch']
-  catalogUrl: https://github.com/digitaplatform/digita-deploy.git
+  deployUrl: https://github.com/digitaplatform/digita-deploy.git
   clusterIssuer: platform-acme
   letsencryptEmail: info@simetrix.ch
   letsencryptServer: https://acme-v02.api.letsencrypt.org/directory
@@ -60,7 +60,7 @@ global:
       accountId: 7d6b0eaa4cff67abf485661f0022e065
       jurisdiction: eu
   clusterName: apps8
-  catalogRepo: digitaplatform/digita-deploy
+  deployRepo: digitaplatform/digita-deploy
   vaultKubernetesAuthPath: kubernetes-apps8
   nodeCidrs:
     - 136.243.202.197/32
