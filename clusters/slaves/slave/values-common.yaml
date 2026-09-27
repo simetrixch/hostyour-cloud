@@ -65,20 +65,20 @@ slave:
 repo:
   url: https://github.com/simetrixch/hostyour-cloud.git
   username: hostyour-cloud
-  # The TENANT CATALOG — this installation's own repository, holding the tenant
+  # The DEPLOY REPOSITORY — this installation's own repository, holding the tenant
   # registrations (registrations/<guid>/<stage>.yaml) and the member charts.
   # Read by the repo credential ESO twin
-  # (templates/externalsecret-repo-catalog.yaml): the tenant
+  # (templates/externalsecret-repo-deploy.yaml): the tenant
   # ApplicationSets live in the books branch's argocd tree
   # (clusters/argocd/files/tenants-appset.yaml, synced by the handoff root
-  # Application) and read the catalog through this instance's repo-server, so
+  # Application) and read the deploy repository through this instance's repo-server, so
   # the instance needs the credential even though no template here renders
   # them. The credential is the platform's GitHub App, read out of <stage>/app/github-app.
   #
-  # WHICH repository the catalog is, is installation state and is not settable
-  # here: clusters/active/<fqdn>.yaml carries it as global.catalogUrl, and
-  # templates/externalsecret-repo-catalog.yaml requires it — a branch naming no
-  # catalog fails its render instead of materializing a credential for no
+  # WHICH repository that is, is installation state and is not settable
+  # here: clusters/active/<fqdn>.yaml carries it as global.deployUrl, and
+  # templates/externalsecret-repo-deploy.yaml requires it — a branch naming no
+  # deploy repository fails its render instead of materializing a credential for no
   # repository. There is no per-slave override to write it into: the generator
   # clusters/argocd/files/slaves-appset.yaml names no installation/values/<app>.yaml
   # for this chart, and this file is product, byte-identical everywhere.

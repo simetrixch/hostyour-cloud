@@ -1,7 +1,7 @@
 # =============================================================================
 # abandon-installation.ps1 — take down what ONE installation left outside its
 # machines: the DNS records it wrote, its install branches and its books branch
-# in the catalog. Bash twin: abandon-installation.sh (same folder), which does
+# in the deploy repository. Bash twin: abandon-installation.sh (same folder), which does
 # the same in the same order and prints the same lines. lifecycle/test.sh
 # measures that.
 # =============================================================================
@@ -13,18 +13,18 @@
 #   master-fqdn — WHICH INSTALLATION is abandoned, named by the cluster that
 #             keeps its books: the domain of the master, the name of its install
 #             branch, the name of its map under clusters/active and the name of
-#             the installation's books branch in the catalog.
+#             the installation's books branch in the deploy repository.
 #   config  — that installation's own key=value file, the one install-machine.ps1
 #             was given for the master and in the same grammar. Two values are
 #             read out of it and nothing is run: the DNS token the installation
-#             wrote its records with, and the catalog its tenants are registered
+#             wrote its records with, and the deploy repository its tenants are registered
 #             in. Defaults to config.<first label of the fqdn>.env beside this
 #             file, which is the name release-platform.ps1 looks for too.
 #
 # WHAT AN INSTALLATION LEAVES OUTSIDE ITS MACHINES. Restoring a machine to its
 # bare point takes back everything on it and nothing beside it: the unit records
 # in the zone still answer with the old address, the install branch on origin
-# still carries the map a release would pin, and the catalog still carries the
+# still carries the map a release would pin, and the deploy repository still carries the
 # books branch with every tenant registration. The next installation meets each
 # of them — a unit record that answers with a machine that is gone refuses the
 # onboarding of the same unit, and a release regenerates a branch of a machine
@@ -34,7 +34,7 @@
 # read off a local checkout: the cluster map of the master and of every slave it
 # records say what the machines were and where they stood (nodeCidrs), the
 # consumer registrations on the same branch and the tenant registrations on the
-# catalog's books branch say which unit names were written, and the map's two
+# deploy repository's books branch say which unit names were written, and the map's two
 # sender domains say which mail records were published. A record is DELETED only
 # where its content proves it the installation's — an A or AAAA at one of the
 # installation's addresses, or an SPF that authorises those addresses and nobody
@@ -188,17 +188,17 @@ function Stated([string] $Named) {
 }
 $configFqdn = Stated 'FQDN'
 if ($configFqdn -ne $MasterFqdn) {
-  Stop-Here "$ConfigFile states FQDN='$configFqdn', and this abandons $MasterFqdn. The config has to be the installation's own, because its token and its catalog are what this writes with" 65
+  Stop-Here "$ConfigFile states FQDN='$configFqdn', and this abandons $MasterFqdn. The config has to be the installation's own, because its token and its deploy repository are what this writes with" 65
 }
 $token = Stated 'CLOUDFLARE_DNS_API_TOKEN'
 if (-not $token) {
   Stop-Here "$ConfigFile states no CLOUDFLARE_DNS_API_TOKEN, and the records were written with it" 65
 }
-$catalogRepo = Stated 'CATALOG_REPO'
-if (-not $catalogRepo) {
-  Stop-Here "$ConfigFile states no CATALOG_REPO, and the installation's books branch stands in that repository" 65
+$deployRepo = Stated 'DEPLOY_REPO'
+if (-not $deployRepo) {
+  Stop-Here "$ConfigFile states no DEPLOY_REPO, and the installation's books branch stands in that repository" 65
 }
-$catalogUrl = "https://github.com/$catalogRepo.git"
+$deployUrl = "https://github.com/$deployRepo.git"
 
 # The MicroK8s API port — a constant of the distribution, the same the Manager
 # and the cluster maps carry — and where the DNS provider answers for everybody.
@@ -322,46 +322,46 @@ else {
   Say "abandon: origin carries no branch $MasterFqdn, so no map, no address and no registration of it can be read: no DNS record can be derived or attributed, and the zone is left as it stands"
 }
 
-# ----------------------------------------------------------- the catalog
-# THE INSTALLATION'S BOOKS BRANCH IN THE CATALOG, named like the install branch,
+# ------------------------------------------------- the deploy repository
+# THE INSTALLATION'S BOOKS BRANCH IN THE DEPLOY REPOSITORY, named like the install branch,
 # carries the tenant registrations and the pins. It is asked with this
 # workstation's own login, the way every act here reaches a repository.
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ('abandon-' + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $work *> $null
 try {
-  git ls-remote --exit-code --heads $catalogUrl "refs/heads/$MasterFqdn" *> $null
+  git ls-remote --exit-code --heads $deployUrl "refs/heads/$MasterFqdn" *> $null
   switch ($LASTEXITCODE) {
-    0 { $catalogBooks = $true }
-    2 { $catalogBooks = $false }
-    default { Stop-Here "the catalog $catalogUrl could not be asked for its branches with this workstation's login, so what it carries of $MasterFqdn cannot be read" 69 }
+    0 { $deployBooks = $true }
+    2 { $deployBooks = $false }
+    default { Stop-Here "the deploy repository $deployUrl could not be asked for its branches with this workstation's login, so what it carries of $MasterFqdn cannot be read" 69 }
   }
-  $cat = Join-Path $work 'catalog'
-  if ($catalogBooks) {
-    git clone --quiet --single-branch --branch $MasterFqdn $catalogUrl $cat *> $null
+  $deployClone = Join-Path $work 'deploy'
+  if ($deployBooks) {
+    git clone --quiet --single-branch --branch $MasterFqdn $deployUrl $deployClone *> $null
     if ($LASTEXITCODE -ne 0) {
-      Stop-Here "the books branch $MasterFqdn of the catalog $catalogUrl could not be cloned, so its registrations cannot be read" 69
+      Stop-Here "the books branch $MasterFqdn of the deploy repository $deployUrl could not be cloned, so its registrations cannot be read" 69
     }
-    foreach ($file in @(git -C $cat ls-tree -r --name-only HEAD -- registrations 2>$null)) {
+    foreach ($file in @(git -C $deployClone ls-tree -r --name-only HEAD -- registrations 2>$null)) {
       if ($file -notmatch '^registrations/([^/]+)/(dev|test|prod)\.yaml$') { continue }
       $guid = $Matches[1]; $tenantStage = $Matches[2]
-      $subdomain = Read-Value @(Get-Content -Path (Join-Path $cat $file)) 'subdomain'
+      $subdomain = Read-Value @(Get-Content -Path (Join-Path $deployClone $file)) 'subdomain'
       if ($books -and $subdomain) {
         $name = "*.$subdomain.$(Get-StageApex $tenantStage)"
-        Say "abandon: the catalog's books branch $MasterFqdn carries $file, which stands at $name"
+        Say "abandon: the deploy repository's books branch $MasterFqdn carries $file, which stands at $name"
         Add-Name $name "the tenant $guid at $tenantStage"
       }
       else {
         $said = if ($subdomain) { $subdomain } else { 'none' }
-        Say "abandon: the catalog's books branch $MasterFqdn carries $file (subdomain '$said'), whose wildcard cannot be derived without the map"
+        Say "abandon: the deploy repository's books branch $MasterFqdn carries $file (subdomain '$said'), whose wildcard cannot be derived without the map"
       }
     }
   }
   else {
-    Say "abandon: the catalog $catalogUrl carries no books branch $MasterFqdn"
+    Say "abandon: the deploy repository $deployUrl carries no books branch $MasterFqdn"
   }
 
-  if (-not $books -and -not $catalogBooks) {
-    Say "abandon: nothing of $MasterFqdn stands on origin or in the catalog, and nothing can be derived without its branch: nothing to do"
+  if (-not $books -and -not $deployBooks) {
+    Say "abandon: nothing of $MasterFqdn stands on origin or in the deploy repository, and nothing can be derived without its branch: nothing to do"
     Say "abandon: $ConfigFile stays. A local config is the record of the answers a machine was installed with, and the next machine of that name is installed from it"
     exit 0
   }
@@ -416,20 +416,20 @@ try {
       }
     }
   }
-  if ($catalogBooks) {
-    $refused = @(git -C $cat push --dry-run --quiet origin --delete "refs/heads/$MasterFqdn" 2>&1 | ForEach-Object { "$_" })
+  if ($deployBooks) {
+    $refused = @(git -C $deployClone push --dry-run --quiet origin --delete "refs/heads/$MasterFqdn" 2>&1 | ForEach-Object { "$_" })
     if ($LASTEXITCODE -ne 0) {
-      Stop-Here "this workstation cannot push the deletion of the books branch $MasterFqdn to the catalog $catalogUrl ($($refused -join ' ')), so that branch could not follow the records. Nothing has been changed" 77
+      Stop-Here "this workstation cannot push the deletion of the books branch $MasterFqdn to the deploy repository $deployUrl ($($refused -join ' ')), so that branch could not follow the records. Nothing has been changed" 77
     }
   }
-  Say 'abandon: this workstation can push a branch deletion to origin and to the catalog, so every branch below can follow the records'
+  Say 'abandon: this workstation can push a branch deletion to origin and to the deploy repository, so every branch below can follow the records'
 
   # ================================================================ CONFIRM
   $goes = ''
   if ($books) { $goes = "every record above that proves itself this installation's, the branches $(($deletable | ForEach-Object { "$_ " }) -join '')on origin" }
-  if ($catalogBooks) {
+  if ($deployBooks) {
     if ($goes) { $goes += ', and ' }
-    $goes += "the books branch $MasterFqdn of the catalog $catalogUrl"
+    $goes += "the books branch $MasterFqdn of the deploy repository $deployUrl"
   }
   Say "abandon: what goes: $goes. Type $MasterFqdn to confirm, or anything else to stop"
   $answer = [Console]::In.ReadLine()
@@ -577,7 +577,7 @@ try {
   }
 
   # =============================================================== BRANCHES
-  # THE MASTER'S BRANCH, THE SLAVES' BRANCHES, THEN THE CATALOG'S, each named. A
+  # THE MASTER'S BRANCH, THE SLAVES' BRANCHES, THEN THE DEPLOY REPOSITORY'S, each named. A
   # cluster carrying only the slave part has no branch of its own today; one cut
   # under the earlier layout is taken down with the rest, and an absent one is
   # said and not refused.
@@ -601,12 +601,12 @@ try {
       }
     }
   }
-  if ($catalogBooks) {
-    git -C $cat push --quiet origin --delete "refs/heads/$MasterFqdn" *> $null
+  if ($deployBooks) {
+    git -C $deployClone push --quiet origin --delete "refs/heads/$MasterFqdn" *> $null
     if ($LASTEXITCODE -ne 0) {
-      Stop-Here "the books branch $MasterFqdn could not be deleted in the catalog $catalogUrl. Everything above is gone, that branch stands, and a second run takes it down" 74
+      Stop-Here "the books branch $MasterFqdn could not be deleted in the deploy repository $deployUrl. Everything above is gone, that branch stands, and a second run takes it down" 74
     }
-    Say "abandon: deleted the books branch $MasterFqdn of the catalog $catalogUrl"
+    Say "abandon: deleted the books branch $MasterFqdn of the deploy repository $deployUrl"
   }
 
   Say "abandon: $ConfigFile stays. A local config is the record of the answers a machine was installed with, and the next machine of that name is installed from it"

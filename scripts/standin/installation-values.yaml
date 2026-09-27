@@ -7,6 +7,6 @@
 #
 # THE ANSWERS ARE STAND-INS AND NAME NOTHING REAL: the owner and the repository below exist nowhere.
 github:
-  # The repository the deployment programs are read from (the deploy_repo answer), which the
+  # The repository the deployment programs are read from (the programs_repo answer), which the
   # manager chart requires.
   programsRepo: check-owner/check-programs

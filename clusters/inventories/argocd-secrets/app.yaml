@@ -3,8 +3,8 @@ project: core
 # AFTER external-secrets, whose operator and CRDs this reads through, and after the reconciler that
 # consumes the Secrets is standing. Nothing the rollout brings later reads through this namespace's
 # store, and ArgoCD reconciles perfectly well without the sign-in: arriving late costs a person one
-# refreshed login page, and the tenants ApplicationSet one failed generation until the catalogue
-# credential stands.
+# refreshed login page, and the tenants ApplicationSet one failed generation until the deploy
+# repository credential stands.
 syncWave: "5"
 namespace: argocd
 prune: "true"
@@ -14,7 +14,7 @@ prune: "true"
 # at login by the same rule as every other namespace of this platform.
 createNamespace: "true"
 # MASTER AND NOT every-cluster. This app materialises the Secrets the reconciler reads into the
-# namespace `argocd` — the OIDC client secret and the catalogue credential. A SLAVE HAS NO ARGOCD:
+# namespace `argocd` — the OIDC client secret and the deploy repository credential. A SLAVE HAS NO ARGOCD:
 # its applications are driven by an instance that stands on its master, in a namespace named after
 # the slave. Nothing on a slave would ever read this Secret, and the namespace it asks for is not
 # among the ones its project allows there.

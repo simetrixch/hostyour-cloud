@@ -2,7 +2,7 @@
 # =============================================================================
 # abandon-installation.sh — take down what ONE installation left outside its
 # machines: the DNS records it wrote, its install branches and its books branch
-# in the catalog. PowerShell twin: abandon-installation.ps1 (same folder), which
+# in the deploy repository. PowerShell twin: abandon-installation.ps1 (same folder), which
 # does the same in the same order and prints the same lines. lifecycle/test.sh
 # measures that.
 # =============================================================================
@@ -14,18 +14,18 @@
 #   master-fqdn — WHICH INSTALLATION is abandoned, named by the cluster that
 #             keeps its books: the domain of the master, the name of its install
 #             branch, the name of its map under clusters/active and the name of
-#             the installation's books branch in the catalog.
+#             the installation's books branch in the deploy repository.
 #   config  — that installation's own key=value file, the one install-machine.sh
 #             was given for the master and in the same grammar. Two values are
 #             read out of it and nothing is run: the DNS token the installation
-#             wrote its records with, and the catalog its tenants are registered
+#             wrote its records with, and the deploy repository its tenants are registered
 #             in. Defaults to config.<first label of the fqdn>.env beside this
 #             file, which is the name release-platform.sh looks for too.
 #
 # WHAT AN INSTALLATION LEAVES OUTSIDE ITS MACHINES. Restoring a machine to its
 # bare point takes back everything on it and nothing beside it: the unit records
 # in the zone still answer with the old address, the install branch on origin
-# still carries the map a release would pin, and the catalog still carries the
+# still carries the map a release would pin, and the deploy repository still carries the
 # books branch with every tenant registration. The next installation meets each
 # of them — a unit record that answers with a machine that is gone refuses the
 # onboarding of the same unit, and a release regenerates a branch of a machine
@@ -35,7 +35,7 @@
 # read off a local checkout: the cluster map of the master and of every slave it
 # records say what the machines were and where they stood (nodeCidrs), the
 # consumer registrations on the same branch and the tenant registrations on the
-# catalog's books branch say which unit names were written, and the map's two
+# deploy repository's books branch say which unit names were written, and the map's two
 # sender domains say which mail records were published. A record is DELETED only
 # where its content proves it the installation's — an A or AAAA at one of the
 # installation's addresses, or an SPF that authorises those addresses and nobody
@@ -173,14 +173,14 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
   || die "there is no config at $CONFIG. It is the installation's own, the one it was installed with: name it as the second argument" 66
 CONFIG_FQDN="$(config_value FQDN)"
 [ "$CONFIG_FQDN" = "$MASTER" ] \
-  || die "$CONFIG states FQDN='${CONFIG_FQDN}', and this abandons $MASTER. The config has to be the installation's own, because its token and its catalog are what this writes with" 65
+  || die "$CONFIG states FQDN='${CONFIG_FQDN}', and this abandons $MASTER. The config has to be the installation's own, because its token and its deploy repository are what this writes with" 65
 TOKEN="$(config_value CLOUDFLARE_DNS_API_TOKEN)"
 [ -n "$TOKEN" ] \
   || die "$CONFIG states no CLOUDFLARE_DNS_API_TOKEN, and the records were written with it" 65
-CATALOG_REPO="$(config_value CATALOG_REPO)"
-[ -n "$CATALOG_REPO" ] \
-  || die "$CONFIG states no CATALOG_REPO, and the installation's books branch stands in that repository" 65
-CATALOG_URL="https://github.com/${CATALOG_REPO}.git"
+DEPLOY_REPO="$(config_value DEPLOY_REPO)"
+[ -n "$DEPLOY_REPO" ] \
+  || die "$CONFIG states no DEPLOY_REPO, and the installation's books branch stands in that repository" 65
+DEPLOY_URL="https://github.com/${DEPLOY_REPO}.git"
 
 # The MicroK8s API port — a constant of the distribution, the same the Manager
 # and the cluster maps carry — and where the DNS provider answers for everybody.
@@ -299,41 +299,41 @@ else
   say "abandon: origin carries no branch $MASTER, so no map, no address and no registration of it can be read: no DNS record can be derived or attributed, and the zone is left as it stands"
 fi
 
-# ----------------------------------------------------------- the catalog
-# THE INSTALLATION'S BOOKS BRANCH IN THE CATALOG, named like the install branch,
+# ------------------------------------------------- the deploy repository
+# THE INSTALLATION'S BOOKS BRANCH IN THE DEPLOY REPOSITORY, named like the install branch,
 # carries the tenant registrations and the pins. It is asked with this
 # workstation's own login, the way every act here reaches a repository.
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-git ls-remote --exit-code --heads "$CATALOG_URL" "refs/heads/$MASTER" >/dev/null 2>&1
+git ls-remote --exit-code --heads "$DEPLOY_URL" "refs/heads/$MASTER" >/dev/null 2>&1
 case $? in
-  0) CATALOG_BOOKS=yes ;;
-  2) CATALOG_BOOKS=no ;;
-  *) die "the catalog $CATALOG_URL could not be asked for its branches with this workstation's login, so what it carries of $MASTER cannot be read" 69 ;;
+  0) DEPLOY_BOOKS=yes ;;
+  2) DEPLOY_BOOKS=no ;;
+  *) die "the deploy repository $DEPLOY_URL could not be asked for its branches with this workstation's login, so what it carries of $MASTER cannot be read" 69 ;;
 esac
-if [ "$CATALOG_BOOKS" = yes ]; then
-  CAT="$WORK/catalog"
-  git clone --quiet --single-branch --branch "$MASTER" "$CATALOG_URL" "$CAT" \
-    || die "the books branch $MASTER of the catalog $CATALOG_URL could not be cloned, so its registrations cannot be read" 69
+if [ "$DEPLOY_BOOKS" = yes ]; then
+  DEPLOY_CLONE="$WORK/deploy"
+  git clone --quiet --single-branch --branch "$MASTER" "$DEPLOY_URL" "$DEPLOY_CLONE" \
+    || die "the books branch $MASTER of the deploy repository $DEPLOY_URL could not be cloned, so its registrations cannot be read" 69
   while IFS= read -r file; do
     case "$file" in registrations/*/dev.yaml|registrations/*/test.yaml|registrations/*/prod.yaml) ;; *) continue ;; esac
     guid="${file#registrations/}"; guid="${guid%%/*}"
     stage="${file##*/}"; stage="${stage%.yaml}"
-    subdomain="$(value_in_text subdomain < "$CAT/$file")"
+    subdomain="$(value_in_text subdomain < "$DEPLOY_CLONE/$file")"
     if [ "$BOOKS" = yes ] && [ -n "$subdomain" ]; then
       name="*.$subdomain.$(stage_apex "$stage")"
-      say "abandon: the catalog's books branch $MASTER carries $file, which stands at $name"
+      say "abandon: the deploy repository's books branch $MASTER carries $file, which stands at $name"
       add_name "$name" "the tenant $guid at $stage"
     else
-      say "abandon: the catalog's books branch $MASTER carries $file (subdomain '${subdomain:-none}'), whose wildcard cannot be derived without the map"
+      say "abandon: the deploy repository's books branch $MASTER carries $file (subdomain '${subdomain:-none}'), whose wildcard cannot be derived without the map"
     fi
-  done <<< "$(git -C "$CAT" ls-tree -r --name-only HEAD -- registrations 2>/dev/null)"
+  done <<< "$(git -C "$DEPLOY_CLONE" ls-tree -r --name-only HEAD -- registrations 2>/dev/null)"
 else
-  say "abandon: the catalog $CATALOG_URL carries no books branch $MASTER"
+  say "abandon: the deploy repository $DEPLOY_URL carries no books branch $MASTER"
 fi
 
-if [ "$BOOKS" = no ] && [ "$CATALOG_BOOKS" = no ]; then
-  say "abandon: nothing of $MASTER stands on origin or in the catalog, and nothing can be derived without its branch: nothing to do"
+if [ "$BOOKS" = no ] && [ "$DEPLOY_BOOKS" = no ]; then
+  say "abandon: nothing of $MASTER stands on origin or in the deploy repository, and nothing can be derived without its branch: nothing to do"
   say "abandon: $CONFIG stays. A local config is the record of the answers a machine was installed with, and the next machine of that name is installed from it"
   exit 0
 fi
@@ -380,16 +380,16 @@ if [ "$BOOKS" = yes ]; then
     fi
   done <<< "$CLUSTERS"
 fi
-if [ "$CATALOG_BOOKS" = yes ]; then
-  REFUSED="$(git -C "$CAT" push --dry-run --quiet origin --delete "refs/heads/$MASTER" 2>&1)" \
-    || die "this workstation cannot push the deletion of the books branch $MASTER to the catalog $CATALOG_URL ($(printf '%s' "$REFUSED" | tr '\n' ' ')), so that branch could not follow the records. Nothing has been changed" 77
+if [ "$DEPLOY_BOOKS" = yes ]; then
+  REFUSED="$(git -C "$DEPLOY_CLONE" push --dry-run --quiet origin --delete "refs/heads/$MASTER" 2>&1)" \
+    || die "this workstation cannot push the deletion of the books branch $MASTER to the deploy repository $DEPLOY_URL ($(printf '%s' "$REFUSED" | tr '\n' ' ')), so that branch could not follow the records. Nothing has been changed" 77
 fi
-say "abandon: this workstation can push a branch deletion to origin and to the catalog, so every branch below can follow the records"
+say "abandon: this workstation can push a branch deletion to origin and to the deploy repository, so every branch below can follow the records"
 
 # ================================================================ CONFIRM
 GOES=''
 [ "$BOOKS" = yes ] && GOES="every record above that proves itself this installation's, the branches ${DELETABLE//$'\n'/ }on origin"
-[ "$CATALOG_BOOKS" = yes ] && GOES="${GOES:+$GOES, and }the books branch $MASTER of the catalog $CATALOG_URL"
+[ "$DEPLOY_BOOKS" = yes ] && GOES="${GOES:+$GOES, and }the books branch $MASTER of the deploy repository $DEPLOY_URL"
 say "abandon: what goes: $GOES. Type $MASTER to confirm, or anything else to stop"
 IFS= read -r ANSWER || ANSWER=''
 ANSWER="${ANSWER%$'\r'}"
@@ -521,7 +521,7 @@ if [ "$BOOKS" = yes ]; then
 fi
 
 # =============================================================== BRANCHES
-# THE MASTER'S BRANCH, THE SLAVES' BRANCHES, THEN THE CATALOG'S, each named. A
+# THE MASTER'S BRANCH, THE SLAVES' BRANCHES, THEN THE DEPLOY REPOSITORY'S, each named. A
 # cluster carrying only the slave part has no branch of its own today; one cut
 # under the earlier layout is taken down with the rest, and an absent one is
 # said and not refused.
@@ -537,10 +537,10 @@ if [ "$BOOKS" = yes ]; then
     fi
   done <<< "$CLUSTERS"
 fi
-if [ "$CATALOG_BOOKS" = yes ]; then
-  git -C "$CAT" push --quiet origin --delete "refs/heads/$MASTER" >/dev/null 2>&1 \
-    || die "the books branch $MASTER could not be deleted in the catalog $CATALOG_URL. Everything above is gone, that branch stands, and a second run takes it down" 74
-  say "abandon: deleted the books branch $MASTER of the catalog $CATALOG_URL"
+if [ "$DEPLOY_BOOKS" = yes ]; then
+  git -C "$DEPLOY_CLONE" push --quiet origin --delete "refs/heads/$MASTER" >/dev/null 2>&1 \
+    || die "the books branch $MASTER could not be deleted in the deploy repository $DEPLOY_URL. Everything above is gone, that branch stands, and a second run takes it down" 74
+  say "abandon: deleted the books branch $MASTER of the deploy repository $DEPLOY_URL"
 fi
 
 say "abandon: $CONFIG stays. A local config is the record of the answers a machine was installed with, and the next machine of that name is installed from it"

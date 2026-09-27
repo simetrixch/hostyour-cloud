@@ -52,7 +52,7 @@ DEPLOY_ENV=
 #
 # THIS KEY IS NOT ONE A LATER RUN READS BACK. FIVE values in this file are read back, counted from `conditions:` in
 # ../hostyour-deploy/ansiwise.yaml and from the one row outside it: CLUSTER_ISSUER, the three ENABLE_
-# switches at the foot, and DEPLOY_REPO, which deploy-platform-services clones the catalogue from
+# switches at the foot, and PROGRAMS_REPO, which deploy-platform-services clones the catalogue from
 # through `origin_file`. Every one of those five is an INSTALLATION-wide fact — the same word for
 # every machine of the installation — and that is exactly what one file shared by several machines
 # can carry. This key names ONE MACHINE, and a cluster carrying only the slave part reads this file
@@ -109,21 +109,12 @@ BOOKS_CLUSTER=
 
 BUILD_PLANE_FQDN=
 
-# The repository holding this installation's TENANT charts and their per-stage pins, written as
-# owner/name. It is your own repository and not this platform's, and no rule composes its name out
-# of anything else here. Something that is not an owner and a name is refused when the map is
-# written, where the generator records the same answer as `catalog-repo`. The same answer is also
-# stamped into the reconciler's tenant generators, in place of the marker the trunk carries for it,
-# which is what points them at your catalog. Nothing reads THIS line, so editing it later retargets
-# nothing.
-CATALOG_REPO=
-
 # The repository the DEPLOYMENT PROGRAMS are read from, written as owner/name. It is the platform's
 # own and public, the same for every installation, and the row that clones the catalogue onto this
-# machine reads it from HERE and names no credential beside it. It is not CATALOG_REPO above: that
-# one is your tenant charts, private and reached with a read credential, and a single key for both
-# clones whichever repository the last writer meant.
-DEPLOY_REPO=
+# machine reads it from HERE and names no credential beside it. This installation's own deploy
+# repository is not in this file: the cluster map records it as `deployRepo`, and one key for both
+# would clone whichever repository the last writer meant.
+PROGRAMS_REPO=
 
 # ── the mailboxes ────────────────────────────────────────────────────────────────────────────────
 

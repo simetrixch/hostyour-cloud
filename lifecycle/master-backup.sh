@@ -8,7 +8,7 @@
 # state nothing else holds: Vault with every unit's secrets, the Manager's database, the IdP's
 # accounts, Headscale's nodes, its own MongoDB, Redis, mail queue, registry and dbgate — and the file
 # Vault's quorum was written to once, secrets/vault-<stage>.txt. Lose the machine and every one of
-# them is gone; the install branch, the registrations and the catalog on origin describe an
+# them is gone; the install branch, the registrations and the deploy repository on origin describe an
 # installation that can no longer be opened. This takes that set, sealed with BACKUP_PASSPHRASE, to
 # the storage box under master/<fqdn>/<id>/, and master-restore brings it back onto a bare machine.
 #

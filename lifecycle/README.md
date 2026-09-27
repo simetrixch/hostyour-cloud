@@ -17,7 +17,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `release-platform.sh` / `.ps1` | with an fqdn, cuts a release of the platform tree and pins ONE installation to it; without one, cuts the release and pins nothing, which is what a first machine names as `PLATFORM_REF` |
 | `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` / `.ps1` | takes ONE slave's registration off the master it stands on |
-| `abandon-installation.sh` / `.ps1` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the catalog; the config stays |
+| `abandon-installation.sh` / `.ps1` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
 | `master-backup.sh` / `.ps1` | takes a master's stores and Vault's quorum, sealed, to the storage box under `master/<fqdn>/<id>/` |
 | `master-restore.sh` / `.ps1` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |
@@ -46,7 +46,7 @@ the two acts somebody can read what the pin now says and stop.
 
 ```
 bash lifecycle/create-github-app.sh lifecycle/config.apps4.env           # or:  pwsh ./lifecycle/create-github-app.ps1 ...
-bash lifecycle/create-github-app.sh lifecycle/config.apps4.env acme      # the organisation named, not read off CATALOG_REPO
+bash lifecycle/create-github-app.sh lifecycle/config.apps4.env acme      # the organisation named, not read off DEPLOY_REPO
 ```
 
 The three answers `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PRIVATE_KEY` of the
@@ -66,7 +66,7 @@ writes `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` into the config at once, in 
 line with `\n` for each line break. It then opens the App's installation page for the second click,
 **Install** with **All repositories**, asks GitHub every five seconds with a JWT signed by the key
 until the installation stands, refuses one made on selected repositories, and writes
-`GITHUB_APP_INSTALLATION_ID`. The organisation is the owner of `CATALOG_REPO` unless named as the
+`GITHUB_APP_INSTALLATION_ID`. The organisation is the owner of `DEPLOY_REPO` unless named as the
 second argument. The browser is `$BROWSER` where that is set, and the platform's own opener otherwise.
 
 The key is written the moment the App stands, because it exists in that run's memory and in the
@@ -285,7 +285,7 @@ bash lifecycle/install-machine.sh lifecycle/config.master.env                   
 
 ## What a master holds that nothing else holds
 
-The install branch, the registrations and the catalog stand on origin; the images are rebuilt by the
+The install branch, the registrations and the deploy repository stand on origin; the images are rebuilt by the
 release cycles; every certificate is issued again for the name. What lives on the master alone is its
 stores — Vault with every unit's secrets, the Manager's database, the IdP's accounts, Headscale's
 nodes, the master's own MongoDB, Redis, mail queue, registry and dbgate — and, beside them on the
@@ -350,7 +350,7 @@ repository it holds no credential for.
 
 Everything is derived from the install branch on origin, never typed: the cluster map of the master
 and of every slave it records give the machines and their addresses (`nodeCidrs`), the consumer
-registrations on the same branch and the tenant registrations on the catalog's books branch of the
+registrations on the same branch and the tenant registrations on the deploy repository's books branch of the
 same name give the unit names, and the map's two sender domains give the mail records. From those it
 names every record the installation wrote — the platform host names of each cluster, every consumer's
 `<label>.<stage apex>`, every tenant's `*.<subdomain>.<stage apex>`, and the address, SPF, DKIM and
@@ -371,10 +371,10 @@ a machine restored to its bare point still answers on 22, so that port cannot te
 that is gone from a bare machine standing at the same address. A cluster that answers refuses the
 whole act. Then the operator types the master's domain, and only then is anything written: the
 records first, because the branch is what they are derived from, then the master's install branch,
-its slaves' branches where the earlier layout cut them, and the books branch in the catalog, each
+its slaves' branches where the earlier layout cut them, and the books branch in the deploy repository, each
 named. A failure in the DNS phase stops before the branches and says so; every run is safe to repeat,
 because an absent record and an absent branch are not errors.
 
-The config is read for two values, the DNS token and the catalog, and never run. It stays: a local
+The config is read for two values, the DNS token and the deploy repository, and never run. It stays: a local
 config is the record of the answers a machine was installed with, and the next machine of that name
 is installed from it.
