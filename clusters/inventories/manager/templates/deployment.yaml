@@ -268,6 +268,17 @@ spec:
             # the reaper reads, so one installation still names its deploy repository once.
             - name: DEPLOY_REPO
               value: {{ .Values.github.deployRepo | default (required "manager: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.deployUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
+            {{- if and .Values.reaper.enabled .Values.master.sshUser }}
+            # The registry reaper inside the manager (hostyour-manager server/boot/registry-reap.ts):
+            # once a day at this hour, UTC, it prunes the central registry, deleting unless the dry
+            # run is "true". All three or none; the manager refuses one without the others.
+            - name: REGISTRY_REAPER_HOUR
+              value: {{ required "manager: reaper.hour is required when reaper.enabled" .Values.reaper.hour | quote }}
+            - name: REGISTRY_HOST
+              value: {{ include "common.registryHost" . | quote }}
+            - name: REGISTRY_REAPER_DRY_RUN
+              value: {{ required "manager: reaper.dryRun is required when reaper.enabled" .Values.reaper.dryRun | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             # How this manager reaches the ansiwise deployment engine on a machine
@@ -566,6 +577,13 @@ spec:
               mountPath: /etc/manager/master-key
               readOnly: true
             {{- end }}
+            {{- if and .Values.reaper.enabled .Values.master.sshUser .Values.github.repo }}
+            # The zot PUSH credential (delete rights) the registry reaper prunes with. A plain directory
+            # mount, never subPath, so an ESO resync refreshes it without a restart.
+            - name: registry-push
+              mountPath: /etc/manager/registry-push
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
@@ -639,5 +657,11 @@ spec:
           secret:
             secretName: manager-master-key
             optional: true
+            defaultMode: 0440
+        {{- end }}
+        {{- if and .Values.reaper.enabled .Values.master.sshUser .Values.github.repo }}
+        - name: registry-push
+          secret:
+            secretName: registry-reaper-push
             defaultMode: 0440
         {{- end }}

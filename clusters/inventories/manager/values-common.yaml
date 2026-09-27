@@ -24,42 +24,21 @@
 # cluster release delivers the bumped master to running clusters.
 replicas: 1
 
-# registry-reaper — the periodic CronJob (templates/reaper-cronjob.yaml) that
-# prunes aged, UNREFERENCED image tags of OUR flat, single-segment repos from
-# the central zot registry.
-#
-# WHAT IS LEFT FOR IT TO PRUNE, now that the builds[] pins compose against
-# ghcr.io: what zot already holds. Copies fetched by its on-demand ghcr seed
-# before the switch, and the tags an older install branch still pins, stay in
-# that registry with nothing pulling them — which is exactly the aged and
-# unreferenced state this job exists to clear. It reads the same keep floor as
-# before, so a pin an installation is still running is never taken out from
-# under it. Its keep floor is the release bump's search space
-# (the builds[] pins in every values-<stage>.yaml carrier — see the CronJob
-# header). It runs THIS manager image + code (server/jobs/registry-reaper.ts)
-# and reuses the manager-github write-pat + manager-registry-pull +
-# manager-app secrets that already live in this namespace, plus the
-# App's own secret for the deploy repository (externalsecret-github-app.yaml). Rendered only
-# on the control/build host: gated on master.sshUser (the same toggle that
-# materializes manager-github) AND github.repo.
-#
-# SAFETY: dryRun defaults to "true" — the reaper only OBSERVES + LOGS, deletes
-# NOTHING. The entrypoint deletes ONLY when DRY_RUN is EXACTLY "false". ARM it later
-# (owner) by setting reaper.dryRun: "false" once the dry-run logs confirm the
-# keep/delete plan is correct. zot's own retention never touches the
-# single-segment repos (the ["*"] keep-all policy in
-# clusters/inventories/registry/values-common.yaml) — the reaper is the sole cleaner there.
+# registry-reaper — prunes aged, UNREFERENCED image tags of OUR flat, single-segment repos from the
+# central zot registry, from inside the manager (hostyour-manager server/boot/registry-reap.ts), on
+# the manager's own database, credential store and GitHub App. Its keep floor is every builds[] pin
+# the release bump writes, every plugin's pins and every image a tenant holds; per repository it
+# also keeps the last ten stable and the last ten other tags. Rendered only on the control/build
+# host: gated on master.sshUser AND github.repo, like the push credential it deletes with
+# (externalsecret-registry-push.yaml). zot's own retention never touches the single-segment repos
+# (the ["*"] keep-all policy in clusters/inventories/registry/values-common.yaml) — the reaper is the
+# sole cleaner there.
 reaper:
   enabled: true
-  # Nightly, off-peak. concurrencyPolicy: Forbid means a long run never overlaps
-  # the next tick.
-  schedule: "17 3 * * *"
-  # "true" = observe only (default, SAFE). Set to "false" to ARM deletion —
-  # nothing else changes.
-  dryRun: "true"
-  # Hard ceiling for one run (it scans every install branch's pointers); the Job
-  # fails if exceeded.
-  activeDeadlineSeconds: 900
+  # The hour of the day (UTC) it runs, off-peak.
+  hour: 3
+  # "false" deletes; "true" only logs the keep/delete plan.
+  dryRun: "false"
 
 # Run the manager pod on the node's host network so it can SSH to the clusters
 # on the physical LAN. This is REQUIRED whenever the MicroK8s pod CIDR
@@ -141,8 +120,8 @@ adminSocket:
 # in config.ts: when repo is set the deployment injects BOTH env vars.
 github:
   repo: "simetrixch/hostyour-cloud"
-  # The DEPLOY REPOSITORY the registry-reaper's floor also searches
-  # (reaper-cronjob.yaml DEPLOY_REPO). EMPTY here on purpose: which
+  # The DEPLOY REPOSITORY the manager reads, and the registry reaper's floor also searches
+  # (deployment.yaml DEPLOY_REPO). EMPTY here on purpose: which
   # repository it is, is installation state — clusters/active/<fqdn>.yaml carries it as
   # global.deployUrl and loads LAST, and the template falls back to that with a
   # `required` on it and trims the owner/name off the address, so a branch naming no

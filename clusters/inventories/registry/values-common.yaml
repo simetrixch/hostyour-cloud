@@ -299,7 +299,7 @@ ingress:
 #      prefix, so after the registry wipe every single-segment repo is one of
 #      ours. Keep ALL tags (patterns [".*"], no count) and
 #      deleteUntagged false, so zot NEVER prunes one of our image tags. The
-#      registry-reaper CronJob (clusters/inventories/manager) is the SOLE cleaner here: it
+#      registry reaper inside the manager (clusters/inventories/manager) is the SOLE cleaner here: it
 #      alone knows which tags are still pinned by a values-<stage>.yaml on any
 #      branch, so zot's blind 50-count rule must not race it and evict a
 #      referenced tag. (Blob-level GC still reclaims space after the reaper
