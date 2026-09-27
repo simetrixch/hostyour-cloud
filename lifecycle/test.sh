@@ -1587,7 +1587,7 @@ must "there is no config at $NOCONFIG" 'a run with no config is refused'
 same 'a run with no config'
 
 FULLCFG="$GHAPP/config.full.env"
-printf "GITHUB_APP_ID='1'\nGITHUB_APP_INSTALLATION_ID='2'\nGITHUB_APP_PRIVATE_KEY='k'\nCATALOG_REPO='acme/deploy'\nUNIT_APEX='example.invalid'\n" > "$FULLCFG"
+printf "GITHUB_APP_ID='1'\nGITHUB_APP_INSTALLATION_ID='2'\nGITHUB_APP_PRIVATE_KEY='k'\nDEPLOY_REPO='acme/deploy'\nUNIT_APEX='example.invalid'\n" > "$FULLCFG"
 run_app_bash "$FULLCFG"
 run_app_pwsh "$FULLCFG"
 must "create-github-app: $FULLCFG already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY. Nothing has been changed" 'a config carrying the three answers is refused by name'
@@ -1595,7 +1595,7 @@ must "create-github-app: $FULLCFG already carries GITHUB_APP_ID, GITHUB_APP_INST
 same 'a config carrying the three answers'
 
 PARTCFG="$GHAPP/config.part.env"
-printf "GITHUB_APP_ID=''\nGITHUB_APP_INSTALLATION_ID=''\nGITHUB_APP_PRIVATE_KEY='k'\nCATALOG_REPO='acme/deploy'\nUNIT_APEX='example.invalid'\n" > "$PARTCFG"
+printf "GITHUB_APP_ID=''\nGITHUB_APP_INSTALLATION_ID=''\nGITHUB_APP_PRIVATE_KEY='k'\nDEPLOY_REPO='acme/deploy'\nUNIT_APEX='example.invalid'\n" > "$PARTCFG"
 run_app_bash "$PARTCFG"
 run_app_pwsh "$PARTCFG"
 must "create-github-app: $PARTCFG carries GITHUB_APP_PRIVATE_KEY and not GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and this act cannot tell which App they belong to" 'a config carrying a key and no id is refused, naming what stands and what does not'
