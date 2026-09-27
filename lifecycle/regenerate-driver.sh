@@ -8,7 +8,7 @@
 #
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not
 # change: it composes the answers each program is told with and invokes it, once
-# per mode. The regeneration itself is deploy-branch.yaml in the catalogue
+# per mode. The regeneration itself is deploy-branch.yaml in the programs checkout
 # standing on this machine, and every decision about what a branch becomes is a
 # row of that file. That one program carries both acts: it cuts the branch where
 # the remote publishes none and stands the checkout on the one it does, so what
@@ -30,9 +30,9 @@
 # time one was corrected. One file, streamed by both, cannot.
 #
 # WHY THE ANSWERS ARE COMPOSED ON THIS MACHINE AND NOT ON THE WORKSTATION. The
-# names are read off each program's file in the catalogue standing here, so
+# names are read off each program's file in the programs checkout standing here, so
 # nothing on the workstation holds a list of answers that could fall behind what
-# a program declares. The catalogue is on this machine and not on that one.
+# a program declares. The programs checkout is on this machine and not on that one.
 #
 # WHAT IT IS TOLD, and it is the only thing that reaches it from outside: the
 # same key=value config file the operator filled in for the installation, carried
@@ -40,10 +40,10 @@
 # PLATFORM_REF, read off the `release:` line of this cluster's own map. The
 # launcher reads the pin so that nobody states the ref a second time.
 #
-# THE ENGINE IS PLACED BEFORE THE CATALOGUE IS READ, the same act the installation
-# performs (driver.sh, phase 1). The catalogue's trunk names the steps of the
+# THE ENGINE IS PLACED BEFORE THE PROGRAMS CHECKOUT IS READ, the same act the installation
+# performs (driver.sh, phase 1). The programs checkout's trunk names the steps of the
 # engine the platform repository pins, and a machine holds the engine its last run
-# left: a regeneration that ran the new catalogue on the old engine was refused
+# left: a regeneration that ran the new programs checkout on the old engine was refused
 # before its first step, every program held against a registry lacking the steps
 # the trunk had gained (hostyour-cloud#216, measured on apps3 after the 0.8.182
 # engine release). The Manager places the engine before every program it drives;
@@ -127,7 +127,7 @@ readonly PLATFORM_REPO="${PLATFORM_REPO:-}"
 # process listing for anyone on it to read.
 root() { printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 
-readonly CATALOG=/srv/ansiwise-catalog
+readonly PROGRAMS_CHECKOUT=/srv/ansiwise-programs
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
 readonly PROGRAMS=(deploy-branch tailnet-record-address)
@@ -169,8 +169,8 @@ fi
 # deploy-host at an installation's birth, and this is a regeneration: a machine
 # carrying neither is a machine nothing has installed, and the act for that is
 # lifecycle/install-machine.sh.
-[ -d "$CATALOG" ] \
-  || die "there is no catalogue at $CATALOG, so the programs a regeneration runs are not on this machine. A machine is given them by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
+[ -d "$PROGRAMS_CHECKOUT" ] \
+  || die "there is no programs checkout at $PROGRAMS_CHECKOUT, so the programs a regeneration runs are not on this machine. A machine is given them by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
 [ -x "$ENGINE" ] \
   || die "there is no engine at $ENGINE, and it is what runs a program. A machine is given it by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
 
@@ -178,7 +178,7 @@ fi
 # platform repository by this machine, fetched from the public release, placed
 # elevated and read back off the machine - the shape driver.sh gives it, so a
 # regeneration and an installation put the same engine in front of the same
-# catalogue. Nothing is fetched where the machine already answers the pin.
+# programs checkout. Nothing is fetched where the machine already answers the pin.
 readonly RELEASES=https://github.com/simetrixch/ansiwise-cli/releases/download
 readonly PIN_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/versions.yaml"
 say "reading the engine pin from $PIN_URL"
@@ -214,8 +214,8 @@ else
   done
   good "/usr/local/bin/ansiwise and /usr/local/bin/ansiwise-rest answer $PIN"
 fi
-# THE CATALOGUE IS BROUGHT FORWARD BEFORE A PROGRAM IS READ OUT OF IT. A program's
-# rows and the answers it declares move with the catalogue's trunk, and a machine
+# THE PROGRAMS CHECKOUT IS BROUGHT FORWARD BEFORE A PROGRAM IS READ OUT OF IT. A program's
+# rows and the answers it declares move with the programs checkout's trunk, and a machine
 # holds the copy its last run left: a regeneration that read that copy would run a
 # program of unknown age and leave out every answer the config states under a name
 # the old copy does not declare — measured on apps1 (hostyour-cloud#193), where the
@@ -223,24 +223,24 @@ fi
 # The same act the installation performs (lifecycle/driver.sh), as this account:
 # the tree belongs to the operator so that a fetch needs no elevation, and the
 # repository is public so that it needs no credential. RESET AND NOT MERGE, because
-# nothing on a machine may write this tree. A catalogue that cannot be fetched stops
+# nothing on a machine may write this tree. A programs checkout that cannot be fetched stops
 # the regeneration by name rather than running a program of unknown age.
-say "bringing $CATALOG onto the published head of its branch"
+say "bringing $PROGRAMS_CHECKOUT onto the published head of its branch"
 want="https://github.com/$PROGRAMS_REPO.git"
-have=$(git -C "$CATALOG" remote get-url origin 2>/dev/null || true)
+have=$(git -C "$PROGRAMS_CHECKOUT" remote get-url origin 2>/dev/null || true)
 if [ "$have" != "$want" ]; then
-  git -C "$CATALOG" remote set-url origin "$want"     || die "could not point $CATALOG at $PROGRAMS_REPO; nothing has been changed" 69
-  say "$CATALOG followed $have and now follows $PROGRAMS_REPO"
+  git -C "$PROGRAMS_CHECKOUT" remote set-url origin "$want"     || die "could not point $PROGRAMS_CHECKOUT at $PROGRAMS_REPO; nothing has been changed" 69
+  say "$PROGRAMS_CHECKOUT followed $have and now follows $PROGRAMS_REPO"
 fi
-branch=$(git -C "$CATALOG" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+branch=$(git -C "$PROGRAMS_CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 [ -n "$branch" ] && [ "$branch" != HEAD ] || branch=master
-GIT_TERMINAL_PROMPT=0 git -C "$CATALOG" fetch --quiet origin "$branch"   || die "could not fetch $PROGRAMS_REPO into $CATALOG, and a program of unknown age is not run; nothing has been changed" 69
-git -C "$CATALOG" reset --quiet --hard FETCH_HEAD   || die "could not bring $CATALOG onto the published head of $branch; nothing has been changed" 69
-good "$CATALOG stands at $(git -C "$CATALOG" rev-parse --short HEAD 2>/dev/null || echo 'an unreadable commit') on $branch"
+GIT_TERMINAL_PROMPT=0 git -C "$PROGRAMS_CHECKOUT" fetch --quiet origin "$branch"   || die "could not fetch $PROGRAMS_REPO into $PROGRAMS_CHECKOUT, and a program of unknown age is not run; nothing has been changed" 69
+git -C "$PROGRAMS_CHECKOUT" reset --quiet --hard FETCH_HEAD   || die "could not bring $PROGRAMS_CHECKOUT onto the published head of $branch; nothing has been changed" 69
+good "$PROGRAMS_CHECKOUT stands at $(git -C "$PROGRAMS_CHECKOUT" rev-parse --short HEAD 2>/dev/null || echo 'an unreadable commit') on $branch"
 
 for program in "${PROGRAMS[@]}"; do
-  [ -r "$CATALOG/ansiwise/programs/$program.yaml" ] \
-    || die "$CATALOG/ansiwise/programs/$program.yaml cannot be read, and it is what states the answers $program takes; nothing has been changed" 66
+  [ -r "$PROGRAMS_CHECKOUT/ansiwise/programs/$program.yaml" ] \
+    || die "$PROGRAMS_CHECKOUT/ansiwise/programs/$program.yaml cannot be read, and it is what states the answers $program takes; nothing has been changed" 66
 done
 command -v python3 >/dev/null 2>&1 \
   || die 'python3 is not on this path, and the answers envelope is composed with it; nothing has been changed' 66
@@ -250,7 +250,7 @@ say "$FQDN, stage $STAGE, regenerated onto $PLATFORM_REF"
 # =============================================================================
 # THE ANSWERS, composed out of the config and the program's own declaration.
 #
-# THE NAMES ARE READ OFF THE PROGRAM ITSELF, out of the catalogue standing on
+# THE NAMES ARE READ OFF THE PROGRAM ITSELF, out of the programs checkout standing on
 # this machine, so nothing here holds a list that could fall behind what the
 # program declares. The config's names are those names in upper case.
 #
@@ -278,7 +278,7 @@ mkdir -p "$ANSWERS_DIR" && chmod 700 "$ANSWERS_DIR" \
 
 for PROGRAM in "${PROGRAMS[@]}"; do
 ANSWERS="$ANSWERS_DIR/$PROGRAM.json"
-COUNTED=$(python3 - "$CONFIG" "$CATALOG/ansiwise/programs/$PROGRAM.yaml" "$ANSWERS" <<'COMPOSE'
+COUNTED=$(python3 - "$CONFIG" "$PROGRAMS_CHECKOUT/ansiwise/programs/$PROGRAM.yaml" "$ANSWERS" <<'COMPOSE'
 import json, re, sys
 
 BESIDE = 'elevation_password'
@@ -369,9 +369,9 @@ for mode in test dry run; do
   #
   # THE PASSWORD REACHES sudo ON STANDARD INPUT and is never an argument, which
   # would stand in this machine's own process listing for anyone on it to read.
-  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$CATALOG" && sudo -S -p '' -u "$OPERATOR" "$ENGINE" "$PROGRAM" \
-      --programs "$CATALOG/ansiwise/programs" \
-      --config "$CATALOG/ansiwise.yaml" \
+  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$PROGRAMS_CHECKOUT" && sudo -S -p '' -u "$OPERATOR" "$ENGINE" "$PROGRAM" \
+      --programs "$PROGRAMS_CHECKOUT/ansiwise/programs" \
+      --config "$PROGRAMS_CHECKOUT/ansiwise.yaml" \
       --answers "$ANSWERS" \
       --runs "$RUNS" \
       --role "$RUN_ROLE" --stage "$STAGE" --fqdn "$FQDN" \

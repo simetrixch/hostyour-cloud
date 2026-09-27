@@ -60,7 +60,7 @@
 # WHAT THIS DOES NOT DO. It does not stamp anything, and it touches no file under
 # clusters/argocd or clusters/bootstrap. The root-app.yaml beside clusters/argocd
 # carries one installation's own domain where this tree carries a placeholder, and
-# writing it is the branch programs' act in the catalogue repository — re-run by
+# writing it is the branch programs' act in the programs repository — re-run by
 # deploy-branch, which regenerate-install-branch.ps1 beside this file performs on
 # the machine, and which is the act a person performs after this one. A second
 # implementation of that stamping beside them would disagree with them the first
@@ -117,7 +117,7 @@ function Stop-Here([string] $Because, [int] $Code = 65) {
 }
 function Say([string] $Line) { [Console]::Out.Write("$Line`n") }
 
-# THE VALUE OF ONE TOP-LEVEL KEY, read the way the catalogue's own step writes
+# THE VALUE OF ONE TOP-LEVEL KEY, read the way the programs checkout's own step writes
 # it: a line beginning at column one with the key and a colon. A key of the same
 # name indented under `global:` is a different key and is deliberately not seen.
 # Surrounding quotes are the notation's and are taken off.
@@ -136,7 +136,7 @@ function Read-FileValue([string] $Path, [string] $Key) {
 }
 
 # THE LINE IS REPLACED WHERE IT STANDS AND APPENDED ONLY WHERE THE FILE HAS NONE,
-# which is the grammar the catalogue's writing step uses. Appending regardless
+# which is the grammar the programs checkout's writing step uses. Appending regardless
 # would leave two lines for one key, and whatever reads them takes one.
 function Write-FileValue([string] $Path, [string] $Key, [string] $Value) {
   $lines = [System.Collections.Generic.List[string]]::new()

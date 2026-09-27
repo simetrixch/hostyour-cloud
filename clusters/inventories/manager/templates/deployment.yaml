@@ -286,7 +286,7 @@ spec:
             # default). UNCONDITIONAL, unlike the MASTER_* block above: those name one
             # machine and stand on an install branch, while these two are the same on
             # every installation this platform ships — the release surface and the
-            # catalogue path are the manager's own code, not an operator's choice.
+            # programs checkout path are the manager's own code, not an operator's choice.
             #
             # The download address carries `<version>` and `<name>` as MARKERS. The
             # placement fills them in from the one pin (clusters/platform/versions.yaml
@@ -298,7 +298,7 @@ spec:
               value: {{ .Values.ansiwise.downloadUrl | quote }}
             # The command that serves the machine's programs over the run's SSH session.
             # It names ansiwise-rest, which is where `serve` lives, and reads the
-            # catalogue checkout the placement writes — both stated in values-common.yaml
+            # programs checkout the placement writes — both stated in values-common.yaml
             # beside the value, because both are facts of the machine rather than of this
             # rendering.
             - name: ANSIWISE_SERVE_COMMAND
@@ -336,7 +336,7 @@ spec:
             # A LITERAL, BECAUSE THE WORD IS THE UNIT'S IDENTITY AND NOT A DEPLOYMENT'S
             # CHOICE. It has to be the same word in three places that already exist: the
             # unit's own manifest (hostyour-manager deploy/platform.yaml `name`), the
-            # body of the request that onboards it (the installation catalogue's
+            # body of the request that onboards it (the installation programs checkout's
             # ansiwise/programs/onboard-manager.yaml sends
             # "consumerName":"hostyour-manager"), and here, which is where the Manager
             # reads it from. A values key would be a fourth spelling of one word, and an

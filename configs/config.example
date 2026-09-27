@@ -52,7 +52,7 @@ DEPLOY_ENV=
 #
 # THIS KEY IS NOT ONE A LATER RUN READS BACK. FIVE values in this file are read back, counted from `conditions:` in
 # ../hostyour-deploy/ansiwise.yaml and from the one row outside it: CLUSTER_ISSUER, the three ENABLE_
-# switches at the foot, and PROGRAMS_REPO, which deploy-platform-services clones the catalogue from
+# switches at the foot, and PROGRAMS_REPO, which deploy-platform-services clones the programs checkout from
 # through `origin_file`. Every one of those five is an INSTALLATION-wide fact — the same word for
 # every machine of the installation — and that is exactly what one file shared by several machines
 # can carry. This key names ONE MACHINE, and a cluster carrying only the slave part reads this file
@@ -110,7 +110,7 @@ BOOKS_CLUSTER=
 BUILD_PLANE_FQDN=
 
 # The repository the DEPLOYMENT PROGRAMS are read from, written as owner/name. It is the platform's
-# own and public, the same for every installation, and the row that clones the catalogue onto this
+# own and public, the same for every installation, and the row that clones the programs checkout onto this
 # machine reads it from HERE and names no credential beside it. This installation's own deploy
 # repository is not in this file: the cluster map records it as `deployRepo`, and one key for both
 # would clone whichever repository the last writer meant.

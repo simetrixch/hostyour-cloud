@@ -37,7 +37,7 @@
 # Every refusal below says that nothing has been changed, because at every one of
 # them nothing has.
 #
-# WHAT ACTUALLY REGENERATES A BRANCH is deploy-branch.yaml in the catalogue
+# WHAT ACTUALLY REGENERATES A BRANCH is deploy-branch.yaml in the programs checkout
 # repository, run by the engine on the machine. This opens ONE session, carries
 # the config over it, and starts regenerate-driver.sh there — the same shape
 # install-machine.ps1 uses to start driver.sh, and for the same
@@ -86,10 +86,10 @@ function Stop-Here([string] $Because, [int] $Code = 65) {
 function Say([string] $Line) { [Console]::Out.Write("$Line`n") }
 
 # THE VALUE OF ONE TOP-LEVEL KEY of the installation's map, read the way the
-# catalogue's own step writes it: a line beginning at column one with the key and
+# programs checkout's own step writes it: a line beginning at column one with the key and
 # a colon. A key of the same name indented under `global:` is a different key and
 # is deliberately not seen. Surrounding quotes are the notation's and are taken
-# off, which is what the catalogue's reading step does too.
+# off, which is what the programs checkout's reading step does too.
 function Read-MapValue([string[]] $Text, [string] $Key) {
   foreach ($line in $Text) {
     if (-not $line.StartsWith("${Key}:")) { continue }
