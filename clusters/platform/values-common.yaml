@@ -276,14 +276,16 @@ global:
   #   - clusters/inventories/consumer-build pipeline-release gate-stage re-verify.
   # It is the INNER pattern only (no ^/$ anchors) so it composes as above (CEL)
   # and as `^<filter>$` (shell / release.ts source).
-  # Numeric segments reject leading zeros (a lone 0 excepted). The other side of
+  # The major and the minor reject leading zeros (a lone 0 excepted); the third
+  # position is written with three digits, leading zeros included (0.3.000), or
+  # as a number without them, the form the tags written before carry. The other side of
   # the grammar is RELEASE_TAG_RE in hostyour-manager/shared/release.ts,
   # imported by hostyour-manager/server/domains/inventory/cluster-marking.ts.
   # `^<filter>$` and that regular expression must stay byte-identical — a change
   # to either is a change to both. Nothing measures that: this repository does
   # not depend on the other, and a check here could only read it where somebody
   # happened to have it cloned.
-  releaseTagFilter: '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(alpha|beta|stable)-([0-9]{14})'
+  releaseTagFilter: '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([0-9]{3}|0|[1-9][0-9]*)-(alpha|beta|stable)-([0-9]{14})'
 
   # ── The pin a stage carries before its first release ───────────────────────
   # WHAT TO WRITE WHEN AN APPLICATION IS ADDED. Every image this platform builds

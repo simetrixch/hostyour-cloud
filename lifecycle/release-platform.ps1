@@ -10,7 +10,7 @@
 #   pwsh ./lifecycle/release-platform.ps1 <x.y.z> <stable|beta|alpha> [fqdn]
 #
 # THE INPUTS, AND THE THIRD IS OPTIONAL
-#   version  — x.y.z, no leading zeros. EVERY RELEASE IS A PATCH BUMP: the first
+#   version  — x.y.z, the third position three digits (0.8.305, 0.3.000). EVERY RELEASE IS A PATCH BUMP: the first
 #              two numbers say what the product is and are the owner's to move.
 #   channel  — the maturity CEILING of the release: alpha may reach a dev
 #              installation only, beta dev and test, stable any. The channel is
@@ -216,8 +216,8 @@ function Pin-Installation([string] $Name) {
 if (-not $Version -or -not $Channel) {
   Stop-Here 'usage: lifecycle/release-platform.ps1 <x.y.z> <stable|beta|alpha> [fqdn]' 64
 }
-if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-  Stop-Here "version must be x.y.z with no leading zeros (got '$Version')" 64
+if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([0-9]{3}|0|[1-9][0-9]*)$') {
+  Stop-Here "version must be x.y.z, the third position three digits such as 000 (got '$Version')" 64
 }
 $admits = ''
 switch ($Channel) {
