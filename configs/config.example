@@ -109,20 +109,11 @@ BOOKS_CLUSTER=
 
 BUILD_PLANE_FQDN=
 
-# The repository holding this installation's TENANT charts and their per-stage pins, written as
-# owner/name. It is your own repository and not this platform's, and no rule composes its name out
-# of anything else here. Something that is not an owner and a name is refused when the map is
-# written, where the generator records the same answer as `deploy-repo`. The same answer is also
-# stamped into the reconciler's tenant generators, in place of the marker the trunk carries for it,
-# which is what points them at your deploy repository. Nothing reads THIS line, so editing it later
-# retargets nothing.
-DEPLOY_REPO=
-
 # The repository the DEPLOYMENT PROGRAMS are read from, written as owner/name. It is the platform's
 # own and public, the same for every installation, and the row that clones the catalogue onto this
-# machine reads it from HERE and names no credential beside it. It is not DEPLOY_REPO above: that
-# one is your tenant charts, private and reached with a read credential, and a single key for both
-# clones whichever repository the last writer meant.
+# machine reads it from HERE and names no credential beside it. This installation's own deploy
+# repository is not in this file: the cluster map records it as `deployRepo`, and one key for both
+# would clone whichever repository the last writer meant.
 PROGRAMS_REPO=
 
 # ── the mailboxes ────────────────────────────────────────────────────────────────────────────────
