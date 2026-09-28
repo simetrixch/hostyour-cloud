@@ -219,9 +219,7 @@ external-secret:
     # ALWAYS ON. The key pair is minted where the store is seeded, at install, before this chart is
     # rendered (hostyour-deploy deploy-platform-services, vault_kv_dkim_key_pair), so every
     # installation holds the property this names. An ExternalSecret has no per-property
-    # optionality — it fails whole when the property is absent — which is why it stood off while
-    # the key had no writer; an installation from before that writer stands Degraded here until
-    # its store is seeded again.
+    # optionality — it fails whole when the property is absent.
     enabled: true
     annotations:
       argocd.argoproj.io/sync-wave: "-1"

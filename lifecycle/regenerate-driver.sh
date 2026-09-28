@@ -18,8 +18,7 @@
 # AND tailnet-record-address AFTER IT, which the installation runs last as well.
 # It records the address this master holds on its private network as
 # `global.apiHost` in its own map, the fact the fence of a mail sender's SMTP
-# entry admits (hostyour-cloud#242). A master installed before that program
-# existed gains it here, and every later regeneration keeps it true. The join
+# entry admits (hostyour-cloud#242). Every regeneration keeps it true. The join
 # itself is not run again: the machine is on its network already, and a join key
 # minted for it would stand unused until it expires.
 #
