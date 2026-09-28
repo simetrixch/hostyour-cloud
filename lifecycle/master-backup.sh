@@ -85,7 +85,9 @@ if [ $? -ne 0 ]; then
     *'Permission denied'*)
       die "$TARGET refuses the operator key. A master carries it, so this is not an installed master — or not the machine $DOOR_HOST names" 69 ;;
     *)
-      die "$TARGET could not be reached: $(printf '%s' "$PROBE" | tr '\n' ' ')" 69 ;;
+      # ssh ends its own lines with \r\n, and a \r left inside the sentence sends a terminal
+      # back to the start of the line, over what was already printed.
+      die "$TARGET could not be reached: $(printf '%s' "$PROBE" | tr -d '\r' | tr '\n' ' ')" 69 ;;
   esac
 fi
 say "backup: $TARGET opens to the operator key; the backup of $FQDN starts"

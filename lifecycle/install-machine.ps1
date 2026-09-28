@@ -43,33 +43,26 @@ $driver = Join-Path $PSScriptRoot 'driver.sh'
 if (-not (Test-Path $driver)) {
   Stop-Here 'driver.sh is not beside this file — it IS the installation, and this only starts it' 66
 }
+$guard = Join-Path $PSScriptRoot 'require-owner-only.ps1'
+if (-not (Test-Path -LiteralPath $guard)) {
+  Stop-Here 'require-owner-only.ps1 is not beside this file — it is the guard every launcher puts on a config' 66
+}
+. $guard
 if (-not (Test-Path $ConfigFile)) {
   Stop-Here "there is no config at $ConfigFile. Copy config.example.env, fill it in, then take every other account off it" 66
 }
 $ConfigFile = (Resolve-Path $ConfigFile).Path
 
 # ------------------------------------------------------ the file, and its guards
-# OWNER-ONLY OR NOTHING. Windows says this with an access list rather than a mode,
-# so the question asked here is the one install-machine.sh asks and only the answer is read
-# differently: which accounts hold rights on it, beyond the owner and the system.
-# require-owner-only.sh beside this file applies the same rule for the bash twin on Windows;
-# a principal admitted here is admitted there in the same change.
-$acl = Get-Acl -Path $ConfigFile
-$owner = $acl.Owner
-$strangers = @($acl.Access | Where-Object {
-  $who = $_.IdentityReference.Value
-  $who -ne $owner -and
-  $who -notmatch '(?i)\\SYSTEM$' -and
-  $who -notmatch '(?i)\\Administrators$'
-} | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
-
-if ($strangers.Count -gt 0) {
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
+# Windows, where a mode says nothing, and the mode everywhere else.
+if (-not (Test-OwnerOnly $ConfigFile)) {
   Stop-Here (@(
-    "$ConfigFile can be read by $($strangers -join ', ') and it carries credentials —"
+    "$ConfigFile $($script:Reach) and it carries credentials —"
     'ten of them, four being tokens with WRITE access to your repositories.'
     'Take every other account off it:'
     ''
-    "  icacls `"$ConfigFile`" /inheritance:r /grant:r `"$($env:USERNAME):(F)`""
+    "  $($script:OwnerOnlyCommand)"
   ) -join [Environment]::NewLine) 77
 }
 

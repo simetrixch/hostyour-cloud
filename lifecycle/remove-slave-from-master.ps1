@@ -143,6 +143,11 @@ $driver = Join-Path $PSScriptRoot 'remove-slave-driver.sh'
 if (-not (Test-Path -LiteralPath $driver)) {
   Stop-Here 'remove-slave-driver.sh is not beside this file. It IS the removal on the machine, and this only starts it' 66
 }
+$guard = Join-Path $PSScriptRoot 'require-owner-only.ps1'
+if (-not (Test-Path -LiteralPath $guard)) {
+  Stop-Here 'require-owner-only.ps1 is not beside this file. It is the guard every launcher puts on a config' 66
+}
+. $guard
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
   Stop-Here 'git is not on this path, and the master keeps its books in git'
@@ -315,22 +320,10 @@ if ($LASTEXITCODE -eq 0) {
   }
 }
 
-# OWNER-ONLY OR NOTHING. Windows says this with an access list rather than a mode,
-# so the question asked here is the one the bash twin asks and only the answer is
-# read differently: which accounts hold rights on it, beyond the owner and the
-# system. require-owner-only.sh beside this file applies the same rule for the
-# bash twin on Windows; a principal admitted here is admitted there in the same
-# change.
-$acl = Get-Acl -Path $ConfigFile
-$owner = $acl.Owner
-$strangers = @($acl.Access | Where-Object {
-  $who = $_.IdentityReference.Value
-  $who -ne $owner -and
-  $who -notmatch '(?i)\\SYSTEM$' -and
-  $who -notmatch '(?i)\\Administrators$'
-} | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
-if ($strangers.Count -gt 0) {
-  Stop-Here "$ConfigFile can be read by $($strangers -join ', ') and it carries credentials, the elevation password of the machine among them. Run: icacls `"$ConfigFile`" /inheritance:r /grant:r `"$($env:USERNAME):(F)`"" 77
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
+# Windows, where a mode says nothing, and the mode everywhere else.
+if (-not (Test-OwnerOnly $ConfigFile)) {
+  Stop-Here "$ConfigFile $($script:Reach) and carries credentials, the elevation password of the machine among them. Run: $($script:OwnerOnlyCommand)" 77
 }
 
 # ------------------------------------------------------------- the machine
