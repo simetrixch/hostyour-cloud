@@ -25,10 +25,10 @@
 #
 # AND AN ANSWER THE PROGRAM WORKS OUT ITSELF IS NOBODY'S TO ANSWER. remove-slave
 # asks slave_cluster_name, the name the slave's map records, which the launcher
-# appends; a programs checkout from before that question works it out of slave_fqdn, and
-# the engine refuses an envelope that carries a derived answer as well. So the
-# composer below reads `derived:` off the declaration and leaves every answer it
-# marks out, and says which ones it left out rather than being silent about them.
+# appends. The engine refuses an envelope that carries an answer the declaration
+# marks `derived:`, so the composer below reads `derived:` off the declaration and
+# leaves every answer it marks out, and says which ones it left out rather than
+# being silent about them.
 #
 # WHAT IT IS TOLD, and it is the only thing that reaches it from outside: the
 # same key=value config file the operator filled in for the MASTER, carried over
