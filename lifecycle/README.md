@@ -18,7 +18,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` / `.ps1` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` / `.ps1` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
-| `master-backup.sh` / `.ps1` | takes a master's stores and Vault's quorum, sealed, to the storage box under `master/<fqdn>/<id>/` |
+| `master-backup.sh` / `.ps1` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
 | `master-restore.sh` / `.ps1` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |
 
@@ -293,7 +293,7 @@ host, `secrets/vault-<stage>.txt`, the file Vault's quorum was written to once. 
 exactly that set: each store is stopped for its own copy and started again with the replicas it had
 (a database copied under a running process is a copy with a write in flight), every archive is
 sealed with `BACKUP_PASSPHRASE` before it leaves, and the whole goes to the storage box under
-`master/<fqdn>/<id>/` with a manifest of checksums. The Manager is among the stores stopped, so a run
+`<fqdn>/master/<id>/` with a manifest of checksums. The Manager is among the stores stopped, so a run
 in flight when the backup starts is a run it interrupts: start it at a quiet hour.
 
 ## The identity is the name, and the name is a CNAME

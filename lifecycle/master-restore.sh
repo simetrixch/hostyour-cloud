@@ -93,7 +93,9 @@ else
       DOOR=(-o BatchMode=no -o NumberOfPasswordPrompts=1)
       say "restore: $TARGET carries no operator key yet, so ssh asks for the login password ONCE, on this terminal. It is not read from the config and it is not kept" ;;
     *)
-      die "$TARGET could not be reached: $(printf '%s' "$PROBE" | tr '\n' ' ')" 69 ;;
+      # ssh ends its own lines with \r\n, and a \r left inside the sentence sends a terminal
+      # back to the start of the line, over what was already printed.
+      die "$TARGET could not be reached: $(printf '%s' "$PROBE" | tr -d '\r' | tr '\n' ' ')" 69 ;;
   esac
 fi
 

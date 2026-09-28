@@ -1180,12 +1180,81 @@ spec:
                 # books clone above and pushed in the ONE commit with the
                 # class-(b) pins. A registration with the empty pair, or with
                 # neither key, mounts no bundle and is never written.
+                #
+                # THE BUNDLE AND THE ENGINES HAVE TO BE OF ONE LINE. A bundle is
+                # written against the engine's app contract, whose breaking change
+                # starts a new minor line, and it says which build it runs on and
+                # of which line in its apps.yaml (`engine`, hostyour-manager
+                # server/domains/units/engine-line.ts, where the Manager's plans
+                # ask the same question). A tenant is moved onto this bundle only
+                # where every version of that build it runs is of that line;
+                # otherwise the run fails before anything is committed, so no
+                # registration moves. A bundle declaring no engine moves as before.
+                #
+                # THE ENGINE IS READ THE WAY THE MANAGER READS IT (hostyour-manager
+                # shared/apps-manifest.ts, AppsEngineSchema): build a quoted name
+                # of lowercase letters, digits and dashes, line a quoted x.y, both
+                # or neither. An unquoted 0.10 is the number 0.1 to the Manager,
+                # which refuses it, and so is `engine: null`, which is an engine
+                # key with no value and not an absent one. An apps.yaml yq cannot
+                # read, or an engine the
+                # Manager would refuse, fails the run: a bundle whose engine
+                # cannot be read is not one that declares none. The apps.yaml is
+                # the tenant's own, so the build reaches yq as an environment
+                # variable and never as text of the expression, where a value
+                # could run yq's load() over a file this step can read.
+                bundle_engine() { # apps.yaml -> BUNDLE_ENGINE_BUILD and BUNDLE_ENGINE_LINE, "" for no engine; 1 with ENGINE_REFUSAL
+                  local engine_tag build_shape='^[a-z0-9-]+$' line_shape='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+                  BUNDLE_ENGINE_BUILD=''
+                  BUNDLE_ENGINE_LINE=''
+                  ENGINE_REFUSAL=''
+                  [ -f "$1" ] || return 0
+                  if ! engine_tag="$(yq eval '.engine | tag' "$1" 2>&1)"; then
+                    ENGINE_REFUSAL="$1 cannot be read: $(printf '%s' "${engine_tag}" | tr '\n' ' ')"
+                    return 1
+                  fi
+                  if [ "${engine_tag}" = '!!null' ] && [ "$(yq eval 'tag == "!!map" and has("engine")' "$1")" = false ]; then
+                    return 0
+                  fi
+                  if [ "${engine_tag}" = '!!map' ]; then
+                    BUNDLE_ENGINE_BUILD="$(yq eval '.engine.build // ""' "$1")"
+                    BUNDLE_ENGINE_LINE="$(yq eval '.engine.line // ""' "$1")"
+                    if [ "$(yq eval '.engine.build | tag' "$1")" = '!!str' ] && [[ "${BUNDLE_ENGINE_BUILD}" =~ ${build_shape} ]] \
+                      && [ "$(yq eval '.engine.line | tag' "$1")" = '!!str' ] && [[ "${BUNDLE_ENGINE_LINE}" =~ ${line_shape} ]]; then
+                      return 0
+                    fi
+                  fi
+                  BUNDLE_ENGINE_BUILD=''
+                  BUNDLE_ENGINE_LINE=''
+                  ENGINE_REFUSAL="$1 declares an engine the Manager cannot read: engine needs build, a quoted name of lowercase letters, digits and dashes, and line, a quoted x.y such as \"0.3\""
+                  return 1
+                }
+                engine_line_off() { # build, line, registration -> the versions of the build off the line, joined with ", "
+                  BUILD="$1" yq eval '.approvedTags[] | .[env(BUILD)] // ""' "$3" \
+                    | awk -v line="$2" 'NF { split($0, v, "-"); split(v[1], n, "."); if (n[1] "." n[2] != line) { printf "%s%s", sep, $0; sep = ", " } }'
+                }
+                BUNDLE_ENGINE_BUILD=''
+                if [ -n "${APPS_BUNDLE}" ]; then
+                  if ! bundle_engine "${SRC}/apps.yaml"; then
+                    echo "bump: FAIL — ${ENGINE_REFUSAL}. Which engine the bundle ${APPS_BUNDLE} is written for is unknown, so no registration is written" >&2
+                    exit 1
+                  fi
+                  [ -n "${BUNDLE_ENGINE_BUILD}" ] \
+                    || echo "bump: ${SRC}/apps.yaml declares no engine, so whether the bundle ${APPS_BUNDLE} fits the engines of the tenants it moves is not checked"
+                fi
                 for reg in "${TENANT_REGS}"/*/"${STAGE}.yaml"; do
                   [ -f "${reg}" ] || continue
                   rimage="$(yq eval '.appsImage // ""' "${reg}")"
                   [ -n "${rimage}" ] || continue
                   for P in ${IMAGES}; do
                     [ "${rimage}" = "${P}" ] || continue
+                    if [ -n "${BUNDLE_ENGINE_BUILD}" ]; then
+                      off="$(engine_line_off "${BUNDLE_ENGINE_BUILD}" "${BUNDLE_ENGINE_LINE}" "${reg}")"
+                      if [ -n "${off}" ]; then
+                        echo "bump: FAIL — ${P}:${IMAGE_TAG} is written for ${BUNDLE_ENGINE_BUILD} ${BUNDLE_ENGINE_LINE} (${SRC}/apps.yaml engine), and tenant $(basename "$(dirname "${reg}")") runs ${BUNDLE_ENGINE_BUILD} ${off}, of another line. No registration is written. A bundle and an engine on different lines are refused; moving a tenant to a new line needs its bundle and its engines to move together, which nothing does yet" >&2
+                        exit 1
+                      fi
+                    fi
                     yq eval -i ".appsImageTag = \"${IMAGE_TAG}\"" "${reg}"
                     HIT_COUNT[$P]=$(( ${HIT_COUNT[$P]} + 1 ))
                     BUNDLE_HIT_COUNT[$P]=$(( ${BUNDLE_HIT_COUNT[$P]} + 1 ))

@@ -30,6 +30,11 @@ $driver = Join-Path $PSScriptRoot 'master-backup-driver.sh'
 if (-not (Test-Path -LiteralPath $driver)) {
   Stop-Here 'master-backup-driver.sh is not beside this file. It IS the backup on the machine, and this only starts it' 66
 }
+$guard = Join-Path $PSScriptRoot 'require-owner-only.ps1'
+if (-not (Test-Path -LiteralPath $guard)) {
+  Stop-Here 'require-owner-only.ps1 is not beside this file. It is the guard every launcher puts on a config' 66
+}
+. $guard
 if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
   Stop-Here 'ssh is not on this path, and the backup is one session to the machine'
 }
@@ -39,16 +44,8 @@ if (-not (Test-Path -LiteralPath $ConfigFile)) {
 # THE PATH IS PRINTED AS IT WAS GIVEN, so both spellings say the same file the same way; the
 # resolved one is for the checks, which need a real path.
 $resolvedConfig = (Resolve-Path -LiteralPath $ConfigFile).Path
-$acl = Get-Acl -Path $resolvedConfig
-$owner = $acl.Owner
-$strangers = @($acl.Access | Where-Object {
-  $who = $_.IdentityReference.Value
-  $who -ne $owner -and
-  $who -notmatch '(?i)\\SYSTEM$' -and
-  $who -notmatch '(?i)\\Administrators$'
-} | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
-if ($strangers.Count -gt 0) {
-  Stop-Here "$ConfigFile can be read by $($strangers -join ', ') and it carries credentials, the elevation password of the machine among them. Run: icacls `"$ConfigFile`" /inheritance:r /grant:r `"$($env:USERNAME):(F)`"" 77
+if (-not (Test-OwnerOnly $ConfigFile)) {
+  Stop-Here "$ConfigFile $($script:Reach) and carries credentials, the elevation password of the machine among them. Run: $($script:OwnerOnlyCommand)" 77
 }
 $configDir = Split-Path -Parent $resolvedConfig
 git -C $configDir rev-parse --show-toplevel *> $null

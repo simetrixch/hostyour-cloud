@@ -99,6 +99,11 @@ if (-not (Get-Command curl -CommandType Application -ErrorAction SilentlyContinu
 # THE PROGRAM AND NOT AN ALIAS: an older PowerShell spells a web request `curl`,
 # and what this needs is the program the bash twin runs.
 $curl = @(Get-Command curl -CommandType Application)[0].Source
+$guard = Join-Path $PSScriptRoot 'require-owner-only.ps1'
+if (-not (Test-Path -LiteralPath $guard)) {
+  Stop-Here 'require-owner-only.ps1 is not beside this file. It is the guard every launcher puts on a config' 66
+}
+. $guard
 if (-not (Test-Path -LiteralPath $ConfigFile)) {
   Stop-Here "there is no config at $ConfigFile. It is the installation's own, the one install-machine is given: name it as the first argument" 66
 }
@@ -129,37 +134,6 @@ function Write-ConfigValue([string] $Key, [string] $Value) {
   }
   if (-not $found) { $lines.Add("${Key}='$Value'") }
   [System.IO.File]::WriteAllText($configPath, (($lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
-}
-# OWNER-ONLY OR NOTHING. Windows says this with an access list rather than a mode,
-# so the question asked here is the one require-owner-only.sh asks for the bash
-# twin and only the answer is read differently: which accounts hold rights on
-# it, beyond the owner and the system. A principal admitted here is admitted
-# there in the same change. Everywhere else the answer is the mode, 600 or 400.
-$script:Reach = ''
-$script:OwnerOnlyCommand = ''
-function Test-OwnerOnly {
-  $script:Reach = ''
-  $script:OwnerOnlyCommand = ''
-  if ($IsWindows) {
-    $acl = Get-Acl -Path $configPath
-    $owner = $acl.Owner
-    $strangers = @($acl.Access | Where-Object {
-      $who = $_.IdentityReference.Value
-      $who -ne $owner -and
-      $who -notmatch '(?i)\\SYSTEM$' -and
-      $who -notmatch '(?i)\\Administrators$'
-    } | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
-    $script:OwnerOnlyCommand = "icacls `"$configPath`" /inheritance:r /grant:r `"$($env:USERNAME):(F)`""
-    if ($strangers.Count -eq 0) { return $true }
-    $script:Reach = "can be read by $($strangers -join ', ')"
-    return $false
-  }
-  $mode = & stat -c '%a' $configPath 2>$null
-  if ($LASTEXITCODE -ne 0) { $mode = & stat -f '%Lp' $configPath 2>$null }
-  if ($mode -eq '600' -or $mode -eq '400') { return $true }
-  $script:Reach = "is mode $mode"
-  $script:OwnerOnlyCommand = "chmod 600 $ConfigFile"
-  return $false
 }
 # THE BROWSER IS $env:BROWSER WHERE IT IS SET, the way gh reads it, and the
 # platform's own opener otherwise. Each returns once the browser was asked, and
@@ -224,7 +198,7 @@ $homepage = "https://manager.$unitApex"
 
 # ================================================================= GUARD
 # ASKED BEFORE THE BROWSER OPENS: the private key lands in this file.
-if (-not (Test-OwnerOnly)) {
+if (-not (Test-OwnerOnly $ConfigFile)) {
   Stop-Here "$ConfigFile $($script:Reach) and is where the App's private key lands. Run: $($script:OwnerOnlyCommand). Nothing has been changed" 77
 }
 
@@ -407,7 +381,7 @@ try {
     # ================================================================= WRITE
     Write-ConfigValue 'GITHUB_APP_ID' $appId
     Write-ConfigValue 'GITHUB_APP_PRIVATE_KEY' $pemJson
-    if (-not (Test-OwnerOnly)) {
+    if (-not (Test-OwnerOnly $ConfigFile)) {
       Stop-Here "$ConfigFile $($script:Reach) now that it carries the App's private key. Run: $($script:OwnerOnlyCommand)" 77
     }
     Say "create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into $ConfigFile in place"
@@ -478,7 +452,7 @@ try {
 
   # ================================================================= WRITE
   Write-ConfigValue 'GITHUB_APP_INSTALLATION_ID' $installationId
-  if (-not (Test-OwnerOnly)) {
+  if (-not (Test-OwnerOnly $ConfigFile)) {
     Stop-Here "$ConfigFile $($script:Reach) now that it carries the App's private key. Run: $($script:OwnerOnlyCommand)" 77
   }
   Say "create-github-app: GITHUB_APP_INSTALLATION_ID written into $ConfigFile in place"

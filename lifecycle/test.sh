@@ -64,14 +64,18 @@
 # remove-slave-from-master refuses on: a fixture cannot make a machine listen on
 # port 22, so what is measured is the other verdict, that the slave is gone.
 #
-# THE OWNER-ONLY GUARD ON A CONFIG is measured on the bash spelling alone, in
-# section FOUR: Windows states a file's reach as an access list and every other
-# system as a mode, and require-owner-only.sh reads whichever the platform it
-# runs on keeps. Its cases are driven with icacls, cygpath, stat and uname stood
-# in for by stubs, so they run and answer the same on every platform, and once
-# with the real tools, after a release has rewritten a config in place. The
-# PowerShell spelling's Get-Acl is not driven, because a fixture cannot make it
-# answer on a system that keeps no access lists. The guard beside it — a config
+# THE OWNER-ONLY GUARD ON A CONFIG is written twice, require-owner-only.sh and
+# require-owner-only.ps1, and each launcher sources the guard of its own
+# spelling. Windows states a file's reach as an access list and every other
+# system as a mode, and each guard reads whichever the platform it runs on
+# keeps. The bash guard's cases are driven in section FOUR with icacls, cygpath,
+# stat and uname stood in for by stubs, so they run and answer the same on every
+# platform, and once with the real tools, after a release has rewritten a config
+# in place. Off Windows, a config of mode 644 is refused by both spellings of the
+# regeneration, the backup and the restore, and the two refusals are compared.
+# The PowerShell guard's reading of an access list is not driven: a fixture
+# cannot make Get-Acl answer on a system that keeps no access lists, and no case
+# here grants a stranger a right on Windows. The guard beside it — a config
 # standing in a git working tree that does not ignore it — is refused in the SAME
 # words by both, and that is the one the removal's fixture config trips, which is
 # what lets a case run all the way to the slave being asked whether it answers.
@@ -484,8 +488,11 @@ same 'a domain with no install branch, now that the third argument is optional'
 # asked again with the same real tools. The config is named after no
 # installation, so no regeneration is started over a session, and the release
 # names apps4, whose pin no case below reads back.
+# A FILE'S REACH IS ITS MODE everywhere but Windows, where the mode says nothing
+# and the access list answers.
+reach_is_a_mode() { [ -z "${MSYSTEM:-}" ] && [ "$(uname -o 2>/dev/null)" != 'Msys' ]; }
 make_owner_only() { # a file -> nobody but the owner reaches it, in this platform's own words
-  if [ -n "${MSYSTEM:-}" ] || [ "$(uname -o 2>/dev/null)" = 'Msys' ]; then
+  if ! reach_is_a_mode; then
     icacls "$(cygpath -aw "$1")" /inheritance:r /grant:r "$USERNAME:(F)" >/dev/null
   else
     chmod 600 "$1"
@@ -601,6 +608,21 @@ must "regenerate: apps3.example.invalid carries role master in clusters/active/a
 must "there is no config at" 'a run with no config to state the installation is refused'
 [ "$A_CODE" = '66' ] || fail "a missing config must end with 66, got $A_CODE"
 same 'the pin read off the branch, and a missing config'
+
+# A CONFIG OTHERS CAN READ is refused by the guard each spelling sources, before
+# anything is read out of it. Off Windows the answer is the mode, which a fixture
+# sets with chmod, so both guards are measured on the same file here.
+if reach_is_a_mode; then
+  REACHABLE="$WORK/config.reachable.env"
+  printf "FQDN='apps3.example.invalid'\n" > "$REACHABLE"
+  chmod 644 "$REACHABLE"
+  run_bash regenerate-install-branch apps3.example.invalid "$REACHABLE"
+  run_pwsh regenerate-install-branch apps3.example.invalid "$REACHABLE"
+  must "regenerate: $REACHABLE is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 $REACHABLE. Nothing has been changed" \
+    'a config others can read is refused with its mode and the command that closes it'
+  [ "$A_CODE" = '77' ] || fail "a config others can read must end with 77, got $A_CODE"
+  same 'a config of mode 644'
+fi
 
 # THE ROLE IS THE MAP'S AND NOT THE CONFIG'S, AND THE RETIRED WORD IS A MASTER. apps4's
 # branch states master+slave, written before hostyour-cloud#232; the regeneration names it,
@@ -1796,6 +1818,12 @@ MNOBOX="$MASTER/config.nobox.env"
 grep -v '^STORAGE_BOX_USER=' "$MCFG" > "$MNOBOX"
 make_owner_only "$MNOBOX"
 MNOCONFIG="$MASTER/there-is-no-config.env"
+# A config others can read, by its mode: off Windows alone, where the mode is the answer.
+MREACH="$MASTER/config.reach.env"
+if reach_is_a_mode; then
+  cp "$MCFG" "$MREACH"
+  chmod 644 "$MREACH"
+fi
 
 run_master_bash() { # script base name, then its arguments
   local base="$1"; shift
@@ -1827,6 +1855,15 @@ for act in master-backup master-restore; do
   must "states no BACKUP_PASSPHRASE" "$act: a config without the passphrase is refused"
   [ "$A_CODE" = '65' ] || fail "$act: a config without the passphrase must end with 65, got $A_CODE"
   same "$act: a config without the passphrase"
+
+  if reach_is_a_mode; then
+    run_master_bash "$act" "$MREACH"
+    run_master_pwsh "$act" "$MREACH"
+    must "$MREACH is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 $MREACH. Nothing has been changed" \
+      "$act: a config others can read is refused with its mode and the command that closes it"
+    [ "$A_CODE" = '77' ] || fail "$act: a config others can read must end with 77, got $A_CODE"
+    same "$act: a config of mode 644"
+  fi
 
   run_master_bash "$act" "$MNOBOX"
   run_master_pwsh "$act" "$MNOBOX"
@@ -1877,6 +1914,18 @@ diff -u "$OUT/stores-backup" "$OUT/stores-restore" \
   || fail 'the two drivers name different stores — a store taken by one and unknown to the other is backed up and never placed'
 ok "the two drivers name the same $(wc -l < "$OUT/stores-backup" | tr -d ' ') stores, in the same order"
 
+# ── one folder in both drivers ───────────────────────────────────────────────
+# A backup written where the restore does not look never comes back, so both drivers name the
+# installation's machine-backup folder in one identical line, and neither names the old one.
+folder_of() { grep -E '^BACKUPS=' "$1"; }
+[ "$(folder_of "$HERE/master-backup-driver.sh")" = 'BACKUPS="box:$FQDN/master"' ] \
+  || fail 'the backup driver does not write under box:$FQDN/master, the folder of the installation'
+[ "$(folder_of "$HERE/master-backup-driver.sh")" = "$(folder_of "$HERE/master-restore-driver.sh")" ] \
+  || fail 'the two drivers name different folders — a backup written where the restore does not look never comes back'
+! grep -n 'box:master/' "$HERE/master-backup-driver.sh" "$HERE/master-restore-driver.sh" \
+  || fail 'a driver still names the old folder box:master/'
+ok 'the two drivers write and read one folder, box:$FQDN/master'
+
 # ── the planted defects for this pair ────────────────────────────────────────
 for act in master-backup master-restore; do
   PLANTED_M="$MASTER/planted-$act.sh"
@@ -1894,8 +1943,31 @@ for act in master-backup master-restore; do
   ok "the planted defect was caught — the comparison of the $act pair can go red"
 done
 
+# ── the planted defect for the guard the PowerShell spelling sources ────────
+# A copy of master-backup.ps1 beside a guard with one word changed: the refusal
+# must carry the changed word, which proves the launcher reads the guard beside
+# itself, and must compare unequal to the bash spelling's.
+if reach_is_a_mode; then
+  mkdir -p "$MASTER/planted-guard"
+  cp "$HERE/master-backup.ps1" "$HERE/master-backup-driver.sh" "$MASTER/planted-guard/"
+  sed 's/is mode /has mode /' "$HERE/require-owner-only.ps1" > "$MASTER/planted-guard/require-owner-only.ps1"
+  grep -q 'has mode ' "$MASTER/planted-guard/require-owner-only.ps1" \
+    || fail 'the planted line was not planted in require-owner-only.ps1 — the probe proves nothing'
+  run_master_bash master-backup "$MREACH"
+  B_CODE=0
+  ( cd "$MASTER" && "$PWSH" -NoProfile -NoLogo -File "$MASTER/planted-guard/master-backup.ps1" "$MREACH" ) \
+    > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
+  grep -q "$MREACH has mode 644" "$OUT/b.err" \
+    || fail 'the launcher beside the planted guard printed no planted mode line — it does not read the guard beside itself'
+  normalise < "$OUT/a.err" > "$OUT/a.err.n"; normalise < "$OUT/b.err" > "$OUT/b.err.n"
+  if diff -q "$OUT/a.err.n" "$OUT/b.err.n" >/dev/null; then
+    fail 'a guard with one word changed compared EQUAL to the bash spelling — the comparison of a config of mode 644 proves nothing'
+  fi
+  ok 'the planted defect was caught — the comparison of the guard each spelling sources can go red'
+fi
+
 echo "test: GREEN — every case above was measured on both spellings and answered identically,"
-echo "test:   and the owner-only guard on the bash spelling alone."
+echo "test:   but the stubbed cases of the owner-only guard, on the bash spelling alone."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
@@ -1925,9 +1997,14 @@ echo "test:   run after it that installs alone; the refusals a master backup and
 echo "test:   make before they open a session, the door each composes from MACHINE_HOST and not"
 echo "test:   from the identity, the id a restore refuses, and the one list of stores both drivers"
 echo "test:   carry. Seven planted defects prove the comparison can go red."
+if reach_is_a_mode; then
+  echo "test: covered off Windows — a config of mode 644, refused in one sentence by both"
+  echo "test:   spellings of the regeneration, the backup and the restore, and an eighth planted"
+  echo "test:   defect in the PowerShell guard that proves this comparison can go red."
+fi
 echo "test: not covered — an authenticated remote, two workstations minting at one moment, the"
 echo "test:   regeneration and the removal themselves on a machine, a slave that is still"
-echo "test:   answering, the PowerShell spelling's own refusal of a readable config, a branch"
+echo "test:   answering, the PowerShell guard's reading of an access list, a branch"
 echo "test:   deletion a remote refuses (a directory origin refuses none), a DNS provider"
 echo "test:   that fails in the middle of the abandonment, GitHub's own answers to a manifest"
 echo "test:   and a real browser, the two ten-minute bounds of the GitHub App act, and the backup"

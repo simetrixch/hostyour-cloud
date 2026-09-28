@@ -10,7 +10,7 @@
 # Vault's quorum was written to once, secrets/vault-<stage>.txt. Lose the machine and every one of
 # them is gone; the install branch, the registrations and the deploy repository on origin describe an
 # installation that can no longer be opened. This takes that set, sealed with BACKUP_PASSPHRASE, to
-# the storage box under master/<fqdn>/<id>/, and master-restore brings it back onto a bare machine.
+# the storage box under <fqdn>/master/<id>/, and master-restore brings it back onto a bare machine.
 #
 # ONE SESSION, THE CONFIG AHEAD OF THE DRIVER. master-backup-driver.sh is the backup itself and runs
 # on the machine; this only opens the session and carries it over, the config inside a quoted
@@ -85,7 +85,9 @@ if [ $? -ne 0 ]; then
     *'Permission denied'*)
       die "$TARGET refuses the operator key. A master carries it, so this is not an installed master — or not the machine $DOOR_HOST names" 69 ;;
     *)
-      die "$TARGET could not be reached: $(printf '%s' "$PROBE" | tr '\n' ' ')" 69 ;;
+      # ssh ends its own lines with \r\n, and a \r left inside the sentence sends a terminal
+      # back to the start of the line, over what was already printed.
+      die "$TARGET could not be reached: $(printf '%s' "$PROBE" | tr -d '\r' | tr '\n' ' ')" 69 ;;
   esac
 fi
 say "backup: $TARGET opens to the operator key; the backup of $FQDN starts"
