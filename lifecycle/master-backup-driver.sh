@@ -25,10 +25,12 @@
 # none of it. The passphrase reaches this machine on the session's standard input, is read into the
 # environment and never lands in a file.
 #
-# WHERE IT GOES. box:master/<fqdn>/<id>/ on the storage box, through the same rclone remote the
-# Manager's relocations use (hostyour-manager relocation-jobs.ts BOX_REMOTE), one directory per
-# backup, named by the moment it was taken, with a manifest of checksums beside the archives. The
-# last line this prints is that id, which is what master-restore asks for.
+# WHERE IT GOES. box:<fqdn>/master/<id>/ on the storage box. Everything of one installation lives
+# under its FQDN: the unit backups the Manager writes stand beside this, under box:<fqdn>/<stage>/.
+# It goes through the same rclone remote the Manager's relocations use (hostyour-manager
+# relocation-jobs.ts BOX_REMOTE), one directory per backup, named by the moment it was taken, with a
+# manifest of checksums beside the archives. The last line this prints is that id, which is what
+# master-restore asks for.
 # ===========================================================================
 set -uo pipefail
 
@@ -95,6 +97,7 @@ rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does n
 good "the storage box $STORAGE_BOX_HOST opens"
 
 ID="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUPS="box:$FQDN/master"
 WORK="/var/lib/master-backup/$ID"
 root install -d -m 700 -o root -g root /var/lib/master-backup "$WORK" || die "could not make $WORK" 78
 seal() { # a file on stdin, sealed to $1 as root
@@ -139,10 +142,10 @@ step "the manifest, and the way out"
 RELEASE=$(grep -E '^release:' "/srv/hostyour-cloud/clusters/active/${FQDN}.yaml" 2>/dev/null | head -1 | sed 's/^release:[[:space:]]*//' | tr -d '"'"'")
 root sh -c "cd '$WORK' && { printf 'FQDN=%s\nSTAGE=%s\nID=%s\nRELEASE=%s\nSTORES=%s\n' '$FQDN' '$STAGE' '$ID' '$RELEASE' '$TAKEN'; sha256sum *.gpg; } > manifest.txt" || die 'the manifest could not be written' 70
 say "release on this machine: ${RELEASE:-unknown}"
-rclone copy "$WORK" "box:master/$FQDN/$ID/" --quiet || die "the archives could not be carried to box:master/$FQDN/$ID/ — they stand in $WORK on this machine" 69
-LISTED=$(rclone lsf "box:master/$FQDN/$ID/" 2>/dev/null | wc -l | tr -d ' ')
+rclone copy "$WORK" "$BACKUPS/$ID/" --quiet || die "the archives could not be carried to $BACKUPS/$ID/ — they stand in $WORK on this machine" 69
+LISTED=$(rclone lsf "$BACKUPS/$ID/" 2>/dev/null | wc -l | tr -d ' ')
 EXPECTED=$(( TAKEN + 2 ))
-[ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under master/$FQDN/$ID/ and $EXPECTED were sent" 69
+[ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under $BACKUPS/$ID/ and $EXPECTED were sent" 69
 root rm -rf "$WORK"
-good "$LISTED file(s) stand under box:master/$FQDN/$ID/ — $TAKEN store(s), the quorum, the manifest; nothing of it is left on this machine"
+good "$LISTED file(s) stand under $BACKUPS/$ID/ — $TAKEN store(s), the quorum, the manifest; nothing of it is left on this machine"
 printf 'BACKUP %s\n' "$ID"

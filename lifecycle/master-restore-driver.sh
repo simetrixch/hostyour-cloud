@@ -105,22 +105,23 @@ RCLONE_CONFIG_BOX_PASS="$(rclone obscure "$STORAGE_BOX_PASSWORD")"; export RCLON
 rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was placed" 69
 good "the storage box $STORAGE_BOX_HOST opens"
 
+BACKUPS="box:$FQDN/master"
 if [ -z "$ID" ]; then
   step "the backups the storage box holds for $FQDN"
-  LIST=$(rclone lsf "box:master/$FQDN/" --dirs-only 2>/dev/null | tr -d / | sort)
-  [ -n "$LIST" ] || die "the storage box holds no backup under master/$FQDN/ — master-backup is what puts one there" 66
+  LIST=$(rclone lsf "$BACKUPS/" --dirs-only 2>/dev/null | tr -d / | sort)
+  [ -n "$LIST" ] || die "the storage box holds no backup under $BACKUPS/ — master-backup is what puts one there" 66
   printf '%s\n' "$LIST" | sed 's/^/     /'
   die 'name one of them as the second argument of master-restore; the newest is last' 64
 fi
 
 step "the backup $ID, fetched and checked"
-rclone lsf "box:master/$FQDN/$ID/manifest.txt" >/dev/null 2>&1 \
-  || die "the storage box holds no backup $ID under master/$FQDN/ — run master-restore without an id to see the ones it holds" 66
+rclone lsf "$BACKUPS/$ID/manifest.txt" >/dev/null 2>&1 \
+  || die "the storage box holds no backup $ID under $BACKUPS/ — run master-restore without an id to see the ones it holds" 66
 root install -d -m 700 -o root -g root "$STAGING" "$STAGING/$ID" || die "could not make $STAGING/$ID" 78
 FETCH="$STAGING/$ID/sealed"
 root install -d -m 700 "$FETCH"
 root env RCLONE_CONFIG_BOX_TYPE="$RCLONE_CONFIG_BOX_TYPE" RCLONE_CONFIG_BOX_HOST="$RCLONE_CONFIG_BOX_HOST" RCLONE_CONFIG_BOX_USER="$RCLONE_CONFIG_BOX_USER" RCLONE_CONFIG_BOX_PASS="$RCLONE_CONFIG_BOX_PASS" \
-  rclone copy "box:master/$FQDN/$ID/" "$FETCH/" --quiet || die "the backup $ID could not be fetched" 69
+  rclone copy "$BACKUPS/$ID/" "$FETCH/" --quiet || die "the backup $ID could not be fetched" 69
 root sh -c "cd '$FETCH' && grep -E '^[0-9a-f]{64}  ' manifest.txt | sha256sum -c --quiet" \
   || die "the checksums in manifest.txt of backup $ID do not hold — the archives are not what was written, and nothing of them is placed" 65
 BACKED_FQDN=$(root grep -E '^FQDN=' "$FETCH/manifest.txt" | cut -d= -f2-)

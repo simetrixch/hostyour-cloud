@@ -1877,6 +1877,18 @@ diff -u "$OUT/stores-backup" "$OUT/stores-restore" \
   || fail 'the two drivers name different stores — a store taken by one and unknown to the other is backed up and never placed'
 ok "the two drivers name the same $(wc -l < "$OUT/stores-backup" | tr -d ' ') stores, in the same order"
 
+# ── one folder in both drivers ───────────────────────────────────────────────
+# A backup written where the restore does not look never comes back, so both drivers name the
+# installation's machine-backup folder in one identical line, and neither names the old one.
+folder_of() { grep -E '^BACKUPS=' "$1"; }
+[ "$(folder_of "$HERE/master-backup-driver.sh")" = 'BACKUPS="box:$FQDN/master"' ] \
+  || fail 'the backup driver does not write under box:$FQDN/master, the folder of the installation'
+[ "$(folder_of "$HERE/master-backup-driver.sh")" = "$(folder_of "$HERE/master-restore-driver.sh")" ] \
+  || fail 'the two drivers name different folders — a backup written where the restore does not look never comes back'
+! grep -n 'box:master/' "$HERE/master-backup-driver.sh" "$HERE/master-restore-driver.sh" \
+  || fail 'a driver still names the old folder box:master/'
+ok 'the two drivers write and read one folder, box:$FQDN/master'
+
 # ── the planted defects for this pair ────────────────────────────────────────
 for act in master-backup master-restore; do
   PLANTED_M="$MASTER/planted-$act.sh"
