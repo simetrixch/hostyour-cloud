@@ -45,7 +45,9 @@ CODE=0; bundle_engine "$apps" || CODE=$?
 engine_of $'apps:\n  - { name: erp }\n'
 [ "$CODE" = 0 ] && [ -z "$BUNDLE_ENGINE_BUILD" ] && [ -z "$BUNDLE_ENGINE_LINE" ] \
   || fail "an apps.yaml without engine was taken for one with an engine, or refused (exit $CODE: $ENGINE_REFUSAL)"
-ok "a release without apps.yaml, and an apps.yaml without engine, declare no engine and are not refused"
+engine_of ''
+[ "$CODE" = 0 ] && [ -z "$BUNDLE_ENGINE_BUILD" ] || fail "an empty apps.yaml was taken for one with an engine, or refused (exit $CODE: $ENGINE_REFUSAL)"
+ok "a release without apps.yaml, an empty apps.yaml and one without engine declare no engine and are not refused"
 
 engine_of $'engine:\n  build: digita-engine\n  line: "0.3"\n'
 [ "$CODE" = 0 ] && [ "$BUNDLE_ENGINE_BUILD" = digita-engine ] && [ "$BUNDLE_ENGINE_LINE" = 0.3 ] \
@@ -64,8 +66,11 @@ refused 'a build without a line' $'engine:\n  build: digita-engine\n' 'declares 
 refused 'a line without a build' $'engine:\n  line: "0.3"\n' 'declares an engine the Manager cannot read'
 refused 'a build of other characters' $'engine:\n  build: \'x"] | [load("/etc/hostname")] | .[0] // ["\'\n  line: "0.3"\n' 'lowercase letters, digits and dashes'
 refused 'an engine that is no map' $'engine: digita-engine\n' 'declares an engine the Manager cannot read'
-refused 'an apps.yaml yq cannot read' $'engine: [digita-engine\n' 'cannot be read as YAML'
-ok "an unquoted line, a half-declared engine, a build of other characters, an engine that is no map and an unreadable apps.yaml are refused by name"
+refused 'an engine key with no value' $'engine: null\n' 'declares an engine the Manager cannot read'
+refused 'an engine key written ~' $'engine: ~\n' 'declares an engine the Manager cannot read'
+refused 'an apps.yaml yq cannot parse' $'engine: [digita-engine\n' 'cannot be read:'
+refused 'an apps.yaml that is a list' $'- erp\n' 'cannot be read:'
+ok "an unquoted line, a half-declared engine, a build of other characters, an engine that is no map or null, and an apps.yaml yq cannot read are refused by name"
 
 # ── engine_line_off: the versions of the build a registration holds off the line ──
 reg="$work/registration.yaml"

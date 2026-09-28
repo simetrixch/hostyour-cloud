@@ -1195,7 +1195,9 @@ spec:
                 # shared/apps-manifest.ts, AppsEngineSchema): build a quoted name
                 # of lowercase letters, digits and dashes, line a quoted x.y, both
                 # or neither. An unquoted 0.10 is the number 0.1 to the Manager,
-                # which refuses it. An apps.yaml yq cannot read, or an engine the
+                # which refuses it, and so is `engine: null`, which is an engine
+                # key with no value and not an absent one. An apps.yaml yq cannot
+                # read, or an engine the
                 # Manager would refuse, fails the run: a bundle whose engine
                 # cannot be read is not one that declares none. The apps.yaml is
                 # the tenant's own, so the build reaches yq as an environment
@@ -1208,10 +1210,12 @@ spec:
                   ENGINE_REFUSAL=''
                   [ -f "$1" ] || return 0
                   if ! engine_tag="$(yq eval '.engine | tag' "$1" 2>&1)"; then
-                    ENGINE_REFUSAL="$1 cannot be read as YAML: $(printf '%s' "${engine_tag}" | tr '\n' ' ')"
+                    ENGINE_REFUSAL="$1 cannot be read: $(printf '%s' "${engine_tag}" | tr '\n' ' ')"
                     return 1
                   fi
-                  [ "${engine_tag}" != '!!null' ] || return 0
+                  if [ "${engine_tag}" = '!!null' ] && [ "$(yq eval 'tag == "!!map" and has("engine")' "$1")" = false ]; then
+                    return 0
+                  fi
                   if [ "${engine_tag}" = '!!map' ]; then
                     BUNDLE_ENGINE_BUILD="$(yq eval '.engine.build // ""' "$1")"
                     BUNDLE_ENGINE_LINE="$(yq eval '.engine.line // ""' "$1")"
