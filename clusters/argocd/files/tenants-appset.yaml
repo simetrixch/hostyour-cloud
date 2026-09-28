@@ -228,8 +228,9 @@ spec:
                 # by the operator in the Manager's tenant-set-own-domain, never derived.
                 ownDomainRedirects: {{ $.ownDomainRedirects | toJson }}
                 # The image tags approved for this tenant alone, per app and build
-                # (`<app>: {<build>: <tag>}`); a build with none follows the stage pin. Set only by the
-                # Manager's tenant-set-approved-tag.
+                # (`<app>: {<build>: <tag>}`); a build with none follows the stage pin. Written by the
+                # Manager: create-tenant and add-app at the stage pin, its boot for a build the tenant
+                # holds none of, and the tenant's Versions run at the version chosen per part.
                 approvedTags: {{ $.approvedTags | toJson }}
                 # The domain the tenant's mail is sent as, or "" for the platform's own; the product's
                 # charts send as no-reply@<senderDomain> where it is set. Set only by the Manager's
