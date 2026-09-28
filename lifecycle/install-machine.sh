@@ -36,12 +36,12 @@ readonly FILE="${1:-./config.env}"
 readonly HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DRIVER="$HERE/driver.sh"
 
-fail() { printf '\n  %s\n\n' "$*" >&2; exit "${2:-65}"; }
+fail() { printf '\n  %s\n\n' "$1" >&2; exit "${2:-65}"; }
 
 [ -r "$DRIVER" ] || fail 'driver.sh is not beside this file — it IS the installation, and this only starts it' 66
 # shellcheck disable=SC1091
 . "$HERE/require-owner-only.sh" || fail 'require-owner-only.sh is not beside this file — it is the guard every launcher puts on a config' 66
-[ -r "$FILE" ]   || fail "there is no config at $FILE. Copy config.example.env, fill it in, then chmod 600 it" 66
+[ -r "$FILE" ]   || fail "there is no config at $FILE. Copy config.example.env, fill it in, and make it readable by you alone" 66
 
 # ------------------------------------------------------- the file, and its guards
 # OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
