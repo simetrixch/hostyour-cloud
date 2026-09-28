@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Everything this repository can be held to on one machine, before anything leaves it.
 #
-# Three checks, in this order, and the run stops at the first red one:
+# Four checks, in this order, and the run stops at the first red one:
 #
 #   1. every chart under clusters/inventories, clusters/units and clusters/slaves renders,
 #      and no value in what came out still carries a Helm expression
 #   2. bash lifecycle/test.sh — the delivery programs against their fixtures
-#   3. gitleaks over the files git would let you commit
+#   3. bash scripts/pipeline-release.test.sh — the release pipeline's own shell, read out of
+#      its template, where it decides something a fixture can hold it to
+#   4. gitleaks over the files git would let you commit
 #
 # THE ORDER IS THE COST. The charts are the thing that is edited daily and they render in
 # seconds; the lifecycle test builds git fixtures and drives both spellings of six programs,
@@ -39,9 +41,10 @@ fail() { echo "check: FAIL — $1"; exit 1; }
 # pwsh is here because lifecycle/test.sh needs it: half of what that file measures is written
 # in PowerShell, and it holds the two spellings to printing the same bytes. base64 is here
 # because the scan of step 1 decodes every base64 value of a render, and a decoder that is not
-# there would leave that half of the scan silently finding nothing.
+# there would leave that half of the scan silently finding nothing. yq is here because step 3
+# runs the pipeline's own shell, which reads a registration with it as the Pipeline does.
 missing=""
-for tool in helm gitleaks pwsh base64; do
+for tool in helm gitleaks pwsh base64 yq; do
   command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
 done
 [ -n "$missing" ] && fail "these tools are not on this path:$missing"
@@ -559,7 +562,11 @@ echo "check: no file under clusters/bootstrap carries a placeholder, which nothi
 echo "check: lifecycle/test.sh — the release, the regeneration, the report, the slave removal, the abandonment and the GitHub App, in both spellings. About two minutes."
 bash lifecycle/test.sh || fail "lifecycle/test.sh"
 
-# ── 3. The credentials ──────────────────────────────────────────────────────────────────────
+# ── 3. The release pipeline's own shell ─────────────────────────────────────────────────────
+echo "check: scripts/pipeline-release.test.sh — the release pipeline's engine-line decision, read out of its template."
+bash scripts/pipeline-release.test.sh || fail "scripts/pipeline-release.test.sh"
+
+# ── 4. The credentials ──────────────────────────────────────────────────────────────────────
 # SCANNED OVER WHAT GIT WOULD LET YOU COMMIT, and that is not the same as this directory. A
 # working copy also holds files this repository ignores, and on a machine that has installed
 # anything those include lifecycle/config.<machine>.env — one installation's ten credentials,

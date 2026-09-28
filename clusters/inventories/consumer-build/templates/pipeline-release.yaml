@@ -1180,12 +1180,37 @@ spec:
                 # books clone above and pushed in the ONE commit with the
                 # class-(b) pins. A registration with the empty pair, or with
                 # neither key, mounts no bundle and is never written.
+                #
+                # THE BUNDLE AND THE ENGINES HAVE TO BE OF ONE LINE. A bundle is
+                # written against the engine's app contract, whose breaking change
+                # starts a new minor line, and it says which build it runs on and
+                # of which line in its apps.yaml (`engine`, hostyour-manager
+                # server/domains/units/engine-line.ts, where the Manager's plans
+                # ask the same question). A tenant is moved onto this bundle only
+                # where every version of that build it runs is of that line;
+                # otherwise the run fails before anything is committed, so no
+                # registration moves. A bundle declaring no engine moves as before.
+                engine_line_off() { # build, line, registration -> each version of the build off the line, one per line
+                  yq eval ".approvedTags[] | .[\"$1\"] // \"\"" "$3" | awk -v line="$2" 'NF { split($0, v, "-"); split(v[1], n, "."); if (n[1] "." n[2] != line) print }'
+                }
+                BUNDLE_ENGINE_BUILD="$(yq eval '.engine.build // ""' "${SRC}/apps.yaml" 2>/dev/null || true)"
+                BUNDLE_ENGINE_LINE="$(yq eval '.engine.line // ""' "${SRC}/apps.yaml" 2>/dev/null || true)"
+                if [ -n "${APPS_BUNDLE}" ] && [ -z "${BUNDLE_ENGINE_BUILD}" ]; then
+                  echo "bump: ${SRC}/apps.yaml declares no engine, so whether the bundle ${APPS_BUNDLE} fits the engines of the tenants it moves is not checked"
+                fi
                 for reg in "${TENANT_REGS}"/*/"${STAGE}.yaml"; do
                   [ -f "${reg}" ] || continue
                   rimage="$(yq eval '.appsImage // ""' "${reg}")"
                   [ -n "${rimage}" ] || continue
                   for P in ${IMAGES}; do
                     [ "${rimage}" = "${P}" ] || continue
+                    if [ -n "${BUNDLE_ENGINE_BUILD}" ]; then
+                      off="$(engine_line_off "${BUNDLE_ENGINE_BUILD}" "${BUNDLE_ENGINE_LINE}" "${reg}")"
+                      if [ -n "${off}" ]; then
+                        echo "bump: FAIL — ${P}:${IMAGE_TAG} is written for ${BUNDLE_ENGINE_BUILD} ${BUNDLE_ENGINE_LINE} (${SRC}/apps.yaml engine), and tenant $(basename "$(dirname "${reg}")") runs ${BUNDLE_ENGINE_BUILD} $(printf '%s' "${off}" | tr '\n' ' ')of another line. No registration is written. A bundle and an engine on different lines are refused; moving a tenant to a new line needs its bundle and its engines to move together, which nothing does yet" >&2
+                        exit 1
+                      fi
+                    fi
                     yq eval -i ".appsImageTag = \"${IMAGE_TAG}\"" "${reg}"
                     HIT_COUNT[$P]=$(( ${HIT_COUNT[$P]} + 1 ))
                     BUNDLE_HIT_COUNT[$P]=$(( ${BUNDLE_HIT_COUNT[$P]} + 1 ))
