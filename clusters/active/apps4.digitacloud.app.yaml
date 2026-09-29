@@ -26,6 +26,7 @@ booksCluster: master.digitacloud.app
 
 global:
   domain: apps4.digitacloud.app
+  clusterName: apps4
   buildPlane: master.digitacloud.app
   booksCluster: master.digitacloud.app
   master: master.digitacloud.app
@@ -48,6 +49,7 @@ global:
       host: post
     vault:
       url: https://vault.master.digitacloud.app
+      privateAddress: 100.64.0.1
     idp:
       url: https://idp.master.digitacloud.app
     tailnet:
@@ -59,11 +61,11 @@ global:
     r2:
       accountId: 7d6b0eaa4cff67abf485661f0022e065
       jurisdiction: eu
-  clusterName: apps4
   deployRepo: digitaplatform/digita-deploy
   vaultKubernetesAuthPath: kubernetes-apps4
   nodeCidrs:
     - 157.90.201.150/32
+    - 100.64.0.5/32
   servicesLocal:
     registry: false
     vault: false
