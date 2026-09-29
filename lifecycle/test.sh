@@ -1002,6 +1002,65 @@ must "regenerate: $PROBE is mode 644 and carries credentials, the elevation pass
 [ "$A_CODE" = '77' ] || fail "the regeneration must refuse mode 644 with 77, got $A_CODE"
 ok 'the three launchers refuse a readable config in their own sentence, built from the one guard'
 
+# ── install-machine refuses in one sentence from both spellings ─────────────
+# THE TWO SPELLINGS OF install-machine refuse a missing config and a config others
+# can read in the same words and with the same code, as every other launcher does,
+# and the sentence carries no exit code. The missing config runs on every platform;
+# the readable one where a file's reach is its mode.
+IMMISSING="$WORK/there-is-no-install-config.env"
+run_bash install-machine "$IMMISSING"
+run_pwsh install-machine "$IMMISSING"
+must "there is no config at $IMMISSING. Copy config.example.env, fill it in, and make it readable by you alone" \
+  'install-machine: a config that is not there is refused'
+must_not "readable by you alone 66" 'install-machine: the exit code is not part of the sentence'
+[ "$A_CODE" = '66' ] || fail "install-machine: a missing config must end with 66, got $A_CODE"
+same 'install-machine: a config that is not there'
+if reach_is_a_mode; then
+  IMREACH="$WORK/install-machine.env"
+  printf "X='1'\n" > "$IMREACH"
+  chmod 644 "$IMREACH"
+  run_bash install-machine "$IMREACH"
+  run_pwsh install-machine "$IMREACH"
+  must "$IMREACH is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 $IMREACH" \
+    'install-machine: a config others can read is refused with its mode and the command that closes it'
+  [ "$A_CODE" = '77' ] || fail "install-machine: a config others can read must end with 77, got $A_CODE"
+  same 'install-machine: a config of mode 644'
+
+  # A RELATIVE PATH, as a person types it. The PowerShell spelling resolves the path only
+  # after the owner-only check, so both spellings name the file as it was given; an
+  # absolute path could not tell that order from the reverse.
+  for side in "$WORK_A" "$WORK_B"; do
+    printf "X='1'\n" > "$side/install-machine-relative.env"
+    chmod 644 "$side/install-machine-relative.env"
+  done
+  run_bash install-machine install-machine-relative.env
+  run_pwsh install-machine install-machine-relative.env
+  must "install-machine-relative.env is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 install-machine-relative.env" \
+    'install-machine: a config named by a relative path is named as it was given'
+  must_not "$WORK_A/install-machine-relative.env" 'install-machine: the bash spelling does not resolve the path it names'
+  same 'install-machine: a config of mode 644 named by a relative path'
+fi
+
+# The planted defect: a PowerShell copy with one word changed, beside a driver and
+# the guard it reads, must compare unequal to the bash spelling.
+PLANTED_IM="$WORK/planted-install-machine"
+mkdir -p "$PLANTED_IM"
+cp "$HERE/driver.sh" "$HERE/require-owner-only.ps1" "$PLANTED_IM/"
+sed 's/make it readable by you alone/make it readable by you only/' "$HERE/install-machine.ps1" > "$PLANTED_IM/install-machine.ps1"
+grep -q 'readable by you only' "$PLANTED_IM/install-machine.ps1" \
+  || fail 'the planted line was not planted in install-machine.ps1 — the probe proves nothing'
+run_bash install-machine "$IMMISSING"
+B_CODE=0
+( cd "$WORK_B" && "$PWSH" -NoProfile -NoLogo -File "$PLANTED_IM/install-machine.ps1" "$IMMISSING" ) \
+  > "$OUT/b.out" 2> "$OUT/b.err" || B_CODE=$?
+grep -q 'readable by you only' "$OUT/b.err" \
+  || fail 'the planted install-machine printed no planted line — the probe was aimed at a line the fixture does not reach'
+normalise < "$OUT/a.err" > "$OUT/a.err.n"; normalise < "$OUT/b.err" > "$OUT/b.err.n"
+if diff -q "$OUT/a.err.n" "$OUT/b.err.n" >/dev/null; then
+  fail 'an install-machine spelling with one word changed compared EQUAL to the other — the comparison above proves nothing'
+fi
+ok 'the planted defect was caught — the comparison of the install-machine pair can go red'
+
 # ===========================================================================
 # FIVE — abandon-installation, against a fixture of an installation that is gone
 #
@@ -1996,10 +2055,11 @@ echo "test:   installation on selected repositories refused with two answers wri
 echo "test:   run after it that installs alone; the refusals a master backup and a master restore"
 echo "test:   make before they open a session, the door each composes from MACHINE_HOST and not"
 echo "test:   from the identity, the id a restore refuses, and the one list of stores both drivers"
-echo "test:   carry. Seven planted defects prove the comparison can go red."
+echo "test:   carry; install-machine's refusal of a missing config in both spellings, with no exit"
+echo "test:   code in its sentence. Eight planted defects prove the comparison can go red."
 if reach_is_a_mode; then
   echo "test: covered off Windows — a config of mode 644, refused in one sentence by both"
-  echo "test:   spellings of the regeneration, the backup and the restore, and an eighth planted"
+  echo "test:   spellings of the regeneration, the backup, the restore and install-machine, and a ninth planted"
   echo "test:   defect in the PowerShell guard that proves this comparison can go red."
 fi
 echo "test: not covered — an authenticated remote, two workstations minting at one moment, the"

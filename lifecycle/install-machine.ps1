@@ -33,9 +33,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 function Stop-Here([string] $Because, [int] $Code = 65) {
-  Write-Host ''
-  Write-Host "  $Because" -ForegroundColor Red
-  Write-Host ''
+  [Console]::Error.Write("`n  $Because`n`n")
   exit $Code
 }
 
@@ -49,22 +47,18 @@ if (-not (Test-Path -LiteralPath $guard)) {
 }
 . $guard
 if (-not (Test-Path $ConfigFile)) {
-  Stop-Here "there is no config at $ConfigFile. Copy config.example.env, fill it in, then take every other account off it" 66
+  Stop-Here "there is no config at $ConfigFile. Copy config.example.env, fill it in, and make it readable by you alone" 66
 }
-$ConfigFile = (Resolve-Path $ConfigFile).Path
 
 # ------------------------------------------------------ the file, and its guards
 # OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
 # Windows, where a mode says nothing, and the mode everywhere else.
 if (-not (Test-OwnerOnly $ConfigFile)) {
-  Stop-Here (@(
-    "$ConfigFile $($script:Reach) and it carries credentials —"
-    'ten of them, four being tokens with WRITE access to your repositories.'
-    'Take every other account off it:'
-    ''
-    "  $($script:OwnerOnlyCommand)"
-  ) -join [Environment]::NewLine) 77
+  Stop-Here "$ConfigFile $($script:Reach) and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: $($script:OwnerOnlyCommand)" 77
 }
+# The sentences above name the file as it was given, as the bash twin does; every check below reads
+# the resolved path.
+$ConfigFile = (Resolve-Path $ConfigFile).Path
 
 # INSIDE A GIT TREE AND NOT IGNORED BY IT is refused: the mistake is made once and
 # cannot be taken back, because a token that reached a remote must be rotated.

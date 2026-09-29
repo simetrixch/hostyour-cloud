@@ -303,10 +303,13 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
   fi
 
   # The dependencies first, or the render finds an empty charts/ directory and reports a missing
-  # template rather than a missing dependency. Both directories the build writes — charts/ and
-  # Chart.lock — are ignored by this repository, so this leaves the working copy clean.
+  # template rather than a missing dependency. Both outputs, charts/ and Chart.lock, are ignored by
+  # this repository, so this leaves the working copy clean. UPDATE AND NOT BUILD: once a Chart.lock
+  # stands, `helm dependency build` resolves a dependency named by URL only through a
+  # `helm repo add`, so every run after the first failed on a machine that never added one; update
+  # resolves it the same way on every run.
   if grep -q '^dependencies:' "$chart/Chart.yaml"; then
-    out="$(helm dependency build "$chart" 2>&1)" \
+    out="$(helm dependency update "$chart" 2>&1)" \
       || { echo "$out"; fail "the dependencies of $chart could not be built"; }
   fi
 

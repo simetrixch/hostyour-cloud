@@ -225,6 +225,17 @@ role rendered into __CLUSTER_ROLE_FIRST_PART__ / __CLUSTER_ROLE_LAST_PART__, and
 else) — no separate toggle, exactly like
 serviceaccount.yaml / deployment.yaml.
 
+  * manager-headlamp-contexts (Role, ns headlamp) — the shared dashboard's slave
+    contexts (hostyour-manager server/domains/inventory/headlamp-contexts.ts). The
+    Manager reads Headlamp's own sign-in off the Deployment and the client secret
+    off `headlamp-oidc`, writes the kubeconfig Secret `kube-slaves-kubeconfig`
+    that clusters/bootstrap/headlamp mounts, and records the kubeconfig's hash on
+    the Deployment's pod template, which restarts it: Headlamp reads that file at
+    start alone. Every verb is bound to its name except create, which names no
+    object a check could hold it to. The kubeconfig Secret is written and NEVER
+    READ through this grant, so a Secret of another type made under its name (a
+    service-account token of Headlamp's) gives nothing back. The patch adds no
+    reach: manager-workload-restarter below patches every Deployment already.
   * manager-admission-policy (ClusterRole) — the admission policy every tenant
     member is fenced by (clusters/units/admissionpolicy) and its binding, both
     cluster-scoped: create-tenant's apply-appprojects WRITES them and the orphan
@@ -256,6 +267,12 @@ serviceaccount.yaml / deployment.yaml.
       (dict "name" "manager-build-rbac-writer" "rules" (list
         (dict "apiGroups" (list "rbac.authorization.k8s.io") "resources" (list "roles" "rolebindings") "verbs" (list "get" "create" "update" "delete"))
         (dict "apiGroups" (list "tekton.dev") "resources" (list "pipelineruns") "verbs" (list "create" "get" "list" "watch"))
+      ))
+      (dict "name" "manager-headlamp-contexts" "namespace" "headlamp" "rules" (list
+        (dict "apiGroups" (list "") "resources" (list "secrets") "resourceNames" (list "headlamp-oidc") "verbs" (list "get"))
+        (dict "apiGroups" (list "") "resources" (list "secrets") "resourceNames" (list "kube-slaves-kubeconfig") "verbs" (list "update"))
+        (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "create"))
+        (dict "apiGroups" (list "apps") "resources" (list "deployments") "resourceNames" (list "headlamp") "verbs" (list "get" "patch"))
       ))
       (dict "name" "manager-smtp-ops-grant-writer" "namespace" "postfix" "rules" (list
         (dict "apiGroups" (list "") "resources" (list "pods") "verbs" (list "get" "list"))
