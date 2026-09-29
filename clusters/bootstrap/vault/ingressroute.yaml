@@ -22,6 +22,22 @@ spec:
     replacement: https://vault.master.digitacloud.app/ui/vault/auth?with=oidc%2F
     permanent: false
 ---
+# Traefik Middleware — admits the Vault host only from where it is reached
+# privately: the tailnet (headscale's two prefixes, clusters/inventories/
+# headscale/templates/configmap-config.yaml), the pod range every cluster of
+# this platform runs (deploy-cluster's pod_cidr), and this node's own
+# addresses, from which the master's programs reach it over 127.0.0.1.
+# Everything else gets 403. Traefik sees the client's own address, because it
+# listens on the host's ports rather than behind a balancer.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: vault-private-sources
+  namespace: vault
+spec:
+  ipAllowList:
+    sourceRange: [100.64.0.0/10, 'fd7a:115c:a1e0::/48', 10.244.0.0/16, 192.168.0.250/32, 100.64.0.1/32]
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -34,6 +50,8 @@ spec:
     - match: Host(`vault.master.digitacloud.app`)
       kind: Rule
       middlewares:
+        - name: vault-private-sources
+          namespace: vault
         - name: vault-oidc-redirect
           namespace: vault
       services:
