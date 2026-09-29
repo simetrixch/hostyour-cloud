@@ -498,11 +498,8 @@ toolchains:
 # "latest" until they were pinned here: two hosts installed a month apart got
 # different tools and neither could be reproduced. Each pin is stamped into
 # the install row of deploy-cluster AND into the assert list at the end of its
-# tool phase, from this one key — tailscale has no install row that takes a
-# version (its makers' installer), so only the assert list carries its pin,
-# and the program reports rather than fails where it drifts. The upstream of
-# each is its own release feed, because that is what the install fetches
-# from.
+# tool phase, from this one key. The upstream of each is its own release feed,
+# because that is what the install fetches from.
 cliTools:
   argocd:
     version: "v3.4.5"
@@ -609,6 +606,11 @@ cliTools:
       # rule this feed does not exercise.
       matching: '^v[0-9]+\.[0-9]+\.[0-9]+$'
     stamps:
+      - kind: yaml_value
+        tree: deploy
+        file: ansiwise/programs/deploy-cluster.yaml
+        key: version
+        anchor: '- step: install_tailscale_client'
       - kind: list_pin
         tree: deploy
         file: ansiwise/programs/deploy-cluster.yaml
