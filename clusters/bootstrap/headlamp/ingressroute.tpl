@@ -1,8 +1,12 @@
 # IngressRoute for Headlamp. Its certificate is the base layer's one,
 # served by the TLSStore bootstrap/ingress/certificate.yaml puts in Traefik's own namespace.
-# Replaces the previous k8s Ingress + annotation pattern. Auth is handled
-# by Headlamp's own OIDC client talking to the IdP — no Traefik forwardAuth
-# Middleware needed.
+#
+# BEHIND THE IDENTITY PROVIDER'S FORWARD-AUTH, and Headlamp's own OIDC login after it
+# (hostyour-cloud#264). Headlamp answers /config before its login: the name and the tailnet API
+# address of every cluster. The middleware idp/forwardauth answers that request with a redirect
+# to the identity provider unless the browser holds a session; its provider runs in forward_domain
+# mode with the cookie on the whole domain (idp/blueprints/99-proxy-tekton.yaml), so one sign-in
+# carries here and Headlamp's own login completes without a second prompt.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -18,6 +22,9 @@ spec:
   routes:
     - match: Host(`kube.<fqdn>`)
       kind: Rule
+      middlewares:
+        - name: forwardauth
+          namespace: idp
       services:
         - name: headlamp
           port: 80
