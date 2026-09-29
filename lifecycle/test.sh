@@ -1025,6 +1025,20 @@ if reach_is_a_mode; then
     'install-machine: a config others can read is refused with its mode and the command that closes it'
   [ "$A_CODE" = '77' ] || fail "install-machine: a config others can read must end with 77, got $A_CODE"
   same 'install-machine: a config of mode 644'
+
+  # A RELATIVE PATH, as a person types it. The PowerShell spelling resolves the path only
+  # after the owner-only check, so both spellings name the file as it was given; an
+  # absolute path could not tell that order from the reverse.
+  for side in "$WORK_A" "$WORK_B"; do
+    printf "X='1'\n" > "$side/install-machine-relative.env"
+    chmod 644 "$side/install-machine-relative.env"
+  done
+  run_bash install-machine install-machine-relative.env
+  run_pwsh install-machine install-machine-relative.env
+  must "install-machine-relative.env is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 install-machine-relative.env" \
+    'install-machine: a config named by a relative path is named as it was given'
+  must_not "$WORK_A/install-machine-relative.env" 'install-machine: the bash spelling does not resolve the path it names'
+  same 'install-machine: a config of mode 644 named by a relative path'
 fi
 
 # The planted defect: a PowerShell copy with one word changed, beside a driver and
