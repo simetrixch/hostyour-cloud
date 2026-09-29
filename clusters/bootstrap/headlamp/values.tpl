@@ -63,7 +63,8 @@ settings:
 #     per active slave, dialing the address and CA it sealed at the slave's
 #     deployment and signing the person in through this same client
 #     (hostyour-manager server/domains/inventory/headlamp-contexts.ts). Headlamp
-#     reads the file at start alone, so the Manager restarts it after a write.
+#     reads the file at start alone, so after a write the Manager records the
+#     kubeconfig's hash on the pod template, which restarts it.
 #     Until the first write the Secret is absent, the mount below is optional,
 #     and the picker offers the master alone.
 config:
