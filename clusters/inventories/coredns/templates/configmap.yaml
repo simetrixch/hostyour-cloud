@@ -70,6 +70,21 @@ data:
         {{- if .Values.global.servicesLocal.vault }}
         rewrite name vault.{{ .Values.global.domain }} traefik.ingress.svc.cluster.local
         {{- end }}
+        {{- /* Vault over the tailnet — emitted where Vault runs ELSEWHERE. The
+             master's Vault route admits the tailnet, the pods and the master's
+             node addresses and nothing else (clusters/bootstrap/vault/
+             ingressroute.tpl), so a lookup of the Vault host by its public name
+             would reach a route that refuses it. The host is answered with the
+             master's tailnet address, which mark-slave writes into this map as
+             global.endpoints.vault.privateAddress; every other name falls
+             through. Required here, because without it every secret store on
+             this cluster fails its sync with 403 and nothing names the cause. */}}
+        {{- if not .Values.global.servicesLocal.vault }}
+        hosts {
+          {{ required "global.endpoints.vault.privateAddress is required where Vault runs on another cluster: the master's tailnet address, which mark-slave writes" .Values.global.endpoints.vault.privateAddress }} {{ (urlParse .Values.global.endpoints.vault.url).host }}
+          fallthrough
+        }
+        {{- end }}
         {{- /* Zot registry hairpin — emitted ONLY where the registry runs locally
              (the ONE build cluster, global.servicesLocal.registry). In-cluster
              https:// lookups of this cluster's own registry hostname bounce
