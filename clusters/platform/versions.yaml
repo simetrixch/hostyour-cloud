@@ -498,11 +498,11 @@ toolchains:
 # "latest" until they were pinned here: two hosts installed a month apart got
 # different tools and neither could be reproduced. Each pin is stamped into
 # the install row of deploy-cluster AND into the assert list at the end of its
-# tool phase, from this one key — jq and tailscale have no install row that
-# takes a version (package manager and vendor installer), so only the assert
-# list carries theirs, and the program reports rather than fails where those
-# two drift. The upstream of each is its own release feed, because that is
-# what the install fetches from.
+# tool phase, from this one key — tailscale has no install row that takes a
+# version (its makers' installer), so only the assert list carries its pin,
+# and the program reports rather than fails where it drifts. The upstream of
+# each is its own release feed, because that is what the install fetches
+# from.
 cliTools:
   argocd:
     version: "v3.4.5"
@@ -583,6 +583,11 @@ cliTools:
       # after the numbers is what keeps them out.
       matching: '^jq-[0-9]+\.[0-9]+(\.[0-9]+)?$'
     stamps:
+      - kind: yaml_value
+        tree: deploy
+        file: ansiwise/programs/deploy-cluster.yaml
+        key: version
+        anchor: 'tool: jq'
       - kind: list_pin
         tree: deploy
         file: ansiwise/programs/deploy-cluster.yaml
@@ -590,7 +595,7 @@ cliTools:
         entry: jq
   # The client half of the tailnet; the server is images.headscale.
   tailscale:
-    version: "v1.98.10"
+    version: "v1.102.4"
     upstream:
       kind: github_release
       project: tailscale/tailscale
