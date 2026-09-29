@@ -356,6 +356,9 @@ spec:
     #                   sync retried "one or more synchronization tasks are not
     #                   valid" for good and the first unit claiming smtp-ops stopped
     #                   at provision-smtp-ops-grant (hostyour-cloud#215).
+    #   headlamp      — the shared dashboard's slave contexts (rbac.yaml
+    #                   manager-headlamp-contexts): the Manager writes the kubeconfig
+    #                   Secret there and restarts the Deployment (hostyour-cloud#255).
     # The Applications read and the Manager-owned AppProjects are NOT here: that
     # grant is cluster-scoped (rbac.yaml, "Cluster scope (was ns argocd)"), so it is
     # a ClusterRole + ClusterRoleBinding, which ArgoCD validates against
@@ -368,6 +371,8 @@ spec:
       namespace: __ARGOCD_NAMESPACE__
     - name: __CLUSTER_NAME__
       namespace: postfix
+    - name: __CLUSTER_NAME__
+      namespace: headlamp
   clusterResourceWhitelist:
     # createNamespace=true on the manager Application: ArgoCD validates the
     # auto-created `manager` Namespace against this list on a fresh cluster.

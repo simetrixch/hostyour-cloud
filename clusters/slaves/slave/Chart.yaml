@@ -28,8 +28,9 @@ description: |
       clusters/argocd/root-app.yaml does on a full cluster.
     - (kube dashboard: deliberately NOT in this chart — ONE SHARED master
       Headlamp in ns headlamp serves the master and every slave
-      via its cluster picker; contexts come from the kube-slaves-kubeconfig
-      Secret that adding or removing a slave rebuilds.)
+      via its cluster picker; its slave contexts come from the
+      kube-slaves-kubeconfig Secret, which the Manager writes when a slave is
+      added or removed and at its own start.)
 
   The per-slave Vault surface is NOT in this chart: it is a per-slave KV-v2 mount
   + auth mount on the master's EXISTING Vault, created imperatively by
