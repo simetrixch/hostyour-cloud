@@ -133,6 +133,7 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 cleanup() {
   rm -f "$CONFIG" 2>/dev/null || true
   rm -rf "${ANSWERS_DIR:-}" 2>/dev/null || true
+  rm -rf "${FETCHED:-}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -196,7 +197,7 @@ root() { printf '%s
 # THE FETCHED ENGINE IS HELD AGAINST THE DIGESTS THE PLATFORM REPOSITORY STATES FOR THE PIN,
 # before either executable is placed. The pin says which release is fetched and not which bytes
 # arrive, and an asset replaced after the release answers --version with whatever it was built to
-# answer. The release wrote the digests in the same commit as the pin, off what GitHub recorded
+# answer. The release writes the digests in the same commit as the pin, off what GitHub recorded
 # when the build uploaded the assets.
 #
 # A LINE FOR EACH EXECUTABLE, NAMED BY ITS ASSET, is asked for before anything is hashed, so a
@@ -206,9 +207,13 @@ hold_engine_against_digests() { # <directory the assets were fetched into> <the 
   local dir="$1" digests="$2" pin="$3" tool asset line wanted=''
   for tool in ansiwise ansiwise-rest; do
     asset="$tool-$pin-linux-x64"
-    line=$(printf '%s\n' "$digests" | awk -v asset="$asset" \
-      '$2 == asset && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ { print; exit }')
-    [ -n "$line" ] || { echo "the digests name no $asset" >&2; return 1; }
+    line=$(printf '%s\n' "$digests" | awk -v asset="$asset" '$2 == asset')
+    case "$line" in
+      '') echo "the digests name no $asset" >&2; return 1 ;;
+      *$'\n'*) echo "the digests name $asset more than once" >&2; return 1 ;;
+    esac
+    printf '%s\n' "$line" | awk '{ exit !(length($1) == 64 && $1 ~ /^[0-9a-f]+$/) }' \
+      || { echo "the digests name $asset with no SHA-256 of 64 lowercase hex digits" >&2; return 1; }
     wanted+="$line"$'\n'
   done
   ( cd "$dir" && printf '%s' "$wanted" | sha256sum --check --strict --quiet - )
