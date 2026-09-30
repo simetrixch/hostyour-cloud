@@ -20,6 +20,9 @@
 # in full). What matters when editing:
 #   version:   the pin, ALWAYS QUOTED — YAML would read 8.8 as a number and
 #              26.04 as a number that lost its trailing zero.
+#   sha256:    the digest of the file the pin fetches, where a site holds the
+#              fetched file against one, quoted like the version. A stamp
+#              with `writes: sha256` writes it instead of the version.
 #   stamps:    every place the pin is written. `tree` is a LABEL the program
 #              row maps to a checkout: `platform` is this repository, `deploy`
 #              the installation repository carrying the ansiwise programs,
@@ -500,9 +503,23 @@ toolchains:
 # the install row of deploy-cluster AND into the assert list at the end of its
 # tool phase, from this one key. The upstream of each is its own release feed,
 # because that is what the install fetches from.
+#
+# EVERY TOOL AN install_pinned_tool ROW FETCHES CARRIES THE SHA-256 OF THAT
+# FILE, stamped into the same row: argocd, vault, yq and jq. The row removes a
+# fetched file whose digest differs before it reaches /usr/local/bin, so a bump
+# moves the version and the digest together, and a version moved alone fails
+# that row on every machine that fetches it. The digest is read off the list
+# each project publishes beside the release: argocd cli_checksums.txt, vault
+# vault_<version>_SHA256SUMS (the digest of the zip, which is what the row
+# fetches), yq checksums (the SHA-256 column, per checksums_hashes_order), jq
+# sha256sum.txt. tailscale and ansiwise carry none. tailscale comes from its
+# package repository, and the engine is fetched by lifecycle/driver.sh and by
+# the Manager's placement, which check that it is not empty and what its
+# --version answers, and no digest.
 cliTools:
   argocd:
     version: "v3.4.5"
+    sha256: "23303f05a58c1e041324d5645b0f9d6ea338b16bbf32f4a24508f388fcf9f9c0"
     upstream:
       kind: github_release
       project: argoproj/argo-cd
@@ -518,6 +535,12 @@ cliTools:
         file: ansiwise/programs/deploy-cluster.yaml
         key: version
         anchor: 'tool: argocd'
+      - kind: yaml_value
+        tree: deploy
+        file: ansiwise/programs/deploy-cluster.yaml
+        key: sha256
+        anchor: 'tool: argocd'
+        writes: sha256
       - kind: list_pin
         tree: deploy
         file: ansiwise/programs/deploy-cluster.yaml
@@ -525,6 +548,7 @@ cliTools:
         entry: argocd
   vault:
     version: "v2.0.3"
+    sha256: "1e0ffb7a82491219c7242da6e05e2d756b05d1097c29799a42228661f229bc2a"
     upstream:
       kind: hashicorp_release
       product: vault
@@ -534,6 +558,12 @@ cliTools:
         file: ansiwise/programs/deploy-cluster.yaml
         key: version
         anchor: 'tool: vault'
+      - kind: yaml_value
+        tree: deploy
+        file: ansiwise/programs/deploy-cluster.yaml
+        key: sha256
+        anchor: 'tool: vault'
+        writes: sha256
       - kind: list_pin
         tree: deploy
         file: ansiwise/programs/deploy-cluster.yaml
@@ -541,6 +571,7 @@ cliTools:
         entry: vault
   yq:
     version: "v4.53.3"
+    sha256: "fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4"
     upstream:
       kind: github_release
       project: mikefarah/yq
@@ -557,6 +588,12 @@ cliTools:
         file: ansiwise/programs/deploy-cluster.yaml
         key: version
         anchor: 'tool: yq'
+      - kind: yaml_value
+        tree: deploy
+        file: ansiwise/programs/deploy-cluster.yaml
+        key: sha256
+        anchor: 'tool: yq'
+        writes: sha256
       - kind: list_pin
         tree: deploy
         file: ansiwise/programs/deploy-cluster.yaml
@@ -566,6 +603,7 @@ cliTools:
   # same shape so the assert can hold the two against each other.
   jq:
     version: "jq-1.8.2"
+    sha256: "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f"
     upstream:
       kind: github_release
       project: jqlang/jq
@@ -585,6 +623,12 @@ cliTools:
         file: ansiwise/programs/deploy-cluster.yaml
         key: version
         anchor: 'tool: jq'
+      - kind: yaml_value
+        tree: deploy
+        file: ansiwise/programs/deploy-cluster.yaml
+        key: sha256
+        anchor: 'tool: jq'
+        writes: sha256
       - kind: list_pin
         tree: deploy
         file: ansiwise/programs/deploy-cluster.yaml
