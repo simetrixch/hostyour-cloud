@@ -701,9 +701,9 @@ cliTools:
   # sha256sum line per release asset: ansiwise-<tag>-linux-x64 and
   # ansiwise-rest-<tag>-linux-x64. The release writes them in the same commit as
   # this pin, off the digests GitHub recorded when the build uploaded the assets.
-  # lifecycle/driver.sh and the Manager's placement hold each fetched executable
-  # against its line before placing it, and a pin whose assets the file does not
-  # name is refused rather than placed unchecked. They stand outside this file
+  # lifecycle/driver.sh, lifecycle/regenerate-driver.sh and the Manager's placement
+  # hold each fetched executable against its line before placing it, and a pin
+  # whose assets the file does not name is refused rather than placed unchecked. They stand outside this file
   # because one pin names two files, and the grammar's sha256 holds one digest.
   #
   # THE PIN CANNOT GO BELOW 0.1.0-alpha-20260823002740, which is the first release

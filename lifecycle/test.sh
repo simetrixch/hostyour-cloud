@@ -2026,54 +2026,66 @@ if reach_is_a_mode; then
 fi
 
 # ===========================================================================
-# EIGHT — the engine held against its digests, the check driver.sh runs on a machine
+# EIGHT — the engine held against its digests, the check both drivers run on a machine
 # ===========================================================================
-# driver.sh arms the machine it runs on and is not run here whole. Its check is taken out of the
-# file itself, so what is driven is the text a machine runs, over two planted assets and the
-# digest file a release writes: the pinned digests, the same with one planted wrong, a file that
-# names another release, and one that names only one of the two executables.
+# driver.sh arms a machine and regenerate-driver.sh regenerates one, and each places the engine
+# where it is off the pin. Neither is run here whole. Each one's check is taken out of the file
+# itself, so what is driven is the text a machine runs, over two planted assets and the digest
+# file a release writes: the pinned digests, the same with one planted wrong, a file that names
+# another release, and one that names only one of the two executables. The two drivers are
+# streamed to a machine one at a time and cannot share a file, so they carry the check twice, and
+# the two copies are held to one text.
 ENGINE_WORK="$WORK/engine"
 mkdir -p "$ENGINE_WORK"
 ENGINE_PIN='0.8.307-stable-20260930202014'
 printf 'the engine\n' > "$ENGINE_WORK/ansiwise-$ENGINE_PIN-linux-x64"
 printf 'the serving half\n' > "$ENGINE_WORK/ansiwise-rest-$ENGINE_PIN-linux-x64"
 PINNED_DIGESTS="$(cd "$ENGINE_WORK" && sha256sum "ansiwise-$ENGINE_PIN-linux-x64" "ansiwise-rest-$ENGINE_PIN-linux-x64")"
-held() { # <digest file text> — runs the check as driver.sh carries it, and answers its exit code
-  ( eval "$(sed -n '/^hold_engine_against_digests() {/,/^}/p' "$HERE/driver.sh")"
-    hold_engine_against_digests "$ENGINE_WORK" "$1" "$ENGINE_PIN" ) > "$OUT/held.out" 2>&1
-}
-sed -n '/^hold_engine_against_digests() {/,/^}/p' "$HERE/driver.sh" | grep -q 'sha256sum --check' \
-  || fail 'driver.sh carries no hold_engine_against_digests that runs sha256sum --check — nothing below measures the machine'
-
-held "$PINNED_DIGESTS" || fail "the pinned digests of both assets were refused: $(cat "$OUT/held.out")"
-ok 'both assets at their pinned digests are held and pass'
-
 PLANTED_DIGESTS="$(printf '%s\n' "$PINNED_DIGESTS" | sed '2s/^./0/')"
 [ "$PLANTED_DIGESTS" != "$PINNED_DIGESTS" ] || fail 'the planted digest was not planted — the probe proves nothing'
-if held "$PLANTED_DIGESTS"; then
-  fail 'an asset whose digest differs from the pinned one passed — a swapped engine would be placed'
-fi
-grep -q "ansiwise-rest-$ENGINE_PIN-linux-x64: FAILED" "$OUT/held.out" \
-  || fail "the refusal does not name the asset that differs: $(cat "$OUT/held.out")"
-ok 'the planted defect was caught — an asset whose digest differs is refused, by name'
+check_of() { sed -n '/^hold_engine_against_digests() {/,/^}/p' "$HERE/$1"; }
+held() { # <driver> <digest file text> — runs the check as that driver carries it, and answers its exit code
+  ( eval "$(check_of "$1")"
+    hold_engine_against_digests "$ENGINE_WORK" "$2" "$ENGINE_PIN" ) > "$OUT/held.out" 2>&1
+}
 
-if held "$(printf '%s\n' "$PINNED_DIGESTS" | sed "s/$ENGINE_PIN/0.8.306-stable-20260929191649/")"; then
-  fail 'a digest file naming another release passed — the pin and its digests came apart unnoticed'
-fi
-grep -q "the digests name no ansiwise-$ENGINE_PIN-linux-x64" "$OUT/held.out" \
-  || fail "a digest file naming another release was not refused as such: $(cat "$OUT/held.out")"
-ok 'a digest file naming another release is refused, before anything is hashed'
+for engine_driver in driver.sh regenerate-driver.sh; do
+  check_of "$engine_driver" | grep -q 'sha256sum --check' \
+    || fail "$engine_driver carries no hold_engine_against_digests that runs sha256sum --check — nothing below measures the machine"
 
-if held "$(printf '%s\n' "$PINNED_DIGESTS" | head -1)"; then
-  fail 'a digest file naming one executable passed — the other would be placed unchecked'
-fi
-grep -q "the digests name no ansiwise-rest-$ENGINE_PIN-linux-x64" "$OUT/held.out" \
-  || fail "a digest file naming one executable was not refused for the other: $(cat "$OUT/held.out")"
-ok 'a digest file naming only one of the two executables is refused'
+  held "$engine_driver" "$PINNED_DIGESTS" \
+    || fail "$engine_driver: the pinned digests of both assets were refused: $(cat "$OUT/held.out")"
+  ok "$engine_driver: both assets at their pinned digests are held and pass"
+
+  if held "$engine_driver" "$PLANTED_DIGESTS"; then
+    fail "$engine_driver: an asset whose digest differs from the pinned one passed — a swapped engine would be placed"
+  fi
+  grep -q "ansiwise-rest-$ENGINE_PIN-linux-x64: FAILED" "$OUT/held.out" \
+    || fail "$engine_driver: the refusal does not name the asset that differs: $(cat "$OUT/held.out")"
+  ok "$engine_driver: the planted defect was caught — an asset whose digest differs is refused, by name"
+
+  if held "$engine_driver" "$(printf '%s\n' "$PINNED_DIGESTS" | sed "s/$ENGINE_PIN/0.8.306-stable-20260929191649/")"; then
+    fail "$engine_driver: a digest file naming another release passed — the pin and its digests came apart unnoticed"
+  fi
+  grep -q "the digests name no ansiwise-$ENGINE_PIN-linux-x64" "$OUT/held.out" \
+    || fail "$engine_driver: a digest file naming another release was not refused as such: $(cat "$OUT/held.out")"
+  ok "$engine_driver: a digest file naming another release is refused, before anything is hashed"
+
+  if held "$engine_driver" "$(printf '%s\n' "$PINNED_DIGESTS" | head -1)"; then
+    fail "$engine_driver: a digest file naming one executable passed — the other would be placed unchecked"
+  fi
+  grep -q "the digests name no ansiwise-rest-$ENGINE_PIN-linux-x64" "$OUT/held.out" \
+    || fail "$engine_driver: a digest file naming one executable was not refused for the other: $(cat "$OUT/held.out")"
+  ok "$engine_driver: a digest file naming only one of the two executables is refused"
+done
+
+diff -u <(check_of driver.sh) <(check_of regenerate-driver.sh) \
+  || fail 'the two drivers carry different checks — a machine regenerated is held to other bytes than one installed'
+ok 'driver.sh and regenerate-driver.sh carry one check, word for word'
 
 echo "test: GREEN — every case above was measured on both spellings and answered identically,"
 echo "test:   but the stubbed cases of the owner-only guard, on the bash spelling alone, and the"
-echo "test:   engine's digest check, which a machine runs in bash alone."
+echo "test:   engine's digest check of both drivers, which a machine runs in bash alone."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
@@ -2104,8 +2116,9 @@ echo "test:   make before they open a session, the door each composes from MACHI
 echo "test:   from the identity, the id a restore refuses, and the one list of stores both drivers"
 echo "test:   carry; install-machine's refusal of a missing config in both spellings, with no exit"
 echo "test:   code in its sentence. Eight planted defects prove the comparison can go red."
-echo "test:   driver.sh's digest check passes the engine at its pinned digests, and refuses a planted"
-echo "test:   wrong digest, a digest file of another release and one naming a single executable."
+echo "test:   The digest check of driver.sh and regenerate-driver.sh, one text in both, passes the"
+echo "test:   engine at its pinned digests and refuses a planted wrong digest, a digest file of another"
+echo "test:   release and one naming a single executable."
 if reach_is_a_mode; then
   echo "test: covered off Windows — a config of mode 644, refused in one sentence by both"
   echo "test:   spellings of the regeneration, the backup, the restore and install-machine, and a ninth planted"
