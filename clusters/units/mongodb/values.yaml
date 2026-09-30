@@ -63,7 +63,7 @@ mongodb:
     repository: mongo
     # Managed centrally in clusters/platform/versions.yaml (images.mongodb) and stamped by
     # the version sync — do not hand-edit this tag.
-    tag: "8.0.4"
+    tag: "8.0.4@sha256:6b0f3b8898c09d1d15753978cd8a733834f692d70aa3d424f680bccd2896f6a1"
     pullPolicy: IfNotPresent
 
   # The replica set's name, used only in `replicaset` mode. `rs0` is what the
