@@ -247,6 +247,12 @@ spec:
                 # an app's engine reads its own seed tiers out of the list by appName.
                 seedUsers: {{ $.seedUsers }}
                 apps: {{ $.apps | toJson }}
+                # A demo tenant: the product's charts turn tenant.demo into a one-click demo login and a
+                # nightly reset. Handed over only where the registration carries it, and read with dig
+                # rather than bare, so a registration without the key renders exactly as before.
+                {{- if dig "demo" false $ }}
+                demo: true
+                {{- end }}
                 # THE TENANT'S OWN APPS BUNDLE: the image `<subdomain>-apps` its engines, its IdP and its
                 # report mount, and the pin the Manager resolved from that bundle's own release — the
                 # engine chart's pins file never carries a tenant bundle, so the tag is delivered, not
