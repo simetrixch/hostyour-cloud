@@ -193,6 +193,27 @@ RUN_IDS=()
 root() { printf '%s
 ' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 
+# THE FETCHED ENGINE IS HELD AGAINST THE DIGESTS THE PLATFORM REPOSITORY STATES FOR THE PIN,
+# before either executable is placed. The pin says which release is fetched and not which bytes
+# arrive, and an asset replaced after the release answers --version with whatever it was built to
+# answer. The release wrote the digests in the same commit as the pin, off what GitHub recorded
+# when the build uploaded the assets.
+#
+# A LINE FOR EACH EXECUTABLE, NAMED BY ITS ASSET, is asked for before anything is hashed, so a
+# digest file that names another release says so, rather than sha256sum reporting a file it
+# cannot find.
+hold_engine_against_digests() { # <directory the assets were fetched into> <the digest file's text> <pin>
+  local dir="$1" digests="$2" pin="$3" tool asset line wanted=''
+  for tool in ansiwise ansiwise-rest; do
+    asset="$tool-$pin-linux-x64"
+    line=$(printf '%s\n' "$digests" | awk -v asset="$asset" \
+      '$2 == asset && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ { print; exit }')
+    [ -n "$line" ] || { echo "the digests name no $asset" >&2; return 1; }
+    wanted+="$line"$'\n'
+  done
+  ( cd "$dir" && printf '%s' "$wanted" | sha256sum --check --strict --quiet - )
+}
+
 # =============================================================================
 phase '0 / 4   what this machine is, before anything is touched'
 # =============================================================================
@@ -525,6 +546,7 @@ phase '1 / 4   the engine, at the version the platform repository pins'
 # no caller states a version: a machine carrying one no file names is a machine
 # nobody can say anything about afterwards.
 readonly PIN_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/versions.yaml"
+readonly DIGESTS_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/ansiwise.sha256"
 say "reading the pin from $PIN_URL"
 PIN_YAML=$(curl -fsSL "$PIN_URL") || die "$PIN_URL could not be read from this machine" 69
 # SINGLE-QUOTED FOR THE SHELL, so every dollar and every quote below belongs to
@@ -547,14 +569,26 @@ if [ "$ENGINE_ANSWERS" = "$PIN" ]; then
   good "$ENGINE already answers $PIN — nothing fetched"
 else
   [ -n "$ENGINE_ANSWERS" ] && say "$ENGINE answers $ENGINE_ANSWERS, which is not the pin"
+  say "reading the digests from $DIGESTS_URL"
+  DIGESTS=$(curl -fsSL "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine" 69
+  # A DIRECTORY OF ITS OWN, readable by this account alone, and not a fixed name under /tmp: the
+  # bytes that are hashed are the bytes that are placed, and nobody else can write between the two.
+  FETCHED=$(mktemp -d) || die "no directory could be made to fetch the engine into" 73
   for tool in ansiwise ansiwise-rest; do
     url="$RELEASES/$PIN/$tool-$PIN-linux-x64"
     say "fetching $tool from $url"
-    curl -fsSL -o "/tmp/$tool" "$url" || die "$url served nothing — check the release carries an asset under that name" 69
-    [ -s "/tmp/$tool" ] || die "$url served an empty file, and an empty executable answers every command with a shell error" 69
-    root install -m 755 "/tmp/$tool" "/usr/local/bin/$tool" || die "could not place $tool in /usr/local/bin" 73
-    rm -f "/tmp/$tool"
+    curl -fsSL -o "$FETCHED/$tool-$PIN-linux-x64" "$url" || die "$url served nothing — check the release carries an asset under that name" 69
+    [ -s "$FETCHED/$tool-$PIN-linux-x64" ] || die "$url served an empty file, and an empty executable answers every command with a shell error" 69
   done
+  if ! hold_engine_against_digests "$FETCHED" "$DIGESTS" "$PIN"; then
+    rm -rf "$FETCHED"
+    die "the engine fetched for $PIN is not what $DIGESTS_URL states for it, and nothing was placed. A pin that moved in the last few minutes may not have reached that address yet; otherwise an asset of the release changed after it was built" 65
+  fi
+  good "ansiwise and ansiwise-rest hold the digests the platform repository states for $PIN"
+  for tool in ansiwise ansiwise-rest; do
+    root install -m 755 "$FETCHED/$tool-$PIN-linux-x64" "/usr/local/bin/$tool" || die "could not place $tool in /usr/local/bin" 73
+  done
+  rm -rf "$FETCHED"
   # READ BACK OFF THE MACHINE, never off this script's own claim: a truncated
   # transfer, an asset that is an error page and an architecture this machine
   # cannot execute are all one answer here — not the pin.

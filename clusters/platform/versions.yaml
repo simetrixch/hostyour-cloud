@@ -512,10 +512,9 @@ toolchains:
 # each project publishes beside the release: argocd cli_checksums.txt, vault
 # vault_<version>_SHA256SUMS (the digest of the zip, which is what the row
 # fetches), yq checksums (the SHA-256 column, per checksums_hashes_order), jq
-# sha256sum.txt. tailscale and ansiwise carry none. tailscale comes from its
-# package repository, and the engine is fetched by lifecycle/driver.sh and by
-# the Manager's placement, which check that it is not empty and what its
-# --version answers, and no digest.
+# sha256sum.txt. tailscale carries none: it comes from its package
+# repository. The engine carries one for each of its two executables, beside
+# this file (cliTools.ansiwise says where and who writes it).
 cliTools:
   argocd:
     version: "v3.4.5"
@@ -697,6 +696,15 @@ cliTools:
   # deploy-cluster's `pin_prefixes` strips at most one of `v` or `jq-` before
   # comparing, and a tag that begins with a digit loses nothing, so the whole tag
   # is what the machine's own --version is held against.
+  #
+  # THE DIGESTS OF BOTH EXECUTABLES stand beside this file in ansiwise.sha256, one
+  # sha256sum line per release asset: ansiwise-<tag>-linux-x64 and
+  # ansiwise-rest-<tag>-linux-x64. The release writes them in the same commit as
+  # this pin, off the digests GitHub recorded when the build uploaded the assets.
+  # lifecycle/driver.sh and the Manager's placement hold each fetched executable
+  # against its line before placing it, and a pin whose assets the file does not
+  # name is refused rather than placed unchecked. They stand outside this file
+  # because one pin names two files, and the grammar's sha256 holds one digest.
   #
   # THE PIN CANNOT GO BELOW 0.1.0-alpha-20260823002740, which is the first release
   # whose executables answer --version at all. Everything holding a machine to this
