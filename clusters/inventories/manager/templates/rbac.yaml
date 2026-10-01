@@ -172,7 +172,11 @@ surface of the manager's onboarding adapters:
     its output — the channel a listing job answers through; list on
     persistentvolumeclaims is how the consumer dump learns which PVCs of the
     unit's namespace to tar (PVC names are chart-chosen, only the cluster can
-    answer). Cluster scope because the jobs run where their credentials are —
+    answer), and create on them is how a consumer restore puts back a
+    StatefulSet's claim that the quiesced target, at replicas 0, has not made:
+    the Manager writes it from that StatefulSet's own volumeClaimTemplate, so
+    the restore job can mount it and the StatefulSet adopts it by name when it
+    scales up. Cluster scope because the jobs run where their credentials are —
     the mongodb namespace, a consumer's own namespace, a tenant member's —
     none known ahead of time. create and delete on secrets, and deliberately
     NOT get: the Storage Box credentials the job needs exist nowhere in the
@@ -304,7 +308,7 @@ serviceaccount.yaml / deployment.yaml.
         (dict "apiGroups" (list "batch") "resources" (list "jobs") "verbs" (list "create" "get" "delete"))
         (dict "apiGroups" (list "") "resources" (list "pods") "verbs" (list "list"))
         (dict "apiGroups" (list "") "resources" (list "pods/log") "verbs" (list "get"))
-        (dict "apiGroups" (list "") "resources" (list "persistentvolumeclaims") "verbs" (list "list"))
+        (dict "apiGroups" (list "") "resources" (list "persistentvolumeclaims") "verbs" (list "list" "create"))
         (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "create" "delete"))
       ))
       (dict "name" "manager-workload-restarter" "rules" (list
