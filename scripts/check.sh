@@ -561,6 +561,118 @@ if [ -n "$placeholders" ]; then
 fi
 echo "check: no file under clusters/bootstrap carries a placeholder, which nothing there would replace."
 
+# ── Every stamp site of this tree, held to its pin ───────────────────────────────────────────
+# clusters/platform/versions.yaml names, per pin, the sites a version sync writes it into. The
+# sync is an ansiwise program and does not run here, so a site it left behind went unnoticed
+# until a pod failed to pull, as the per-unit MongoDB chart once did. Every yaml_value site of
+# the `platform` tree is read here the way the stamp reads it (ansiwise-versions
+# lib/src/stamping.dart): the line whose trim is the anchor, exactly once; the block under it,
+# which ends where a line stands further left or a list item begins at the anchor's column or
+# left of it; and in it the key at the anchor's column, outside list items, exactly once. Sites of
+# the `deploy` and `manager` trees stand in other repositories, and are those repositories' to hold.
+site_value() { # <file> <key> <anchor, or empty for the top level> — prints "<line>\t<value>", or "!<why>"
+  awk -v key="$2" -v anchor="$3" '
+    function trimmed(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    function column(s,   c, a) {
+      c = match(s, /[^ ]/) - 1; if (c < 0) return length(s)
+      if (substr(s, c + 1, 1) == "-") { a = c + 1; while (substr(s, a + 1, 1) == " ") a++; if (a > c + 1) return a }
+      return c
+    }
+    function quiet(s,   t) { t = trimmed(s); return t == "" || substr(t, 1, 1) == "#" }
+    function item(s,   t) { t = s; sub(/^[ \t]+/, "", t); return substr(t, 1, 2) == "- " }
+    # The value token of a `key: value` line, as the stamp reads one: one token with no whitespace
+    # and no quote, quoted or not, and nothing after it but a comment. "" where the line is no such line.
+    function token(s,   rest, q, v) {
+      if (!match(s, "^[ ]*(-[ ]+)?" key ":[ ]*")) return ""
+      rest = substr(s, RLENGTH + 1); q = substr(rest, 1, 1)
+      if (q == "\"" || q == "\047") { rest = substr(rest, 2); if (!match(rest, "^[^ \t\"\047]+")) return ""; v = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1); if (substr(rest, 1, 1) != q) return ""; rest = substr(rest, 2) }
+      else { if (!match(rest, "^[^ \t\"\047]+")) return ""; v = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1) }
+      return (rest ~ /^[ \t]*(#.*)?$/) ? v : ""
+    }
+    { line[NR] = $0; if (anchor != "" && trimmed($0) == anchor) { hits++; at = NR } }
+    END {
+      if (anchor == "") { first = 1; past = NR + 1; col = 0 }
+      else {
+        if (hits != 1) { printf "!holds the anchor \"%s\" %d times, and a stamp reads it exactly once\n", anchor, hits; exit }
+        col = column(line[at]); first = at + 1; past = first
+        while (past <= NR) { s = line[past]; if (!quiet(s)) { c = column(s); if (c < col || (item(s) && c <= col)) break }; past++ }
+      }
+      n = 0
+      for (i = first; i < past; i++) {
+        s = line[i]; if (quiet(s) || item(s) || column(s) != col) continue
+        v = token(s); if (v != "") { n++; found = i; value = v }
+      }
+      if (n != 1) { printf "!holds %d values of \"%s\" under \"%s\", and a stamp writes exactly one\n", n, key, (anchor == "" ? "the top level" : anchor); exit }
+      printf "%d\t%s\n", found, value
+    }' "$1"
+}
+stamp_drifts() { # <tree root> — one line per yaml_value site of the platform tree that does not hold its pin
+  local root="$1" pin sha file key anchor segments writes want got
+  yq e '.. | select(tag == "!!map" and has("version") and has("stamps")) | . as $c | .stamps[]
+        | select(.kind == "yaml_value" and .tree == "platform")
+        | [$c.version, ($c.sha256 // "~"), .file, .key, (.anchor // "~"), (.segments // 0), (.writes // "version")] | @tsv' \
+    "$root/clusters/platform/versions.yaml" |
+  while IFS=$'\t' read -r pin sha file key anchor segments writes; do
+    # yq prints an empty line for every component whose stamps the filter leaves none of.
+    [ -n "$pin" ] || continue
+    [ "$anchor" = '~' ] && anchor=''
+    want="$pin"; [ "$writes" = sha256 ] && want="$sha"
+    [ "$segments" -gt 0 ] && want="$(printf '%s' "$want" | cut -d. -f1-"$segments")"
+    if [ ! -f "$root/$file" ]; then echo "$file is not there, and versions.yaml stamps $want into it"; continue; fi
+    got="$(site_value "$root/$file" "$key" "$anchor")"
+    case "$got" in
+      '!'*) echo "$file ${got#!}" ;;
+      *) [ "${got#*$'\t'}" = "$want" ] \
+           || echo "$file:${got%%$'\t'*}: $key holds ${got#*$'\t'}, and versions.yaml pins $want" ;;
+    esac
+  done
+}
+# The planted drift and the planted innocent beside it: one site one version behind its pin, and
+# one at its pin with a comment between its lines. The probe has to name the first and stay
+# silent on the second, or a clean answer below means nothing.
+probe="$work/stamp-probe"
+mkdir -p "$probe/clusters/platform" "$probe/parts"
+cat > "$probe/clusters/platform/versions.yaml" <<'PROBE'
+images:
+  drifted:
+    version: "1.2.3"
+    stamps:
+      - kind: yaml_value
+        tree: platform
+        file: parts/values.yaml
+        key: tag
+        anchor: 'repository: example/drifted'
+  innocent:
+    version: "4.5.6"
+    stamps:
+      - kind: yaml_value
+        tree: platform
+        file: parts/values.yaml
+        key: tag
+        anchor: 'repository: example/innocent'
+PROBE
+cat > "$probe/parts/values.yaml" <<'PROBE'
+drifted:
+  image:
+    repository: example/drifted
+    tag: "1.2.2"
+innocent:
+  image:
+    repository: example/innocent
+    # the stamp reads past a comment
+    tag: 4.5.6
+PROBE
+probed="$(stamp_drifts "$probe")"
+[ "$probed" = 'parts/values.yaml:4: tag holds 1.2.2, and versions.yaml pins 1.2.3' ] \
+  || fail "the stamp-site probe did not report exactly the planted drift and nothing else: ${probed:-nothing}"
+echo "check: the stamp-site probe reports the planted drift and not the planted innocent."
+drifts="$(stamp_drifts .)"
+if [ -n "$drifts" ]; then
+  printf '%s\n' "$drifts" | sed 's/^/  /'
+  fail "a stamp site of this tree does not hold its pin — write the pin into it, or move the pin in clusters/platform/versions.yaml"
+fi
+echo "check: every yaml_value stamp site of this tree holds its pin from clusters/platform/versions.yaml, $(yq e '[.. | select(tag == "!!map" and has("stamps")) | .stamps[] | select(.kind == "yaml_value" and .tree == "platform")] | length' clusters/platform/versions.yaml) of them."
+
 # ── 2. The delivery programs ────────────────────────────────────────────────────────────────
 echo "check: lifecycle/test.sh — the release, the regeneration, the report, the slave removal, the abandonment and the GitHub App, in both spellings. About two minutes."
 bash lifecycle/test.sh || fail "lifecycle/test.sh"
