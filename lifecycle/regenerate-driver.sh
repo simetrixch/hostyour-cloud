@@ -75,7 +75,9 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 # around hides the reason it was lying around, and the refusal is what names it.
 readonly DISCARD="${2:-}"
 
+# EMPTY UNTIL THIS SCRIPT SETS THEM, so a name the environment happens to carry is never removed.
 ANSWERS_DIR=''
+FETCHED=''
 # SHREDDED ON EVERY PATH. A credential that outlives the act it was handed over
 # for is a credential nobody is watching, and most of what deploy-branch is
 # told is credentials.
@@ -84,7 +86,12 @@ cleanup() {
   rm -rf "${ANSWERS_DIR:-}" 2>/dev/null || true
   rm -rf "${FETCHED:-}" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+# A SIGNAL ENDS THE RUN, and EXIT then cleans up. A handler that only cleaned up would let bash
+# resume the script after it, into a step whose files the handler has just taken away: the engine
+# was left half placed that way, ansiwise at the pin and ansiwise-rest not.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # NOTHING BUT ASSIGNMENTS AND COMMENTS, checked BEFORE this file is read, because
 # reading it is running it: a shell `.` executes every line, so a config carrying
@@ -218,11 +225,14 @@ block = re.search(r"^cliTools:\s*$.*?(?=^\S|\Z)", text, re.S | re.M)
 found = re.search(r"^  ansiwise:\s*$\s*^\s+version:\s*\"([^\"]+)\"", block.group(0) if block else "", re.M)
 sys.stdout.write(found.group(1) if found else "")')
 [ -n "$PIN" ] || die "$PIN_URL says nothing under cliTools.ansiwise.version; nothing has been changed" 65
+# BOTH EXECUTABLES ARE ASKED, so a machine left with one at the pin and the other not is placed
+# again rather than passed over until the pin moves.
 ENGINE_ANSWERS=$("$ENGINE" --version 2>/dev/null || true)
-if [ "$ENGINE_ANSWERS" = "$PIN" ]; then
-  good "$ENGINE already answers $PIN - nothing fetched"
+SERVING_ANSWERS=$(/usr/local/bin/ansiwise-rest --version 2>/dev/null || true)
+if [ "$ENGINE_ANSWERS" = "$PIN" ] && [ "$SERVING_ANSWERS" = "$PIN" ]; then
+  good "$ENGINE and /usr/local/bin/ansiwise-rest already answer $PIN - nothing fetched"
 else
-  say "$ENGINE answers ${ENGINE_ANSWERS:-nothing}, and the pin is $PIN"
+  say "$ENGINE answers ${ENGINE_ANSWERS:-nothing}, /usr/local/bin/ansiwise-rest answers ${SERVING_ANSWERS:-nothing}, and the pin is $PIN"
   say "reading the digests from $DIGESTS_URL"
   DIGESTS=$(curl -fsSL "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine; nothing has been changed" 69
   # A DIRECTORY OF ITS OWN, readable by this account alone, and not a fixed name under /tmp: the
@@ -235,8 +245,7 @@ else
     [ -s "$FETCHED/$tool-$PIN-linux-x64" ] || die "$url served an empty file, and an empty executable answers every command with a shell error; nothing has been changed" 69
   done
   if ! hold_engine_against_digests "$FETCHED" "$DIGESTS" "$PIN"; then
-    rm -rf "$FETCHED"
-    die "the engine fetched for $PIN is not what $DIGESTS_URL states for it; nothing has been changed. A pin that moved in the last few minutes may not have reached that address yet; otherwise an asset of the release changed after it was built" 65
+    die "the engine fetched for $PIN does not hold what $DIGESTS_URL states for it; nothing has been changed. The line above names the asset and why. Where it says the digests name no asset of $PIN, versions.yaml and ansiwise.sha256 were read at different moments: run again" 65
   fi
   good "ansiwise and ansiwise-rest hold the digests the platform repository states for $PIN"
   for tool in ansiwise ansiwise-rest; do

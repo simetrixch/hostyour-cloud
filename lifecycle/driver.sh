@@ -130,12 +130,23 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 # WHAT THIS PUT ON THE MACHINE, TAKEN OFF AGAIN ON EVERY PATH, including a failure.
 # Most of what deploy-branch is told is credentials, and a credential that outlives
 # the act it was handed over for is one nobody is watching.
+# EMPTY UNTIL THIS SCRIPT SETS THEM, so a name the environment happens to carry is never removed.
+ANSWERS_DIR=''
+FETCHED=''
+TICKER=''
 cleanup() {
+  [ -z "${TICKER:-}" ] || kill "$TICKER" 2>/dev/null || true
   rm -f "$CONFIG" 2>/dev/null || true
   rm -rf "${ANSWERS_DIR:-}" 2>/dev/null || true
   rm -rf "${FETCHED:-}" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+# A SIGNAL ENDS THE RUN, and EXIT then cleans up. A handler that only cleaned up would let bash
+# resume the script after it, into a step whose files the handler has just taken away: the engine
+# was left half placed that way, ansiwise at the pin and ansiwise-rest not. The summary still
+# comes first, because its RUNS line is how the launcher finds the records of what did run.
+trap cleanup EXIT
+trap 'summary; exit 130' INT
+trap 'summary; exit 143' TERM
 
 # NOTHING BUT ASSIGNMENTS AND COMMENTS, checked BEFORE this file is read, because
 # reading it is running it: a shell `.` executes every line, so a config carrying a
@@ -569,11 +580,15 @@ sys.stdout.write(found.group(1) if found else "")')
 [ -n "$PIN" ] || die "$PIN_URL says nothing under cliTools.ansiwise.version" 65
 good "the pin is $PIN"
 
+# BOTH EXECUTABLES ARE ASKED, so a machine left with one at the pin and the other not is placed
+# again rather than passed over until the pin moves.
 ENGINE_ANSWERS=$("$ENGINE" --version 2>/dev/null || true)
-if [ "$ENGINE_ANSWERS" = "$PIN" ]; then
-  good "$ENGINE already answers $PIN — nothing fetched"
+SERVING_ANSWERS=$(/usr/local/bin/ansiwise-rest --version 2>/dev/null || true)
+if [ "$ENGINE_ANSWERS" = "$PIN" ] && [ "$SERVING_ANSWERS" = "$PIN" ]; then
+  good "$ENGINE and /usr/local/bin/ansiwise-rest already answer $PIN — nothing fetched"
 else
-  [ -n "$ENGINE_ANSWERS" ] && say "$ENGINE answers $ENGINE_ANSWERS, which is not the pin"
+  [ "$ENGINE_ANSWERS" = "$PIN" ] || say "$ENGINE answers ${ENGINE_ANSWERS:-nothing}, which is not the pin"
+  [ "$SERVING_ANSWERS" = "$PIN" ] || say "/usr/local/bin/ansiwise-rest answers ${SERVING_ANSWERS:-nothing}, which is not the pin"
   say "reading the digests from $DIGESTS_URL"
   DIGESTS=$(curl -fsSL "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine" 69
   # A DIRECTORY OF ITS OWN, readable by this account alone, and not a fixed name under /tmp: the
@@ -586,8 +601,7 @@ else
     [ -s "$FETCHED/$tool-$PIN-linux-x64" ] || die "$url served an empty file, and an empty executable answers every command with a shell error" 69
   done
   if ! hold_engine_against_digests "$FETCHED" "$DIGESTS" "$PIN"; then
-    rm -rf "$FETCHED"
-    die "the engine fetched for $PIN is not what $DIGESTS_URL states for it, and nothing was placed. A pin that moved in the last few minutes may not have reached that address yet; otherwise an asset of the release changed after it was built" 65
+    die "the engine fetched for $PIN does not hold what $DIGESTS_URL states for it, and nothing was placed. The line above names the asset and why. Where it says the digests name no asset of $PIN, versions.yaml and ansiwise.sha256 were read at different moments: run again" 65
   fi
   good "ansiwise and ansiwise-rest hold the digests the platform repository states for $PIN"
   for tool in ansiwise ansiwise-rest; do
@@ -845,7 +859,9 @@ run_program() {
       sleep 60
       printf '%s       … still running, %ds%s\n' "$C_DIM" "$(( $(date +%s) - began ))" "$C_OFF"
     done ) &
-  local ticker=$!
+  # A GLOBAL AND NOT A LOCAL, so cleanup() can stop it when a signal ends the run mid-program: a
+  # ticker left behind holds the session open and goes on printing.
+  TICKER=$!
 
   # `-u "$OPERATOR"` IS WHAT THIS LINE IS ABOUT, AND IT IS NOT ELEVATION. The tool runs
   # as the account that owns this machine — the same account the Manager starts it as
@@ -886,8 +902,9 @@ run_program() {
   # THE SECOND ELEMENT, not the last. The pipeline is printf, the run, tee, sed —
   # so $? is sed's, which succeeds whatever the run did.
   local status=${PIPESTATUS[1]}
-  kill "$ticker" 2>/dev/null
-  wait "$ticker" 2>/dev/null
+  kill "$TICKER" 2>/dev/null
+  wait "$TICKER" 2>/dev/null
+  TICKER=''
   local took=$(( $(date +%s) - began ))
 
   # THE RECORD'S NAME IS LOOKED FOR, NOT TAKEN FROM THE END. Reading it off the last
