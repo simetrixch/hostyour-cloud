@@ -130,11 +130,23 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 # WHAT THIS PUT ON THE MACHINE, TAKEN OFF AGAIN ON EVERY PATH, including a failure.
 # Most of what deploy-branch is told is credentials, and a credential that outlives
 # the act it was handed over for is one nobody is watching.
+# EMPTY UNTIL THIS SCRIPT SETS THEM, so a name the environment happens to carry is never removed.
+ANSWERS_DIR=''
+FETCHED=''
+TICKER=''
 cleanup() {
+  [ -z "${TICKER:-}" ] || kill "$TICKER" 2>/dev/null || true
   rm -f "$CONFIG" 2>/dev/null || true
   rm -rf "${ANSWERS_DIR:-}" 2>/dev/null || true
+  rm -rf "${FETCHED:-}" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+# A SIGNAL ENDS THE RUN, and EXIT then cleans up. A handler that only cleaned up would let bash
+# resume the script after it, into a step whose files the handler has just taken away: the engine
+# was left half placed that way, ansiwise at the pin and ansiwise-rest not. The summary still
+# comes first, because its RUNS line is how the launcher finds the records of what did run.
+trap cleanup EXIT
+trap 'summary; exit 130' INT
+trap 'summary; exit 143' TERM
 
 # NOTHING BUT ASSIGNMENTS AND COMMENTS, checked BEFORE this file is read, because
 # reading it is running it: a shell `.` executes every line, so a config carrying a
@@ -192,6 +204,31 @@ RUN_IDS=()
 # process listing for anyone on it to read.
 root() { printf '%s
 ' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
+
+# THE FETCHED ENGINE IS HELD AGAINST THE DIGESTS THE PLATFORM REPOSITORY STATES FOR THE PIN,
+# before either executable is placed. The pin says which release is fetched and not which bytes
+# arrive, and an asset replaced after the release answers --version with whatever it was built to
+# answer. The release writes the digests in the same commit as the pin, off what GitHub recorded
+# when the build uploaded the assets.
+#
+# A LINE FOR EACH EXECUTABLE, NAMED BY ITS ASSET, is asked for before anything is hashed, so a
+# digest file that names another release says so, rather than sha256sum reporting a file it
+# cannot find.
+hold_engine_against_digests() { # <directory the assets were fetched into> <the digest file's text> <pin>
+  local dir="$1" digests="$2" pin="$3" tool asset line wanted=''
+  for tool in ansiwise ansiwise-rest; do
+    asset="$tool-$pin-linux-x64"
+    line=$(printf '%s\n' "$digests" | awk -v asset="$asset" '$2 == asset')
+    case "$line" in
+      '') echo "the digests name no $asset" >&2; return 1 ;;
+      *$'\n'*) echo "the digests name $asset more than once" >&2; return 1 ;;
+    esac
+    printf '%s\n' "$line" | awk '{ exit !(length($1) == 64 && $1 ~ /^[0-9a-f]+$/) }' \
+      || { echo "the digests name $asset with no SHA-256 of 64 lowercase hex digits" >&2; return 1; }
+    wanted+="$line"$'\n'
+  done
+  ( cd "$dir" && printf '%s' "$wanted" | sha256sum --check --strict --quiet - )
+}
 
 # =============================================================================
 phase '0 / 4   what this machine is, before anything is touched'
@@ -525,6 +562,7 @@ phase '1 / 4   the engine, at the version the platform repository pins'
 # no caller states a version: a machine carrying one no file names is a machine
 # nobody can say anything about afterwards.
 readonly PIN_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/versions.yaml"
+readonly DIGESTS_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/ansiwise.sha256"
 say "reading the pin from $PIN_URL"
 PIN_YAML=$(curl -fsSL "$PIN_URL") || die "$PIN_URL could not be read from this machine" 69
 # SINGLE-QUOTED FOR THE SHELL, so every dollar and every quote below belongs to
@@ -542,19 +580,34 @@ sys.stdout.write(found.group(1) if found else "")')
 [ -n "$PIN" ] || die "$PIN_URL says nothing under cliTools.ansiwise.version" 65
 good "the pin is $PIN"
 
+# BOTH EXECUTABLES ARE ASKED, so a machine left with one at the pin and the other not is placed
+# again rather than passed over until the pin moves.
 ENGINE_ANSWERS=$("$ENGINE" --version 2>/dev/null || true)
-if [ "$ENGINE_ANSWERS" = "$PIN" ]; then
-  good "$ENGINE already answers $PIN — nothing fetched"
+SERVING_ANSWERS=$(/usr/local/bin/ansiwise-rest --version 2>/dev/null || true)
+if [ "$ENGINE_ANSWERS" = "$PIN" ] && [ "$SERVING_ANSWERS" = "$PIN" ]; then
+  good "$ENGINE and /usr/local/bin/ansiwise-rest already answer $PIN — nothing fetched"
 else
-  [ -n "$ENGINE_ANSWERS" ] && say "$ENGINE answers $ENGINE_ANSWERS, which is not the pin"
+  [ "$ENGINE_ANSWERS" = "$PIN" ] || say "$ENGINE answers ${ENGINE_ANSWERS:-nothing}, which is not the pin"
+  [ "$SERVING_ANSWERS" = "$PIN" ] || say "/usr/local/bin/ansiwise-rest answers ${SERVING_ANSWERS:-nothing}, which is not the pin"
+  say "reading the digests from $DIGESTS_URL"
+  DIGESTS=$(curl -fsSL "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine" 69
+  # A DIRECTORY OF ITS OWN, readable by this account alone, and not a fixed name under /tmp: the
+  # bytes that are hashed are the bytes that are placed, and nobody else can write between the two.
+  FETCHED=$(mktemp -d) || die "no directory could be made to fetch the engine into" 73
   for tool in ansiwise ansiwise-rest; do
     url="$RELEASES/$PIN/$tool-$PIN-linux-x64"
     say "fetching $tool from $url"
-    curl -fsSL -o "/tmp/$tool" "$url" || die "$url served nothing — check the release carries an asset under that name" 69
-    [ -s "/tmp/$tool" ] || die "$url served an empty file, and an empty executable answers every command with a shell error" 69
-    root install -m 755 "/tmp/$tool" "/usr/local/bin/$tool" || die "could not place $tool in /usr/local/bin" 73
-    rm -f "/tmp/$tool"
+    curl -fsSL -o "$FETCHED/$tool-$PIN-linux-x64" "$url" || die "$url served nothing — check the release carries an asset under that name" 69
+    [ -s "$FETCHED/$tool-$PIN-linux-x64" ] || die "$url served an empty file, and an empty executable answers every command with a shell error" 69
   done
+  if ! hold_engine_against_digests "$FETCHED" "$DIGESTS" "$PIN"; then
+    die "the engine fetched for $PIN does not hold what $DIGESTS_URL states for it, and nothing was placed. The line above names the asset and why. Where it says the digests name no asset of $PIN, versions.yaml and ansiwise.sha256 were read at different moments: run again" 65
+  fi
+  good "ansiwise and ansiwise-rest hold the digests the platform repository states for $PIN"
+  for tool in ansiwise ansiwise-rest; do
+    root install -m 755 "$FETCHED/$tool-$PIN-linux-x64" "/usr/local/bin/$tool" || die "could not place $tool in /usr/local/bin" 73
+  done
+  rm -rf "$FETCHED"
   # READ BACK OFF THE MACHINE, never off this script's own claim: a truncated
   # transfer, an asset that is an error page and an architecture this machine
   # cannot execute are all one answer here — not the pin.
@@ -806,7 +859,9 @@ run_program() {
       sleep 60
       printf '%s       … still running, %ds%s\n' "$C_DIM" "$(( $(date +%s) - began ))" "$C_OFF"
     done ) &
-  local ticker=$!
+  # A GLOBAL AND NOT A LOCAL, so cleanup() can stop it when a signal ends the run mid-program: a
+  # ticker left behind holds the session open and goes on printing.
+  TICKER=$!
 
   # `-u "$OPERATOR"` IS WHAT THIS LINE IS ABOUT, AND IT IS NOT ELEVATION. The tool runs
   # as the account that owns this machine — the same account the Manager starts it as
@@ -847,8 +902,9 @@ run_program() {
   # THE SECOND ELEMENT, not the last. The pipeline is printf, the run, tee, sed —
   # so $? is sed's, which succeeds whatever the run did.
   local status=${PIPESTATUS[1]}
-  kill "$ticker" 2>/dev/null
-  wait "$ticker" 2>/dev/null
+  kill "$TICKER" 2>/dev/null
+  wait "$TICKER" 2>/dev/null
+  TICKER=''
   local took=$(( $(date +%s) - began ))
 
   # THE RECORD'S NAME IS LOOKED FOR, NOT TAKEN FROM THE END. Reading it off the last

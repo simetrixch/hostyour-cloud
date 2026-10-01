@@ -2025,8 +2025,212 @@ if reach_is_a_mode; then
   ok 'the planted defect was caught — the comparison of the guard each spelling sources can go red'
 fi
 
+# ===========================================================================
+# EIGHT — the engine held against its digests, as both drivers place it on a machine
+# ===========================================================================
+# driver.sh arms a machine and regenerate-driver.sh regenerates one, and each places the engine
+# where it is off the pin. Neither is run here whole. What runs is each driver's own text, taken out
+# of the file: its check, its clean-up and traps, and the whole block that decides, fetches, holds
+# and installs. Only /usr/local/bin is moved into a sandbox, and curl and root are stand-ins, so
+# what a machine does is what is measured. The cases: a clean machine; a swapped asset; a digest file
+# of another release, of one executable, naming one twice, or with a digest in capitals; a machine
+# left half placed; and a TERM after the first install. Each guard has a planted defect of its own,
+# driven through the same probe that measures the real driver. The two drivers carry one check, and
+# the digest file this tree commits names the assets of the pin it commits.
+ENGINE_WORK="$WORK/engine"
+SERVED="$ENGINE_WORK/served"
+mkdir -p "$SERVED"
+ENGINE_PIN='0.8.307-stable-20260930202014'
+asset_text() { printf '#!/bin/sh\necho %s\n# %s\n' "$2" "$1"; } # <tool> <the version it answers>
+for tool in ansiwise ansiwise-rest; do asset_text "$tool" "$ENGINE_PIN" > "$SERVED/$tool-$ENGINE_PIN-linux-x64"; done
+PINNED_DIGESTS="$(cd "$SERVED" && sha256sum "ansiwise-$ENGINE_PIN-linux-x64" "ansiwise-rest-$ENGINE_PIN-linux-x64")"
+check_of() { sed -n '/^hold_engine_against_digests() {/,/^}/p' "$1"; }
+# The names a driver blanks, its cleanup() and its traps, in the order the driver states them.
+guard_of() { sed -n "/^# EMPTY UNTIL THIS SCRIPT SETS THEM/,/^trap .*TERM\$/p" "$1"; }
+held() { # <driver file> <digest file text> — runs the check as that driver carries it, and answers its exit code
+  ( eval "$(check_of "$1")"
+    hold_engine_against_digests "$SERVED" "$2" "$ENGINE_PIN" ) > "$OUT/held.out" 2>&1
+}
+# The driver's placement as a machine runs it: its clean-up and traps, its check, and the block from
+# asking the engine to the read-back, with /usr/local/bin moved into the sandbox. [served digests]
+# is what the digest file answers, and $SERVED holds what the release answers.
+SANDBOX="$ENGINE_WORK/machine"
+placed() { # <driver file> <served digests> [<the asset served in place of ansiwise-rest>] — answers the block's exit code
+  local driver="$1"
+  ( SERVED_DIGESTS="$2" SWAPPED="${3:-}"
+    ENGINE="$SANDBOX/bin/ansiwise" PIN="$ENGINE_PIN" CONFIG="$ENGINE_WORK/no-config"
+    RELEASES='https://releases.example.invalid' DIGESTS_URL='https://pins.example.invalid/ansiwise.sha256'
+    say() { echo "say: $*"; }; good() { echo "good: $*"; }; summary() { echo 'summary'; }
+    die() { echo "die: $1" >&2; exit "${2:-1}"; }
+    root() { "$@" && { [ -z "${TERM_AFTER_FIRST_INSTALL:-}" ] || { TERM_AFTER_FIRST_INSTALL=''; kill -TERM "$BASHPID"; }; }; }
+    curl() { # -fsSL [-o <file>] <url>
+      local out='' url=''
+      while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
+      case "$url" in
+        "$DIGESTS_URL") printf '%s\n' "$SERVED_DIGESTS" ;;
+        "$RELEASES"/*/ansiwise-rest-*) if [ -n "$SWAPPED" ]; then cp "$SWAPPED" "$out"; else cp "$SERVED/${url##*/}" "$out"; fi ;;
+        "$RELEASES"/*) cp "$SERVED/${url##*/}" "$out" ;;
+        *) return 22 ;;
+      esac
+    }
+    eval "$(guard_of "$driver")"
+    eval "$(check_of "$driver")"
+    eval "$(sed -n '/^ENGINE_ANSWERS=\$("\$ENGINE" --version/,/^fi$/p' "$driver" | sed "s#/usr/local/bin/#$SANDBOX/bin/#g")"
+  ) > "$OUT/placed.out" 2>&1
+}
+fresh_machine() { rm -rf "$SANDBOX"; mkdir -p "$SANDBOX/bin"; }
+carries() { cat "$SANDBOX/bin/$1" 2>/dev/null; } # <tool> — what the machine holds under that name
+released() { cat "$SERVED/$1-$ENGINE_PIN-linux-x64"; } # <tool> — what the release built
+SWAPPED_ASSET="$ENGINE_WORK/swapped"
+asset_text ansiwise-rest "$ENGINE_PIN" > "$SWAPPED_ASSET"; echo '# swapped after the release' >> "$SWAPPED_ASSET"
+
+for engine_driver in driver.sh regenerate-driver.sh; do
+  D="$HERE/$engine_driver"
+  check_of "$D" | grep -q 'sha256sum --check' \
+    || fail "$engine_driver carries no hold_engine_against_digests that runs sha256sum --check — nothing below measures the machine"
+
+  held "$D" "$PINNED_DIGESTS" || fail "$engine_driver: the pinned digests of both assets were refused: $(cat "$OUT/held.out")"
+  if held "$D" "$(printf '%s\n' "$PINNED_DIGESTS" | sed "s/$ENGINE_PIN/0.8.306-stable-20260929191649/")"; then
+    fail "$engine_driver: a digest file naming another release passed — the pin and its digests came apart unnoticed"
+  fi
+  grep -q "the digests name no ansiwise-$ENGINE_PIN-linux-x64" "$OUT/held.out" \
+    || fail "$engine_driver: a digest file naming another release was not refused as such: $(cat "$OUT/held.out")"
+  if held "$D" "$(printf '%s\n' "$PINNED_DIGESTS" | head -1)"; then
+    fail "$engine_driver: a digest file naming one executable passed — the other would be placed unchecked"
+  fi
+  grep -q "the digests name no ansiwise-rest-$ENGINE_PIN-linux-x64" "$OUT/held.out" \
+    || fail "$engine_driver: a digest file naming one executable was not refused for the other: $(cat "$OUT/held.out")"
+  if held "$D" "$(printf '%s\n%s\n' "$PINNED_DIGESTS" "$(printf '%s\n' "$PINNED_DIGESTS" | tail -1 | sed 's/^./0/')")"; then
+    fail "$engine_driver: a digest file naming an executable twice passed — the Manager refuses it, and the two would accept different bytes"
+  fi
+  grep -q "the digests name ansiwise-rest-$ENGINE_PIN-linux-x64 more than once" "$OUT/held.out" \
+    || fail "$engine_driver: a digest file naming an executable twice was not refused as such: $(cat "$OUT/held.out")"
+  if held "$D" "$(printf '%s\n' "$PINNED_DIGESTS" | sed '2s/^\([0-9a-f]*\)/\U\1/')"; then
+    fail "$engine_driver: a digest in capitals passed — sha256sum would accept it, and the Manager refuses it"
+  fi
+  grep -q "the digests name ansiwise-rest-$ENGINE_PIN-linux-x64 with no SHA-256 of 64 lowercase hex digits" "$OUT/held.out" \
+    || fail "$engine_driver: a digest in capitals was not refused as such: $(cat "$OUT/held.out")"
+  ok "$engine_driver: the check passes the pinned digests and refuses another release, one executable, a name given twice and capitals"
+
+  fresh_machine
+  placed "$D" "$PINNED_DIGESTS" || fail "$engine_driver: a clean machine was refused the engine at its pinned digests: $(cat "$OUT/placed.out")"
+  [ "$(carries ansiwise)" = "$(released ansiwise)" ] && [ "$(carries ansiwise-rest)" = "$(released ansiwise-rest)" ] \
+    || fail "$engine_driver: a clean machine does not carry the release's bytes after the placement"
+  ok "$engine_driver: a clean machine is given both executables at their pinned digests"
+
+  fresh_machine
+  CODE=0; placed "$D" "$PINNED_DIGESTS" "$SWAPPED_ASSET" || CODE=$?
+  [ "$CODE" = 65 ] || fail "$engine_driver: a swapped asset must end the placement with 65, got $CODE: $(cat "$OUT/placed.out")"
+  [ -z "$(ls -A "$SANDBOX/bin")" ] || fail "$engine_driver: a swapped asset was refused, and something was placed all the same: $(ls "$SANDBOX/bin")"
+  ok "$engine_driver: a swapped asset is refused and nothing is placed"
+
+  fresh_machine
+  released ansiwise > "$SANDBOX/bin/ansiwise"; asset_text ansiwise-rest '0.8.306-stable-20260929191649' > "$SANDBOX/bin/ansiwise-rest"
+  chmod +x "$SANDBOX/bin/ansiwise" "$SANDBOX/bin/ansiwise-rest"
+  placed "$D" "$PINNED_DIGESTS" || fail "$engine_driver: a half-placed machine was refused: $(cat "$OUT/placed.out")"
+  [ "$(carries ansiwise-rest)" = "$(released ansiwise-rest)" ] \
+    || fail "$engine_driver: a machine with ansiwise at the pin and ansiwise-rest off it was passed over"
+  ok "$engine_driver: a machine left half placed is placed again, not passed over"
+
+  fresh_machine
+  CODE=0; TERM_AFTER_FIRST_INSTALL=1 placed "$D" "$PINNED_DIGESTS" || CODE=$?
+  [ "$CODE" = 143 ] || fail "$engine_driver: a TERM after the first install must end the run with 143, got $CODE: $(cat "$OUT/placed.out")"
+  [ ! -e "$SANDBOX/bin/ansiwise-rest" ] || fail "$engine_driver: the run went on after a TERM and placed ansiwise-rest"
+  ok "$engine_driver: a TERM ends the run where it stands, and the next run places what is missing"
+done
+
+# The planted defects, each through the probe that measures the real driver.
+plant() { sed "$2" "$HERE/driver.sh" > "$ENGINE_WORK/planted-driver.sh"; grep -q "$3" "$ENGINE_WORK/planted-driver.sh" \
+  || fail "the planted line was not planted ($1) — the probe proves nothing"; }
+plant 'a refusal that does not stop the install' 's/^    die "the engine fetched for \$PIN does not hold.*" 65$/    :/' '^    :$'
+fresh_machine
+CODE=0; placed "$ENGINE_WORK/planted-driver.sh" "$PINNED_DIGESTS" "$SWAPPED_ASSET" || CODE=$?
+[ -n "$(ls -A "$SANDBOX/bin")" ] || fail 'a driver whose refusal does not stop the install placed nothing over a swapped asset — the probe proves nothing'
+ok 'the planted defect was caught — a driver whose refusal does not stop the install places the swapped asset'
+plant 'a handler that resumes after a TERM' "s/^trap 'summary; exit 143' TERM$/trap cleanup TERM/" '^trap cleanup TERM$'
+fresh_machine
+CODE=0; TERM_AFTER_FIRST_INSTALL=1 placed "$ENGINE_WORK/planted-driver.sh" "$PINNED_DIGESTS" || CODE=$?
+[ "$CODE" != 143 ] || fail 'a driver that resumes after a TERM ended with 143 all the same — the probe proves nothing'
+ok "the planted defect was caught — a driver that resumes after a TERM ends with $CODE, not 143"
+plant 'a skip that asks ansiwise alone' 's/^if \[ "\$ENGINE_ANSWERS" = "\$PIN" \] && \[ "\$SERVING_ANSWERS" = "\$PIN" \]; then$/if [ "$ENGINE_ANSWERS" = "$PIN" ]; then/' '^if \[ "\$ENGINE_ANSWERS" = "\$PIN" \]; then$'
+fresh_machine
+released ansiwise > "$SANDBOX/bin/ansiwise"; asset_text ansiwise-rest '0.8.306-stable-20260929191649' > "$SANDBOX/bin/ansiwise-rest"
+chmod +x "$SANDBOX/bin/ansiwise" "$SANDBOX/bin/ansiwise-rest"
+placed "$ENGINE_WORK/planted-driver.sh" "$PINNED_DIGESTS" || true
+[ "$(carries ansiwise-rest)" != "$(released ansiwise-rest)" ] || fail 'a driver that asks ansiwise alone placed ansiwise-rest all the same — the probe proves nothing'
+ok 'the planted defect was caught — a driver that asks ansiwise alone leaves a half-placed machine as it is'
+
+# A name the environment carries survives a run that ends before it sets one, because the driver
+# blanks it before it arms the trap that removes it.
+survives_an_early_end() { # <driver file> — answers 0 when both directories named in the environment survive
+  local kept="$ENGINE_WORK/kept"
+  rm -rf "$kept"; mkdir -p "$kept/answers" "$kept/fetched"
+  ( export ANSWERS_DIR="$kept/answers" FETCHED="$kept/fetched" CONFIG="$ENGINE_WORK/no-config"
+    summary() { :; }
+    eval "$(guard_of "$1")"
+    exit 3 ) > /dev/null 2>&1
+  [ -d "$kept/answers" ] && [ -d "$kept/fetched" ]
+}
+for engine_driver in driver.sh regenerate-driver.sh; do
+  survives_an_early_end "$HERE/$engine_driver" \
+    || fail "$engine_driver removed a directory the environment named before the run set it"
+done
+plant 'a FETCHED left as the environment set it' "s/^FETCHED=''$/: FETCHED left as the environment set it/" '^: FETCHED left as the environment set it$'
+if survives_an_early_end "$ENGINE_WORK/planted-driver.sh"; then
+  fail 'a driver that does not blank FETCHED kept the directory the environment named — the probe proves nothing'
+fi
+ok 'both drivers blank ANSWERS_DIR and FETCHED before the trap, and a driver that does not is caught'
+
+# The check refuses a digest that is not 64 lowercase hex digits, which sha256sum would accept.
+plant 'a check that takes any digest' 's/^    printf .%s\\n. "\$line" | awk .{ exit !(length(\$1) == 64 \&\& \$1 ~ \/^\[0-9a-f\]+\$\/) }. \\$/    true \\/' '^    true \\$'
+if ! held "$ENGINE_WORK/planted-driver.sh" "$(printf '%s\n' "$PINNED_DIGESTS" | sed '2s/^\([0-9a-f]*\)/\U\1/')"; then
+  fail 'a check without the lowercase rule refused a digest in capitals all the same — the probe proves nothing'
+fi
+ok 'the planted defect was caught — a check without the lowercase rule accepts a digest in capitals'
+
+# A signal mid-program stops the heartbeat ticker: cleanup() kills the one run_program records.
+stops_the_ticker() { sed -n '/^cleanup() {/,/^}/p' "$1" | grep -q 'kill "\$TICKER"' && grep -q '^  TICKER=\$!$' "$1"; }
+stops_the_ticker "$HERE/driver.sh" || fail 'driver.sh does not stop the heartbeat ticker when a signal ends the run'
+plant 'a cleanup that leaves the ticker running' 's/^  \[ -z "\${TICKER:-}" \] || kill "\$TICKER" 2>\/dev\/null || true$/  : the ticker is left running/' '^  : the ticker is left running$'
+if stops_the_ticker "$ENGINE_WORK/planted-driver.sh"; then
+  fail 'a driver whose cleanup() leaves the ticker running passed — the probe proves nothing'
+fi
+ok 'driver.sh stops its heartbeat ticker when a signal ends the run, and a cleanup that leaves it running is caught'
+
+one_check() { diff -u <(check_of "$1") <(check_of "$2") > "$OUT/one-check.out"; }
+one_check "$HERE/driver.sh" "$HERE/regenerate-driver.sh" \
+  || fail "the two drivers carry different checks — a machine regenerated is held to other bytes than one installed: $(cat "$OUT/one-check.out")"
+sed 's/more than once/twice/' "$HERE/regenerate-driver.sh" > "$ENGINE_WORK/planted-regenerate-driver.sh"
+if one_check "$HERE/driver.sh" "$ENGINE_WORK/planted-regenerate-driver.sh"; then
+  fail 'a regenerate-driver.sh with one word changed compared EQUAL to driver.sh — the comparison proves nothing'
+fi
+ok 'driver.sh and regenerate-driver.sh carry one check, word for word, and a copy with one word changed is caught'
+
+# The digest file this tree commits, held to the pin it commits by the drivers' own rule: each asset
+# named once, and that line well formed. A pin moved by hand without its digests is caught here,
+# before a machine refuses the pin.
+names_the_pin() { # <digest file text> <pin>
+  local tool
+  for tool in ansiwise ansiwise-rest; do
+    printf '%s\n' "$1" | awk -v asset="$tool-$2-linux-x64" \
+      '$2 == asset { n++; ok = length($1) == 64 && $1 ~ /^[0-9a-f]+$/ } END { exit !(n == 1 && ok) }' || return 1
+  done
+}
+TREE_PIN=$(yq e '.cliTools.ansiwise.version' "$HERE/../clusters/platform/versions.yaml")
+[ -n "$TREE_PIN" ] && [ "$TREE_PIN" != null ] || fail 'clusters/platform/versions.yaml states no cliTools.ansiwise.version yq could read'
+names_the_pin "$(cat "$HERE/../clusters/platform/ansiwise.sha256")" "$TREE_PIN" \
+  || fail "clusters/platform/ansiwise.sha256 does not name the two assets of the pin $TREE_PIN once each — every machine off the pin would be refused its engine"
+if names_the_pin "$(sed "s/$TREE_PIN/0.8.306-stable-20260929191649/" "$HERE/../clusters/platform/ansiwise.sha256")" "$TREE_PIN"; then
+  fail 'a digest file naming another release passed the probe of the committed file — the probe proves nothing'
+fi
+if names_the_pin "$(cat "$HERE/../clusters/platform/ansiwise.sha256"; echo "BAD  ansiwise-rest-$TREE_PIN-linux-x64")" "$TREE_PIN"; then
+  fail 'a digest file naming an asset a second time, in a line the drivers refuse, passed the probe of the committed file'
+fi
+ok "clusters/platform/ansiwise.sha256 names both assets of the committed pin $TREE_PIN once each, and a file of another release or a second line is caught"
+
 echo "test: GREEN — every case above was measured on both spellings and answered identically,"
-echo "test:   but the stubbed cases of the owner-only guard, on the bash spelling alone."
+echo "test:   but the stubbed cases of the owner-only guard, on the bash spelling alone, and the"
+echo "test:   engine's digest check of both drivers, which a machine runs in bash alone."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
@@ -2057,6 +2261,15 @@ echo "test:   make before they open a session, the door each composes from MACHI
 echo "test:   from the identity, the id a restore refuses, and the one list of stores both drivers"
 echo "test:   carry; install-machine's refusal of a missing config in both spellings, with no exit"
 echo "test:   code in its sentence. Eight planted defects prove the comparison can go red."
+echo "test:   Both drivers' placement, run from their own text in a sandbox, gives a clean machine the"
+echo "test:   engine at its pinned digests, refuses a swapped asset with nothing placed, places a"
+echo "test:   half-placed machine again and ends the run on a TERM; their one check refuses another"
+echo "test:   release, one executable, a name given twice and capitals; the committed digest file names"
+echo "test:   the committed pin; both drivers blank the names they remove before the trap, and driver.sh"
+echo "test:   stops its heartbeat ticker on a signal. A refusal that does not stop the install, a handler"
+echo "test:   that resumes after a TERM, a skip that asks ansiwise alone, a FETCHED left as the environment"
+echo "test:   set it, a check that takes any digest and a cleanup that leaves the ticker running are each"
+echo "test:   planted, and each is caught."
 if reach_is_a_mode; then
   echo "test: covered off Windows — a config of mode 644, refused in one sentence by both"
   echo "test:   spellings of the regeneration, the backup, the restore and install-machine, and a ninth planted"
