@@ -758,6 +758,17 @@ kube-prometheus-stack:
 
   prometheus:
     prometheusSpec:
+      # EVERY SERIES THIS PROMETHEUS SCRAPES NAMES ITS CLUSTER, as every slave's series does
+      # through its agent (clusters/charts/monitoring/templates/alloy-agent-config.yaml). Without
+      # it master1's series carry no cluster, so no dashboard's cluster choice can offer master1
+      # and its alerts name no cluster. Series the slaves push are not scraped here and keep theirs.
+      # The chart renders this through tpl, so global.domain comes from the cluster map.
+      scrapeClasses:
+        - name: cluster-label
+          default: true
+          relabelings:
+            - targetLabel: cluster
+              replacement: '{{ .Values.global.domain }}'
       ruleSelectorNilUsesHelmValues: false
       serviceMonitorSelectorNilUsesHelmValues: false
       podMonitorSelectorNilUsesHelmValues: false
@@ -822,21 +833,20 @@ kube-prometheus-stack:
       runAsGroup: 472
       fsGroup: 472
     sidecar:
-      # The k8s-sidecar container fails on MicroK8s because its built-in
-      # kube-apiserver CA lacks the X.509 keyUsage extension, which newer
-      # Python SSL libs reject. Neither sidecar.skipTlsVerify nor the env-var
-      # overrides are honored by this chart version. Since datasources are
-      # fully declarative via additionalDataSources below (no runtime ConfigMap
-      # discovery needed) and dashboards will be provisioned via
-      # dashboardsConfigMaps, disable the sidecars entirely.
+      # The dashboard sidecar loads every ConfigMap labelled grafana_dashboard, from every
+      # namespace: the stock dashboards this chart renders, and the one each app drops in its
+      # own namespace. Without it Grafana shows none of them. It verifies the API server against
+      # the cluster CA, which carries the keyUsage a strict Python TLS check asks for.
       dashboards:
-        enabled: false
+        enabled: true
+        # The cluster choice on every dashboard that has one, so a slave can be chosen beside
+        # master1. Hidden, the choice takes its first value.
+        multicluster:
+          global:
+            enabled: true
+      # The datasources are declared below, so nothing has to be discovered at runtime.
       datasources:
         enabled: false
-    # Dashboards: each app drops a ConfigMap labelled grafana_dashboard: "1"
-    # in its own namespace. Re-enable the dashboards sidecar above (and resolve
-    # the MicroK8s CA issue) to have Grafana auto-discover them, or list them
-    # explicitly under `dashboardsConfigMaps` here if sidecar discovery is off.
     # Provision datasources explicitly. additionalDataSources wasn't producing
     # a ConfigMap in this chart combination — explicit datasources.yaml works.
     datasources:
