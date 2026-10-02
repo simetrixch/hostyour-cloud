@@ -496,12 +496,14 @@ monitoring:
                 description: >-
                   The scheduler has not renewed its lease for more than two minutes, or
                   kube-state-metrics cannot be scraped. Either way no controller can be trusted to
-                  act until it ends. First read which of the two holds: query
-                  `up{job="kube-state-metrics"}` for this cluster, and run
-                  `microk8s kubectl -n kube-system get lease kube-scheduler -o jsonpath='{.spec.renewTime}'`
-                  twice, a few seconds apart. If the renew time moves, the control plane acts: restart
-                  nothing of it, and repair kube-state-metrics instead. If it does not move, the control
-                  plane has stopped. On master1 the cause was a stalled k8s-dqlite. First save
+                  act until it ends. First find out which: on that cluster run
+                  `microk8s kubectl -n observability delete pod -l app.kubernetes.io/name=kube-state-metrics`
+                  and then `microk8s kubectl -n observability get pods -l app.kubernetes.io/name=kube-state-metrics -o wide`.
+                  If a new pod appears within two minutes and stands on a node, the control plane acts:
+                  restart nothing of it, and repair kube-state-metrics instead. If no new pod appears,
+                  the control plane has stopped, because a stalled one replaces no deleted pod. Its
+                  lease is no proof either way: single writes can still succeed in such a stall. On
+                  master1 the cause was a stalled k8s-dqlite. First save
                   `journalctl -u snap.microk8s.daemon-k8s-dqlite -u snap.microk8s.daemon-kubelite --since -1h`
                   to a file, because a restart ends the only record of the stall. Then copy the data
                   aside with
