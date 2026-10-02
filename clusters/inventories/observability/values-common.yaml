@@ -456,6 +456,53 @@ monitoring:
                   the alert above seen from the other side, and it also catches a machine whose source
                   answers but disagrees.
 
+    # A control plane can stop acting while the node stays Ready and every pod reports Running: the
+    # API still answers single requests, but no watch delivers an event, so no controller acts, a
+    # deleted pod is not replaced and ESO writes no Secret again. Measured on master1 on 2026-09-30,
+    # when k8s-dqlite stalled from 22:26 to 23:31.
+    #
+    # TWO LEGS, ONE ALERT. The scheduler renews its lease every few seconds, so a lease older than two
+    # minutes is a scheduler that cannot act. But kube-state-metrics, which reports that lease, reads
+    # the cluster through the same API: in that stall it could not be scraped at all, and the lease
+    # series was simply gone, so an alert on the age alone stayed silent. The second leg is a
+    # kube-state-metrics that cannot be scraped, which also blinds every other kube_ rule of that
+    # cluster. The stock TargetDown reports it only as a warning, and only after ten minutes.
+    #
+    # BY THE LEASE'S NAME, NOT ITS NAMESPACE. A slave's agent moves the object's namespace to
+    # exported_namespace, so a selector on namespace="kube-system" matches master1's lease and none
+    # of the slaves'.
+    #
+    # WHY THREE MINUTES. A restart of k8s-dqlite takes the control plane away for two to three
+    # minutes; master1's restart on 2026-09-30 at 16:00 held the expression true for three samples.
+    # Three minutes keeps a restart from paging and still catches a stall within four.
+    control-plane:
+      enabled: true
+      groups:
+        - name: control-plane
+          interval: 60s
+          rules:
+            - alert: KubeControlPlaneStalled
+              expr: >-
+                (time() - max by (cluster) (kube_lease_renew_time{lease="kube-scheduler"}) > 120)
+                or on (cluster)
+                (max by (cluster) (up{job="kube-state-metrics"}) == 0)
+              for: 3m
+              labels:
+                severity: critical
+              annotations:
+                summary: "The control plane{{ if $labels.cluster }} of {{ $labels.cluster }}{{ end }} has stopped acting"
+                description: >-
+                  The scheduler has not renewed its lease for more than two minutes, or
+                  kube-state-metrics cannot be scraped. Either way no controller can be trusted to
+                  act until it ends. On master1 the cause was a stalled k8s-dqlite. First save
+                  `journalctl -u snap.microk8s.daemon-k8s-dqlite -u snap.microk8s.daemon-kubelite --since -1h`
+                  to a file, because a restart ends the only record of the stall. Then copy the data
+                  aside with
+                  `sudo cp -a /var/snap/microk8s/current/var/kubernetes/backend /root/dqlite-backend-$(date -u +%Y%m%d-%H%M)`
+                  and run
+                  `sudo systemctl restart snap.microk8s.daemon-k8s-dqlite && sleep 20 && sudo systemctl restart snap.microk8s.daemon-kubelite`,
+                  which ended it there.
+
   # --------------------------------------------------------------------------
   # AlertmanagerConfig CRs.
   #
