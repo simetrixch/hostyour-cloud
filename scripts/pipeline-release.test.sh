@@ -24,7 +24,7 @@ extract() { # function name -> its text out of the template
     on && /^ *\}$/ && match($0, /[^ ]/) == indent { exit }
   ' "$template"
 }
-for fn in bundle_engine engine_line_off; do
+for fn in bundle_engine engine_line_off concurrent_push_refusal; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
@@ -115,5 +115,20 @@ read="$(grep -n 'if ! bundle_engine "${SRC}/apps.yaml"' "$template" | head -1 | 
 [ "$read" -lt "$call" ] && [ "$call" -lt "$write" ] \
   || fail "class (d) must read the engine (line $read), then judge the line (line $call), then write appsImageTag (line $write)"
 ok "class (d) reads the engine (line $read), judges the line (line $call), then writes appsImageTag (line $write)"
+
+# ── concurrent_push_refusal: which refusals of a bump's push are a race ──────
+# A race is retried after a rebase, and anything else fails at once with git's words. Each case is
+# git's or GitHub's own text: the two that name a concurrent update, and a protected branch as the
+# refusal that must not be taken for one.
+refusal="$work/refusal"
+races() { printf '%s\n' "$1" > "$refusal"; concurrent_push_refusal "$refusal"; }
+races ' ! [rejected]        HEAD -> master (non-fast-forward)' \
+  || fail "a non-fast-forward refusal was not taken for a concurrent update"
+races " ! [remote rejected] HEAD -> master.digitacloud.app (cannot lock ref 'refs/heads/master.digitacloud.app': is at 001f168 but expected 3f2ffe8)" \
+  || fail "a ref GitHub found moved under the push was not taken for a concurrent update"
+if races ' ! [remote rejected] HEAD -> master (protected branch hook declined)'; then
+  fail "a protected branch was taken for a concurrent update, so it would be retried five times"
+fi
+ok "a non-fast-forward and a moved ref are retried, and a protected branch is not"
 
 echo "pipeline-release.test: OK"

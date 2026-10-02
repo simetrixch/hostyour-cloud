@@ -875,8 +875,18 @@ spec:
               # times against either changes nothing and prints five lines
               # asserting a race that was never established — the sentence an
               # operator reads first and acts on. So git's own refusal is
-              # captured and read: only a non-fast-forward is retried, and
+              # captured and read: only a concurrent update is retried, and
               # every other refusal fails at once with what git said.
+              # concurrent_push_refusal <errfile> — whether git's refusal of a
+              # push names a concurrent update of the branch: a non-fast-forward
+              # in git's own words, or a ref GitHub found moved under the push
+              # ("cannot lock ref … is at <sha> but expected <sha>", under
+              # [remote rejected]). Both are the race a rebase absorbs; nothing
+              # else is.
+              concurrent_push_refusal() {
+                grep -qEi 'non-fast-forward|fetch first|behind its remote|cannot lock ref.*but expected' "$1"
+              }
+
               commit_push() {
                 local dir="$1" branch="$2" what="$3" attempt err
                 err="$(mktemp)"
@@ -893,17 +903,16 @@ spec:
                       echo "bump: pushed ${what} (${branch})"
                       exit 0
                     fi
-                    # git names a non-fast-forward in its own words; anything
-                    # else — a protected branch, a credential without
-                    # contents:write, a repository that is not there — is not a
-                    # race and is not retried.
-                    if ! grep -qEi 'non-fast-forward|fetch first|behind its remote' "${err}"; then
+                    # Only a concurrent update is retried; anything else — a
+                    # protected branch, a credential without contents:write, a
+                    # repository that is not there — is not a race.
+                    if ! concurrent_push_refusal "${err}"; then
                       echo "bump: FAIL — ${what} (${branch}): the push was refused, and not as a concurrent release. git said:" >&2
                       cat "${err}" >&2
                       echo "  A first installation refuses here for two reasons before it ever races: branch protection on ${branch}, and a PAT in the store without contents:write on this repository." >&2
                       exit 1
                     fi
-                    echo "bump: push of ${what} (${branch}) rejected as non-fast-forward (attempt ${attempt}/5) — rebasing onto the remote tip and retrying" >&2
+                    echo "bump: push of ${what} (${branch}) rejected by a concurrent update (attempt ${attempt}/5) — rebasing onto the remote tip and retrying" >&2
                     if ! git fetch -q origin "${branch}" 2>"${err}"; then
                       echo "bump: FAIL — ${what} (${branch}): the push was rejected and the branch cannot be fetched either, so it cannot be rebased. git said:" >&2
                       cat "${err}" >&2
