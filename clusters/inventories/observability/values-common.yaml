@@ -466,11 +466,13 @@ monitoring:
     # the cluster through the same API: in that stall it could not be scraped at all, and the lease
     # series was simply gone, so an alert on the age alone stayed silent. The second leg is a
     # kube-state-metrics that cannot be scraped, which also blinds every other kube_ rule of that
-    # cluster. The stock TargetDown reports it only as a warning, and only after ten minutes.
+    # cluster. The stock TargetDown reports it only as a warning, and only after ten minutes. The rule
+    # cannot tell the legs apart, so the alert names both and the description says how to read which.
     #
-    # BY THE LEASE'S NAME, NOT ITS NAMESPACE. A slave's agent moves the object's namespace to
-    # exported_namespace, so a selector on namespace="kube-system" matches master1's lease and none
-    # of the slaves'.
+    # THE LEASE'S AGE WHEN IT WAS READ, timestamp(x) - x, and not its age now. A slave's samples reach
+    # the master over its agent's push, and with time() a push that stalls ages the last sample until
+    # the lookback drops it, which is about as long as the three minutes below. A scheduler that
+    # stopped still shows: kube-state-metrics goes on reading the old renew time and reporting it.
     #
     # WHY THREE MINUTES. A restart of k8s-dqlite takes the control plane away for two to three
     # minutes; master1's restart on 2026-09-30 at 16:00 held the expression true for three samples.
@@ -483,18 +485,23 @@ monitoring:
           rules:
             - alert: KubeControlPlaneStalled
               expr: >-
-                (time() - max by (cluster) (kube_lease_renew_time{lease="kube-scheduler"}) > 120)
+                (max by (cluster) (timestamp(kube_lease_renew_time{lease="kube-scheduler"}) - kube_lease_renew_time{lease="kube-scheduler"}) > 120)
                 or on (cluster)
                 (max by (cluster) (up{job="kube-state-metrics"}) == 0)
               for: 3m
               labels:
                 severity: critical
               annotations:
-                summary: "The control plane{{ if $labels.cluster }} of {{ $labels.cluster }}{{ end }} has stopped acting"
+                summary: "The control plane{{ if $labels.cluster }} of {{ $labels.cluster }}{{ end }} has stopped acting, or kube-state-metrics cannot be read"
                 description: >-
                   The scheduler has not renewed its lease for more than two minutes, or
                   kube-state-metrics cannot be scraped. Either way no controller can be trusted to
-                  act until it ends. On master1 the cause was a stalled k8s-dqlite. First save
+                  act until it ends. First read which of the two holds: query
+                  `up{job="kube-state-metrics"}` for this cluster, and run
+                  `microk8s kubectl -n kube-system get lease kube-scheduler -o jsonpath='{.spec.renewTime}'`
+                  twice, a few seconds apart. If the renew time moves, the control plane acts: restart
+                  nothing of it, and repair kube-state-metrics instead. If it does not move, the control
+                  plane has stopped. On master1 the cause was a stalled k8s-dqlite. First save
                   `journalctl -u snap.microk8s.daemon-k8s-dqlite -u snap.microk8s.daemon-kubelite --since -1h`
                   to a file, because a restart ends the only record of the stall. Then copy the data
                   aside with
