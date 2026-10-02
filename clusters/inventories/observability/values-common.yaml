@@ -237,26 +237,18 @@ monitoring:
             # a line in this group rather than a page.
             #
             # The ALERT is per pod, because kube_pod_status_phase carries no container dimension.
-            # The JOIN is on (namespace, pod), which is not the narrowest available:
-            # kube-state-metrics puts `namespace`, `pod` AND `uid` on every pod metric family
-            # (wrapPodFunc merging descPodLabelsDefaultLabels, internal/store/pod.go), so both
-            # operands carry `uid` too, and upstream KubePodNotReady narrows the same kind of join
-            # with `cluster` instead. What the wider join can match is a phase series and a
-            # waiting-reason series belonging to two DIFFERENT pods that share a namespace and a
-            # name, which takes a second cluster's series in this Prometheus:
-            # THIS PROMETHEUS CAN NOW HOLD A SECOND CLUSTER'S SERIES: the receiver
-            # below is on, so a slave's agent pushes into it. What keeps the join
-            # from matching across clusters is the `cluster` label the agent puts
-            # on everything it sends
-            # (clusters/charts/monitoring/templates/alloy-agent-config.yaml), not
-            # the absence of the series.
+            # The JOIN is on (cluster, namespace, pod). This Prometheus holds every slave's series
+            # beside master1's, because the receiver below is on, and two clusters can run a pod of
+            # the same namespace and name. Without `cluster` in the join, one cluster's waiting
+            # reason would take another cluster's pod out. Upstream KubePodNotReady narrows the same
+            # kind of join with `cluster` too.
             #
             # The DECISION to exclude is per container, and the nested `unless` is what makes
             # it so: the inner operand keeps an owned container only while the same pod has NO
             # container waiting for a reason nobody owns, so a pod is taken out only when EVERY
             # waiting container of it is already reported elsewhere.
             #
-            # A single `unless on (namespace, pod)` over the reason set removes the whole pod on ONE
+            # A single `unless on (cluster, namespace, pod)` over the reason set removes the whole pod on ONE
             # owned container, and this platform runs the pods where that is the wrong answer:
             # DaemonSet alloy runs alloy beside config-reloader and Deployment loki-gateway runs
             # nginx beside exporter, each pair pulling from a different registry, and a TaskRun of
@@ -312,9 +304,9 @@ monitoring:
             - alert: PodStuckPending
               expr: |-
                 kube_pod_status_phase{phase="Pending"} == 1
-                unless on (namespace, pod) (
+                unless on (cluster, namespace, pod) (
                   kube_pod_container_status_waiting_reason{reason=~"ContainerCreating|ImagePullBackOff|ErrImagePull|CrashLoopBackOff"} == 1
-                  unless on (namespace, pod)
+                  unless on (cluster, namespace, pod)
                   kube_pod_container_status_waiting_reason{reason!~"ContainerCreating|ImagePullBackOff|ErrImagePull|CrashLoopBackOff"} == 1
                 )
               for: 15m
@@ -340,7 +332,7 @@ monitoring:
                   containers carry no status at all is a kubelet that has not reported.
 
             - alert: PodNotReady
-              expr: kube_pod_status_ready{condition="true"} == 0 and on(namespace, pod) kube_pod_status_phase{phase="Running"} == 1
+              expr: kube_pod_status_ready{condition="true"} == 0 and on (cluster, namespace, pod) kube_pod_status_phase{phase="Running"} == 1
               for: 10m
               labels:
                 severity: warning
@@ -463,6 +455,64 @@ monitoring:
                   minutes. It grows while nothing corrects the clock, so this is the same condition as
                   the alert above seen from the other side, and it also catches a machine whose source
                   answers but disagrees.
+
+    # A control plane can stop acting while the node stays Ready and every pod reports Running: the
+    # API still answers single requests, but no watch delivers an event, so no controller acts, a
+    # deleted pod is not replaced and ESO writes no Secret again. Measured on master1 on 2026-09-30,
+    # when k8s-dqlite stalled from 22:26 to 23:31.
+    #
+    # TWO LEGS, ONE ALERT. The scheduler renews its lease every few seconds, so a lease older than two
+    # minutes is a scheduler that cannot act. But kube-state-metrics, which reports that lease, reads
+    # the cluster through the same API: in that stall it could not be scraped at all, and the lease
+    # series was simply gone, so an alert on the age alone stayed silent. The second leg is a
+    # kube-state-metrics that cannot be scraped, which also blinds every other kube_ rule of that
+    # cluster. The stock TargetDown reports it only as a warning, and only after ten minutes. The rule
+    # cannot tell the legs apart, so the alert names both and the description says how to read which.
+    #
+    # THE LEASE'S AGE WHEN IT WAS READ, timestamp(x) - x, and not its age now. A slave's samples reach
+    # the master over its agent's push, and with time() a push that stalls ages the last sample until
+    # the lookback drops it, which is about as long as the three minutes below. A scheduler that
+    # stopped still shows: kube-state-metrics goes on reading the old renew time and reporting it.
+    #
+    # WHY THREE MINUTES. A restart of k8s-dqlite takes the control plane away for two to three
+    # minutes; master1's restart on 2026-09-30 at 16:00 held the expression true for three samples.
+    # Three minutes keeps a restart from paging and still catches a stall within four.
+    control-plane:
+      enabled: true
+      groups:
+        - name: control-plane
+          interval: 60s
+          rules:
+            - alert: KubeControlPlaneStalled
+              expr: >-
+                (max by (cluster) (timestamp(kube_lease_renew_time{lease="kube-scheduler"}) - kube_lease_renew_time{lease="kube-scheduler"}) > 120)
+                or on (cluster)
+                (max by (cluster) (up{job="kube-state-metrics"}) == 0)
+              for: 3m
+              labels:
+                severity: critical
+              annotations:
+                summary: "The control plane{{ if $labels.cluster }} of {{ $labels.cluster }}{{ end }} has stopped acting, or kube-state-metrics cannot be read"
+                description: >-
+                  The scheduler has not renewed its lease for more than two minutes, or
+                  kube-state-metrics cannot be scraped. Either way no controller can be trusted to
+                  act until it ends. First find out which: on that cluster run
+                  `microk8s kubectl -n observability delete pod -l app.kubernetes.io/name=kube-state-metrics --wait=false`
+                  and then `microk8s kubectl -n observability get pods -l app.kubernetes.io/name=kube-state-metrics -o wide`.
+                  If a new pod appears within two minutes and stands on a node, the control plane acts:
+                  restart nothing of it, and repair kube-state-metrics instead. If a new pod appears and
+                  gets no node, `microk8s kubectl -n observability describe pod` on it names the
+                  scheduler's reason. If no new pod appears, the control plane has stopped, because a
+                  stalled one replaces no deleted pod. Its
+                  lease is no proof either way: single writes can still succeed in such a stall. On
+                  master1 the cause was a stalled k8s-dqlite. First save
+                  `journalctl -u snap.microk8s.daemon-k8s-dqlite -u snap.microk8s.daemon-kubelite --since -1h`
+                  to a file, because a restart ends the only record of the stall. Then copy the data
+                  aside with
+                  `sudo cp -a /var/snap/microk8s/current/var/kubernetes/backend /root/dqlite-backend-$(date -u +%Y%m%d-%H%M)`
+                  and run
+                  `sudo systemctl restart snap.microk8s.daemon-k8s-dqlite && sleep 20 && sudo systemctl restart snap.microk8s.daemon-kubelite`,
+                  which ended it there.
 
   # --------------------------------------------------------------------------
   # AlertmanagerConfig CRs.

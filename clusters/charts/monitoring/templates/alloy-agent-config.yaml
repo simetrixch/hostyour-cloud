@@ -99,10 +99,17 @@ data:
 
     // kubelet /metrics — scraped directly on the node, authorized by the SA's
     // nodes/metrics RBAC (granted by the alloy chart's default clusterRules).
+    // The metrics_path label is the one the master's kubelet series carry, and the stock
+    // kubelet rules select on it (KubeletDown reads up{job="kubelet",metrics_path="/metrics"}).
+    // Without it every slave's kubelet reads as down on the master.
     discovery.relabel "kubelet" {
       targets = discovery.kubernetes.nodes.targets
       rule {
         target_label = "__metrics_path__"
+        replacement  = "/metrics"
+      }
+      rule {
+        target_label = "metrics_path"
         replacement  = "/metrics"
       }
     }
@@ -119,17 +126,24 @@ data:
     }
 
     // cAdvisor container metrics (/metrics/cadvisor on the same kubelet).
+    // Sent as the job and metrics_path the master's cAdvisor series carry, because the stock
+    // container recording rules select on both (job="kubelet",metrics_path="/metrics/cadvisor").
+    // Under a job of its own every slave is missing from them on the master.
     discovery.relabel "cadvisor" {
       targets = discovery.kubernetes.nodes.targets
       rule {
         target_label = "__metrics_path__"
         replacement  = "/metrics/cadvisor"
       }
+      rule {
+        target_label = "metrics_path"
+        replacement  = "/metrics/cadvisor"
+      }
     }
     prometheus.scrape "cadvisor" {
       targets           = discovery.relabel.cadvisor.output
       forward_to        = [prometheus.remote_write.default.receiver]
-      job_name          = "cadvisor"
+      job_name          = "kubelet"
       scheme            = "https"
       bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
       tls_config {
