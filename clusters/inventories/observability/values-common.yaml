@@ -763,11 +763,15 @@ kube-prometheus-stack:
       # it master1's series carry no cluster, so no dashboard's cluster choice can offer master1
       # and its alerts name no cluster. Series the slaves push are not scraped here and keep theirs.
       # The chart renders this through tpl, so global.domain comes from the cluster map.
+      # The action is spelled out although replace is its default, because the API server writes
+      # the default into the stored object, and ArgoCD would otherwise see a difference forever and
+      # sync the application again every few seconds.
       scrapeClasses:
         - name: cluster-label
           default: true
           relabelings:
-            - targetLabel: cluster
+            - action: replace
+              targetLabel: cluster
               replacement: '{{ .Values.global.domain }}'
       ruleSelectorNilUsesHelmValues: false
       serviceMonitorSelectorNilUsesHelmValues: false
