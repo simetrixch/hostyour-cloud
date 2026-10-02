@@ -98,6 +98,12 @@ kube-state-metrics:
       enabled: true
       additionalLabels:
         release: observability
+      # The namespace and pod of a kube_* series are the object's, as on the master, where
+      # kube-prometheus-stack honours them too. Without it the scrape overwrites them with the
+      # kube-state-metrics pod's own, so every rule that joins on (namespace, pod) and every alert
+      # about a slave's pod names the kube-state-metrics pod instead.
+      http:
+        honorLabels: true
   resources:
     requests:
       cpu: 20m
