@@ -99,10 +99,17 @@ data:
 
     // kubelet /metrics — scraped directly on the node, authorized by the SA's
     // nodes/metrics RBAC (granted by the alloy chart's default clusterRules).
+    // The metrics_path label is the one the master's kubelet series carry, and the stock
+    // kubelet rules select on it (KubeletDown reads up{job="kubelet",metrics_path="/metrics"}).
+    // Without it every slave's kubelet reads as down on the master.
     discovery.relabel "kubelet" {
       targets = discovery.kubernetes.nodes.targets
       rule {
         target_label = "__metrics_path__"
+        replacement  = "/metrics"
+      }
+      rule {
+        target_label = "metrics_path"
         replacement  = "/metrics"
       }
     }
