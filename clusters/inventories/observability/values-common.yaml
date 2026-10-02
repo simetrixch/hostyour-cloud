@@ -832,13 +832,22 @@ kube-prometheus-stack:
       runAsUser: 472
       runAsGroup: 472
       fsGroup: 472
+    # The dashboard sidecar reads with the namespaced Role templates/grafana-dashboard-reader.yaml
+    # renders, ConfigMaps of this namespace only. The chart's own RBAC would let Grafana's
+    # ServiceAccount read every Secret of the namespace, or of the cluster.
+    rbac:
+      namespaced: true
+      useExistingRole: grafana-dashboard-reader
     sidecar:
-      # The dashboard sidecar loads every ConfigMap labelled grafana_dashboard, from every
-      # namespace: the stock dashboards this chart renders, and the one each app drops in its
-      # own namespace. Without it Grafana shows none of them. It verifies the API server against
-      # the cluster CA, which carries the keyUsage a strict Python TLS check asks for.
+      # The dashboard sidecar loads the ConfigMaps labelled grafana_dashboard in this namespace,
+      # where the stock dashboards of this chart stand. Without it Grafana shows none of them.
+      # Only this namespace, so no unit's ConfigMap can draw into the operators' Grafana. It
+      # verifies the API server against the cluster CA, which carries the keyUsage a strict
+      # Python TLS check asks for.
       dashboards:
         enabled: true
+        searchNamespace: observability
+        resource: configmap
         # The cluster choice on every dashboard that has one, so a slave can be chosen beside
         # master1. Hidden, the choice takes its first value.
         multicluster:
