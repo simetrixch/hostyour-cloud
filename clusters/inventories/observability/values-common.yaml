@@ -237,26 +237,18 @@ monitoring:
             # a line in this group rather than a page.
             #
             # The ALERT is per pod, because kube_pod_status_phase carries no container dimension.
-            # The JOIN is on (namespace, pod), which is not the narrowest available:
-            # kube-state-metrics puts `namespace`, `pod` AND `uid` on every pod metric family
-            # (wrapPodFunc merging descPodLabelsDefaultLabels, internal/store/pod.go), so both
-            # operands carry `uid` too, and upstream KubePodNotReady narrows the same kind of join
-            # with `cluster` instead. What the wider join can match is a phase series and a
-            # waiting-reason series belonging to two DIFFERENT pods that share a namespace and a
-            # name, which takes a second cluster's series in this Prometheus:
-            # THIS PROMETHEUS CAN NOW HOLD A SECOND CLUSTER'S SERIES: the receiver
-            # below is on, so a slave's agent pushes into it. What keeps the join
-            # from matching across clusters is the `cluster` label the agent puts
-            # on everything it sends
-            # (clusters/charts/monitoring/templates/alloy-agent-config.yaml), not
-            # the absence of the series.
+            # The JOIN is on (cluster, namespace, pod). This Prometheus holds every slave's series
+            # beside master1's, because the receiver below is on, and two clusters can run a pod of
+            # the same namespace and name. Without `cluster` in the join, one cluster's waiting
+            # reason would take another cluster's pod out. Upstream KubePodNotReady narrows the same
+            # kind of join with `cluster` too.
             #
             # The DECISION to exclude is per container, and the nested `unless` is what makes
             # it so: the inner operand keeps an owned container only while the same pod has NO
             # container waiting for a reason nobody owns, so a pod is taken out only when EVERY
             # waiting container of it is already reported elsewhere.
             #
-            # A single `unless on (namespace, pod)` over the reason set removes the whole pod on ONE
+            # A single `unless on (cluster, namespace, pod)` over the reason set removes the whole pod on ONE
             # owned container, and this platform runs the pods where that is the wrong answer:
             # DaemonSet alloy runs alloy beside config-reloader and Deployment loki-gateway runs
             # nginx beside exporter, each pair pulling from a different registry, and a TaskRun of
@@ -312,9 +304,9 @@ monitoring:
             - alert: PodStuckPending
               expr: |-
                 kube_pod_status_phase{phase="Pending"} == 1
-                unless on (namespace, pod) (
+                unless on (cluster, namespace, pod) (
                   kube_pod_container_status_waiting_reason{reason=~"ContainerCreating|ImagePullBackOff|ErrImagePull|CrashLoopBackOff"} == 1
-                  unless on (namespace, pod)
+                  unless on (cluster, namespace, pod)
                   kube_pod_container_status_waiting_reason{reason!~"ContainerCreating|ImagePullBackOff|ErrImagePull|CrashLoopBackOff"} == 1
                 )
               for: 15m
@@ -340,7 +332,7 @@ monitoring:
                   containers carry no status at all is a kubelet that has not reported.
 
             - alert: PodNotReady
-              expr: kube_pod_status_ready{condition="true"} == 0 and on(namespace, pod) kube_pod_status_phase{phase="Running"} == 1
+              expr: kube_pod_status_ready{condition="true"} == 0 and on (cluster, namespace, pod) kube_pod_status_phase{phase="Running"} == 1
               for: 10m
               labels:
                 severity: warning
