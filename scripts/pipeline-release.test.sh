@@ -2,9 +2,10 @@
 # The release pipeline's own shell, where it decides something a fixture can hold it to:
 # class (d) of the bump moves a tenant onto the bundle it just built only where the bundle and
 # the tenant's engines are of one line (clusters/inventories/consumer-build/templates/
-# pipeline-release.yaml, bundle_engine and engine_line_off). The functions are read out of the
-# template, as the Pipeline carries them, and run against fixture files; the engine-line call
-# is held to standing before the registration is written.
+# pipeline-release.yaml, bundle_engine and engine_line_off), and the bump's push retries only a
+# concurrent update (concurrent_push_refusal, and commit_push against a local bare repository).
+# The functions are read out of the template, as the Pipeline carries them, and run against
+# fixture files; the engine-line call is held to standing before the registration is written.
 #
 #   bash scripts/pipeline-release.test.sh
 set -uo pipefail
@@ -24,7 +25,7 @@ extract() { # function name -> its text out of the template
     on && /^ *\}$/ && match($0, /[^ ]/) == indent { exit }
   ' "$template"
 }
-for fn in bundle_engine engine_line_off concurrent_push_refusal; do
+for fn in bundle_engine engine_line_off concurrent_push_refusal commit_push; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
@@ -118,17 +119,63 @@ ok "class (d) reads the engine (line $read), judges the line (line $call), then 
 
 # ── concurrent_push_refusal: which refusals of a bump's push are a race ──────
 # A race is retried after a rebase, and anything else fails at once with git's words. Each case is
-# git's or GitHub's own text: the two that name a concurrent update, and a protected branch as the
-# refusal that must not be taken for one.
+# git's or GitHub's own text: the three that name a concurrent update, and a protected branch and a
+# ref that cannot be created as refusals that must not be taken for one.
 refusal="$work/refusal"
 races() { printf '%s\n' "$1" > "$refusal"; concurrent_push_refusal "$refusal"; }
 races ' ! [rejected]        HEAD -> master (non-fast-forward)' \
   || fail "a non-fast-forward refusal was not taken for a concurrent update"
+races ' ! [rejected]        HEAD -> master (fetch first)' \
+  || fail "a remote that moved (fetch first) was not taken for a concurrent update"
 races " ! [remote rejected] HEAD -> master.digitacloud.app (cannot lock ref 'refs/heads/master.digitacloud.app': is at 001f168 but expected 3f2ffe8)" \
   || fail "a ref GitHub found moved under the push was not taken for a concurrent update"
 if races ' ! [remote rejected] HEAD -> master (protected branch hook declined)'; then
   fail "a protected branch was taken for a concurrent update, so it would be retried five times"
 fi
-ok "a non-fast-forward and a moved ref are retried, and a protected branch is not"
+if races " ! [remote rejected] HEAD -> a/b (cannot lock ref 'refs/heads/a/b': 'refs/heads/a' exists; cannot create 'refs/heads/a/b')"; then
+  fail "a ref that cannot be created was taken for a ref that moved, so it would be retried five times"
+fi
+ok "a non-fast-forward, a fetch first and a moved ref are retried; a protected branch and a ref that cannot be created are not"
+
+# ── commit_push: the bump's push against real git ───────────────────────────
+# concurrent_push_refusal decides only where commit_push asks it, so commit_push pushes one pin
+# change into a local bare repository whose hook refuses it: once with the ref moved under the push
+# by a concurrent release, the lock refusal, and once as a protected branch. The user's own git
+# configuration stays out, since a hooks path or commit signing there would change the answers.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.test GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.test
+export UNIT=digita-jobs RELEASE_TAG=0.3.008 IMAGE_TAG=0.3.008-stable STAGE=prod
+remote="$work/remote.git"
+push_pin() { # hook name, hook text -> CODE and OUT of commit_push for one pin change on master
+  rm -rf "$remote" "$work/seed" "$work/bump"
+  { git init -q --bare -b master "$remote" &&
+    git clone -q "$remote" "$work/seed" 2>/dev/null &&
+    ( cd "$work/seed" &&
+      echo 'a: 1' > pins.yaml && git add -A && git commit -q -m base && git push -q origin HEAD:master &&
+      echo 'b: 1' > other.yaml && git add -A && git commit -q -m 'another release' &&
+      git push -q origin HEAD:refs/heads/aside ) &&
+    git clone -q "$remote" "$work/bump"; } || fail "the bare repository the push runs against could not be made"
+  echo 'a: 2' > "$work/bump/pins.yaml"
+  printf '%s\n' "$2" > "$remote/hooks/$1" && chmod +x "$remote/hooks/$1"
+  CODE=0; OUT="$(TMPDIR="$work" commit_push "$work/bump" master 'the pin' 2>&1)" || CODE=$?
+}
+
+push_pin update "#!/bin/sh
+if [ \"\$1\" = refs/heads/master ] && [ ! -e '$remote/moved-once' ]; then
+  touch '$remote/moved-once' && git update-ref refs/heads/master refs/heads/aside
+fi"
+[ "$CODE" = 0 ] || fail "PLANTED DEFECT: a ref moved under the push must be rebased and pushed again, and commit_push answered $CODE: $OUT"
+case "$OUT" in *"rejected by a concurrent update (attempt 1/5)"*) ;; *) fail "the moved ref was pushed without the retry this case exists for: $OUT" ;; esac
+[ "$(git -C "$remote" log -2 --format=%s master | paste -sd '|')" = "release: digita-jobs 0.3.008 — pin 0.3.008-stable (prod)|another release" ] \
+  || fail "the retried push did not land the pin on top of the concurrent release"
+ok "a ref moved under the push is rebased onto the concurrent release and pushed again"
+
+push_pin pre-receive '#!/bin/sh
+echo "GH006: Protected branch update failed for refs/heads/master." >&2
+exit 1'
+[ "$CODE" = 1 ] || fail "a protected branch must fail the bump, and commit_push answered $CODE: $OUT"
+case "$OUT" in *"rejected by a concurrent update"*) fail "a protected branch was retried as a concurrent update: $OUT" ;; esac
+case "$OUT" in *"not as a concurrent release"*GH006*) ;; *) fail "a protected branch failed without git's own words: $OUT" ;; esac
+ok "a protected branch fails at once with git's words, and is not retried"
 
 echo "pipeline-release.test: OK"

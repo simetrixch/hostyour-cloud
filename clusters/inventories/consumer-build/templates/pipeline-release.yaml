@@ -924,7 +924,7 @@ spec:
                       exit 1
                     fi
                   done
-                  echo "bump: FAIL — ${what} (${branch}): push still rejected as non-fast-forward after 5 rebase retries" >&2
+                  echo "bump: FAIL — ${what} (${branch}): push still rejected by a concurrent update after 5 rebase retries" >&2
                   exit 1 )
               }
 
