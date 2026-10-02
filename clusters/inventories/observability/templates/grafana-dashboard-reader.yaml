@@ -1,0 +1,15 @@
+{{- /*
+grafana-dashboard-reader — WHAT GRAFANA'S DASHBOARD SIDECAR MAY READ: the ConfigMaps of this
+namespace, and nothing else. The Grafana chart's own Role grants every Secret of the namespace
+beside them whenever a sidecar runs, and its ClusterRole every Secret of the cluster, so the
+values bind the sidecar's ServiceAccount to this Role instead (grafana.rbac.useExistingRole).
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: grafana-dashboard-reader
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "watch", "list"]
