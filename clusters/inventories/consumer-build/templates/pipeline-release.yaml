@@ -1260,7 +1260,7 @@ spec:
                     if [ -n "${BUNDLE_ENGINE_BUILD}" ]; then
                       off="$(engine_line_off "${BUNDLE_ENGINE_BUILD}" "${BUNDLE_ENGINE_LINE}" "${reg}")"
                       if [ -n "${off}" ]; then
-                        echo "bump: FAIL — ${P}:${IMAGE_TAG} is written for ${BUNDLE_ENGINE_BUILD} ${BUNDLE_ENGINE_LINE} (${SRC}/apps.yaml engine), and tenant $(basename "$(dirname "${reg}")") runs ${BUNDLE_ENGINE_BUILD} ${off}, of another line. No registration is written. A bundle and an engine on different lines are refused; moving a tenant to a new line needs its bundle and its engines to move together, which nothing does yet" >&2
+                        echo "bump: FAIL — ${P}:${IMAGE_TAG} is written for ${BUNDLE_ENGINE_BUILD} ${BUNDLE_ENGINE_LINE} (${SRC}/apps.yaml engine), and tenant $(basename "$(dirname "${reg}")") runs ${BUNDLE_ENGINE_BUILD} ${off}, of another line. No registration is written. A bundle and an engine on different lines are refused; the tenant moves to the new line with its bundle and its engines together through \"Move to line\" in its Versions dialog, the Manager run tenant-line-move" >&2
                         exit 1
                       fi
                     fi

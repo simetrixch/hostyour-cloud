@@ -90,6 +90,20 @@ off="$(engine_line_off digita-engine 0.4 "$reg")"
   || fail "PLANTED DEFECT: a tenant on 0.3 beside a bundle written for 0.4 must be named with each tag it runs, joined with a comma, and the answer was '$off'"
 ok "a tenant on 0.3 beside a bundle written for 0.4 is named with each tag it runs"
 
+cat > "$reg" <<'EOF'
+approvedTags:
+  erp: { digita-engine: "0.4.001-stable-20261010000000-3333333", digita-app: "0.4.001-stable-20261010000000-3333333" }
+EOF
+[ -z "$(engine_line_off digita-engine 0.4 "$reg")" ] \
+  || fail "a tenant moved to 0.4 was taken for one of another line beside a bundle written for 0.4, so it could not follow 0.4 releases"
+ok "a tenant whose engines run 0.4.x fits a bundle written for 0.4, so after its line move it follows 0.4 releases"
+cat > "$reg" <<'EOF'
+approvedTags:
+  erp: { digita-engine: "0.3.004-stable-20260928080242-a1b2c3d", digita-app: "0.3.004-stable-20260928080242-a1b2c3d" }
+  auth: { digita-auth-backend: "0.4.000-stable-20261001000000-abc1234" }
+  crm: { digita-engine: "0.3.005-stable-20260929080242-b2c3d4e" }
+EOF
+
 # THE BUILD IS DATA TO yq, never text of its expression: a build shaped to close the key and
 # call load() must find no member, and must not hand the file it names back.
 printf 'the-secret-this-step-can-read\n' > "$work/secret"
@@ -116,6 +130,16 @@ read="$(grep -n 'if ! bundle_engine "${SRC}/apps.yaml"' "$template" | head -1 | 
 [ "$read" -lt "$call" ] && [ "$call" -lt "$write" ] \
   || fail "class (d) must read the engine (line $read), then judge the line (line $call), then write appsImageTag (line $write)"
 ok "class (d) reads the engine (line $read), judges the line (line $call), then writes appsImageTag (line $write)"
+
+# The refusal names the way forward, which exists: the Manager's tenant-line-move, offered in the
+# tenant's Versions dialog. A refusal saying that nothing moves a tenant to a new line would be false.
+refusal_line="$(sed -n "${call},\$p" "$template" | grep -m1 'bump: FAIL — ')"
+case "$refusal_line" in
+  *'Move to line'*'tenant-line-move'*) ;;
+  *) fail "PLANTED DEFECT: class (d)'s line refusal must name the dialog's Move to line and the Manager run tenant-line-move: $refusal_line" ;;
+esac
+case "$refusal_line" in *'which nothing does yet'*) fail "class (d)'s line refusal still says nothing moves a tenant to a new line" ;; esac
+ok "class (d)'s line refusal names the dialog's Move to line and the run tenant-line-move"
 
 # ── concurrent_push_refusal: which refusals of a bump's push are a race ──────
 # A race is retried after a rebase, and anything else fails at once with git's words. Each case is
