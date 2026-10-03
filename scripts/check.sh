@@ -1,25 +1,8 @@
 #!/usr/bin/env bash
 # Everything this repository can be held to on one machine, before anything leaves it.
 #
-# Four checks, in this order, and the run stops at the first red one:
-#
-#   1. every chart under clusters/inventories, clusters/units and clusters/slaves renders,
-#      and no value in what came out still carries a Helm expression
-#   2. bash lifecycle/test.sh — the delivery programs against their fixtures
-#   3. bash scripts/pipeline-release.test.sh — the release pipeline's own shell, read out of
-#      its template, where it decides something a fixture can hold it to
-#   4. gitleaks over the files git would let you commit
-#
-# THE ORDER IS THE COST. The charts are the thing that is edited daily and they render in
-# seconds; the lifecycle test builds git fixtures and drives both spellings of six programs,
-# which is a minute; the credential scan is under a second and stands last because a leak is
-# a stop-everything finding and is worth reading on its own.
-#
-# A MISSING TOOL IS NAMED AND THE RUN ENDS RED. It is never passed over: a check that did not
-# run and a check that passed print differently here, because the two mean opposite things.
-#
-# scripts/check.ps1 beside this file is the Windows entry point and is a shim that starts THIS
-# file, so the three checks exist once and cannot be run in a second spelling of them.
+# Local chart validation and credential scanning. Fixture suites run in GitHub Actions.
+# scripts/check.ps1 is the standard Windows entry point for this file.
 
 set -uo pipefail
 
@@ -38,13 +21,9 @@ fail() { echo "check: FAIL — $1"; exit 1; }
 # All of them up front. Each is needed by a later step, and finding the third one missing after
 # the first two have run costs a minute for an answer that was knowable at the start.
 #
-# pwsh is here because lifecycle/test.sh needs it: half of what that file measures is written
-# in PowerShell, and it holds the two spellings to printing the same bytes. base64 is here
-# because the scan of step 1 decodes every base64 value of a render, and a decoder that is not
-# there would leave that half of the scan silently finding nothing. yq is here because step 3
-# runs the pipeline's own shell, which reads a registration with it as the Pipeline does.
+# base64 decodes rendered values; yq reads the version stamp declarations.
 missing=""
-for tool in helm gitleaks pwsh base64 yq; do
+for tool in helm gitleaks base64 yq; do
   command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
 done
 [ -n "$missing" ] && fail "these tools are not on this path:$missing"
@@ -673,15 +652,10 @@ if [ -n "$drifts" ]; then
 fi
 echo "check: every yaml_value stamp site of this tree holds its pin from clusters/platform/versions.yaml, $(yq e '[.. | select(tag == "!!map" and has("stamps")) | .stamps[] | select(.kind == "yaml_value" and .tree == "platform")] | length' clusters/platform/versions.yaml) of them."
 
-# ── 2. The delivery programs ────────────────────────────────────────────────────────────────
-echo "check: lifecycle/test.sh — the release, the regeneration, the report, the slave removal, the abandonment and the GitHub App, in both spellings. About two minutes."
-bash lifecycle/test.sh || fail "lifecycle/test.sh"
+echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
 
-# ── 3. The release pipeline's own shell ─────────────────────────────────────────────────────
-echo "check: scripts/pipeline-release.test.sh — the release pipeline's engine-line decision, read out of its template."
-bash scripts/pipeline-release.test.sh || fail "scripts/pipeline-release.test.sh"
-
-# ── 4. The credentials ──────────────────────────────────────────────────────────────────────
+# ── 2. The credentials ──────────────────────────────────────────────────────────────────────
 # SCANNED OVER WHAT GIT WOULD LET YOU COMMIT, and that is not the same as this directory. A
 # working copy also holds files this repository ignores, and on a machine that has installed
 # anything those include lifecycle/config.<machine>.env — one installation's ten credentials,
@@ -713,6 +687,6 @@ while IFS= read -r -d '' file; do
   cp "$file" "$destination" \
     || fail "the committable files could not be collected for the credential scan"
 done < "$list"
-gitleaks detect --no-git --no-banner --source "$scan" || fail "gitleaks found a credential"
+gitleaks detect --redact --no-git --no-banner --source "$scan" || fail "gitleaks found a credential"
 
 echo "check: OK — every check green"

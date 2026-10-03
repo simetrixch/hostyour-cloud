@@ -91,6 +91,15 @@ package, a package pushed for the first time is private, and no workflow token c
 person turns each of the three public once. Until that is done, a fresh installation's pull is
 refused, and what an operator sees is an `ImagePullBackOff` naming no cause.
 
+## Checks
+
+`bash scripts/check.sh` (or `pwsh scripts/check.ps1`) runs local chart validation and
+credential scanning. It names the suites that did not run locally.
+
+GitHub Actions runs those checks and `bash scripts/test.sh` on every push and pull request.
+The test entry point runs `lifecycle/test.sh` and `scripts/pipeline-release.test.sh`;
+`pwsh scripts/test.ps1` starts the same entry point. Run tests only on a remote runner.
+
 ## License
 
 **Elastic License 2.0.** Run it, change it, deploy it — for yourself, your company and your
