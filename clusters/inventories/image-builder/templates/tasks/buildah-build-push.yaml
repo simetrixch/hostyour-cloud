@@ -165,6 +165,8 @@ spec:
         # value it never parses.
         - name: CONTAINERFILE
           value: $(params.containerfile)
+        - name: BUILD_VERSION
+          value: $(params.image-tag)
       envFrom:
         # READ-ONLY registry identity (Zot user pull-user) — REGISTRY_USERNAME +
         # REGISTRY_PASSWORD pulled by ESO from Vault secret/<env>/app/registry
@@ -238,6 +240,7 @@ spec:
         # containers-storage (--root), which the `push` step below reads.
         buildah --root /var/lib/containers/storage --storage-driver=vfs bud \
           --format=oci \
+          --build-arg "BUILD_VERSION=${BUILD_VERSION}" \
           --label "org.opencontainers.image.source=$(params.git-url)" \
           --label "org.opencontainers.image.revision=$(params.git-revision)" \
           --label "org.opencontainers.image.created=$(params.build-timestamp)" \
