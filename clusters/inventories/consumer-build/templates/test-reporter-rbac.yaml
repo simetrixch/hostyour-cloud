@@ -1,0 +1,32 @@
+{{- if .Values.unit }}
+{{- $test := include "consumer-build.testRegistration" . -}}
+{{- if $test }}
+{{- $unit := include "consumer-build.unitName" . -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tekton-reporter-read
+  namespace: {{ printf "%s-build" $unit }}
+rules:
+  - apiGroups: [tekton.dev]
+    resources: [pipelineruns, taskruns]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tekton-reporter-read
+  namespace: {{ printf "%s-build" $unit }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.digitaTests.reporter.serviceAccountName }}
+    namespace: {{ .Values.eventListener.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tekton-reporter-read
+{{- end }}
+{{- end }}
