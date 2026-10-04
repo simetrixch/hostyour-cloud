@@ -5,4 +5,4 @@ onboardedAt: "2026-09-24T19:32:24.838Z"
 suspended: false
 quiesced: false
 removing: false
-builds: ["digita-jobs"]
+builds: ["digita-jobs","digita-jobs-frontend"]
