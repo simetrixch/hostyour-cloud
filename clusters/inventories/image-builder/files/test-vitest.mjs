@@ -9,6 +9,7 @@ import {existsSync} from 'node:fs';
 export async function runVitest(root, toolchain, profile, environment) {
   const originalFork = childProcess.fork;
   childProcess.fork = (module, args, options = {}) => originalFork(module, args, {...options, uid: 1001, gid: 1001,
+    env: {...options.env, TMPDIR: environment.HOME},
     // The controller's write limit applies to its trusted RPC handlers. The
     // separate UID already fences workers, which need their own Source/tmp.
     execArgv: (options.execArgv ?? []).filter(arg => arg !== '--permission' && !arg.startsWith('--allow-'))});

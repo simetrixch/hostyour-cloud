@@ -234,10 +234,10 @@ test('fixed Vitest counts real cases under UID1001 and ignores source test scrip
     const runController = () => {
       const execution = spawnSync(process.execPath, ['--permission', '--allow-fs-read=*', '--allow-fs-write=' + cache,
         '--allow-child-process', '--allow-addons', join(protectedCode, 'test-vitest-controller.mjs')], {
-        timeout: 60000, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], env: {PATH: process.env.PATH, HOME: directory, CI: 'true', NO_COLOR: '1',
+        timeout: 60000, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], env: {PATH: process.env.PATH, HOME: directory, TMPDIR: cache, CI: 'true', NO_COLOR: '1',
           TEST_PACKAGE_ROOT: source, TEST_TOOLCHAIN: join(deps, 'toolchain'), TEST_VITEST_RESULT: result,
           TEST_TRUSTED_CACHE: cache, TEST_SUITE_PROFILE: JSON.stringify({include: ['tests/**/*.test.ts']}),
-          TEST_WORKER_ENVIRONMENT: JSON.stringify({CI: 'true', HOME: directory})}});
+          TEST_WORKER_ENVIRONMENT: JSON.stringify({CI: 'true', HOME: source})}});
       if (execution.error) throw execution.error;
       if (execution.status !== 0) throw new Error(execution.stderr.toString() + execution.stdout.toString());
       writeFileSync(result, execution.output[3], {mode: 0o600});
