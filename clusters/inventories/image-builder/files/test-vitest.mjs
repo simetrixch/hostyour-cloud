@@ -1,19 +1,11 @@
-import childProcess from 'node:child_process';
-import {syncBuiltinESMExports} from 'node:module';
 import {pathToFileURL} from 'node:url';
 import {join} from 'node:path';
 import {existsSync} from 'node:fs';
 
-// This controller uses an infrastructure-owned Vitest and configuration. Only
-// its forked workers may import repository code, under the untrusted UID.
+// The controller and all of its workers share the unprivileged Source UID.
+// The fixed framework/configuration cannot acquire the supervisor UID.
 export async function runVitest(root, toolchain, profile, environment) {
-  const originalFork = childProcess.fork;
-  childProcess.fork = (module, args, options = {}) => originalFork(module, args, {...options, uid: 1001, gid: 1001,
-    env: {...options.env, TMPDIR: environment.HOME},
-    // The controller's write limit applies to its trusted RPC handlers. The
-    // separate UID already fences workers, which need their own Source/tmp.
-    execArgv: (options.execArgv ?? []).filter(arg => arg !== '--permission' && !arg.startsWith('--allow-'))});
-  syncBuiltinESMExports();
+  if (process.getuid() !== 1001) throw new Error('the fixed test framework requires the unprivileged Source UID');
   let context;
   try {
     const {startVitest} = await import(pathToFileURL(join(toolchain, 'node_modules/vitest/dist/node.js')));
@@ -50,7 +42,5 @@ export async function runVitest(root, toolchain, profile, environment) {
     return counts;
   } finally {
     await context?.close();
-    childProcess.fork = originalFork;
-    syncBuiltinESMExports();
   }
 }

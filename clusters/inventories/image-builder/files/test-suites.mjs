@@ -37,14 +37,14 @@ for (const segment of ['deploy', registration.recipeFile]) {
 }
 if (digest(readFileSync(recipePath)) !== registration.recipeDigest) throw new Error('recipe does not match reviewed bytes');
 
-async function run(command, cwd = source, extraEnvironment = {}, trusted = false) {
+async function run(command, cwd = source, extraEnvironment = {}, collectEvidence = false) {
   return new Promise((finish, reject) => {
-    const child = spawn(command[0], command.slice(1), {cwd, uid: trusted ? 0 : 1001, gid: trusted ? 0 : 1001,
-      detached: true, stdio: trusted ? ['ignore', 'pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
+    const child = spawn(command[0], command.slice(1), {cwd, uid: 1001, gid: 1001,
+      detached: true, stdio: collectEvidence ? ['ignore', 'pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
       env: {...environment, ...extraEnvironment}});
     let output = '';
     let evidence = '';
-    if (trusted) child.stdio[3].on('data', bytes => {
+    if (collectEvidence) child.stdio[3].on('data', bytes => {
       if (Buffer.byteLength(evidence) + bytes.length > 4096) stop('controller evidence exceeded its size budget');
       else evidence += bytes.toString();
     });

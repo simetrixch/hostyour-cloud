@@ -217,7 +217,7 @@ test('fixed Vitest counts real cases under UID1001 and ignores source test scrip
     chownSync(source, 1001, 1001);
     const protectedDirectory = join(directory, 'protected'); mkdirSync(protectedDirectory, {mode: 0o700});
     const result = join(protectedDirectory, 'result.json');
-    const cache = join(protectedDirectory, 'cache'); mkdirSync(cache, {mode: 0o700});
+    const cache = join(directory, 'cache'); mkdirSync(cache, {mode: 0o700}); chownSync(cache, 1001, 1001);
     const reader = join(directory, 'reader');
     writeFileSync(reader, '@digitaplatform:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=fixture-reader-with-no-grant\n', {mode: 0o600});
     await preparePackageTools(join(deps, 'tools'));
@@ -232,8 +232,7 @@ test('fixed Vitest counts real cases under UID1001 and ignores source test scrip
     const protectedHelper = join(protectedCode, 'canary.mjs');
     writeFileSync(protectedHelper, 'immutable helper', {mode: 0o600});
     const runController = () => {
-      const execution = spawnSync(process.execPath, ['--permission', '--allow-fs-read=*', '--allow-fs-write=' + cache,
-        '--allow-child-process', '--allow-addons', join(protectedCode, 'test-vitest-controller.mjs')], {
+      const execution = spawnSync(process.execPath, [join(protectedCode, 'test-vitest-controller.mjs')], {uid: 1001, gid: 1001,
         timeout: 60000, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], env: {PATH: process.env.PATH, HOME: directory, TMPDIR: cache, CI: 'true', NO_COLOR: '1',
           TEST_PACKAGE_ROOT: source, TEST_TOOLCHAIN: join(deps, 'toolchain'), TEST_VITEST_RESULT: result,
           TEST_TRUSTED_CACHE: cache, TEST_SUITE_PROFILE: JSON.stringify({include: ['tests/**/*.test.ts']}),
@@ -242,11 +241,16 @@ test('fixed Vitest counts real cases under UID1001 and ignores source test scrip
       if (execution.status !== 0) throw new Error(execution.stderr.toString() + execution.stdout.toString());
       writeFileSync(result, execution.output[3], {mode: 0o600});
     };
-    writeFileSync(join(source, 'tests/proof.test.ts'), `import {test,expect,recordArtifact} from 'vitest';\nimport {writeFileSync,mkdirSync,symlinkSync} from 'node:fs';\nimport {createHash} from 'node:crypto';\nimport {resolve} from 'node:path';\ntest('UID and protected evidence',async({task})=>{expect(process.getuid()).toBe(1001);expect(()=>writeFileSync(${JSON.stringify(result)},'forged')).toThrow(); const payload=resolve('payload.txt');writeFileSync(payload,'forged helper');mkdirSync('.vitest-attachments');symlinkSync(${JSON.stringify(protectedHelper)},'.vitest-attachments/'+createHash('sha1').update(payload).digest('hex')+'.txt');await recordArtifact(task,{type:'proof',attachments:[{path:payload}]});console.log('9999 passed');});\n`);
+    writeFileSync(join(source, 'tests/proof.test.ts'), `import {test,expect} from 'vitest';\nimport {writeFileSync} from 'node:fs';\ntest('UID and protected evidence',()=>{expect(process.getuid()).toBe(1001);expect(()=>writeFileSync(${JSON.stringify(result)},'forged')).toThrow(); console.log('9999 passed');});\n`);
     runController();
     assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), {passed: 1, failed: 0, skipped: 0});
     assert.equal(statSync(result).uid, 0);
-    assert.equal(readFileSync(protectedHelper, 'utf8'), 'immutable helper', 'artifact RPC cannot follow Source symlinks into Root helpers');
+    writeFileSync(join(source, 'tests/proof.test.ts'), `import {test,recordArtifact} from 'vitest';\nimport {writeFileSync,mkdirSync,symlinkSync} from 'node:fs';\nimport {createHash} from 'node:crypto';\nimport {resolve} from 'node:path';\ntest('artifact cannot overwrite supervisor code',async({task})=>{const payload=resolve('payload.txt');writeFileSync(payload,'forged helper');mkdirSync('.vitest-attachments');symlinkSync(${JSON.stringify(protectedHelper)},'.vitest-attachments/'+createHash('sha1').update(payload).digest('hex')+'.txt');await recordArtifact(task,{type:'proof',attachments:[{path:payload}]});});\n`);
+    // All framework RPC runs under UID1001. The configured cache may accept
+    // the attachment normally; neither it nor a legacy destination symlink
+    // can retitle the Root-owned supervisor file.
+    try {runController();} catch {}
+    assert.equal(readFileSync(protectedHelper, 'utf8'), 'immutable helper');
     for (const testCode of ["test('failing',()=>{expect(1).toBe(2)})", "test.skip('skipped',()=>{})", '']) {
       writeFileSync(result, '');
       writeFileSync(join(source, 'tests/proof.test.ts'), "import {test,expect} from 'vitest';\n" + testCode);
