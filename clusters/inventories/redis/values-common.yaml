@@ -38,9 +38,11 @@ redis:
   # THE CEILING STANDS BELOW THE CONTAINER'S MEMORY LIMIT (resources below), because
   # every unit of the cluster shares this server: without it one unit's data grows
   # it into the limit, the kubelet kills it, and every unit loses its sessions and
-  # queues at once. 4gb leaves 2Gi of the 6Gi limit for what maxmemory does not
-  # count: the AOF-rewrite fork's copy-on-write pages, its rewrite buffer, client
-  # buffers and fragmentation.
+  # queues at once. maxmemory bounds the memory Redis counts as used, never the
+  # process's resident size, so 3gb is half of the 6Gi limit: the other half holds
+  # what maxmemory does not count, above all the AOF-rewrite fork's copy-on-write
+  # pages, up to the whole dataset again when every key changes during a rewrite,
+  # and then its rewrite buffer, client buffers and fragmentation.
   #
   # NOEVICTION, because of what lives here: BullMQ queues, which have no TTL and
   # which BullMQ requires noeviction for, and digita-auth sessions. Any eviction
@@ -56,7 +58,7 @@ redis:
     - --dir
     - /data
     - --maxmemory
-    - 4gb
+    - 3gb
     - --maxmemory-policy
     - noeviction
     - --requirepass
@@ -161,8 +163,10 @@ monitoring:
 
             # Under noeviction (redis.args) nothing is ever evicted, so the warning
             # is the approach to the ceiling, before writes start to be refused.
+            # The `> 0` guard: a server reporting no ceiling (max 0) makes used/max
+            # +Inf, which would fire for as long as it reports that.
             - alert: RedisMemoryNearCeiling
-              expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+              expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85 and redis_memory_max_bytes > 0
               for: 10m
               labels:
                 severity: warning
