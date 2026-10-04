@@ -2,7 +2,7 @@ import {strict as assert} from 'node:assert';
 import {spawnSync} from 'node:child_process';
 import {test} from 'node:test';
 import {fileURLToPath} from 'node:url';
-import {planInstallation} from '../lifecycle/plan-installation-domain.mjs';
+import {planInstallation, installedIngressHosts} from '../lifecycle/plan-installation-domain.mjs';
 
 const fixture = () => [{file: 'clusters/active/master.old.example.yaml', map: {
   role: 'master', stage: 'prod', release: 'unchanged-pin', global: {
@@ -54,4 +54,14 @@ test('Bash and PowerShell return identical bytes and codes for help and rejected
     assert.equal(ps.stderr.toString(), bash.stderr.toString());
     assert.equal(bash.status, args[0] === '--help' ? 0 : 64);
   }
+});
+
+test('inventory accepts concrete Host spellings and fails on unsupported hostname matchers', () => {
+  const routes = match => [{spec: {routes: [{match}]}}];
+  assert.deepEqual(installedIngressHosts(routes('Host("argo.master.old.example") || Host(`vault.master.old.example`)')), ['argo.master.old.example', 'vault.master.old.example']);
+  assert.deepEqual(installedIngressHosts(routes('Host ("a.old.example", `b.old.example`)')), ['a.old.example', 'b.old.example']);
+  assert.deepEqual(installedIngressHosts(routes('PathPrefix("/Host(`ghost.old.example`)") && Host("real.old.example")')), ['real.old.example']);
+  assert.throws(() => installedIngressHosts(routes('HostRegexp(`.+.old.example`)')), /incomplete/);
+  assert.throws(() => installedIngressHosts(routes('HostSNI(`*.old.example`)')), /incomplete/);
+  assert.throws(() => installedIngressHosts(routes('Host(unquoted.old.example)')), /malformed/);
 });

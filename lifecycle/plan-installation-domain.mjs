@@ -100,6 +100,30 @@ function command(program, args, input) {
   catch { refuse(`${program} read failed; nothing has been changed remotely`, 69); }
 }
 
+export function installedIngressHosts(items) {
+  if (!Array.isArray(items)) refuse('the installed ingress inventory is invalid');
+  const hosts = [];
+  for (const item of items) {
+    for (const rule of item.spec?.rules ?? []) if (rule.host) hosts.push(rule.host);
+    for (const route of item.spec?.routes ?? []) {
+      if (typeof route.match !== 'string') refuse('an ingress route has no matcher');
+      // Skip quoted literals elsewhere in the expression, such as a PathPrefix argument.
+      const matcher = /`[^`]*`|"(?:\\.|[^"\\])*"|\b(HostRegexp|HostSNI|Host)\s*\(/g;
+      for (const match of route.match.matchAll(matcher)) {
+        if (!match[1]) continue;
+        if (match[1] !== 'Host') refuse('an ingress route uses an unsupported hostname matcher; inventory is incomplete');
+        const end = route.match.indexOf(')', match.index + match[0].length);
+        if (end < 0) refuse('an ingress hostname matcher is malformed');
+        const args = route.match.slice(match.index + match[0].length, end);
+        if (!/^\s*(?:`[^`]+`|"[^"\\]+")\s*(?:,\s*(?:`[^`]+`|"[^"\\]+")\s*)*$/.test(args))
+          refuse('an ingress hostname matcher is malformed');
+        for (const argument of args.matchAll(/([`"])([^`"]+)\1/g)) hosts.push(requireHostname(argument[2]));
+      }
+    }
+  }
+  return hosts;
+}
+
 export async function runDomainPlan(args, repo, requireMachine = false) {
   try {
     if (args.length === 1 && args[0] === '--help') { process.stdout.write(usage + '\n'); return; }
@@ -159,13 +183,7 @@ export async function runDomainPlan(args, repo, requireMachine = false) {
       let inventory;
       try { inventory = JSON.parse(ssh(old, 'microk8s.kubectl get ingresses.networking.k8s.io,ingressroutes.traefik.io -A -o json')); }
       catch { refuse('the installed ingress inventory could not be read'); }
-      if (!Array.isArray(inventory.items)) refuse('the installed ingress inventory is invalid');
-      for (const item of inventory.items) {
-        for (const rule of item.spec?.rules ?? []) if (rule.host) installedHosts.push(rule.host);
-        for (const route of item.spec?.routes ?? []) {
-          for (const match of (route.match ?? '').matchAll(/Host\(\s*`([^`]+)`\s*\)/g)) installedHosts.push(match[1]);
-        }
-      }
+      installedHosts = installedIngressHosts(inventory.items);
       machine = {fromFqdn: old, toFqdn: target, hostname: oldIdentity, sameMachine: true, sameHostKey: true,
         hostKeyFingerprint: 'SHA256:' + createHash('sha256').update(Buffer.from(oldKey, 'base64')).digest('base64').replace(/=+$/, ''),
         installedRouteCount: inventory.items.length};
