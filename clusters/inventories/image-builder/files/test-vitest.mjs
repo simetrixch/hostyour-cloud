@@ -16,6 +16,7 @@ export async function runVitest(root, toolchain, profile, environment) {
     const setupFiles = (profile.setupFiles ?? []).map(file => join(root, file));
     if (setupFiles.some(file => !existsSync(file))) throw new Error('required suite setup file is missing');
     context = await startVitest('test', [], {root, config: false, watch: false, pool: 'forks',
+      attachmentsDir: join(process.env.TEST_TRUSTED_CACHE, 'attachments'), update: false,
       maxWorkers: 1, fileParallelism: false, isolate: true, globals: true, environment: profile.environment ?? 'node',
       include: profile.include ?? ['tests/**/*.test.{ts,tsx}'], setupFiles,
       exclude: ['**/node_modules/**', '**/.git/**', ...(profile.exclude ?? [])],

@@ -40,8 +40,14 @@ if (digest(readFileSync(recipePath)) !== registration.recipeDigest) throw new Er
 async function run(command, cwd = source, extraEnvironment = {}, trusted = false) {
   return new Promise((finish, reject) => {
     const child = spawn(command[0], command.slice(1), {cwd, uid: trusted ? 0 : 1001, gid: trusted ? 0 : 1001,
-      detached: true, env: {...environment, ...extraEnvironment}});
+      detached: true, stdio: trusted ? ['ignore', 'pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
+      env: {...environment, ...extraEnvironment}});
     let output = '';
+    let evidence = '';
+    if (trusted) child.stdio[3].on('data', bytes => {
+      if (Buffer.byteLength(evidence) + bytes.length > 4096) stop('controller evidence exceeded its size budget');
+      else evidence += bytes.toString();
+    });
     let size = 0;
     let failure;
     let killTimer;
@@ -67,7 +73,7 @@ async function run(command, cwd = source, extraEnvironment = {}, trusted = false
       // Kill orphaned children before writing trusted evidence.
       try {process.kill(-child.pid, 'SIGKILL');} catch (error) {if (error.code !== 'ESRCH') failure ??= 'could not stop suite children';}
       process.stdout.write(redact(output));
-      finish({code, output, failure});
+      finish({code, output, failure, evidence});
     });
   });
 }
@@ -121,16 +127,9 @@ try {
         runResult = await run([process.execPath, '--test', '--test-reporter=tap', ...files], root);
         counted = parseNodeTAP(runResult.output);
       } else if (profile.adapter === 'vitest') {
-        const countedPath = resolve(trustedScratch, 'vitest.json');
-        writeFileSync(countedPath, '', {mode: 0o600});
-        runResult = await run([process.execPath, fileURLToPath(new URL('./test-vitest-controller.mjs', import.meta.url))], root, {
-          TEST_PACKAGE_ROOT: root, TEST_TOOLCHAIN: resolve(dependencies, 'toolchain'),
-          TEST_SUITE_PROFILE: JSON.stringify(profile), TEST_VITEST_RESULT: countedPath,
-          TEST_TRUSTED_CACHE: resolve(trustedScratch, 'cache'),
-          TEST_WORKER_ENVIRONMENT: JSON.stringify({...environment, ...profile.env}),
-        }, true);
-        counted = JSON.parse(readFileSync(countedPath, 'utf8'));
-        for (const value of Object.values(counted)) if (!Number.isSafeInteger(value) || value < 0) throw new Error('invalid Vitest case count');
+        // Source can manipulate its own framework RPC; do not activate
+        // positive receipts until the owner decides this trust boundary.
+        throw new Error('Vitest result trust boundary is awaiting owner approval');
       } else throw new Error('required suite adapter is unavailable');
       for (const key of ['passed', 'failed', 'skipped']) counts[key] += counted[key];
       passed &&= runResult.code === 0 && !runResult.failure && counted.passed > 0 && !counted.failed && !counted.skipped;

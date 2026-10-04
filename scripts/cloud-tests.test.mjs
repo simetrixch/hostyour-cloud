@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, chownSync, statSync, rmSync, symlinkSync, existsSync} from 'node:fs';
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {resolve, join} from 'node:path';
 import {digest, emptyResult, parseNodeTAP, redact, validateResult} from '../clusters/inventories/image-builder/files/test-contract.mjs';
@@ -224,15 +224,28 @@ test('fixed Vitest counts real cases under UID1001 and ignores source test scrip
     writeFileSync(join(source, 'package.json'), JSON.stringify({type: 'module', scripts: {test: 'echo 9999 passed'}}));
     writeFileSync(join(source, 'vitest.config.ts'), 'throw new Error("untrusted configuration executed")');
     writeFileSync(join(source, 'postcss.config.js'), 'throw new Error("untrusted CSS configuration executed")');
-    const runController = () => execFileSync(process.execPath, [resolve('clusters/inventories/image-builder/files/test-vitest-controller.mjs')], {
-      timeout: 60000, stdio: 'pipe', env: {PATH: process.env.PATH, HOME: directory, CI: 'true', NO_COLOR: '1',
-        TEST_PACKAGE_ROOT: source, TEST_TOOLCHAIN: join(deps, 'toolchain'), TEST_VITEST_RESULT: result,
-        TEST_TRUSTED_CACHE: cache, TEST_SUITE_PROFILE: JSON.stringify({include: ['tests/**/*.test.ts']}),
-        TEST_WORKER_ENVIRONMENT: JSON.stringify({CI: 'true', HOME: directory})}});
-    writeFileSync(join(source, 'tests/proof.test.ts'), `import {test,expect} from 'vitest';\nimport {writeFileSync} from 'node:fs';\ntest('UID and protected evidence',()=>{expect(process.getuid()).toBe(1001);expect(()=>writeFileSync(${JSON.stringify(result)},'forged')).toThrow(); console.log('9999 passed');});\n`);
+    const protectedCode = join(directory, 'code'); mkdirSync(protectedCode);
+    for (const file of ['test-vitest-controller.mjs', 'test-vitest.mjs', 'test-contract.mjs']) {
+      writeFileSync(join(protectedCode, file), readFileSync(resolve('clusters/inventories/image-builder/files', file)), {mode: 0o644});
+    }
+    const protectedHelper = join(protectedCode, 'canary.mjs');
+    writeFileSync(protectedHelper, 'immutable helper', {mode: 0o600});
+    const runController = () => {
+      const execution = spawnSync(process.execPath, ['--permission', '--allow-fs-read=*', '--allow-fs-write=' + cache,
+        '--allow-child-process', '--allow-addons', join(protectedCode, 'test-vitest-controller.mjs')], {
+        timeout: 60000, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], env: {PATH: process.env.PATH, HOME: directory, CI: 'true', NO_COLOR: '1',
+          TEST_PACKAGE_ROOT: source, TEST_TOOLCHAIN: join(deps, 'toolchain'), TEST_VITEST_RESULT: result,
+          TEST_TRUSTED_CACHE: cache, TEST_SUITE_PROFILE: JSON.stringify({include: ['tests/**/*.test.ts']}),
+          TEST_WORKER_ENVIRONMENT: JSON.stringify({CI: 'true', HOME: directory})}});
+      if (execution.error) throw execution.error;
+      if (execution.status !== 0) throw new Error(execution.stderr.toString() + execution.stdout.toString());
+      writeFileSync(result, execution.output[3], {mode: 0o600});
+    };
+    writeFileSync(join(source, 'tests/proof.test.ts'), `import {test,expect,recordArtifact} from 'vitest';\nimport {writeFileSync,mkdirSync,symlinkSync} from 'node:fs';\nimport {createHash} from 'node:crypto';\nimport {resolve} from 'node:path';\ntest('UID and protected evidence',async({task})=>{expect(process.getuid()).toBe(1001);expect(()=>writeFileSync(${JSON.stringify(result)},'forged')).toThrow(); const payload=resolve('payload.txt');writeFileSync(payload,'forged helper');mkdirSync('.vitest-attachments');symlinkSync(${JSON.stringify(protectedHelper)},'.vitest-attachments/'+createHash('sha1').update(payload).digest('hex')+'.txt');await recordArtifact(task,{type:'proof',attachments:[{path:payload}]});console.log('9999 passed');});\n`);
     runController();
     assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), {passed: 1, failed: 0, skipped: 0});
     assert.equal(statSync(result).uid, 0);
+    assert.equal(readFileSync(protectedHelper, 'utf8'), 'immutable helper', 'artifact RPC cannot follow Source symlinks into Root helpers');
     for (const testCode of ["test('failing',()=>{expect(1).toBe(2)})", "test.skip('skipped',()=>{})", '']) {
       writeFileSync(result, '');
       writeFileSync(join(source, 'tests/proof.test.ts'), "import {test,expect} from 'vitest';\n" + testCode);
