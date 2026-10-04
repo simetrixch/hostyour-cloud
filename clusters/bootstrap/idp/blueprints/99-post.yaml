@@ -38,6 +38,15 @@ entries:
         # and post sends its site root.
         - matching_mode: strict
           url: !Format ["https://post.%s/", !Env IDP_UNIT_APEX]
+        # DEV and TEST stage callbacks and RP-initiated logout roots.
+        - matching_mode: strict
+          url: !Format ["https://post.dev.%s/api/auth/callback", !Env IDP_UNIT_APEX]
+        - matching_mode: strict
+          url: !Format ["https://post.dev.%s/", !Env IDP_UNIT_APEX]
+        - matching_mode: strict
+          url: !Format ["https://post.test.%s/api/auth/callback", !Env IDP_UNIT_APEX]
+        - matching_mode: strict
+          url: !Format ["https://post.test.%s/", !Env IDP_UNIT_APEX]
       access_token_validity: hours=1
       refresh_token_validity: days=30
       sub_mode: hashed_user_id

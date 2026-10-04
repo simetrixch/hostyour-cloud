@@ -15,4 +15,6 @@ helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'
 echo 'test: installation domain planning and paired launchers.'
 node --test scripts/installation-domain.test.mjs || fail 'scripts/installation-domain.test.mjs'
+echo 'test: post stage callbacks — strict nonproduction allowlist.'
+node --test scripts/post-stage-callbacks.test.mjs || fail 'scripts/post-stage-callbacks.test.mjs'
 echo 'test: OK — all suites green'
