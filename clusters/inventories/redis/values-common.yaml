@@ -34,6 +34,19 @@ redis:
   # container's own env before exec, so the password never stands in this file, in
   # the rendered manifest, or in a shell the pod runs. The env entry it names is
   # declared below and comes from the ESO-materialized redis-credentials Secret.
+  #
+  # THE CEILING STANDS BELOW THE CONTAINER'S MEMORY LIMIT (resources below), because
+  # every unit of the cluster shares this server: without it one unit's data grows
+  # it into the limit, the kubelet kills it, and every unit loses its sessions and
+  # queues at once. 4gb leaves 2Gi of the 6Gi limit for what maxmemory does not
+  # count: the AOF-rewrite fork's copy-on-write pages, its rewrite buffer, client
+  # buffers and fragmentation.
+  #
+  # NOEVICTION, because of what lives here: BullMQ queues, which have no TTL and
+  # which BullMQ requires noeviction for, and digita-auth sessions. Any eviction
+  # policy would delete another unit's job or log an operator out to make room,
+  # silently. Under noeviction a write past the ceiling is refused with an OOM
+  # error to the unit that sent it, and nothing already stored is lost.
   args:
     - redis-server
     - --appendonly
@@ -42,6 +55,10 @@ redis:
     - everysec
     - --dir
     - /data
+    - --maxmemory
+    - 4gb
+    - --maxmemory-policy
+    - noeviction
     - --requirepass
     - $(REDIS_PASSWORD)
   # REDIS_PASSWORD fills the arg above. REDISCLI_AUTH is redis-cli's own documented
@@ -125,8 +142,7 @@ redis-data:
       - ReadWriteOnce
     storageSize: "10Gi"
 
-# Redis alert rules. Metrics (redis_*) come from the redis exporter, wired as a
-# follow-up; until then these rules stay dormant.
+# Redis alert rules. Metrics (redis_*) come from the redis exporter below.
 monitoring:
   prometheusRules:
     redis:
@@ -143,13 +159,15 @@ monitoring:
               annotations:
                 summary: "Redis instance {{ $labels.instance }} is down"
 
-            - alert: RedisEvictionsSpiking
-              expr: rate(redis_evicted_keys_total[5m]) > 10
+            # Under noeviction (redis.args) nothing is ever evicted, so the warning
+            # is the approach to the ceiling, before writes start to be refused.
+            - alert: RedisMemoryNearCeiling
+              expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
               for: 10m
               labels:
                 severity: warning
               annotations:
-                summary: "Redis evicting keys at > 10/s"
+                summary: "Redis instance {{ $labels.instance }} uses over 85 % of its maxmemory; at 100 % every unit's writes are refused"
 
 # Metrics exporter — emits redis_* metrics (the alerts above need it). The address
 # is per-env (values-{dev,test,prod}).

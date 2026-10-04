@@ -16,4 +16,7 @@ node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-
 echo 'test: installation domain planning and paired launchers.'
 node --test scripts/installation-domain.test.mjs || fail 'scripts/installation-domain.test.mjs'
 node --test scripts/tenant-stage-label.test.mjs || fail 'scripts/tenant-stage-label.test.mjs'
+echo 'test: redis maxmemory — a ceiling below the limit, under noeviction.'
+helm dependency update clusters/inventories/redis
+node --test scripts/redis-maxmemory.test.mjs || fail 'scripts/redis-maxmemory.test.mjs'
 echo 'test: OK — all suites green'
