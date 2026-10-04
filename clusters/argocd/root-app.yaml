@@ -23,14 +23,14 @@ spec:
   # only place its two values become this installation's own.
   sources:
     - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
-      targetRevision: &branch master.digitacloud.app
+      targetRevision: &branch master.simplidigita.ai
       ref: values
     - repoURL: *repo
       targetRevision: *branch
       path: clusters/argocd
       helm:
         valueFiles:
-          - $values/clusters/active/master.digitacloud.app.yaml
+          - $values/clusters/active/master.simplidigita.ai.yaml
 
   destination:
     server: https://kubernetes.default.svc

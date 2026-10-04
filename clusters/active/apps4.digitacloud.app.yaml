@@ -22,14 +22,14 @@
 # know a mapping to see that they agree.
 stage: prod
 role: slave
-booksCluster: master.digitacloud.app
+booksCluster: master.simplidigita.ai
 
 global:
   domain: apps4.digitacloud.app
   clusterName: apps4
-  buildPlane: master.digitacloud.app
-  booksCluster: master.digitacloud.app
-  master: master.digitacloud.app
+  buildPlane: master.simplidigita.ai
+  booksCluster: master.simplidigita.ai
+  master: master.simplidigita.ai
   apiHost: 100.64.0.5
   apiPort: 16443
   unitApex: digitacloud.app
@@ -44,19 +44,19 @@ global:
   timeSources: ['ntp1.hetzner.de', 'ntp2.hetzner.de', 'ntp3.hetzner.de']
   endpoints:
     registry:
-      host: zot.master.digitacloud.app
+      host: zot.master.simplidigita.ai
     mail:
       host: post
     vault:
-      url: https://vault.master.digitacloud.app
+      url: https://vault.master.simplidigita.ai
       privateAddress: 100.64.0.1
     idp:
-      url: https://idp.master.digitacloud.app
+      url: https://idp.master.simplidigita.ai
     tailnet:
-      url: https://tale.master.digitacloud.app
+      url: https://tale.master.simplidigita.ai
     observability:
-      prometheusPush: https://prom-push.master.digitacloud.app
-      lokiPush: https://loki-push.master.digitacloud.app
+      prometheusPush: https://prom-push.master.simplidigita.ai
+      lokiPush: https://loki-push.master.simplidigita.ai
   objectStorage:
     r2:
       accountId: 7d6b0eaa4cff67abf485661f0022e065

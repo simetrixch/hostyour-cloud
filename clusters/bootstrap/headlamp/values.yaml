@@ -102,7 +102,7 @@ env:
   - name: OIDC_CLIENT_ID
     value: "headlamp"
   - name: OIDC_ISSUER_URL
-    value: "https://idp.master.digitacloud.app/application/o/headlamp/"
+    value: "https://idp.master.simplidigita.ai/application/o/headlamp/"
   # THE FOUR THE CLIENT IS GRANTED, and no other. clusters/bootstrap/idp/blueprints/99-headlamp.yaml gives
   # this client openid, profile, email and groups; asking for a scope it was not granted ends the
   # flow without a session and the browser lands back on the sign-in dialog, which reads as a login

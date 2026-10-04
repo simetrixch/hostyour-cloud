@@ -14,6 +14,6 @@ metadata:
   namespace: idp
 data:
   # Every blueprint builds its redirect and launch addresses on this, with !Format.
-  IDP_DOMAIN: "master.digitacloud.app"
+  IDP_DOMAIN: "master.simplidigita.ai"
   # The apex the consumers are reached below: 99-post.yaml builds post's addresses on it.
   IDP_UNIT_APEX: "digitacloud.app"

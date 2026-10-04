@@ -22,7 +22,7 @@
 # know a mapping to see that they agree.
 stage: prod
 role: master
-booksCluster: master.digitacloud.app
+booksCluster: master.simplidigita.ai
 # THE PIN. The release this cluster stands on, in the one release grammar. A regeneration reads
 # this line off the map and hands it back as the ref it merges, so the field and the branch state
 # are one statement and "this cluster runs platform X" is a question with an answer.
@@ -40,17 +40,17 @@ global:
   # hands it back as it stands. The fence of a mail sender's SMTP entry admits it.
   apiHost: 100.64.0.1
   # This cluster's own public domain name, which is also the name of its install branch.
-  domain: master.digitacloud.app
+  domain: master.simplidigita.ai
   # The first DNS label of that domain. Everything named per cluster carries it — the Vault auth
   # mount below, the dashboard's context, a slave's ArgoCD instance.
   clusterName: master
   # The install branch of the cluster that keeps the books — the cluster maps and the registrations.
   # On a cluster that reads another's, this is a DIFFERENT branch from the one this file stands on.
   # The same value as the top-level `booksCluster`, from the same slot, for the reason stated above.
-  booksCluster: master.digitacloud.app
+  booksCluster: master.simplidigita.ai
   # The cluster that builds this one's images. `servicesLocal.registry` below is the predicate that
   # follows from it — a cluster that builds elsewhere pulls from that other cluster's registry.
-  buildPlane: master.digitacloud.app
+  buildPlane: master.simplidigita.ai
   # The public apex units serve under: a unit's own name, then this.
   unitApex: digitacloud.app
   # This installation's business domain: the mail sender identity and the relay's own name.
@@ -130,7 +130,7 @@ global:
   # installation has exactly one of, the build plane for the registry.
   endpoints:
     registry:
-      host: zot.master.digitacloud.app
+      host: zot.master.simplidigita.ai
     # The host LABEL the installation's shared mail service stands on: one DNS label, not an
     # address. The mail service exists once per stage, and its host follows the unit host law —
     # the label, a dot, the stage apex — so every unit composes the address itself as https://
@@ -143,16 +143,16 @@ global:
     # coredns rewrites exactly this name to the in-cluster Service, so it follows the books-keeping
     # cluster and not this one — a cluster that keeps no books would otherwise be pointed at a Vault
     # that does not run there.
-    vault: {url: 'https://vault.master.digitacloud.app'}
+    vault: {url: 'https://vault.master.simplidigita.ai'}
     # One installation has ONE place people sign in, for the same reason. Everything that accepts a
     # browser login is told this address, and the auth mount in the store reads it from here.
-    idp: {url: 'https://idp.master.digitacloud.app'}
-    tailnet: {url: 'https://tale.master.digitacloud.app'}
+    idp: {url: 'https://idp.master.simplidigita.ai'}
+    tailnet: {url: 'https://tale.master.simplidigita.ai'}
     # Where a cluster's agent pushes its metrics and logs. The observability plane runs on the
     # cluster that keeps the books (servicesLocal.observability below), behind the two routes it
     # publishes; a slave takes both from here through the Manager's mark, and its agent refuses to
     # render without them rather than send to an address with no host.
-    observability: {prometheusPush: 'https://prom-push.master.digitacloud.app', lokiPush: 'https://loki-push.master.digitacloud.app'}
+    observability: {prometheusPush: 'https://prom-push.master.simplidigita.ai', lokiPush: 'https://loki-push.master.simplidigita.ai'}
   # WHICH OF THE SHARED SERVICES RUN HERE, keyed by the service. A chart reads its own key to decide
   # whether to reach in-cluster or over the address above.
   servicesLocal:

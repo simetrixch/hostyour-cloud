@@ -11,16 +11,16 @@ apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: headlamp
-  # THE ADDRESS STAYS kube.master.digitacloud.app WHILE THE NAMESPACE BECOMES headlamp: what a component is
+  # THE ADDRESS STAYS kube.master.simplidigita.ai WHILE THE NAMESPACE BECOMES headlamp: what a component is
   # called and what a browser types are two different names. The identity provider registers
-  # this product at https://kube.master.digitacloud.app/oidc-callback (blueprints/99-headlamp.yaml), so moving
+  # this product at https://kube.master.simplidigita.ai/oidc-callback (blueprints/99-headlamp.yaml), so moving
   # the host would take the login with it and cost a certificate for nothing.
   namespace: headlamp
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`kube.master.digitacloud.app`)
+    - match: Host(`kube.master.simplidigita.ai`)
       kind: Rule
       middlewares:
         - name: forwardauth

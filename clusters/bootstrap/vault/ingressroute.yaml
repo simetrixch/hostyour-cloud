@@ -18,8 +18,8 @@ metadata:
   namespace: vault
 spec:
   redirectRegex:
-    regex: ^https?://vault.master.digitacloud.app/?$
-    replacement: https://vault.master.digitacloud.app/ui/vault/auth?with=oidc%2F
+    regex: ^https?://vault.master.simplidigita.ai/?$
+    replacement: https://vault.master.simplidigita.ai/ui/vault/auth?with=oidc%2F
     permanent: false
 ---
 # Traefik Middleware — admits the Vault host only from where it is reached
@@ -47,7 +47,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`vault.master.digitacloud.app`)
+    - match: Host(`vault.master.simplidigita.ai`)
       kind: Rule
       middlewares:
         - name: vault-private-sources

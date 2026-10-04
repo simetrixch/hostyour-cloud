@@ -49,10 +49,10 @@ spec:
     name: platform-acme
     kind: ClusterIssuer
   dnsNames:
-  - argo.master.digitacloud.app
-  - idp.master.digitacloud.app
-  - kube.master.digitacloud.app
-  - vault.master.digitacloud.app
+  - argo.master.simplidigita.ai
+  - idp.master.simplidigita.ai
+  - kube.master.simplidigita.ai
+  - vault.master.simplidigita.ai
 ---
 # The three routes Traefik terminates name this store; Vault's own route needs no TLS block of its
 # own for the certificate, because Traefik terminates that one too and the pod behind it presents

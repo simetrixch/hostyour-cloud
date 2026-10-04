@@ -60,7 +60,7 @@ DEPLOY_ENV=
 # asking which machine it is running on therefore asks the RUN (the answers `fqdn`, `books_fqdn` and
 # `build_plane_fqdn`), never this line. What stands here is this installation's record of the answer,
 # like every other key whose paragraph says so.
-CLUSTER_FQDN="master.digitacloud.app"
+CLUSTER_FQDN="master.simplidigita.ai"
 
 # ── where this installation's units and its mail live ────────────────────────────────────────────
 
@@ -105,9 +105,9 @@ PLATFORM_DOMAIN=
 # reached elsewhere is that same comparison, but it is made over the RUN's answers (`books_fqdn`
 # against `fqdn`) and not over this file — see the paragraph on CLUSTER_FQDN above for why a file
 # shared by several machines cannot answer it. What stands here is the record.
-BOOKS_CLUSTER="master.digitacloud.app"
+BOOKS_CLUSTER="master.simplidigita.ai"
 
-BUILD_PLANE_FQDN="master.digitacloud.app"
+BUILD_PLANE_FQDN="master.simplidigita.ai"
 
 # The repository the DEPLOYMENT PROGRAMS are read from, written as owner/name. It is the platform's
 # own and public, the same for every installation, and the row that clones the catalogue onto this

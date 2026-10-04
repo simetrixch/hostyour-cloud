@@ -14,7 +14,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`argo.master.digitacloud.app`)
+    - match: Host(`argo.master.simplidigita.ai`)
       kind: Rule
       services:
         - name: argocd-server

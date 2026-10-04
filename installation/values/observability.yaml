@@ -30,13 +30,13 @@ kube-prometheus-stack:
                pointed at nothing shows no data rather than an error. */ -}}
         {{- define "alert.loki_url" -}}
         {{- $pane := printf `{"logs":{"datasource":"loki","queries":[{"refId":"A","datasource":{"type":"loki","uid":"loki"},"expr":"{namespace=\"%s\"}"}],"range":{"from":"now-3h","to":"now"}}}` .Labels.namespace -}}
-        https://grafana.master.digitacloud.app/explore?schemaVersion=1&panes={{ $pane | urlquery }}
+        https://grafana.master.simplidigita.ai/explore?schemaVersion=1&panes={{ $pane | urlquery }}
         {{- end -}}
 
         {{- define "alert.alert_url" -}}
-        https://grafana.master.digitacloud.app/alerting/list
+        https://grafana.master.simplidigita.ai/alerting/list
         {{- end -}}
 
         {{- define "alert.silence_url" -}}
-        https://grafana.master.digitacloud.app/alerting/silences
+        https://grafana.master.simplidigita.ai/alerting/silences
         {{- end -}}
