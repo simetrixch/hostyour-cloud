@@ -231,6 +231,12 @@ spec:
                 # The hosts that answer with a redirect to the own domain; empty without one. Named
                 # by the operator in the Manager's tenant-set-own-domain, never derived.
                 ownDomainRedirects: {{ $.ownDomainRedirects | toJson }}
+                # The domains the own domain left for good, each typed without www, or [] for none: each,
+                # and its www, redirects for good to the own domain. Written by the Manager's
+                # tenant-set-own-domain, which leaves the key out while the list is empty, so it is read
+                # with dig, never bare: under missingkey=error one registration without it would stop
+                # the controller for every Application of this set.
+                ownDomainAliases: {{ dig "ownDomainAliases" (list) $ | toJson }}
                 # The image tags approved for this tenant alone, per app and build
                 # (`<app>: {<build>: <tag>}`); a build with none follows the stage pin. Written by the
                 # Manager: create-tenant and add-app at the stage pin, its boot for a build the tenant
