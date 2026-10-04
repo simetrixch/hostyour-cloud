@@ -265,6 +265,9 @@ serviceaccount.yaml / deployment.yaml.
         (dict "apiGroups" (list "argoproj.io") "resources" (list "applications") "verbs" (list "get" "list" "patch"))
         (dict "apiGroups" (list "argoproj.io") "resources" (list "appprojects") "verbs" (list "get" "list" "create" "update" "delete"))
       ))
+      (dict "name" "manager-tenant-generator-refresh" "rules" (list
+        (dict "apiGroups" (list "argoproj.io") "resources" (list "applicationsets") "resourceNames" (list "tenants") "verbs" (list "patch"))
+      ))
       (dict "name" "manager-admission-policy" "rules" (list
         (dict "apiGroups" (list "admissionregistration.k8s.io") "resources" (list "validatingadmissionpolicies" "validatingadmissionpolicybindings") "verbs" (list "get" "list" "create" "update" "delete"))
       ))
