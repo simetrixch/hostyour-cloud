@@ -3,7 +3,7 @@
 {{- $name := base .file -}}
 {{- $dependencyDigest := $root.Files.Get "files/test-dependencies.mjs" | sha256sum -}}
 {{- printf "// dependency worker sha256:%s\nimport {writeFileSync, mkdtempSync, mkdirSync} from 'node:fs';\nconst directory = mkdtempSync('/tmp/hostyour-runner-');\n" $dependencyDigest -}}
-{{- range $file := list "test-contract.mjs" "test-tools.mjs" "test-dependency-policy.mjs" "test-package-fetch.mjs" "test-toolchain-install.mjs" "test-suite-profiles.mjs" "test-vitest.mjs" "test-vitest-controller.mjs" -}}
+{{- range $file := list "test-contract.mjs" "test-input.mjs" "test-tools.mjs" "test-dependency-policy.mjs" "test-package-fetch.mjs" "test-toolchain-install.mjs" "test-suite-profiles.mjs" "test-vitest.mjs" "test-vitest-controller.mjs" -}}
 {{- printf "writeFileSync(directory + '/%s', %s, {mode: 384});\n" $file ($root.Files.Get (printf "files/%s" $file) | toJson) -}}
 {{- end -}}
 {{- printf "mkdirSync(directory + '/test-toolchain');\n" -}}

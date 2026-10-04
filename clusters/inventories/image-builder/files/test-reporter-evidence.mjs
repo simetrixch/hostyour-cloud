@@ -43,10 +43,13 @@ export async function inspect(run, registration, runnerDigest, nodeImage, getTas
     checkTask(task, run, taskName, registration, runnerDigest, nodeImage);
     states.set(pipelineTask, task);
   }
-  const terminal = condition(run)?.status === 'False';
+  const runStatus = condition(run)?.status;
+  const canceled = /cancel|stop/i.test(run.spec.status ?? '') || /cancel/i.test(condition(run)?.reason ?? '');
+  const terminal = runStatus === 'False' || canceled;
+  const settled = runStatus === 'True' || terminal;
   const suite = states.get('tests');
   const failedTask = [...states.values()].some(task => condition(task)?.status === 'False');
-  if (!terminal && !failedTask && condition(suite ?? {})?.status !== 'True') return {binding};
+  if (!settled && !failedTask && condition(suite ?? {})?.status !== 'True') return {binding, completed: false};
   const startedAt = run.status?.startTime ?? run.metadata.creationTimestamp;
   const completedAt = run.status?.completionTime ?? suite?.status?.completionTime ?? condition(run)?.lastTransitionTime ?? startedAt;
   const clone = states.get('clone');
@@ -64,11 +67,12 @@ export async function inspect(run, registration, runnerDigest, nodeImage, getTas
     if (passed && !runnerFinished) throw new Error('positive receipt has no successful runner exit');
   } else {
     const reason = condition(run)?.reason ?? condition(suite ?? {})?.reason ?? 'MissingRequiredEvidence';
-    const canceled = /cancel/i.test(reason);
     result = emptyResult(binding, registration, canceled ? 'canceled' : 'infrastructure-failed',
       'authoritative run did not complete required evidence: ' + reason, startedAt, completedAt);
   }
   validateResult(result, binding, registration);
-  return {binding, result, passed};
+  // The pipeline's report/finally tasks need the provisional suite receipt.
+  // A public success and release approval require the whole run to succeed.
+  return {binding, result, passed, completed: !passed || runStatus === 'True'};
 }
 

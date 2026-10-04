@@ -10,6 +10,7 @@ spec:
     - {name: ref, type: string}
     - {name: recipe-json, type: string}
     - {name: recipe-digest, type: string}
+    - {name: receipt-mode, type: string, default: "run"}
     - {name: require-success, type: string, default: "true"}
     - {name: run-id, type: string}
     - {name: run-name, type: string}
@@ -43,6 +44,7 @@ spec:
           value: {{ include "image-builder.testRunnerDigest" . | quote }}
         - {name: TEST_PASSED_PATH, value: "$(results.passed.path)"}
         - {name: TEST_RECEIPT_PATH, value: "$(results.receipt.path)"}
+        - {name: TEST_RECEIPT_MODE, value: "$(params.receipt-mode)"}
         - {name: TEST_REQUIRE_SUCCESS, value: "$(params.require-success)"}
         - name: TEST_REPORTER_URL
           value: {{ printf "http://%s.%s.svc.cluster.local:%v" .Values.digitaTests.reporter.name .Release.Namespace .Values.digitaTests.reporter.port | quote }}

@@ -20,6 +20,13 @@ metadata:
 spec:
   serviceAccountName: {{ .Values.pipeline.eventListenerServiceAccountName }}
   triggers:
+{{- if .Values.digitaTests.events.enabled }}
+{{- range .Values.digitaTests.repositories }}
+{{- if ne .name "digita-catalog-show" }}
+    - triggerRef: {{ .name }}-test-push
+{{- end }}
+{{- end }}
+{{- end }}
     - triggerRef: github-deploy-request # deploy/<stage>/<release-tag> push → <unit>-release in <unit>-build
   resources:
     kubernetesResource:

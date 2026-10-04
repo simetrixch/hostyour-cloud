@@ -28,7 +28,17 @@ spec:
   workspaces:
     - name: source
   tasks:
+    - name: input
+      taskRef:
+        resolver: cluster
+        params:
+          - {name: kind, value: task}
+          - {name: namespace, value: {{ .Values.eventListener.namespace }}}
+          - {name: name, value: test-input}
+      params:
+{{ $params | toYaml | indent 8 }}
     - name: clone
+      runAfter: [input]
       taskRef:
         resolver: cluster
         params:

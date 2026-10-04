@@ -6,11 +6,13 @@ import {tmpdir} from 'node:os';
 import {resolve, join} from 'node:path';
 import {digest, emptyResult, parseNodeTAP, redact, validateResult} from '../clusters/inventories/image-builder/files/test-contract.mjs';
 import {bindRun, inspect} from '../clusters/inventories/image-builder/files/test-reporter-evidence.mjs';
+import {listRuns, listGithub, latestRun} from '../clusters/inventories/image-builder/files/test-reporter-list.mjs';
 import {readState, writeState} from '../clusters/inventories/image-builder/files/test-reporter-state.mjs';
 import {registryURL, sanitizedDependencyRoot} from '../clusters/inventories/image-builder/files/test-dependency-policy.mjs';
 import {preparePackageTools} from '../clusters/inventories/image-builder/files/test-tools.mjs';
 import {fetchPackages} from '../clusters/inventories/image-builder/files/test-package-fetch.mjs';
 import {installToolchain} from '../clusters/inventories/image-builder/files/test-toolchain-install.mjs';
+import {validateInput} from '../clusters/inventories/image-builder/files/test-input.mjs';
 
 const code = 'trusted runner bytes';
 const image = 'node@sha256:' + 'a'.repeat(64);
@@ -52,6 +54,37 @@ test('a success needs independent clone, scan, recipe and runner evidence', asyn
   assert.equal((await f.inspect()).passed, true);
   f.tasks.clone.status.results[0].value = 'c'.repeat(40);
   assert.equal((await f.inspect()).passed, false);
+});
+test('suite success remains provisional until every pipeline task succeeds', async () => {
+  const f = fixture();
+  let evidence = await f.inspect();
+  assert.equal(evidence.passed, true);
+  assert.equal(evidence.completed, false);
+  f.run.status.conditions[0].status = 'True';
+  f.run.status.completionTime = '2026-10-04T01:00:03Z';
+  evidence = await f.inspect();
+  assert.equal(evidence.passed, true);
+  assert.equal(evidence.completed, true);
+  f.run.status.conditions[0] = {type: 'Succeeded', status: 'False', reason: 'FinallyFailed'};
+  evidence = await f.inspect();
+  assert.equal(evidence.passed, false);
+  assert.equal(evidence.completed, true);
+});
+test('cancellation requests invalidate provisional success before controller completion', async () => {
+  for (const status of ['Cancelled', 'CancelledRunFinally', 'StoppedRunFinally']) {
+    const f = fixture(); f.run.spec.status = status;
+    const evidence = await f.inspect();
+    assert.equal(evidence.passed, false);
+    assert.equal(evidence.completed, true);
+    assert.equal(evidence.result.result, 'canceled');
+  }
+});
+test('a terminal run without suite evidence is a completed failure', async () => {
+  const f = fixture(); f.run.status.conditions[0].status = 'True';
+  f.run.status.childReferences = f.run.status.childReferences.filter(ref => ref.pipelineTaskName !== 'tests');
+  const evidence = await f.inspect();
+  assert.equal(evidence.passed, false);
+  assert.equal(evidence.completed, true);
 });
 test('zero, skipped, missing and foreign-SHA receipts cannot pass', () => {
   for (const mutate of [r => r.suites[0].cases.passed = 0, r => r.suites[0].cases.skipped = 1,
@@ -257,4 +290,131 @@ test('fixed Vitest counts real cases under UID1001 and ignores source test scrip
       assert.throws(runController, 'zero, skipped and failed cases cannot turn fake script stdout into success');
     }
   } finally {rmSync(directory, {recursive: true, force: true});}
+});
+
+test('event input is validated before a credentialed clone', () => {
+  const reg = {...registration, branch: 'master'};
+  const binding = fixture().binding;
+  const grammar = '(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.([0-9]{3}|0|[1-9][0-9]*)-(alpha|beta|stable)-([0-9]{14})';
+  for (const ref of ['refs/heads/master', 'refs/heads/issue-89-cloud-proof',
+    'refs/tags/0.4.001-stable-20261004034200', 'refs/tags/deploy/prod/0.4.001-stable-20261004034200']) {
+    assert.equal(validateInput(reg, {...binding, ref}, grammar).ref, ref);
+  }
+  for (const delta of [{repositoryURL: 'https://github.com/other/repo.git'}, {commit: '0'.repeat(40)},
+    {commit: 'main'}, {ref: 'refs/heads/master;echo bad'}, {ref: 'refs/heads/feature-unregistered'},
+    {ref: 'refs/tags/deploy/staging/0.4.001-stable-20261004034200'}]) {
+    assert.throws(() => validateInput(reg, {...binding, ...delta}, grammar));
+  }
+});
+
+test('reporter reaches run and GitHub evidence beyond the first hundred entries', async () => {
+  const pages = [];
+  const runs = await listRuns(async path => {
+    pages.push(path);
+    return pages.length === 1 ? {items: Array(100).fill({old: true}), metadata: {continue: 'next/token+='}} :
+      {items: [{uid: 'latest'}], metadata: {}};
+  }, registration.name + '-build');
+  assert.equal(runs.length, 101);
+  assert.equal(runs[100].uid, 'latest');
+  assert.ok(pages[1].endsWith('&continue=next%2Ftoken%2B%3D'));
+  for (const field of [undefined, 'check_runs']) {
+    const requests = [];
+    const values = await listGithub(async path => {
+      requests.push(path);
+      const entries = requests.length === 1 ? Array(100).fill({old: true}) : [{id: 101}];
+      return field ? {[field]: entries} : entries;
+    }, '/repos/digitaplatform/example/issues/1/comments', field);
+    assert.equal(values[100].id, 101);
+    assert.ok(requests[1].endsWith('per_page=100&page=2'));
+  }
+});
+test('reporter never approves a partial or cyclic paginated history', async () => {
+  await assert.rejects(listRuns(async () => ({items: [], metadata: {continue: 'same'}}), registration.name + '-build'), /continuation/);
+  let calls = 0;
+  await assert.rejects(listGithub(async () => {
+    if (++calls === 2) throw new Error('second page unavailable');
+    return Array(100).fill({});
+  }, '/repos/digitaplatform/example/issues/1/comments'), /second page unavailable/);
+  await assert.rejects(listGithub(async () => Array(100).fill({}), '/repos/digitaplatform/example/issues/1/comments'), /bound/);
+});
+
+test('the exact-ref newest run supersedes an older pass at the same SHA', () => {
+  const f = fixture();
+  const older = structuredClone(f.run); older.status.conditions[0].status = 'True';
+  const newer = structuredClone(f.run); newer.metadata.creationTimestamp = '2026-10-04T01:00:10Z';
+  newer.status.conditions[0].status = 'False';
+  const foreignRef = structuredClone(newer); foreignRef.metadata.creationTimestamp = '2026-10-04T01:00:20Z';
+  foreignRef.spec.params[2].value = 'refs/heads/master';
+  assert.equal(latestRun([older, foreignRef, newer], registration, f.binding.commit, f.binding.ref), newer);
+  assert.equal(latestRun([foreignRef], registration, f.binding.commit, f.binding.ref), undefined);
+  const ambiguous = structuredClone(newer); ambiguous.metadata.uid = '22222222-2222-4222-8222-222222222222';
+  assert.throws(() => latestRun([newer, ambiguous], registration, f.binding.commit, f.binding.ref), /ambiguous/);
+  assert.throws(() => latestRun([], registration, '0'.repeat(40), f.binding.ref), /invalid/);
+});
+
+function renderChart(chart, extra = []) {
+  const rendered = execFileSync('helm', ['template', chart, 'clusters/inventories/' + chart,
+    '--namespace', chart === 'image-builder' ? 'image-builder' : 'argocd',
+    '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml',
+    '-f', 'clusters/inventories/' + chart + '/values-common.yaml',
+    ...(existsSync('clusters/inventories/' + chart + '/values-prod.yaml') ?
+      ['-f', 'clusters/inventories/' + chart + '/values-prod.yaml'] : []),
+    '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', ...extra],
+    {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
+  return JSON.parse(execFileSync('yq', ['eval-all', '-o=json', '-I=0', '[.]', '-'],
+    {input: rendered, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024})).filter(Boolean);
+}
+test('enabled release gate precedes image reuse, builds and every pin write', () => {
+  const documents = renderChart('consumer-build', ['--set', 'digitaTests.releaseGate.enabled=true', '--set-json',
+    'unit=' + JSON.stringify({name: 'digita-report', repoURL: 'https://github.com/digitaplatform/digita-report.git',
+      buildsJson: '["digita-report-backend","digita-report-frontend"]'})]);
+  const pipeline = documents.find(d => d.kind === 'Pipeline' && d.metadata.name === 'digita-report-release');
+  const tasks = new Map(pipeline.spec.tasks.map(task => [task.name, task]));
+  function ancestors(name, visiting = new Set()) {
+    assert.ok(!visiting.has(name), 'pipeline dependency cycle at ' + name);
+    const next = new Set(visiting).add(name);
+    return (tasks.get(name).runAfter ?? []).flatMap(parent => [parent, ...ancestors(parent, next)]);
+  }
+  for (const name of tasks.keys()) ancestors(name);
+  for (const [name, task] of tasks) {
+    if (['builds', 'scan', 'bump', 'argo-sync'].includes(name) ||
+        task.taskRef?.params?.some(param => param.name === 'name' && param.value === 'buildah-build-push') || name.startsWith('probe-')) {
+      assert.ok(ancestors(name).includes('test-report'), name + ' bypassed exact-SHA tests');
+    }
+  }
+  const gate = Object.fromEntries(tasks.get('test-report').params.map(param => [param.name, param.value]));
+  assert.equal(gate.commit, '$(tasks.clone.results.commit)');
+  assert.equal(gate.ref, 'refs/tags/deploy/$(params.stage)/$(params.release-tag)');
+  assert.equal(gate['receipt-mode'], 'latest');
+  assert.equal(gate['repository-url'], 'https://github.com/digitaplatform/digita-report.git');
+});
+test('HMAC test triggers bind each repository and leave ordinary public branch CI alone', () => {
+  const documents = renderChart('image-builder', ['--set', 'digitaTests.events.enabled=true']);
+  const event = documents.find(d => d.kind === 'EventListener');
+  const triggers = documents.filter(d => d.kind === 'Trigger' && d.metadata.name.endsWith('-test-push'));
+  for (const trigger of triggers) {
+    const unit = trigger.metadata.name.slice(0, -'-test-push'.length);
+    assert.ok(event.spec.triggers.some(ref => ref.triggerRef === trigger.metadata.name));
+    const hmac = trigger.spec.interceptors.find(interceptor => interceptor.ref.name === 'github');
+    assert.deepEqual(hmac.params.find(param => param.name === 'secretRef').value,
+      {secretName: 'image-builder-webhook-secrets', secretKey: 'github'});
+    const filter = trigger.spec.interceptors.find(interceptor => interceptor.ref.name === 'cel').params[0].value;
+    assert.ok(filter.includes("body.repository.full_name == 'digitaplatform/" + unit + "'"));
+    assert.ok(filter.includes("body.repository.clone_url == 'https://github.com/digitaplatform/" + unit + ".git'"));
+    assert.ok(filter.includes('has(body.deleted) && body.deleted'));
+    assert.ok(filter.includes("body.after != '0000000000000000000000000000000000000000'"));
+    if (['digita-platform', 'digita-plugins-free', 'digita-translations'].includes(unit)) {
+      assert.ok(!filter.includes('refs/heads/'));
+    } else assert.ok(filter.includes('refs/heads/issue-'));
+    const releasePattern = new RegExp(/body.ref.matches\(r'([^']+)'\)/.exec(filter)[1]);
+    assert.ok(releasePattern.test('refs/tags/deploy/prod/0.4.001-stable-20261004034200'));
+    assert.ok(releasePattern.test('refs/tags/0.4.001-stable-20261004034200'));
+    assert.ok(!releasePattern.test('refs/tags/deploy/staging/0.4.001-stable-20261004034200'));
+  }
+  const template = documents.find(d => d.kind === 'TriggerTemplate' && d.metadata.name === 'digita-test-push');
+  const run = template.spec.resourcetemplates[0];
+  assert.equal(run.spec.taskRunTemplate.serviceAccountName, 'pipeline-sa');
+  assert.ok(!run.spec.pipelineSpec);
+  assert.ok(run.spec.workspaces[0].volumeClaimTemplate);
+  assert.ok(!run.spec.workspaces[0].persistentVolumeClaim);
 });

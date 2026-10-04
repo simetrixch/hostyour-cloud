@@ -22,7 +22,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   registrations.json: {{ .Values.digitaTests.repositories | toJson | quote }}
-{{- range $file := list "test-contract.mjs" "test-reporter-api.mjs" "test-reporter-evidence.mjs" "test-reporter-state.mjs" "test-reporter.mjs" }}
+{{- range $file := list "test-contract.mjs" "test-reporter-api.mjs" "test-reporter-evidence.mjs" "test-reporter-state.mjs" "test-reporter-list.mjs" "test-reporter.mjs" }}
   {{ $file }}: |
 {{ $.Files.Get (printf "files/%s" $file) | indent 4 }}
 {{- end }}
@@ -41,7 +41,7 @@ spec:
     metadata:
       labels: {app.kubernetes.io/name: {{ $reporter.name }}, app.kubernetes.io/component: reporter}
       annotations:
-        checksum/code: {{ printf "%s%s%s%s%s%s" (.Files.Get "files/test-contract.mjs") (.Files.Get "files/test-reporter.mjs") (.Files.Get "files/test-reporter-api.mjs") (.Files.Get "files/test-reporter-evidence.mjs") (.Files.Get "files/test-reporter-state.mjs") (.Values.digitaTests | toJson) | sha256sum }}
+        checksum/code: {{ printf "%s%s%s%s%s%s%s" (.Files.Get "files/test-contract.mjs") (.Files.Get "files/test-reporter.mjs") (.Files.Get "files/test-reporter-api.mjs") (.Files.Get "files/test-reporter-evidence.mjs") (.Files.Get "files/test-reporter-state.mjs") (.Files.Get "files/test-reporter-list.mjs") (.Values.digitaTests | toJson) | sha256sum }}
     spec:
 {{ include "image-builder.reporterPod" (dict "root" . "once" false) | indent 6 }}
 ---
