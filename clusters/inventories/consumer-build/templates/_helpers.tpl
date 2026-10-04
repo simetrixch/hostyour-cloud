@@ -31,24 +31,6 @@ and no other, so the scope is a fact of the registration and never a value of th
 {{- $owner -}}
 {{- end -}}
 
-{{- define "consumer-build.testRegistration" -}}
-{{- $name := include "consumer-build.unitName" . -}}
-{{- range .Values.digitaTests.repositories -}}
-{{- if eq .name $name -}}
-{{- if ne .repositoryURL $.Values.unit.repoURL -}}{{ fail "test repository identity does not match build registration" }}{{- end -}}
-{{- . | toJson -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
 {{- define "consumer-build.hasBuilds" -}}
 {{- if gt (len (include "consumer-build.builds" . | fromJsonArray)) 0 -}}true{{- else -}}false{{- end -}}
-{{- end -}}
-
-{{- define "consumer-build.testFixtureProfile" -}}
-{{- $record := include "consumer-build.testRegistration" . | fromJson -}}
-{{- if eq $record.recipe.runtime "report" -}}report
-{{- else if has "redis" $record.recipe.fixtures -}}mongo-redis
-{{- else if has "mongo-replica" $record.recipe.fixtures -}}mongo
-{{- else -}}node
-{{- end -}}
 {{- end -}}
