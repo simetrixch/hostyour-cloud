@@ -23,4 +23,7 @@ helm dependency update clusters/inventories/redis
 node --test scripts/redis-maxmemory.test.mjs || fail 'scripts/redis-maxmemory.test.mjs'
 echo 'test: tenant size — every registration renders, with the word or without it.'
 node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
+echo 'test: unit alerts — the master evaluates the PostgreSQL alerts of every unit, the unit renders none.'
+helm dependency update clusters/units/postgresql
+node --test scripts/unit-alerts.test.mjs || fail 'scripts/unit-alerts.test.mjs'
 echo 'test: OK — all suites green'

@@ -61,7 +61,3 @@ postgres-data:
     # Storage is the scarce resource: do not pick this preset for headroom,
     # pick it because a measurement says the data is there.
     storageSize: "50Gi"
-
-monitoring:
-  # ~80% of this preset's 50Gi PVC — the storage early-warning trip point.
-  dataAlertThresholdGi: 40

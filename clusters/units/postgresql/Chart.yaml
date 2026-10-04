@@ -79,17 +79,8 @@ dependencies:
     repository: file://../../charts/secret-store
     condition: secret-store.enabled
 
-  # NOTE — the PostgreSQL alert rules (PostgreSQLDown etc.) are NOT a
-  # clusters/charts/monitoring dependency here: they are an INLINE template,
-  # templates/prometheusrule.yaml, gated on the same metrics.enabled. The subchart
-  # renders rules from values verbatim (toYaml, no tpl) and so cannot scope an
-  # alert expression to .Release.Namespace, which per-consumer isolation requires
-  # (finding 5 / per-consumer-postgres.md §10.3) — see the WHY at the top of that
-  # template. metrics.enabled is still the ONE switch for the whole monitoring
-  # pair: it gates BOTH the exporter dependency below (via `condition`) AND the
-  # inline PrometheusRule (via `{{ if }}`), so the two can never be half-configured.
-
-  # Metrics exporter — emits the pg_* metrics the inline PrometheusRule watches.
+  # Metrics exporter — emits the pg_* metrics the master's units-postgresql alerts
+  # watch (clusters/inventories/observability/values-common.yaml); this chart renders no rule.
   # Connects to the in-NAMESPACE postgres as the superuser, reading the same
   # postgresql-credentials Secret the database itself is initialised from.
   #

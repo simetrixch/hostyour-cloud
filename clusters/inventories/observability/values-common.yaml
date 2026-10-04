@@ -514,6 +514,64 @@ monitoring:
                   `sudo systemctl restart snap.microk8s.daemon-k8s-dqlite && sleep 20 && sudo systemctl restart snap.microk8s.daemon-kubelite`,
                   which ended it there.
 
+    # THE ALERTS OF EVERY CONSUMER'S OWN POSTGRESQL (clusters/units/postgresql), evaluated here and
+    # nowhere else. An app cluster runs no Prometheus: its agent remote-writes every series to this
+    # one, and a PrometheusRule rendered there is evaluated by nothing. So the unit chart renders no
+    # rule, and this group covers every unit at once, the moment its exporter's series arrive.
+    #
+    # NO EXPRESSION NAMES A UNIT. Each result keeps the cluster and namespace of the one instance it
+    # is about, so one consumer's outage raises that consumer's alert and nobody else's; a `by` or an
+    # `on` that dropped either label would merge two units into one alert.
+    #
+    # THE STORAGE LINE IS 80 % OF THE UNIT'S OWN DATA VOLUME, read off the request kube-state-metrics
+    # reports for postgres-data (the claim the unit chart names), so each size preset gets its own
+    # line with no number here. The hostpath provisioner enforces no capacity, which is why the
+    # warning matters: a runaway database fills the node's one filesystem. The databases are summed,
+    # because they share that volume.
+    units-postgresql:
+      enabled: true
+      groups:
+        - name: units-postgresql
+          interval: 60s
+          rules:
+            - alert: PostgreSQLDown
+              expr: pg_up == 0
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "PostgreSQL of {{ $labels.namespace }} on {{ $labels.cluster }} is down"
+
+            # The share of the instance's own max_connections, so it follows each preset's cap.
+            - alert: PostgreSQLConnectionsSaturated
+              expr: >-
+                sum by (cluster, namespace) (pg_stat_activity_count)
+                / max by (cluster, namespace) (pg_settings_max_connections) > 0.8
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "PostgreSQL of {{ $labels.namespace }} on {{ $labels.cluster }} uses over 80 % of max_connections"
+                description: "Active connections approaching max_connections; reaching it rejects new clients."
+
+            - alert: PostgreSQLDeadlocksSpiking
+              expr: rate(pg_stat_database_deadlocks[5m]) > 0.1
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "PostgreSQL deadlocks over 0.1/s in {{ $labels.namespace }} on {{ $labels.cluster }} (db {{ $labels.datname }})"
+
+            - alert: PostgreSQLStorageFillingUp
+              expr: >-
+                sum by (cluster, namespace) (pg_database_size_bytes)
+                > 0.8 * max by (cluster, namespace) (kube_persistentvolumeclaim_resource_requests_storage_bytes{persistentvolumeclaim="postgres-data"})
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "PostgreSQL of {{ $labels.namespace }} on {{ $labels.cluster }} fills over 80 % of its data volume"
+
   # --------------------------------------------------------------------------
   # AlertmanagerConfig CRs.
   #
