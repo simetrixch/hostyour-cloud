@@ -61,7 +61,3 @@ postgres-data:
     # i.e. the size the platform considers sufficient for a whole stage's worth
     # of databases; for ONE consumer it is years of growth.
     storageSize: "20Gi"
-
-monitoring:
-  # ~80% of this preset's 20Gi PVC — the storage early-warning trip point.
-  dataAlertThresholdGi: 16

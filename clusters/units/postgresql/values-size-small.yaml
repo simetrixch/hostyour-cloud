@@ -9,8 +9,7 @@
 # THIS FILE IS INTENTIONALLY EMPTY — that is the whole point of it.
 # The small values live in values.yaml itself — not just the four resource
 # numbers but also the server config (postgres.args: shared_buffers=128MB,
-# max_connections=50, autovacuum_work_mem=32MB) and the storage-alert threshold
-# (monitoring.dataAlertThresholdGi: 4) — so that a render which names NO size
+# max_connections=50, autovacuum_work_mem=32MB) — so that a render which names NO size
 # gets the frugal preset rather than the generous one, and so that the small
 # numbers exist exactly once (a values-size-small.yaml restating them would be a
 # second copy free to drift from the default). The file exists purely so that
