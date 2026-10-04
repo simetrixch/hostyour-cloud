@@ -7,7 +7,7 @@ import {resolve, join} from 'node:path';
 import {digest, emptyResult, parseNodeTAP, redact, validateResult} from '../clusters/inventories/image-builder/files/test-contract.mjs';
 import {bindRun, inspect} from '../clusters/inventories/image-builder/files/test-reporter-evidence.mjs';
 import {listRuns, listGithub, latestRun} from '../clusters/inventories/image-builder/files/test-reporter-list.mjs';
-import {readState, writeState} from '../clusters/inventories/image-builder/files/test-reporter-state.mjs';
+import {readState, writeState, historicalReceipt} from '../clusters/inventories/image-builder/files/test-reporter-state.mjs';
 import {registryURL, sanitizedDependencyRoot} from '../clusters/inventories/image-builder/files/test-dependency-policy.mjs';
 import {preparePackageTools} from '../clusters/inventories/image-builder/files/test-tools.mjs';
 import {fetchPackages} from '../clusters/inventories/image-builder/files/test-package-fetch.mjs';
@@ -420,4 +420,23 @@ test('HMAC test triggers bind each repository and leave ordinary public branch C
   assert.ok(!run.spec.pipelineSpec);
   assert.ok(run.spec.workspaces[0].volumeClaimTemplate);
   assert.ok(!run.spec.workspaces[0].persistentVolumeClaim);
+});
+
+test('a worker rollout preserves completed history but never freezes a provisional receipt', () => {
+  const f = fixture(); f.run.status.conditions[0].status = 'True';
+  const receipt = {binding: {...f.binding, runnerDigest: digest('previous worker')}, passed: true, result: f.result, completed: false};
+  assert.equal(historicalReceipt({receipt}, f.run, f.binding), undefined);
+  receipt.completed = true;
+  assert.equal(historicalReceipt({receipt}, f.run, f.binding), receipt);
+  for (const status of ['Unknown', 'False']) {
+    f.run.status.conditions[0].status = status;
+    assert.equal(historicalReceipt({receipt}, f.run, f.binding), undefined);
+  }
+  f.run.status.conditions[0].status = 'True';
+  f.run.spec.status = 'CancelledRunFinally';
+  assert.equal(historicalReceipt({receipt}, f.run, f.binding), undefined);
+  delete f.run.spec.status;
+  assert.equal(historicalReceipt({receipt}, f.run, {...f.binding, commit: 'c'.repeat(40)}), undefined);
+  delete receipt.completed;
+  assert.equal(historicalReceipt({receipt}, f.run, f.binding), receipt);
 });

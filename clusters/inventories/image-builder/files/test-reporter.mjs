@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {digest, condition, getParam, getResult, emptyResult, redact, validateBinding, validateResult} from './test-contract.mjs';
 import {bindRun, inspect} from './test-reporter-evidence.mjs';
 import {github, kubernetes, validateReporterIdentity, withRequestDeadline} from './test-reporter-api.mjs';
-import {readState, writeState} from './test-reporter-state.mjs';
+import {readState, writeState, historicalReceipt} from './test-reporter-state.mjs';
 import {listRuns, listGithub, latestRun} from './test-reporter-list.mjs';
 
 const registrations = JSON.parse(readFileSync('/reporter-code/registrations.json', 'utf8'));
@@ -43,12 +43,8 @@ async function publish(run, registration) {
       // A runner/recipe rollout must not rewrite completed historical checks.
       // Release lookup still requires the current digests, and a later failure
       // or cancellation always re-enters authoritative reconciliation.
-      const old = cached?.receipt?.binding;
-      if ((cached?.receipt?.completed === true || (cached?.receipt && !Object.hasOwn(cached.receipt, 'completed'))) &&
-          condition(run)?.status === 'True' && !/cancel|stop/i.test(run.spec.status ?? '') &&
-          old?.repositoryURL === binding.repositoryURL && old?.commit === binding.commit && old?.ref === binding.ref &&
-          JSON.stringify(old.pipelineRun) === JSON.stringify(binding.pipelineRun) &&
-          (old.runnerDigest !== binding.runnerDigest || old.recipeDigest !== binding.recipeDigest)) return cached.receipt;
+      const historical = historicalReceipt(cached, run, binding);
+      if (historical) return historical;
       evidence = await inspect(run, registration, runnerDigest, process.env.TEST_NODE_IMAGE,
       (namespace, name) => kubernetes(taskPath(namespace, name)));
     }
