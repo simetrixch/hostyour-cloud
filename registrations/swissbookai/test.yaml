@@ -1,0 +1,17 @@
+name: "swissbookai"
+repoURL: "https://github.com/ahkutun/swissbookai.git"
+owner: "swissbookai"
+onboardedAt: "2026-10-04T19:47:38.017Z"
+suspended: false
+quiesced: false
+removing: false
+chartPath: "deploy/chart"
+cluster: "apps1"
+databases: ["swissbookai"]
+keyPatterns: ["swissbookai:*"]
+channelPatterns: []
+services: ["postgresql","redis","registry-pull"]
+size: "medium"
+mongodb: "shared"
+quota: {"requestsCpu":"950m","requestsMemory":"3584Mi","limitsCpu":"4200m","limitsMemory":"6656Mi","pods":18,"persistentVolumeClaims":3}
+host: "swissbookai"
