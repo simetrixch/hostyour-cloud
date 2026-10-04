@@ -1,8 +1,13 @@
+{{- $root := . -}}
+{{- range $profile := list "node" "report" }}
+{{- if eq $profile "report" }}
+---
+{{- end }}
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
-  name: test-dependencies
-  namespace: {{ .Release.Namespace }}
+  name: test-dependencies{{ if eq $profile "report" }}-report{{ end }}
+  namespace: {{ $root.Release.Namespace }}
 spec:
   params:
     - {name: repository-url, type: string}
@@ -30,14 +35,15 @@ spec:
         optional: true
         defaultMode: 256
   steps:
-    - name: runner
-      image: {{ required "tests.nodeImage is required" .Values.tests.nodeImage | quote }}
+{{- range $worker := list "source" "dependencies" }}
+    - name: {{ $worker }}
+      image: {{ (ternary (printf "%s/%s" (include "common.registryHost" $root) $root.Values.tests.reportImage) $root.Values.tests.nodeImage (and (eq $profile "report") (eq $worker "dependencies"))) | quote }}
       command: [node]
       args:
         - --input-type=module
         - --eval
         - |
-{{ include "image-builder.testCode" (dict "root" . "file" "files/test-dependencies.mjs") | indent 10 }}
+{{ include "image-builder.testCode" (dict "root" $root "file" (printf "files/test-%s.mjs" $worker)) | indent 10 }}
       env:
         - {name: TEST_REGISTRATION, value: "$(params.recipe-json)"}
         - {name: TEST_REPOSITORY_URL, value: "$(params.repository-url)"}
@@ -49,7 +55,7 @@ spec:
         - name: TEST_RECIPE_DIGEST
           value: "$(params.recipe-digest)"
         - name: TEST_RUNNER_DIGEST
-          value: {{ include "image-builder.testRunnerDigest" . | quote }}
+          value: {{ include "image-builder.testRunnerDigest" $root | quote }}
         - {name: TEST_SOURCE, value: "$(workspaces.source.path)"}
         - {name: TEST_DEPENDENCIES, value: "$(workspaces.deps.path)"}
         - {name: TEST_PACKAGE_MANAGER_VERSION, value: "$(params.package-manager-version)"}
@@ -57,7 +63,9 @@ spec:
         - {name: TEST_RECIPE_RESULT_PATH, value: "$(results.recipe-digest.path)"}
       volumeMounts:
         - {name: scratch, mountPath: /tmp}
+{{- if eq $worker "dependencies" }}
         - {name: npmrc, mountPath: /npmrc, readOnly: true}
+{{- end }}
       securityContext:
         runAsUser: 0
         runAsGroup: 0
@@ -71,3 +79,5 @@ spec:
       computeResources:
         requests: {cpu: 250m, memory: 512Mi}
         limits: {cpu: "2", memory: 4Gi}
+{{- end }}
+{{- end }}

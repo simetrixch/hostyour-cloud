@@ -51,3 +51,14 @@ export function suiteProfile(registration, suite) {
   if (!profile) throw new Error('required trusted suite adapter is unavailable');
   return [profile];
 }
+
+export function fixtureProfile(registration) {
+  const fixtures = registration.recipe.fixtures;
+  if (registration.recipe.runtime === 'report' && JSON.stringify(fixtures) === '["mongo-replica"]') return 'report';
+  if (['node', 'helm'].includes(registration.recipe.runtime)) {
+    if (!fixtures.length) return 'node';
+    if (JSON.stringify(fixtures) === '["mongo-replica"]') return 'mongo';
+    if (JSON.stringify(fixtures) === '["mongo-replica","redis"]') return 'mongo-redis';
+  }
+  throw new Error('required fixture/runtime profile is unavailable');
+}

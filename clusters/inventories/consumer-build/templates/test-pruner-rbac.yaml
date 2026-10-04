@@ -1,0 +1,26 @@
+{{- if and .Values.unit .Values.digitaTests.retention.enabled }}
+{{- $test := include "consumer-build.testRegistration" . -}}
+{{- $unit := include "consumer-build.unitName" . -}}
+{{- if and $test (ne $unit "digita-catalog-show") }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: digita-test-pruner
+  namespace: {{ printf "%s-build" $unit }}
+rules:
+  - apiGroups: [tekton.dev]
+    resources: [pipelineruns]
+    verbs: [get, list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: digita-test-pruner
+  namespace: {{ printf "%s-build" $unit }}
+subjects:
+  - kind: ServiceAccount
+    name: digita-test-pruner
+    namespace: {{ .Values.eventListener.namespace }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: digita-test-pruner}
+{{- end }}
+{{- end }}

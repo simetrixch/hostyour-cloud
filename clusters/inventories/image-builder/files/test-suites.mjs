@@ -1,9 +1,10 @@
-import {readFileSync, writeFileSync, chmodSync, lstatSync, realpathSync, mkdtempSync, chownSync, mkdirSync, globSync} from 'node:fs';
+import {readFileSync, writeFileSync, chmodSync, lstatSync, realpathSync, mkdtempSync, chownSync, mkdirSync, globSync, readdirSync, existsSync} from 'node:fs';
 import {spawn} from 'node:child_process';
 import {resolve, dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {digest, emptyResult, parseNodeTAP, redact, validateBinding, validateResult} from './test-contract.mjs';
-import {suiteProfile} from './test-suite-profiles.mjs';
+import {suiteProfile, fixtureProfile} from './test-suite-profiles.mjs';
+import {sourceFile} from './test-dependency-policy.mjs';
 
 const registration = JSON.parse(process.env.TEST_REGISTRATION);
 const binding = {repositoryURL: process.env.TEST_REPOSITORY_URL, ref: process.env.TEST_REF,
@@ -27,6 +28,13 @@ const environment = {PATH: (dependencies ? resolve(dependencies, 'bin') + ':' : 
   HOME: childHome, CI: 'true', NO_COLOR: '1', DIGITA_TEST_RUN_ID: binding.pipelineRun.uid,
   GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', NPM_CONFIG_USERCONFIG: '/dev/null',
   NPM_CONFIG_GLOBALCONFIG: '/dev/null', MONGOMS_RUNTIME_DOWNLOAD: 'false'};
+const profile = fixtureProfile(registration);
+if (profile !== 'node') environment.DIGITA_TEST_MONGODB_URI = 'mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true';
+if (profile === 'mongo-redis') environment.AUTH_TEST_REDIS_URI = 'redis://127.0.0.1:6379';
+if (profile === 'report') {
+  environment.REPORT_CHROMIUM_PATH = '/usr/bin/chromium-browser';
+  environment.REPORT_CHROMIUM_ARGS = '--no-sandbox,--disable-dev-shm-usage';
+}
 // The child has a different UID and cannot replace this root-owned file or
 // its root-owned Tekton results directory. It receives no credential mount.
 writeFileSync(resultPath, '', {mode: 0o600});
@@ -80,8 +88,8 @@ async function run(command, cwd = source, extraEnvironment = {}, collectEvidence
 
 let receipt = emptyResult(binding, registration, 'not-run', 'required runtime has not run', startedAt, startedAt);
 try {
-  if (!['none', 'pnpm@11.7.0'].includes(registration.recipe.packageManager) || !['node', 'helm'].includes(registration.recipe.runtime) ||
-      registration.recipe.fixtures.length) {
+  if (!['none', 'pnpm@11.7.0'].includes(registration.recipe.packageManager) ||
+      process.env.TEST_FIXTURE_PROFILE !== profile) {
     throw new Error('required dependency/runtime profile is not available');
   }
   const pnpm = dependencies && [process.execPath, resolve(dependencies, 'tools/pnpm/bin/pnpm.cjs')];
@@ -105,6 +113,28 @@ try {
     const built = await run([...pnpm, 'build']);
     if (built.code || built.failure) throw new Error('required source preparation failed');
   }
+  // Capture is a preparation artifact, never a passing golden comparison.
+  // The runner remains alive briefly for authenticated, read-only retrieval;
+  // PDF bytes and document contents are never printed into its logs.
+  if (registration.name === 'digita-report') {
+    const fixtures = readdirSync(resolve(source, 'backend/tests/golden/fixtures')).filter(file => file.endsWith('.json')).sort();
+    if (!fixtures.length || fixtures.length > 100) throw new Error('required golden corpus is empty or oversized');
+    for (const file of fixtures) sourceFile(source, 'backend/tests/golden/fixtures/' + file);
+    const missing = fixtures.some(file => !existsSync(resolve(source, 'backend/tests/golden/__baselines__', file.replace(/\.json$/, '.pdf'))));
+    if (missing) {
+      const captured = await run([process.execPath, '--import', resolve(dependencies, 'toolchain/node_modules/tsx/dist/loader.mjs'),
+        resolve(source, 'backend/scripts/golden-pdf.ts'), '--update'], resolve(source, 'backend'));
+      if (captured.code || captured.failure) throw new Error('golden baseline artifact capture failed');
+      for (const file of fixtures) {
+        const path = sourceFile(source, 'backend/tests/golden/__baselines__/' + file.replace(/\.json$/, '.pdf'));
+        const bytes = readFileSync(path);
+        if (!bytes.subarray(0, 5).equals(Buffer.from('%PDF-')) || bytes.length > 1024 * 1024) throw new Error('golden capture is not a bounded PDF');
+        console.log('GOLDEN CAPTURE READY ' + file + ' ' + digest(bytes));
+      }
+      await new Promise(done => setTimeout(done, 15 * 60 * 1000));
+      throw new Error('golden baseline captured for review only; no normal comparison or required suites have passed');
+    }
+  }
   receipt.suites = [];
   receipt.notRun = [];
   for (const suite of registration.recipe.suites) {
@@ -126,6 +156,14 @@ try {
         if (!files.length || profile.files.some(pattern => !globSync(pattern, {cwd: root}).length)) throw new Error('required Node test files are missing');
         runResult = await run([process.execPath, '--test', '--test-reporter=tap', ...files], root);
         counted = parseNodeTAP(runResult.output);
+      } else if (profile.adapter === 'golden') {
+        const files = readdirSync(resolve(root, 'tests/golden/fixtures')).filter(file => file.endsWith('.json'));
+        if (!files.length || files.length > 100) throw new Error('required golden corpus is empty or oversized');
+        for (const file of files) sourceFile(source, 'backend/tests/golden/__baselines__/' + file.replace(/\.json$/, '.pdf'));
+        runResult = await run([process.execPath, '--import', resolve(dependencies, 'toolchain/node_modules/tsx/dist/loader.mjs'),
+          resolve(root, 'scripts/golden-pdf.ts')], root);
+        counted = {passed: runResult.code === 0 && !runResult.failure ? files.length : 0,
+          failed: runResult.code || runResult.failure ? files.length : 0, skipped: 0};
       } else if (profile.adapter === 'vitest') {
         // Source can manipulate its own framework RPC; do not activate
         // positive receipts until the owner decides this trust boundary.

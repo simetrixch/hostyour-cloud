@@ -2,6 +2,7 @@
 {{- $test := include "consumer-build.testRegistration" . -}}
 {{- if $test }}
 {{- $record := $test | fromJson -}}
+{{- $profile := include "consumer-build.testFixtureProfile" . -}}
 {{- $unit := include "consumer-build.unitName" . -}}
 {{- $namespace := printf "%s-build" $unit -}}
 {{- $params := list (dict "name" "repository-url" "value" $record.repositoryURL) (dict "name" "commit" "value" "$(params.commit)") (dict "name" "ref" "value" "$(params.ref)") (dict "name" "recipe-json" "value" $test) (dict "name" "recipe-digest" "value" $record.recipeDigest) (dict "name" "run-id" "value" "$(context.pipelineRun.uid)") (dict "name" "run-name" "value" "$(context.pipelineRun.name)") (dict "name" "run-namespace" "value" "$(context.pipelineRun.namespace)") -}}
@@ -70,7 +71,7 @@ spec:
         params:
           - {name: kind, value: task}
           - {name: namespace, value: {{ $.Values.eventListener.namespace }}}
-          - {name: name, value: {{ if eq $task "dependencies" }}test-dependencies{{ else if eq $task "tests" }}test-suites{{ else }}test-report{{ end }}}
+          - {name: name, value: {{ if eq $task "dependencies" }}test-dependencies{{ if eq $profile "report" }}-report{{ end }}{{ else if eq $task "tests" }}test-suites{{ if ne $profile "node" }}-{{ $profile }}{{ end }}{{ else }}test-report{{ end }}}
       params:
 {{ $params | toYaml | indent 8 }}
 {{- if eq $task "dependencies" }}

@@ -12,6 +12,8 @@ import {registryURL, sanitizedDependencyRoot} from '../clusters/inventories/imag
 import {preparePackageTools} from '../clusters/inventories/image-builder/files/test-tools.mjs';
 import {fetchPackages} from '../clusters/inventories/image-builder/files/test-package-fetch.mjs';
 import {installToolchain} from '../clusters/inventories/image-builder/files/test-toolchain-install.mjs';
+import {expiredTestRun} from '../clusters/inventories/image-builder/files/test-retention.mjs';
+import {fixtureProfile} from '../clusters/inventories/image-builder/files/test-suite-profiles.mjs';
 import {validateInput} from '../clusters/inventories/image-builder/files/test-input.mjs';
 
 const code = 'trusted runner bytes';
@@ -33,7 +35,7 @@ function fixture() {
   result.notRun = [];
   result.suites[0] = {...result.suites[0], status: 'passed', cases: {passed: 2, failed: 0, skipped: 0}};
   const tasks = {};
-  for (const [name, taskName] of [['clone', 'git-clone'], ['scan', 'credential-scan'], ['dependencies', 'test-dependencies'], ['tests', 'test-suites']]) {
+  for (const [name, taskName] of [['input', 'test-input'], ['clone', 'git-clone'], ['scan', 'credential-scan'], ['dependencies', 'test-dependencies'], ['tests', 'test-suites']]) {
     run.status.childReferences.push({name, kind: 'TaskRun', pipelineTaskName: name});
     tasks[name] = {metadata: {name, ownerReferences: [{uid: run.metadata.uid, controller: true}],
       labels: {'tekton.dev/pipelineRun': run.metadata.name}}, spec: {taskRef: {resolver: 'cluster', params: [
@@ -439,4 +441,74 @@ test('a worker rollout preserves completed history but never freezes a provision
   assert.equal(historicalReceipt({receipt}, f.run, {...f.binding, commit: 'c'.repeat(40)}), undefined);
   delete receipt.completed;
   assert.equal(historicalReceipt({receipt}, f.run, f.binding), receipt);
+});
+
+test('fixture profiles bind the required sidecar task and reject missing input validation', async () => {
+  for (const [runtime, fixtures, expected] of [['node', [], 'node'], ['node', ['mongo-replica'], 'mongo'],
+    ['node', ['mongo-replica', 'redis'], 'mongo-redis'], ['report', ['mongo-replica'], 'report']]) {
+    assert.equal(fixtureProfile({recipe: {runtime, fixtures}}), expected);
+  }
+  for (const recipe of [{runtime: 'report', fixtures: []}, {runtime: 'node', fixtures: ['redis']},
+    {runtime: 'unknown', fixtures: []}]) assert.throws(() => fixtureProfile({recipe}));
+  const f = fixture(); f.tasks.input.status.conditions[0].status = 'False';
+  const evidence = await f.inspect();
+  assert.equal(evidence.passed, false);
+});
+
+test('retention expires only terminal owned tests after fourteen complete days', () => {
+  const f = fixture(); f.run.metadata.labels = {'hostyour.cloud/test-managed': 'true'};
+  f.run.status.conditions[0].status = 'True';
+  f.run.status.completionTime = '2026-10-04T01:00:03Z';
+  const expiry = Date.parse(f.run.status.completionTime) + 14 * 24 * 60 * 60 * 1000;
+  assert.equal(expiredTestRun(f.run, registration, expiry - 1), false);
+  assert.equal(expiredTestRun(f.run, registration, expiry), true);
+  for (const mutate of [r => r.status.conditions[0].status = 'Unknown', r => delete r.status.completionTime,
+    r => r.spec.pipelineRef.name = registration.name + '-release', r => r.metadata.namespace = 'foreign-build',
+    r => delete r.metadata.labels['hostyour.cloud/test-managed'], r => r.spec.pipelineSpec = {}]) {
+    const run = structuredClone(f.run); mutate(run);
+    assert.equal(expiredTestRun(run, registration, expiry), false);
+  }
+});
+
+test('runtime renders bind sidecars, musl dependency preparation and private read-only image pulls', () => {
+  const builder = renderChart('image-builder');
+  const report = builder.find(d => d.kind === 'Task' && d.metadata.name === 'test-suites-report');
+  assert.equal(report.spec.steps[0].env.find(value => value.name === 'TEST_FIXTURE_PROFILE').value, 'report');
+  assert.ok(report.spec.steps[0].image.includes('/digita-report-backend@sha256:'));
+  assert.equal(report.spec.sidecars[0].name, 'mongo');
+  assert.deepEqual(report.spec.sidecars[0].volumeMounts.map(value => value.name), ['mongo-data', 'mongo-scratch']);
+  assert.ok(report.spec.volumes.every(volume => !volume.persistentVolumeClaim && !volume.secret));
+  const dependency = builder.find(d => d.kind === 'Task' && d.metadata.name === 'test-dependencies-report');
+  assert.equal(dependency.spec.steps[0].name, 'source');
+  assert.ok(dependency.spec.steps[0].image.startsWith('docker.io/library/node@sha256:'));
+  assert.ok(!dependency.spec.steps[0].volumeMounts.some(value => value.name === 'npmrc'));
+  assert.ok(dependency.spec.steps[1].image.includes('/digita-report-backend@sha256:'));
+  const auth = builder.find(d => d.kind === 'Task' && d.metadata.name === 'test-suites-mongo-redis');
+  assert.deepEqual(auth.spec.sidecars.map(value => value.name), ['mongo', 'redis']);
+  const consumer = renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'digita-report',
+    repoURL: 'https://github.com/digitaplatform/digita-report.git', buildsJson: '["digita-report-backend"]'})]);
+  const pipeline = consumer.find(d => d.kind === 'Pipeline' && d.metadata.name === 'digita-report-tests');
+  assert.equal(pipeline.spec.tasks.find(task => task.name === 'tests').taskRef.params.find(param => param.name === 'name').value, 'test-suites-report');
+  assert.equal(pipeline.spec.tasks.find(task => task.name === 'dependencies').taskRef.params.find(param => param.name === 'name').value, 'test-dependencies-report');
+  const account = consumer.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa');
+  assert.deepEqual(account.imagePullSecrets, [{name: 'image-builder-registry-pull'}]);
+  const pull = consumer.find(d => d.kind === 'ExternalSecret' && d.metadata.name === 'image-builder-registry-pull');
+  assert.equal(pull.spec.target.template.type, 'kubernetes.io/dockerconfigjson');
+  assert.equal(pull.spec.target.template.mergePolicy, 'Merge');
+  assert.equal(pull.spec.data.length, 2);
+  assert.ok(pull.spec.data.every(value => value.remoteRef.property.startsWith('pull-')));
+});
+test('prepared retention exposes only PipelineRun deletion and protects release runs', () => {
+  const builder = renderChart('image-builder', ['--set', 'digitaTests.retention.enabled=true']);
+  const guard = builder.find(d => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'digita-test-pruner-delete-guard');
+  assert.deepEqual(guard.spec.matchConstraints.resourceRules[0].operations, ['DELETE']);
+  assert.ok(guard.spec.validations[0].expression.includes("+ '-tests'"));
+  assert.ok(guard.spec.validations[0].expression.includes("c.status in ['True', 'False']"));
+  const job = builder.find(d => d.kind === 'CronJob' && d.metadata.name === 'digita-test-pruner');
+  assert.equal(job.spec.jobTemplate.spec.template.spec.serviceAccountName, 'digita-test-pruner');
+  assert.ok(job.spec.jobTemplate.spec.template.spec.volumes.every(volume => !volume.secret));
+  const consumer = renderChart('consumer-build', ['--set', 'digitaTests.retention.enabled=true', '--set-json',
+    'unit=' + JSON.stringify({name: 'digita-report', repoURL: 'https://github.com/digitaplatform/digita-report.git', buildsJson: '[]'})]);
+  const role = consumer.find(d => d.kind === 'Role' && d.metadata.name === 'digita-test-pruner');
+  assert.deepEqual(role.rules, [{apiGroups: ['tekton.dev'], resources: ['pipelineruns'], verbs: ['get', 'list', 'delete']}]);
 });

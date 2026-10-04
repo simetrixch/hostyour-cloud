@@ -1,4 +1,5 @@
 import {digest, condition, getParam, getResult, validateBinding, validateResult, emptyResult} from './test-contract.mjs';
+import {fixtureProfile} from './test-suite-profiles.mjs';
 const ownedBy = (object, uid) => object.metadata.ownerReferences?.some(owner => owner.uid === uid && owner.controller === true);
 
 function checkTask(task, run, name, registration, runnerDigest, nodeImage) {
@@ -8,10 +9,17 @@ function checkTask(task, run, name, registration, runnerDigest, nodeImage) {
       params.kind !== 'task' || params.name !== name || task.metadata.labels?.['tekton.dev/pipelineRun'] !== run.metadata.name) {
     throw new Error('TaskRun is not the expected trusted task');
   }
-  if (name === 'test-suites') {
+  if (name.startsWith('test-suites')) {
     const step = task.status?.taskSpec?.steps?.find(value => value.name === 'runner');
     if (!step && !task.status?.taskSpec && condition(task)?.status !== 'True' && condition(task)?.status !== 'False') return;
-    if (!step || step.image !== nodeImage || digest(step.args?.[2] ?? '') !== runnerDigest ||
+    const expectedImage = fixtureProfile(registration) === 'report' ? process.env.TEST_REPORT_IMAGE : nodeImage;
+    const expectedFixtures = fixtureProfile(registration) === 'node' ? [] : fixtureProfile(registration) === 'mongo-redis' ? ['mongo', 'redis'] : ['mongo'];
+    const sidecars = task.status?.taskSpec?.sidecars ?? [];
+    if (sidecars.length !== expectedFixtures.length || expectedFixtures.some(fixture => {
+      const sidecar = sidecars.find(value => value.name === fixture);
+      return !sidecar || sidecar.image !== process.env[fixture === 'mongo' ? 'TEST_MONGO_IMAGE' : 'TEST_REDIS_IMAGE'];
+    })) throw new Error('required run-owned fixture images changed');
+    if (!step || step.image !== expectedImage || digest(step.args?.[2] ?? '') !== runnerDigest ||
         getParam(task, 'recipe-json') !== JSON.stringify(registration) || getParam(task, 'run-id') !== run.metadata.uid) {
       throw new Error('suite runner or recipe identity changed');
     }
@@ -34,8 +42,10 @@ export async function inspect(run, registration, runnerDigest, nodeImage, getTas
   const binding = bindRun(run, registration, runnerDigest);
   const children = run.status?.childReferences ?? [];
   const states = new Map();
-  for (const [pipelineTask, taskName] of [['clone', 'git-clone'], ['scan', 'credential-scan'],
-    ['dependencies', 'test-dependencies'], ['tests', 'test-suites']]) {
+  const profile = fixtureProfile(registration);
+  for (const [pipelineTask, taskName] of [['input', 'test-input'], ['clone', 'git-clone'], ['scan', 'credential-scan'],
+    ['dependencies', 'test-dependencies' + (profile === 'report' ? '-report' : '')],
+    ['tests', 'test-suites' + (profile === 'node' ? '' : '-' + profile)]]) {
     const refs = children.filter(child => child.pipelineTaskName === pipelineTask && child.kind === 'TaskRun');
     if (refs.length > 1) throw new Error('ambiguous TaskRun evidence');
     if (!refs.length) continue;
@@ -54,7 +64,7 @@ export async function inspect(run, registration, runnerDigest, nodeImage, getTas
   const completedAt = run.status?.completionTime ?? suite?.status?.completionTime ?? condition(run)?.lastTransitionTime ?? startedAt;
   const clone = states.get('clone');
   const deps = states.get('dependencies');
-  const prerequisites = ['clone', 'scan', 'dependencies'].every(name => condition(states.get(name) ?? {})?.status === 'True') &&
+  const prerequisites = ['input', 'clone', 'scan', 'dependencies'].every(name => condition(states.get(name) ?? {})?.status === 'True') &&
     getResult(clone ?? {}, 'commit') === binding.commit && getResult(clone ?? {}, 'url') === binding.repositoryURL &&
     getResult(deps ?? {}, 'recipe-digest') === binding.recipeDigest;
   const runnerFinished = condition(suite ?? {})?.status === 'True' &&
