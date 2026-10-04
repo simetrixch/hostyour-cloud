@@ -6,7 +6,8 @@ suspended: false
 quiesced: true
 removing: false
 chartPath: "deploy/chart"
-cluster: "apps1"
+cluster: "apps2"
+leaving: "apps1"
 databases: ["swissbookai"]
 keyPatterns: ["swissbookai:*"]
 channelPatterns: []
