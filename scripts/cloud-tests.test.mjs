@@ -171,7 +171,7 @@ test('untrusted test code cannot overwrite the trusted result or fake outer TAP 
     execFileSync(process.execPath, [resolve('clusters/inventories/image-builder/files/test-suites.mjs')], {env: {
       PATH: process.env.PATH, TEST_REGISTRATION: JSON.stringify(reg), TEST_SOURCE: source, TEST_RESULT_PATH: resultPath,
       TEST_REPOSITORY_URL: reg.repositoryURL, TEST_REF: 'refs/heads/master', TEST_COMMIT: 'b'.repeat(40),
-      TEST_RECIPE_DIGEST: reg.recipeDigest, TEST_RUNNER_DIGEST: runnerDigest,
+      TEST_RECIPE_DIGEST: reg.recipeDigest, TEST_RUNNER_DIGEST: runnerDigest, TEST_FIXTURE_PROFILE: "node",
       TEST_RUN_NAME: 'proof-run', TEST_RUN_NAMESPACE: reg.name + '-build', TEST_RUN_UID: fixture().run.metadata.uid,
     }, timeout: 30000, stdio: 'pipe'});
     const result = JSON.parse(readFileSync(resultPath, 'utf8'));
