@@ -26,6 +26,11 @@ const checkMaster = (rendered, dataVolume) => {
     const rule = rules.find(rule => rule.alert === alert);
     assert.ok(rule, `the master evaluates no ${alert}`);
     assert.doesNotMatch(rule.expr, /\b(?:cluster|namespace)\s*(?:=|!=|=~|!~)/, `${alert} is pinned to one unit`);
+    // A bare aggregation, or one written with without (...), sums every unit into one series.
+    assert.doesNotMatch(rule.expr, /\bwithout\s*\(/, `${alert} folds the cluster or the namespace away`);
+    for (const [aggregation, by] of rule.expr.matchAll(/\b(?:sum|max|min|avg|count)\b\s*(by\s*\()?/g)) {
+      assert.ok(by, `${alert} aggregates without by (cluster, namespace): ${aggregation.trim()}`);
+    }
     for (const [, labels] of rule.expr.matchAll(/\b(?:by|on)\s*\(([^)]*)\)/g)) {
       const kept = labels.split(',').map(label => label.trim());
       assert.ok(kept.includes('cluster') && kept.includes('namespace'), `${alert} folds the cluster or the namespace away`);
@@ -51,13 +56,17 @@ test('the master evaluates every unit\'s PostgreSQL alerts, and the unit chart r
   checkMaster(master(), dataVolumeOf(rendered));
 });
 
-test('a pinned alert, a folded label and a unit rule are refused', () => {
+test('a pinned alert, a bare or folded aggregation and a unit rule are refused', () => {
   const rendered = master();
   const volume = dataVolumeOf(unit());
   const plant = (alert, change) => rendered.map(doc => doc.kind !== 'PrometheusRule' ? doc : {...doc, spec: {groups: doc.spec.groups
     .map(group => ({...group, rules: group.rules.map(rule => rule.alert === alert ? {...rule, expr: change(rule.expr)} : rule)}))}});
   assert.throws(() => checkMaster(plant('PostgreSQLDown', () => 'pg_up{namespace="acme-test"} == 0'), volume), /pinned to one unit/);
   assert.throws(() => checkMaster(plant('PostgreSQLConnectionsSaturated', expr => expr.replaceAll('cluster, ', '')), volume), /folds/);
+  assert.throws(() => checkMaster(plant('PostgreSQLStorageFillingUp',
+    expr => expr.replace('sum by (cluster, namespace) (pg_database_size_bytes)', 'sum (pg_database_size_bytes)')), volume), /aggregates without by/);
+  assert.throws(() => checkMaster(plant('PostgreSQLConnectionsSaturated',
+    expr => expr.replace('sum by (cluster, namespace)', 'sum without (datname)')), volume), /folds/);
   assert.throws(() => checkMaster(plant('PostgreSQLStorageFillingUp', expr => expr.replace(volume, 'other')), volume), /data volume/);
   assert.throws(() => checkUnit([{kind: 'PrometheusRule', spec: {groups: [{rules: [{alert: 'PostgreSQLDown'}]}]}}]), /evaluates/);
 });
