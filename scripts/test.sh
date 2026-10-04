@@ -18,6 +18,9 @@ node --test scripts/installation-domain.test.mjs || fail 'scripts/installation-d
 node --test scripts/tenant-stage-label.test.mjs || fail 'scripts/tenant-stage-label.test.mjs'
 echo 'test: post stage callbacks — strict nonproduction allowlist.'
 node --test scripts/post-stage-callbacks.test.mjs || fail 'scripts/post-stage-callbacks.test.mjs'
+echo 'test: redis maxmemory — a ceiling of half the limit, under noeviction.'
+helm dependency update clusters/inventories/redis
+node --test scripts/redis-maxmemory.test.mjs || fail 'scripts/redis-maxmemory.test.mjs'
 echo 'test: tenant size — every registration renders, with the word or without it.'
 node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
 echo 'test: OK — all suites green'
