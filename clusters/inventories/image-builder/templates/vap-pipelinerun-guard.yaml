@@ -117,14 +117,16 @@ spec:
     # only GitOps may create fixed proof runs; controller updates remain allowed.
     - expression: >-
         variables.refName != variables.ownTestPipeline ||
+        (request.operation == 'UPDATE' && request.userInfo.username == 'system:serviceaccount:tekton:tekton-controller') ||
+        (request.operation == 'UPDATE' && request.userInfo.username == 'system:serviceaccount:kube-system:generic-garbage-collector' &&
+          has(oldObject.metadata.deletionTimestamp) && has(object.metadata.deletionTimestamp)) ||
         ((false
 {{- range $proof := concat (list .Values.digitaTests.proof) (.Values.digitaTests.proofs | default list) }}
         || (request.namespace == {{ printf "%s-build" $proof.repository | quote }} &&
           object.metadata.name == {{ $proof.name | quote }})
 {{- end }}
         ) &&
-        (request.userInfo.username == 'system:serviceaccount:argocd:argocd-application-controller' ||
-          (request.operation == 'UPDATE' && request.userInfo.username == 'system:serviceaccount:tekton:tekton-controller')) &&
+        request.userInfo.username == 'system:serviceaccount:argocd:argocd-application-controller' &&
         has(object.spec.params) && object.spec.params.size() == 3 &&
         object.spec.params.exists(p, p.name == 'commit') &&
         object.spec.params.exists(p, p.name == 'ref') &&
