@@ -266,11 +266,11 @@ test('fixed Vitest counts real cases under UID1001 and ignores source test scrip
     }
     const protectedHelper = join(protectedCode, 'canary.mjs');
     writeFileSync(protectedHelper, 'immutable helper', {mode: 0o600});
-    const runController = () => {
+    const runController = (profile = {include: ['tests/**/*.test.ts']}) => {
       const execution = spawnSync(process.execPath, [join(protectedCode, 'test-vitest-controller.mjs')], {uid: 1001, gid: 1001,
         timeout: 60000, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], env: {PATH: process.env.PATH, HOME: directory, TMPDIR: cache, CI: 'true', NO_COLOR: '1',
           TEST_PACKAGE_ROOT: source, TEST_TOOLCHAIN: join(deps, 'toolchain'), TEST_VITEST_RESULT: result,
-          TEST_TRUSTED_CACHE: cache, TEST_SUITE_PROFILE: JSON.stringify({include: ['tests/**/*.test.ts']}),
+          TEST_TRUSTED_CACHE: cache, TEST_SUITE_PROFILE: JSON.stringify(profile),
           TEST_WORKER_ENVIRONMENT: JSON.stringify({CI: 'true', HOME: source})}});
       if (execution.error) throw execution.error;
       if (execution.status !== 0) throw new Error(execution.stderr.toString() + execution.stdout.toString());
@@ -280,6 +280,9 @@ test('fixed Vitest counts real cases under UID1001 and ignores source test scrip
     runController();
     assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), {passed: 1, failed: 0, skipped: 0});
     assert.equal(statSync(result).uid, 0);
+    writeFileSync(join(source, 'tests/proof.test.ts'), "import {test,expect} from 'vitest';\ntest('fixed DOM environment',()=>{const element=document.createElement('button');element.textContent='ready';document.body.append(element);expect(document.querySelector('button')?.textContent).toBe('ready');expect(process.getuid()).toBe(1001);});\n");
+    runController({include: ['tests/**/*.test.ts'], environment: 'jsdom'});
+    assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), {passed: 1, failed: 0, skipped: 0});
     writeFileSync(join(source, 'tests/proof.test.ts'), `import {test,recordArtifact} from 'vitest';\nimport {writeFileSync,mkdirSync,symlinkSync} from 'node:fs';\nimport {createHash} from 'node:crypto';\nimport {resolve} from 'node:path';\ntest('artifact cannot overwrite supervisor code',async({task})=>{const payload=resolve('payload.txt');writeFileSync(payload,'forged helper');mkdirSync('.vitest-attachments');symlinkSync(${JSON.stringify(protectedHelper)},'.vitest-attachments/'+createHash('sha1').update(payload).digest('hex')+'.txt');await recordArtifact(task,{type:'proof',attachments:[{path:payload}]});});\n`);
     // All framework RPC runs under UID1001. The configured cache may accept
     // the attachment normally; neither it nor a legacy destination symlink
@@ -538,15 +541,17 @@ test('Platform fixtures use four exact clones/scans before dependency execution 
 });
 
 
-test('held Report artifact proof adds neither a PipelineRun nor an admitted CREATE', () => {
-  const unit = ['--set-json', 'unit=' + JSON.stringify({name: 'digita-report',
-    repoURL: 'https://github.com/digitaplatform/digita-report.git', buildsJson: '["digita-report-backend"]'})];
-  const proofName = 'digita-report-tests-op3-capture-69bdfc6';
+for (const [repository, proofName, proofIndex] of [
+  ['digita-deploy', 'digita-deploy-tests-op3-input-4644a82', 2],
+  ['digita-report', 'digita-report-tests-op3-capture-72bae2f', 3],
+]) test(`held ${repository} proof adds neither a PipelineRun nor an admitted CREATE`, () => {
+  const unit = ['--set-json', 'unit=' + JSON.stringify({name: repository,
+    repoURL: 'https://github.com/digitaplatform/' + repository + '.git', buildsJson: '[]'})];
   assert.ok(!renderChart('consumer-build', unit).some(d => d.kind === 'PipelineRun' && d.metadata.name === proofName));
   const guard = docs => JSON.stringify(docs.find(d => d.kind === 'ValidatingAdmissionPolicy' &&
     d.metadata.name === 'image-builder-pipelinerun-guard'));
   assert.ok(!guard(renderChart('image-builder')).includes(proofName));
-  const approved = ['--set', 'digitaTests.proofs[3].enabled=true'];
+  const approved = ['--set', `digitaTests.proofs[${proofIndex}].enabled=true`];
   assert.ok(renderChart('consumer-build', [...unit, ...approved]).some(d => d.kind === 'PipelineRun' && d.metadata.name === proofName));
   assert.ok(guard(renderChart('image-builder', approved)).includes(proofName));
 });
