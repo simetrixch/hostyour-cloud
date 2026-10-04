@@ -85,12 +85,14 @@ spec:
       params:
 {{ $params | toYaml | indent 8 }}
         - {name: require-success, value: "false"}
-{{- if and (eq .Values.global.env "prod") (eq $unit .Values.digitaTests.proof.repository) }}
+{{- $root := . -}}
+{{- range $proof := concat (list .Values.digitaTests.proof) (.Values.digitaTests.proofs | default list) }}
+{{- if and (eq $root.Values.global.env "prod") (eq $unit $proof.repository) }}
 ---
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  name: {{ .Values.digitaTests.proof.name }}
+  name: {{ $proof.name }}
   namespace: {{ $namespace }}
   labels:
     hostyour.cloud/test-managed: "true"
@@ -99,8 +101,8 @@ spec:
   taskRunTemplate: {serviceAccountName: pipeline-sa}
   params:
     - {name: git-url, value: {{ $record.repositoryURL | quote }}}
-    - {name: commit, value: {{ .Values.digitaTests.proof.commit | quote }}}
-    - {name: ref, value: {{ .Values.digitaTests.proof.ref | quote }}}
+    - {name: commit, value: {{ $proof.commit | quote }}}
+    - {name: ref, value: {{ $proof.ref | quote }}}
   timeouts: {pipeline: 40m, tasks: 30m, finally: 10m}
   workspaces:
     - name: source
@@ -109,6 +111,7 @@ spec:
           accessModes: [ReadWriteOnce]
           resources:
             requests: {storage: 10Gi}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

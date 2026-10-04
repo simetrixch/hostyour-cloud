@@ -24,6 +24,11 @@ spec:
   volumes:
     - name: scratch
       emptyDir: {sizeLimit: 1Gi}
+    - name: npmrc
+      secret:
+        secretName: build-npmrc
+        optional: true
+        defaultMode: 256
   steps:
     - name: runner
       image: {{ required "tests.nodeImage is required" .Values.tests.nodeImage | quote }}
@@ -46,9 +51,13 @@ spec:
         - name: TEST_RUNNER_DIGEST
           value: {{ include "image-builder.testRunnerDigest" . | quote }}
         - {name: TEST_SOURCE, value: "$(workspaces.source.path)"}
+        - {name: TEST_DEPENDENCIES, value: "$(workspaces.deps.path)"}
+        - {name: TEST_PACKAGE_MANAGER_VERSION, value: "$(params.package-manager-version)"}
+        - {name: TEST_REGISTRY_SCOPE, value: "$(params.registry-scope)"}
         - {name: TEST_RECIPE_RESULT_PATH, value: "$(results.recipe-digest.path)"}
       volumeMounts:
         - {name: scratch, mountPath: /tmp}
+        - {name: npmrc, mountPath: /npmrc, readOnly: true}
       securityContext:
         runAsUser: 0
         runAsGroup: 0

@@ -2,6 +2,8 @@ import {readFileSync, writeFileSync, lstatSync, realpathSync, rmSync, readdirSyn
 import {execFileSync} from 'node:child_process';
 import {resolve, join} from 'node:path';
 import {digest, isCommit, isUID} from './test-contract.mjs';
+import {prepareStaticTools, preparePackageTools} from './test-tools.mjs';
+import {fetchPackages} from './test-package-fetch.mjs';
 
 const registration = JSON.parse(process.env.TEST_REGISTRATION);
 const source = realpathSync(process.env.TEST_SOURCE);
@@ -17,11 +19,24 @@ for (const path of ['deploy', registration.recipeFile]) {
 }
 const recipeDigest = digest(readFileSync(resolve(source, registration.recipeFile)));
 if (recipeDigest !== registration.recipeDigest || recipeDigest !== process.env.TEST_RECIPE_DIGEST) throw new Error('source recipe is not the reviewed recipe');
-// Clone credentials lived in the clone container's /tmp. Remove Git metadata
-// before any repository code runs, including credentials a remote URL could hold.
-rmSync(join(source, '.git'), {recursive: true, force: true});
-if (registration.recipe.packageManager !== 'none' || registration.recipe.dependencyRoots.length) {
-  throw new Error('required credential-isolated dependency profile is not available');
+// Existing static checks need the tracked-file list and immutable HEAD. Keep
+// those, replacing all clone configuration and hooks before source execution.
+const git = join(source, '.git');
+if (!lstatSync(git).isDirectory() || lstatSync(git).isSymbolicLink()) throw new Error('invalid Git metadata');
+rmSync(join(git, 'hooks'), {recursive: true, force: true});
+writeFileSync(join(git, 'config'), '[core]\n repositoryformatversion = 0\n bare = false\n hooksPath = /dev/null\n[remote "origin"]\n url = ' + registration.repositoryURL + '\n', {mode: 0o600});
+const dependencies = realpathSync(process.env.TEST_DEPENDENCIES);
+if (registration.recipe.packageManager === 'pnpm@11.7.0') {
+  if (process.env.TEST_PACKAGE_MANAGER_VERSION !== '11.7.0' || process.env.TEST_REGISTRY_SCOPE !== 'digitaplatform') {
+    throw new Error('package-manager identity mismatch');
+  }
+  await preparePackageTools(join(dependencies, 'tools'));
+  await fetchPackages(source, registration.recipe.dependencyRoots, dependencies, '/npmrc/.npmrc');
+} else if (registration.recipe.packageManager !== 'none' || registration.recipe.dependencyRoots.length) {
+  throw new Error('unsupported dependency profile');
+}
+if (registration.recipe.runtime === 'helm' || registration.recipe.suites.some(suite => suite.kind === 'static')) {
+  await prepareStaticTools(join(dependencies, 'bin'));
 }
 function giveSourceToChild(path) {
   const file = lstatSync(path);

@@ -30,8 +30,9 @@ if (digest(readFileSync(recipePath)) !== registration.recipeDigest) throw new Er
 async function run(command) {
   return new Promise((finish, reject) => {
     const child = spawn(command[0], command.slice(1), {cwd: source, uid: 1001, gid: 1001,
-      detached: true, env: {PATH: '/usr/local/bin:/usr/bin:/bin', HOME: childHome,
-        CI: 'true', NO_COLOR: '1', DIGITA_TEST_RUN_ID: binding.pipelineRun.uid}});
+      detached: true, env: {PATH: (process.env.TEST_DEPENDENCIES ? resolve(process.env.TEST_DEPENDENCIES, 'bin') + ':' : '') + '/usr/local/bin:/usr/bin:/bin', HOME: childHome,
+        CI: 'true', NO_COLOR: '1', DIGITA_TEST_RUN_ID: binding.pipelineRun.uid,
+        GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null'}});
     let output = '';
     let size = 0;
     let failure;
@@ -59,14 +60,25 @@ async function run(command) {
 
 let receipt = emptyResult(binding, registration, 'not-run', 'required runtime has not run', startedAt, startedAt);
 try {
-  if (registration.recipe.packageManager !== 'none' || registration.recipe.runtime !== 'node' ||
+  if (registration.recipe.packageManager !== 'none' || !['node', 'helm'].includes(registration.recipe.runtime) ||
       registration.recipe.dependencyRoots.length || registration.recipe.fixtures.length || registration.recipe.prepare.length) {
     throw new Error('required dependency/runtime profile is not available');
   }
   receipt.suites = [];
   receipt.notRun = [];
   for (const suite of registration.recipe.suites) {
-    if (suite.kind !== 'test' || suite.command[0] !== 'node' || suite.command[1] !== '--test') {
+    if (suite.kind === 'static') {
+      if (suite.command.length !== 2 || suite.command[0] !== 'bash' || suite.command[1] !== 'scripts/check.sh') {
+        throw new Error('required static adapter is not available');
+      }
+      const runResult = await run(suite.command);
+      const passed = runResult.code === 0 && !runResult.failure;
+      receipt.suites.push({name: suite.name, kind: suite.kind, status: passed ? 'passed' : 'failed',
+        cases: {passed: passed ? 1 : 0, failed: passed ? 0 : 1, skipped: 0}});
+      if (runResult.failure) receipt.notRun.push(runResult.failure);
+      continue;
+    }
+    if (suite.command[0] !== 'node' || suite.command[1] !== '--test') {
       throw new Error('required suite adapter is not available');
     }
     const command = ['node', '--test', '--test-reporter=tap', ...suite.command.slice(2)];
