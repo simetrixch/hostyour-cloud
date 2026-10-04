@@ -842,14 +842,34 @@ spec:
               declare -A HIT_COUNT BUNDLE_HIT_COUNT
               for P in ${IMAGES}; do HIT_COUNT[$P]=0; BUNDLE_HIT_COUNT[$P]=0; done
 
-              # bump_file <values file> — bumps every declared image's pin in
+              # bump_file <values file> [chart values] — adds missing chart entries for
+              # this release only, then bumps every declared image's pin in
               # the file. Called directly, never in a command substitution:
               # HIT_COUNT and BUMPED must update the CALLER's state, and a
               # subshell would silently drop both.
               bump_file() {
-                local vf="$1"
+                local vf="$1" chart_values="${2:-}"
                 for P in ${IMAGES}; do
-                  local n
+                  local n missing conflicts
+                  if [ -n "${chart_values}" ]; then
+                    conflicts="$(CHART_VALUES="${chart_values}" RELEASE_IMAGE="${P}" yq eval '
+                      . as $current | load(strenv(CHART_VALUES)).builds
+                      | map(select(.image == strenv(RELEASE_IMAGE)))
+                      | map(. as $declared | select([$current.builds[]? |
+                          select(.name == $declared.name and .image != $declared.image)] | length > 0)) | length' "${vf}")" || return 1
+                    if [ "${conflicts}" != "0" ]; then
+                      echo "bump: FAIL — ${vf} already pins a declared build name to a different image; refusing a duplicate or replacement" >&2
+                      return 1
+                    fi
+                    missing="$(CHART_VALUES="${chart_values}" RELEASE_IMAGE="${P}" NEW_IMAGE_TAG="${IMAGE_TAG}" yq eval -o=json -I=0 '
+                      . as $current | load(strenv(CHART_VALUES)).builds
+                      | map(select(.image == strenv(RELEASE_IMAGE)))
+                      | map(select(.name as $name | [($current.builds // [])[] | select(.name == $name)] | length == 0))
+                      | map(.tag = strenv(NEW_IMAGE_TAG))' "${vf}")" || return 1
+                    if [ "${missing}" != "[]" ]; then
+                      NEW_PIN_ROWS="${missing}" yq eval -i '.builds = (.builds // []) + env(NEW_PIN_ROWS)' "${vf}" || return 1
+                    fi
+                  fi
                   n="$(yq eval "[.builds[]? | select(.image == \"${P}\")] | length" "${vf}")"
                   if [ "${n}" != "0" ]; then
                     yq eval -i "(.builds[] | select(.image == \"${P}\")).tag = \"${IMAGE_TAG}\"" "${vf}"
@@ -1168,7 +1188,7 @@ spec:
                     SEEDED=1
                   fi
                   BUMPED=0
-                  bump_file "${pins}"
+                  bump_file "${pins}" "${cdir}values.yaml"
                   if [ "${BUMPED}" = "1" ]; then
                     BUMPED_CHARTS="${BUMPED_CHARTS} ${cname}"
                   elif [ "${SEEDED}" = "1" ]; then
