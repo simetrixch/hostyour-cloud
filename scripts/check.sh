@@ -658,6 +658,7 @@ echo 'check: NOT RUN locally — scripts/cloud-tests.test.mjs; runs in public Gi
 for module in clusters/inventories/image-builder/files/*.mjs scripts/cloud-tests.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
+echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in public GitHub Actions.'
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
 # SCANNED OVER WHAT GIT WOULD LET YOU COMMIT, and that is not the same as this directory. A

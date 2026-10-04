@@ -10,4 +10,7 @@ echo 'test: scripts/pipeline-release.test.sh — release pipeline decisions.'
 bash scripts/pipeline-release.test.sh || fail 'scripts/pipeline-release.test.sh'
 echo 'test: cloud test trust boundaries — Node fixtures on the public runner.'
 sudo --preserve-env=PATH node --test scripts/cloud-tests.test.mjs || fail 'scripts/cloud-tests.test.mjs'
+echo 'test: manager-generator-refresh — approved grant only.'
+helm dependency build clusters/inventories/manager
+node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'
 echo 'test: OK — all suites green'
