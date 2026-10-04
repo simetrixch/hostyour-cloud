@@ -1,8 +1,12 @@
 {{- define "image-builder.testCode" -}}
-{{- $common := .root.Files.Get "files/test-contract.mjs" | toJson -}}
-{{- $worker := .root.Files.Get .file | toJson -}}
+{{- $root := .root -}}
 {{- $name := base .file -}}
-{{- printf "import {writeFileSync, mkdtempSync} from 'node:fs';\nconst directory = mkdtempSync('/tmp/hostyour-runner-');\nwriteFileSync(directory + '/test-contract.mjs', %s, {mode: 384});\nwriteFileSync(directory + '/%s', %s, {mode: 384});\nawait import('file://' + directory + '/%s');\n" $common $name $worker $name -}}
+{{- $dependencyDigest := $root.Files.Get "files/test-dependencies.mjs" | sha256sum -}}
+{{- printf "// dependency worker sha256:%s\nimport {writeFileSync, mkdtempSync} from 'node:fs';\nconst directory = mkdtempSync('/tmp/hostyour-runner-');\n" $dependencyDigest -}}
+{{- range $file := list "test-contract.mjs" "test-tools.mjs" "test-dependency-policy.mjs" "test-package-fetch.mjs" -}}
+{{- printf "writeFileSync(directory + '/%s', %s, {mode: 384});\n" $file ($root.Files.Get (printf "files/%s" $file) | toJson) -}}
+{{- end -}}
+{{- printf "writeFileSync(directory + '/%s', %s, {mode: 384});\nawait import('file://' + directory + '/%s');\n" $name ($root.Files.Get .file | toJson) $name -}}
 {{- end -}}
 {{- define "image-builder.testRunnerDigest" -}}
 {{- printf "sha256:%s" (include "image-builder.testCode" (dict "root" . "file" "files/test-suites.mjs") | sha256sum) -}}

@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, chownSync, statSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, chownSync, statSync, rmSync, symlinkSync, existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {resolve, join} from 'node:path';
 import {digest, emptyResult, parseNodeTAP, redact, validateResult} from '../clusters/inventories/image-builder/files/test-contract.mjs';
 import {bindRun, inspect} from '../clusters/inventories/image-builder/files/test-reporter-evidence.mjs';
 import {readState, writeState} from '../clusters/inventories/image-builder/files/test-reporter-state.mjs';
+import {registryURL, sanitizedDependencyRoot} from '../clusters/inventories/image-builder/files/test-dependency-policy.mjs';
+import {preparePackageTools} from '../clusters/inventories/image-builder/files/test-tools.mjs';
+import {fetchPackages} from '../clusters/inventories/image-builder/files/test-package-fetch.mjs';
 
 const code = 'trusted runner bytes';
 const image = 'node@sha256:' + 'a'.repeat(64);
@@ -138,5 +141,66 @@ test('untrusted test code cannot overwrite the trusted result or fake outer TAP 
     const result = JSON.parse(readFileSync(resultPath, 'utf8'));
     assert.equal(result.result, 'passed'); assert.equal(result.suites[0].cases.passed, 1);
     assert.equal(statSync(resultPath).uid, 0);
+  } finally {rmSync(directory, {recursive: true, force: true});}
+});
+
+test('dependency preparation rejects external protocols, symbolic paths and configuration packages', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hostyour-dependencies-'));
+  const source = join(directory, 'source'); mkdirSync(source);
+  const lock = {lockfileVersion: '9.0', importers: {'.': {}}, packages: {'yaml@2.9.0': {
+    resolution: {integrity: 'sha512-ZmFrZQ=='}}}, snapshots: {'yaml@2.9.0': {}}};
+  const manifest = {name: 'fixture', scripts: {postinstall: 'exit 99'}, dependencies: {yaml: '2.9.0'}};
+  writeFileSync(join(source, 'package.json'), JSON.stringify(manifest));
+  writeFileSync(join(source, '.npmrc'), 'registry=https://attacker.invalid');
+  writeFileSync(join(source, '.pnpmfile.cjs'), 'throw new Error("source hook ran")');
+  const save = () => writeFileSync(join(source, 'pnpm-lock.yaml'), JSON.stringify(lock));
+  try {
+    save();
+    const clean = join(directory, 'clean'); mkdirSync(clean);
+    sanitizedDependencyRoot(source, '.', clean, JSON.parse, JSON.stringify);
+    assert.deepEqual(JSON.parse(readFileSync(join(clean, 'package.json'))), {name: 'fixture', private: true});
+    assert.equal(existsSync(join(clean, '.npmrc')), false);
+    assert.equal(existsSync(join(clean, '.pnpmfile.cjs')), false);
+    for (const url of ['http://registry.npmjs.org/a', 'https://attacker.invalid/a',
+      'https://password@npm.pkg.github.com/a', 'https://npm.pkg.github.com/a?token=credential']) assert.throws(() => registryURL(url));
+    lock.packages['yaml@2.9.0'].resolution.tarball = 'https://attacker.invalid/fake.tgz'; save();
+    assert.throws(() => sanitizedDependencyRoot(source, '.', clean, JSON.parse, JSON.stringify), /URL/);
+    delete lock.packages['yaml@2.9.0'].resolution.tarball;
+    lock.configDependencies = {evil: '1.0.0'}; save();
+    assert.throws(() => sanitizedDependencyRoot(source, '.', clean, JSON.parse, JSON.stringify), /lock shape/);
+    delete lock.configDependencies; save();
+    manifest.dependencies.yaml = 'git+ssh://attacker.invalid/evil';
+    writeFileSync(join(source, 'package.json'), JSON.stringify(manifest));
+    assert.throws(() => sanitizedDependencyRoot(source, '.', clean, JSON.parse, JSON.stringify), /protocol/);
+    rmSync(join(source, 'package.json')); symlinkSync(join(directory, 'outside.json'), join(source, 'package.json'));
+    assert.throws(() => sanitizedDependencyRoot(source, '.', clean, JSON.parse, JSON.stringify), /symbolic/);
+  } finally {rmSync(directory, {recursive: true, force: true});}
+});
+
+test('pinned pnpm fetches a public locked package without executing source hooks or copying reader credentials', async () => {
+  // Public Actions only: this is the real downloader/PNPM integration, not a
+  // local test. The placeholder reader can authenticate no private package.
+  const directory = mkdtempSync(join(tmpdir(), 'hostyour-fetch-'));
+  try {
+    const source = join(directory, 'source'); const deps = join(directory, 'deps');
+    mkdirSync(source); mkdirSync(deps);
+    writeFileSync(join(source, 'package.json'), JSON.stringify({name: 'fixture', private: true,
+      packageManager: 'pnpm@99.0.0', scripts: {postinstall: 'exit 99'}, dependencies: {yaml: '2.9.0'}}));
+    writeFileSync(join(source, '.pnpmfile.cjs'), 'throw new Error("source hook ran")');
+    writeFileSync(join(source, '.npmrc'), 'registry=https://attacker.invalid');
+    writeFileSync(join(source, 'pnpm-workspace.yaml'), JSON.stringify({configDependencies: {evil: '1.0.0'},
+      pnpmfile: '.pnpmfile.cjs', allowBuilds: {'*': true}, packages: ['.']}));
+    const integrity = 'sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==';
+    writeFileSync(join(source, 'pnpm-lock.yaml'), JSON.stringify({lockfileVersion: '9.0',
+      settings: {autoInstallPeers: true, excludeLinksFromLockfile: false},
+      importers: {'.': {dependencies: {yaml: {specifier: '2.9.0', version: '2.9.0'}}}},
+      packages: {'yaml@2.9.0': {resolution: {integrity}}}, snapshots: {'yaml@2.9.0': {}}}));
+    const reader = join(directory, 'reader');
+    writeFileSync(reader, '@digitaplatform:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=fixture-reader-with-no-grant\n', {mode: 0o600});
+    await preparePackageTools(join(deps, 'tools'));
+    await fetchPackages(source, ['.'], deps, reader);
+    assert.equal(existsSync(join(deps, '.npmrc')), false);
+    assert.equal(existsSync(join(deps, 'store')), true);
+    assert.equal(JSON.parse(readFileSync(join(deps, 'tools/pnpm/package.json'))).version, '11.7.0');
   } finally {rmSync(directory, {recursive: true, force: true});}
 });

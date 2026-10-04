@@ -366,4 +366,17 @@ digitaTests:
     repository: digita-translations
     commit: 27a34f213abdf9fd0ebc9ad9f9398fe5d8005669
     ref: refs/heads/master
-    name: digita-translations-tests-op8-27a34f2
+    name: digita-translations-tests-op3-static-27a34f2
+  proofs:
+    - repository: digita-docs
+      commit: 62882d160e04edcd81ccf8c8fffd98bd5d23a834
+      ref: refs/heads/master
+      name: digita-docs-tests-op3-static-62882d1
+    - repository: digita-websites
+      commit: 26ebc20e472ea86ddcba13bed8c72f24b346d5d1
+      ref: refs/heads/master
+      name: digita-websites-tests-op3-static-26ebc20
+    - repository: digita-deploy
+      commit: 4572daea13917baefe884fe00e1a7f6112924830
+      ref: refs/heads/issue-89-gate-release-builds-with-cloud-tests-so
+      name: digita-deploy-tests-op3-static-4572dae

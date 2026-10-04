@@ -16,6 +16,7 @@ spec:
   workspaces:
     - name: source
     - name: deps
+      readOnly: true
   results:
     - name: result-json
       type: string
@@ -44,6 +45,7 @@ spec:
         - name: TEST_RUNNER_DIGEST
           value: {{ include "image-builder.testRunnerDigest" . | quote }}
         - {name: TEST_SOURCE, value: "$(workspaces.source.path)"}
+        - {name: TEST_DEPENDENCIES, value: "$(workspaces.deps.path)"}
         - {name: TEST_RESULT_PATH, value: "$(results.result-json.path)"}
       volumeMounts:
         - {name: scratch, mountPath: /tmp}
@@ -58,5 +60,5 @@ spec:
           add: [CHOWN, SETUID, SETGID, KILL]
         seccompProfile: {type: RuntimeDefault}
       computeResources:
-        requests: {cpu: 250m, memory: 512Mi}
+        requests: {cpu: 250m, memory: 4Gi}
         limits: {cpu: "2", memory: 4Gi}
