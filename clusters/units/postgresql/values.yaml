@@ -69,7 +69,7 @@ postgres:
   # ONE INSTANCE PER NAMESPACE — a second one is UNSUPPORTED, not a config knob.
   # This chart is the per-consumer template of design decision 2 (per-consumer-
   # postgres.md §2): exactly one PostgreSQL instance lives in a consumer's own
-  # namespace, reaped by namespace deletion. SEVEN of its object names are fixed,
+  # namespace, reaped by namespace deletion. SIX of its object names are fixed,
   # not release-derived, and every one of them would collide if a second instance
   # were rendered into the same namespace:
   #   • Deployment + Service   `postgres`                (this fullnameOverride)
@@ -78,9 +78,8 @@ postgres:
   #   • credential Secret      `postgresql-credentials`  (externalsecret-postgres.targetSecretName)
   #   • SecretStore            `vault-backend-postgres`  (secret-store.name)
   #   • ServiceAccount         `postgres-eso`            (secret-store.serviceAccountName)
-  #   • PrometheusRule         `postgresql`              (templates/prometheusrule.yaml)
   # So overriding THIS one field alone would NOT make a second same-namespace
-  # instance work — the PVC, the credential objects and the rule would still clash.
+  # instance work — the PVC and the credential objects would still clash.
   # If per-namespace multi-instance is ever needed, ALL of them must move to
   # release-derived names together; until then, treat one-per-namespace as a hard
   # invariant, not a default.
@@ -254,6 +253,8 @@ postgres:
 postgres-data:
   pvc:
     enabled: true
+    # The master's storage alert reads this claim's request by name
+    # (clusters/inventories/observability/values-common.yaml, units-postgresql).
     name: postgres-data
     annotations:
       argocd.argoproj.io/sync-options: Prune=false,Delete=false
@@ -432,32 +433,15 @@ networkPolicy:
     - backup
 
 # =============================================================================
-# Metrics + alerting. ONE switch (metrics.enabled) governs BOTH halves so they
-# can never be half-configured: it gates the prometheus-postgres-exporter
-# dependency (Chart.yaml `condition: metrics.enabled`) AND the inlined
-# PrometheusRule (templates/prometheusrule.yaml, `{{ if .Values.metrics.enabled }}`).
+# Metrics. metrics.enabled gates the prometheus-postgres-exporter dependency
+# (Chart.yaml `condition: metrics.enabled`). The alerts on its series are not
+# this chart's: an app cluster evaluates no rule, so the master evaluates them
+# for every unit at once (clusters/inventories/observability/values-common.yaml,
+# monitoring.prometheusRules.units-postgresql), each keyed by cluster and
+# namespace, the storage line at 80 % of the data PVC's own request.
 # =============================================================================
 metrics:
   enabled: true
-
-# Alert tuning for the inlined PrometheusRule (templates/prometheusrule.yaml).
-#
-# WHY THE RULE IS A LOCAL TEMPLATE, NOT the shared clusters/charts/monitoring subchart:
-# per-consumer isolation requires every alert EXPRESSION to be scoped to this
-# instance's own namespace (finding 5 / §10.3) — otherwise, because the live
-# Prometheus has an empty enforcedNamespaceLabel, one consumer's PostgreSQLDown
-# fires whenever ANY other consumer's database is down. The monitoring subchart
-# renders rules from values verbatim (toYaml, no tpl), so it structurally cannot
-# inject .Release.Namespace into an expr. A local template can — at the price of
-# escaping Prometheus's own {{ $labels }} vars, which the template does.
-monitoring:
-  # Storage early-warning threshold, in GiB — design §10.3 / risk R12. The PVC
-  # size is a declaration, not a bound (the hostpath provisioner enforces no
-  # capacity), so a runaway consumer can fill the node's single filesystem and
-  # take Vault/zot/Prometheus/etc. down with it. This alert names WHICH consumer
-  # is growing before the node does. Set to ~80% of this preset's data PVC
-  # (small 5Gi → 4Gi); overridden per size preset. Converted to bytes at render.
-  dataAlertThresholdGi: 4
 
 # Metrics exporter (upstream prometheus-community chart). Connects as the
 # postgres superuser using the password from the postgresql-credentials Secret.
