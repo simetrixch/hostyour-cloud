@@ -30,3 +30,16 @@ and no other, so the scope is a fact of the registration and never a value of th
 {{- if eq $owner $url }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://github.com/<owner>/<repo>[.git], and the build's npm scope is read off its owner" $url) }}{{ end -}}
 {{- $owner -}}
 {{- end -}}
+
+{{- define "consumer-build.testRegistration" -}}
+{{- $name := include "consumer-build.unitName" . -}}
+{{- range .Values.digitaTests.repositories -}}
+{{- if eq .name $name -}}
+{{- if ne .repositoryURL $.Values.unit.repoURL -}}{{ fail "test repository identity does not match build registration" }}{{- end -}}
+{{- . | toJson -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- define "consumer-build.hasBuilds" -}}
+{{- if gt (len (include "consumer-build.builds" . | fromJsonArray)) 0 -}}true{{- else -}}false{{- end -}}
+{{- end -}}

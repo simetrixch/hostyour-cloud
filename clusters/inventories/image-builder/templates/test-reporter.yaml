@@ -1,0 +1,77 @@
+{{- $reporter := .Values.digitaTests.reporter -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $reporter.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $reporter.name }}-state
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $reporter.name }}-code
+  namespace: {{ .Release.Namespace }}
+data:
+  registrations.json: {{ .Values.digitaTests.repositories | toJson | quote }}
+{{- range $file := list "test-contract.mjs" "test-reporter-api.mjs" "test-reporter-evidence.mjs" "test-reporter-state.mjs" "test-reporter.mjs" }}
+  {{ $file }}: |
+{{ $.Files.Get (printf "files/%s" $file) | indent 4 }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $reporter.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: {{ $reporter.name }}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: {{ $reporter.name }}, app.kubernetes.io/component: reporter}
+      annotations:
+        checksum/code: {{ printf "%s%s%s%s%s%s" (.Files.Get "files/test-contract.mjs") (.Files.Get "files/test-reporter.mjs") (.Files.Get "files/test-reporter-api.mjs") (.Files.Get "files/test-reporter-evidence.mjs") (.Files.Get "files/test-reporter-state.mjs") (.Values.digitaTests | toJson) | sha256sum }}
+    spec:
+{{ include "image-builder.reporterPod" (dict "root" . "once" false) | indent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $reporter.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector: {app.kubernetes.io/name: {{ $reporter.name }}}
+  ports:
+    - {name: http, port: {{ $reporter.port }}, targetPort: http}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $reporter.name }}-reconcile
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: "*/2 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 180
+      backoffLimit: 1
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: {{ $reporter.name }}, app.kubernetes.io/component: reconciler}
+        spec:
+{{ include "image-builder.reporterPod" (dict "root" . "once" true) | indent 10 }}

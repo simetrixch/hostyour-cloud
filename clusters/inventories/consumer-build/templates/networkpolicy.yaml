@@ -46,7 +46,11 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     image-builder.io/consumer: {{ $unit | quote }}
 spec:
-  podSelector: {}
+  podSelector:
+    matchExpressions:
+      - key: tekton.dev/pipelineTask
+        operator: NotIn
+        values: [tests]
   policyTypes:
     - Egress
   egress:
@@ -151,4 +155,39 @@ spec:
         - protocol: TCP
           port: {{ . }}
         {{- end }}
+{{- if include "consumer-build.testRegistration" . }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tests-isolation
+  namespace: {{ printf "%s-build" $unit }}
+spec:
+  podSelector:
+    matchLabels: {tekton.dev/pipelineTask: tests}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: test-report-egress
+  namespace: {{ printf "%s-build" $unit }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: tekton.dev/pipelineTask
+        operator: In
+        values: [test-report, report-final]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ .Values.eventListener.namespace }}}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: {{ .Values.digitaTests.reporter.name }}}
+      ports:
+        - {protocol: TCP, port: {{ .Values.digitaTests.reporter.port }}}
+{{- end }}
 {{- end }}
