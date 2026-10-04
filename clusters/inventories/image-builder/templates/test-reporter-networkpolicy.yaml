@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: test-reporter-isolation
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: {{ .Values.digitaTests.reporter.name }}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {hostyour.cloud/build: "true"}
+          podSelector:
+            matchExpressions:
+              - key: tekton.dev/pipelineTask
+                operator: In
+                values: [test-report, report-final]
+      ports:
+        - {protocol: TCP, port: {{ .Values.digitaTests.reporter.port }}}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+{{- range required "global.nodeCidrs is required for reporter API access" .Values.global.nodeCidrs }}
+        - ipBlock: {cidr: {{ . | quote }}}
+{{- end }}
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+        - {protocol: TCP, port: 16443}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+{{- range .Values.global.nodeCidrs }}
+              - {{ . | quote }}
+{{- end }}
+      ports:
+        - {protocol: TCP, port: 443}

@@ -58,6 +58,13 @@ spec:
       expression: >-
         request.namespace.endsWith('-build')
           ? request.namespace.substring(0, request.namespace.size() - 6) + '-release' : ''
+    - name: ownTestPipeline
+      expression: >-
+        request.namespace.endsWith('-build')
+          ? request.namespace.substring(0, request.namespace.size() - 6) + '-tests' : ''
+    - name: testNamespace
+      expression: >-
+        request.namespace in {{ range $index, $repo := .Values.digitaTests.repositories }}{{ if eq $index 0 }}[{{ else }}, {{ end }}{{ printf "%s-build" $repo.name | quote }}{{ end }}]
     # Every ServiceAccount a per-task override would substitute for the one in
     # taskRunTemplate.
     - name: overrideSAs
@@ -90,11 +97,42 @@ spec:
     - expression: "has(object.spec.taskRunTemplate) && has(object.spec.taskRunTemplate.serviceAccountName) && object.spec.taskRunTemplate.serviceAccountName == 'pipeline-sa'"
       message: "PipelineRuns must run under taskRunTemplate.serviceAccountName: pipeline-sa."
       reason: Forbidden
-    - expression: "variables.refName == variables.ownPipeline"
-      message: "a build namespace runs only its own pipeline — in <unit>-build that is <unit>-release."
+    - expression: "variables.refName == variables.ownPipeline || (variables.testNamespace && variables.refName == variables.ownTestPipeline)"
+      message: "a build namespace runs only its own release Pipeline or its registered test Pipeline."
       reason: Forbidden
     - expression: "variables.overrideSAs.all(n, n == 'pipeline-sa')"
       message: "taskRunSpecs may not run a task under another ServiceAccount — every task pod runs as pipeline-sa."
+      reason: Forbidden
+    - expression: "!has(object.spec.taskRunSpecs) || object.spec.taskRunSpecs.size() == 0"
+      message: "per-task pod, step, sidecar, metadata and account overrides are not allowed."
+      reason: Forbidden
+    - expression: "!has(object.spec.taskRunTemplate) || !has(object.spec.taskRunTemplate.podTemplate)"
+      message: "caller pod templates are not allowed in managed build runs."
+      reason: Forbidden
+    - expression: "!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('tekton.dev/') || k == 'tekton.dev/pipeline')"
+      message: "caller labels may not impersonate Tekton task or pod identities."
+      reason: Forbidden
+    # Tekton's parameter values are opaque in the served CRD and cannot be
+    # inspected by CEL. Until arbitrary test input has its own strict validator,
+    # only GitOps may create the fixed proof run; controller updates remain allowed.
+    - expression: >-
+        variables.refName != variables.ownTestPipeline ||
+        (request.namespace == {{ printf "%s-build" .Values.digitaTests.proof.repository | quote }} &&
+        object.metadata.name == {{ .Values.digitaTests.proof.name | quote }} &&
+        (request.userInfo.username == 'system:serviceaccount:argocd:argocd-application-controller' ||
+          (request.operation == 'UPDATE' && request.userInfo.username == 'system:serviceaccount:tekton:tekton-controller')) &&
+        has(object.spec.params) && object.spec.params.size() == 3 &&
+        object.spec.params.exists(p, p.name == 'commit') &&
+        object.spec.params.exists(p, p.name == 'ref') &&
+        object.spec.params.exists(p, p.name == 'git-url'))
+      message: "only the fixed GitOps proof run may invoke tests until arbitrary input is validated."
+      reason: Forbidden
+    - expression: >-
+        has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
+        object.spec.workspaces.all(w, w.name == 'source' &&
+          !has(w.subPath) && !has(w.persistentVolumeClaim) && !has(w.secret) && !has(w.configMap) &&
+          !has(w.emptyDir) && !has(w.projected) && !has(w.csi))
+      message: "a managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace."
       reason: Forbidden
     - expression: "!variables.asksForToken"
       message: "podTemplate.automountServiceAccountToken must stay off — the step that runs the built repo's own code holds no API credential."
