@@ -21,10 +21,10 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `master-backup.sh` / `.ps1` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
 | `master-restore.sh` / `.ps1` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |
+| `plan-installation-domain.sh` / `.ps1` | plans and dry-runs proposed hostname changes across domain zones: reads every cluster map on a freshly fetched books branch, optionally probes machine names and Ingress/IngressRoute over ssh, and prints proposed hostname changes and coverage without altering remote state |
 
 Every one of them is written twice, and the two spellings are held to doing the same in the same
-order and printing the same bytes. `test.sh` is what measures that, against fixtures it builds in a
-temporary directory.
+order and printing the same bytes. `scripts/test.sh` runs their remote fixture checks.
 
 **Five files here are not a person's entry point.** `driver.sh` is the installation itself,
 `regenerate-driver.sh` the regeneration, `remove-slave-driver.sh` the removal, `master-backup-driver.sh`
@@ -378,3 +378,19 @@ because an absent record and an absent branch are not errors.
 The config is read for two values, the DNS token and the deploy repository, and never run. It stays: a local
 config is the record of the answers a machine was installed with, and the next machine of that name
 is installed from it.
+
+# Planning an installation domain move
+
+```
+bash lifecycle/plan-installation-domain.sh --books-fqdn master.old.example.invalid --from-domain old.example.invalid --to-domain new.example.invalid --dry-run
+bash lifecycle/plan-installation-domain.sh --books-fqdn master.old.example.invalid --from-domain old.example.invalid --to-domain new.example.invalid --dry-run --fqdn master.old.example.invalid --ssh-user operator   # or: pwsh ./lifecycle/plan-installation-domain.ps1 ...
+```
+
+Both spellings accept `--books-fqdn HOST --from-domain DOMAIN --to-domain DOMAIN --dry-run`,
+optionally `--fqdn HOST --ssh-user USER` together. They require Node, git, yq and for machine probes
+ssh. They read every cluster map on a freshly fetched books branch; a selected machine probes both
+SSH names with the existing old-name host-key trust and inventories Ingress plus IngressRoute. The
+report lists proposed hostname changes and coverage; current configuration and remote state remain unchanged.
+Exit 0 means a dry-run report, never cutover approval; JSON `cutoverReady=false`, full
+persisted-store/client/IdP/TLS/redirect execution belongs to the coordinated Manager migration. Only
+`--dry-run` is implemented. Execution and rollback require the coordinated Manager migration.

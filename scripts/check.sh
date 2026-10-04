@@ -655,10 +655,12 @@ echo "check: every yaml_value stamp site of this tree holds its pin from cluster
 echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/cloud-tests.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
-for module in clusters/inventories/image-builder/files/*.mjs scripts/cloud-tests.test.mjs; do
+for module in clusters/inventories/image-builder/files/*.mjs scripts/cloud-tests.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in public GitHub Actions.'
+echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in public GitHub Actions.'
+bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
 # SCANNED OVER WHAT GIT WOULD LET YOU COMMIT, and that is not the same as this directory. A
