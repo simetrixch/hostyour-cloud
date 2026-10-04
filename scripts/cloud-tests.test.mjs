@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import {resolve, join} from 'node:path';
 import {digest, emptyResult, parseNodeTAP, redact, validateResult} from '../clusters/inventories/image-builder/files/test-contract.mjs';
 import {bindRun, inspect} from '../clusters/inventories/image-builder/files/test-reporter-evidence.mjs';
+import {readState, writeState} from '../clusters/inventories/image-builder/files/test-reporter-state.mjs';
 
 const code = 'trusted runner bytes';
 const image = 'node@sha256:' + 'a'.repeat(64);
@@ -22,7 +23,7 @@ function fixture() {
       {name: 'ref', value: 'refs/heads/issue-1-proof'}]},
     status: {startTime: '2026-10-04T01:00:01Z', conditions: [{type: 'Succeeded', status: 'Unknown'}], childReferences: []}};
   const binding = bindRun(run, registration, runnerDigest);
-  const result = emptyResult(binding, registration, 'passed', 'unused', '2026-10-04T01:00:01Z', '2026-10-04T01:00:02Z');
+  const result = structuredClone(emptyResult(binding, registration, 'passed', 'unused', '2026-10-04T01:00:01Z', '2026-10-04T01:00:02Z'));
   result.notRun = [];
   result.suites[0] = {...result.suites[0], status: 'passed', cases: {passed: 2, failed: 0, skipped: 0}};
   const tasks = {};
@@ -99,6 +100,21 @@ test('the TAP adapter rejects absent, duplicate and inconsistent counters', () =
 test('logs redact credentials and a truncated PEM block', () => {
   const output = redact('Bearer fake-token\nhvs.fake_token\nmongodb://user:password@example/db\n-----BEGIN PRIVATE KEY-----\nsecret');
   for (const secret of ['fake-token', 'fake_token', 'password@example', '\nsecret']) assert.equal(output.includes(secret), false);
+});
+test('an interrupted reporter cache is rebuilt and replaced atomically', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hostyour-state-'));
+  try {
+    const path = join(directory, 'receipt.json');
+    assert.equal(readState(path), undefined);
+    writeFileSync(path, '{"receipt":');
+    assert.equal(readState(path), undefined);
+    const record = {fingerprint: 'current', receipt: {passed: false}};
+    writeState(path, record);
+    assert.deepEqual(readState(path), record);
+    assert.equal(statSync(path).mode & 0o777, 0o600);
+    writeState(path, {...record, fingerprint: 'new'});
+    assert.equal(readState(path).fingerprint, 'new');
+  } finally {rmSync(directory, {recursive: true, force: true});}
 });
 test('untrusted test code cannot overwrite the trusted result or fake outer TAP counters', () => {
   assert.equal(process.getuid(), 0, 'this security fixture requires sudo on the public Actions runner');

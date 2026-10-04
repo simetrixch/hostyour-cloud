@@ -4,6 +4,7 @@ import {createServer} from 'node:http';
 import {digest, condition, getParam, getResult, emptyResult, redact, validateBinding, validateResult} from './test-contract.mjs';
 import {bindRun, inspect} from './test-reporter-evidence.mjs';
 import {github, kubernetes, validateReporterIdentity, withRequestDeadline} from './test-reporter-api.mjs';
+import {readState, writeState} from './test-reporter-state.mjs';
 
 const registrations = JSON.parse(readFileSync('/reporter-code/registrations.json', 'utf8'));
 const registry = new Map(registrations.map(value => [value.name + '-build', value]));
@@ -47,8 +48,7 @@ async function publish(run, registration) {
     }
     let {result, passed} = evidence;
     const path = stateDirectory + '/' + key + '.json';
-    let cached;
-    try {cached = JSON.parse(readFileSync(path, 'utf8'));} catch (error) {if (error.code !== 'ENOENT') throw error;}
+    const cached = readState(path);
     if (cached?.receipt && !result) {
       result = emptyResult(binding, registration, 'infrastructure-failed', 'completed evidence became pending',
         cached.receipt.result.startedAt, cached.receipt.result.completedAt);
@@ -83,7 +83,7 @@ async function publish(run, registration) {
       }
     }
     if (!result) {
-      writeFileSync(path, JSON.stringify({fingerprint, completedAt: run.metadata.creationTimestamp}), {mode: 0o600});
+      writeState(path, {fingerprint, completedAt: run.metadata.creationTimestamp});
       return;
     }
     const issue = /^refs\/heads\/issue-([1-9][0-9]{0,8})(?:-|$)/.exec(binding.ref)?.[1];
@@ -105,7 +105,7 @@ async function publish(run, registration) {
     }
     const receipt = {binding, passed, result};
     // Persist only after Checks and the issue proof have both been published.
-    writeFileSync(path, JSON.stringify({fingerprint, completedAt: result.completedAt, receipt}), {mode: 0o600});
+    writeState(path, {fingerprint, completedAt: result.completedAt, receipt});
     return receipt;
   }));
 }
@@ -133,12 +133,20 @@ async function reconcile() {
       const path = stateDirectory + '/locks/' + name;
       // Every API call times out in15seconds. A full publication is bounded
       // well below ten minutes; an older lock belongs to a dead process.
-      if (Date.now() - statSync(path).mtimeMs > 10 * 60 * 1000) rmSync(path, {recursive: true});
+      try {
+        if (Date.now() - statSync(path).mtimeMs > 10 * 60 * 1000) rmSync(path, {recursive: true});
+      } catch (error) {if (error.code !== 'ENOENT') throw error;}
     }
     for (const name of readdirSync(stateDirectory).filter(name => /^[a-f0-9]{64}\.json$/.test(name))) {
       const path = stateDirectory + '/' + name;
-      const record = JSON.parse(readFileSync(path, 'utf8'));
-      if (Date.now() - Date.parse(record.completedAt) > 14 * 24 * 60 * 60 * 1000) rmSync(path);
+      const record = readState(path);
+      if (record && Date.now() - Date.parse(record.completedAt) > 14 * 24 * 60 * 60 * 1000) rmSync(path, {force: true});
+    }
+    for (const name of readdirSync(stateDirectory).filter(name => /^[a-f0-9]{64}\.json\.[a-f0-9-]+\.tmp$/.test(name))) {
+      const path = stateDirectory + '/' + name;
+      try {
+        if (Date.now() - statSync(path).mtimeMs > 14 * 24 * 60 * 60 * 1000) rmSync(path, {force: true});
+      } catch (error) {if (error.code !== 'ENOENT') throw error;}
     }
     if (errors.length) throw new Error('reporter reconciliation failed in ' + errors.length + ' namespaces');
   })();

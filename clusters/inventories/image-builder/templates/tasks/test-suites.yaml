@@ -55,7 +55,7 @@ spec:
         readOnlyRootFilesystem: true
         capabilities:
           drop: [ALL]
-          add: [CHOWN, SETUID, SETGID]
+          add: [CHOWN, SETUID, SETGID, KILL]
         seccompProfile: {type: RuntimeDefault}
       computeResources:
         requests: {cpu: 250m, memory: 512Mi}
