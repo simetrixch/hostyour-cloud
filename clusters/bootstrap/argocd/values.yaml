@@ -185,3 +185,84 @@ configs:
       g, admins, role:admin
     policy.default: role:readonly
     scopes: '[groups]'
+
+# THE MASTER'S OLD NAMES, kept answering while people and machines move to the new ones (package G,
+# Phase 2). No chart in this tree renders a second host for a component, and this release is the one
+# the master installs from this branch and upgrades whenever these values change
+# (deploy-platform-services, helm_release argocd), so the objects ride here. ArgoCD tracks what it
+# owns by annotation and leaves them alone.
+#
+# - The browser hosts redirect for good to the same path on their new names. One certificate covers
+#   all thirteen: one order, not thirteen, against the old domain's weekly limit.
+# - The tailnet coordinator keeps its old name as a second door to the same Headscale. A machine
+#   still logged in at the old address then hears every node key that changes while the others
+#   rejoin at the new one. It retires once all nine machines are logged in there.
+#
+# Each retires by deleting its entries here: the next upgrade of this release removes them.
+extraObjects:
+  - apiVersion: traefik.io/v1alpha1
+    kind: Middleware
+    metadata:
+      name: old-browser-hosts
+      namespace: argocd
+    spec:
+      redirectRegex:
+        regex: '^https?://([^./]+)\.master\.digitacloud\.app(.*)$'
+        replacement: 'https://${1}.master.simplidigita.ai${2}'
+        permanent: true
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: old-browser-hosts
+      namespace: argocd
+      annotations:
+        cert-manager.io/cluster-issuer: platform-acme
+        traefik.ingress.kubernetes.io/router.entrypoints: websecure
+        traefik.ingress.kubernetes.io/router.middlewares: argocd-old-browser-hosts@kubernetescrd
+    spec:
+      ingressClassName: public
+      tls:
+        - secretName: old-browser-hosts-tls
+          hosts: &oldBrowserHosts
+            - argo.master.digitacloud.app
+            - argo-apps1.master.digitacloud.app
+            - argo-apps2.master.digitacloud.app
+            - argo-apps3.master.digitacloud.app
+            - argo-apps4.master.digitacloud.app
+            - argo-apps5.master.digitacloud.app
+            - argo-apps6.master.digitacloud.app
+            - argo-apps7.master.digitacloud.app
+            - argo-apps8.master.digitacloud.app
+            - manager.master.digitacloud.app
+            - grafana.master.digitacloud.app
+            - tekton.master.digitacloud.app
+            - kube.master.digitacloud.app
+      # The redirect answers before a request reaches a backend; the rules need one all the same.
+      rules:
+        - {host: argo.master.digitacloud.app, http: &toArgo {paths: [{path: /, pathType: Prefix, backend: {service: {name: argocd-server, port: {number: 80}}}}]}}
+        - {host: argo-apps1.master.digitacloud.app, http: *toArgo}
+        - {host: argo-apps2.master.digitacloud.app, http: *toArgo}
+        - {host: argo-apps3.master.digitacloud.app, http: *toArgo}
+        - {host: argo-apps4.master.digitacloud.app, http: *toArgo}
+        - {host: argo-apps5.master.digitacloud.app, http: *toArgo}
+        - {host: argo-apps6.master.digitacloud.app, http: *toArgo}
+        - {host: argo-apps7.master.digitacloud.app, http: *toArgo}
+        - {host: argo-apps8.master.digitacloud.app, http: *toArgo}
+        - {host: manager.master.digitacloud.app, http: *toArgo}
+        - {host: grafana.master.digitacloud.app, http: *toArgo}
+        - {host: tekton.master.digitacloud.app, http: *toArgo}
+        - {host: kube.master.digitacloud.app, http: *toArgo}
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: old-tailnet-host
+      namespace: headscale
+      annotations:
+        cert-manager.io/cluster-issuer: platform-acme
+        traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    spec:
+      ingressClassName: public
+      tls:
+        - {secretName: old-tailnet-host-tls, hosts: [tale.master.digitacloud.app]}
+      rules:
+        - {host: tale.master.digitacloud.app, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: headscale-prod-app, port: {number: 8080}}}}]}}
