@@ -214,6 +214,7 @@ test('fixed Vitest counts real cases under UID1001 and ignores source test scrip
     chmodSync(directory, 0o755);
     const deps = join(directory, 'deps'); mkdirSync(deps);
     const source = join(directory, 'source'); mkdirSync(source); mkdirSync(join(source, 'tests'));
+    chownSync(source, 1001, 1001);
     const protectedDirectory = join(directory, 'protected'); mkdirSync(protectedDirectory, {mode: 0o700});
     const result = join(protectedDirectory, 'result.json');
     const cache = join(protectedDirectory, 'cache'); mkdirSync(cache, {mode: 0o700});
