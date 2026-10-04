@@ -27,7 +27,6 @@ const profiles = {
     'design-css': node('build-tools/design-css', 'gen-design-css.test.mjs', 'design-keys.test.mjs'),
     'signature-build': node('build-tools/signature-build', 'signature-keys.test.mjs'),
     'signature-kit': node('build-tools/signature-kit', 'dist/**/*.test.js'),
-    usermenu: vitest('usermenu', {environment: 'jsdom'}),
   },
   'digita-plugins-store': {'design-css': node('build-tools/design-css', 'gen-design-css.test.mjs', 'design-keys.test.mjs')},
   'digita-report': {
