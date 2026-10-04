@@ -16,7 +16,7 @@ of the step where untrusted code runs:
 
   step 1 `build` — runs the untrusted code. NO push credential (no envFrom of
     image-builder-registry-push). It logs in with the READ-ONLY pull identity
-    (image-builder-registry-pull → Zot user pull-user) purely so the base-image
+    ({{ include "common.registryPullSecretName" . }} → Zot user pull-user) purely so the base-image
     pull can authenticate: Zot disables anonymous pulls (anonymousPolicy []),
     and the drop-in below remaps every `FROM docker.io/...` onto Zot. A
     read-only credential stolen out of this step is low-value — it can only READ
@@ -177,7 +177,7 @@ spec:
         # code below must never reach a credential that can WRITE to the registry.
         # That is the whole point of the build/push split.
         - secretRef:
-            name: image-builder-registry-pull
+            name: {{ include "common.registryPullSecretName" . }}
       securityContext:
         privileged: true
         runAsUser: 0

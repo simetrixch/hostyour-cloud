@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # The release pipeline's own shell, where it decides something a fixture can hold it to:
+# class (b) appends newly declared image pins without losing held entries;
 # class (d) of the bump moves a tenant onto the bundle it just built only where the bundle and
 # the tenant's engines are of one line (clusters/inventories/consumer-build/templates/
 # pipeline-release.yaml, bundle_engine and engine_line_off), and the bump's push retries only a
@@ -25,12 +26,92 @@ extract() { # function name -> its text out of the template
     on && /^ *\}$/ && match($0, /[^ ]/) == indent { exit }
   ' "$template"
 }
-for fn in bundle_engine engine_line_off concurrent_push_refusal commit_push; do
+for fn in bundle_engine engine_line_off concurrent_push_refusal commit_push bump_file; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
   . "$work/$fn.sh"
 done
+
+# ── bump_file: a new declared image enters existing Books pins ─────────────
+chart_values="$work/chart/values.yaml"
+mkdir -p "$(dirname "$chart_values")"
+cat > "$chart_values" <<'EOF'
+builds:
+  - {name: backend, image: example-backend, tag: product-default}
+  - {name: frontend, image: example-frontend, tag: product-default, extra: preserved}
+  - {name: other, image: another-producer, tag: product-default}
+EOF
+pins="$work/pins-prod.yaml"
+cat > "$pins" <<'EOF'
+builds:
+  - {name: backend, image: example-backend, tag: old-backend}
+  - {name: retained, image: another-unit, tag: held-tag}
+  - {name: frontend-proxy, image: another-prefix-unit, tag: held-prefix-tag}
+EOF
+IMAGES='example-backend example-frontend'
+IMAGE_TAG=0.4.002-stable-fixture
+BUMPED=0
+declare -A HIT_COUNT
+HIT_COUNT[example-backend]=0; HIT_COUNT[example-frontend]=0
+# No declaration input drives the old behavior as a planted defect inside a green run.
+cp "$pins" "$work/old-behavior.yaml"
+bump_file "$work/old-behavior.yaml" || fail 'legacy bump refused'
+[ "$(yq '[.builds[] | select(.image == "example-frontend")] | length' "$work/old-behavior.yaml")" = 0 ] \
+  || fail 'planted old behavior did not reproduce the missing frontend'
+HIT_COUNT[example-backend]=0; HIT_COUNT[example-frontend]=0; BUMPED=0
+bump_file "$pins" "$chart_values" || fail 'existing Books pins refused'
+[ "$(yq -o=json -I=0 '.builds | map(.name)' "$pins")" = '["backend","retained","frontend-proxy","frontend"]' ] \
+  || fail 'PLANTED DEFECT: newly declared frontend absent or existing order changed'
+[ "$(yq '.builds[] | select(.name == "frontend") | .tag' "$pins")" = "$IMAGE_TAG" ] \
+  || fail 'the new image was not pinned to the successful release'
+[ "$(yq '.builds[] | select(.name == "frontend") | .extra' "$pins")" = preserved ] \
+  || fail 'new declaration fields were dropped'
+[ "$(yq '.builds[] | select(.name == "retained") | .tag' "$pins")" = held-tag ] \
+  || fail 'an unrelated held image changed'
+[ "$BUMPED" = 1 ] && [ "${HIT_COUNT[example-frontend]}" = 1 ] || fail 'new image was not counted as a native hit'
+cp "$pins" "$work/once.yaml"
+bump_file "$pins" "$chart_values" || fail 'repeated bump refused'
+cmp -s "$pins" "$work/once.yaml" || fail 'repeated bump duplicated or changed an entry'
+ok 'existing entries and held tags stay in order; a new chart image is appended once with all declaration fields'
+# Two distinct chart names may share an image; pin hits alone cannot prove both names exist.
+cat > "$work/aliases.yaml" <<'EOF'
+builds:
+  - {name: legacy-frontend, image: example-frontend, tag: old}
+  - {name: retained, image: another-unit, tag: held}
+EOF
+IMAGES=example-frontend; HIT_COUNT[example-frontend]=0; BUMPED=0
+bump_file "$work/aliases.yaml" "$chart_values" || fail 'a distinct name for an existing image refused'
+[ "$(yq -o=json -I=0 '.builds | map(.name)' "$work/aliases.yaml")" = '["legacy-frontend","retained","frontend"]' ] \
+  || fail 'PLANTED DEFECT: substring name match hid the new frontend despite a pin hit'
+[ "${HIT_COUNT[example-frontend]}" = 2 ] || fail 'distinct aliases did not count both native pins'
+cp "$work/aliases.yaml" "$work/aliases-once.yaml"
+bump_file "$work/aliases.yaml" "$chart_values" || fail 'repeated alias bump refused'
+cmp -s "$work/aliases.yaml" "$work/aliases-once.yaml" || fail 'repeated alias bump duplicated a name'
+ok 'exact names distinguish legacy-frontend and frontend even when they share an image'
+# A different chart must never receive this producer's undeclared image.
+printf 'builds: [{name: frontend, image: another-unit, tag: held}]\n' > "$work/unrelated.yaml"
+IMAGES=example-frontend
+cp "$work/unrelated.yaml" "$work/unrelated-before.yaml"
+bump_file "$work/unrelated.yaml" "$chart_values" >/dev/null 2>&1 && fail 'conflicting existing name was not refused'
+cmp -s "$work/unrelated.yaml" "$work/unrelated-before.yaml" || fail 'a conflicting name changed before refusal'
+printf 'builds: [{name: retained, image: another-unit, tag: held}]\n' > "$work/unrelated.yaml"
+IMAGES=not-declared; BUMPED=0
+cp "$work/unrelated.yaml" "$work/unrelated-before.yaml"
+bump_file "$work/unrelated.yaml" "$chart_values" || fail 'unrelated chart refused'
+cmp -s "$work/unrelated.yaml" "$work/unrelated-before.yaml" || fail 'an unrelated chart file changed'
+[ "$BUMPED" = 0 ] || fail 'an undeclared image claimed a pin hit'
+# Exercise the actual first-pin seed block, rather than a second implementation.
+IMAGES='example-backend example-frontend'
+pins="$work/fresh/pins-prod.yaml"; cdir="$work/chart/"; cname=fixture; STAGE=prod; PLACEHOLDER_TAG=unreleased-fixture
+awk '/^ +SEEDED=0$/ {on=1} on {print} on && /^ +BUMPED=0$/ {exit}' "$template" > "$work/seed.sh"
+[ -s "$work/seed.sh" ] || fail 'native first-pin seed block absent'
+. "$work/seed.sh"
+bump_file "$pins" "$chart_values" || fail 'freshly seeded pin refused'
+[ "$(yq '.builds | length' "$pins")" = 3 ] || fail 'first-pin seed lost chart declarations'
+[ "$(yq '.builds[] | select(.name == "other") | .tag' "$pins")" = "$PLACEHOLDER_TAG" ] || fail 'first-pin seed invented another producer release'
+grep -qF 'bump_file "${pins}" "${cdir}values.yaml"' "$template" || fail 'Books caller did not supply chart declarations'
+ok 'absent pins retain native full-list seeding; unrelated images stay unreleased and the Books caller uses declarations'
 
 # ── bundle_engine: the engine read the way the Manager reads it ─────────────
 apps="$work/apps.yaml"

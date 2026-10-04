@@ -63,7 +63,7 @@
 # run.
 #
 # ArgoCD creates the member namespace (CreateNamespace) and labels it via managedNamespaceMetadata:
-# platform/tenant + platform/tenant-managed are the tenant ESO Vault role's precondition (its
+# platform/tenant + platform/tenant-managed + platform/tenant-stage are the tenant ESO Vault role's precondition (its
 # namespace selector matches tenant-managed, and the secret kit's ServiceAccount annotation resolves
 # the per-tenant Vault path); platform/db-consumer admits the namespace through the credentialed
 # backing-service NetworkPolicies (mongodb). Anything BEYOND those three is the member's own
@@ -143,9 +143,12 @@ spec:
           labels:
             platform/tenant: "{{ .values.guid }}"
             platform/tenant-managed: "true"
+            platform/tenant-stage: "{{ .values.stage }}"
             platform/db-consumer: "true"
             {{- range $k, $v := .namespaceLabels }}
+            {{- if ne $k "platform/tenant-stage" }}
             {{ $k }}: {{ $v | quote }}
+            {{- end }}
             {{- end }}
       sources:
         # 0. Values-only source — makes $values/... resolvable for the sources below. Filled
