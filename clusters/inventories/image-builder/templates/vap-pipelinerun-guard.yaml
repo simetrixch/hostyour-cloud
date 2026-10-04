@@ -15,7 +15,10 @@ vap-namespace-build-label.yaml) — so the set of guarded namespaces cannot be
 altered by whoever the guard is aimed at.
 
 WHAT IT BINDS (CEL, fail-closed logic):
-  1. no inline spec.pipelineSpec               — only a referenced Pipeline runs;
+  1. only a referenced Pipeline runs: this policy requires pipelineRef;
+     Tekton's fail-closed validating webhook rejects pipelineRef + pipelineSpec
+     together. pipelineSpec is untyped preserved data in the upstream CRD and
+     is deliberately unavailable to CEL; do not select it here.
   2. a bare spec.pipelineRef.name is required  — nothing anonymous;
   3. no resolver on pipelineRef                — no remote/cluster-resolved
      PIPELINE ref (the pipeline's own taskRefs may resolve the shared Tasks;
@@ -87,9 +90,9 @@ spec:
                 && s.podTemplate.automountServiceAccountToken)
             : false)
   validations:
-    - expression: "!has(object.spec.pipelineSpec)"
-      message: "inline spec.pipelineSpec is not allowed in a build namespace — reference the unit's Pipeline by name."
-      reason: Forbidden
+    # Native exactly-one validation: Tekton v1.12.0
+    # pkg/apis/pipeline/v1/pipelinerun_validation.go:56-62.
+    # Inline-only fails this required reference; inline + reference fails Tekton.
     - expression: "has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0"
       message: "spec.pipelineRef.name is required (a bare Pipeline name)."
       reason: Forbidden

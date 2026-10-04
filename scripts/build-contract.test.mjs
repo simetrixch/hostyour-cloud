@@ -79,3 +79,27 @@ test('immutable render guard catches the planted registry transition inside a gr
     assert.equal(immutableChanges([object], [{...object, spec: {selector: {matchLabels: {app: 'new'}}}}]).length, 1);
   }
 });
+
+test('admission guard selects typed Tekton fields and keeps native inline refusal', () => {
+  const tekton = renderChart('tekton');
+  const crd = tekton.find(d => d.kind === 'CustomResourceDefinition' && d.metadata.name === 'pipelineruns.tekton.dev');
+  const properties = crd.spec.versions.find(v => v.name === 'v1').schema.openAPIV3Schema.properties.spec.properties;
+  // Use the shipped schema, not a hand-maintained list of CEL-visible fields.
+  const guard = renderChart('image-builder').find(d => d.kind === 'ValidatingAdmissionPolicy' &&
+    d.metadata.name === 'image-builder-pipelinerun-guard');
+  const untypedFields = policy => [...new Set([...JSON.stringify(policy.spec).matchAll(/object\.spec\.([A-Za-z0-9_]+)/g)]
+    .map(match => match[1]))].filter(field => !properties[field]?.type).sort();
+  assert.deepEqual(untypedFields(guard), []);
+  const planted = structuredClone(guard);
+  planted.spec.validations.push({expression: '!has(object.spec.pipelineSpec)'});
+  assert.deepEqual(untypedFields(planted), ['pipelineSpec']);
+  // Inline-only is denied by the typed reference requirement; an inline spec
+  // with a reference is rejected by Tekton's native exactly-one validation.
+  assert.equal(guard.spec.failurePolicy, 'Fail');
+  assert.ok(guard.spec.validations.some(v => v.expression ===
+    'has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0'));
+  const webhook = tekton.find(d => d.kind === 'ValidatingWebhookConfiguration' &&
+    d.metadata.name === 'validation.webhook.pipeline.tekton.dev');
+  assert.equal(webhook.metadata.labels['pipeline.tekton.dev/release'], 'v1.12.0');
+  assert.ok(webhook.webhooks.every(h => h.failurePolicy === 'Fail'));
+});
