@@ -36,6 +36,8 @@ const checkExporter = docs => {
   const targets = monitors[0].spec.endpoints.map(({params}) => params.target[0]);
   assert.deepEqual(targets, expected, `the ServiceMonitor does not scrape each of the ${members.replicas} members on its own`);
   for (const uri of [...env.MONGODB_URI.split(','), ...targets]) assert.ok(!uri.includes('@'), `${uri} carries a credential`);
+  // At debug the exporter logs the URI it connects with, the root credential merged into it.
+  assert.doesNotMatch((exporters[0].args ?? []).join(' '), /--log\.level[= ]debug\b/, 'the exporter logs its root credential at debug');
 
   // The consumer's AppProject refuses these kinds, and one refused resource fails the whole sync.
   assert.deepEqual(docs.filter(({kind}) => ['Role', 'RoleBinding', 'Secret'].includes(kind)).map(({kind}) => kind), []);
@@ -45,10 +47,14 @@ test('the unit MongoDB of each mode exports every member as its root, to the obs
   for (const mode of ['standalone', 'replicaset']) checkExporter(render(mode));
 });
 
-test('a render without the mode file, or without the exporter, is refused', () => {
+test('a render without the mode file, without the exporter, or logging at debug is refused', () => {
   assert.throws(() => checkExporter(render('replicaset', {modeFile: false})), /each of the 3 members/);
   const bare = render('standalone').filter(({metadata}) => !metadata.name.includes('prometheus-mongodb-exporter'));
   assert.throws(() => checkExporter(bare), /no MongoDB exporter/);
+  const debug = render('standalone').map(doc => doc.kind !== 'Deployment' ? doc : {...doc, spec: {...doc.spec, template: {...doc.spec.template,
+    spec: {...doc.spec.template.spec, containers: doc.spec.template.spec.containers
+      .map(container => container.name === 'mongodb-exporter' ? {...container, args: [...container.args, '--log.level=debug']} : container)}}}});
+  assert.throws(() => checkExporter(debug), /root credential at debug/);
 });
 
 test('the renderer names the mode file beside the mode word', () => {
