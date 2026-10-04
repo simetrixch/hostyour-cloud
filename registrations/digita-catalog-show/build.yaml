@@ -1,8 +1,0 @@
-name: "digita-catalog-show"
-repoURL: "https://github.com/digitaplatform/digita-catalog-show.git"
-owner: "show"
-onboardedAt: "2026-09-30T19:15:20.607Z"
-suspended: false
-quiesced: false
-removing: false
-builds: ["digita-catalog-show"]
