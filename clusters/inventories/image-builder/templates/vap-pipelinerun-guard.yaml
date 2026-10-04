@@ -114,18 +114,22 @@ spec:
       reason: Forbidden
     # Tekton's parameter values are opaque in the served CRD and cannot be
     # inspected by CEL. Until arbitrary test input has its own strict validator,
-    # only GitOps may create the fixed proof run; controller updates remain allowed.
+    # only GitOps may create fixed proof runs; controller updates remain allowed.
     - expression: >-
         variables.refName != variables.ownTestPipeline ||
-        (request.namespace == {{ printf "%s-build" .Values.digitaTests.proof.repository | quote }} &&
-        object.metadata.name == {{ .Values.digitaTests.proof.name | quote }} &&
+        ((false
+{{- range $proof := concat (list .Values.digitaTests.proof) (.Values.digitaTests.proofs | default list) }}
+        || (request.namespace == {{ printf "%s-build" $proof.repository | quote }} &&
+          object.metadata.name == {{ $proof.name | quote }})
+{{- end }}
+        ) &&
         (request.userInfo.username == 'system:serviceaccount:argocd:argocd-application-controller' ||
           (request.operation == 'UPDATE' && request.userInfo.username == 'system:serviceaccount:tekton:tekton-controller')) &&
         has(object.spec.params) && object.spec.params.size() == 3 &&
         object.spec.params.exists(p, p.name == 'commit') &&
         object.spec.params.exists(p, p.name == 'ref') &&
         object.spec.params.exists(p, p.name == 'git-url'))
-      message: "only the fixed GitOps proof run may invoke tests until arbitrary input is validated."
+      message: "only fixed GitOps proof runs may invoke tests until arbitrary input is validated."
       reason: Forbidden
     - expression: >-
         has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
