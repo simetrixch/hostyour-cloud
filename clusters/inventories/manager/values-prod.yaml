@@ -7,7 +7,7 @@
 builds:
   - name: manager
     image: manager
-    tag: "0.8.385-stable-20261004231244-7db8eb2"
+    tag: "0.8.386-stable-20261004235107-19ef808"
     plugins: "unit"
   # The dbtools job image (hostyour-manager/docker/dbtools.Dockerfile): the
   # Deployment projects it as DBTOOLS_IMAGE and the manager runs every
@@ -15,4 +15,4 @@ builds:
   # is where its caller lives, so a hostyour-manager release bumps this pin.
   - name: dbtools
     image: dbtools
-    tag: "0.8.385-stable-20261004231244-7db8eb2"
+    tag: "0.8.386-stable-20261004235107-19ef808"
