@@ -74,9 +74,3 @@ monitoring:
               annotations:
                 summary: "Release PipelineRun running > 30 minutes"
                 description: "Check for stuck Buildah steps."
-
-tests:
-  nodeImage: docker.io/library/node@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
-  mongoImage: docker.io/library/mongo:8.0.4@sha256:6b0f3b8898c09d1d15753978cd8a733834f692d70aa3d424f680bccd2896f6a1
-  redisImage: docker.io/library/redis:8.8@sha256:b2ba68d56e7e7ea88b64f4eaf307bceafc012079f227ed795785f4283a592dc0
-  reportImage: digita-report-backend@sha256:ef6da62396adfde11ba15e041c720b2cad96cae9d0377ca7fa6d0653e2d13f3a
