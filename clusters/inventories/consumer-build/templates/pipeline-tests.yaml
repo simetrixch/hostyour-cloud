@@ -2,6 +2,7 @@
 {{- $test := include "consumer-build.testRegistration" . -}}
 {{- if $test }}
 {{- $record := $test | fromJson -}}
+{{- $profile := include "consumer-build.testFixtureProfile" . -}}
 {{- $unit := include "consumer-build.unitName" . -}}
 {{- $namespace := printf "%s-build" $unit -}}
 {{- $params := list (dict "name" "repository-url" "value" $record.repositoryURL) (dict "name" "commit" "value" "$(params.commit)") (dict "name" "ref" "value" "$(params.ref)") (dict "name" "recipe-json" "value" $test) (dict "name" "recipe-digest" "value" $record.recipeDigest) (dict "name" "run-id" "value" "$(context.pipelineRun.uid)") (dict "name" "run-name" "value" "$(context.pipelineRun.name)") (dict "name" "run-namespace" "value" "$(context.pipelineRun.namespace)") -}}
@@ -28,7 +29,17 @@ spec:
   workspaces:
     - name: source
   tasks:
+    - name: input
+      taskRef:
+        resolver: cluster
+        params:
+          - {name: kind, value: task}
+          - {name: namespace, value: {{ .Values.eventListener.namespace }}}
+          - {name: name, value: test-input}
+      params:
+{{ $params | toYaml | indent 8 }}
     - name: clone
+      runAfter: [input]
       taskRef:
         resolver: cluster
         params:
@@ -52,15 +63,44 @@ spec:
           - {name: name, value: credential-scan}
       workspaces:
         - {name: source, workspace: source, subPath: source}
-{{- range $task := list "dependencies" "tests" "test-report" }}
-    - name: {{ $task }}
-      runAfter: [{{ if eq $task "dependencies" }}scan{{ else if eq $task "tests" }}dependencies{{ else }}tests{{ end }}]
+{{- if eq $unit "digita-platform" }}
+{{- range $fixture := .Values.digitaTests.fixtures }}
+    - name: fixture-clone-{{ $fixture.name }}
+      runAfter: [input]
       taskRef:
         resolver: cluster
         params:
           - {name: kind, value: task}
           - {name: namespace, value: {{ $.Values.eventListener.namespace }}}
-          - {name: name, value: {{ if eq $task "dependencies" }}test-dependencies{{ else if eq $task "tests" }}test-suites{{ else }}test-report{{ end }}}
+          - {name: name, value: git-clone}
+      params:
+        - {name: url, value: {{ $fixture.repositoryURL | quote }}}
+        - {name: revision, value: {{ $fixture.commit | quote }}}
+        - {name: depth, value: "1"}
+        - {name: credentials-secret, value: build-git-https}
+      workspaces:
+        - {name: source, workspace: source, subPath: {{ printf "fixtures/%s" $fixture.name }}}
+    - name: fixture-scan-{{ $fixture.name }}
+      runAfter: [fixture-clone-{{ $fixture.name }}]
+      taskRef:
+        resolver: cluster
+        params:
+          - {name: kind, value: task}
+          - {name: namespace, value: {{ $.Values.eventListener.namespace }}}
+          - {name: name, value: credential-scan}
+      workspaces:
+        - {name: source, workspace: source, subPath: {{ printf "fixtures/%s" $fixture.name }}}
+{{- end }}
+{{- end }}
+{{- range $task := list "dependencies" "tests" "test-report" }}
+    - name: {{ $task }}
+      runAfter: [{{ if eq $task "dependencies" }}scan{{ if eq $unit "digita-platform" }}{{ range $.Values.digitaTests.fixtures }}, fixture-scan-{{ .name }}{{ end }}{{ end }}{{ else if eq $task "tests" }}dependencies{{ else }}tests{{ end }}]
+      taskRef:
+        resolver: cluster
+        params:
+          - {name: kind, value: task}
+          - {name: namespace, value: {{ $.Values.eventListener.namespace }}}
+          - {name: name, value: {{ if eq $task "dependencies" }}test-dependencies{{ if eq $profile "report" }}-report{{ end }}{{ else if eq $task "tests" }}test-suites{{ if ne $profile "node" }}-{{ $profile }}{{ end }}{{ else }}test-report{{ end }}}
       params:
 {{ $params | toYaml | indent 8 }}
 {{- if eq $task "dependencies" }}
@@ -72,6 +112,7 @@ spec:
       workspaces:
         - {name: source, workspace: source, subPath: source}
         - {name: deps, workspace: source, subPath: deps}
+        - {name: fixtures, workspace: source, subPath: fixtures}
 {{- end }}
 {{- end }}
   finally:
@@ -87,7 +128,7 @@ spec:
         - {name: require-success, value: "false"}
 {{- $root := . -}}
 {{- range $proof := concat (list .Values.digitaTests.proof) (.Values.digitaTests.proofs | default list) }}
-{{- if and (eq $root.Values.global.env "prod") (eq $unit $proof.repository) }}
+{{- if and (eq $root.Values.global.env "prod") (eq $unit $proof.repository) (or (not (hasKey $proof "enabled")) $proof.enabled) }}
 ---
 apiVersion: tekton.dev/v1
 kind: PipelineRun

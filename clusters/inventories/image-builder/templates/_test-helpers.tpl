@@ -2,11 +2,18 @@
 {{- $root := .root -}}
 {{- $name := base .file -}}
 {{- $dependencyDigest := $root.Files.Get "files/test-dependencies.mjs" | sha256sum -}}
-{{- printf "// dependency worker sha256:%s\nimport {writeFileSync, mkdtempSync} from 'node:fs';\nconst directory = mkdtempSync('/tmp/hostyour-runner-');\n" $dependencyDigest -}}
-{{- range $file := list "test-contract.mjs" "test-tools.mjs" "test-dependency-policy.mjs" "test-package-fetch.mjs" -}}
-{{- printf "writeFileSync(directory + '/%s', %s, {mode: 384});\n" $file ($root.Files.Get (printf "files/%s" $file) | toJson) -}}
+{{- $runtimeDigest := printf "%s%s%s%s%s%s%s" $root.Values.tests.nodeImage $root.Values.tests.reportImage $root.Values.tests.mongoImage $root.Values.tests.redisImage ($root.Files.Get "templates/_test-fixtures.tpl") ($root.Files.Get "templates/tasks/test-suites.yaml") ($root.Files.Get "templates/tasks/test-dependencies.yaml") | sha256sum -}}
+{{- printf "// fixed fixture contract sha256:%s\n" ($root.Values.digitaTests.fixtures | toJson | sha256sum) -}}
+{{- printf "// fixed runtime contract sha256:%s\n" $runtimeDigest -}}
+{{- printf "// dependency worker sha256:%s\nimport {writeFileSync, mkdtempSync, mkdirSync, chmodSync} from 'node:fs';\nconst directory = mkdtempSync('/tmp/hostyour-runner-');\nchmodSync(directory, 493);\n" $dependencyDigest -}}
+{{- range $file := list "test-contract.mjs" "test-input.mjs" "test-source.mjs" "test-tools.mjs" "test-dependency-policy.mjs" "test-package-fetch.mjs" "test-toolchain-install.mjs" "test-suite-profiles.mjs" "test-vitest.mjs" "test-vitest-controller.mjs" -}}
+{{- printf "writeFileSync(directory + '/%s', %s, {mode: 420});\n" $file ($root.Files.Get (printf "files/%s" $file) | toJson) -}}
 {{- end -}}
-{{- printf "writeFileSync(directory + '/%s', %s, {mode: 384});\nawait import('file://' + directory + '/%s');\n" $name ($root.Files.Get .file | toJson) $name -}}
+{{- printf "mkdirSync(directory + '/test-toolchain');\n" -}}
+{{- range $file := list "package.json" "pnpm-lock.yaml" -}}
+{{- printf "writeFileSync(directory + '/test-toolchain/%s', %s, {mode: 420});\n" $file ($root.Files.Get (printf "files/test-toolchain/%s" $file) | toJson) -}}
+{{- end -}}
+{{- printf "writeFileSync(directory + '/%s', %s, {mode: 420});\nawait import('file://' + directory + '/%s');\n" $name ($root.Files.Get .file | toJson) $name -}}
 {{- end -}}
 {{- define "image-builder.testRunnerDigest" -}}
 {{- printf "sha256:%s" (include "image-builder.testCode" (dict "root" . "file" "files/test-suites.mjs") | sha256sum) -}}
@@ -57,6 +64,9 @@ containers:
       - {name: REPORTER_INSTALLATION_ID, value: {{ $reporter.installationId | quote }}}
       - {name: REPORTER_PORT, value: {{ $reporter.port | quote }}}
       - {name: TEST_NODE_IMAGE, value: {{ $root.Values.tests.nodeImage | quote }}}
+      - {name: TEST_REPORT_IMAGE, value: {{ printf "%s/%s" (include "common.registryHost" $root) $root.Values.tests.reportImage | quote }}}
+      - {name: TEST_MONGO_IMAGE, value: {{ $root.Values.tests.mongoImage | quote }}}
+      - {name: TEST_REDIS_IMAGE, value: {{ $root.Values.tests.redisImage | quote }}}
       - name: TEST_RUNNER_DIGEST
         value: {{ include "image-builder.testRunnerDigest" $root | quote }}
       - name: TEST_LOG_URL

@@ -1,3 +1,4 @@
+import {condition} from './test-contract.mjs';
 import {readFileSync, writeFileSync, renameSync, rmSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 
@@ -18,4 +19,16 @@ export function writeState(path, value) {
     writeFileSync(temporary, JSON.stringify(value), {mode: 0o600, flag: 'wx'});
     renameSync(temporary, path);
   } finally {rmSync(temporary, {force: true});}
+}
+
+// Preserve only already-published terminal history across a worker rollout.
+// Legacy records predate the completed field; explicit provisional ones do not.
+export function historicalReceipt(cached, run, binding) {
+  const receipt = cached?.receipt;
+  const old = receipt?.binding;
+  if ((receipt?.completed === true || (receipt && !Object.hasOwn(receipt, 'completed'))) &&
+      condition(run)?.status === 'True' && !/cancel|stop/i.test(run.spec.status ?? '') &&
+      old?.repositoryURL === binding.repositoryURL && old?.commit === binding.commit && old?.ref === binding.ref &&
+      JSON.stringify(old.pipelineRun) === JSON.stringify(binding.pipelineRun) &&
+      (old.runnerDigest !== binding.runnerDigest || old.recipeDigest !== binding.recipeDigest)) return receipt;
 }

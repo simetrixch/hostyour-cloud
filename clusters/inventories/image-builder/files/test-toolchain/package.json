@@ -1,0 +1,1 @@
+{"name":"hostyour-trusted-test-toolchain","private":true,"packageManager":"pnpm@11.7.0","dependencies":{"vitest":"4.1.9","tsx":"4.23.0","yaml":"2.9.0"}}

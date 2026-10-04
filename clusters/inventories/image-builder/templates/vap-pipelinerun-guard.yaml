@@ -112,18 +112,27 @@ spec:
     - expression: "!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('tekton.dev/') || k == 'tekton.dev/pipeline')"
       message: "caller labels may not impersonate Tekton task or pod identities."
       reason: Forbidden
-    # Tekton's parameter values are opaque in the served CRD and cannot be
-    # inspected by CEL. Until arbitrary test input has its own strict validator,
-    # only GitOps may create fixed proof runs; controller updates remain allowed.
+    # Parameter values are opaque in the served CRD. The first trusted task
+    # validates event claims before any credentialed clone. Event admission
+    # remains inactive until the existing webhook path is accepted.
     - expression: >-
         variables.refName != variables.ownTestPipeline ||
+{{- if .Values.digitaTests.events.enabled }}
+        (request.operation == 'CREATE' && request.userInfo.username == {{ printf "system:serviceaccount:%s:%s" .Release.Namespace .Values.pipeline.eventListenerServiceAccountName | squote }} &&
+          has(object.metadata.labels) && object.metadata.labels['hostyour.cloud/test-managed'] == 'true' &&
+          has(object.spec.params) && object.spec.params.size() == 3 &&
+          object.spec.params.exists(p, p.name == 'commit') && object.spec.params.exists(p, p.name == 'ref') &&
+          object.spec.params.exists(p, p.name == 'git-url')) ||
+{{- end }}
         (request.operation == 'UPDATE' && request.userInfo.username == 'system:serviceaccount:tekton:tekton-controller') ||
         (request.operation == 'UPDATE' && request.userInfo.username == 'system:serviceaccount:kube-system:generic-garbage-collector' &&
           has(oldObject.metadata.deletionTimestamp) && has(object.metadata.deletionTimestamp)) ||
         ((false
 {{- range $proof := concat (list .Values.digitaTests.proof) (.Values.digitaTests.proofs | default list) }}
+{{- if or (not (hasKey $proof "enabled")) $proof.enabled }}
         || (request.namespace == {{ printf "%s-build" $proof.repository | quote }} &&
           object.metadata.name == {{ $proof.name | quote }})
+{{- end }}
 {{- end }}
         ) &&
         request.userInfo.username == 'system:serviceaccount:argocd:argocd-application-controller' &&
@@ -131,7 +140,7 @@ spec:
         object.spec.params.exists(p, p.name == 'commit') &&
         object.spec.params.exists(p, p.name == 'ref') &&
         object.spec.params.exists(p, p.name == 'git-url'))
-      message: "only fixed GitOps proof runs may invoke tests until arbitrary input is validated."
+      message: "tests require the existing trusted webhook identity or fixed GitOps proof names, with validated input."
       reason: Forbidden
     - expression: >-
         has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&

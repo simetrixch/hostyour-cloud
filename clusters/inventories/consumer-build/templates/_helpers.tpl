@@ -43,3 +43,12 @@ and no other, so the scope is a fact of the registration and never a value of th
 {{- define "consumer-build.hasBuilds" -}}
 {{- if gt (len (include "consumer-build.builds" . | fromJsonArray)) 0 -}}true{{- else -}}false{{- end -}}
 {{- end -}}
+
+{{- define "consumer-build.testFixtureProfile" -}}
+{{- $record := include "consumer-build.testRegistration" . | fromJson -}}
+{{- if eq $record.recipe.runtime "report" -}}report
+{{- else if has "redis" $record.recipe.fixtures -}}mongo-redis
+{{- else if has "mongo-replica" $record.recipe.fixtures -}}mongo
+{{- else -}}node
+{{- end -}}
+{{- end -}}

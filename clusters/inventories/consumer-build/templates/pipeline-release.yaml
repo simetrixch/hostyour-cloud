@@ -71,6 +71,8 @@ namespace, so the credential Secrets they envFrom by name are rendered here
 */ -}}
 {{- if and .Values.unit (eq (include "consumer-build.hasBuilds" .) "true") }}
 {{- $unit := include "consumer-build.unitName" . -}}
+{{- $test := include "consumer-build.testRegistration" . -}}
+{{- $testGate := and (ne $test "") .Values.digitaTests.releaseGate.enabled -}}
 {{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
 {{- $registry := include "common.registryHost" . -}}
 {{- $releaseTagRe := printf "^%s$" (required "consumer-build: global.releaseTagFilter is required (platform values chain)" .Values.global.releaseTagFilter) -}}
@@ -247,6 +249,29 @@ spec:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
 
+{{- if $testGate }}
+    # The clone result is the final stamped release SHA, including image reuse.
+    # Reuse the credentialless reporting task and its existing network path.
+    - name: test-report
+      runAfter: [verify]
+      taskRef:
+        resolver: cluster
+        params:
+          - {name: kind, value: task}
+          - {name: namespace, value: image-builder}
+          - {name: name, value: test-report}
+      params:
+        - {name: repository-url, value: {{ $repoURL | quote }}}
+        - {name: commit, value: "$(tasks.clone.results.commit)"}
+        - {name: ref, value: "refs/tags/deploy/$(params.stage)/$(params.release-tag)"}
+        - {name: recipe-json, value: {{ $test | quote }}}
+        - {name: recipe-digest, value: {{ ($test | fromJson).recipeDigest | quote }}}
+        - {name: receipt-mode, value: latest}
+        - {name: run-id, value: "$(context.pipelineRun.uid)"}
+        - {name: run-name, value: "$(context.pipelineRun.name)"}
+        - {name: run-namespace, value: "$(context.pipelineRun.namespace)"}
+{{- end }}
+
     # ── 4. builds — the manifest, checked against the attestation ────────────
     # Reads builds[] from the TAGGED deploy/platform.yaml and checks every
     # declared build against the ATTESTED names the fan-out stamped from
@@ -264,7 +289,7 @@ spec:
     # grammar before they leave this task: nothing else downstream looks at
     # them again, and the build step that consumes them runs privileged.
     - name: builds
-      runAfter: [clone]
+      runAfter: [clone{{ if $testGate }}, test-report{{ end }}]
       workspaces:
         - { name: source, workspace: source }
       taskSpec:
@@ -352,7 +377,7 @@ spec:
     # beside the build context and hands it to buildah as a BUILD SECRET, so a
     # `COPY . .` in the unit's own Containerfile cannot pick the credential up.
     - name: scan
-      runAfter: [clone]
+      runAfter: [clone{{ if $testGate }}, test-report{{ end }}]
       taskRef:
         resolver: cluster
         params:
@@ -537,6 +562,9 @@ spec:
     # runs no unit code.
     - name: bump
       runAfter:
+{{- if $testGate }}
+        - test-report
+{{- end }}
         # builds and scan are named directly, not left to the build tasks to
         # imply. A unit with NO attested build renders none of them, and the
         # list below would then be empty — the bump would start BESIDE the two

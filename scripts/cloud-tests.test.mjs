@@ -1,15 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, chownSync, statSync, rmSync, symlinkSync, existsSync} from 'node:fs';
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {resolve, join} from 'node:path';
 import {digest, emptyResult, parseNodeTAP, redact, validateResult} from '../clusters/inventories/image-builder/files/test-contract.mjs';
 import {bindRun, inspect} from '../clusters/inventories/image-builder/files/test-reporter-evidence.mjs';
-import {readState, writeState} from '../clusters/inventories/image-builder/files/test-reporter-state.mjs';
+import {listRuns, listGithub, latestRun} from '../clusters/inventories/image-builder/files/test-reporter-list.mjs';
+import {readState, writeState, historicalReceipt} from '../clusters/inventories/image-builder/files/test-reporter-state.mjs';
 import {registryURL, sanitizedDependencyRoot} from '../clusters/inventories/image-builder/files/test-dependency-policy.mjs';
 import {preparePackageTools} from '../clusters/inventories/image-builder/files/test-tools.mjs';
 import {fetchPackages} from '../clusters/inventories/image-builder/files/test-package-fetch.mjs';
+import {installToolchain} from '../clusters/inventories/image-builder/files/test-toolchain-install.mjs';
+import {expiredTestRun} from '../clusters/inventories/image-builder/files/test-retention.mjs';
+import {fixtureProfile} from '../clusters/inventories/image-builder/files/test-suite-profiles.mjs';
+import {validateInput} from '../clusters/inventories/image-builder/files/test-input.mjs';
 
 const code = 'trusted runner bytes';
 const image = 'node@sha256:' + 'a'.repeat(64);
@@ -30,7 +35,7 @@ function fixture() {
   result.notRun = [];
   result.suites[0] = {...result.suites[0], status: 'passed', cases: {passed: 2, failed: 0, skipped: 0}};
   const tasks = {};
-  for (const [name, taskName] of [['clone', 'git-clone'], ['scan', 'credential-scan'], ['dependencies', 'test-dependencies'], ['tests', 'test-suites']]) {
+  for (const [name, taskName] of [['input', 'test-input'], ['clone', 'git-clone'], ['scan', 'credential-scan'], ['dependencies', 'test-dependencies'], ['tests', 'test-suites']]) {
     run.status.childReferences.push({name, kind: 'TaskRun', pipelineTaskName: name});
     tasks[name] = {metadata: {name, ownerReferences: [{uid: run.metadata.uid, controller: true}],
       labels: {'tekton.dev/pipelineRun': run.metadata.name}}, spec: {taskRef: {resolver: 'cluster', params: [
@@ -51,6 +56,37 @@ test('a success needs independent clone, scan, recipe and runner evidence', asyn
   assert.equal((await f.inspect()).passed, true);
   f.tasks.clone.status.results[0].value = 'c'.repeat(40);
   assert.equal((await f.inspect()).passed, false);
+});
+test('suite success remains provisional until every pipeline task succeeds', async () => {
+  const f = fixture();
+  let evidence = await f.inspect();
+  assert.equal(evidence.passed, true);
+  assert.equal(evidence.completed, false);
+  f.run.status.conditions[0].status = 'True';
+  f.run.status.completionTime = '2026-10-04T01:00:03Z';
+  evidence = await f.inspect();
+  assert.equal(evidence.passed, true);
+  assert.equal(evidence.completed, true);
+  f.run.status.conditions[0] = {type: 'Succeeded', status: 'False', reason: 'FinallyFailed'};
+  evidence = await f.inspect();
+  assert.equal(evidence.passed, false);
+  assert.equal(evidence.completed, true);
+});
+test('cancellation requests invalidate provisional success before controller completion', async () => {
+  for (const status of ['Cancelled', 'CancelledRunFinally', 'StoppedRunFinally']) {
+    const f = fixture(); f.run.spec.status = status;
+    const evidence = await f.inspect();
+    assert.equal(evidence.passed, false);
+    assert.equal(evidence.completed, true);
+    assert.equal(evidence.result.result, 'canceled');
+  }
+});
+test('a terminal run without suite evidence is a completed failure', async () => {
+  const f = fixture(); f.run.status.conditions[0].status = 'True';
+  f.run.status.childReferences = f.run.status.childReferences.filter(ref => ref.pipelineTaskName !== 'tests');
+  const evidence = await f.inspect();
+  assert.equal(evidence.passed, false);
+  assert.equal(evidence.completed, true);
 });
 test('zero, skipped, missing and foreign-SHA receipts cannot pass', () => {
   for (const mutate of [r => r.suites[0].cases.passed = 0, r => r.suites[0].cases.skipped = 1,
@@ -135,7 +171,7 @@ test('untrusted test code cannot overwrite the trusted result or fake outer TAP 
     execFileSync(process.execPath, [resolve('clusters/inventories/image-builder/files/test-suites.mjs')], {env: {
       PATH: process.env.PATH, TEST_REGISTRATION: JSON.stringify(reg), TEST_SOURCE: source, TEST_RESULT_PATH: resultPath,
       TEST_REPOSITORY_URL: reg.repositoryURL, TEST_REF: 'refs/heads/master', TEST_COMMIT: 'b'.repeat(40),
-      TEST_RECIPE_DIGEST: reg.recipeDigest, TEST_RUNNER_DIGEST: runnerDigest,
+      TEST_RECIPE_DIGEST: reg.recipeDigest, TEST_RUNNER_DIGEST: runnerDigest, TEST_FIXTURE_PROFILE: "node",
       TEST_RUN_NAME: 'proof-run', TEST_RUN_NAMESPACE: reg.name + '-build', TEST_RUN_UID: fixture().run.metadata.uid,
     }, timeout: 30000, stdio: 'pipe'});
     const result = JSON.parse(readFileSync(resultPath, 'utf8'));
@@ -198,9 +234,319 @@ test('pinned pnpm fetches a public locked package without executing source hooks
     const reader = join(directory, 'reader');
     writeFileSync(reader, '@digitaplatform:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=fixture-reader-with-no-grant\n', {mode: 0o600});
     await preparePackageTools(join(deps, 'tools'));
-    await fetchPackages(source, ['.'], deps, reader);
+    const fetched = await fetchPackages(source, ['.'], deps, reader);
+    assert.ok(fetched.connections > 0, 'pinned PNPM actually uses the host-restricted HTTPS proxy');
     assert.equal(existsSync(join(deps, '.npmrc')), false);
     assert.equal(existsSync(join(deps, 'store')), true);
     assert.equal(JSON.parse(readFileSync(join(deps, 'tools/pnpm/package.json'))).version, '11.7.0');
   } finally {rmSync(directory, {recursive: true, force: true});}
+});
+
+test('fixed Vitest counts real cases under UID1001 and ignores source test scripts and configuration', async () => {
+  assert.equal(process.getuid(), 0, 'this fixture runs only on the public Actions runner');
+  const directory = mkdtempSync(join(tmpdir(), 'hostyour-vitest-'));
+  try {
+    chmodSync(directory, 0o755);
+    const deps = join(directory, 'deps'); mkdirSync(deps);
+    const source = join(directory, 'source'); mkdirSync(source); mkdirSync(join(source, 'tests'));
+    chownSync(source, 1001, 1001);
+    const protectedDirectory = join(directory, 'protected'); mkdirSync(protectedDirectory, {mode: 0o700});
+    const result = join(protectedDirectory, 'result.json');
+    const cache = join(directory, 'cache'); mkdirSync(cache, {mode: 0o700}); chownSync(cache, 1001, 1001);
+    const reader = join(directory, 'reader');
+    writeFileSync(reader, '@digitaplatform:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=fixture-reader-with-no-grant\n', {mode: 0o600});
+    await preparePackageTools(join(deps, 'tools'));
+    await installToolchain(deps, resolve('clusters/inventories/image-builder/files/test-toolchain'), reader);
+    writeFileSync(join(source, 'package.json'), JSON.stringify({type: 'module', scripts: {test: 'echo 9999 passed'}}));
+    writeFileSync(join(source, 'vitest.config.ts'), 'throw new Error("untrusted configuration executed")');
+    writeFileSync(join(source, 'postcss.config.js'), 'throw new Error("untrusted CSS configuration executed")');
+    const protectedCode = join(directory, 'code'); mkdirSync(protectedCode);
+    for (const file of ['test-vitest-controller.mjs', 'test-vitest.mjs', 'test-contract.mjs']) {
+      writeFileSync(join(protectedCode, file), readFileSync(resolve('clusters/inventories/image-builder/files', file)), {mode: 0o644});
+    }
+    const protectedHelper = join(protectedCode, 'canary.mjs');
+    writeFileSync(protectedHelper, 'immutable helper', {mode: 0o600});
+    const runController = () => {
+      const execution = spawnSync(process.execPath, [join(protectedCode, 'test-vitest-controller.mjs')], {uid: 1001, gid: 1001,
+        timeout: 60000, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], env: {PATH: process.env.PATH, HOME: directory, TMPDIR: cache, CI: 'true', NO_COLOR: '1',
+          TEST_PACKAGE_ROOT: source, TEST_TOOLCHAIN: join(deps, 'toolchain'), TEST_VITEST_RESULT: result,
+          TEST_TRUSTED_CACHE: cache, TEST_SUITE_PROFILE: JSON.stringify({include: ['tests/**/*.test.ts']}),
+          TEST_WORKER_ENVIRONMENT: JSON.stringify({CI: 'true', HOME: source})}});
+      if (execution.error) throw execution.error;
+      if (execution.status !== 0) throw new Error(execution.stderr.toString() + execution.stdout.toString());
+      writeFileSync(result, execution.output[3], {mode: 0o600});
+    };
+    writeFileSync(join(source, 'tests/proof.test.ts'), `import {test,expect} from 'vitest';\nimport {writeFileSync} from 'node:fs';\ntest('UID and protected evidence',()=>{expect(process.getuid()).toBe(1001);expect(()=>writeFileSync(${JSON.stringify(result)},'forged')).toThrow(); console.log('9999 passed');});\n`);
+    runController();
+    assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), {passed: 1, failed: 0, skipped: 0});
+    assert.equal(statSync(result).uid, 0);
+    writeFileSync(join(source, 'tests/proof.test.ts'), `import {test,recordArtifact} from 'vitest';\nimport {writeFileSync,mkdirSync,symlinkSync} from 'node:fs';\nimport {createHash} from 'node:crypto';\nimport {resolve} from 'node:path';\ntest('artifact cannot overwrite supervisor code',async({task})=>{const payload=resolve('payload.txt');writeFileSync(payload,'forged helper');mkdirSync('.vitest-attachments');symlinkSync(${JSON.stringify(protectedHelper)},'.vitest-attachments/'+createHash('sha1').update(payload).digest('hex')+'.txt');await recordArtifact(task,{type:'proof',attachments:[{path:payload}]});});\n`);
+    // All framework RPC runs under UID1001. The configured cache may accept
+    // the attachment normally; neither it nor a legacy destination symlink
+    // can retitle the Root-owned supervisor file.
+    try {runController();} catch {}
+    assert.equal(readFileSync(protectedHelper, 'utf8'), 'immutable helper');
+    for (const testCode of ["test('failing',()=>{expect(1).toBe(2)})", "test.skip('skipped',()=>{})", '']) {
+      writeFileSync(result, '');
+      writeFileSync(join(source, 'tests/proof.test.ts'), "import {test,expect} from 'vitest';\n" + testCode);
+      assert.throws(runController, 'zero, skipped and failed cases cannot turn fake script stdout into success');
+    }
+  } finally {rmSync(directory, {recursive: true, force: true});}
+});
+
+test('event input is validated before a credentialed clone', () => {
+  const reg = {...registration, branch: 'master'};
+  const binding = fixture().binding;
+  const grammar = '(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.([0-9]{3}|0|[1-9][0-9]*)-(alpha|beta|stable)-([0-9]{14})';
+  for (const ref of ['refs/heads/master', 'refs/heads/issue-89-cloud-proof',
+    'refs/tags/0.4.001-stable-20261004034200', 'refs/tags/deploy/prod/0.4.001-stable-20261004034200']) {
+    assert.equal(validateInput(reg, {...binding, ref}, grammar).ref, ref);
+  }
+  for (const delta of [{repositoryURL: 'https://github.com/other/repo.git'}, {commit: '0'.repeat(40)},
+    {commit: 'main'}, {ref: 'refs/heads/master;echo bad'}, {ref: 'refs/heads/feature-unregistered'},
+    {ref: 'refs/tags/deploy/staging/0.4.001-stable-20261004034200'}]) {
+    assert.throws(() => validateInput(reg, {...binding, ...delta}, grammar));
+  }
+});
+
+test('reporter reaches run and GitHub evidence beyond the first hundred entries', async () => {
+  const pages = [];
+  const runs = await listRuns(async path => {
+    pages.push(path);
+    return pages.length === 1 ? {items: Array(100).fill({old: true}), metadata: {continue: 'next/token+='}} :
+      {items: [{uid: 'latest'}], metadata: {}};
+  }, registration.name + '-build');
+  assert.equal(runs.length, 101);
+  assert.equal(runs[100].uid, 'latest');
+  assert.ok(pages[1].endsWith('&continue=next%2Ftoken%2B%3D'));
+  for (const field of [undefined, 'check_runs']) {
+    const requests = [];
+    const values = await listGithub(async path => {
+      requests.push(path);
+      const entries = requests.length === 1 ? Array(100).fill({old: true}) : [{id: 101}];
+      return field ? {[field]: entries} : entries;
+    }, '/repos/digitaplatform/example/issues/1/comments', field);
+    assert.equal(values[100].id, 101);
+    assert.ok(requests[1].endsWith('per_page=100&page=2'));
+  }
+});
+test('reporter never approves a partial or cyclic paginated history', async () => {
+  await assert.rejects(listRuns(async () => ({items: [], metadata: {continue: 'same'}}), registration.name + '-build'), /continuation/);
+  let calls = 0;
+  await assert.rejects(listGithub(async () => {
+    if (++calls === 2) throw new Error('second page unavailable');
+    return Array(100).fill({});
+  }, '/repos/digitaplatform/example/issues/1/comments'), /second page unavailable/);
+  await assert.rejects(listGithub(async () => Array(100).fill({}), '/repos/digitaplatform/example/issues/1/comments'), /bound/);
+});
+
+test('the exact-ref newest run supersedes an older pass at the same SHA', () => {
+  const f = fixture();
+  const older = structuredClone(f.run); older.status.conditions[0].status = 'True';
+  const newer = structuredClone(f.run); newer.metadata.creationTimestamp = '2026-10-04T01:00:10Z';
+  newer.status.conditions[0].status = 'False';
+  const foreignRef = structuredClone(newer); foreignRef.metadata.creationTimestamp = '2026-10-04T01:00:20Z';
+  foreignRef.spec.params[2].value = 'refs/heads/master';
+  assert.equal(latestRun([older, foreignRef, newer], registration, f.binding.commit, f.binding.ref), newer);
+  assert.equal(latestRun([foreignRef], registration, f.binding.commit, f.binding.ref), undefined);
+  const ambiguous = structuredClone(newer); ambiguous.metadata.uid = '22222222-2222-4222-8222-222222222222';
+  assert.throws(() => latestRun([newer, ambiguous], registration, f.binding.commit, f.binding.ref), /ambiguous/);
+  assert.throws(() => latestRun([], registration, '0'.repeat(40), f.binding.ref), /invalid/);
+});
+
+function renderChart(chart, extra = []) {
+  const rendered = execFileSync('helm', ['template', chart, 'clusters/inventories/' + chart,
+    '--namespace', chart === 'image-builder' ? 'image-builder' : 'argocd',
+    '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml',
+    '-f', 'clusters/inventories/' + chart + '/values-common.yaml',
+    ...(existsSync('clusters/inventories/' + chart + '/values-prod.yaml') ?
+      ['-f', 'clusters/inventories/' + chart + '/values-prod.yaml'] : []),
+    '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', ...extra],
+    {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
+  return JSON.parse(execFileSync('yq', ['eval-all', '-o=json', '-I=0', '[.]', '-'],
+    {input: rendered, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024})).filter(Boolean);
+}
+test('enabled release gate precedes image reuse, builds and every pin write', () => {
+  const documents = renderChart('consumer-build', ['--set', 'digitaTests.releaseGate.enabled=true', '--set-json',
+    'unit=' + JSON.stringify({name: 'digita-report', repoURL: 'https://github.com/digitaplatform/digita-report.git',
+      buildsJson: '["digita-report-backend","digita-report-frontend"]'})]);
+  const pipeline = documents.find(d => d.kind === 'Pipeline' && d.metadata.name === 'digita-report-release');
+  const tasks = new Map(pipeline.spec.tasks.map(task => [task.name, task]));
+  function ancestors(name, visiting = new Set()) {
+    assert.ok(!visiting.has(name), 'pipeline dependency cycle at ' + name);
+    const next = new Set(visiting).add(name);
+    // Tekton also waits for task results referenced by params and when clauses.
+    const task = tasks.get(name);
+    const inferred = [...JSON.stringify(task).matchAll(/\$\(tasks\.([a-z0-9-]+)\.results\./g)].map(match => match[1]);
+    return [...new Set([...(task.runAfter ?? []), ...inferred])].flatMap(parent => [parent, ...ancestors(parent, next)]);
+  }
+  for (const name of tasks.keys()) ancestors(name);
+  for (const [name, task] of tasks) {
+    if (['builds', 'scan', 'bump', 'argo-sync'].includes(name) ||
+        task.taskRef?.params?.some(param => param.name === 'name' && param.value === 'buildah-build-push') || name.startsWith('probe-')) {
+      assert.ok(ancestors(name).includes('test-report'), name + ' bypassed exact-SHA tests');
+    }
+  }
+  const gate = Object.fromEntries(tasks.get('test-report').params.map(param => [param.name, param.value]));
+  assert.equal(gate.commit, '$(tasks.clone.results.commit)');
+  assert.equal(gate.ref, 'refs/tags/deploy/$(params.stage)/$(params.release-tag)');
+  assert.equal(gate['receipt-mode'], 'latest');
+  assert.equal(gate['repository-url'], 'https://github.com/digitaplatform/digita-report.git');
+});
+test('HMAC test triggers bind each repository and leave ordinary public branch CI alone', () => {
+  const documents = renderChart('image-builder', ['--set', 'digitaTests.events.enabled=true']);
+  const event = documents.find(d => d.kind === 'EventListener');
+  const triggers = documents.filter(d => d.kind === 'Trigger' && d.metadata.name.endsWith('-test-push'));
+  for (const trigger of triggers) {
+    const unit = trigger.metadata.name.slice(0, -'-test-push'.length);
+    assert.ok(event.spec.triggers.some(ref => ref.triggerRef === trigger.metadata.name));
+    const hmac = trigger.spec.interceptors.find(interceptor => interceptor.ref.name === 'github');
+    assert.deepEqual(hmac.params.find(param => param.name === 'secretRef').value,
+      {secretName: 'image-builder-webhook-secrets', secretKey: 'github'});
+    const filter = trigger.spec.interceptors.find(interceptor => interceptor.ref.name === 'cel').params[0].value;
+    assert.ok(filter.includes("body.repository.full_name == 'digitaplatform/" + unit + "'"));
+    assert.ok(filter.includes("body.repository.clone_url == 'https://github.com/digitaplatform/" + unit + ".git'"));
+    assert.ok(filter.includes('has(body.deleted) && body.deleted'));
+    assert.ok(filter.includes("body.after != '0000000000000000000000000000000000000000'"));
+    if (['digita-platform', 'digita-plugins-free', 'digita-translations'].includes(unit)) {
+      assert.ok(!filter.includes('refs/heads/'));
+    } else assert.ok(filter.includes('refs/heads/issue-'));
+    const releasePattern = new RegExp(/body.ref.matches\(r'([^']+)'\)/.exec(filter)[1]);
+    assert.ok(releasePattern.test('refs/tags/deploy/prod/0.4.001-stable-20261004034200'));
+    assert.ok(releasePattern.test('refs/tags/0.4.001-stable-20261004034200'));
+    assert.ok(!releasePattern.test('refs/tags/deploy/staging/0.4.001-stable-20261004034200'));
+  }
+  const template = documents.find(d => d.kind === 'TriggerTemplate' && d.metadata.name === 'digita-test-push');
+  const run = template.spec.resourcetemplates[0];
+  assert.equal(run.spec.taskRunTemplate.serviceAccountName, 'pipeline-sa');
+  assert.ok(!run.spec.pipelineSpec);
+  assert.ok(run.spec.workspaces[0].volumeClaimTemplate);
+  assert.ok(!run.spec.workspaces[0].persistentVolumeClaim);
+});
+
+test('a worker rollout preserves completed history but never freezes a provisional receipt', () => {
+  const f = fixture(); f.run.status.conditions[0].status = 'True';
+  const receipt = {binding: {...f.binding, runnerDigest: digest('previous worker')}, passed: true, result: f.result, completed: false};
+  assert.equal(historicalReceipt({receipt}, f.run, f.binding), undefined);
+  receipt.completed = true;
+  assert.equal(historicalReceipt({receipt}, f.run, f.binding), receipt);
+  for (const status of ['Unknown', 'False']) {
+    f.run.status.conditions[0].status = status;
+    assert.equal(historicalReceipt({receipt}, f.run, f.binding), undefined);
+  }
+  f.run.status.conditions[0].status = 'True';
+  f.run.spec.status = 'CancelledRunFinally';
+  assert.equal(historicalReceipt({receipt}, f.run, f.binding), undefined);
+  delete f.run.spec.status;
+  assert.equal(historicalReceipt({receipt}, f.run, {...f.binding, commit: 'c'.repeat(40)}), undefined);
+  delete receipt.completed;
+  assert.equal(historicalReceipt({receipt}, f.run, f.binding), receipt);
+});
+
+test('fixture profiles bind the required sidecar task and reject missing input validation', async () => {
+  for (const [runtime, fixtures, expected] of [['node', [], 'node'], ['node', ['mongo-replica'], 'mongo'],
+    ['node', ['mongo-replica', 'redis'], 'mongo-redis'], ['report', ['mongo-replica'], 'report']]) {
+    assert.equal(fixtureProfile({recipe: {runtime, fixtures}}), expected);
+  }
+  for (const recipe of [{runtime: 'report', fixtures: []}, {runtime: 'node', fixtures: ['redis']},
+    {runtime: 'unknown', fixtures: []}]) assert.throws(() => fixtureProfile({recipe}));
+  const f = fixture(); f.tasks.input.status.conditions[0].status = 'False';
+  const evidence = await f.inspect();
+  assert.equal(evidence.passed, false);
+});
+
+test('retention expires only terminal owned tests after fourteen complete days', () => {
+  const f = fixture(); f.run.metadata.labels = {'hostyour.cloud/test-managed': 'true'};
+  f.run.status.conditions[0].status = 'True';
+  f.run.status.completionTime = '2026-10-04T01:00:03Z';
+  const expiry = Date.parse(f.run.status.completionTime) + 14 * 24 * 60 * 60 * 1000;
+  assert.equal(expiredTestRun(f.run, registration, expiry - 1), false);
+  assert.equal(expiredTestRun(f.run, registration, expiry), true);
+  for (const mutate of [r => r.status.conditions[0].status = 'Unknown', r => delete r.status.completionTime,
+    r => r.spec.pipelineRef.name = registration.name + '-release', r => r.metadata.namespace = 'foreign-build',
+    r => delete r.metadata.labels['hostyour.cloud/test-managed'], r => r.spec.pipelineSpec = {}]) {
+    const run = structuredClone(f.run); mutate(run);
+    assert.equal(expiredTestRun(run, registration, expiry), false);
+  }
+});
+
+test('runtime renders bind sidecars, musl dependency preparation and private read-only image pulls', () => {
+  const builder = renderChart('image-builder');
+  const report = builder.find(d => d.kind === 'Task' && d.metadata.name === 'test-suites-report');
+  assert.equal(report.spec.steps[0].env.find(value => value.name === 'TEST_FIXTURE_PROFILE').value, 'report');
+  assert.ok(report.spec.steps[0].image.includes('/digita-report-backend@sha256:'));
+  assert.equal(report.spec.sidecars[0].name, 'mongo');
+  assert.deepEqual(report.spec.sidecars[0].volumeMounts.map(value => value.name), ['mongo-data', 'mongo-scratch']);
+  assert.ok(report.spec.volumes.every(volume => !volume.persistentVolumeClaim && !volume.secret));
+  const dependency = builder.find(d => d.kind === 'Task' && d.metadata.name === 'test-dependencies-report');
+  assert.equal(dependency.spec.steps[0].name, 'source');
+  assert.ok(dependency.spec.steps[0].image.startsWith('docker.io/library/node@sha256:'));
+  assert.ok(!dependency.spec.steps[0].volumeMounts.some(value => value.name === 'npmrc'));
+  assert.ok(dependency.spec.steps[1].image.includes('/digita-report-backend@sha256:'));
+  const auth = builder.find(d => d.kind === 'Task' && d.metadata.name === 'test-suites-mongo-redis');
+  assert.deepEqual(auth.spec.sidecars.map(value => value.name), ['mongo', 'redis']);
+  const consumer = renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'digita-report',
+    repoURL: 'https://github.com/digitaplatform/digita-report.git', buildsJson: '["digita-report-backend"]'})]);
+  const pipeline = consumer.find(d => d.kind === 'Pipeline' && d.metadata.name === 'digita-report-tests');
+  assert.equal(pipeline.spec.tasks.find(task => task.name === 'tests').taskRef.params.find(param => param.name === 'name').value, 'test-suites-report');
+  assert.equal(pipeline.spec.tasks.find(task => task.name === 'dependencies').taskRef.params.find(param => param.name === 'name').value, 'test-dependencies-report');
+  const account = consumer.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa');
+  assert.deepEqual(account.imagePullSecrets, [{name: 'image-builder-registry-pull'}]);
+  const pull = consumer.find(d => d.kind === 'ExternalSecret' && d.metadata.name === 'image-builder-registry-pull');
+  assert.equal(pull.spec.target.template.type, 'kubernetes.io/dockerconfigjson');
+  assert.equal(pull.spec.target.template.mergePolicy, 'Merge');
+  assert.equal(pull.spec.data.length, 2);
+  assert.ok(pull.spec.data.every(value => value.remoteRef.property.startsWith('pull-')));
+});
+test('prepared retention exposes only PipelineRun deletion and protects release runs', () => {
+  const builder = renderChart('image-builder', ['--set', 'digitaTests.retention.enabled=true']);
+  const guard = builder.find(d => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'digita-test-pruner-delete-guard');
+  assert.deepEqual(guard.spec.matchConstraints.resourceRules[0].operations, ['DELETE']);
+  assert.ok(guard.spec.validations[0].expression.includes("+ '-tests'"));
+  assert.ok(guard.spec.validations[0].expression.includes("c.status in ['True', 'False']"));
+  const job = builder.find(d => d.kind === 'CronJob' && d.metadata.name === 'digita-test-pruner');
+  assert.equal(job.spec.jobTemplate.spec.template.spec.serviceAccountName, 'digita-test-pruner');
+  assert.ok(job.spec.jobTemplate.spec.template.spec.volumes.every(volume => !volume.secret));
+  const consumer = renderChart('consumer-build', ['--set', 'digitaTests.retention.enabled=true', '--set-json',
+    'unit=' + JSON.stringify({name: 'digita-report', repoURL: 'https://github.com/digitaplatform/digita-report.git', buildsJson: '[]'})]);
+  const role = consumer.find(d => d.kind === 'Role' && d.metadata.name === 'digita-test-pruner');
+  assert.deepEqual(role.rules, [{apiGroups: ['tekton.dev'], resources: ['pipelineruns'], verbs: ['get', 'list', 'delete']}]);
+});
+
+test('Platform fixtures use four exact clones/scans before dependency execution and stay read-only to suites', () => {
+  const consumer = renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'digita-platform',
+    repoURL: 'https://github.com/digitaplatform/digita-platform.git', buildsJson: '["digita-engine"]'})]);
+  const pipeline = consumer.find(d => d.kind === 'Pipeline' && d.metadata.name === 'digita-platform-tests');
+  const tasks = new Map(pipeline.spec.tasks.map(task => [task.name, task]));
+  const dependencies = tasks.get('dependencies');
+  const fixtures = ['digita-catalog', 'digita-catalog-show', 'digita-catalog-simetrix', 'digita-translations'];
+  for (const name of fixtures) {
+    const clone = tasks.get('fixture-clone-' + name);
+    assert.deepEqual(clone.runAfter, ['input']);
+    const params = Object.fromEntries(clone.params.map(param => [param.name, param.value]));
+    assert.equal(params.url, 'https://github.com/digitaplatform/' + name + '.git');
+    assert.match(params.revision, /^[a-f0-9]{40}$/);
+    assert.equal(params['credentials-secret'], 'build-git-https');
+    assert.equal(clone.workspaces[0].subPath, 'fixtures/' + name);
+    assert.deepEqual(tasks.get('fixture-scan-' + name).runAfter, ['fixture-clone-' + name]);
+    assert.ok(dependencies.runAfter.includes('fixture-scan-' + name));
+  }
+  const builder = renderChart('image-builder');
+  const suites = builder.find(d => d.kind === 'Task' && d.metadata.name === 'test-suites-mongo');
+  assert.equal(suites.spec.workspaces.find(workspace => workspace.name === 'fixtures').readOnly, true);
+  assert.equal(suites.spec.workspaces.find(workspace => workspace.name === 'deps').readOnly, true);
+});
+
+
+test('held Report artifact proof adds neither a PipelineRun nor an admitted CREATE', () => {
+  const unit = ['--set-json', 'unit=' + JSON.stringify({name: 'digita-report',
+    repoURL: 'https://github.com/digitaplatform/digita-report.git', buildsJson: '["digita-report-backend"]'})];
+  const proofName = 'digita-report-tests-op3-capture-69bdfc6';
+  assert.ok(!renderChart('consumer-build', unit).some(d => d.kind === 'PipelineRun' && d.metadata.name === proofName));
+  const guard = docs => JSON.stringify(docs.find(d => d.kind === 'ValidatingAdmissionPolicy' &&
+    d.metadata.name === 'image-builder-pipelinerun-guard'));
+  assert.ok(!guard(renderChart('image-builder')).includes(proofName));
+  const approved = ['--set', 'digitaTests.proofs[3].enabled=true'];
+  assert.ok(renderChart('consumer-build', [...unit, ...approved]).some(d => d.kind === 'PipelineRun' && d.metadata.name === proofName));
+  assert.ok(guard(renderChart('image-builder', approved)).includes(proofName));
 });

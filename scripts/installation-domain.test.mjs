@@ -49,7 +49,7 @@ test('Bash and PowerShell return identical bytes and codes for help and rejected
     const bash = spawnSync('bash', [root + 'lifecycle/plan-installation-domain.sh', ...args]);
     const ps = spawnSync('pwsh', ['-NoProfile', '-File', root + 'lifecycle/plan-installation-domain.ps1', ...args]);
     assert.equal(bash.error, undefined); assert.equal(ps.error, undefined);
-    assert.equal(ps.status, bash.status);
+    assert.equal(ps.status, bash.status, ps.stderr.toString());
     assert.equal(ps.stdout.toString(), bash.stdout.toString());
     assert.equal(ps.stderr.toString(), bash.stderr.toString());
     assert.equal(bash.status, args[0] === '--help' ? 0 : 64);
