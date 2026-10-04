@@ -15,4 +15,5 @@ helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'
 echo 'test: installation domain planning and paired launchers.'
 node --test scripts/installation-domain.test.mjs || fail 'scripts/installation-domain.test.mjs'
+node --test scripts/tenant-stage-label.test.mjs || fail 'scripts/tenant-stage-label.test.mjs'
 echo 'test: OK — all suites green'
