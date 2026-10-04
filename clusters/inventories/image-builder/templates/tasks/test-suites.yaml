@@ -20,6 +20,8 @@ spec:
     - {name: run-namespace, type: string}
   workspaces:
     - name: source
+    - name: fixtures
+      readOnly: true
     - name: deps
       readOnly: true
   results:
@@ -66,6 +68,7 @@ spec:
           value: "$(params.recipe-digest)"
         - name: TEST_RUNNER_DIGEST
           value: {{ include "image-builder.testRunnerDigest" $root | quote }}
+        - {name: TEST_FIXTURES, value: "$(workspaces.fixtures.path)"}
         - {name: TEST_SOURCE, value: "$(workspaces.source.path)"}
         - {name: TEST_DEPENDENCIES, value: "$(workspaces.deps.path)"}
         - {name: TEST_FIXTURE_PROFILE, value: {{ $profile | quote }}}

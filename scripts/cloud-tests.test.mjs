@@ -512,3 +512,27 @@ test('prepared retention exposes only PipelineRun deletion and protects release 
   const role = consumer.find(d => d.kind === 'Role' && d.metadata.name === 'digita-test-pruner');
   assert.deepEqual(role.rules, [{apiGroups: ['tekton.dev'], resources: ['pipelineruns'], verbs: ['get', 'list', 'delete']}]);
 });
+
+test('Platform fixtures use four exact clones/scans before dependency execution and stay read-only to suites', () => {
+  const consumer = renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'digita-platform',
+    repoURL: 'https://github.com/digitaplatform/digita-platform.git', buildsJson: '["digita-engine"]'})]);
+  const pipeline = consumer.find(d => d.kind === 'Pipeline' && d.metadata.name === 'digita-platform-tests');
+  const tasks = new Map(pipeline.spec.tasks.map(task => [task.name, task]));
+  const dependencies = tasks.get('dependencies');
+  const fixtures = ['digita-catalog', 'digita-catalog-show', 'digita-catalog-simetrix', 'digita-translations'];
+  for (const name of fixtures) {
+    const clone = tasks.get('fixture-clone-' + name);
+    assert.deepEqual(clone.runAfter, ['input']);
+    const params = Object.fromEntries(clone.params.map(param => [param.name, param.value]));
+    assert.equal(params.url, 'https://github.com/digitaplatform/' + name + '.git');
+    assert.match(params.revision, /^[a-f0-9]{40}$/);
+    assert.equal(params['credentials-secret'], 'build-git-https');
+    assert.equal(clone.workspaces[0].subPath, 'fixtures/' + name);
+    assert.deepEqual(tasks.get('fixture-scan-' + name).runAfter, ['fixture-clone-' + name]);
+    assert.ok(dependencies.runAfter.includes('fixture-scan-' + name));
+  }
+  const builder = renderChart('image-builder');
+  const suites = builder.find(d => d.kind === 'Task' && d.metadata.name === 'test-suites-mongo');
+  assert.equal(suites.spec.workspaces.find(workspace => workspace.name === 'fixtures').readOnly, true);
+  assert.equal(suites.spec.workspaces.find(workspace => workspace.name === 'deps').readOnly, true);
+});

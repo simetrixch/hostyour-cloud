@@ -29,6 +29,11 @@ const environment = {PATH: (dependencies ? resolve(dependencies, 'bin') + ':' : 
   GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', NPM_CONFIG_USERCONFIG: '/dev/null',
   NPM_CONFIG_GLOBALCONFIG: '/dev/null', MONGOMS_RUNTIME_DOWNLOAD: 'false'};
 const profile = fixtureProfile(registration);
+const fixtures = process.env.TEST_FIXTURES && realpathSync(process.env.TEST_FIXTURES);
+if (registration.name === 'digita-platform') {
+  if (!fixtures) throw new Error('required immutable fixtures are missing');
+  environment.CATALOG_DIRS = ['digita-catalog', 'digita-catalog-show', 'digita-catalog-simetrix'].map(name => resolve(fixtures, name)).join(':');
+}
 if (profile !== 'node') environment.DIGITA_TEST_MONGODB_URI = 'mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true';
 if (profile === 'mongo-redis') environment.AUTH_TEST_REDIS_URI = 'redis://127.0.0.1:6379';
 if (profile === 'report') {
@@ -143,6 +148,9 @@ try {
     for (const profile of suiteProfile(registration, suite)) {
       const root = realpathSync(resolve(source, profile.path));
       if (root !== source && !root.startsWith(source + '/')) throw new Error('suite path escaped source');
+      if (registration.name === 'digita-platform' && ['packages/engine', 'packages/app', 'packages/web'].includes(profile.path)) {
+        environment.TRANSLATIONS_DIR = resolve(fixtures, 'digita-translations/translations/digita-' + profile.path.split('/')[1]);
+      }
       let runResult;
       let counted;
       if (profile.adapter === 'static') {

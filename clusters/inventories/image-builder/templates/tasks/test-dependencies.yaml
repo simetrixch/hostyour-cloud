@@ -22,6 +22,7 @@ spec:
     - {name: registry-scope, type: string}
   workspaces:
     - name: source
+    - name: fixtures
     - name: deps
   results:
     - name: recipe-digest
@@ -56,6 +57,8 @@ spec:
           value: "$(params.recipe-digest)"
         - name: TEST_RUNNER_DIGEST
           value: {{ include "image-builder.testRunnerDigest" $root | quote }}
+        - {name: TEST_FIXTURES, value: "$(workspaces.fixtures.path)"}
+        - {name: TEST_FIXTURE_REGISTRATIONS, value: {{ $root.Values.digitaTests.fixtures | toJson | quote }}}
         - {name: TEST_SOURCE, value: "$(workspaces.source.path)"}
         - {name: TEST_DEPENDENCIES, value: "$(workspaces.deps.path)"}
         - {name: TEST_PACKAGE_MANAGER_VERSION, value: "$(params.package-manager-version)"}

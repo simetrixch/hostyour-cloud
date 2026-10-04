@@ -63,9 +63,38 @@ spec:
           - {name: name, value: credential-scan}
       workspaces:
         - {name: source, workspace: source, subPath: source}
+{{- if eq $unit "digita-platform" }}
+{{- range $fixture := .Values.digitaTests.fixtures }}
+    - name: fixture-clone-{{ $fixture.name }}
+      runAfter: [input]
+      taskRef:
+        resolver: cluster
+        params:
+          - {name: kind, value: task}
+          - {name: namespace, value: {{ $.Values.eventListener.namespace }}}
+          - {name: name, value: git-clone}
+      params:
+        - {name: url, value: {{ $fixture.repositoryURL | quote }}}
+        - {name: revision, value: {{ $fixture.commit | quote }}}
+        - {name: depth, value: "1"}
+        - {name: credentials-secret, value: build-git-https}
+      workspaces:
+        - {name: source, workspace: source, subPath: {{ printf "fixtures/%s" $fixture.name }}}
+    - name: fixture-scan-{{ $fixture.name }}
+      runAfter: [fixture-clone-{{ $fixture.name }}]
+      taskRef:
+        resolver: cluster
+        params:
+          - {name: kind, value: task}
+          - {name: namespace, value: {{ $.Values.eventListener.namespace }}}
+          - {name: name, value: credential-scan}
+      workspaces:
+        - {name: source, workspace: source, subPath: {{ printf "fixtures/%s" $fixture.name }}}
+{{- end }}
+{{- end }}
 {{- range $task := list "dependencies" "tests" "test-report" }}
     - name: {{ $task }}
-      runAfter: [{{ if eq $task "dependencies" }}scan{{ else if eq $task "tests" }}dependencies{{ else }}tests{{ end }}]
+      runAfter: [{{ if eq $task "dependencies" }}scan{{ if eq $unit "digita-platform" }}{{ range $.Values.digitaTests.fixtures }}, fixture-scan-{{ .name }}{{ end }}{{ end }}{{ else if eq $task "tests" }}dependencies{{ else }}tests{{ end }}]
       taskRef:
         resolver: cluster
         params:
@@ -83,6 +112,7 @@ spec:
       workspaces:
         - {name: source, workspace: source, subPath: source}
         - {name: deps, workspace: source, subPath: deps}
+        - {name: fixtures, workspace: source, subPath: fixtures}
 {{- end }}
 {{- end }}
   finally:
