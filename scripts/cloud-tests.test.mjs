@@ -373,7 +373,10 @@ test('enabled release gate precedes image reuse, builds and every pin write', ()
   function ancestors(name, visiting = new Set()) {
     assert.ok(!visiting.has(name), 'pipeline dependency cycle at ' + name);
     const next = new Set(visiting).add(name);
-    return (tasks.get(name).runAfter ?? []).flatMap(parent => [parent, ...ancestors(parent, next)]);
+    // Tekton also waits for task results referenced by params and when clauses.
+    const task = tasks.get(name);
+    const inferred = [...JSON.stringify(task).matchAll(/\$\(tasks\.([a-z0-9-]+)\.results\./g)].map(match => match[1]);
+    return [...new Set([...(task.runAfter ?? []), ...inferred])].flatMap(parent => [parent, ...ancestors(parent, next)]);
   }
   for (const name of tasks.keys()) ancestors(name);
   for (const [name, task] of tasks) {

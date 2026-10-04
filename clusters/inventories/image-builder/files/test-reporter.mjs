@@ -44,7 +44,8 @@ async function publish(run, registration) {
       // Release lookup still requires the current digests, and a later failure
       // or cancellation always re-enters authoritative reconciliation.
       const old = cached?.receipt?.binding;
-      if (cached?.receipt && condition(run)?.status === 'True' && !/cancel|stop/i.test(run.spec.status ?? '') &&
+      if ((cached?.receipt?.completed === true || (cached?.receipt && !Object.hasOwn(cached.receipt, 'completed'))) &&
+          condition(run)?.status === 'True' && !/cancel|stop/i.test(run.spec.status ?? '') &&
           old?.repositoryURL === binding.repositoryURL && old?.commit === binding.commit && old?.ref === binding.ref &&
           JSON.stringify(old.pipelineRun) === JSON.stringify(binding.pipelineRun) &&
           (old.runnerDigest !== binding.runnerDigest || old.recipeDigest !== binding.recipeDigest)) return cached.receipt;
