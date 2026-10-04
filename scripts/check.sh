@@ -23,13 +23,44 @@ fail() { echo "check: FAIL — $1"; exit 1; }
 #
 # base64 decodes rendered values; yq reads the version stamp declarations.
 missing=""
-for tool in helm gitleaks base64 yq; do
+for tool in helm gitleaks base64 yq node; do
   command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
 done
 [ -n "$missing" ] && fail "these tools are not on this path:$missing"
 
 work="$(mktemp -d)" || fail "no temporary directory could be made"
 trap 'rm -rf "$work"' EXIT
+
+# Compare against the preceding stable source, never a hand-maintained snapshot.
+# A tag on a clean HEAD is the candidate itself, so its parent supplies the baseline.
+revision=HEAD
+if git diff --quiet && git diff --cached --quiet && git tag --points-at HEAD | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+-stable-'; then
+  revision=HEAD^
+fi
+baseline="$(git describe --tags --match '*-stable-*' --abbrev=0 "$revision" 2>/dev/null)" \
+  || fail "no preceding stable release available for immutable comparison; fetch complete release history"
+mkdir "$work/baseline" || fail "cannot prepare immutable baseline"
+git archive "$baseline" clusters | tar -x -C "$work/baseline" || fail "cannot extract immutable baseline"
+node scripts/check-immutable.mjs --probe || fail "immutable-field counter-probe failed"
+immutable_rendered=0
+
+# args, chart, name and namespace are the same value chain used by the render below.
+check_immutable_render() {
+  local current="$1" previous
+  [ -f "$work/baseline/$chart/Chart.yaml" ] || return 0
+  previous="$(cd "$work/baseline" &&
+    { helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" 2>/dev/null ||
+      helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" \
+        -f "$installation_values" -f "$cluster_map" -f "$registration"; })" \
+    || fail "cannot render $chart at preceding stable release $baseline"
+  printf '%s' "$previous" | yq eval-all -o=json -I=0 '[.]' - > "$work/immutable-before.json" \
+    || fail "cannot parse preceding render"
+  printf '%s' "$current" | yq eval-all -o=json -I=0 '[.]' - > "$work/immutable-after.json" \
+    || fail "cannot parse candidate render"
+  node "$root/scripts/check-immutable.mjs" "$work/immutable-before.json" "$work/immutable-after.json" "$namespace" \
+    || fail "$chart at $stage changes an immutable field of a retained identity; use a new identity"
+  immutable_rendered=$((immutable_rendered + 1))
+}
 
 # ── What an installation answers ────────────────────────────────────────────────────────────
 # The three stand-in documents are TRACKED FILES, and each is read here rather than written out.
@@ -292,6 +323,11 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       || { echo "$out"; fail "the dependencies of $chart could not be built"; }
   fi
 
+  if [ -f "$work/baseline/$chart/Chart.yaml" ] && grep -q '^dependencies:' "$work/baseline/$chart/Chart.yaml"; then
+    out="$(cd "$work/baseline" && helm dependency update "$chart" 2>&1)" \
+      || { echo "$out"; fail "cannot build baseline dependencies of $chart"; }
+  fi
+
   # The namespace the app declares for itself. A chart holding a PersistentVolumeClaim refuses
   # to render into another namespace — a claim does not follow a release — so rendering into
   # helm's default would report a defect in a chart that has none.
@@ -315,6 +351,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       rendered=$((rendered + 1))
       collect_expressions "$name at stage $stage" "$trunk_only"
       collect_disagreeing "$name at stage $stage" "$trunk_only"
+      check_immutable_render "$trunk_only"
       continue
     fi
 
@@ -326,6 +363,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       rendered=$((rendered + 1))
       collect_expressions "$name at stage $stage" "$out"
       collect_disagreeing "$name at stage $stage" "$out"
+      check_immutable_render "$out"
       case " $needed_standin " in
         *" $name "*) ;;
         *) needed_standin="$needed_standin $name" ;;
@@ -340,6 +378,21 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
 $(printf '%s' "$out" | sed 's/^/    /')"
   done
 done
+
+# Catalog mode emits only the fan-out, so also compare the generic production-unit mode.
+chart=clusters/inventories/consumer-build
+name=consumer-build
+namespace=check-build
+for stage in $stages; do
+  args=(-f clusters/platform/values-common.yaml -f "clusters/platform/values-$stage.yaml"
+    -f "$chart/values-common.yaml" --set-json
+    'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[\"check\"]"}')
+  out="$(helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" \
+    -f "$installation_values" -f "$cluster_map" -f "$registration" 2>&1)" \
+    || { echo "$out"; fail "cannot render production-unit immutable probe"; }
+  check_immutable_render "$out"
+done
+echo "check: $immutable_rendered immutable render comparisons green against $baseline."
 
 [ -n "$skipped_library" ] && echo "check: library charts, which render only through what depends on them:$skipped_library"
 [ -n "$needed_standin" ] && echo "check: charts that render only with an installation's own answers, which no file of this repository carries:$needed_standin"
@@ -462,7 +515,7 @@ done
 helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
   -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
-  --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[]"}' \
+  --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[\"check\"]"}' \
   > "$work/fence-render" 2>&1 \
   || { cat "$work/fence-render"; fail "clusters/inventories/consumer-build does not render in unit mode, which is where a unit's build grants stand"; }
 # The build's .npmrc routes the unit's OWN scope — the owner of its repository — to GitHub
@@ -654,8 +707,8 @@ echo "check: every yaml_value stamp site of this tree holds its pin from cluster
 
 echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/cloud-tests.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
-for module in clusters/inventories/image-builder/files/*.mjs scripts/cloud-tests.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs; do
+echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
+for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in public GitHub Actions.'

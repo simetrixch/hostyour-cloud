@@ -26,13 +26,5 @@ clusters/inventories/consumer-build/app.yaml says runsOn: master, so the app gen
 it on the build plane and nowhere else.
 */ -}}
 {{- if not .Values.unit }}
-{{- $excludes := list -}}
-{{- $elements := list -}}
-{{- range .Values.digitaTests.repositories -}}
-{{- $excludes = append $excludes (dict "path" (printf "registrations/%s/build.yaml" .name) "exclude" true) -}}
-{{- $elements = append $elements (dict "name" .name "repoURL" .repositoryURL "builds" (list) "suspended" false) -}}
-{{- end -}}
-{{- $git := dict "repoURL" "https://github.com/simetrixch/hostyour-cloud.git" "revision" .Values.global.booksCluster "files" (list (dict "path" "registrations/*/build.yaml")) -}}
-{{- $generator := dict "merge" (dict "mergeKeys" (list "name") "generators" (list (dict "list" (dict "elements" $elements)) (dict "git" $git))) "selector" (dict "matchLabels" (dict "suspended" "false")) -}}
-{{- .Files.Get "files/applicationset.yaml" | replace "__TEST_EXCLUDES__" ($excludes | toYaml | indent 10) | replace "__TEST_GENERATOR__" ((list $generator) | toYaml | indent 4) | replace "__CLUSTER__" (required "consumer-build: global.clusterName is required (clusters/active/<fqdn>.yaml) — the build Applications name the cluster they deploy to, and their project allows that name" .Values.global.clusterName) | replace "__STAGE__" .Values.global.env | replace "__BRANCH__" .Values.global.domain | replace "__BOOKS__" (required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksCluster) }}
+{{- .Files.Get "files/applicationset.yaml" | replace "__CLUSTER__" (required "consumer-build: global.clusterName is required (clusters/active/<fqdn>.yaml) — the build Applications name the cluster they deploy to, and their project allows that name" .Values.global.clusterName) | replace "__STAGE__" .Values.global.env | replace "__BRANCH__" .Values.global.domain | replace "__BOOKS__" (required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksCluster) }}
 {{- end }}

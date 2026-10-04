@@ -247,6 +247,8 @@ spec:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
 
+
+
     # ── 4. builds — the manifest, checked against the attestation ────────────
     # Reads builds[] from the TAGGED deploy/platform.yaml and checks every
     # declared build against the ATTESTED names the fan-out stamped from
@@ -420,7 +422,7 @@ spec:
                 value: /tekton/results/exists
             envFrom:
               - secretRef:
-                  name: image-builder-registry-pull
+                  name: {{ include "common.registryPullSecretName" . }}
             script: |
               #!/usr/bin/env bash
               set -euo pipefail

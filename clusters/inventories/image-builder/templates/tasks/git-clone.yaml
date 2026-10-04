@@ -61,7 +61,7 @@ spec:
       description: Repository URL (echoed back for downstream tasks).
   steps:
     - name: clone
-      image: alpine/git:2.45.2
+      image: alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592
       envFrom:
         # GITCREDENTIALS = multi-line value, one credential-store record per
         # provider. The Secret is resolved in the RUN's namespace and the

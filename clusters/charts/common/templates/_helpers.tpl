@@ -134,3 +134,6 @@ naming what is missing.
 {{- $tag -}}
 {{- end }}
 
+
+{{/* A type-qualified identity gives immutable Secret.type a declarative forward path. */}}
+{{- define "common.registryPullSecretName" -}}image-builder-registry-pull-opaque{{- end -}}
