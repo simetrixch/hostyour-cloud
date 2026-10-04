@@ -23,4 +23,7 @@ helm dependency update clusters/inventories/redis
 node --test scripts/redis-maxmemory.test.mjs || fail 'scripts/redis-maxmemory.test.mjs'
 echo 'test: tenant size — every registration renders, with the word or without it.'
 node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
+echo 'test: unit mongodb exporter — every member of each mode scraped as the instance root.'
+helm dependency update clusters/units/mongodb
+node --test scripts/unit-mongodb-exporter.test.mjs || fail 'scripts/unit-mongodb-exporter.test.mjs'
 echo 'test: OK — all suites green'

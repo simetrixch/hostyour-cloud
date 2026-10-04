@@ -35,12 +35,14 @@ description: |
 
   WHAT A RENDERER MUST SUPPLY. The Vault path of the instance credential
   (externalsecret-mongodb.externalSecret.vaultPath) — the chart `required`s it
-  rather than silently defaulting to a shared path — and `mongodb.mode`.
+  rather than silently defaulting to a shared path — and `mongodb.mode`, with
+  values-mode-<mode>.yaml beside it, which lists the exporter's targets for the mode.
 type: application
 dependencies:
   # The instance credential (root password, plus the replica-set keyfile when the
   # mode has one) materialized from Vault into `mongodb-credentials` in THIS
-  # namespace. The StatefulSet mounts it; nothing else reads it.
+  # namespace. The StatefulSet mounts it, and the metrics exporter below reads its
+  # root-password; nothing else does.
   - name: external-secret
     version: 1.0.0
     repository: file://../../charts/external-secret
@@ -56,6 +58,13 @@ dependencies:
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store
+
+  # The metrics exporter, one pod scraping every member: the same chart and version
+  # clusters/inventories/mongodb runs for the shared set. values.yaml says why it
+  # connects as root and why no alert rule is rendered here.
+  - name: prometheus-mongodb-exporter
+    version: 3.20.0
+    repository: https://prometheus-community.github.io/helm-charts
 
   # Shared named templates the library charts above use.
   - name: common

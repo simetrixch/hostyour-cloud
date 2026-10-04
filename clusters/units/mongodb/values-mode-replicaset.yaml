@@ -1,0 +1,21 @@
+# MODE — replicaset: the exporter scrapes each of the three members on its own,
+# and reads the set's own view of its members as well.
+#
+# A sub-chart's values cannot follow mongodb.mode from a template, so the target
+# list of each mode stands in its own file, named by the renderer beside the mode
+# word (clusters/argocd/files/consumers-appset.yaml).
+# scripts/unit-mongodb-exporter.test.mjs holds this list to the member count
+# templates/_members.tpl states for the mode.
+prometheus-mongodb-exporter:
+  serviceMonitor:
+    multiTarget:
+      targets:
+        - uri: mongodb://mongodb-0.mongodb-headless:27017
+          name: mongodb-0
+        - uri: mongodb://mongodb-1.mongodb-headless:27017
+          name: mongodb-1
+        - uri: mongodb://mongodb-2.mongodb-headless:27017
+          name: mongodb-2
+  extraArgs:
+    - --collector.diagnosticdata
+    - --collector.replicasetstatus

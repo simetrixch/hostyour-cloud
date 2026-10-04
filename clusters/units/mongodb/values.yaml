@@ -188,3 +188,55 @@ secret-store:
   # grant of its own to be READ. Writing it is the Manager's seed-mongodb-instance
   # step, which has its own narrow policy.
   role: consumer-eso
+
+# =============================================================================
+# The metrics exporter — one pod per instance, scraping EVERY member on its own.
+#
+# IT CONNECTS AS THE INSTANCE'S OWN ROOT, as clusters/units/postgresql's exporter
+# connects as the postgres superuser. The shared set claims a clusterMonitor user
+# instead, and a consumer cannot: the service-provisioner admits extra roles only
+# from the namespaces it names (controller.mongo.extraRolesNamespaces), because on
+# the shared server the role is cluster-wide. In `replicaset` mode a claim would
+# also wait for a PRIMARY that only the PostSync rs-init makes, after the sync the
+# waiting exporter holds open. root-password stands at wave -20, so nothing waits.
+#
+# ONE TARGET PER MEMBER, so a stopped member is a mongodb_up of 0 of its own and
+# is not hidden behind a Service that routes only to ready members. The targets
+# are the members' headless-Service names, short so they resolve in this
+# namespace, and carry no credential: the chart copies each into the series'
+# instance label. This file lists the one member of the default mode;
+# values-mode-replicaset.yaml lists three. scripts/unit-mongodb-exporter.test.mjs
+# holds both lists to the member count templates/_members.tpl states.
+#
+# NO ALERT RULE IS RENDERED HERE. An app cluster evaluates no PrometheusRule: its
+# series are remote-written to the master, whose MongoDBDown and
+# MongoDBConnectionsSaturated (clusters/inventories/mongodb) watch every
+# cluster's and every namespace's mongodb_* series, these among them.
+#
+# ONE EXPORTER WHATEVER THE SIZE AND THE MODE, so its figures are not in the
+# per-member presets; the Manager's quota counts it once beside the members.
+# =============================================================================
+prometheus-mongodb-exporter:
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: observability
+    multiTarget:
+      enabled: true
+      username: root
+      password:
+        existingSecret:
+          name: mongodb-credentials
+          key: root-password
+      targets:
+        - uri: mongodb://mongodb-0.mongodb-headless:27017
+          name: mongodb-0
+  extraArgs:
+    - --collector.diagnosticdata
+  resources:
+    requests:
+      cpu: 15m
+      memory: 48Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
