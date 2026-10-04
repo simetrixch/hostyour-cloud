@@ -201,7 +201,8 @@ spec:
             valuesObject:
               # THE TENANT'S OWN FACTS, handed to every source of every member. Bare access is safe
               # under goTemplateOptions missingkey=error: every field read here is mandatory in the
-              # registration, written explicitly by the Manager on every commit. A chart takes
+              # registration, written explicitly by the Manager on every commit — except `demo` and
+              # `size`, read with dig because a registration may lack them. A chart takes
               # what it needs and ignores the rest — which is what keeps this block the same for all
               # of them, and keeps every member-specific value out of this file.
               tenant:
@@ -256,6 +257,13 @@ spec:
                 {{- if dig "demo" false $ }}
                 demo: true
                 {{- end }}
+                # THE TENANT STAGE'S SIZE WORD (xsmall to xxlarge), as the Manager's Set size recorded
+                # it; a member chart sizes its own pods from it. Read with dig, never bare: one
+                # registration without the word would fail its render under missingkey=error, and one
+                # failed render stops the controller from creating, updating or deleting ANY
+                # Application of this set. Without the word a member gets "", and refusing that is the
+                # member chart's, for that member alone.
+                size: "{{ dig "size" "" $ }}"
                 # THE TENANT'S OWN APPS BUNDLE: the image `<subdomain>-apps` its engines, its IdP and its
                 # report mount, and the pin the Manager resolved from that bundle's own release — the
                 # engine chart's pins file never carries a tenant bundle, so the tag is delivered, not

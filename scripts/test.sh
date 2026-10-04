@@ -18,4 +18,6 @@ node --test scripts/installation-domain.test.mjs || fail 'scripts/installation-d
 node --test scripts/tenant-stage-label.test.mjs || fail 'scripts/tenant-stage-label.test.mjs'
 echo 'test: post stage callbacks — strict nonproduction allowlist.'
 node --test scripts/post-stage-callbacks.test.mjs || fail 'scripts/post-stage-callbacks.test.mjs'
+echo 'test: tenant size — every registration renders, with the word or without it.'
+node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
 echo 'test: OK — all suites green'
