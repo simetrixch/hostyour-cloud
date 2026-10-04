@@ -2,9 +2,13 @@
 {{- $root := .root -}}
 {{- $name := base .file -}}
 {{- $dependencyDigest := $root.Files.Get "files/test-dependencies.mjs" | sha256sum -}}
-{{- printf "// dependency worker sha256:%s\nimport {writeFileSync, mkdtempSync} from 'node:fs';\nconst directory = mkdtempSync('/tmp/hostyour-runner-');\n" $dependencyDigest -}}
-{{- range $file := list "test-contract.mjs" "test-tools.mjs" "test-dependency-policy.mjs" "test-package-fetch.mjs" -}}
+{{- printf "// dependency worker sha256:%s\nimport {writeFileSync, mkdtempSync, mkdirSync} from 'node:fs';\nconst directory = mkdtempSync('/tmp/hostyour-runner-');\n" $dependencyDigest -}}
+{{- range $file := list "test-contract.mjs" "test-tools.mjs" "test-dependency-policy.mjs" "test-package-fetch.mjs" "test-toolchain-install.mjs" "test-suite-profiles.mjs" "test-vitest.mjs" "test-vitest-controller.mjs" -}}
 {{- printf "writeFileSync(directory + '/%s', %s, {mode: 384});\n" $file ($root.Files.Get (printf "files/%s" $file) | toJson) -}}
+{{- end -}}
+{{- printf "mkdirSync(directory + '/test-toolchain');\n" -}}
+{{- range $file := list "package.json" "pnpm-lock.yaml" -}}
+{{- printf "writeFileSync(directory + '/test-toolchain/%s', %s, {mode: 384});\n" $file ($root.Files.Get (printf "files/test-toolchain/%s" $file) | toJson) -}}
 {{- end -}}
 {{- printf "writeFileSync(directory + '/%s', %s, {mode: 384});\nawait import('file://' + directory + '/%s');\n" $name ($root.Files.Get .file | toJson) $name -}}
 {{- end -}}

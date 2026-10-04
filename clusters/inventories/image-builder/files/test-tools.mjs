@@ -63,3 +63,9 @@ export async function preparePackageTools(directory) {
     execFileSync('tar', ['-xzf', archive, '--strip-components=1', '-C', destination], {timeout: 30000});
   }
 }
+
+export function preparePackageLauncher(directory) {
+  const bin = join(directory, 'bin');
+  mkdirSync(bin, {recursive: true, mode: 0o755});
+  writeFileSync(join(bin, 'pnpm'), '#!/bin/sh\nexec node "' + join(directory, 'tools/pnpm/bin/pnpm.cjs') + '" "$@"\n', {mode: 0o755});
+}

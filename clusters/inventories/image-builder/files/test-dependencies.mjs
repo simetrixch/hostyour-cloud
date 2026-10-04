@@ -2,8 +2,10 @@ import {readFileSync, writeFileSync, lstatSync, realpathSync, rmSync, readdirSyn
 import {execFileSync} from 'node:child_process';
 import {resolve, join} from 'node:path';
 import {digest, isCommit, isUID} from './test-contract.mjs';
-import {prepareStaticTools, preparePackageTools} from './test-tools.mjs';
+import {prepareStaticTools, preparePackageTools, preparePackageLauncher} from './test-tools.mjs';
 import {fetchPackages} from './test-package-fetch.mjs';
+import {installToolchain} from './test-toolchain-install.mjs';
+import {fileURLToPath} from 'node:url';
 
 const registration = JSON.parse(process.env.TEST_REGISTRATION);
 const source = realpathSync(process.env.TEST_SOURCE);
@@ -31,7 +33,9 @@ if (registration.recipe.packageManager === 'pnpm@11.7.0') {
     throw new Error('package-manager identity mismatch');
   }
   await preparePackageTools(join(dependencies, 'tools'));
+  preparePackageLauncher(dependencies);
   await fetchPackages(source, registration.recipe.dependencyRoots, dependencies, '/npmrc/.npmrc');
+  await installToolchain(dependencies, fileURLToPath(new URL('./test-toolchain/', import.meta.url)), '/npmrc/.npmrc');
 } else if (registration.recipe.packageManager !== 'none' || registration.recipe.dependencyRoots.length) {
   throw new Error('unsupported dependency profile');
 }

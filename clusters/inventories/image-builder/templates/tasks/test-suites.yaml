@@ -22,7 +22,7 @@ spec:
       type: string
   volumes:
     - name: scratch
-      emptyDir: {sizeLimit: 1Gi}
+      emptyDir: {sizeLimit: 10Gi}
   steps:
     - name: runner
       image: {{ required "tests.nodeImage is required" .Values.tests.nodeImage | quote }}

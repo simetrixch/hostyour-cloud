@@ -12,7 +12,7 @@ export async function fetchPackages(source, roots, directory, authPath) {
   const {parse, stringify} = createRequire(import.meta.url)(join(tools, 'yaml/dist/index.js'));
   const scratch = mkdtempSync('/tmp/cloud-dependencies-');
   const store = join(directory, 'store');
-  mkdirSync(store, {mode: 0o755});
+  mkdirSync(store, {recursive: true, mode: 0o755});
   const configuration = join(scratch, 'npmrc');
   // Accept only the existing ESO reader's two approved lines. Never copy a
   // source npmrc, or route the credential to an unscoped/default registry.
@@ -22,6 +22,7 @@ export async function fetchPackages(source, roots, directory, authPath) {
   }
   writeFileSync(configuration, auth + '\nregistry=https://registry.npmjs.org/\n', {mode: 0o600});
   const sockets = new Set();
+  let connections = 0;
   const proxy = createServer((_, response) => response.writeHead(405).end());
   proxy.on('connect', (request, client, head) => {
     const match = /^([a-z0-9.-]+):443$/.exec(request.url ?? '');
@@ -33,6 +34,7 @@ export async function fetchPackages(source, roots, directory, authPath) {
       socket.on('error', () => {client.destroy(); upstream.destroy();});
     }
     upstream.on('connect', () => {
+      connections++;
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (head.length) upstream.write(head);
       client.pipe(upstream); upstream.pipe(client);
@@ -63,4 +65,5 @@ export async function fetchPackages(source, roots, directory, authPath) {
     await new Promise(done => proxy.close(done));
     rmSync(scratch, {recursive: true, force: true});
   }
+  return {connections};
 }

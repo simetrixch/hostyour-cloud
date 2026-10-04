@@ -10,6 +10,7 @@ import {readState, writeState} from '../clusters/inventories/image-builder/files
 import {registryURL, sanitizedDependencyRoot} from '../clusters/inventories/image-builder/files/test-dependency-policy.mjs';
 import {preparePackageTools} from '../clusters/inventories/image-builder/files/test-tools.mjs';
 import {fetchPackages} from '../clusters/inventories/image-builder/files/test-package-fetch.mjs';
+import {installToolchain} from '../clusters/inventories/image-builder/files/test-toolchain-install.mjs';
 
 const code = 'trusted runner bytes';
 const image = 'node@sha256:' + 'a'.repeat(64);
@@ -198,9 +199,44 @@ test('pinned pnpm fetches a public locked package without executing source hooks
     const reader = join(directory, 'reader');
     writeFileSync(reader, '@digitaplatform:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=fixture-reader-with-no-grant\n', {mode: 0o600});
     await preparePackageTools(join(deps, 'tools'));
-    await fetchPackages(source, ['.'], deps, reader);
+    const fetched = await fetchPackages(source, ['.'], deps, reader);
+    assert.ok(fetched.connections > 0, 'pinned PNPM actually uses the host-restricted HTTPS proxy');
     assert.equal(existsSync(join(deps, '.npmrc')), false);
     assert.equal(existsSync(join(deps, 'store')), true);
     assert.equal(JSON.parse(readFileSync(join(deps, 'tools/pnpm/package.json'))).version, '11.7.0');
+  } finally {rmSync(directory, {recursive: true, force: true});}
+});
+
+test('fixed Vitest counts real cases under UID1001 and ignores source test scripts and configuration', async () => {
+  assert.equal(process.getuid(), 0, 'this fixture runs only on the public Actions runner');
+  const directory = mkdtempSync(join(tmpdir(), 'hostyour-vitest-'));
+  try {
+    chmodSync(directory, 0o755);
+    const deps = join(directory, 'deps'); mkdirSync(deps);
+    const source = join(directory, 'source'); mkdirSync(source); mkdirSync(join(source, 'tests'));
+    const protectedDirectory = join(directory, 'protected'); mkdirSync(protectedDirectory, {mode: 0o700});
+    const result = join(protectedDirectory, 'result.json');
+    const cache = join(protectedDirectory, 'cache'); mkdirSync(cache, {mode: 0o700});
+    const reader = join(directory, 'reader');
+    writeFileSync(reader, '@digitaplatform:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=fixture-reader-with-no-grant\n', {mode: 0o600});
+    await preparePackageTools(join(deps, 'tools'));
+    await installToolchain(deps, resolve('clusters/inventories/image-builder/files/test-toolchain'), reader);
+    writeFileSync(join(source, 'package.json'), JSON.stringify({type: 'module', scripts: {test: 'echo 9999 passed'}}));
+    writeFileSync(join(source, 'vitest.config.ts'), 'throw new Error("untrusted configuration executed")');
+    writeFileSync(join(source, 'postcss.config.js'), 'throw new Error("untrusted CSS configuration executed")');
+    const runController = () => execFileSync(process.execPath, [resolve('clusters/inventories/image-builder/files/test-vitest-controller.mjs')], {
+      timeout: 60000, stdio: 'pipe', env: {PATH: process.env.PATH, HOME: directory, CI: 'true', NO_COLOR: '1',
+        TEST_PACKAGE_ROOT: source, TEST_TOOLCHAIN: join(deps, 'toolchain'), TEST_VITEST_RESULT: result,
+        TEST_TRUSTED_CACHE: cache, TEST_SUITE_PROFILE: JSON.stringify({include: ['tests/**/*.test.ts']}),
+        TEST_WORKER_ENVIRONMENT: JSON.stringify({CI: 'true', HOME: directory})}});
+    writeFileSync(join(source, 'tests/proof.test.ts'), `import {test,expect} from 'vitest';\nimport {writeFileSync} from 'node:fs';\ntest('UID and protected evidence',()=>{expect(process.getuid()).toBe(1001);expect(()=>writeFileSync(${JSON.stringify(result)},'forged')).toThrow(); console.log('9999 passed');});\n`);
+    runController();
+    assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), {passed: 1, failed: 0, skipped: 0});
+    assert.equal(statSync(result).uid, 0);
+    for (const testCode of ["test('failing',()=>{expect(1).toBe(2)})", "test.skip('skipped',()=>{})", '']) {
+      writeFileSync(result, '');
+      writeFileSync(join(source, 'tests/proof.test.ts'), "import {test,expect} from 'vitest';\n" + testCode);
+      assert.throws(runController, 'zero, skipped and failed cases cannot turn fake script stdout into success');
+    }
   } finally {rmSync(directory, {recursive: true, force: true});}
 });
