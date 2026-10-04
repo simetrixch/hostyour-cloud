@@ -8,7 +8,10 @@ import {existsSync} from 'node:fs';
 // its forked workers may import repository code, under the untrusted UID.
 export async function runVitest(root, toolchain, profile, environment) {
   const originalFork = childProcess.fork;
-  childProcess.fork = (module, args, options = {}) => originalFork(module, args, {...options, uid: 1001, gid: 1001});
+  childProcess.fork = (module, args, options = {}) => originalFork(module, args, {...options, uid: 1001, gid: 1001,
+    // The controller's write limit applies to its trusted RPC handlers. The
+    // separate UID already fences workers, which need their own Source/tmp.
+    execArgv: (options.execArgv ?? []).filter(arg => arg !== '--permission' && !arg.startsWith('--allow-'))});
   syncBuiltinESMExports();
   let context;
   try {
@@ -22,7 +25,7 @@ export async function runVitest(root, toolchain, profile, environment) {
       exclude: ['**/node_modules/**', '**/.git/**', ...(profile.exclude ?? [])],
       passWithNoTests: false, testTimeout: 30000, hookTimeout: 120000,
       env: environment, css: false, coverage: {enabled: false}, reporters: ['default']}, {
-      configFile: false, envFile: false, cacheDir: process.env.TEST_TRUSTED_CACHE,
+      configFile: false, envDir: false, cacheDir: process.env.TEST_TRUSTED_CACHE,
       resolve: {alias: [
         {find: /^vitest$/, replacement: join(toolchain, 'node_modules/vitest/dist/index.js')},
         {find: '@', replacement: join(root, 'src')},
