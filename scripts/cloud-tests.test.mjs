@@ -54,6 +54,16 @@ test('zero, skipped, missing and foreign-SHA receipts cannot pass', () => {
     const f = fixture(); mutate(f.result); assert.throws(() => validateResult(f.result, f.binding, registration));
   }
 });
+test('run references and UTF-8 result summaries remain bounded', () => {
+  const f = fixture();
+  f.binding.ref = f.result.ref = 'a'.repeat(256);
+  assert.equal(validateResult(f.result, f.binding, registration), true);
+  f.binding.ref = f.result.ref = 'a'.repeat(257);
+  assert.throws(() => validateResult(f.result, f.binding, registration), /invalid run binding/);
+  const oversized = fixture();
+  oversized.result.liveProof = ['é'.repeat(2000)];
+  assert.throws(() => validateResult(oversized.result, oversized.binding, registration), /summary limit/);
+});
 test('a forged passing result with a failed exit is rejected', async () => {
   const f = fixture(); f.tasks.tests.status.steps[0].terminated.exitCode = 1;
   await assert.rejects(f.inspect(), /successful runner exit/);
