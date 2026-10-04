@@ -9,7 +9,7 @@ const rendered = execFileSync('helm', ['template', 'manager', 'clusters/inventor
 const select = expression => JSON.parse(execFileSync('yq', ['-o=json', expression, '-'], {input: rendered, encoding: 'utf8'}));
 const name = 'manager-tenant-generator-refresh';
 const role = select('select(.kind == "ClusterRole" and .metadata.name == "' + name + '")');
-const exactRule = {apiGroups: ['argoproj.io'], resources: ['applicationsets'], resourceNames: ['tenants'], verbs: ['patch']};
+const exactRule = {apiGroups: ['argoproj.io'], resources: ['applicationsets'], resourceNames: ['tenants', 'consumer-apps'], verbs: ['patch']};
 const check = rule => {
   assert.deepEqual(Object.keys(rule).sort(), Object.keys(exactRule).sort());
   for (const key of Object.keys(exactRule)) assert.deepEqual(rule[key], exactRule[key]);
