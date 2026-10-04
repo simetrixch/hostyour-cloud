@@ -1,0 +1,5 @@
+# MODE — standalone. Deliberately EMPTY.
+#
+# Standalone is the chart DEFAULT: values.yaml itself lists its one member as the
+# exporter's only target. This file exists only so every renderer can name the
+# mode uniformly (-f values-mode-<mode>.yaml), as it names the size.

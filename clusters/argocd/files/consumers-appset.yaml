@@ -386,6 +386,9 @@ spec:
               # The unit's ONE size, naming the preset — the same word that bounds
               # its namespace and sizes its PostgreSQL.
               - values-size-{{ .size }}.yaml
+              # The mode's own exporter targets, one per member: the file is
+              # named by the same word as mongodb.mode below.
+              - values-mode-{{ .mongodb }}.yaml
               - $values/clusters/active/__FQDN__.yaml
             valuesObject:
               mongodb:

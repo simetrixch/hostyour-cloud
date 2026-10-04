@@ -304,6 +304,10 @@ charts:
         tree: platform
         file: clusters/inventories/mongodb/Chart.yaml
         dependency: prometheus-mongodb-exporter
+      - kind: chart_dependency
+        tree: platform
+        file: clusters/units/mongodb/Chart.yaml
+        dependency: prometheus-mongodb-exporter
   prometheus-redis-exporter:
     version: "6.28.0"
     upstream:
