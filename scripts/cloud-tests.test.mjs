@@ -536,3 +536,17 @@ test('Platform fixtures use four exact clones/scans before dependency execution 
   assert.equal(suites.spec.workspaces.find(workspace => workspace.name === 'fixtures').readOnly, true);
   assert.equal(suites.spec.workspaces.find(workspace => workspace.name === 'deps').readOnly, true);
 });
+
+
+test('held Report artifact proof adds neither a PipelineRun nor an admitted CREATE', () => {
+  const unit = ['--set-json', 'unit=' + JSON.stringify({name: 'digita-report',
+    repoURL: 'https://github.com/digitaplatform/digita-report.git', buildsJson: '["digita-report-backend"]'})];
+  const proofName = 'digita-report-tests-op3-capture-69bdfc6';
+  assert.ok(!renderChart('consumer-build', unit).some(d => d.kind === 'PipelineRun' && d.metadata.name === proofName));
+  const guard = docs => JSON.stringify(docs.find(d => d.kind === 'ValidatingAdmissionPolicy' &&
+    d.metadata.name === 'image-builder-pipelinerun-guard'));
+  assert.ok(!guard(renderChart('image-builder')).includes(proofName));
+  const approved = ['--set', 'digitaTests.proofs[3].enabled=true'];
+  assert.ok(renderChart('consumer-build', [...unit, ...approved]).some(d => d.kind === 'PipelineRun' && d.metadata.name === proofName));
+  assert.ok(guard(renderChart('image-builder', approved)).includes(proofName));
+});

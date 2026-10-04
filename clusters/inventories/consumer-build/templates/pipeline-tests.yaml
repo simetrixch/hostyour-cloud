@@ -128,7 +128,7 @@ spec:
         - {name: require-success, value: "false"}
 {{- $root := . -}}
 {{- range $proof := concat (list .Values.digitaTests.proof) (.Values.digitaTests.proofs | default list) }}
-{{- if and (eq $root.Values.global.env "prod") (eq $unit $proof.repository) }}
+{{- if and (eq $root.Values.global.env "prod") (eq $unit $proof.repository) (or (not (hasKey $proof "enabled")) $proof.enabled) }}
 ---
 apiVersion: tekton.dev/v1
 kind: PipelineRun

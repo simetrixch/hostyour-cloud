@@ -387,3 +387,9 @@ digitaTests:
       commit: 4572daea13917baefe884fe00e1a7f6112924830
       ref: refs/heads/issue-89-gate-release-builds-with-cloud-tests-so
       name: digita-deploy-tests-op3-input-4572dae
+    - repository: digita-report
+      commit: 69bdfc62c21b1cebed0aba1a2ea7907df4810080
+      ref: refs/heads/issue-72-run-digita-report-tests-in-tekton-so-the
+      name: digita-report-tests-op3-capture-69bdfc6
+      # Adds one admitted GitOps CREATE; held for Note177 owner decision.
+      enabled: false

@@ -129,8 +129,10 @@ spec:
           has(oldObject.metadata.deletionTimestamp) && has(object.metadata.deletionTimestamp)) ||
         ((false
 {{- range $proof := concat (list .Values.digitaTests.proof) (.Values.digitaTests.proofs | default list) }}
+{{- if or (not (hasKey $proof "enabled")) $proof.enabled }}
         || (request.namespace == {{ printf "%s-build" $proof.repository | quote }} &&
           object.metadata.name == {{ $proof.name | quote }})
+{{- end }}
 {{- end }}
         ) &&
         request.userInfo.username == 'system:serviceaccount:argocd:argocd-application-controller' &&
