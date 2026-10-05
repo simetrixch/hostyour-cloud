@@ -1,0 +1,5 @@
+apiVersion: v2
+name: unit-redirect
+version: 1.0.0
+description: The permanent redirects from old unit hosts to their twins under the unit apex, one Certificate, Middleware and IngressRoute per old host, into the namespace unit-redirects. Rendered by the redirect ApplicationSets (clusters/argocd/files/redirects-appset.yaml), which exist only while the cluster map keeps global.previousUnitApex. The pairs arrive from there; this chart holds none of its own.
+type: application

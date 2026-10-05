@@ -1,0 +1,3 @@
+# The old hosts and their twins, each `{from: <old host>, to: <new host>}`, composed by
+# clusters/argocd/files/redirects-appset.yaml from one registration and stage.
+redirects: []

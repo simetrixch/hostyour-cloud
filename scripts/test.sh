@@ -33,4 +33,6 @@ helm dependency update clusters/units/mongodb
 node --test scripts/unit-mongodb-exporter.test.mjs || fail 'scripts/unit-mongodb-exporter.test.mjs'
 echo 'test: consumer data sizes — each part at its own preset, each volume as onboarded, every preset within its row.'
 node --test scripts/consumer-data-sizes.test.mjs || fail 'scripts/consumer-data-sizes.test.mjs'
+echo 'test: unit redirects — old unit hosts answer with a permanent redirect to their twins, and nothing renders without an old apex.'
+node --test scripts/unit-redirects.test.mjs || fail 'scripts/unit-redirects.test.mjs'
 echo 'test: OK — all suites green'

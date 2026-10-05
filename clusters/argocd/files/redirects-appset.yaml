@@ -1,0 +1,187 @@
+# The old unit hosts of an installation whose units moved to another apex, each answering with a
+# permanent redirect to its twin under the unit apex, path and query kept. templates/apps.yaml
+# renders this file only while the cluster map keeps the old apex as global.previousUnitApex, and
+# composes its stage zones into the __PREVIOUS_STAGE_APEX_*__ markers by the rule of the new ones.
+#
+# WHICH HOSTS. Every host the platform composes from the unit apex, composed from the old one: a
+# consumer's `<label>.<stage apex>` and a tenant's zone `<subdomain>.<stage apex>`, and for a tenant
+# routed by host every member's `<member>.<zone>` (digita-deploy digita-lib.memberHost, which takes
+# an empty routing for host). A unit's own domains, its aliases and a consumer's fqdn never stood
+# under the apex and keep answering as they do.
+#
+# THEIR OWN NAMESPACE AND PROJECT. A consumer's namespace admits an Ingress for its granted host
+# alone (clusters/units/admissionpolicy), and a tenant member's chart is the deploy repository's,
+# so the redirects are no part of either: one Application per registration and stage renders
+# clusters/units/redirect into `unit-redirects`, selected exactly as the unit's own Application
+# is, so they come and go with the unit.
+#
+# HOW IT ANSWERS. Traefik's redirectRegex in front of noop@internal, over websecure alone, with a
+# certificate per old host from the platform authority: GET answers 301, every other method 308
+# (HEAD included), which keeps a request's method and body.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: unit-redirects
+  namespace: __ARGOCD_NAMESPACE__
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: The permanent redirects from the old unit hosts to their twins under the unit apex. One namespace, three kinds.
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+  destinations:
+    - name: __CLUSTER_NAME__
+      namespace: unit-redirects
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: cert-manager.io
+      kind: Certificate
+    - group: traefik.io
+      kind: Middleware
+    - group: traefik.io
+      kind: IngressRoute
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: consumer-redirects
+  namespace: __ARGOCD_NAMESPACE__
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:  # consumers-appset.yaml's, so a consumer's redirect is generated where the consumer is
+    - git:
+        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        revision: __BOOKS_FQDN__
+        files:
+          - path: "registrations/*/dev.yaml"
+          - path: "registrations/*/test.yaml"
+          - path: "registrations/*/prod.yaml"
+        values:
+          stage: '{{ trimSuffix ".yaml" .path.filename }}'
+      selector:
+        matchLabels:
+          cluster: __CLUSTER_NAME__
+        matchExpressions:
+          - key: removing
+            operator: NotIn
+            values: ["true"]
+  template:
+    metadata:
+      name: "{{ .name }}-redirect-{{ .values.stage }}"
+      namespace: __ARGOCD_NAMESPACE__
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: unit-redirects
+      destination:
+        name: __CLUSTER_NAME__
+        namespace: unit-redirects
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+        syncOptions:
+          - CreateNamespace=true
+  templatePatch: |
+    spec:
+      sources:
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          ref: values
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          path: clusters/units/redirect
+          helm:
+            valueFiles:
+              - $values/clusters/platform/values-common.yaml
+              - $values/clusters/platform/values-{{ .values.stage }}.yaml
+              - $values/clusters/active/__FQDN__.yaml
+            valuesObject:
+              redirects:
+                - from: "{{ dig "host" .name . }}.{{ index (dict "dev" "__PREVIOUS_STAGE_APEX_DEV__" "test" "__PREVIOUS_STAGE_APEX_TEST__" "prod" "__PREVIOUS_STAGE_APEX_PROD__") .values.stage }}"
+                  to: "{{ dig "host" .name . }}.{{ index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") .values.stage }}"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tenant-redirects
+  namespace: __ARGOCD_NAMESPACE__
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:  # the git half of tenants-appset.yaml's matrix with its selector: one Application per registration and stage, not per member
+    - git:
+        repoURL: https://github.com/__DEPLOY_REPO__.git
+        revision: __BOOKS_FQDN__
+        files:
+          - path: "registrations/*/dev.yaml"
+          - path: "registrations/*/test.yaml"
+          - path: "registrations/*/prod.yaml"
+        values:
+          guid: "{{ index .path.segments 1 }}"
+          stage: '{{ trimSuffix ".yaml" .path.filename }}'
+      selector:
+        matchLabels:
+          cluster: __CLUSTER_NAME__
+  template:
+    metadata:
+      name: "{{ .values.guid }}-redirect-{{ .values.stage }}"
+      namespace: __ARGOCD_NAMESPACE__
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: unit-redirects
+      destination:
+        name: __CLUSTER_NAME__
+        namespace: unit-redirects
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+        syncOptions:
+          - CreateNamespace=true
+  templatePatch: |
+    {{- $old := index (dict "dev" "__PREVIOUS_STAGE_APEX_DEV__" "test" "__PREVIOUS_STAGE_APEX_TEST__" "prod" "__PREVIOUS_STAGE_APEX_PROD__") .values.stage }}
+    {{- $new := index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") .values.stage }}
+    spec:
+      sources:
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          ref: values
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          path: clusters/units/redirect
+          helm:
+            valueFiles:
+              - $values/clusters/platform/values-common.yaml
+              - $values/clusters/platform/values-{{ .values.stage }}.yaml
+              - $values/clusters/active/__FQDN__.yaml
+            valuesObject:
+              redirects:
+                - from: "{{ .subdomain }}.{{ $old }}"
+                  to: "{{ .subdomain }}.{{ $new }}"
+                {{- if ne .routing "path" }}
+                {{- range .members }}
+                - from: "{{ .name }}.{{ $.subdomain }}.{{ $old }}"
+                  to: "{{ .name }}.{{ $.subdomain }}.{{ $new }}"
+                {{- end }}
+                {{- end }}
