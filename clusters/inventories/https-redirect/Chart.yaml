@@ -1,0 +1,5 @@
+apiVersion: v2
+name: https-redirect
+version: 1.0.0
+description: Answers every plain-http request that no route claims with a permanent redirect to https, host, path and query kept. Below every other route on the web entrypoint, so the ACME HTTP-01 solver keeps its own.
+type: application

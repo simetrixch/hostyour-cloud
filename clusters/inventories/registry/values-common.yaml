@@ -127,8 +127,6 @@ ingress:
   ingress:
     enabled: true
     className: public
-    annotations:
-      traefik.ingress.kubernetes.io/router.entrypoints: websecure
     host: 'zot.{{ .Values.global.domain }}'
     paths:
       - path: /

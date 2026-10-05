@@ -139,8 +139,6 @@ ingress:
   ingress:
     enabled: true
     className: public
-    annotations:
-      traefik.ingress.kubernetes.io/router.entrypoints: websecure
     host: '{{ required "global.endpoints.tailnet.url must be set (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.endpoints.tailnet.url | trimPrefix "https://" }}'
     paths:
       - path: /

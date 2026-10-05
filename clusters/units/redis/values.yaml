@@ -1,0 +1,192 @@
+# =============================================================================
+# Redis — a consumer's OWN server (Chart.yaml says what and why).
+#
+# values.yaml and no per-stage file, for the reason clusters/units/postgresql/values.yaml
+# gives: a chart rendered into a consumer namespace loads only its own values.yaml, and
+# everything stage-dependent arrives through global.* from $values/clusters/platform.
+#
+# SIZE PRESETS. Each figure is the Manager's `redis` size row minus the exporter's fixed
+# 10m / 32Mi (requests and limits alike), so the server and its exporter add up to the row.
+# maxmemory is half the server container's memory limit: the AOF rewrite forks the server, and
+# the fork's copy-on-write pages can reach the whole dataset again.
+#
+#   preset           cpu req  mem req  cpu lim  mem lim   maxmemory  claim at onboarding
+#   xsmall               15m     96Mi     240m    480Mi      240mb      1Gi
+#   small (DEFAULT)      40m    224Mi     490m    992Mi      496mb      2Gi
+#   medium               90m    480Mi     990m   2016Mi     1008mb      4Gi
+#   large               190m    992Mi    1990m   4064Mi     2032mb      8Gi
+#   xlarge              290m   2016Mi    1990m   8160Mi     4080mb     16Gi
+#   xxlarge             390m   3040Mi    1990m  12256Mi     6128mb     24Gi
+#
+# Redis runs commands on one thread, so the CPU limit stops below 2. The claim is the
+# registration's (volumes.redis), about four times maxmemory: the append-only file, its
+# rewrite and one snapshot. A hostpath claim cannot grow, so a resize changes CPU, memory
+# and maxmemory only.
+# =============================================================================
+redis:
+  fullnameOverride: redis
+  image:
+    repository: redis
+    # Managed centrally in clusters/platform/versions.yaml (images.redis) and stamped by the
+    # version sync — do not hand-edit this tag.
+    tag: "8.8"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  containerPort: 6379
+  # One RWO claim: two pods of this server never exist at once.
+  strategy:
+    type: Recreate
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+  terminationGracePeriodSeconds: 30
+  podSecurityContext:
+    fsGroup: 999
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    runAsUser: 999
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  # Read by the env entries below, which the deployment chart passes through tpl; the presets
+  # set maxmemory, the renderer the policy from the registration (redisMaxmemoryPolicy).
+  maxmemory: 496mb
+  maxmemoryPolicy: noeviction
+  args:
+    - redis-server
+    - --appendonly
+    - "yes"
+    - --appendfsync
+    - everysec
+    - --dir
+    - /data
+    - --maxmemory
+    - $(REDIS_MAXMEMORY)
+    - --maxmemory-policy
+    - $(REDIS_MAXMEMORY_POLICY)
+    - --requirepass
+    - $(REDIS_PASSWORD)
+  env:
+    - name: REDIS_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: redis-credentials
+          key: redis-password
+    # redis-cli in the probes reads it, so no password stands on a command line.
+    - name: REDISCLI_AUTH
+      valueFrom:
+        secretKeyRef:
+          name: redis-credentials
+          key: redis-password
+    - name: REDIS_MAXMEMORY
+      value: '{{ .Values.maxmemory }}'
+    - name: REDIS_MAXMEMORY_POLICY
+      value: '{{ .Values.maxmemoryPolicy }}'
+  volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: redis-data
+  livenessProbe:
+    exec:
+      command: ["redis-cli", "PING"]
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+  readinessProbe:
+    exec:
+      command: ["redis-cli", "PING"]
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 6379
+    annotations:
+      argocd.argoproj.io/sync-wave: "-20"
+  resources:
+    requests:
+      cpu: 40m
+      memory: 224Mi
+    limits:
+      cpu: 490m
+      memory: 992Mi
+
+redis-data:
+  pvc:
+    enabled: true
+    name: redis-data
+    # The data outlives a pruned Application: only the namespace delete of an offboard or a
+    # move's clear-source removes it.
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+      argocd.argoproj.io/sync-wave: "-20"
+    accessModes:
+      - ReadWriteOnce
+    storageSize: "2Gi"
+
+externalsecret-redis:
+  externalSecret:
+    enabled: true
+    name: redis-password
+    secretStoreName: vault-backend-redis
+    secretStoreKind: SecretStore
+    targetSecretName: redis-credentials
+    # The renderer's: <stage>/consumer/<name>/redis. Required, never a shared default.
+    vaultPath: ""
+    data:
+      - secretKey: redis-password
+        property: redis-password
+    annotations:
+      argocd.argoproj.io/sync-wave: "-21"
+
+# A platform-named store one wave before the server, for clusters/units/postgresql's reason.
+secret-store:
+  enabled: true
+  annotations:
+    argocd.argoproj.io/sync-wave: "-21"
+  name: vault-backend-redis
+  serviceAccountName: redis-eso
+  role: consumer-eso
+
+networkPolicy:
+  enabled: true
+  allowedNamespaces:
+    - service-provisioner
+
+metrics:
+  enabled: true
+
+prometheus-redis-exporter:
+  # The Deployment the Manager's quiesce keeps running beside the server.
+  fullnameOverride: redis-exporter
+  redisAddress: redis://redis:6379
+  auth:
+    enabled: true
+    secret:
+      name: redis-credentials
+      key: redis-password
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: observability
+  # Fixed at every size and counted in each size row: the shared server's exporter runs at
+  # 1m and 7-11Mi (apps1, apps2, 2026-10-05).
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 10m
+      memory: 32Mi
+

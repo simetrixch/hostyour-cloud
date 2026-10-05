@@ -1,6 +1,7 @@
-# THE COUNTER-PROBE OF THE TWO SCANS THAT READ A RENDER: the one that looks for an unresolved Helm
-# expression, and the one that looks for an Application naming one repository at two revisions.
-# scripts/check.sh runs both over this file before either touches a real chart, and ends the run red
+# THE COUNTER-PROBE OF THE THREE SCANS THAT READ A RENDER: the one that looks for an unresolved Helm
+# expression, the one that looks for an Application naming one repository at two revisions, and the
+# one that looks for an Ingress served over plain http. scripts/check.sh runs each over this file
+# before any of them touches a real chart, and ends the run red
 # unless each reports EXACTLY the defects planted for it below and says nothing at all about the
 # innocents beside them. Without the defects neither scan can be shown to go red; without the
 # innocents a clean answer might only mean nobody was looking.
@@ -54,6 +55,14 @@
 #      each. It is the shape this tree writes, and it is what a scan that failed to resolve an
 #      anchor would report, because `*repo` and the URL it stands for are two different words.
 #                                                                          MUST STAY UNREPORTED
+#
+# WHAT THE THIRD SCAN IS PLANTED, the Ingress shapes Traefik serves over plain http and the one it
+# does not:
+#
+#   9. an Ingress with no entrypoints annotation, which Traefik binds to every entrypoint. It is
+#      the shape the Manager's and Grafana's Ingresses had.                  MUST BE REPORTED
+#  10. an Ingress that names web beside websecure.                           MUST BE REPORTED
+#  11. an Ingress that binds websecure alone.                                MUST STAY UNREPORTED
 #
 # The two decoded payloads are, in full:
 #
@@ -153,3 +162,39 @@ spec:
       helm:
         valueFiles:
           - $values/planted/values.yaml
+---
+# Source: counter-probe/planted-defect-on-every-entrypoint.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: planted-defect-on-every-entrypoint
+  annotations:
+    cert-manager.io/cluster-issuer: planted-issuer
+spec:
+  ingressClassName: public
+  rules:
+    - host: planted.example.invalid
+---
+# Source: counter-probe/planted-defect-on-web-and-websecure.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: planted-defect-on-web-and-websecure
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  ingressClassName: public
+  rules:
+    - host: planted.example.invalid
+---
+# Source: counter-probe/planted-innocent-on-websecure.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: planted-innocent-on-websecure
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: public
+  rules:
+    - host: planted.example.invalid

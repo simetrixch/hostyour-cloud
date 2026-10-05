@@ -20,6 +20,8 @@ metadata:
     app.kubernetes.io/component: eventlistener-ingress
   annotations:
     cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | quote }}
+    # websecure alone, or Traefik takes the webhook and its signature over plain http too.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
 spec:
   ingressClassName: public
   tls:

@@ -443,6 +443,36 @@ spec:
         #    relay runs there. The address is read out of the books cluster's own map, on
         #    the books branch the `values` ref reads. Without an entry the chart reads no
         #    platform value and is handed nothing.
+        # 2c. Per-consumer Redis (clusters/units/redis), rendered ONLY when the registration's
+        #    `redis` is "standalone"; an absent key is the cluster's shared server, so every
+        #    registration written before the field renders as it did. The preset is named from
+        #    the part's own size, the claim from the volume the Manager pinned at onboarding, and
+        #    the maxmemory policy from the registration, which states it for every own server.
+        {{- if eq (dig "redis" "shared" .) "standalone" }}
+        {{- $redisSize := dig "sizes" "redis" .size . }}
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          path: clusters/units/redis
+          helm:
+            valueFiles:
+              - $values/clusters/platform/values-common.yaml
+              - $values/clusters/platform/values-{{ .values.stage }}.yaml
+              - values-size-{{ $redisSize }}.yaml
+              - $values/clusters/active/__FQDN__.yaml
+            valuesObject:
+              redis:
+                maxmemoryPolicy: '{{ dig "redisMaxmemoryPolicy" "noeviction" . }}'
+              redis-data:
+                pvc:
+                  storageSize: '{{ dig "volumes" "redis" "" . }}'
+              secret-store:
+                annotations:
+                  vault.hashicorp.com/alias-metadata-unit: "{{ .name }}"
+                  vault.hashicorp.com/alias-metadata-stage: "{{ .values.stage }}"
+              externalsecret-redis:
+                externalSecret:
+                  vaultPath: "{{ .values.stage }}/consumer/{{ .name }}/redis"
+        {{- end }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: __BRANCH__
           path: clusters/units/networkpolicy

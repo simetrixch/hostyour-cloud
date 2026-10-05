@@ -24,6 +24,8 @@ metadata:
     {{- include "common.labels" . | nindent 4 }}
   annotations:
     cert-manager.io/cluster-issuer: {{ required "global.clusterIssuer is required (clusters/platform/values-common.yaml)" .Values.global.clusterIssuer | quote }}
+    # websecure alone, or Traefik serves the slave's ArgoCD and its sign-in over plain http too.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
 spec:
   ingressClassName: public
   tls:

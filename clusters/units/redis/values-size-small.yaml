@@ -1,0 +1,11 @@
+# The small preset: the Manager's `redis` small row minus the exporter's 10m / 32Mi
+# (values.yaml has the table).
+redis:
+  maxmemory: 496mb
+  resources:
+    requests:
+      cpu: 40m
+      memory: 224Mi
+    limits:
+      cpu: 490m
+      memory: 992Mi

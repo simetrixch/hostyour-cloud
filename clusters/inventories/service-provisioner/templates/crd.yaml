@@ -73,10 +73,13 @@ spec:
                     mongodb/postgresql: the provisioner grants EXACTLY these, with no
                     prefix and no composition, and the platform is what controls the
                     value (the consumer's deploy/platform.yaml, injected into this
-                    ServiceClaim as a chart value). REQUIRED for a redis claim and
-                    fail-closed — a claim naming none is an Error, never a user that
-                    reaches every key. Read back out of the credentials Secret as
-                    REDIS_KEY_PATTERNS rather than re-derived by the reader.
+                    ServiceClaim as a chart value). REQUIRED for a claim on the shared
+                    redis and fail-closed — a claim there naming none is an Error, never
+                    a user that reaches every key. A claim served by the consumer's own
+                    Redis (clusters/units/redis) names none: that server is the
+                    consumer's alone, and its user gets every key and channel. Read back
+                    out of the credentials Secret as REDIS_KEY_PATTERNS rather than
+                    re-derived by the reader.
                 channelPatterns:
                   type: array
                   items: { type: string }

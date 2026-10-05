@@ -1,0 +1,11 @@
+# The xsmall preset: the Manager's `redis` xsmall row minus the exporter's 10m / 32Mi
+# (values.yaml has the table).
+redis:
+  maxmemory: 240mb
+  resources:
+    requests:
+      cpu: 15m
+      memory: 96Mi
+    limits:
+      cpu: 240m
+      memory: 480Mi

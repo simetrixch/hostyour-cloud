@@ -64,3 +64,28 @@ test('a missing, unlimited or too high ceiling, an evicting or unstated policy a
   assert.throws(() => checkRule('redis_memory_used_bytes / redis_memory_max_bytes > 0.85'));
   checkRule(nearCeiling(prodRender));
 });
+
+// A consumer's own Redis (clusters/units/redis): every size preset holds the same ceiling rule against
+// its own container, and its policy is the one the registration names, noeviction by default.
+const unitRender = (preset, policy) => execFileSync('helm', ['template', 'acme-test', 'clusters/units/redis', '--namespace', 'acme-test',
+  '--api-versions', 'monitoring.coreos.com/v1', '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-test.yaml',
+  '-f', `clusters/units/redis/${preset}`, '-f', 'scripts/standin/installation-values.yaml', '-f', 'scripts/standin/cluster-map.yaml',
+  '--set', 'externalsecret-redis.externalSecret.vaultPath=test/consumer/acme/redis', ...(policy ? ['--set', `redis.maxmemoryPolicy=${policy}`] : [])],
+  {encoding: 'utf8'});
+const unitServer = rendered => {
+  const container = server(rendered);
+  const env = Object.fromEntries((container.env ?? []).filter(e => 'value' in e).map(e => [e.name, e.value]));
+  return {...container, args: container.args.map(a => a.replace(/^\$\((\w+)\)$/, (whole, name) => env[name] ?? whole))};
+};
+
+test('every size of a consumer\'s own Redis runs under a ceiling of half its container limit', () => {
+  for (const preset of ['xsmall', 'small', 'medium', 'large', 'xlarge', 'xxlarge'].map(size => `values-size-${size}.yaml`)) {
+    checkCeiling(unitServer(unitRender(preset)));
+  }
+});
+
+test('a consumer\'s own Redis takes the maxmemory policy its registration names', () => {
+  const evicting = unitServer(unitRender('values-size-small.yaml', 'allkeys-lru'));
+  assert.equal(option(evicting.args, '--maxmemory-policy'), 'allkeys-lru');
+  assert.throws(() => checkCeiling(evicting));
+});

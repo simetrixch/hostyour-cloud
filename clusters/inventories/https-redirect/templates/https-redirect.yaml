@@ -1,0 +1,31 @@
+{{- /* Every route this platform serves binds websecure, so a request over plain http found no
+route and got 404. This route takes whatever nothing else on web claims. Priority 1 keeps it below
+every other route there: Traefik ranks a route without one by the length of its rule, which puts
+cert-manager's HTTP-01 solver (a host and a path) and every route that serves http today above it.
+redirectScheme keeps the host, the path and the query, and drops the port; permanent answers GET
+with 301 and every other method with 308. noop@internal answers nothing itself. */ -}}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: https-redirect
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: https-redirect
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: PathPrefix(`/`)
+      priority: 1
+      middlewares:
+        - name: https-redirect
+      services:
+        - name: noop@internal
+          kind: TraefikService
