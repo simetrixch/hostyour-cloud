@@ -30,8 +30,9 @@ echo 'test: tenant size — every registration renders, with the word or without
 node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
 echo 'test: tenant own domain aliases — every member gets the list, or [] without one.'
 node --test scripts/tenant-own-domain-aliases.test.mjs || fail 'scripts/tenant-own-domain-aliases.test.mjs'
-echo 'test: unit alerts — the master evaluates the PostgreSQL alerts of every unit, the unit renders none.'
+echo 'test: unit alerts — the master evaluates the PostgreSQL, Redis and MariaDB alerts of every unit, the unit renders none.'
 helm dependency update clusters/units/postgresql
+helm dependency update clusters/units/mariadb
 node --test scripts/unit-alerts.test.mjs || fail 'scripts/unit-alerts.test.mjs'
 node --test scripts/manager-log-alerts.test.mjs || fail 'scripts/manager-log-alerts.test.mjs'
 echo 'test: unit mongodb exporter — every member of each mode scraped as the instance root.'
