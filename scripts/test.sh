@@ -28,6 +28,7 @@ node --test scripts/tenant-own-domain-aliases.test.mjs || fail 'scripts/tenant-o
 echo 'test: unit alerts — the master evaluates the PostgreSQL alerts of every unit, the unit renders none.'
 helm dependency update clusters/units/postgresql
 node --test scripts/unit-alerts.test.mjs || fail 'scripts/unit-alerts.test.mjs'
+node --test scripts/manager-log-alerts.test.mjs || fail 'scripts/manager-log-alerts.test.mjs'
 echo 'test: unit mongodb exporter — every member of each mode scraped as the instance root.'
 helm dependency update clusters/units/mongodb
 node --test scripts/unit-mongodb-exporter.test.mjs || fail 'scripts/unit-mongodb-exporter.test.mjs'

@@ -1058,6 +1058,19 @@ loki:
       retention_enabled: true
       retention_delete_delay: 2h
       delete_request_store: filesystem
+    # The ruler of the single binary evaluates the log alerts of templates/loki-rules.yaml: a
+    # failure written only to a process log (the Manager's failed runs and skipped nightly backups)
+    # reaches Alertmanager, where platform-default routes it. The rules are read from local files,
+    # because the chart's rules sidecar crashloops here (see sidecar below) and its
+    # ruler.directories render only in the distributed modes.
+    rulerConfig:
+      alertmanager_url: http://observability-alertmanager.observability.svc.cluster.local:9093
+      enable_api: true
+      rule_path: /var/loki/rules-temp
+      storage:
+        type: local
+        local:
+          directory: /etc/loki/rules
   # loki 18.x (grafana-community) ships a HARD (requiredDuringScheduling) pod
   # anti-affinity by hostname on the gateway Deployment. On a single-node cluster
   # that deadlocks its RollingUpdate — the new gateway pod can't co-locate with
@@ -1075,6 +1088,16 @@ loki:
     persistence:
       enabled: true
       size: 50Gi
+    # The rules of templates/loki-rules.yaml, where the ruler's local storage reads the rules of the
+    # one tenant a Loki without auth has, "fake".
+    extraVolumes:
+      - name: loki-rules
+        configMap:
+          name: loki-rules
+    extraVolumeMounts:
+      - name: loki-rules
+        mountPath: /etc/loki/rules/fake
+        readOnly: true
   read: { replicas: 0 }
   write: { replicas: 0 }
   backend: { replicas: 0 }
