@@ -306,6 +306,7 @@ spec:
         #    missingkey=error: the field is mandatory in the deployable
         #    registration (an empty list is allowed).
         {{- if has "postgresql" .services }}
+        {{- $postgresqlSize := dig "sizes" "postgresql" .size . }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: __BRANCH__
           path: clusters/units/postgresql
@@ -319,15 +320,25 @@ spec:
             valueFiles:
               - $values/clusters/platform/values-common.yaml
               - $values/clusters/platform/values-{{ .values.stage }}.yaml
-              # The size preset, named by the consumer's OWN size — the same word that bounds its
-              # namespace, because a unit has exactly one. Relative to the chart path above, so it is
-              # the chart's OWN file — not a $values reference. Bare access is safe under
-              # missingkey=error: `size` is part of the deploy group and the Manager writes a
-              # literal on every commit ("small" when the manifest expressed no preference, which is
-              # what the chart's values.yaml carries anyway).
-              - values-size-{{ .size }}.yaml
+              # The size preset, named by THIS PART's own size: `sizes.postgresql`, and the unit's
+              # `size` where the registration names none — every registration written before
+              # parts had sizes of their own. Read with `dig`, because one parameter set that
+              # fails under missingkey=error leaves every consumer's Application as it stood.
+              # Relative to the chart path above, so it is the chart's OWN file — not a $values
+              # reference. The preset sizes the pods only; the volume is below.
+              - values-size-{{ $postgresqlSize }}.yaml
               - $values/clusters/active/__FQDN__.yaml
             valuesObject:
+              # THE DATA VOLUME IS THE REGISTRATION'S, never a preset's: a hostpath volume cannot
+              # grow and nothing may shrink one, so a volume keeps the size it was created with
+              # whatever the part's size becomes. The Manager pins `volumes.postgresql` at
+              # onboarding and in the same commit as any change of the part's size. A registration
+              # without the pin has kept its size since onboarding, so its volume is the figure
+              # that size's preset carried then. A size no such registration can carry renders no
+              # volume, which fails this one Application rather than giving it another size.
+              postgres-data:
+                pvc:
+                  storageSize: '{{ dig "volumes" "postgresql" (get (dict "small" "5Gi" "medium" "20Gi" "large" "50Gi") $postgresqlSize) . }}'
               # WHO THIS STORE'S ServiceAccount IS, TOLD TO VAULT. The Kubernetes auth mount
               # lifts every vault.hashicorp.com/alias-metadata-* annotation of the calling
               # ServiceAccount into its login alias, and the consumer read policy hostyour-deploy
@@ -372,6 +383,7 @@ spec:
         #    it is part of the deploy group, so the Manager writes a literal on
         #    every commit.
         {{- if ne .mongodb "shared" }}
+        {{- $mongodbSize := dig "sizes" "mongodb" .size . }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: __BRANCH__
           path: clusters/units/mongodb
@@ -383,9 +395,8 @@ spec:
             valueFiles:
               - $values/clusters/platform/values-common.yaml
               - $values/clusters/platform/values-{{ .values.stage }}.yaml
-              # The unit's ONE size, naming the preset — the same word that bounds
-              # its namespace and sizes its PostgreSQL.
-              - values-size-{{ .size }}.yaml
+              # THIS PART's own size, read as PostgreSQL's is above.
+              - values-size-{{ $mongodbSize }}.yaml
               # The mode's own exporter targets, one per member: the file is
               # named by the same word as mongodb.mode below.
               - values-mode-{{ .mongodb }}.yaml
@@ -396,6 +407,10 @@ spec:
                 # count from it, and the Manager's quota table multiplied the
                 # mongodb row by the same count when it priced the unit.
                 mode: "{{ .mongodb }}"
+                # Each member's data volume, the registration's as PostgreSQL's is above. A
+                # StatefulSet's volumeClaimTemplates cannot change at all, so a different figure
+                # would hang the sync.
+                storageSize: '{{ dig "volumes" "mongodb" (get (dict "small" "10Gi" "medium" "40Gi" "large" "100Gi") $mongodbSize) . }}'
               # The unit and its stage in the login alias — the same two annotations
               # source 2 hands, for the same policy; the note there says why the
               # namespace cannot carry them.

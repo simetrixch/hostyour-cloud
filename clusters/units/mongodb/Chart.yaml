@@ -27,11 +27,12 @@ description: |
   PostSync Job that initiates the set, and a PodDisruptionBudget that keeps a
   quorum through a node drain.
 
-  SIZING. Three presets — values-size-{small,medium,large}.yaml — covering
-  CPU/memory requests, limits and the data volume. SMALL is what values.yaml
-  itself carries, so a render that names no size gets the frugal one. The size is
-  the UNIT's size: the operator sells one word and the databases are rendered at
-  it (hostyour-manager/shared/unit-size.ts).
+  SIZING. Six presets — values-size-{xsmall,small,medium,large,xlarge,xxlarge}.yaml —
+  covering CPU/memory requests and limits; the data volume's size is the
+  renderer's (mongodb.storageSize). SMALL is what values.yaml itself carries, so
+  a render that names no size gets the frugal one. The size is the part's own:
+  the operator sets one per part, and the consumer's registration carries it
+  (hostyour-manager plugins/unit/shared/unit-size.ts).
 
   WHAT A RENDERER MUST SUPPLY. The Vault path of the instance credential
   (externalsecret-mongodb.externalSecret.vaultPath) — the chart `required`s it

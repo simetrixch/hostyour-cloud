@@ -28,8 +28,9 @@ description: |
   (externalsecret-postgres.externalSecret.vaultPath); the chart `required`s it
   rather than silently defaulting to a shared path.
 
-  SIZING. Three presets — values-size-{small,medium,large}.yaml — each covering
-  CPU/memory requests, CPU/memory limits and the data PVC. SMALL is the chart
+  SIZING. Six presets — values-size-{xsmall,small,medium,large,xlarge,xxlarge}.yaml —
+  each covering CPU/memory requests, CPU/memory limits and the server config; the
+  data PVC's size is the renderer's (postgres-data.pvc.storageSize). SMALL is the chart
   DEFAULT (it is what values.yaml itself carries), so a render that names no
   size gets the frugal one, never the generous one. See the values.yaml header
   for what each size is for and where its numbers come from.

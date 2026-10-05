@@ -1,0 +1,34 @@
+# SIZE PRESET — xsmall. Layer over values.yaml: -f values-size-xsmall.yaml
+#
+#   cpu req 15m · mem req 128Mi · cpu lim 250m · mem lim 256Mi
+#
+# FOR: a consumer whose data is a few tables of settings or state, a handful of
+# connections, megabytes rather than gigabytes. Half of small, which the
+# measured in-use instance (231Mi, values.yaml header) already outgrows: pick it
+# only for a database that is known to stay tiny.
+#
+# Only the four resource numbers and the server config (args) differ from the
+# small default; every other value (image, probes, security context, monitoring,
+# exporter) stays as values.yaml defines it, and the data volume is the
+# registration's, never a preset's (values.yaml, postgres-data).
+postgres:
+  # SERVER CONFIG — restated in full (Helm replaces list values, does not merge).
+  # Scaled to the 256Mi limit the way small is scaled to 512Mi.
+  args:
+    # shared_buffers 32MB — a quarter of the 128Mi request, as medium and large.
+    - "-c"
+    - "shared_buffers=32MB"
+    # max_connections 25 — half of small's 50. Peak check: shared_buffers 32 +
+    # 3 autovacuum × 16 (48) + 25 backends ≈ 205MB, under the 256Mi limit.
+    - "-c"
+    - "max_connections=25"
+    # autovacuum_work_mem 16MB — half of small's 32MB clamp, for the same reason.
+    - "-c"
+    - "autovacuum_work_mem=16MB"
+  resources:
+    requests:
+      cpu: 15m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi

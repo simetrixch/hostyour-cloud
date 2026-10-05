@@ -1,6 +1,6 @@
 # SIZE PRESET — small (the chart DEFAULT).
 #
-#   cpu req 25m · mem req 256Mi · cpu lim 500m · mem lim 512Mi · data PVC 5Gi
+#   cpu req 25m · mem req 256Mi · cpu lim 500m · mem lim 512Mi
 #
 # FOR: one consumer application whose working set fits in PostgreSQL's stock
 # 128MB shared_buffers, single-digit concurrent connections, data measured in
@@ -17,7 +17,7 @@
 #
 #     -f values-size-<size>.yaml
 #
-# for all three sizes, instead of carrying a conditional for the one size that
+# for every size, instead of carrying a conditional for the one size that
 # has no file. Layering it changes nothing: `helm template clusters/units/postgresql` and
 # `helm template clusters/units/postgresql -f values-size-small.yaml` render identically.
 #

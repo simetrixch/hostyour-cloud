@@ -1,15 +1,16 @@
 # SIZE PRESET — medium. Layer over values.yaml: -f values-size-medium.yaml
 #
-#   cpu req 100m · mem req 1Gi · cpu lim 1 · mem lim 2Gi · data PVC 20Gi
+#   cpu req 100m · mem req 1Gi · cpu lim 1 · mem lim 2Gi
 #
 # FOR: a consumer whose working set has outgrown PostgreSQL's stock 128MB
 # shared_buffers, or that runs reporting queries next to its transactional
 # traffic — tens of concurrent connections, sorts and index builds that need
 # real work_mem, low single-digit gigabytes of data.
 #
-# Only the four resource numbers, the server config (args) and the PVC size
-# differ from the small default; every other value (image, probes, security
-# context, monitoring, exporter) stays as values.yaml defines it. The
+# Only the four resource numbers and the server config (args) differ from the
+# small default; every other value (image, probes, security context, monitoring,
+# exporter) stays as values.yaml defines it, and the data volume is the
+# registration's, never a preset's (values.yaml, postgres-data). The
 # measurements these numbers are reasoned from are documented once, in the
 # values.yaml header.
 postgres:
@@ -54,10 +55,3 @@ postgres:
       # measured on a live master): the request is what the scheduler reserves.
       cpu: "1"
       memory: 2Gi
-
-postgres-data:
-  pvc:
-    # 20Gi — 4x small. It is the dev/test PVC size of a single shared instance,
-    # i.e. the size the platform considers sufficient for a whole stage's worth
-    # of databases; for ONE consumer it is years of growth.
-    storageSize: "20Gi"
