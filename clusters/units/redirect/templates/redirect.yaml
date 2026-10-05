@@ -1,16 +1,19 @@
 {{- /* Per old host: its certificate from the platform authority, a redirectRegex that keeps path and
 query (Traefik matches the whole request URL), and a route over websecure to noop@internal, which
 answers nothing itself, so the redirect is all an old host serves. permanent answers GET with 301
-and every other method with 308. Each object is named by its old host, unique in the namespace. */ -}}
+and every other method with 308. Each object is named by its old host with dashes for dots, so no
+reference rests on Traefik reading a dotted name, and a short hash of the host keeps two hosts a dot
+apart (shop.dev.<apex>, shop-dev.<apex>) from sharing a name in the namespace. */ -}}
 {{- $issuer := required "unit-redirect: global.clusterIssuer is required (clusters/platform/values-common.yaml)" .Values.global.clusterIssuer }}
 {{- range .Values.redirects }}
+{{- $name := printf "%s-%s" (replace "." "-" .from) (sha256sum .from | trunc 8) }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .from | quote }}
+  name: {{ $name | quote }}
 spec:
-  secretName: {{ printf "%s-tls" .from | quote }}
+  secretName: {{ printf "%s-tls" $name | quote }}
   dnsNames:
     - {{ .from | quote }}
   issuerRef:
@@ -20,7 +23,7 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: {{ .from | quote }}
+  name: {{ $name | quote }}
 spec:
   redirectRegex:
     regex: '^https?://[^/]+(.*)$'
@@ -30,7 +33,7 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: {{ .from | quote }}
+  name: {{ $name | quote }}
 spec:
   entryPoints:
     - websecure
@@ -38,10 +41,10 @@ spec:
     - kind: Rule
       match: {{ printf "Host(`%s`)" .from | quote }}
       middlewares:
-        - name: {{ .from | quote }}
+        - name: {{ $name | quote }}
       services:
         - name: noop@internal
           kind: TraefikService
   tls:
-    secretName: {{ printf "%s-tls" .from | quote }}
+    secretName: {{ printf "%s-tls" $name | quote }}
 {{- end }}

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import test from 'node:test';
 
 // The standin cluster map answers global.unitApex check.example.invalid; the old apex below is
@@ -111,16 +112,24 @@ test('a tenant redirects its old zone, and the old host of every member when rou
   ]);
 });
 
+// The last two are hosts a dot apart, a dev consumer `shop` and a prod consumer `shop-dev`.
 const pairs = [{from: 'shop.old.example.invalid', to: 'shop.check.example.invalid'},
-  {from: 'web.acme.test.old.example.invalid', to: 'web.acme.test.check.example.invalid'}];
+  {from: 'web.acme.test.old.example.invalid', to: 'web.acme.test.check.example.invalid'},
+  {from: 'shop.dev.old.example.invalid', to: 'shop.dev.check.example.invalid'},
+  {from: 'shop-dev.old.example.invalid', to: 'shop-dev.check.example.invalid'}];
+// An object's name is its old host with dashes for dots, so no reference rests on Traefik reading a
+// dotted name, and a short hash of the host, since dashes for dots alone would name both last pairs alike.
+const slug = host => `${host.replaceAll('.', '-')}-${createHash('sha256').update(host).digest('hex').slice(0, 8)}`;
 const chart = docs(helm(['redirect', 'clusters/units/redirect', '--namespace', 'unit-redirects',
   '-f', 'clusters/platform/values-common.yaml', '--set-json', `redirects=${JSON.stringify(pairs)}`]));
 
 test('the chart answers each old host over https with a permanent redirect to its twin', () => {
   assert.equal(chart.length, 3 * pairs.length);
+  assert.equal(new Set(chart.map(doc => `${doc.kind}/${doc.metadata.name}`)).size, chart.length);
+  for (const doc of chart) assert.match(doc.metadata.name, /^[a-z0-9-]+$/);
   for (const {from, to} of pairs) {
-    const of = kind => chart.find(doc => doc.kind === kind && doc.metadata.name === from);
-    assert.deepEqual(of('Certificate').spec, {secretName: `${from}-tls`, dnsNames: [from],
+    const of = kind => chart.find(doc => doc.kind === kind && doc.metadata.name === slug(from));
+    assert.deepEqual(of('Certificate').spec, {secretName: `${slug(from)}-tls`, dnsNames: [from],
       issuerRef: {kind: 'ClusterIssuer', name: 'platform-acme'}});
     const {redirectRegex} = of('Middleware').spec;
     assert.equal(redirectRegex.permanent, true);
@@ -128,9 +137,9 @@ test('the chart answers each old host over https with a permanent redirect to it
     assert.equal(`https://${from}/a/b?c=1`.replace(new RegExp(redirectRegex.regex), redirectRegex.replacement.replace('${1}', '$1')),
       `https://${to}/a/b?c=1`);
     assert.deepEqual(of('IngressRoute').spec, {entryPoints: ['websecure'],
-      routes: [{kind: 'Rule', match: `Host(\`${from}\`)`, middlewares: [{name: from}],
+      routes: [{kind: 'Rule', match: `Host(\`${from}\`)`, middlewares: [{name: slug(from)}],
         services: [{name: 'noop@internal', kind: 'TraefikService'}]}],
-      tls: {secretName: `${from}-tls`}});
+      tls: {secretName: `${slug(from)}-tls`}});
   }
 });
 
