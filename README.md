@@ -103,7 +103,7 @@ The test entry point runs `lifecycle/test.sh` and `scripts/pipeline-release.test
 ## License
 
 **Elastic License 2.0.** Run it, change it, deploy it — for yourself, your company and your
-customers' workloads. What needs a separate license from Simetrix GmbH is offering it to third
+customers' workloads. What needs a separate license from simplidigita AI GmbH is offering it to third
 parties as a hosted or managed service.
 
 See [LICENSE.md](LICENSE.md).

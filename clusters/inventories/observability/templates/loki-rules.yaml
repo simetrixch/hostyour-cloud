@@ -1,0 +1,33 @@
+{{- /*
+The master's log alerts, evaluated by the single-binary Loki's ruler (values-common.yaml
+loki.loki.rulerConfig, mounted at /etc/loki/rules/fake) and sent to Alertmanager, whose
+AlertmanagerConfig platform-default routes every alert but severity=info.
+
+The Manager writes a failed run as one error line `"msg":"run failed"` (with runId, kind and the
+masked runError), and a nightly backup that did not start as a warning "nightly backup was not
+started today" (hostyour-manager server/executor/executor.ts, server/boot/nightly-backup-schedule.ts).
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-rules
+  namespace: {{ .Release.Namespace }}
+data:
+  manager.yaml: |
+    groups:
+      - name: manager
+        rules:
+          - alert: ManagerRunFailed
+            expr: 'sum by (kind) (count_over_time({namespace="manager"} |= "\"msg\":\"run failed\"" | json kind="kind" [15m])) > 0'
+            labels:
+              severity: warning
+            annotations:
+              summary: 'A Manager run of kind {{`{{ $labels.kind }}`}} failed'
+              description: 'The run is in the Manager''s run list; its log line in Loki carries runId and runError.'
+          - alert: NightlyBackupNotStarted
+            expr: 'sum(count_over_time({namespace="manager"} |= "nightly backup was not started today" [1h])) > 0'
+            labels:
+              severity: warning
+            annotations:
+              summary: 'A nightly backup was not started today'
+              description: 'No generation was taken tonight for that family; the Manager''s log line says why.'
