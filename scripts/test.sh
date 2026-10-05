@@ -18,6 +18,8 @@ node --test scripts/installation-domain.test.mjs || fail 'scripts/installation-d
 node --test scripts/tenant-stage-label.test.mjs || fail 'scripts/tenant-stage-label.test.mjs'
 echo 'test: post stage callbacks — strict nonproduction allowlist.'
 node --test scripts/post-stage-callbacks.test.mjs || fail 'scripts/post-stage-callbacks.test.mjs'
+echo 'test: https redirect — every cluster answers unclaimed plain http with a permanent redirect, below the ACME solver.'
+node --test scripts/https-redirect.test.mjs || fail 'scripts/https-redirect.test.mjs'
 echo 'test: redis maxmemory — a ceiling of half the limit, the shared server under noeviction, an own one under its registration'\''s policy.'
 helm dependency update clusters/inventories/redis
 helm dependency update clusters/units/redis

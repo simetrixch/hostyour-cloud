@@ -58,7 +58,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Cluster foundation — External-Secrets operator + CoreDNS. Privileged (CRDs, kube-system).
+  description: Cluster foundation — External-Secrets operator, CoreDNS and the plain-http redirect to https. Privileged (CRDs, kube-system).
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
     - oci://ghcr.io/external-secrets/charts
@@ -76,6 +76,10 @@ spec:
     # service-provisioner controller's own namespace.
     - name: __CLUSTER_NAME__
       namespace: service-provisioner
+    # The ingress controller's namespace, for the plain-http catch-all that redirects to https
+    # (clusters/inventories/https-redirect). The controller itself is the machine layer's.
+    - name: __CLUSTER_NAME__
+      namespace: ingress
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace

@@ -1,0 +1,7 @@
+name: https-redirect
+project: core
+syncWave: "5"
+namespace: ingress
+prune: "true"
+createNamespace: "false"
+runsOn: every-cluster
