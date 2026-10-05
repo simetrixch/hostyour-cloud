@@ -18,11 +18,21 @@
 # =============================================================================
 # SIZE PRESETS — pick by WORKLOAD, not by optimism
 #
-#   preset            cpu req  mem req  cpu lim  mem lim  data PVC
+#   preset            cpu req  mem req  cpu lim  mem lim  data PVC at onboarding
+#   xsmall               15m    128Mi     250m    256Mi      2Gi
 #   small (DEFAULT)      25m    256Mi     500m    512Mi      5Gi
 #   medium              100m      1Gi       1       2Gi     20Gi
 #   large               250m      2Gi       2       4Gi     50Gi
+#   xlarge              375m      3Gi       3       6Gi    100Gi
+#   xxlarge             500m      4Gi       4       8Gi    200Gi
 #
+# A preset sizes the pod only. The data PVC is the consumer registration's
+# (volumes.postgresql, handed in by clusters/argocd/files/consumers-appset.yaml):
+# the Manager pins the column's figure when it onboards the consumer, and the
+# PVC keeps it through every change of size, since a hostpath volume can neither
+# grow nor shrink.
+#
+#   xsmall — a database known to stay tiny: settings or state, a few connections.
 #   small  — the honest default. One consumer application, a working set that
 #            fits in PostgreSQL's stock 128MB shared_buffers, single-digit
 #            concurrent connections, data measured in hundreds of megabytes.
@@ -33,6 +43,9 @@
 #            write volume, many connections, large joins. Its limits are exactly
 #            what a single SHARED cluster instance is allowed, so a database
 #            migrated off one provably cannot need more.
+#   xlarge, xxlarge — one and a half and twice large, above what one shared
+#            instance is permitted: the Manager offers them only where the target
+#            machine holds them.
 #
 # SMALL IS THE DEFAULT AND IT LIVES HERE, in this file — a render that names no
 # size gets the frugal one, never the generous one. values-size-small.yaml
@@ -267,11 +280,11 @@ postgres-data:
       argocd.argoproj.io/sync-wave: "-20"
     accessModes:
       - ReadWriteOnce
-    # SMALL preset: 5Gi. The one instance we can measure a real footprint on
-    # (idp-postgresql) holds 162MB, so 5Gi is ~30x its live usage and still ten
-    # times smaller than the 50Gi the retired shared instance held for an empty
-    # database. Storage is the scarce resource — grow deliberately by picking
-    # `medium`/`large`, not by defaulting large.
+    # 5Gi, small's figure, for a render of this chart alone: a consumer's PVC is
+    # sized by its registration (see the header). The one instance we can measure
+    # a real footprint on (idp-postgresql) holds 162MB, so 5Gi is ~30x its live
+    # usage and still ten times smaller than the 50Gi the retired shared instance
+    # held for an empty database. Storage is the scarce resource.
     storageSize: "5Gi"
 
 # =============================================================================
@@ -474,7 +487,7 @@ prometheus-postgres-exporter:
   # fail. The exporter needs no Kubernetes API access; it only talks to postgres.
   rbac:
     create: false
-  # Exporter cost is FIXED across the three size presets: it runs the same
+  # Exporter cost is FIXED across the size presets: it runs the same
   # handful of pg_stat queries regardless of how big the database is. Measured
   # 1m CPU / 21Mi memory next to a shared instance, versus the upstream-style
   # 50m/64Mi request and 200m/128Mi limit — which, multiplied per consumer, is

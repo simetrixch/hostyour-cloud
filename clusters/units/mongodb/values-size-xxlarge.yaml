@@ -1,0 +1,20 @@
+# SIZE PRESET — xxlarge. Layer over values.yaml: -f values-size-xxlarge.yaml
+#
+#   cpu req 1 · mem req 4Gi · cpu lim 8 · mem lim 16Gi
+#
+# PER MEMBER. A replicaset runs three of these, 12Gi of requests in all, which
+# does not fit beside the platform on a 16 GiB machine: the Manager offers it
+# only where the target machine holds it.
+#
+# FOR: the largest MongoDB the platform runs for one consumer. Twice large.
+#
+# Only the resource numbers differ from the small default; the data volume is the
+# registration's, never a preset's (values.yaml, storageSize).
+mongodb:
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+    limits:
+      cpu: "8"
+      memory: 16Gi

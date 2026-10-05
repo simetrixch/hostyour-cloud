@@ -1,6 +1,6 @@
 # SIZE PRESET — medium. Layer over values.yaml: -f values-size-medium.yaml
 #
-#   cpu req 250m · mem req 1Gi · cpu lim 2 · mem lim 4Gi · data volume 40Gi
+#   cpu req 250m · mem req 1Gi · cpu lim 2 · mem lim 4Gi
 #
 # PER MEMBER. A replicaset runs three of these; the Manager's quota table
 # multiplies the mongodb row by the same member count.
@@ -10,7 +10,8 @@
 # limit, so 2Gi to 4Gi is what actually buys the cache, and the request follows
 # it closely because memory is OOM-killed rather than throttled.
 #
-# Only the resource numbers and the data volume differ from the small default;
+# Only the resource numbers differ from the small default; the data volume is the
+# registration's, never a preset's (values.yaml, storageSize);
 # image, mode, probes and security context stay as values.yaml defines them.
 mongodb:
   resources:
@@ -25,4 +26,3 @@ mongodb:
       # index build or a large aggregation run.
       cpu: "2"
       memory: 4Gi
-  storageSize: 40Gi

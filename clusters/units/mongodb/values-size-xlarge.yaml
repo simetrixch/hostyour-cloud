@@ -1,0 +1,19 @@
+# SIZE PRESET — xlarge. Layer over values.yaml: -f values-size-xlarge.yaml
+#
+#   cpu req 750m · mem req 3Gi · cpu lim 6 · mem lim 12Gi
+#
+# PER MEMBER. A replicaset runs three of these.
+#
+# FOR: a working set that has outgrown large's cache. One and a half times
+# large: the Manager offers it only where the target machine holds it.
+#
+# Only the resource numbers differ from the small default; the data volume is the
+# registration's, never a preset's (values.yaml, storageSize).
+mongodb:
+  resources:
+    requests:
+      cpu: 750m
+      memory: 3Gi
+    limits:
+      cpu: "6"
+      memory: 12Gi

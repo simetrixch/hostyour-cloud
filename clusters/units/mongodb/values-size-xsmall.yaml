@@ -1,0 +1,20 @@
+# SIZE PRESET — xsmall. Layer over values.yaml: -f values-size-xsmall.yaml
+#
+#   cpu req 50m · mem req 256Mi · cpu lim 500m · mem lim 1Gi
+#
+# PER MEMBER. A replicaset runs three of these.
+#
+# FOR: a few collections of settings or state, read more than written. Half of
+# small. WiredTiger's cache floor is 256MB, which the 1Gi limit still holds next
+# to the connections.
+#
+# Only the resource numbers differ from the small default; the data volume is the
+# registration's, never a preset's (values.yaml, storageSize).
+mongodb:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi

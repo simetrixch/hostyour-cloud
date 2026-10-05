@@ -31,4 +31,6 @@ node --test scripts/unit-alerts.test.mjs || fail 'scripts/unit-alerts.test.mjs'
 echo 'test: unit mongodb exporter — every member of each mode scraped as the instance root.'
 helm dependency update clusters/units/mongodb
 node --test scripts/unit-mongodb-exporter.test.mjs || fail 'scripts/unit-mongodb-exporter.test.mjs'
+echo 'test: consumer data sizes — each part at its own preset, each volume as onboarded, every preset within its row.'
+node --test scripts/consumer-data-sizes.test.mjs || fail 'scripts/consumer-data-sizes.test.mjs'
 echo 'test: OK — all suites green'

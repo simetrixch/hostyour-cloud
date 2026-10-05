@@ -1,0 +1,31 @@
+# SIZE PRESET — xxlarge. Layer over values.yaml: -f values-size-xxlarge.yaml
+#
+#   cpu req 500m · mem req 4Gi · cpu lim 4 · mem lim 8Gi
+#
+# FOR: the largest database the platform runs for one consumer. Twice large: the
+# Manager offers it only where the target machine holds it.
+#
+# Only the four resource numbers and the server config (args) differ from the
+# small default; every other value (image, probes, security context, monitoring,
+# exporter) stays as values.yaml defines it, and the data volume is the
+# registration's, never a preset's (values.yaml, postgres-data).
+postgres:
+  # SERVER CONFIG — restated in full (Helm replaces list values, does not merge).
+  args:
+    # shared_buffers 1GB — a quarter of the 4Gi request, as medium and large.
+    - "-c"
+    - "shared_buffers=1GB"
+    # max_connections 400. Peak check: shared_buffers 1024 + 3 autovacuum × 64
+    # (192) + 400 backends ≈ 3.2GB, under the 8Gi limit.
+    - "-c"
+    - "max_connections=400"
+    # autovacuum_work_mem 64MB — stock maintenance size.
+    - "-c"
+    - "autovacuum_work_mem=64MB"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 4Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi

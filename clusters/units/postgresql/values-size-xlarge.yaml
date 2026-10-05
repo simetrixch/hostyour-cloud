@@ -1,0 +1,32 @@
+# SIZE PRESET — xlarge. Layer over values.yaml: -f values-size-xlarge.yaml
+#
+#   cpu req 375m · mem req 3Gi · cpu lim 3 · mem lim 6Gi
+#
+# FOR: a database that has outgrown large. One and a half times large, above
+# what a single shared cluster instance is permitted: the Manager offers it only
+# where the target machine holds it.
+#
+# Only the four resource numbers and the server config (args) differ from the
+# small default; every other value (image, probes, security context, monitoring,
+# exporter) stays as values.yaml defines it, and the data volume is the
+# registration's, never a preset's (values.yaml, postgres-data).
+postgres:
+  # SERVER CONFIG — restated in full (Helm replaces list values, does not merge).
+  args:
+    # shared_buffers 768MB — a quarter of the 3Gi request, as medium and large.
+    - "-c"
+    - "shared_buffers=768MB"
+    # max_connections 300. Peak check: shared_buffers 768 + 3 autovacuum × 64
+    # (192) + 300 backends ≈ 2.5GB, under the 6Gi limit.
+    - "-c"
+    - "max_connections=300"
+    # autovacuum_work_mem 64MB — stock maintenance size.
+    - "-c"
+    - "autovacuum_work_mem=64MB"
+  resources:
+    requests:
+      cpu: 375m
+      memory: 3Gi
+    limits:
+      cpu: "3"
+      memory: 6Gi
