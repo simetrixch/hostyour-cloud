@@ -194,9 +194,9 @@ configs:
 #
 # - The browser hosts redirect for good to the same path on their new names. One certificate covers
 #   all thirteen: one order, not thirteen, against the old domain's weekly limit.
-# - The tailnet coordinator keeps its old name as a second door to the same Headscale. A machine
-#   still logged in at the old address then hears every node key that changes while the others
-#   rejoin at the new one. It retires once all nine machines are logged in there.
+#
+# The old coordinator name is not here: it stands with the coordinator it serves, in
+# clusters/inventories/headscale/templates/old-tailnet-host.yaml.
 #
 # Each retires by deleting its entries here: the next upgrade of this release removes them.
 extraObjects:
@@ -252,17 +252,3 @@ extraObjects:
         - {host: grafana.master.digitacloud.app, http: *toArgo}
         - {host: tekton.master.digitacloud.app, http: *toArgo}
         - {host: kube.master.digitacloud.app, http: *toArgo}
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: old-tailnet-host
-      namespace: headscale
-      annotations:
-        cert-manager.io/cluster-issuer: platform-acme
-        traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    spec:
-      ingressClassName: public
-      tls:
-        - {secretName: old-tailnet-host-tls, hosts: [tale.master.digitacloud.app]}
-      rules:
-        - {host: tale.master.digitacloud.app, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: headscale-prod-app, port: {number: 8080}}}}]}}

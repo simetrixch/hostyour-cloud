@@ -1,0 +1,38 @@
+{{- /*
+THE COORDINATOR'S OLD NAME, kept answering while the machines move to the new one (package G,
+Phase 2). A machine still logged in at the old address reaches this same coordinator, so it hears
+the new node keys of every machine that has already moved, and the rejoins need no fixed order.
+
+It stands in this chart and not in the argocd release beside the browser redirects, because it is
+part of the private network rather than a convenience. ArgoCD keeps it with the coordinator from
+this branch, and a master restored or reinstalled gets it back with the coordinator.
+
+This file exists on the books branch alone. It retires once every machine has rejoined at the new
+name, by deleting this file.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: old-tailnet-host
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | quote }}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: public
+  tls:
+    - hosts:
+        - tale.master.digitacloud.app
+      secretName: old-tailnet-host-tls
+  rules:
+    - host: tale.master.digitacloud.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: headscale-{{ .Values.global.env }}-app
+                port:
+                  number: 8080
