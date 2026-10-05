@@ -16,7 +16,11 @@ metadata:
     {{- if $issuer }}
     cert-manager.io/cluster-issuer: {{ $issuer | quote }}
     {{- end }}
-    {{- with .Values.ingress.annotations }}
+    {{- /* websecure alone, for every consumer of this chart: Traefik binds an Ingress without the
+    annotation to every entrypoint, and the service would answer over plain http as well. A
+    consumer's own entrypoints annotation is dropped, so this line stays the only one. */}}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    {{- with omit (.Values.ingress.annotations | default dict) "traefik.ingress.kubernetes.io/router.entrypoints" }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:

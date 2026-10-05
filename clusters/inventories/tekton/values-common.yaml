@@ -58,7 +58,6 @@ ingress:
       # cluster's IdP. Order matters — Traefik evaluates
       # auth BEFORE routing.
       traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
-      traefik.ingress.kubernetes.io/router.entrypoints: websecure
     host: 'tekton.{{ .Values.global.domain }}'
     paths:
       - path: /

@@ -254,6 +254,27 @@ collect_disagreeing() {
 $found"
 }
 
+# AN INGRESS IS SERVED OVER PLAIN HTTP UNLESS IT BINDS websecure ALONE. Traefik binds an Ingress
+# without the entrypoints annotation to every entrypoint, `web` included, and a route with a host
+# outranks the catch-all of clusters/inventories/https-redirect, so the page, its sign-in and its
+# cookies would travel unencrypted. $1 says where the render came from, $2 is a file holding it.
+ingresses_on_web() {
+  yq eval-all -N 'select(.kind == "Ingress" and .metadata.annotations["traefik.ingress.kubernetes.io/router.entrypoints"] != "websecure") | .metadata.name' "$2" \
+    > "$work/plain-http" 2>/dev/null || fail "the render of $1 could not be read"
+  while read -r ingress; do
+    [ -n "$ingress" ] && printf '  %s: Ingress %s binds more than websecure\n' "$1" "$ingress"
+  done < "$work/plain-http"
+}
+
+# $1 says where the render came from, $2 is the render itself. Adds what it finds to $plain_http.
+collect_plain_http() {
+  printf '%s\n' "$2" > "$work/render"
+  found="$(ingresses_on_web "$1" "$work/render")"
+  [ -n "$found" ] || return 0
+  plain_http="$plain_http
+$found"
+}
+
 # ── The counter-probe of that scan ──────────────────────────────────────────────────────────
 # THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
 # plants two defects it has to report and three innocents it has to leave alone, and its own header
@@ -286,6 +307,18 @@ if [ "$sources_reported" != "$sources_expected" ]; then
 fi
 echo "check: the counter-probe reports the planted Application whose sources disagree and neither planted innocent."
 
+plain_expected='  scripts/counter-probe.yaml: Ingress planted-defect-on-every-entrypoint binds more than websecure
+  scripts/counter-probe.yaml: Ingress planted-defect-on-web-and-websecure binds more than websecure'
+plain_reported="$(ingresses_on_web 'scripts/counter-probe.yaml' "$counter_probe")"
+if [ "$plain_reported" != "$plain_expected" ]; then
+  echo "The counter-probe plants two Ingresses served over plain http and one that is not. The scan had to report:"
+  echo "$plain_expected"
+  echo "and it reported:"
+  echo "${plain_reported:-  (nothing)}"
+  fail "the scan for an Ingress served over plain http does not report what scripts/counter-probe.yaml plants"
+fi
+echo "check: the counter-probe reports both planted Ingresses served over plain http and not the planted innocent."
+
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
 echo "check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves, and clusters/argocd."
 
@@ -296,6 +329,7 @@ needed_standin=""
 broken=""
 expressions=""
 disagreeing=""
+plain_http=""
 
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
 # renders the eight manifests of clusters/argocd/files from the cluster map, and it is the only
@@ -351,6 +385,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       rendered=$((rendered + 1))
       collect_expressions "$name at stage $stage" "$trunk_only"
       collect_disagreeing "$name at stage $stage" "$trunk_only"
+      collect_plain_http "$name at stage $stage" "$trunk_only"
       check_immutable_render "$trunk_only"
       continue
     fi
@@ -363,6 +398,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       rendered=$((rendered + 1))
       collect_expressions "$name at stage $stage" "$out"
       collect_disagreeing "$name at stage $stage" "$out"
+      collect_plain_http "$name at stage $stage" "$out"
       check_immutable_render "$out"
       case " $needed_standin " in
         *" $name "*) ;;
@@ -415,6 +451,12 @@ if [ -n "$disagreeing" ]; then
   fail "an Application names one repository at two revisions"
 fi
 echo "check: every Application of those $rendered renders names each repository it uses at one revision."
+
+if [ -n "$plain_http" ]; then
+  echo "These Ingresses are served over plain http as well, because they do not bind websecure alone:$plain_http"
+  fail "an Ingress is served over plain http"
+fi
+echo "check: every Ingress of those $rendered renders binds websecure alone."
 
 # ── clusters/argocd as ArgoCD is handed it: the cluster map ALONE ────────────────────────────
 # THE LOOP ABOVE RENDERS IT WITH THE PLATFORM CHAIN, AND NO CLUSTER EVER DOES. clusters/argocd is

@@ -989,6 +989,8 @@ kube-prometheus-stack:
       ingressClassName: public
       annotations:
         cert-manager.io/cluster-issuer: "{{ .Values.global.clusterIssuer }}"
+        # websecure alone: without it Traefik serves Grafana and its sign-in over plain http too.
+        traefik.ingress.kubernetes.io/router.entrypoints: websecure
         # No forwardAuth Middleware — Grafana authenticates natively via OIDC
         # against the platform IdP (Authentik). See `grafana.ini.auth.generic_oauth`
         # below and the `idp-oidc-grafana` Secret materialized by ESO from
@@ -1259,7 +1261,6 @@ ingress-prom-push:
     enabled: true
     className: public
     annotations:
-      traefik.ingress.kubernetes.io/router.entrypoints: websecure
       # Cross-namespace Traefik Middleware ref: <namespace>-<name>@kubernetescrd.
       # The Middleware (push-auth-middleware below) renders in THIS namespace
       # (observability) with the fixed name obs-push-auth.
@@ -1281,7 +1282,6 @@ ingress-loki-push:
     enabled: true
     className: public
     annotations:
-      traefik.ingress.kubernetes.io/router.entrypoints: websecure
       traefik.ingress.kubernetes.io/router.middlewares: observability-obs-push-auth@kubernetescrd
     host: 'loki-push.{{ .Values.global.domain }}'
     paths:

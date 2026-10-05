@@ -13,6 +13,8 @@ node --test scripts/build-contract.test.mjs || fail 'scripts/build-contract.test
 echo 'test: manager-generator-refresh — approved grant only.'
 helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'
+echo 'test: ingress entrypoints — the shared ingress chart writes websecure once, whatever a consumer sets.'
+node --test scripts/ingress-entrypoints.test.mjs || fail 'scripts/ingress-entrypoints.test.mjs'
 echo 'test: installation domain planning and paired launchers.'
 node --test scripts/installation-domain.test.mjs || fail 'scripts/installation-domain.test.mjs'
 node --test scripts/tenant-stage-label.test.mjs || fail 'scripts/tenant-stage-label.test.mjs'
