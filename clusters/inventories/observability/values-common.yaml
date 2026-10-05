@@ -572,6 +572,42 @@ monitoring:
               annotations:
                 summary: "PostgreSQL of {{ $labels.namespace }} on {{ $labels.cluster }} fills over 80 % of its data volume"
 
+    # Every own MariaDB of the platform at once (clusters/units/mariadb): their exporters' series
+    # arrive here, an app cluster evaluates no rule. Each result keeps the cluster and namespace of
+    # the one server it is about. The size of the data is the tables' data and index lengths, which
+    # the exporter reads with its info_schema.tables collector; free space inside a table is no data.
+    units-mariadb:
+      enabled: true
+      groups:
+        - name: units-mariadb
+          interval: 60s
+          rules:
+            - alert: MariaDBDown
+              expr: mysql_up == 0
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "MariaDB of {{ $labels.namespace }} on {{ $labels.cluster }} is down"
+            - alert: MariaDBConnectionsSaturated
+              expr: >-
+                max by (cluster, namespace) (mysql_global_status_threads_connected)
+                / max by (cluster, namespace) (mysql_global_variables_max_connections) > 0.8
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "MariaDB of {{ $labels.namespace }} on {{ $labels.cluster }} uses over 80 % of max_connections"
+            - alert: MariaDBStorageFillingUp
+              expr: >-
+                sum by (cluster, namespace) (mysql_info_schema_table_size{component=~"data_length|index_length"})
+                > 0.8 * max by (cluster, namespace) (kube_persistentvolumeclaim_resource_requests_storage_bytes{persistentvolumeclaim="mariadb-data"})
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "MariaDB of {{ $labels.namespace }} on {{ $labels.cluster }} fills over 80 % of its data volume"
+
     # Every Redis of the platform at once, a consumer's own (clusters/units/redis) and each
     # cluster's shared server alike: their exporters' series arrive here, an app cluster evaluates
     # no rule. Each result keeps the cluster and namespace of the one server it is about. The

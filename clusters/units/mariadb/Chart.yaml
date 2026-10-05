@@ -1,0 +1,57 @@
+apiVersion: v2
+name: unit-mariadb
+version: 1.0.0
+description: |
+  MariaDB — a consumer's OWN server, for a manifest whose services[] names `mariadb`. The
+  official `mariadb` image on our own clusters/charts/deployment, one server per render, inside
+  the namespace it is rendered into: an extra source of the consumer's Application
+  (clusters/argocd/files/consumers-appset.yaml), as clusters/units/postgresql is. There is no
+  shared MariaDB: every consumer that names it brings its own.
+
+  CREDENTIAL. The root password from secret/<stage>/consumer/<name>/mariadb (property
+  root-password), which the Manager's onboarding seeds create-only. The renderer hands the
+  path in (externalsecret-mariadb.externalSecret.vaultPath); the ExternalSecret `required`s it.
+  The store is a platform-named one, `vault-backend-mariadb` / `mariadb-eso`, for the reason
+  clusters/units/postgresql gives: the consumer's own store is created too late. The
+  `consumer-eso` Vault role must admit `mariadb-eso` (hostyour-deploy ansiwise programs
+  deploy-platform-services and register-slave).
+
+  CLAIMS. The service-provisioner serves a mariadb claim from this server with root, as it
+  serves a postgresql claim from clusters/units/postgresql: the claim's user owns the whole
+  server, which serves this consumer alone.
+
+  BACKUP AND RESTORE. The Manager's dump job takes every application database with
+  `mariadb-dump --single-transaction --routines --triggers --events`, and its restore job
+  replays the dump into a fresh server; claim users are the provisioner's
+  (hostyour-manager relocation-jobs-own-stores.ts). Both jobs run in this namespace.
+
+  The image tag is managed centrally in clusters/platform/versions.yaml (images.mariadb).
+dependencies:
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: mariadb
+
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+    alias: mariadb-data
+
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-mariadb
+
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+    condition: secret-store.enabled
+
+  - name: prometheus-mysql-exporter
+    version: 2.15.0
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: metrics.enabled
+
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

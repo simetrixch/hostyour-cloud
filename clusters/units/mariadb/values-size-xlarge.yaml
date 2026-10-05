@@ -1,0 +1,11 @@
+# The xlarge preset: the Manager's `mariadb` xlarge row minus the exporter's 10m / 32Mi
+# (values.yaml has the table).
+mariadb:
+  innodbBufferPoolSize: 3312M
+  resources:
+    requests:
+      cpu: 440m
+      memory: 3552Mi
+    limits:
+      cpu: 3190m
+      memory: 6624Mi

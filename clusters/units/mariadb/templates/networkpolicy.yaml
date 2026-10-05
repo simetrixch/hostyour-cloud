@@ -1,0 +1,33 @@
+{{- /*
+Who may open :3306 on the consumer's own server: the consumer's own pods (its application,
+the exporter, the Manager's dump and restore jobs) and the namespaces named in
+.Values.networkPolicy.allowedNamespaces — the service-provisioner, which writes the user and the
+databases a mariadb claim gets. The namespace's own policy (clusters/units/networkpolicy) already admits the
+same-namespace pods; this one is the server's own fence, as clusters/units/postgresql has.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mariadb-allow-internal
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mariadb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+        {{- range .Values.networkPolicy.allowedNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 3306
+{{- end }}
