@@ -195,9 +195,6 @@ configs:
 # - The browser hosts redirect for good to the same path on their new names. One certificate covers
 #   all thirteen: one order, not thirteen, against the old domain's weekly limit.
 #
-# The old coordinator name is not here: it stands with the coordinator it serves, in
-# clusters/inventories/headscale/templates/old-tailnet-host.yaml.
-#
 # Each retires by deleting its entries here: the next upgrade of this release removes them.
 extraObjects:
   - apiVersion: traefik.io/v1alpha1
