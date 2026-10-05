@@ -609,14 +609,24 @@ data:
         return (["reset", "on", ">" + password] + ["~" + p for p in patterns]
                 + ["resetchannels"] + ["&" + c for c in channels] + REDIS_ACL_TAIL)
 
-    def _redis_admin(core):
+    def _redis_admin(core, ns):
         """WHERE a redis claim is served from: (host, port, the `default` user's password).
 
-        One instance per cluster that runs clusters/inventories/redis, so both coordinates come from the
-        deployment env and
-        the password from the admin Secret clusters/inventories/redis materializes into REDIS_CRED_NS.
+        A consumer that brings its OWN Redis (clusters/units/redis) has the server in ITS
+        namespace, and the credential that chart materializes there, under the shared server's
+        Secret name and key, is the switch — the rule _mongo_backend follows. The shared
+        server's own namespace is excluded for the same reason as there.
+
+        Every other claim is served by the one shared instance of the cluster
+        (clusters/inventories/redis): both coordinates come from the deployment env and the
+        password from the admin Secret that chart materializes into REDIS_CRED_NS.
         A missing password is an Error the claim reports, not a connection attempted
         without one."""
+        if ns != REDIS_CRED_NS:
+            own_pw = read_secret_key(core, ns, REDIS_CRED_SECRET, REDIS_CRED_KEY)
+            if own_pw is not None:
+                # clusters/units/redis pins the Service name `redis` and the port.
+                return "redis.%s.svc.cluster.local" % ns, 6379, own_pw
         if not REDIS_HOST:
             raise RuntimeError("REDIS_HOST not configured")
         admin_pw = read_secret_key(core, REDIS_CRED_NS, REDIS_CRED_SECRET, REDIS_CRED_KEY)
@@ -644,7 +654,7 @@ data:
         does not know — while the `default` user (whose password IS in the server's config)
         already answers."""
         import redis as redis_client
-        host, port, admin_pw = _redis_admin(core)
+        host, port, admin_pw = _redis_admin(core, ns)
         patterns = _key_patterns(spec)
         if not patterns:
             raise RuntimeError(
@@ -775,7 +785,7 @@ data:
 
         Idempotent: ACL DELUSER on an absent user deletes 0 users and returns 0."""
         import redis as redis_client
-        host, port, admin_pw = _redis_admin(core)
+        host, port, admin_pw = _redis_admin(core, ns)
         conn = redis_client.Redis(
             host=host, port=port, username=REDIS_ADMIN_USER, password=admin_pw,
             socket_connect_timeout=10, socket_timeout=10, decode_responses=True)

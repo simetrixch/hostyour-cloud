@@ -70,3 +70,34 @@ test('a pinned alert, a bare or folded aggregation and a unit rule are refused',
   assert.throws(() => checkMaster(plant('PostgreSQLStorageFillingUp', expr => expr.replace(volume, 'other')), volume), /data volume/);
   assert.throws(() => checkUnit([{kind: 'PrometheusRule', spec: {groups: [{rules: [{alert: 'PostgreSQLDown'}]}]}}]), /evaluates/);
 });
+
+// A consumer's own Redis: the master evaluates its alerts for every server at once, the unit renders none.
+const redisUnit = () => docs(execFileSync('helm', ['template', 'acme-test', 'clusters/units/redis',
+  '--namespace', 'acme-test', '--api-versions', 'monitoring.coreos.com/v1',
+  '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-test.yaml',
+  '-f', 'clusters/units/redis/values-size-small.yaml', '-f', 'scripts/standin/installation-values.yaml', '-f', 'scripts/standin/cluster-map.yaml',
+  '--set', 'externalsecret-redis.externalSecret.vaultPath=test/consumer/acme/redis'], {encoding: 'utf8'}));
+const checkRedisMaster = rendered => {
+  const rules = rulesOf(rendered);
+  for (const alert of ['RedisDown', 'RedisMemoryNearCeiling']) {
+    const rule = rules.find(rule => rule.alert === alert);
+    assert.ok(rule, `the master evaluates no ${alert}`);
+    assert.doesNotMatch(rule.expr, /\b(?:cluster|namespace)\s*(?:=|!=|=~|!~)/, `${alert} is pinned to one unit`);
+    assert.doesNotMatch(rule.expr, /\b(?:sum|max|min|avg|count)\b|\bwithout\s*\(/, `${alert} folds servers together`);
+  }
+  assert.match(rules.find(rule => rule.alert === 'RedisMemoryNearCeiling').expr, /\band\s+redis_memory_max_bytes\s*>\s*0\b/, 'the ceiling alert has no guard');
+};
+
+test('the master evaluates every own Redis\'s alerts, and the unit chart renders none', () => {
+  checkUnit(redisUnit());
+  checkRedisMaster(master());
+});
+
+test('a pinned or folded Redis alert is refused', () => {
+  const rendered = master();
+  const plant = (alert, change) => rendered.map(doc => doc.kind !== 'PrometheusRule' ? doc : {...doc, spec: {groups: doc.spec.groups
+    .map(group => ({...group, rules: group.rules.map(rule => rule.alert === alert ? {...rule, expr: change(rule.expr)} : rule)}))}});
+  assert.throws(() => checkRedisMaster(plant('RedisDown', () => 'redis_up{namespace="acme-test"} == 0')), /pinned to one unit/);
+  assert.throws(() => checkRedisMaster(plant('RedisDown', () => 'max(redis_up) == 0')), /folds/);
+  assert.throws(() => checkRedisMaster(plant('RedisMemoryNearCeiling', () => 'redis_memory_used_bytes / redis_memory_max_bytes > 0.85')), /guard/);
+});

@@ -173,3 +173,45 @@ test('a preset above its row is refused', () => {
   const planted = used('postgresql', 'values-size-small.yaml', ['--set', 'postgres.resources.limits.memory=1100Mi']);
   assert.equal(fits(planted.instance, rows.postgresql.small), false);
 });
+
+// A consumer's OWN Redis (clusters/units/redis): a source only for `redis: standalone`, at its own
+// size, on its pinned volume, with the policy the registration names.
+const redisSource = output => yaml('[.spec.sources[] | select(.path == "clusters/units/redis")]', output)[0];
+
+test('an own Redis renders its preset, its pinned volume, its policy and its credential path', () => {
+  const source = redisSource(renderOne(consumer('cache', {services: ['redis'], redis: 'standalone', redisMaxmemoryPolicy: 'allkeys-lru',
+    size: 'small', sizes: {redis: 'large'}, volumes: {redis: '8Gi'}})));
+  assert.ok(source, 'no clusters/units/redis source');
+  assert.ok(source.helm.valueFiles.includes('values-size-large.yaml'), source.helm.valueFiles.join(', '));
+  assert.deepEqual([source.helm.valuesObject['redis-data'].pvc.storageSize, source.helm.valuesObject.redis.maxmemoryPolicy,
+    source.helm.valuesObject['externalsecret-redis'].externalSecret.vaultPath], ['8Gi', 'allkeys-lru', 'test/consumer/cache/redis']);
+});
+
+test('a registration on the shared Redis, or written before the key, renders no own Redis', () => {
+  assert.equal(redisSource(renderOne(consumer('shared-cache', {services: ['redis'], redis: 'shared'}))), undefined);
+  assert.equal(redisSource(renderOne(consumer('older', {}))), undefined);
+});
+
+// The Manager's `redis` rows (UNIT_SIZE_SEED.redis): the server and its exporter, together.
+const redisRows = {
+  xsmall: {requests: [25, 128], limits: [250, 512]},
+  small: {requests: [50, 256], limits: [500, 1024]},
+  medium: {requests: [100, 512], limits: [1000, 2048]},
+  large: {requests: [200, 1024], limits: [2000, 4096]},
+  xlarge: {requests: [300, 2048], limits: [2000, 8192]},
+  xxlarge: {requests: [400, 3072], limits: [2000, 12288]},
+};
+const redisPods = preset => JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(.kind == "Deployment")]', '-'], {
+  encoding: 'utf8', input: execFileSync('helm', ['template', 'acme-test', 'clusters/units/redis', '--namespace', 'acme-test',
+    '--api-versions', 'monitoring.coreos.com/v1', '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-test.yaml',
+    '-f', `clusters/units/redis/${preset}`, '-f', 'scripts/standin/installation-values.yaml', '-f', 'scripts/standin/cluster-map.yaml',
+    '--set', 'externalsecret-redis.externalSecret.vaultPath=test/consumer/acme/redis'], {encoding: 'utf8'})}));
+
+test('every preset of an own Redis, its exporter included, is exactly its size-table row', () => {
+  for (const [size, row] of Object.entries(redisRows)) {
+    const total = sum(redisPods(`values-size-${size}.yaml`).flatMap(containersOf));
+    assert.deepEqual(total, row, `redis at ${size}`);
+  }
+  assert.deepEqual(readdirSync('clusters/units/redis').filter(name => name.startsWith('values-size-')).sort(),
+    Object.keys(redisRows).map(size => `values-size-${size}.yaml`).sort());
+});

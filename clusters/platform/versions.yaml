@@ -200,6 +200,16 @@ images:
         file: clusters/inventories/redis/values-common.yaml
         key: tag
         anchor: 'repository: redis'
+      - kind: yaml_value
+        tree: platform
+        file: clusters/units/redis/values.yaml
+        key: tag
+        anchor: 'repository: redis'
+      - kind: dockerfile_arg
+        tree: manager
+        file: plugins/unit/docker/dbtools.Dockerfile
+        argument: REDIS_SERIES
+        segments: 2
   # The interpreter clusters/inventories/service-provisioner runs its reconciler on. Not a
   # product of its own: the chart mounts the reconciler as a ConfigMap and the
   # container pip-installs the client libraries at boot, so this pin decides

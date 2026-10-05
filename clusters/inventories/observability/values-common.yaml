@@ -572,6 +572,32 @@ monitoring:
               annotations:
                 summary: "PostgreSQL of {{ $labels.namespace }} on {{ $labels.cluster }} fills over 80 % of its data volume"
 
+    # Every Redis of the platform at once, a consumer's own (clusters/units/redis) and each
+    # cluster's shared server alike: their exporters' series arrive here, an app cluster evaluates
+    # no rule. Each result keeps the cluster and namespace of the one server it is about. The
+    # ceiling line holds only where a server sets one: a max of 0 makes the share +Inf.
+    units-redis:
+      enabled: true
+      groups:
+        - name: units-redis
+          interval: 60s
+          rules:
+            - alert: RedisDown
+              expr: redis_up == 0
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Redis of {{ $labels.namespace }} on {{ $labels.cluster }} is down"
+
+            - alert: RedisMemoryNearCeiling
+              expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85 and redis_memory_max_bytes > 0
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Redis of {{ $labels.namespace }} on {{ $labels.cluster }} uses over 85 % of its maxmemory; at 100 % it refuses writes or evicts keys, by its policy"
+
   # --------------------------------------------------------------------------
   # AlertmanagerConfig CRs.
   #

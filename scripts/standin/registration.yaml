@@ -64,3 +64,6 @@ externalsecret-mongodb:
 externalsecret-postgres:
   externalSecret:
     vaultPath: secret/dev/units/check/postgres
+externalsecret-redis:
+  externalSecret:
+    vaultPath: secret/dev/units/check/redis

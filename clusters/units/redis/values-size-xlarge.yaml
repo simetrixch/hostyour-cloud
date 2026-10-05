@@ -1,0 +1,11 @@
+# The xlarge preset: the Manager's `redis` xlarge row minus the exporter's 10m / 32Mi
+# (values.yaml has the table).
+redis:
+  maxmemory: 4080mb
+  resources:
+    requests:
+      cpu: 290m
+      memory: 2016Mi
+    limits:
+      cpu: 1990m
+      memory: 8160Mi

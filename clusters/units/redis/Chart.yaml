@@ -1,0 +1,72 @@
+apiVersion: v2
+name: unit-redis
+version: 1.0.0
+description: |
+  Redis — a consumer's OWN server, for a manifest that says `redis: standalone` beside
+  `services: [redis]`. The official `redis` image on our own clusters/charts/deployment, one
+  server per render, inside the namespace it is rendered into: an extra source of the
+  consumer's Application (clusters/argocd/files/consumers-appset.yaml), as
+  clusters/units/postgresql is. The cluster's shared server (clusters/inventories/redis) stays
+  for every consumer on `redis: shared`.
+
+  WHY A SERVER OF ITS OWN. The shared server's ACL users bound a consumer's keys, never its
+  bytes, so one consumer can fill it for every other. This one is bounded by its own
+  `--maxmemory` (half its container's memory limit, the shared server's rule: the AOF rewrite forks the
+  server, and the fork's copy-on-write pages can reach the whole dataset again) and by its own
+  pod limit, and it is backed up and restored with the unit.
+
+  PERSISTENCE AND RESTORE. AOF (`appendfsync everysec`), as the shared server. A server with
+  AOF on loads only its AOF files at a start, so a backup never comes back as a file on the
+  claim: the Manager's restore job starts a throwaway server from the snapshot and makes this
+  one its replica (hostyour-manager relocation-jobs-consumer.ts). That job runs in this
+  namespace, which clusters/units/networkpolicy admits, and this server's egress is not
+  fenced, so the replication needs no rule here.
+
+  CREDENTIAL. `--requirepass` from secret/<stage>/consumer/<name>/redis, which the Manager's
+  onboarding seeds create-only. The renderer hands the path in
+  (externalsecret-redis.externalSecret.vaultPath); the ExternalSecret `required`s it. The
+  store is a platform-named one, `vault-backend-redis` / `redis-eso`, for the reason
+  clusters/units/postgresql gives: the consumer's own store is created too late. The
+  `consumer-eso` Vault role must admit `redis-eso` (hostyour-deploy ansiwise programs
+  deploy-platform-services.yaml and register-slave.yaml).
+
+  SIZING. Six presets, values-size-<size>.yaml, each CPU, memory and maxmemory; the claim's
+  size is the renderer's (redis-data.pvc.storageSize, the registration's volumes.redis). The
+  presets and the Manager's `redis` size rows add up to the same figures with the exporter.
+
+  ALERTS. None rendered here: an app cluster evaluates no rule, its agent remote-writes, and
+  the master's clusters/inventories/observability evaluates the units-redis group for every
+  unit at once, as it does units-postgresql.
+
+  The image tag is managed centrally in clusters/platform/versions.yaml (images.redis) and
+  stamped by the version sync.
+
+dependencies:
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: redis
+
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+    alias: redis-data
+
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-redis
+
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+    condition: secret-store.enabled
+
+  - name: prometheus-redis-exporter
+    version: 6.28.0
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: metrics.enabled
+
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common
