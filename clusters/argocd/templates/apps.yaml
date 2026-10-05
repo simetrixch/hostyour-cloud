@@ -80,6 +80,19 @@ no appset spells the rule again; hostyour-manager's shared/unit-host.ts composes
 {{- $stageApexDev := printf "dev.%s" $unitApex }}
 {{- $stageApexTest := printf "test.%s" $unitApex }}
 {{- $stageApexProd := $unitApex }}
+{{- /* THE OLD STAGE ZONES, of an installation whose units moved to another apex. While the cluster map
+keeps the apex they stood under as `global.previousUnitApex`, every old unit host answers with a
+permanent redirect to its twin under the unit apex, path and query kept (files/redirects-appset.yaml,
+rendered only then; absent, the output is the same byte for byte). The old apex is neither the unit
+apex nor a zone above or below it: an old host would then be one a unit answers at today, and its
+redirect would take that unit's traffic. */ -}}
+{{- $previousUnitApex := dig "previousUnitApex" "" $global }}
+{{- if and $previousUnitApex (or (eq $previousUnitApex $unitApex) (hasSuffix (printf ".%s" $unitApex) $previousUnitApex) (hasSuffix (printf ".%s" $previousUnitApex) $unitApex)) }}
+{{- fail (printf "argocd-apps: global.previousUnitApex %s is the unit apex %s or a zone above or below it (clusters/active/<fqdn>.yaml), so an old host would be one a unit answers at today" $previousUnitApex $unitApex) }}
+{{- end }}
+{{- $previousStageApexDev := printf "dev.%s" $previousUnitApex }}
+{{- $previousStageApexTest := printf "test.%s" $previousUnitApex }}
+{{- $previousStageApexProd := $previousUnitApex }}
 {{- /* THE PARTS A ROLE CARRIES. A master carries the slave part as well (hostyour-cloud#232): the
 data services and every workload a slave runs stand on it too, so a unit can be placed on any
 cluster of the installation. So `master` fills the two part slots with `master` and `slave`, and a
@@ -135,9 +148,13 @@ syncs at once — the state the steps exist to end, arrived at in silence.
 {{- $waveStepList := printf "\n%s" (join "\n" $waveSteps) }}
 {{- $booksOnly := list "cluster-self.yaml" "slaves-appset.yaml" }}
 {{- $docs := list }}
-{{- range $name := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "slaves-appset.yaml" "tenants-appset.yaml" "units-appset.yaml" }}
+{{- $names := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "slaves-appset.yaml" "tenants-appset.yaml" "units-appset.yaml" }}
+{{- if $previousUnitApex }}
+{{- $names = append $names "redirects-appset.yaml" | sortAlpha }}
+{{- end }}
+{{- range $name := $names }}
 {{- if or $holdsBooks (not (has $name $booksOnly)) }}
-{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__DEPLOY_REPO__" $deployRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__CLUSTER_ROLE_WHOLE__" $roleWhole | replace "__BRANCH__" $booksFqdn | replace "__ARGOCD_NAMESPACE__" $namespace | replace "__SYNC_WAVE_LABEL__" $waveLabel | replace "__SYNC_WAVE_STEPS__" $waveStepList | replace "__STAGE_APEX_DEV__" $stageApexDev | replace "__STAGE_APEX_TEST__" $stageApexTest | replace "__STAGE_APEX_PROD__" $stageApexProd | replace "__API_HOST__" $apiHost }}
+{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__DEPLOY_REPO__" $deployRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__CLUSTER_ROLE_WHOLE__" $roleWhole | replace "__BRANCH__" $booksFqdn | replace "__ARGOCD_NAMESPACE__" $namespace | replace "__SYNC_WAVE_LABEL__" $waveLabel | replace "__SYNC_WAVE_STEPS__" $waveStepList | replace "__STAGE_APEX_DEV__" $stageApexDev | replace "__STAGE_APEX_TEST__" $stageApexTest | replace "__STAGE_APEX_PROD__" $stageApexProd | replace "__API_HOST__" $apiHost | replace "__PREVIOUS_STAGE_APEX_DEV__" $previousStageApexDev | replace "__PREVIOUS_STAGE_APEX_TEST__" $previousStageApexTest | replace "__PREVIOUS_STAGE_APEX_PROD__" $previousStageApexProd }}
 {{- $docs = append $docs (printf "# file: %s\n%s" $name $doc) }}
 {{- end }}
 {{- end }}
