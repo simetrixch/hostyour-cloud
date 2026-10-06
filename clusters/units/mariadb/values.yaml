@@ -126,6 +126,18 @@ externalsecret-mariadb:
     data:
       - secretKey: root-password
         property: root-password
+    # The exporter's my.cnf beside the root password, filled by ESO from the same Vault value, so the credential
+    # reaches the namespace only through the store. Merge keeps root-password as fetched.
+    template:
+      engineVersion: v2
+      mergePolicy: Merge
+      data:
+        my.cnf: |
+          [client]
+          host=mariadb
+          port=3306
+          user=root
+          password={{ index . "root-password" }}
     annotations:
       argocd.argoproj.io/sync-wave: "-21"
 
@@ -149,13 +161,13 @@ metrics:
 prometheus-mysql-exporter:
   # The Deployment the Manager's quiesce keeps running beside the server.
   fullnameOverride: mariadb-exporter
+  # The exporter's my.cnf comes from the credentials ESO materialises (externalsecret-mariadb below), so this
+  # chart renders no Secret of its own: the consumer's AppProject refuses one
+  # (clusters/units/reconciler/templates/appproject.yaml), and one refused resource fails the whole sync.
   mysql:
-    host: mariadb
-    port: 3306
-    user: root
-    existingPasswordSecret:
+    existingConfigSecret:
       name: mariadb-credentials
-      key: root-password
+      key: my.cnf
   # The tables' sizes, which the master's MariaDBStorageFillingUp compares with the data volume.
   collectors:
     info_schema.tables: true

@@ -168,6 +168,11 @@ metrics:
   enabled: true
 
 prometheus-redis-exporter:
+  # No Role and no RoleBinding: the consumer's AppProject refuses both (clusters/units/reconciler/templates/
+  # appproject.yaml), and the chart's Role grants nothing but the retired PodSecurityPolicy. The exporter reads
+  # its password from redis-credentials by env and calls no Kubernetes API.
+  rbac:
+    create: false
   # The Deployment the Manager's quiesce keeps running beside the server.
   fullnameOverride: redis-exporter
   redisAddress: redis://redis:6379
