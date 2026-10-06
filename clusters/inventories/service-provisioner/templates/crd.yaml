@@ -40,9 +40,10 @@ spec:
                   items: { type: string }
                   description: >-
                     mongodb/postgresql — the LITERAL database names to create + grant
-                    (readWrite / owner). Used VERBATIM (platform DB-name contract): the
-                    provisioner creates EXACTLY these names, with no prefix and no
-                    composition. The platform controls them — the consumer's
+                    (readWrite / owner), the platform DB-name contract. The provisioner
+                    serves them as they stand, except a non-prod consumer stage on the
+                    cluster's shared Mongo replica set, which it serves <name>_<stage> so
+                    two stages of one consumer never share a database. The platform controls them — the consumer's
                     deploy/platform.yaml `databases:`, injected into this ServiceClaim
                     as the chart value mongodb.databases — so a claim cannot name a
                     foreign database.
