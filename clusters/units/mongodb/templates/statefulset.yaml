@@ -39,12 +39,14 @@ spec:
       {{- if $rs }}
       initContainers:
         # A K8s Secret volume is mounted root-owned and 0644; mongod refuses a
-        # --keyFile that is group/world-readable or not owned by the running user
-        # (uid 999). This initContainer copies the keyfile off the read-only Secret
-        # mount onto a shared emptyDir AS uid 999, so the copy is 999's own, and
-        # chmod 400 makes mongod accept it: no root, as the restricted Pod Security
-        # level of a consumer namespace demands. Only in replicaset mode: the
-        # keyfile authenticates INTRA-SET traffic, and a standalone has none.
+        # --keyFile that group or others may read. This initContainer copies the
+        # keyfile off the read-only Secret mount onto a shared emptyDir AS uid 999
+        # and makes the copy 0400: no root, as the restricted Pod Security level of
+        # a consumer namespace demands. `cp -f` because the emptyDir outlives a node
+        # reboot, after which the kubelet runs this again over its own 0400 copy,
+        # which a plain `cp` without root may not open for writing. Only in
+        # replicaset mode: the keyfile authenticates INTRA-SET traffic, and a
+        # standalone has none.
         - name: keyfile-perms
           image: busybox:1.36
           imagePullPolicy: IfNotPresent
@@ -61,7 +63,7 @@ spec:
             - -c
             - |
               set -e
-              cp /secret/keyfile /keyfile/keyfile
+              cp -f /secret/keyfile /keyfile/keyfile
               chmod 400 /keyfile/keyfile
           volumeMounts:
             - name: keyfile-secret

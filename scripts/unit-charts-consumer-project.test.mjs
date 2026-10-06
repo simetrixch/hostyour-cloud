@@ -130,6 +130,14 @@ test('PLANTED: a Role, a RoleBinding or a Secret is named; an ExternalSecret, a 
   assert.deepEqual(refusedKinds('namespaceResourceBlacklist:\n    - group: ""\n      kind: Secret\n  roles: []'), ['Secret']);
 });
 
+test('the replica set\'s keyfile copy, made without root, survives the init container running again', () => {
+  const members = render('mongodb').find(({kind, spec}) => kind === 'StatefulSet' && spec.template.spec.initContainers);
+  const keyfile = members.spec.template.spec.initContainers.find(({name}) => name === 'keyfile-perms');
+  assert.equal(keyfile.securityContext.runAsUser, 999);
+  // A rerun meets its own 0400 copy: only cp -f, which unlinks it first, writes it again without root.
+  assert.match(keyfile.command.join('\n'), /cp -f \/secret\/keyfile \/keyfile\/keyfile/);
+});
+
 test('the MariaDB exporter reads its my.cnf from the credentials ESO materialises, holding the root password from Vault', () => {
   const docs = render('mariadb');
   const external = docs.find(({kind}) => kind === 'ExternalSecret');
