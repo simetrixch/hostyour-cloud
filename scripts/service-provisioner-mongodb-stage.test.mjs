@@ -119,3 +119,7 @@ test('PLANTED: a consumer namespace without its stage label is served nothing', 
 test('teardown on an own server drops the literal name', () => {
   assert.deepEqual(run('deprovision', 'digita-post-test', consumer('test'), 'own'), {dropped: ['digita_post']});
 });
+
+test('a failed teardown on an own server lists the literal database it was served', () => {
+  assert.deepEqual(run('orphans', 'digita-post-test', consumer('test'), 'own'), {orphans: ['mongo:db:digita_post']});
+});
