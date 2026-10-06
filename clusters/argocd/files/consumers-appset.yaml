@@ -473,6 +473,34 @@ spec:
                 externalSecret:
                   vaultPath: "{{ .values.stage }}/consumer/{{ .name }}/redis"
         {{- end }}
+        # 2d. Per-consumer MariaDB (clusters/units/mariadb), rendered ONLY when the registration's
+        #    services[] includes "mariadb"; there is no shared MariaDB, so every consumer that
+        #    claims one brings its own, as for PostgreSQL. The preset is named from the part's own
+        #    size and the claim from the volume the Manager pinned at onboarding, both read with
+        #    `dig` for the reason source 2 gives.
+        {{- if has "mariadb" .services }}
+        {{- $mariadbSize := dig "sizes" "mariadb" .size . }}
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          path: clusters/units/mariadb
+          helm:
+            valueFiles:
+              - $values/clusters/platform/values-common.yaml
+              - $values/clusters/platform/values-{{ .values.stage }}.yaml
+              - values-size-{{ $mariadbSize }}.yaml
+              - $values/clusters/active/__FQDN__.yaml
+            valuesObject:
+              mariadb-data:
+                pvc:
+                  storageSize: '{{ dig "volumes" "mariadb" "" . }}'
+              secret-store:
+                annotations:
+                  vault.hashicorp.com/alias-metadata-unit: "{{ .name }}"
+                  vault.hashicorp.com/alias-metadata-stage: "{{ .values.stage }}"
+              externalsecret-mariadb:
+                externalSecret:
+                  vaultPath: "{{ .values.stage }}/consumer/{{ .name }}/mariadb"
+        {{- end }}
         - repoURL: https://github.com/simetrixch/hostyour-cloud.git
           targetRevision: __BRANCH__
           path: clusters/units/networkpolicy

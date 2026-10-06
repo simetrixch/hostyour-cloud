@@ -101,3 +101,44 @@ test('a pinned or folded Redis alert is refused', () => {
   assert.throws(() => checkRedisMaster(plant('RedisDown', () => 'max(redis_up) == 0')), /folds/);
   assert.throws(() => checkRedisMaster(plant('RedisMemoryNearCeiling', () => 'redis_memory_used_bytes / redis_memory_max_bytes > 0.85')), /guard/);
 });
+
+// A consumer's own MariaDB: the master evaluates its alerts for every server at once, the unit
+// renders none, and the storage alert reads the unit's own data volume.
+const mariadbUnit = () => docs(execFileSync('helm', ['template', 'acme-test', 'clusters/units/mariadb',
+  '--namespace', 'acme-test', '--api-versions', 'monitoring.coreos.com/v1',
+  '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-test.yaml',
+  '-f', 'clusters/units/mariadb/values-size-small.yaml', '-f', 'scripts/standin/installation-values.yaml', '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml'], {encoding: 'utf8'}));
+const mariadbAlerts = ['MariaDBDown', 'MariaDBConnectionsSaturated', 'MariaDBStorageFillingUp'];
+const checkMariadbMaster = (rendered, dataVolume) => {
+  const rules = rulesOf(rendered);
+  for (const alert of mariadbAlerts) {
+    const rule = rules.find(rule => rule.alert === alert);
+    assert.ok(rule, `the master evaluates no ${alert}`);
+    assert.doesNotMatch(rule.expr, /\b(?:cluster|namespace)\s*(?:=|!=|=~|!~)/, `${alert} is pinned to one unit`);
+    assert.doesNotMatch(rule.expr, /\bwithout\s*\(/, `${alert} folds the cluster or the namespace away`);
+    for (const [aggregation, by] of rule.expr.matchAll(/\b(?:sum|max|min|avg|count)\b\s*(by\s*\()?/g)) {
+      assert.ok(by, `${alert} aggregates without by (cluster, namespace): ${aggregation.trim()}`);
+    }
+    for (const [, labels] of rule.expr.matchAll(/\b(?:by|on)\s*\(([^)]*)\)/g)) {
+      const kept = labels.split(',').map(label => label.trim());
+      assert.ok(kept.includes('cluster') && kept.includes('namespace'), `${alert} folds the cluster or the namespace away`);
+    }
+  }
+  assert.match(rules.find(rule => rule.alert === 'MariaDBStorageFillingUp').expr, new RegExp(`persistentvolumeclaim="${dataVolume}"`), 'the storage alert does not read the unit\'s data volume');
+};
+
+test('the master evaluates every own MariaDB\'s alerts, and the unit chart renders none', () => {
+  const rendered = mariadbUnit();
+  checkUnit(rendered);
+  checkMariadbMaster(master(), dataVolumeOf(rendered));
+});
+
+test('a pinned, folded or misdirected MariaDB alert is refused', () => {
+  const rendered = master();
+  const volume = dataVolumeOf(mariadbUnit());
+  const plant = (alert, change) => rendered.map(doc => doc.kind !== 'PrometheusRule' ? doc : {...doc, spec: {groups: doc.spec.groups
+    .map(group => ({...group, rules: group.rules.map(rule => rule.alert === alert ? {...rule, expr: change(rule.expr)} : rule)}))}});
+  assert.throws(() => checkMariadbMaster(plant('MariaDBDown', () => 'mysql_up{namespace="acme-test"} == 0'), volume), /pinned to one unit/);
+  assert.throws(() => checkMariadbMaster(plant('MariaDBConnectionsSaturated', expr => expr.replaceAll('cluster, ', '')), volume), /folds/);
+  assert.throws(() => checkMariadbMaster(plant('MariaDBStorageFillingUp', expr => expr.replace(volume, 'other')), volume), /data volume/);
+});

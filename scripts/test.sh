@@ -30,8 +30,10 @@ echo 'test: tenant size — every registration renders, with the word or without
 node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
 echo 'test: tenant own domain aliases — every member gets the list, or [] without one.'
 node --test scripts/tenant-own-domain-aliases.test.mjs || fail 'scripts/tenant-own-domain-aliases.test.mjs'
-echo 'test: unit alerts — the master evaluates the PostgreSQL alerts of every unit, the unit renders none.'
+node --test scripts/tenant-display-name.test.mjs || fail 'scripts/tenant-display-name.test.mjs'
+echo 'test: unit alerts — the master evaluates the PostgreSQL, Redis and MariaDB alerts of every unit, the unit renders none.'
 helm dependency update clusters/units/postgresql
+helm dependency update clusters/units/mariadb
 node --test scripts/unit-alerts.test.mjs || fail 'scripts/unit-alerts.test.mjs'
 node --test scripts/manager-log-alerts.test.mjs || fail 'scripts/manager-log-alerts.test.mjs'
 echo 'test: unit mongodb exporter — every member of each mode scraped as the instance root.'
@@ -42,6 +44,8 @@ node --test scripts/consumer-data-sizes.test.mjs || fail 'scripts/consumer-data-
 echo 'test: service-provisioner redis — a claim is served by the own Redis of its namespace where one stands, else by the shared one.'
 helm dependency update clusters/inventories/service-provisioner
 node --test scripts/service-provisioner-redis.test.mjs || fail 'scripts/service-provisioner-redis.test.mjs'
+echo 'test: service-provisioner mariadb — a claim is served by the own MariaDB of its namespace, with a user that owns it and the databases it names.'
+node --test scripts/service-provisioner-mariadb.test.mjs || fail 'scripts/service-provisioner-mariadb.test.mjs'
 echo 'test: unit redirects — old unit hosts answer with a permanent redirect to their twins, and nothing renders without an old apex.'
 node --test scripts/unit-redirects.test.mjs || fail 'scripts/unit-redirects.test.mjs'
 echo 'test: OK — all suites green'

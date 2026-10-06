@@ -1,0 +1,173 @@
+# =============================================================================
+# MariaDB — a consumer's OWN server (Chart.yaml says what and why).
+#
+# values.yaml and no per-stage file, for the reason clusters/units/postgresql/values.yaml
+# gives: a chart rendered into a consumer namespace loads only its own values.yaml, and
+# everything stage-dependent arrives through global.* from $values/clusters/platform.
+#
+# SIZE PRESETS. Each figure is the Manager's `mariadb` size row, which is its `postgresql` row,
+# minus the exporter's fixed 10m / 32Mi (requests and limits alike), so the server and its
+# exporter add up to the row. The InnoDB buffer pool is half the server container's memory
+# limit: the rest holds the connections' own buffers and the server itself.
+#
+#   preset           cpu req  mem req  cpu lim  mem lim   buffer pool  claim at onboarding
+#   xsmall               15m    224Mi     390m    480Mi        240M      2Gi
+#   small (DEFAULT)      40m    480Mi     590m    992Mi        496M      5Gi
+#   medium              140m   1504Mi    1190m   2528Mi       1264M     20Gi
+#   large               290m   2528Mi    2190m   4576Mi       2288M     50Gi
+#   xlarge              440m   3552Mi    3190m   6624Mi       3312M    100Gi
+#   xxlarge             590m   4576Mi    4190m   8672Mi       4336M    200Gi
+#
+# The claim is the registration's (volumes.mariadb). A hostpath claim cannot grow, so a resize
+# changes CPU, memory and the buffer pool only.
+# =============================================================================
+mariadb:
+  fullnameOverride: mariadb
+  image:
+    repository: mariadb
+    # Managed centrally in clusters/platform/versions.yaml (images.mariadb) and stamped by the
+    # version sync — do not hand-edit this tag.
+    tag: "12.3"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  containerPort: 3306
+  # One RWO claim: two pods of this server never exist at once.
+  strategy:
+    type: Recreate
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+  terminationGracePeriodSeconds: 60
+  podSecurityContext:
+    fsGroup: 999
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    runAsUser: 999
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  # Read by the env entry below, which the deployment chart passes through tpl; the presets set it.
+  innodbBufferPoolSize: 496M
+  # The image's entrypoint hands arguments that start with `--` to the server.
+  args:
+    - --innodb-buffer-pool-size=$(MARIADB_INNODB_BUFFER_POOL_SIZE)
+  env:
+    - name: MARIADB_ROOT_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: mariadb-credentials
+          key: root-password
+    - name: MARIADB_INNODB_BUFFER_POOL_SIZE
+      value: '{{ .Values.innodbBufferPoolSize }}'
+  volumeMounts:
+    - name: data
+      mountPath: /var/lib/mysql
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: mariadb-data
+  # mariadb-admin ping exits 0 for a server that answers, even one that refuses the login, so the
+  # probes carry no credential.
+  livenessProbe:
+    exec:
+      command: ["mariadb-admin", "ping", "-h", "127.0.0.1", "--silent"]
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 5
+  readinessProbe:
+    exec:
+      command: ["mariadb-admin", "ping", "-h", "127.0.0.1", "--silent"]
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 3306
+    annotations:
+      argocd.argoproj.io/sync-wave: "-20"
+  resources:
+    requests:
+      cpu: 40m
+      memory: 480Mi
+    limits:
+      cpu: 590m
+      memory: 992Mi
+
+mariadb-data:
+  pvc:
+    enabled: true
+    name: mariadb-data
+    # The data outlives a pruned Application: only the namespace delete of an offboard or a
+    # move's clear-source removes it.
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+      argocd.argoproj.io/sync-wave: "-20"
+    accessModes:
+      - ReadWriteOnce
+    storageSize: "5Gi"
+
+externalsecret-mariadb:
+  externalSecret:
+    enabled: true
+    name: mariadb-root-password
+    secretStoreName: vault-backend-mariadb
+    secretStoreKind: SecretStore
+    targetSecretName: mariadb-credentials
+    # The renderer's: <stage>/consumer/<name>/mariadb. Required, never a shared default.
+    vaultPath: ""
+    data:
+      - secretKey: root-password
+        property: root-password
+    annotations:
+      argocd.argoproj.io/sync-wave: "-21"
+
+# A platform-named store one wave before the server, for clusters/units/postgresql's reason.
+secret-store:
+  enabled: true
+  annotations:
+    argocd.argoproj.io/sync-wave: "-21"
+  name: vault-backend-mariadb
+  serviceAccountName: mariadb-eso
+  role: consumer-eso
+
+networkPolicy:
+  enabled: true
+  allowedNamespaces:
+    - service-provisioner
+
+metrics:
+  enabled: true
+
+prometheus-mysql-exporter:
+  # The Deployment the Manager's quiesce keeps running beside the server.
+  fullnameOverride: mariadb-exporter
+  mysql:
+    host: mariadb
+    port: 3306
+    user: root
+    existingPasswordSecret:
+      name: mariadb-credentials
+      key: root-password
+  # The tables' sizes, which the master's MariaDBStorageFillingUp compares with the data volume.
+  collectors:
+    info_schema.tables: true
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: observability
+  # Fixed at every size and counted in each size row, as the own Redis's exporter.
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 10m
+      memory: 32Mi

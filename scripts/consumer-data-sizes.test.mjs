@@ -215,3 +215,45 @@ test('every preset of an own Redis, its exporter included, is exactly its size-t
   assert.deepEqual(readdirSync('clusters/units/redis').filter(name => name.startsWith('values-size-')).sort(),
     Object.keys(redisRows).map(size => `values-size-${size}.yaml`).sort());
 });
+
+// A consumer's OWN MariaDB (clusters/units/mariadb): a source wherever services[] names mariadb, as
+// PostgreSQL, at its own size, on its pinned volume. There is no shared MariaDB to fall back on.
+const mariadbSource = output => yaml('[.spec.sources[] | select(.path == "clusters/units/mariadb")]', output)[0];
+
+test('an own MariaDB renders its preset, its pinned volume and its credential path', () => {
+  const source = mariadbSource(renderOne(consumer('shop', {services: ['mariadb'], databases: ['shop'],
+    size: 'small', sizes: {mariadb: 'large'}, volumes: {mariadb: '50Gi'}})));
+  assert.ok(source, 'no clusters/units/mariadb source');
+  assert.ok(source.helm.valueFiles.includes('values-size-large.yaml'), source.helm.valueFiles.join(', '));
+  assert.deepEqual([source.helm.valuesObject['mariadb-data'].pvc.storageSize, source.helm.valuesObject['externalsecret-mariadb'].externalSecret.vaultPath],
+    ['50Gi', 'test/consumer/shop/mariadb']);
+});
+
+test('a registration without mariadb in its services renders no MariaDB', () => {
+  assert.equal(mariadbSource(renderOne(consumer('no-mariadb', {}))), undefined);
+});
+
+// The Manager's `mariadb` rows are its PostgreSQL rows (DATABASE_ROWS): the server and its exporter,
+// together, exactly.
+const mariadbPods = preset => JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(.kind == "Deployment")]', '-'], {
+  encoding: 'utf8', input: execFileSync('helm', ['template', 'acme-test', 'clusters/units/mariadb', '--namespace', 'acme-test',
+    '--api-versions', 'monitoring.coreos.com/v1', '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-test.yaml',
+    '-f', `clusters/units/mariadb/${preset}`, '-f', 'scripts/standin/installation-values.yaml', '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml'], {encoding: 'utf8'})}));
+
+test('every preset of an own MariaDB, its exporter included, is exactly its size-table row', () => {
+  for (const [size, row] of Object.entries(rows.postgresql)) {
+    const total = sum(mariadbPods(`values-size-${size}.yaml`).flatMap(containersOf));
+    assert.deepEqual(total, row, `mariadb at ${size}`);
+  }
+  assert.deepEqual(readdirSync('clusters/units/mariadb').filter(name => name.startsWith('values-size-')).sort(),
+    Object.keys(rows.postgresql).map(size => `values-size-${size}.yaml`).sort());
+});
+
+test('PLANTED DEFECT: a MariaDB preset off its row is refused', () => {
+  const planted = sum(JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(.kind == "Deployment")]', '-'], {
+    encoding: 'utf8', input: execFileSync('helm', ['template', 'acme-test', 'clusters/units/mariadb', '--namespace', 'acme-test',
+      '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-test.yaml', '-f', 'clusters/units/mariadb/values-size-small.yaml',
+      '-f', 'scripts/standin/installation-values.yaml', '-f', 'scripts/standin/cluster-map.yaml',
+      '-f', 'scripts/standin/registration.yaml', '--set', 'mariadb.resources.limits.memory=1100Mi'], {encoding: 'utf8'})})).flatMap(containersOf));
+  assert.notDeepEqual(planted, rows.postgresql.small);
+});

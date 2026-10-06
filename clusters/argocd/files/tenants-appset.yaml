@@ -201,8 +201,8 @@ spec:
             valuesObject:
               # THE TENANT'S OWN FACTS, handed to every source of every member. Bare access is safe
               # under goTemplateOptions missingkey=error: every field read here is mandatory in the
-              # registration, written explicitly by the Manager on every commit — except `demo` and
-              # `size`, read with dig because a registration may lack them. A chart takes
+              # registration, written explicitly by the Manager on every commit — except `demo`, `size`,
+              # `ownDomainAliases` and `displayName`, read with dig because a registration may lack them. A chart takes
               # what it needs and ignores the rest — which is what keeps this block the same for all
               # of them, and keeps every member-specific value out of this file.
               tenant:
@@ -246,6 +246,13 @@ spec:
                 # charts send as no-reply@<senderDomain> where it is set. Set only by the Manager's
                 # tenant-set-sender-domain, after the product's check answered that its mail is signed.
                 senderDomain: "{{ $.senderDomain }}"
+                # The tenant's display name, or "" where none is set: a member without its own sender
+                # domain names the tenant in the From of its mail. Set by the Manager at tenant create
+                # and by tenant-set-display-name. Read with dig, never bare: a registration written
+                # before the field existed carries no key, and under missingkey=error one failed render
+                # stops the controller for every Application of this set. toJson keeps an apostrophe or
+                # an ampersand in the name unchanged.
+                displayName: {{ dig "displayName" "" $ | toJson }}
                 # suspended pauses the tenant; quiesced closes it for a move or backup. The chart
                 # renders the off state from these two values (replicas 0, no Ingress) — see the
                 # prune note in the header.

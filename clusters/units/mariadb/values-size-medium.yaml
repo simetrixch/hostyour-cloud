@@ -1,0 +1,11 @@
+# The medium preset: the Manager's `mariadb` medium row minus the exporter's 10m / 32Mi
+# (values.yaml has the table).
+mariadb:
+  innodbBufferPoolSize: 1264M
+  resources:
+    requests:
+      cpu: 140m
+      memory: 1504Mi
+    limits:
+      cpu: 1190m
+      memory: 2528Mi

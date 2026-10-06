@@ -210,6 +210,26 @@ images:
         file: plugins/unit/docker/dbtools.Dockerfile
         argument: REDIS_SERIES
         segments: 2
+  # A consumer's own MariaDB (clusters/units/mariadb) and the Manager's dump and restore client
+  # beside it, on the long-term-support line mariadb.org names (12.3 on 2026-10-05). The upstream
+  # report also lists the newer rolling lines; moving to one is a decision, not a sync.
+  mariadb:
+    version: "12.3"
+    upstream:
+      kind: docker_hub
+      image: library/mariadb
+      matching: '^1[0-9]+\.[0-9]+$'
+    stamps:
+      - kind: yaml_value
+        tree: platform
+        file: clusters/units/mariadb/values.yaml
+        key: tag
+        anchor: 'repository: mariadb'
+      - kind: dockerfile_arg
+        tree: manager
+        file: plugins/unit/docker/dbtools.Dockerfile
+        argument: MARIADB_SERIES
+        segments: 2
   # The interpreter clusters/inventories/service-provisioner runs its reconciler on. Not a
   # product of its own: the chart mounts the reconciler as a ConfigMap and the
   # container pip-installs the client libraries at boot, so this pin decides
@@ -327,6 +347,15 @@ charts:
         tree: platform
         file: clusters/inventories/redis/Chart.yaml
         dependency: prometheus-redis-exporter
+  prometheus-mysql-exporter:
+    version: "2.15.0"
+    upstream:
+      kind: chart_repository
+    stamps:
+      - kind: chart_dependency
+        tree: platform
+        file: clusters/units/mariadb/Chart.yaml
+        dependency: prometheus-mysql-exporter
   # The push agent a cluster without the master part runs; the receiving
   # side is kube-prometheus-stack above, which carries its own copy.
   kube-state-metrics:
@@ -728,7 +757,7 @@ cliTools:
   # a version out of — a machine carrying it can never be reported as at the pin or
   # off it, only as absent.
   ansiwise:
-    version: "0.8.307-stable-20260930202014"
+    version: "0.8.308-stable-20261005224127"
     upstream:
       kind: github_release
       project: simetrixch/ansiwise-cli

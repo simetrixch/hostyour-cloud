@@ -139,6 +139,11 @@ data:
     PG_ADMIN_USER = os.environ.get("PG_ADMIN_USER", "postgres")
     PG_CRED_SECRET = os.environ.get("PG_CREDENTIALS_SECRET", "postgresql-credentials")
     PG_CRED_KEY = os.environ.get("PG_CREDENTIALS_KEY", "postgres-password")
+    # A consumer's own MariaDB (clusters/units/mariadb) pins its Service `mariadb` on this port and
+    # materializes its root password into this Secret and key in the consumer's namespace.
+    MARIADB_PORT = 3306
+    MARIADB_CRED_SECRET = "mariadb-credentials"
+    MARIADB_CRED_KEY = "root-password"
 
     # Redis is ONE instance per cluster that runs clusters/inventories/redis, so its coordinates are read from
     # the deployment env the way mongo's shared replica set is — a host per stage, and
@@ -695,6 +700,57 @@ data:
             "REDIS_URI": _redis_uri(user, password, host, port),
         }, "Opaque")
 
+    def _mariadb_ident(name):
+        """A database name as MariaDB reads an identifier: in backticks, a backtick doubled, so a
+        name can never close its quotes and go on as a statement."""
+        return "`%s`" % name.replace("`", "``")
+
+    def _mariadb_statements(user, password, dbs):
+        """The statements a mariadb claim is written with, in order, as (sql, args) for the client
+        to bind. The user and its password are re-stated on every pass, so the server holds what
+        the namespace-local Secret holds. The user gets every privilege on the server, the rule
+        handle_postgresql states for a dedicated instance: the server serves this consumer alone.
+        A database name is the platform's literal (spec.databases), quoted as an identifier."""
+        return ([("CREATE USER IF NOT EXISTS %s@'%%' IDENTIFIED BY %s", [user, password]),
+                 ("ALTER USER %s@'%%' IDENTIFIED BY %s", [user, password]),
+                 ("GRANT ALL PRIVILEGES ON *.* TO %s@'%%' WITH GRANT OPTION", [user])]
+                + [("CREATE DATABASE IF NOT EXISTS %s" % _mariadb_ident(db), []) for db in dbs])
+
+    def handle_mariadb(core, spec, ns, claim, user, password, prefix):
+        """A mariadb claim is served by the consumer's OWN server in the claim's namespace
+        (clusters/units/mariadb), as a postgresql claim is: the in-namespace Service `mariadb`,
+        and the root password ESO materializes from secret/<stage>/consumer/<name>/mariadb into
+        Secret `mariadb-credentials` there. There is no shared MariaDB to fall back on, so a claim
+        in a namespace without one fails to connect and reports a clear Error."""
+        host = "mariadb.%s.svc.cluster.local" % ns
+        root_pw = read_secret_key(core, ns, MARIADB_CRED_SECRET, MARIADB_CRED_KEY)
+        if root_pw is None:
+            raise RuntimeError("mariadb root credentials not available yet")
+        dbs = _databases(spec)
+        if not dbs:
+            # The Secret payload below names dbs[0], and a claim without a database owns nothing.
+            raise RuntimeError("claim needs at least one database")
+        import pymysql
+        conn = pymysql.connect(host=host, port=MARIADB_PORT, user="root", password=root_pw,
+                               connect_timeout=10, autocommit=True)
+        try:
+            with conn.cursor() as cur:
+                for statement, args in _mariadb_statements(user, password, dbs):
+                    cur.execute(statement, args)
+            log.info("set mariadb user %s on databases %s", user, ", ".join(dbs))
+        finally:
+            conn.close()
+        return ({
+            "PASSWORD": password,
+            "MARIADB_USER": user,
+            "MARIADB_PASSWORD": password,
+            "MARIADB_HOST": host,
+            "MARIADB_PORT": str(MARIADB_PORT),
+            "MARIADB_DATABASE": dbs[0],
+            "MARIADB_DATABASES": ",".join(dbs),
+            "DATABASE_URL": "mysql://%s:%s@%s:%s/%s" % (quote_plus(user), quote_plus(password), host, MARIADB_PORT, dbs[0]),
+        }, "Opaque")
+
     def handle_registry(core, spec, ns, claim, user, password, prefix):
         """Deliver the shared pull dockerconfigjson into the claiming namespace."""
         if not (REG_SOURCE_NS and REG_SOURCE_SECRET):
@@ -707,6 +763,7 @@ data:
     HANDLERS = {
         "mongodb": handle_mongodb,
         "postgresql": handle_postgresql,
+        "mariadb": handle_mariadb,
         "redis": handle_redis,
         "registry": handle_registry,
     }
@@ -781,6 +838,13 @@ data:
         re-mintable while the data is not. Same shape as deprovision_registry:
         nothing for this handler to tear down."""
         return
+    def deprovision_mariadb(core, spec, ns, claim, user, prefix):
+        """No-op, for every reason deprovision_postgresql gives: the server is the namespace's,
+        a suspend deletes the claim while the data must survive, and on a removal the host is
+        being pruned at the same moment. The server, its claim and its data go with the
+        namespace; the namespace-local credential Secret goes in the deprovision orchestrator."""
+        return
+
     def deprovision_redis(core, spec, ns, claim, user, prefix):
         """Drop the claim's ACL user, and ONLY that.
 
@@ -818,6 +882,7 @@ data:
     DEPROVISIONERS = {
         "mongodb": deprovision_mongodb,
         "postgresql": deprovision_postgresql,
+        "mariadb": deprovision_mariadb,
         "redis": deprovision_redis,
         "registry": deprovision_registry,
     }
@@ -845,6 +910,10 @@ data:
             out.append("pg:role:%s" % user)
             for d in _databases(spec):
                 out.append("pg:db:%s" % d)
+        elif service == "mariadb":
+            out.append("mariadb:user:%s" % user)
+            for d in _databases(spec):
+                out.append("mariadb:db:%s" % d)
         elif service == "redis":
             # The user only: deprovision_redis leaves the keys standing on purpose, so
             # they are not handarbeit an operator is being told to do.

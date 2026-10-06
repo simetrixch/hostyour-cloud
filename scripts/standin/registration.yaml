@@ -67,3 +67,6 @@ externalsecret-postgres:
 externalsecret-redis:
   externalSecret:
     vaultPath: secret/dev/units/check/redis
+externalsecret-mariadb:
+  externalSecret:
+    vaultPath: secret/dev/units/check/mariadb

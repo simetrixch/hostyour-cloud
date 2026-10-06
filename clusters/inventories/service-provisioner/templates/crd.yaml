@@ -33,7 +33,7 @@ spec:
               properties:
                 service:
                   type: string
-                  enum: [mongodb, postgresql, redis, registry]
+                  enum: [mongodb, postgresql, mariadb, redis, registry]
                   description: which backing service to provision credentials for
                 databases:
                   type: array
