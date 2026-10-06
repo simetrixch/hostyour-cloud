@@ -39,6 +39,10 @@ node --test scripts/manager-log-alerts.test.mjs || fail 'scripts/manager-log-ale
 echo 'test: unit mongodb exporter — every member of each mode scraped as the instance root.'
 helm dependency update clusters/units/mongodb
 node --test scripts/unit-mongodb-exporter.test.mjs || fail 'scripts/unit-mongodb-exporter.test.mjs'
+echo 'test: unit charts in the consumer project — no unit chart of a consumer'\''s Application renders a kind its AppProject refuses.'
+helm dependency update clusters/units/networkpolicy
+helm dependency update clusters/units/quota
+node --test scripts/unit-charts-consumer-project.test.mjs || fail 'scripts/unit-charts-consumer-project.test.mjs'
 echo 'test: consumer data sizes — each part at its own preset, each volume as onboarded, every preset within its row.'
 node --test scripts/consumer-data-sizes.test.mjs || fail 'scripts/consumer-data-sizes.test.mjs'
 echo 'test: service-provisioner redis — a claim is served by the own Redis of its namespace where one stands, else by the shared one.'
