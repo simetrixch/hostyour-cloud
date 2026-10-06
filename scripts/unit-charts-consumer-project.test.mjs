@@ -32,23 +32,27 @@ const common = ['-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/pl
 const sized = unit => ['-f', `clusters/units/${unit}/values-size-small.yaml`];
 const secret = (alias, store) => ['--set', `${alias}.externalSecret.vaultPath=test/consumer/acme/${store}`];
 
-/** How the ApplicationSet renders each unit chart: its value files and the values it sets. */
+/** The modes a consumer may pick for its own MongoDB (consumers-appset.yaml renders values-mode-<mode>.yaml). */
+const mongodbMode = mode => [...common, ...sized('mongodb'), '-f', `clusters/units/mongodb/values-mode-${mode}.yaml`, '--set', `mongodb.mode=${mode}`,
+  '--set', 'mongodb.storageSize=10Gi', ...secret('externalsecret-mongodb', 'mongodb')];
+
+/** How the ApplicationSet renders each unit chart, in every variant a consumer can choose: value files and values. */
 const RENDER = {
-  postgresql: [...common, ...sized('postgresql'), '--set', 'postgres-data.pvc.storageSize=5Gi', ...secret('externalsecret-postgres', 'postgres')],
-  mongodb: [...common, ...sized('mongodb'), '-f', 'clusters/units/mongodb/values-mode-standalone.yaml', '--set', 'mongodb.mode=standalone',
-    '--set', 'mongodb.storageSize=10Gi', ...secret('externalsecret-mongodb', 'mongodb')],
-  redis: [...common, ...sized('redis'), '--set', 'redis-data.pvc.storageSize=1Gi', ...secret('externalsecret-redis', 'redis')],
-  mariadb: [...common, ...sized('mariadb'), '--set', 'mariadb-data.pvc.storageSize=1Gi', ...secret('externalsecret-mariadb', 'mariadb')],
-  networkpolicy: ['-f', 'scripts/standin/cluster-map.yaml', '--set', 'smtpEntry.port=2525'],
-  quota: ['--set', 'quota.requestsCpu=400m', '--set', 'quota.requestsMemory=1Gi', '--set', 'quota.limitsCpu=1500m',
-    '--set', 'quota.limitsMemory=2Gi', '--set', 'quota.pods=8', '--set', 'quota.persistentVolumeClaims=1'],
+  postgresql: [[...common, ...sized('postgresql'), '--set', 'postgres-data.pvc.storageSize=5Gi', ...secret('externalsecret-postgres', 'postgres')]],
+  mongodb: [mongodbMode('standalone'), mongodbMode('replicaset')],
+  redis: [[...common, ...sized('redis'), '--set', 'redis-data.pvc.storageSize=1Gi', ...secret('externalsecret-redis', 'redis')]],
+  mariadb: [[...common, ...sized('mariadb'), '--set', 'mariadb-data.pvc.storageSize=1Gi', ...secret('externalsecret-mariadb', 'mariadb')]],
+  networkpolicy: [['-f', 'scripts/standin/cluster-map.yaml', '--set', 'smtpEntry.port=2525']],
+  quota: [['--set', 'quota.requestsCpu=400m', '--set', 'quota.requestsMemory=1Gi', '--set', 'quota.limitsCpu=1500m',
+    '--set', 'quota.limitsMemory=2Gi', '--set', 'quota.pods=8', '--set', 'quota.persistentVolumeClaims=1']],
 };
 
-const render = unit => JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(. != null)]', '-'], {
+/** Every resource of every variant of `unit`. */
+const render = unit => RENDER[unit].flatMap(args => JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(. != null)]', '-'], {
   encoding: 'utf8',
   input: execFileSync('helm', ['template', 'acme-test', `clusters/units/${unit}`, '--namespace', 'acme-test',
-    '--api-versions', 'monitoring.coreos.com/v1', ...RENDER[unit]], {encoding: 'utf8'}),
-}));
+    '--api-versions', 'monitoring.coreos.com/v1', ...args], {encoding: 'utf8'}),
+})));
 
 /** The Pod Security level the ApplicationSet stamps on every consumer namespace. */
 const enforced = /pod-security\.kubernetes\.io\/enforce: (\S+)/.exec(appset)?.[1];
@@ -60,7 +64,8 @@ export function restrictedBreaches(unit, docs) {
     // Argo CD applies no Helm test hook ("Not supported. No equivalent in Argo CD", its Helm guide), so such a pod
     // never reaches the namespace.
     if (/^test/.test(metadata?.annotations?.['helm.sh/hook'] ?? '')) continue;
-    const pod = ['Deployment', 'StatefulSet', 'DaemonSet', 'Job'].includes(kind) ? spec.template.spec : kind === 'Pod' ? spec : null;
+    const pod = ['Deployment', 'StatefulSet', 'DaemonSet', 'Job'].includes(kind) ? spec.template.spec
+      : kind === 'CronJob' ? spec.jobTemplate.spec.template.spec : kind === 'Pod' ? spec : null;
     if (!pod) continue;
     const podContext = pod.securityContext ?? {};
     for (const container of [...(pod.initContainers ?? []), ...(pod.containers ?? [])]) {
@@ -69,6 +74,8 @@ export function restrictedBreaches(unit, docs) {
       if (context.allowPrivilegeEscalation !== false) breaches.push(`${at}: allowPrivilegeEscalation`);
       if (!(context.capabilities?.drop ?? []).includes('ALL')) breaches.push(`${at}: capabilities`);
       if ((context.runAsNonRoot ?? podContext.runAsNonRoot) !== true) breaches.push(`${at}: runAsNonRoot`);
+      // Restricted refuses uid 0 even beside runAsNonRoot: true.
+      if ((context.runAsUser ?? podContext.runAsUser) === 0) breaches.push(`${at}: runAsUser 0`);
       const seccomp = (context.seccompProfile ?? podContext.seccompProfile)?.type;
       if (seccomp !== 'RuntimeDefault' && seccomp !== 'Localhost') breaches.push(`${at}: seccompProfile`);
     }
@@ -107,6 +114,9 @@ test('PLANTED: a container without its restricted settings is named for each one
   assert.deepEqual(restrictedBreaches('planted', [pod([{name: 'kept', securityContext: restricted}])]), []);
   const loose = {kind: 'Deployment', metadata: {name: 'exporter'}, spec: {template: {spec: {containers: [{name: 'kept', securityContext: restricted}]}}}};
   assert.deepEqual(restrictedBreaches('planted', [loose]), ['planted: Deployment/exporter/kept: runAsNonRoot', 'planted: Deployment/exporter/kept: seccompProfile']);
+  assert.deepEqual(restrictedBreaches('planted', [pod([{name: 'root', securityContext: {...restricted, runAsUser: 0}}])]), ['planted: Deployment/exporter/root: runAsUser 0']);
+  const cron = {kind: 'CronJob', metadata: {name: 'nightly'}, spec: {jobTemplate: {spec: {template: {spec: {containers: [{name: 'bare'}]}}}}}};
+  assert.deepEqual(restrictedBreaches('planted', [cron]).length, 4);
 });
 
 test('PLANTED: a Role, a RoleBinding or a Secret is named; an ExternalSecret, a ServiceAccount and a Deployment pass', () => {
