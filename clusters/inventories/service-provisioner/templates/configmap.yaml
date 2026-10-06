@@ -142,6 +142,8 @@ data:
     # A consumer's own MariaDB (clusters/units/mariadb) pins its Service `mariadb` on this port and
     # materializes its root password into this Secret and key in the consumer's namespace.
     MARIADB_PORT = 3306
+    # The label every consumer namespace carries with its stage (the consumers ApplicationSet stamps it).
+    CONSUMER_STAGE_LABEL = "hostyour.cloud/consumer-stage"
     MARIADB_CRED_SECRET = "mariadb-credentials"
     MARIADB_CRED_KEY = "root-password"
 
@@ -411,8 +413,25 @@ data:
         finally:
             probe.close()
 
+    def _served_databases(core, ns, dbs, own):
+        """The database names a mongodb claim is SERVED under. On the cluster's SHARED replica set a
+        consumer's non-prod stage gets <name>_<stage>: two stages of one consumer on one cluster
+        otherwise share one database, so a PROD worker would deliver what TEST queued. PROD keeps
+        <name>. An own server is already per namespace,
+        and a tenant's names carry the stage already, so both keep the literal names. The stage is
+        the namespace's consumer-stage label, read on create and on teardown alike, so teardown
+        drops exactly what create made."""
+        if own:
+            return list(dbs)
+        labels = core.read_namespace(ns).metadata.labels or {}
+        stage = labels.get(CONSUMER_STAGE_LABEL)
+        if not stage or stage == "prod":
+            return list(dbs)
+        return ["%s_%s" % (d, stage) for d in dbs]
+
     def _mongo_backend(core, ns):
-        """WHERE a mongodb claim is served from: (host, root password, replica set name).
+        """WHERE a mongodb claim is served from: (host, root password, replica set name, whether the
+        server is the namespace's own).
 
         A unit that brings its OWN MongoDB has the instance in ITS namespace, and the
         credential the chart materializes there is the switch — the same rule
@@ -432,13 +451,13 @@ data:
                 # clusters/units/mongodb pins the Service name, so the host follows from the
                 # namespace alone — nothing has to be told the instance is there.
                 host = "mongodb.%s.svc.cluster.local" % ns
-                return host, own_pw, _replica_set_of(host, own_pw)
+                return host, own_pw, _replica_set_of(host, own_pw), True
         if not MONGO_HOST:
             raise RuntimeError("MONGO_HOST not configured")
         root_pw = read_secret_key(core, MONGO_CRED_NS, MONGO_CRED_SECRET, MONGO_CRED_KEY)
         if root_pw is None:
             raise RuntimeError("mongo root credentials not available yet")
-        return MONGO_HOST, root_pw, MONGO_REPLICA_SET
+        return MONGO_HOST, root_pw, MONGO_REPLICA_SET, False
 
     def _mongo_uri(user, password, host, path, replica_set):
         """One connection URI builder for every mongodb connection this controller makes or
@@ -479,11 +498,11 @@ data:
         from pymongo.errors import OperationFailure
         # The claim's own namespace first, the cluster's shared replica set otherwise —
         # _mongo_backend states the rule and is the ONLY place that decides it.
-        host, root_pw, replica_set = _mongo_backend(core, ns)
+        host, root_pw, replica_set, own = _mongo_backend(core, ns)
         # databases -> readWrite on each (LITERAL) database; spec.roles adds
         # whitelisted extra grants. A roles-ONLY claim (no databases) is valid —
         # e.g. the mongodb exporter's clusterMonitor@admin monitoring user.
-        dbs = _databases(spec)
+        dbs = _served_databases(core, ns, _databases(spec), own)
         roles = [{"role": "readWrite", "db": d} for d in dbs] + _extra_roles(spec, ns)
         if not roles:
             raise RuntimeError("claim needs at least one database or role")
@@ -782,12 +801,12 @@ data:
         from pymongo.errors import OperationFailure
         # SAME resolve as the create path: a claim is torn down on the instance that served
         # it, so a unit with its own MongoDB never has its user dropped on the shared one.
-        host, root_pw, replica_set = _mongo_backend(core, ns)
+        host, root_pw, replica_set, own = _mongo_backend(core, ns)
         # A roles-only claim (e.g. the exporter's clusterMonitor@admin) owns NO
         # database — only the user gets dropped. SAME literal spec.databases as the
         # create path (recomputed from the still-present claim), so teardown targets
         # exactly the databases create provisioned.
-        dbs = _databases(spec)
+        dbs = _served_databases(core, ns, _databases(spec), own)
         # The USER goes even under a relocation hold, so the hold leaves nothing behind: no
         # source-side step of a move ever authenticates as it (every dump, listing and clear
         # job of a move runs on the Mongo ROOT credential), and a live credential on a cluster
