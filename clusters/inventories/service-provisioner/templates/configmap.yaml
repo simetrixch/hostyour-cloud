@@ -14,11 +14,12 @@ per-claim action is wrapped in try/except so one bad claim never stalls the loop
 ISOLATION: the mongo and redis USER is named from a
 NAMESPACE-anchored identity `<namespace>_<claim>` (see sanitize), so a claim can
 NEVER name — and thus gain access to — another tenant's (or the platform's) user.
-DATABASE names, by contrast, are taken VERBATIM from .spec.databases:
-they are the LITERAL Mongo/Postgres database names the platform DB-name contract
-declares (the consumer's deploy/platform.yaml `databases:`, carried unchanged
-through the registry pointer and the chart's ServiceClaim), and the provisioner
-creates EXACTLY those — no prefix, no composition. What keeps a claim from naming
+DATABASE names, by contrast, come from .spec.databases: the LITERAL Mongo/Postgres
+database names the platform DB-name contract declares (the consumer's
+deploy/platform.yaml `databases:`, carried unchanged through the registry pointer and
+the chart's ServiceClaim). The provisioner serves EXACTLY those, with one composition:
+on the cluster's SHARED Mongo replica set a consumer's non-prod stage is served
+<name>_<stage> (_served_databases), so two stages of one consumer never share a database. What keeps a claim from naming
 a foreign database is the platform (onboard-time validation + the
 ApplicationSet-injected mongodb.databases value), not a provisioner prefix; the
 provisioner trusts the literal names. The consumer still reads the names back from
@@ -142,6 +143,10 @@ data:
     # A consumer's own MariaDB (clusters/units/mariadb) pins its Service `mariadb` on this port and
     # materializes its root password into this Secret and key in the consumer's namespace.
     MARIADB_PORT = 3306
+    # The labels the consumers ApplicationSet stamps on every consumer namespace: that it is one, and
+    # its stage.
+    CONSUMER_LABEL = "hostyour.cloud/consumer"
+    CONSUMER_STAGE_LABEL = "hostyour.cloud/consumer-stage"
     MARIADB_CRED_SECRET = "mariadb-credentials"
     MARIADB_CRED_KEY = "root-password"
 
@@ -351,8 +356,9 @@ data:
         """The LITERAL database names a claim asks for — spec.databases used
         VERBATIM (platform DB-name contract). These are the single source of truth:
         declared in the consumer's deploy/platform.yaml `databases:`, carried
-        unchanged through the registry pointer and the chart's ServiceClaim, so the
-        provisioner creates EXACTLY these names with NO prefix and NO composition.
+        unchanged through the registry pointer and the chart's ServiceClaim. They are
+        served as they stand, except a non-prod consumer stage on the shared Mongo
+        replica set, which _served_databases gives <name>_<stage>.
         Empty ⇒ [] (a mongodb roles-only claim owns no database). Recomputed from
         the same spec on create and teardown, so deprovision targets exactly what
         create made. Never raises — the postgresql path guards the empty case."""
@@ -411,8 +417,29 @@ data:
         finally:
             probe.close()
 
+    def _served_databases(core, ns, dbs, own):
+        """The database names a mongodb claim is SERVED under. On the cluster's SHARED replica set a
+        consumer's non-prod stage gets <name>_<stage>: two stages of one consumer on one cluster
+        otherwise share one database, so a PROD worker would deliver what TEST queued. PROD keeps
+        <name>. An own server is already per namespace,
+        and a tenant's names carry the stage already, so both keep the literal names. The stage is
+        the namespace's consumer-stage label, read on create and on teardown alike, so teardown
+        drops exactly what create made."""
+        if own:
+            return list(dbs)
+        labels = core.read_namespace(ns).metadata.labels or {}
+        stage = labels.get(CONSUMER_STAGE_LABEL)
+        if not stage and labels.get(CONSUMER_LABEL) == "true":
+            # A consumer namespace the ApplicationSet stamped without its stage: serving the
+            # literal name could hand it another stage's database, so it is served nothing.
+            raise RuntimeError("consumer namespace %s carries no %s label — its databases cannot be placed by stage" % (ns, CONSUMER_STAGE_LABEL))
+        if not stage or stage == "prod":
+            return list(dbs)
+        return ["%s_%s" % (d, stage) for d in dbs]
+
     def _mongo_backend(core, ns):
-        """WHERE a mongodb claim is served from: (host, root password, replica set name).
+        """WHERE a mongodb claim is served from: (host, root password, replica set name, whether the
+        server is the namespace's own).
 
         A unit that brings its OWN MongoDB has the instance in ITS namespace, and the
         credential the chart materializes there is the switch — the same rule
@@ -432,13 +459,13 @@ data:
                 # clusters/units/mongodb pins the Service name, so the host follows from the
                 # namespace alone — nothing has to be told the instance is there.
                 host = "mongodb.%s.svc.cluster.local" % ns
-                return host, own_pw, _replica_set_of(host, own_pw)
+                return host, own_pw, _replica_set_of(host, own_pw), True
         if not MONGO_HOST:
             raise RuntimeError("MONGO_HOST not configured")
         root_pw = read_secret_key(core, MONGO_CRED_NS, MONGO_CRED_SECRET, MONGO_CRED_KEY)
         if root_pw is None:
             raise RuntimeError("mongo root credentials not available yet")
-        return MONGO_HOST, root_pw, MONGO_REPLICA_SET
+        return MONGO_HOST, root_pw, MONGO_REPLICA_SET, False
 
     def _mongo_uri(user, password, host, path, replica_set):
         """One connection URI builder for every mongodb connection this controller makes or
@@ -479,11 +506,11 @@ data:
         from pymongo.errors import OperationFailure
         # The claim's own namespace first, the cluster's shared replica set otherwise —
         # _mongo_backend states the rule and is the ONLY place that decides it.
-        host, root_pw, replica_set = _mongo_backend(core, ns)
+        host, root_pw, replica_set, own = _mongo_backend(core, ns)
         # databases -> readWrite on each (LITERAL) database; spec.roles adds
         # whitelisted extra grants. A roles-ONLY claim (no databases) is valid —
         # e.g. the mongodb exporter's clusterMonitor@admin monitoring user.
-        dbs = _databases(spec)
+        dbs = _served_databases(core, ns, _databases(spec), own)
         roles = [{"role": "readWrite", "db": d} for d in dbs] + _extra_roles(spec, ns)
         if not roles:
             raise RuntimeError("claim needs at least one database or role")
@@ -782,12 +809,12 @@ data:
         from pymongo.errors import OperationFailure
         # SAME resolve as the create path: a claim is torn down on the instance that served
         # it, so a unit with its own MongoDB never has its user dropped on the shared one.
-        host, root_pw, replica_set = _mongo_backend(core, ns)
+        host, root_pw, replica_set, own = _mongo_backend(core, ns)
         # A roles-only claim (e.g. the exporter's clusterMonitor@admin) owns NO
-        # database — only the user gets dropped. SAME literal spec.databases as the
+        # database — only the user gets dropped. SAME served names (_served_databases) as the
         # create path (recomputed from the still-present claim), so teardown targets
         # exactly the databases create provisioned.
-        dbs = _databases(spec)
+        dbs = _served_databases(core, ns, _databases(spec), own)
         # The USER goes even under a relocation hold, so the hold leaves nothing behind: no
         # source-side step of a move ever authenticates as it (every dump, listing and clear
         # job of a move runs on the Mongo ROOT credential), and a live credential on a cluster
@@ -904,8 +931,14 @@ data:
         if service == "mongodb":
             out.append("mongo:user:%s" % user)
             if not held:
-                for d in _databases(spec):
-                    out.append("mongo:db:%s" % d)
+                served = spec.get("_served_databases")
+                if served is None:
+                    # Never the literal names: on the shared set a non-prod stage's literal name
+                    # is another stage's database, and this list is read as an instruction to delete.
+                    out.append("mongo:db:<undetermined — the served names of %s could not be read>" % ",".join(_databases(spec)))
+                else:
+                    for d in served:
+                        out.append("mongo:db:%s" % d)
         elif service == "postgresql":
             out.append("pg:role:%s" % user)
             for d in _databases(spec):
@@ -982,6 +1015,12 @@ data:
             # there. A held claim releases WITHOUT its data: same finalizer release, same
             # Secret delete, only the databases stay.
             spec["_relocating"] = relocation_held(core, ns)
+            if service == "mongodb":
+                # The names the claim was served, worked out once and carried like the hold, so
+                # the orphan list names what teardown would drop and never another stage's.
+                spec["_served_databases"] = None
+                _host, _pw, _rs, own = _mongo_backend(core, ns)
+                spec["_served_databases"] = _served_databases(core, ns, _databases(spec), own)
             if spec["_relocating"]:
                 log.info("namespace %s is marked %s — %s/%s (%s) releases without dropping its data",
                          ns, RELOCATING_ANNOTATION, ns, name, service)

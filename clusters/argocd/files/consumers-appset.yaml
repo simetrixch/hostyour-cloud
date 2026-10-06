@@ -252,7 +252,9 @@ spec:
               # VERBATIM from the consumer's platform.yaml `databases:`)
               # reaches the chart as .Values.mongodb.databases — the LITERAL
               # Mongo DB name(s), the single source of truth the chart's
-              # mongodb ServiceClaim passes through with no prefix. Bare
+              # mongodb ServiceClaim passes through with no prefix (the
+              # provisioner serves a non-prod stage on the shared set as
+              # <name>_<stage>). Bare
               # access is safe under missingkey=error: in a stage
               # registration the deploy group stands or falls together
               # (ConsumerRegistrationSchema), so `databases` is always

@@ -46,6 +46,7 @@ helm dependency update clusters/inventories/service-provisioner
 node --test scripts/service-provisioner-redis.test.mjs || fail 'scripts/service-provisioner-redis.test.mjs'
 echo 'test: service-provisioner mariadb — a claim is served by the own MariaDB of its namespace, with a user that owns it and the databases it names.'
 node --test scripts/service-provisioner-mariadb.test.mjs || fail 'scripts/service-provisioner-mariadb.test.mjs'
+node --test scripts/service-provisioner-mongodb-stage.test.mjs || fail 'scripts/service-provisioner-mongodb-stage.test.mjs'
 echo 'test: unit redirects — old unit hosts answer with a permanent redirect to their twins, and nothing renders without an old apex.'
 node --test scripts/unit-redirects.test.mjs || fail 'scripts/unit-redirects.test.mjs'
 echo 'test: OK — all suites green'
