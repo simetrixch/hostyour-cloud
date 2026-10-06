@@ -33,7 +33,7 @@ global:
   apiHost: 100.64.0.3
   apiPort: 16443
   unitApex: digitacloud.app
-  platformDomain: digitaplatform.com
+  platformDomain: simplidigita.ai
   alertRecipients: ['info@simetrix.ch']
   deployUrl: https://github.com/digitaplatform/digita-deploy.git
   clusterIssuer: platform-acme
