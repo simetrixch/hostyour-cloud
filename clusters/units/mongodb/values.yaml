@@ -84,11 +84,18 @@ mongodb:
   containerPort: 27017
 
   # The official mongo image runs as uid/gid 999 (the `mongodb` user).
+  # The restricted Pod Security level a consumer namespace enforces (clusters/argocd/files/consumers-appset.yaml).
   podSecurityContext:
     fsGroup: 999
+    seccompProfile:
+      type: RuntimeDefault
   containerSecurityContext:
     runAsUser: 999
     runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
 
   # SMALL preset — see the table above. Burstable on purpose: the request is what
   # the scheduler reserves, the limit is the ceiling WiredTiger sizes its cache
@@ -229,6 +236,11 @@ secret-store:
 # per-member presets; the Manager's quota counts it once beside the members.
 # =============================================================================
 prometheus-mongodb-exporter:
+  # The chart's container settings meet the restricted level a consumer namespace enforces, all but the seccomp
+  # profile, which only the pod sets.
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
   serviceMonitor:
     enabled: true
     additionalLabels:
