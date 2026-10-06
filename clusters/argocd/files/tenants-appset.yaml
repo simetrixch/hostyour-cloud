@@ -201,8 +201,8 @@ spec:
             valuesObject:
               # THE TENANT'S OWN FACTS, handed to every source of every member. Bare access is safe
               # under goTemplateOptions missingkey=error: every field read here is mandatory in the
-              # registration, written explicitly by the Manager on every commit — except `demo` and
-              # `size`, read with dig because a registration may lack them. A chart takes
+              # registration, written explicitly by the Manager on every commit — except `demo`, `size`,
+              # `ownDomainAliases` and `displayName`, read with dig because a registration may lack them. A chart takes
               # what it needs and ignores the rest — which is what keeps this block the same for all
               # of them, and keeps every member-specific value out of this file.
               tenant:
