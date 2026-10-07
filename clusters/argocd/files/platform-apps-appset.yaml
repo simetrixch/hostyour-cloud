@@ -105,6 +105,11 @@ spec:
           targetRevision: *branch
           path: "clusters/inventories/{{ .name }}"
           helm:
+            # The Helm release name, which a chart builds its object names and selector labels from:
+            # the Application's own name, as ArgoCD takes it without this line, unless the app.yaml
+            # names its own. cert-manager names the release the installer's addon made, so ArgoCD
+            # adopts the running objects in place instead of rendering new ones beside them.
+            releaseName: '{{ dig "releaseName" (printf "%s-__STAGE__" .name) . }}'
             valueFiles:
               - $values/clusters/platform/values-common.yaml
               - $values/clusters/platform/values-__STAGE__.yaml
