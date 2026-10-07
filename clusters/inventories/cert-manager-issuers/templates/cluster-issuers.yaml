@@ -39,6 +39,9 @@ metadata:
     hostyour.cloud/platform-authority: "true"
   annotations:
     argocd.argoproj.io/sync-wave: "1"
+    # Never pruned, though its issuers are: the Secret it owns holds the authority's private key, and
+    # a flip to platform-acme and back would otherwise mint a new authority that nothing trusts yet.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   isCA: true
   commonName: hostyour.cloud platform authority (this cluster only)
