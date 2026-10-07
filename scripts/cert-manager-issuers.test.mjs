@@ -91,7 +91,10 @@ test('PLANTED DEFECT: letsencrypt-prod fails naming global.clusterIssuer', () =>
   );
 });
 
-test('app.prune is "true" and app.runsOn is apps8', () => {
+test('app.prune is "true" and the issuers stand where cert-manager and trust-manager stand', () => {
   assert.equal(app.prune, 'true');
-  assert.equal(app.runsOn, 'apps8');
+  for (const family of ['cert-manager', 'trust-manager']) {
+    const sibling = JSON.parse(execFileSync('yq', ['-o=json', '.', `clusters/inventories/${family}/app.yaml`], {encoding: 'utf8'}));
+    assert.equal(app.runsOn, sibling.runsOn, `the issuers and ${family} select the same clusters`);
+  }
 });
