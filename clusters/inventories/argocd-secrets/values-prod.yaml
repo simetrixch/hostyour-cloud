@@ -3,5 +3,5 @@ externalsecret-oidc:
   externalSecret:
     data:
       - secretKey: clientSecret
-        property: argocd-client-secret
-        vaultPath: prod/idp/bootstrap
+        property: client-secret
+        vaultPath: prod/app/argocd

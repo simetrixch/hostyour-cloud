@@ -8,12 +8,14 @@ secret-store: {}
 # The deploy repository credential is templates/externalsecret-repo-deploy.yaml, the twin of the
 # slave instance's; it reads global.deployUrl off the same map and holds the platform's GitHub App.
 
-# WHERE THE CLIENT SECRET STANDS. `<env>/idp/bootstrap` is written when the identity provider is
-# seeded, on the cluster that keeps the books, and every cluster of the installation reads that one
-# entry — the reconcilers are separate but the provider is one, so the client is one.
+# WHERE THE CLIENT SECRET STANDS. `<env>/app/argocd` holds the reconciler's client secret alone,
+# copied there by the installer from the identity provider's bootstrap entry, which stays the
+# installer's: no cluster's reader may read the bootstrap entry, because it holds every client's
+# secret. The provider is one, so the client is one, and every cluster of the installation reads
+# this one entry.
 #
 # TWO THINGS OUTSIDE THIS REPOSITORY have to hold for the read to succeed, and the seed states both:
-#   * the `<cluster>-eso` policy grants read on secret/data/<env>/idp/bootstrap;
+#   * the `<cluster>-eso` policy grants read on secret/data/<env>/app/*;
 #   * `argocd` is admitted by the store's `external-secrets` role — which it is by carrying
 #     `hostyour.cloud/workload`, the label app.yaml asks ArgoCD to put on the namespace.
 externalsecret-oidc:
@@ -44,4 +46,4 @@ externalsecret-oidc:
           app.kubernetes.io/part-of: argocd
     data:
       - secretKey: clientSecret
-        property: argocd-client-secret
+        property: client-secret
