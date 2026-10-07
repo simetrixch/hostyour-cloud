@@ -50,8 +50,8 @@ global:
   # The cert-manager ClusterIssuer every public Ingress and every Certificate of
   # this platform is issued by, written as the name that object carries.
   #
-  # WHAT CREATES IT: the cluster-issuer rows of deploy-cluster (hostyour-deploy
-  # ansiwise/programs/deploy-cluster.yaml), which write this same name. No key of
+  # WHAT CREATES IT: the Argo CD Application `cert-manager-issuers`
+  # (`clusters/inventories/cert-manager-issuers`) renders it from this name. No key of
   # configs/config.<stage> holds it and nothing composes it — the two places are
   # held together by being spelled alike, and a name here that the cluster does
   # not carry leaves every GitOps-deployed Certificate Pending forever on
