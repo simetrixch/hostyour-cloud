@@ -32,3 +32,30 @@ test('ships its CRDs, syncs them server-side, and renders no post-install hook b
   assert.equal(app.serverSideApply, 'true');
   assert.deepEqual(docs.filter(d => d.metadata.annotations?.['helm.sh/hook']).map(d => `${d.kind}/${d.metadata.name}`), []);
 });
+
+// The CRDs hold every Certificate, and with the owner-ref flag every TLS Secret hangs off one: no sync
+// prunes the app, and ArgoCD keeps a CRD carrying the keep policy when the Application is deleted.
+const crdsWithoutKeep = docs => docs.filter(d => d.kind === 'CustomResourceDefinition' && d.metadata.annotations?.['helm.sh/resource-policy'] !== 'keep').map(d => d.metadata.name);
+
+test('PLANTED DEFECT: nothing removes the CRDs, neither a prune nor the Application\'s deletion', () => {
+  assert.equal(app.prune, 'false');
+  assert.deepEqual(crdsWithoutKeep(objects(render())), []);
+  assert.ok(crdsWithoutKeep(objects(render(['--set', 'cert-manager.crds.keep=false']))).length >= 6);
+});
+
+// The patch the platform ApplicationSet lays over each Application, as it renders for this app.yaml.
+const appset = JSON.parse(execFileSync('yq', ['-o=json', '.spec', 'clusters/argocd/files/platform-apps-appset.yaml'], {encoding: 'utf8'}));
+const [{output, error}] = JSON.parse(execFileSync('go', ['run', '.'], {cwd: 'scripts/appset-render',
+  input: JSON.stringify({template: appset.templatePatch, options: appset.goTemplateOptions, params: [app]}), encoding: 'utf8'}));
+const application = JSON.parse(execFileSync('yq', ['-o=json', '.'], {input: output ?? '', encoding: 'utf8'}));
+
+test('every webhook configuration whose caBundle the cainjector writes is compared without it', () => {
+  assert.equal(error, undefined);
+  const injected = objects(render()).filter(d => d.metadata.annotations?.['cert-manager.io/inject-ca-from-secret']).map(d => d.kind);
+  assert.deepEqual([...new Set(injected)].sort(), ['MutatingWebhookConfiguration', 'ValidatingWebhookConfiguration']);
+  for (const kind of injected) {
+    const rule = application.spec.ignoreDifferences.find(r => r.kind === kind);
+    assert.equal(rule?.group, 'admissionregistration.k8s.io', kind);
+    assert.deepEqual(rule.jqPathExpressions, ['.webhooks[]?.clientConfig.caBundle'], kind);
+  }
+});
