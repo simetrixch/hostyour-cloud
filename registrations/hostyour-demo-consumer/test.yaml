@@ -4,7 +4,7 @@ owner: "demo"
 onboardedAt: "2026-10-07T01:05:12.472Z"
 suspended: false
 quiesced: false
-removing: false
+removing: true
 chartPath: "deploy/chart"
 cluster: "master"
 databases: ["demo_probe"]
