@@ -6,6 +6,11 @@ AlertmanagerConfig platform-default routes every alert but severity=info.
 The Manager writes a failed run as one error line `"msg":"run failed"` (with runId, kind and the
 masked runError), and a nightly backup that did not start as a warning "nightly backup was not
 started today" (hostyour-manager server/executor/executor.ts, server/boot/nightly-backup-schedule.ts).
+
+A digita engine writes one error line `"msg":"Engine plugin switched off after repeated failures"` (with
+plugin, reason and ports) when three failed calls in a row switch an engine plugin off (digita-platform
+packages/engine/src/core/plugins/engine-plugin-registry.ts, failed). For storage-s3 that leaves the tenant's
+files unserved until a restart or an Administrator switches it on again.
 */ -}}
 apiVersion: v1
 kind: ConfigMap
@@ -31,3 +36,14 @@ data:
             annotations:
               summary: 'A nightly backup was not started today'
               description: 'No generation was taken tonight for that family; the Manager''s log line says why.'
+  digita-engine.yaml: |
+    groups:
+      - name: digita-engine
+        rules:
+          - alert: EnginePluginSwitchedOff
+            expr: 'sum by (namespace, plugin) (count_over_time({container="engine"} |= "\"msg\":\"Engine plugin switched off after repeated failures\"" | json plugin="plugin" [15m])) > 0'
+            labels:
+              severity: warning
+            annotations:
+              summary: 'Engine plugin {{`{{ $labels.plugin }}`}} in {{`{{ $labels.namespace }}`}} was switched off after repeated failures'
+              description: 'What the plugin served stays unserved until the engine restarts or an Administrator switches it on under Engine Plugins; for storage-s3 every upload and file view refuses. Its log line in Loki carries plugin and ports.'

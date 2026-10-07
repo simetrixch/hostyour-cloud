@@ -1,0 +1,22 @@
+name: trust-manager
+project: core
+syncWave: "1"
+namespace: cert-manager
+# Never pruned: the CRDs hold every Bundle of the cluster. An object a later chart stops rendering
+# is removed by an operator.
+prune: "false"
+createNamespace: "true"
+serverSideApply: "true"
+# The clusters that hand trust-manager from the installer to Argo CD, named one at a time; widened, never
+# narrowed (platform-apps-appset.yaml, the selector).
+runsOn: apps8
+# The installer's release name: the chart builds names and Deployment selectors from it, and a selector
+# cannot change, so only this name lets Argo CD adopt the running trust-manager in place.
+releaseName: trust-manager
+# The cainjector writes the webhook's caBundle, which the chart renders empty; compared with the
+# live object it would stand OutOfSync for good, and wave 1 would hold later waves back.
+ignoreDifferences: |
+  - group: admissionregistration.k8s.io
+    kind: ValidatingWebhookConfiguration
+    jqPathExpressions:
+      - '.webhooks[]?.clientConfig.caBundle'

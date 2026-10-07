@@ -1,0 +1,29 @@
+{{- $issuer := "" }}
+{{- if and .Values.global .Values.global.clusterIssuer }}
+  {{- $issuer = .Values.global.clusterIssuer }}
+{{- end }}
+{{- if and (ne $issuer "platform-acme") (ne $issuer "platform-local") }}
+{{- fail (printf "global.clusterIssuer is %q: it must be platform-acme or platform-local" $issuer) }}
+{{- end }}
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: platform-trust
+  annotations:
+    # The Bundle is admitted by trust-manager's own webhook, so it is applied once the Deployment of
+    # this Application runs.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  sources:
+    - useDefaultCAs: true
+    - configMap:
+        name: kube-root-ca.crt
+        key: ca.crt
+    {{- if eq $issuer "platform-local" }}
+    - secret:
+        name: platform-ca
+        key: ca.crt
+    {{- end }}
+  target:
+    configMap:
+      key: ca-certificates.crt

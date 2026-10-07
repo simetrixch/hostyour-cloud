@@ -35,6 +35,10 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       {{- end }}
       serviceAccountName: manager
+      # At a restart the Manager lets the steps in flight end within 20 s, exits by itself, and the
+      # next Manager resumes the runs (hostyour-manager server/executor/executor.ts, SHUTDOWN_DRAIN_MS).
+      # The grace stays above that drain, so the exit is the Manager's own and never a kill.
+      terminationGracePeriodSeconds: 30
       # The SA token is NOT auto-mounted; it is projected ONLY into the app
       # container below. The manager presents exactly this token to Vault's
       # kubernetes auth (config.ts VAULT_SA_TOKEN_PATH defaults to the standard

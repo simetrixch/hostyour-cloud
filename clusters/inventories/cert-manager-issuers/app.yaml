@@ -1,0 +1,9 @@
+name: cert-manager-issuers
+project: core
+syncWave: "1"
+namespace: cert-manager
+# Exactly one form stands at a time; a flip of global.clusterIssuer prunes the other form,
+# which is how every certificate is issued again by the new name.
+prune: "true"
+createNamespace: "true"
+runsOn: apps8

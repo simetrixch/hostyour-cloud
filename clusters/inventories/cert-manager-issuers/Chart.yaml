@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cert-manager-issuers
+version: 1.0.0
+description: |
+  cert-manager ClusterIssuers for the platform: the public ACME authority or the cluster authority.
