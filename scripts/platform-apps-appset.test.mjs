@@ -18,15 +18,16 @@ const apps = readdirSync('clusters/inventories', {withFileTypes: true}).filter(e
   .filter(name => { try { return Boolean(appYaml(name).name); } catch { return false; } });
 const releaseNameOf = output => JSON.parse(execFileSync('yq', ['-o=json', '.spec.sources[1].helm.releaseName'], {input: output, encoding: 'utf8'}));
 
-test('every app renders, each under its Application name, and cert-manager under the addon release name', () => {
+test('every app renders under its Application name, or under the release name its app.yaml names', () => {
   const params = apps.map(appYaml);
   const results = render(template, params);
   results.forEach((result, at) => {
     assert.equal(result.error, undefined, `${params[at].name}: ${result.error}`);
-    const expected = params[at].name === 'cert-manager' ? 'cert-manager' : `${params[at].name}-prod`;
+    const expected = params[at].releaseName ?? `${params[at].name}-prod`;
     assert.equal(releaseNameOf(result.output), expected, params[at].name);
   });
   assert.ok(apps.includes('cert-manager') && apps.length > 5, `the inventories were read: ${apps.join(', ')}`);
+  assert.equal(releaseNameOf(results[apps.indexOf('cert-manager')].output), 'cert-manager');
 });
 
 test('PLANTED DEFECT: a bare read of releaseName fails every app that names none', () => {

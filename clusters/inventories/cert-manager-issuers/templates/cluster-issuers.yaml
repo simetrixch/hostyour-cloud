@@ -1,0 +1,67 @@
+{{- $issuer := "" }}
+{{- if and .Values.global .Values.global.clusterIssuer }}
+  {{- $issuer = .Values.global.clusterIssuer }}
+{{- end }}
+{{- if eq $issuer "platform-acme" }}
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: platform-acme
+spec:
+  acme:
+    email: {{ required "global.letsencryptEmail is the ACME contact of platform-acme" .Values.global.letsencryptEmail | quote }}
+    privateKeySecretRef:
+      name: platform-acme
+    server: {{ required "global.letsencryptServer is the ACME directory platform-acme registers with" .Values.global.letsencryptServer | quote }}
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: public
+            # The solver's own Service must be a ClusterIP, because a unit namespace admits no other
+            # Service type; the challenge is answered over the ingress class, so nothing is lost.
+            serviceType: ClusterIP
+{{- else if eq $issuer "platform-local" }}
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: platform-self-signed
+  labels:
+    hostyour.cloud/platform-authority: "true"
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: platform-ca
+  namespace: cert-manager
+  labels:
+    hostyour.cloud/platform-authority: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  isCA: true
+  commonName: hostyour.cloud platform authority (this cluster only)
+  secretName: platform-ca
+  duration: 26280h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Never
+  issuerRef:
+    name: platform-self-signed
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: platform-local
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  ca:
+    secretName: platform-ca
+{{- else }}
+{{- fail (printf "global.clusterIssuer is %q: it must be platform-acme or platform-local" $issuer) }}
+{{- end }}

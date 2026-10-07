@@ -1,0 +1,15 @@
+apiVersion: v2
+name: trust-manager
+version: 1.0.0
+description: |
+  trust-manager, the TLS trust bundle distributor across namespaces, under Argo CD.
+
+  The installer installed it as a Helm release `trust-manager` of the jetstack chart in the
+  namespace `cert-manager`. This Application renders the same chart at the same version under
+  the same release name (app.yaml releaseName), so every object it renders carries the name and the
+  selector labels the installer's release made: Argo CD adopts them in place, and nothing is
+  installed twice.
+dependencies:
+  - name: trust-manager
+    version: v0.24.0
+    repository: oci://quay.io/jetstack/charts

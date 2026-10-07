@@ -58,4 +58,9 @@ node --test scripts/platform-apps-appset.test.mjs || fail 'scripts/platform-apps
 echo 'test: cert-manager adoption — the addon release in place, with the owner-ref flag.'
 helm dependency update clusters/inventories/cert-manager
 node --test scripts/cert-manager-adoption.test.mjs || fail 'scripts/cert-manager-adoption.test.mjs'
+echo 'test: trust-manager adoption — the installer release in place, its bundle in the form of the cluster issuer.'
+helm dependency update clusters/inventories/trust-manager
+node --test scripts/trust-manager-adoption.test.mjs || fail 'scripts/trust-manager-adoption.test.mjs'
+echo 'test: cert-manager issuers — platform-acme as every cluster holds it, or the cluster authority, nothing else.'
+node --test scripts/cert-manager-issuers.test.mjs || fail 'scripts/cert-manager-issuers.test.mjs'
 echo 'test: OK — all suites green'
