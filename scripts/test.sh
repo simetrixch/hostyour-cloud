@@ -53,4 +53,9 @@ node --test scripts/service-provisioner-mariadb.test.mjs || fail 'scripts/servic
 node --test scripts/service-provisioner-mongodb-stage.test.mjs || fail 'scripts/service-provisioner-mongodb-stage.test.mjs'
 echo 'test: unit redirects — old unit hosts answer with a permanent redirect to their twins, and nothing renders without an old apex.'
 node --test scripts/unit-redirects.test.mjs || fail 'scripts/unit-redirects.test.mjs'
+echo 'test: platform release names — every app under its Application name, cert-manager under the addon release name.'
+node --test scripts/platform-apps-release-name.test.mjs || fail 'scripts/platform-apps-release-name.test.mjs'
+echo 'test: cert-manager adoption — the addon release in place, with the owner-ref flag.'
+helm dependency update clusters/inventories/cert-manager
+node --test scripts/cert-manager-adoption.test.mjs || fail 'scripts/cert-manager-adoption.test.mjs'
 echo 'test: OK — all suites green'

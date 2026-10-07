@@ -1,0 +1,11 @@
+name: cert-manager
+project: core
+syncWave: "0"
+namespace: cert-manager
+prune: "true"
+createNamespace: "true"
+serverSideApply: "true"
+runsOn: every-cluster
+# The addon's release name: the chart builds names and Deployment selectors from it, and a selector
+# cannot change, so only this name lets Argo CD adopt the running cert-manager in place.
+releaseName: cert-manager

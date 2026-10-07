@@ -1,0 +1,18 @@
+apiVersion: v2
+name: cert-manager
+version: 1.0.0
+description: |
+  cert-manager, the controller every Certificate of the cluster is issued by, under Argo CD.
+
+  The installer enabled it as the microk8s addon, a Helm release `cert-manager` of the jetstack chart
+  in the namespace `cert-manager`. This Application renders the same chart at the same version under
+  the same release name (app.yaml releaseName), so every object it renders carries the name and the
+  selector labels the addon's release made: Argo CD adopts them in place, nothing is installed twice,
+  and no Certificate is issued again.
+
+  The one value beside the addon's (`crds.enabled`): `enableCertificateOwnerRef`, so a Secret is
+  owned by its Certificate and goes with it when Argo CD prunes the Certificate.
+dependencies:
+  - name: cert-manager
+    version: v1.19.1
+    repository: oci://quay.io/jetstack/charts

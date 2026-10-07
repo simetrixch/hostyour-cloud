@@ -1,0 +1,12 @@
+cert-manager:
+  # The CRDs come with the chart, as the addon installed them; they are larger than the annotation a
+  # client-side apply keeps, which is why app.yaml syncs server-side.
+  crds:
+    enabled: true
+  # A Certificate owns its Secret: when Argo CD prunes a Certificate a chart no longer renders, its
+  # Secret goes with it instead of standing behind as a stray TLS key.
+  enableCertificateOwnerRef: true
+  # A Helm post-install hook that checks the API once after an install. Argo CD would run it as a
+  # PostSync hook at every sync, beside the objects the addon's release holds; nothing waits on it.
+  startupapicheck:
+    enabled: false
