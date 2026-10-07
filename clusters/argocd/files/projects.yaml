@@ -58,7 +58,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Cluster foundation — External-Secrets operator, CoreDNS and the plain-http redirect to https. Privileged (CRDs, kube-system).
+  description: Cluster foundation — External-Secrets operator, CoreDNS, the plain-http redirect to https and the cert-manager family. Privileged (CRDs, kube-system).
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
     - oci://ghcr.io/external-secrets/charts
@@ -80,6 +80,11 @@ spec:
     # (clusters/inventories/https-redirect). The controller itself is the machine layer's.
     - name: __CLUSTER_NAME__
       namespace: ingress
+    # cert-manager, trust-manager and the cluster's issuers (clusters/inventories/cert-manager,
+    # trust-manager, cert-manager-issuers), adopted from the addon where an inventory's runsOn admits
+    # the cluster.
+    - name: __CLUSTER_NAME__
+      namespace: cert-manager
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
@@ -97,6 +102,16 @@ spec:
       kind: ValidatingAdmissionPolicy
     - group: admissionregistration.k8s.io
       kind: ValidatingAdmissionPolicyBinding
+    # What the cert-manager family renders beside its CRDs and roles: the webhooks of cert-manager and
+    # trust-manager, the cluster's issuers and the trust bundle every namespace reads.
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+    - group: cert-manager.io
+      kind: ClusterIssuer
+    - group: trust.cert-manager.io
+      kind: Bundle
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
