@@ -6,4 +6,5 @@ namespace: cert-manager
 # which is how every certificate is issued again by the new name.
 prune: "true"
 createNamespace: "true"
-runsOn: apps8
+# With cert-manager and trust-manager, on every cluster (cert-manager/app.yaml says why).
+runsOn: every-cluster

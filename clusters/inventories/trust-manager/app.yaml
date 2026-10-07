@@ -7,9 +7,10 @@ namespace: cert-manager
 prune: "false"
 createNamespace: "true"
 serverSideApply: "true"
-# The clusters that hand trust-manager from the installer to Argo CD, named one at a time; widened, never
-# narrowed (platform-apps-appset.yaml, the selector).
-runsOn: apps8
+# Every cluster hands trust-manager from the installer to Argo CD: apps8 first, then all of them, as one value
+# of the selector holds no list. Never narrowed (platform-apps-appset.yaml, the selector): an
+# Application the selection drops is deleted with what it adopted.
+runsOn: every-cluster
 # The installer's release name: the chart builds names and Deployment selectors from it, and a selector
 # cannot change, so only this name lets Argo CD adopt the running trust-manager in place.
 releaseName: trust-manager
