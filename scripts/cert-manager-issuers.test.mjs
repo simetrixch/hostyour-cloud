@@ -68,6 +68,20 @@ test('platform-local renders platform-self-signed, platform-ca and platform-loca
   const local = docs.find(d => d.kind === 'ClusterIssuer' && d.metadata.name === 'platform-local');
   assert.ok(local);
   assert.equal(local.spec.ca.secretName, 'platform-ca');
+  assert.equal(ca.metadata.annotations['argocd.argoproj.io/sync-options'], 'Prune=false', 'the authority key survives a flip');
+});
+
+// The installer still writes the local authority from its bootstrap files on a fresh cluster, and this
+// Application adopts what it wrote: a spec that drifted from them would issue the authority again.
+test('PLANTED DEFECT: the local authority equals the installer\'s bootstrap documents, spec for spec', () => {
+  const rendered = objects(render(['--set', 'global.clusterIssuer=platform-local']));
+  const bootstrap = ['platform-authority.yaml', 'platform-authority-issuer.yaml']
+    .flatMap(f => objects(execFileSync('cat', [`clusters/bootstrap/cert-manager/${f}`], {encoding: 'utf8'})));
+  assert.equal(bootstrap.length, 3);
+  for (const want of bootstrap) {
+    const got = rendered.find(d => d.kind === want.kind && d.metadata.name === want.metadata.name);
+    assert.deepEqual(got?.spec, want.spec, `${want.kind}/${want.metadata.name}`);
+  }
 });
 
 test('PLANTED DEFECT: letsencrypt-prod fails naming global.clusterIssuer', () => {

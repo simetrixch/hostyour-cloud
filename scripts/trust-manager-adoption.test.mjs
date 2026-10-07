@@ -65,6 +65,14 @@ test('every webhook configuration kind the chart renders with an inject-ca annot
   }
 });
 
+// The installer still installs trust-manager from its bootstrap values on a fresh cluster, and this
+// Application adopts that release: values that drifted from them would change it at adoption.
+test('PLANTED DEFECT: the values equal the installer\'s bootstrap values', () => {
+  const inventory = JSON.parse(execFileSync('yq', ['-o=json', '.["trust-manager"]', 'clusters/inventories/trust-manager/values-common.yaml'], {encoding: 'utf8'}));
+  const bootstrap = JSON.parse(execFileSync('yq', ['-o=json', '.', 'clusters/bootstrap/cert-manager/trust-manager-values.yaml'], {encoding: 'utf8'}));
+  assert.deepEqual(inventory, bootstrap);
+});
+
 test('the render holds no Helm hook', () => {
   const docs = objects(render());
   assert.deepEqual(docs.filter(d => d.metadata.annotations?.['helm.sh/hook']).map(d => `${d.kind}/${d.metadata.name}`), []);
