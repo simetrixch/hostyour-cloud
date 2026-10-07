@@ -3,6 +3,6 @@ repoURL: "https://github.com/simetrixch/hostyour-demo-consumer.git"
 owner: "demo"
 onboardedAt: "2026-10-07T02:53:24.906Z"
 suspended: false
-quiesced: false
+quiesced: true
 removing: false
-builds: ["hostyour-demo-consumer"]
+builds: []
