@@ -30,6 +30,11 @@ spec:
       # and on a master, which carries that stack itself, the two own the same DaemonSet, and the
       # agent's sync never ends (hostyour-cloud#188). An app.yaml whose runsOn matches no slot and
       # not `every-cluster` stays unselected on every cluster.
+      #
+      # The fourth slot is the cluster's own short name, for an app that takes over something every
+      # cluster already runs and so goes to one cluster before the others. Widen such a runsOn, never
+      # narrow it: an Application the selection drops is deleted with its finalizer, and every
+      # object it adopted goes with it.
       selector:
         matchExpressions:
           - key: runsOn
@@ -39,6 +44,7 @@ spec:
               - __CLUSTER_ROLE_FIRST_PART__
               - __CLUSTER_ROLE_LAST_PART__
               - __CLUSTER_ROLE_WHOLE__
+              - __CLUSTER_NAME__
 
   # WHAT ORDERS ONE APPLICATION AGAINST ANOTHER, and `argocd.argoproj.io/sync-wave` is not it. That
   # annotation orders the RESOURCES INSIDE one Application's own sync. On an Application generated
