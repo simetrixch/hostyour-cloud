@@ -5,4 +5,4 @@
 builds:
   - name: gate-runner
     image: gate-runner
-    tag: "0.8.412-stable-20261006172209-77e9db4"
+    tag: "0.8.413-stable-20261007001602-e97cd30"
