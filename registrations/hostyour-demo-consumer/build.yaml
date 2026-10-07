@@ -1,8 +1,8 @@
 name: "hostyour-demo-consumer"
 repoURL: "https://github.com/simetrixch/hostyour-demo-consumer.git"
 owner: "demo"
-onboardedAt: "2026-10-07T02:53:24.906Z"
+onboardedAt: "2026-10-07T13:12:13.972Z"
 suspended: false
-quiesced: true
+quiesced: false
 removing: false
-builds: []
+builds: ["hostyour-demo-consumer"]
