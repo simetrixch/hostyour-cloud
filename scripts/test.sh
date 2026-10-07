@@ -63,4 +63,5 @@ helm dependency update clusters/inventories/trust-manager
 node --test scripts/trust-manager-adoption.test.mjs || fail 'scripts/trust-manager-adoption.test.mjs'
 echo 'test: cert-manager issuers — platform-acme as every cluster holds it, or the cluster authority, nothing else.'
 node --test scripts/cert-manager-issuers.test.mjs || fail 'scripts/cert-manager-issuers.test.mjs'
+node --test scripts/inventory-project-fit.test.mjs || fail 'scripts/inventory-project-fit.test.mjs'
 echo 'test: OK — all suites green'
