@@ -24,7 +24,7 @@ test('planted defect: a refresh that brings back the default coschedule is caugh
   assert.deepEqual(drift(featureFlags(refreshed)), ['coschedule']);
 });
 
-test('the build plane alert names the cluster that runs Tekton and fires above one node', () => {
+test('the build plane alert stands with its expression', () => {
   const rules = JSON.parse(execFileSync('yq', ['-o=json', '.monitoring.prometheusRules.tekton.groups[].rules', VALUES], {encoding: 'utf8'}));
   const alert = rules.find((r) => r.alert === 'TektonBuildPlaneHasManyNodes');
   assert.ok(alert, 'no alert TektonBuildPlaneHasManyNodes');
