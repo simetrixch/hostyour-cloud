@@ -750,13 +750,14 @@ echo "check: every yaml_value stamp site of this tree holds its pin from cluster
 echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
-for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs; do
+for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in public GitHub Actions.'
+echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in public GitHub Actions.'

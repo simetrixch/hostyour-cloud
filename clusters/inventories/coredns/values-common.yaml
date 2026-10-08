@@ -12,13 +12,19 @@ rewrites: []
 # Empty here so no cluster silently inherits a one-off mapping.
 extraRewrites: []
 
-# Upstream DNS forwarding for non-cluster names. Default mirrors the MicroK8s
-# `dns` addon: forward to the node's /etc/resolv.conf (UDP). Override it in
-# clusters/active/<fqdn>.yaml when the host LAN needs explicit resolvers and/or
-# force_tcp. NOTE: this Corefile OWNS kube-system/coredns, so it overrides
-# whatever the installer's fix_coredns_upstream patched — the value that reaches
-# a cluster must match that host's DNS_UPSTREAM_SERVERS + DNS_FORCE_TCP in
-# configs/config.<stage>.
+# Upstream DNS forwarding for non-cluster names. Default forwards to the node's
+# /etc/resolv.conf over UDP, the same as the MicroK8s `dns` addon. A cluster
+# overrides `forward.upstreams` and/or `forward.forceTcp` in
+# clusters/active/<fqdn>.yaml. This chart owns kube-system/coredns, so it
+# replaces whatever the addon wrote, and Argo CD's self heal restores it if the
+# addon is enabled again.
 forward:
   upstreams: "/etc/resolv.conf"
   forceTcp: false
+
+# Whether outside names are cached for their own TTL and served stale while they
+# refresh (the `cache` block of the Corefile). Temporary: off here, turned on for
+# one cluster in clusters/active/<fqdn>.yaml with `cache: {serveStale: true}`, and
+# deleted with the old `cache 30` once that cluster has been measured.
+cache:
+  serveStale: false
