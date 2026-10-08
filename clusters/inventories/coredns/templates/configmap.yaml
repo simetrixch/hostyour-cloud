@@ -117,7 +117,22 @@ data:
         {{- else }}
         forward . {{ .Values.forward.upstreams | default "/etc/resolv.conf" }}
         {{- end }}
+        {{- /* The provider's resolvers take 1 to 10 seconds or drop the answer, even
+             for a name answered a moment ago, so a 30s cap queries twice a minute.
+             Without a TTL argument CoreDNS keeps a positive answer for the record's
+             own TTL, at most 3600s. A negative answer stays capped at 30s so a name
+             created right after a miss still resolves within 30 seconds.
+             serve_stale 1h immediate answers an expired entry at once, for up to
+             an hour, and refreshes behind the answer; the first lookup still waits
+             on the provider. */}}
+        {{- if .Values.cache.serveStale }}
+        cache {
+          denial 9984 30
+          serve_stale 1h immediate
+        }
+        {{- else }}
         cache 30
+        {{- end }}
         loop
         reload
         loadbalance
