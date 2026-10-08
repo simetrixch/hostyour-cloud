@@ -10,6 +10,8 @@ echo 'test: scripts/pipeline-release.test.sh — release pipeline decisions.'
 bash scripts/pipeline-release.test.sh || fail 'scripts/pipeline-release.test.sh'
 echo 'test: production build chart and immutable-field contracts on the public runner.'
 node --test scripts/build-contract.test.mjs || fail 'scripts/build-contract.test.mjs'
+echo 'test: release queue — one release at a time on the build plane, and the queue may only start a run.'
+node --test scripts/release-queue.test.mjs || fail 'scripts/release-queue.test.mjs'
 echo 'test: manager-generator-refresh — approved grant only.'
 helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'
@@ -31,6 +33,8 @@ node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
 echo 'test: tenant own domain aliases — every member gets the list, or [] without one.'
 node --test scripts/tenant-own-domain-aliases.test.mjs || fail 'scripts/tenant-own-domain-aliases.test.mjs'
 node --test scripts/tenant-display-name.test.mjs || fail 'scripts/tenant-display-name.test.mjs'
+echo 'test: tekton feature flags — a refresh of the vendored manifest keeps coschedule disabled and the build plane alert stands.'
+node --test scripts/tekton-feature-flags.test.mjs || fail 'scripts/tekton-feature-flags.test.mjs'
 echo 'test: unit alerts — the master evaluates the PostgreSQL, Redis and MariaDB alerts of every unit, the unit renders none.'
 helm dependency update clusters/units/postgresql
 helm dependency update clusters/units/mariadb

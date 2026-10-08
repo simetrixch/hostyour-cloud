@@ -36,6 +36,11 @@ eventListener:
 # ExternalSecret — the GitHub webhook signing secret. The deploy-request
 # Trigger's github Interceptor validates X-Hub-Signature-256 against the
 # `github` key of this Secret.
+# The release queue (templates/release-queue.yaml) starts one release at a time on the build plane.
+# The image is the one the release pipeline's own kubectl steps use; it carries bash, kubectl and jq.
+releaseQueue:
+  image: alpine/k8s:1.35.6
+
 externalsecret-webhooks:
   externalSecret:
     enabled: true

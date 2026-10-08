@@ -14,14 +14,18 @@
 #   templates/release-dashboard.yaml     v0.69.0  (build cluster only)
 #
 # THE FEATURE FLAGS THIS PLATFORM DEPENDS ON, in the `feature-flags` ConfigMap of
-# templates/release-pipelines.yaml. A re-download overwrites that file verbatim, so a refresh that
-# does not re-check these two silently takes a working release pipeline apart:
-#   coschedule: "workspaces"   the release pipeline's `source` workspace is a ReadWriteOnce
-#                              volumeClaimTemplate and several of its TaskRuns mount it at once
-#                              (builds beside scan, and one build task per declared build). Without
-#                              the Affinity Assistant nothing pins those pods to one node, so on a
-#                              build plane of more than one node the second pod stays Pending until
-#                              the PipelineRun times out an hour later.
+# templates/release-pipelines.yaml. A re-download overwrites that file verbatim, and
+# scripts/tekton-feature-flags.test.mjs goes red when a refresh reverts either of these two:
+#   coschedule: "disabled"     no affinity-assistant pod per PipelineRun. Each running PipelineRun
+#                              held one, and parallel releases filled the build plane's node (110
+#                              pods) with them until no task pod could start. This holds only on a
+#                              build plane of ONE node: the release pipeline's `source` workspace is
+#                              a ReadWriteOnce volumeClaimTemplate that several of its TaskRuns mount
+#                              at once, and with a second node nothing keeps those pods together, so
+#                              the second pod stays Pending until the PipelineRun's 1h timeout. The
+#                              alert TektonBuildPlaneHasManyNodes below fires as soon as the cluster
+#                              that runs Tekton counts more than one node; the fix then is
+#                              "workspaces" again, or a ReadWriteMany `source` volume.
 #   enable-api-fields: "beta"  stands in that ConfigMap and is NOT the value a bare Tekton install
 #                              carries. The release pipeline does not need it — it declares no
 #                              array-typed result — and what else on this platform relies on a beta
@@ -115,6 +119,17 @@ monitoring:
               annotations:
                 summary: "Tekton PipelineRun failed in last 10 min"
                 description: "Check `tkn pipelinerun list` in the image-builder namespace."
+
+            # The cluster that runs the Tekton controllers is the build plane. With coschedule
+            # "disabled" (header above) its release PipelineRuns hang once it has a second node.
+            - alert: TektonBuildPlaneHasManyNodes
+              expr: count by (cluster) (kube_node_info) > 1 and on (cluster) count by (cluster) (up{job=~"tekton.*"})
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "The build plane counts more than one node while Tekton's coschedule is disabled"
+                description: "Release PipelineRuns mount a ReadWriteOnce workspace from several pods; on a second node one of them stays Pending. Set coschedule back to workspaces in clusters/inventories/tekton/templates/release-pipelines.yaml, or make the source workspace ReadWriteMany."
 
             - alert: PipelineRunRunningTooLong
               expr: time() - max(tekton_pipelines_controller_running_pipelineruns_count > 0) > 1800

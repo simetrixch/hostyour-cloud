@@ -38,6 +38,15 @@ eventListener:
   serviceAccountName: eventlistener-sa
   namespace: image-builder
 
+# WHO STARTS A WAITING RELEASE RUN. Release runs are created waiting, and the release queue of
+# clusters/inventories/image-builder starts them one release at a time. Its grant is `patch` on
+# pipelineruns in the unit's build namespace, rendered per unit by templates/rbac-release-queue.yaml;
+# the admission policy of image-builder lets that identity change nothing but the waiting flag and
+# the note of what a run waits for.
+releaseQueue:
+  serviceAccountName: release-queue
+  namespace: image-builder
+
 # WHO MAY WATCH A RUN IT DID NOT START. The manager has no task in a release cycle — the webhook
 # starts the run and the pipeline finishes it — but it reports the run's progress to the operator who
 # asked for the release, so it needs get/list/watch on PipelineRuns in the unit's build namespace.

@@ -1,0 +1,135 @@
+{{- /*
+THE RELEASE QUEUE. The build plane is one node with room for 110 pods, and every release run takes
+several. Releases started in parallel filled it until no task pod could start and every run hung
+until its timeout. So every release run is created waiting (the deploy-request TriggerTemplate sets
+spec.status PipelineRunPending), and this CronJob starts the oldest waiting release, all of its
+stages, once no other release runs. Each waiting run carries the annotation
+image-builder.io/queued-behind with the release it waits for, which the Tekton Dashboard and
+`kubectl get pipelinerun -o yaml` show. files/release-queue.jq decides; files/release-queue.sh
+applies; scripts/release-queue.test.mjs runs the decision on planted runs.
+
+A start takes up to a minute, the CronJob's period. Nothing starts while this CronJob does not run.
+
+ITS RIGHTS. Read on PipelineRuns cluster-wide (the build namespaces come and go with the units),
+and patch only in each <unit>-build namespace, rendered there by clusters/inventories/consumer-build
+(templates/rbac-release-queue.yaml). The admission policy image-builder-pipelinerun-guard limits a
+patch by this identity to dropping the waiting flag and to its own annotation.
+*/ -}}
+{{- if .Values.eventListener.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-queue
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: release-queue
+data:
+  release-queue.jq: |
+{{ .Files.Get "files/release-queue.jq" | indent 4 }}
+  release-queue.sh: |
+{{ .Files.Get "files/release-queue.sh" | indent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-queue
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: release-queue
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: image-builder-release-queue-read
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: release-queue
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: image-builder-release-queue-read
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: release-queue
+subjects:
+  - kind: ServiceAccount
+    name: release-queue
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: image-builder-release-queue-read
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: release-queue
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: release-queue
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 50
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 50
+      ttlSecondsAfterFinished: 120
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: image-builder
+            app.kubernetes.io/component: release-queue
+        spec:
+          serviceAccountName: release-queue
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+          containers:
+            - name: release-queue
+              image: {{ required "image-builder: releaseQueue.image is required" .Values.releaseQueue.image | quote }}
+              command: ["bash", "/queue/release-queue.sh"]
+              env:
+                - name: QUEUE_DIR
+                  value: /queue
+                # kubectl keeps its discovery cache under HOME; the root filesystem is read only.
+                - name: HOME
+                  value: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 128Mi
+              volumeMounts:
+                - name: queue
+                  mountPath: /queue
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            - name: queue
+              configMap:
+                name: release-queue
+{{- end }}

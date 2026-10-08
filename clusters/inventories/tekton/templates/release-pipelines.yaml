@@ -25054,17 +25054,12 @@ data:
   # See more in the Affinity Assistant documentation
   # https://github.com/tektoncd/pipeline/blob/main/docs/affinityassistants.md
   #
-  # "workspaces", NOT "disabled" — a value this platform depends on, recorded in
+  # "disabled", NOT the default "workspaces" — a value this platform depends on, recorded in
   # clusters/inventories/tekton/values-common.yaml because a refresh of this
-  # vendored manifest overwrites it. The release pipeline's `source` workspace is
-  # a ReadWriteOnce volumeClaimTemplate
-  # (clusters/inventories/image-builder/templates/triggers/github-deploy-request.yaml),
-  # and several of its TaskRuns mount it at once: builds and scan both run after
-  # clone, and a unit with more than one declared build runs its build tasks in
-  # parallel. With no coschedule policy nothing keeps those pods on one node, and
-  # on a build plane of more than one node the second pod cannot attach the
-  # volume and stays Pending until the PipelineRun's 1h timeout.
-  coschedule: "workspaces"
+  # vendored manifest overwrites it, and checked by scripts/tekton-feature-flags.test.mjs.
+  # "workspaces" adds one affinity-assistant pod to every PipelineRun, and parallel
+  # releases filled the build plane's one node with them until no task pod could start.
+  coschedule: "disabled"
   # Setting this flag to "true" will prevent Tekton scanning attached
   # service accounts and injecting any credentials it finds into your
   # Steps.
