@@ -1,0 +1,41 @@
+{{- /*
+The release queue's grant in THIS unit's build namespace: it may patch a PipelineRun, which is how
+it starts a waiting release run and notes what a run waits for. It reads runs through its own
+read-only ClusterRole (clusters/inventories/image-builder/templates/release-queue.yaml). A patch can
+change any field, so the admission policy image-builder-pipelinerun-guard limits this identity to
+dropping the waiting flag and to its annotation.
+*/ -}}
+{{- if .Values.unit }}
+{{- $unit := include "consumer-build.unitName" . -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-queue-start-pipelineruns
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: release-queue-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-queue-start-pipelineruns
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: release-queue-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ required "consumer-build: releaseQueue.serviceAccountName is required" .Values.releaseQueue.serviceAccountName }}
+    namespace: {{ required "consumer-build: releaseQueue.namespace is required" .Values.releaseQueue.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-queue-start-pipelineruns
+{{- end }}

@@ -20,7 +20,7 @@ function renderChart(chart, extra = []) {
 test('withdrawn Tekton test resources cannot activate and production readers remain', () => {
   const builder = renderChart('image-builder', ['--set', 'digitaTests.events.enabled=true',
     '--set', 'digitaTests.retention.enabled=true']);
-  assert.ok(!builder.some(d => ['PipelineRun', 'CronJob'].includes(d.kind) ||
+  assert.ok(!builder.some(d => d.kind === 'PipelineRun' || (d.kind === 'CronJob' && d.metadata.name !== 'release-queue') ||
     d.metadata.name.includes('test-reporter') || d.metadata.name.includes('test-pruner') ||
     (d.kind === 'Task' && d.metadata.name.startsWith('test-')) || d.metadata.name.endsWith('-test-push')));
   assert.deepEqual(builder.find(d => d.kind === 'EventListener').spec.triggers,

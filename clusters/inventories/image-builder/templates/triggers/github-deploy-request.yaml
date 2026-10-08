@@ -133,6 +133,9 @@ spec:
           # Manager's release watch selects runs by it.
           image-builder.io/consumer: $(tt.params.unit)
       spec:
+        # Created waiting: the release queue (templates/release-queue.yaml) starts it once no other
+        # release runs. Tekton counts the timeout from the start, so the wait does not use it up.
+        status: PipelineRunPending
         pipelineRef:
           name: $(tt.params.unit)-release
         taskRunTemplate:

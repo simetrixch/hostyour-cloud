@@ -35,6 +35,11 @@ WHAT IT BINDS (CEL, fail-closed logic):
      ships it off (clusters/inventories/consumer-build/templates/serviceaccount.yaml) so the
      step that runs the unit's own build holds no API credential, and a pod
      spec that sets it true overrides the ServiceAccount.
+  8. the release queue (templates/release-queue.yaml) changes a run only by
+     dropping spec.status PipelineRunPending, which starts it, and by its
+     annotations. Its RBAC grant is `patch`, and a patch can rewrite any field;
+     without this clause the identity that only starts runs could change what
+     they run.
 */ -}}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -70,6 +75,34 @@ spec:
         has(oldObject.metadata.deletionTimestamp) && has(object.metadata.deletionTimestamp) &&
         object.spec == oldObject.spec &&
         variables.refName == request.namespace.substring(0, request.namespace.size() - 6) + '-tests'
+    - name: isReleaseQueue
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:' + {{ .Release.Namespace | squote }} + ':release-queue'
+    # Every field but spec.status and the annotations, unchanged by an update.
+    - name: unchangedButStatus
+      expression: >-
+        request.operation != 'UPDATE' || (
+          has(object.spec.pipelineRef) == has(oldObject.spec.pipelineRef) &&
+          (!has(object.spec.pipelineRef) || object.spec.pipelineRef == oldObject.spec.pipelineRef) &&
+          has(object.spec.params) == has(oldObject.spec.params) &&
+          (!has(object.spec.params) || object.spec.params == oldObject.spec.params) &&
+          has(object.spec.taskRunTemplate) == has(oldObject.spec.taskRunTemplate) &&
+          (!has(object.spec.taskRunTemplate) || object.spec.taskRunTemplate == oldObject.spec.taskRunTemplate) &&
+          has(object.spec.timeouts) == has(oldObject.spec.timeouts) &&
+          (!has(object.spec.timeouts) || object.spec.timeouts == oldObject.spec.timeouts) &&
+          has(object.spec.workspaces) == has(oldObject.spec.workspaces) &&
+          (!has(object.spec.workspaces) || object.spec.workspaces == oldObject.spec.workspaces) &&
+          has(object.spec.taskRunSpecs) == has(oldObject.spec.taskRunSpecs) &&
+          (!has(object.spec.taskRunSpecs) || object.spec.taskRunSpecs == oldObject.spec.taskRunSpecs) &&
+          has(object.metadata.labels) == has(oldObject.metadata.labels) &&
+          (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels))
+    # The status stays as it was, or a waiting run is started.
+    - name: startsOrKeepsStatus
+      expression: >-
+        request.operation != 'UPDATE' || (
+          has(object.spec.status)
+            ? (has(oldObject.spec.status) && object.spec.status == oldObject.spec.status)
+            : (!has(oldObject.spec.status) || oldObject.spec.status == 'PipelineRunPending'))
     # Every ServiceAccount a per-task override would substitute for the one in
     # taskRunTemplate.
     - name: overrideSAs
@@ -126,6 +159,9 @@ spec:
       reason: Forbidden
     - expression: "!variables.asksForToken"
       message: "podTemplate.automountServiceAccountToken must stay off — the step that runs the built repo's own code holds no API credential."
+      reason: Forbidden
+    - expression: "!variables.isReleaseQueue || (request.operation == 'UPDATE' && variables.unchangedButStatus && variables.startsOrKeepsStatus)"
+      message: "the release queue may only start a waiting release run or note what it waits for."
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

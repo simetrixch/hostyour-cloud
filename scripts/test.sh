@@ -10,6 +10,8 @@ echo 'test: scripts/pipeline-release.test.sh — release pipeline decisions.'
 bash scripts/pipeline-release.test.sh || fail 'scripts/pipeline-release.test.sh'
 echo 'test: production build chart and immutable-field contracts on the public runner.'
 node --test scripts/build-contract.test.mjs || fail 'scripts/build-contract.test.mjs'
+echo 'test: release queue — one release at a time on the build plane, and the queue may only start a run.'
+node --test scripts/release-queue.test.mjs || fail 'scripts/release-queue.test.mjs'
 echo 'test: manager-generator-refresh — approved grant only.'
 helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'
