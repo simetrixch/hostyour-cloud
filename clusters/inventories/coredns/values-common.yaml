@@ -22,8 +22,9 @@ forward:
   upstreams: "/etc/resolv.conf"
   forceTcp: false
 
-# DNS response cache settings. Off by default; a cluster turns it on in
-# clusters/active/<fqdn>.yaml with `cache: {serveStale: true}` to serve
-# stale answers while refreshing and keep positive records for their TTL.
+# Whether outside names are cached for their own TTL and served stale while they
+# refresh (the `cache` block of the Corefile). Temporary: off here, turned on for
+# one cluster in clusters/active/<fqdn>.yaml with `cache: {serveStale: true}`, and
+# deleted with the old `cache 30` once that cluster has been measured.
 cache:
   serveStale: false

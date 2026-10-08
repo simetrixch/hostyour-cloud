@@ -15,6 +15,15 @@ const readCorefile = rendered => JSON.parse(execFileSync('yq', [
   '-o=json', 'select(.kind == "ConfigMap") | .data.Corefile', '-',
 ], {input: rendered, encoding: 'utf8'}));
 
+// Any other line in the block changes what is cached: a `success ... 30` caps every answer at 30s
+// again, and a missing `disable` serves stale addresses of the cluster's own Services and pods.
+const CACHE_BLOCK = [
+  'disable success cluster.local in-addr.arpa ip6.arpa',
+  'disable denial cluster.local in-addr.arpa ip6.arpa',
+  'denial 9984 30',
+  'serve_stale 1h immediate',
+];
+
 const checkCacheBlock = (corefile, serveStale) => {
   const lines = corefile.split('\n').map(line => line.trim());
   if (serveStale) {
@@ -23,9 +32,8 @@ const checkCacheBlock = (corefile, serveStale) => {
     assert.ok(match, 'Corefile must contain a cache { block');
     const [, cacheHeader, blockBody] = match;
     assert.equal(cacheHeader.trim(), 'cache', `cache line carries TTL argument: ${cacheHeader.trim()}`);
-    const blockLines = blockBody.split('\n').map(line => line.trim());
-    assert.ok(blockLines.includes('denial 9984 30'), 'cache block must include denial 9984 30');
-    assert.ok(blockLines.includes('serve_stale 1h immediate'), 'cache block must include serve_stale 1h immediate');
+    const blockLines = blockBody.split('\n').map(line => line.trim()).filter(Boolean);
+    assert.deepEqual(blockLines, CACHE_BLOCK, 'the cache block holds exactly the expected lines');
   } else {
     assert.ok(lines.includes('cache 30'), 'Corefile must contain a line that is exactly cache 30');
     assert.ok(!corefile.includes('serve_stale'), 'Corefile must not contain serve_stale');
@@ -52,6 +60,15 @@ test('planted defects in the serveStale render throw while innocent extra indent
 
   const defectNoServeStale = staleCorefile.replace(/^[ \t]*serve_stale 1h immediate\r?\n/m, '');
   assert.throws(() => checkCacheBlock(defectNoServeStale, true));
+
+  const defectSuccessCap = staleCorefile.replace('denial 9984 30', 'denial 9984 30\n      success 9984 30');
+  assert.throws(() => checkCacheBlock(defectSuccessCap, true));
+
+  for (const zoneLine of CACHE_BLOCK.slice(0, 2)) {
+    const defectClusterCached = staleCorefile.replace(`${zoneLine}\n`, '');
+    assert.notEqual(defectClusterCached, staleCorefile);
+    assert.throws(() => checkCacheBlock(defectClusterCached, true));
+  }
 
   const innocentIndent = staleCorefile
     .replace('denial 9984 30', '    denial 9984 30')

@@ -118,15 +118,20 @@ data:
         forward . {{ .Values.forward.upstreams | default "/etc/resolv.conf" }}
         {{- end }}
         {{- /* The provider's resolvers take 1 to 10 seconds or drop the answer, even
-             for a name answered a moment ago, so a 30s cap queries twice a minute.
-             Without a TTL argument CoreDNS keeps a positive answer for the record's
-             own TTL, at most 3600s. A negative answer stays capped at 30s so a name
-             created right after a miss still resolves within 30 seconds.
-             serve_stale 1h immediate answers an expired entry at once, for up to
-             an hour, and refreshes behind the answer; the first lookup still waits
-             on the provider. */}}
+             for a name answered a moment ago, so a 30s cap sends every name back to
+             them twice a minute. Without a TTL argument CoreDNS keeps a positive
+             answer for the record's own TTL, at most 3600s; a negative answer stays
+             capped at 30s. serve_stale 1h immediate answers an expired entry at once,
+             for up to an hour, and refreshes it behind the answer: the first ask after
+             expiry still gets the old answer or the old miss once, and the next gets
+             the refreshed one. The first lookup of a name still waits on the provider.
+             The cluster's own zones are not cached at all: the kubernetes plugin
+             answers them from memory, and a stale answer there would hand out the old
+             address of a Service or pod that was just replaced. */}}
         {{- if .Values.cache.serveStale }}
         cache {
+          disable success cluster.local in-addr.arpa ip6.arpa
+          disable denial cluster.local in-addr.arpa ip6.arpa
           denial 9984 30
           serve_stale 1h immediate
         }
