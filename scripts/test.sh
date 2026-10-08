@@ -28,6 +28,7 @@ echo 'test: redis maxmemory — a ceiling of half the limit, the shared server u
 helm dependency update clusters/inventories/redis
 helm dependency update clusters/units/redis
 node --test scripts/redis-maxmemory.test.mjs || fail 'scripts/redis-maxmemory.test.mjs'
+node --test scripts/coredns-cache.test.mjs || fail 'scripts/coredns-cache.test.mjs'
 echo 'test: tenant size — every registration renders, with the word or without it.'
 node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
 echo 'test: tenant own domain aliases — every member gets the list, or [] without one.'
