@@ -126,3 +126,55 @@ test('planted defect: a patch that fails is reported, the next one still runs, a
     rmSync(bin, {recursive: true, force: true});
   }
 });
+
+// The admission policy's clause for the queue, evaluated on planted requests by scripts/vap-eval,
+// which runs the CEL library the build plane's API server runs.
+const guard = () => renderChart('image-builder').find((d) => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
+const evaluate = (policy, requests) => execFileSync('go', ['run', '.'], {cwd: 'scripts/vap-eval', encoding: 'utf8',
+  input: JSON.stringify({policy, requests})}).split('\n').filter(Boolean).map((line) => JSON.parse(line).denied);
+
+const QUEUE_SA = 'system:serviceaccount:image-builder:release-queue';
+const waitingRun = () => ({
+  metadata: {name: 'shop-release-x', namespace: 'shop-build', labels: {'image-builder.io/consumer': 'shop'},
+    annotations: {'chains.tekton.dev/signed': 'false'}, finalizers: ['chains.tekton.dev/pipelinerun']},
+  spec: {status: 'PipelineRunPending', pipelineRef: {name: 'shop-release'},
+    params: [{name: 'release-tag', value: '1.0.0-stable-1'}, {name: 'stage', value: 'prod'}],
+    taskRunTemplate: {serviceAccountName: 'pipeline-sa'}, timeouts: {pipeline: '1h0m0s'},
+    workspaces: [{name: 'source', volumeClaimTemplate: {spec: {accessModes: ['ReadWriteOnce']}}}]},
+});
+const changed = (edit) => { const run = waitingRun(); edit(run); return run; };
+const asks = (operation, username, object, oldObject) => ({object, oldObject, request: {operation, namespace: 'shop-build', userInfo: {username}}});
+const startedRun = changed((r) => delete r.spec.status);
+const ADMITTED = {
+  'the EventListener creates a waiting run': asks('CREATE', 'system:serviceaccount:image-builder:eventlistener-sa', waitingRun(), null),
+  'the queue starts a waiting run': asks('UPDATE', QUEUE_SA, startedRun, waitingRun()),
+  'the queue notes what a run waits for, beside other annotations': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; }), waitingRun()),
+  'the queue starts a run and drops its note': asks('UPDATE', QUEUE_SA, startedRun, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; })),
+  'the Tekton controller updates a started run': asks('UPDATE', 'system:serviceaccount:tekton:tekton-controller', changed((r) => { delete r.spec.status; r.metadata.labels['tekton.dev/pipeline'] = 'shop-release'; }), startedRun),
+};
+const DENIED = {
+  'the queue changes a param': asks('UPDATE', QUEUE_SA, changed((r) => { delete r.spec.status; r.spec.params[0].value = 'other'; }), waitingRun()),
+  'the queue drops the timeouts while starting': asks('UPDATE', QUEUE_SA, changed((r) => { delete r.spec.status; delete r.spec.timeouts; }), waitingRun()),
+  'the queue cancels a waiting run': asks('UPDATE', QUEUE_SA, changed((r) => { r.spec.status = 'Cancelled'; }), waitingRun()),
+  'the queue puts a started run back to waiting': asks('UPDATE', QUEUE_SA, waitingRun(), startedRun),
+  'the queue creates a run': asks('CREATE', QUEUE_SA, waitingRun(), null),
+  'the queue changes a label': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.labels['image-builder.io/consumer'] = 'post'; }), waitingRun()),
+  'the queue adds another annotation': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['chains.tekton.dev/x'] = 'y'; }), waitingRun()),
+  'the queue changes another annotation': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['chains.tekton.dev/signed'] = 'true'; }), waitingRun()),
+  'the queue removes another annotation': asks('UPDATE', QUEUE_SA, changed((r) => { delete r.metadata.annotations; }), waitingRun()),
+  'the queue changes the finalizers': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.finalizers = []; }), waitingRun()),
+};
+const QUEUE_MESSAGE = 'the release queue may only start a waiting release run or note what it waits for.';
+
+test('the admission policy lets the queue start a waiting run or note what it waits for, and nothing else', () => {
+  const policy = guard();
+  const verdicts = evaluate(policy, [...Object.values(ADMITTED), ...Object.values(DENIED)]);
+  Object.keys(ADMITTED).forEach((name, i) => assert.deepEqual(verdicts[i], [], name));
+  Object.keys(DENIED).forEach((name, i) => assert.deepEqual(verdicts[Object.keys(ADMITTED).length + i], [QUEUE_MESSAGE], name));
+});
+
+test('planted defect: without the queue clause, every change the queue must not make is admitted', () => {
+  const policy = guard();
+  policy.spec.validations = policy.spec.validations.filter((v) => v.message !== QUEUE_MESSAGE);
+  assert.ok(evaluate(policy, Object.values(DENIED)).every((denied) => denied.length === 0));
+});
