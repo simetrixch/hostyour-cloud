@@ -36,8 +36,8 @@ WHAT IT BINDS (CEL, fail-closed logic):
      step that runs the unit's own build holds no API credential, and a pod
      spec that sets it true overrides the ServiceAccount.
   8. the release queue (templates/release-queue.yaml) changes a run only by
-     dropping spec.status PipelineRunPending, which starts it, and by its
-     annotations. Its RBAC grant is `patch`, and a patch can rewrite any field;
+     dropping spec.status PipelineRunPending, which starts it, and by its own
+     annotation image-builder.io/queued-behind. Its RBAC grant is `patch`, and a patch can rewrite any field;
      without this clause the identity that only starts runs could change what
      they run.
 */ -}}
@@ -78,7 +78,7 @@ spec:
     - name: isReleaseQueue
       expression: >-
         request.userInfo.username == 'system:serviceaccount:' + {{ .Release.Namespace | squote }} + ':release-queue'
-    # Every field but spec.status and the annotations, unchanged by an update.
+    # Every field but spec.status and the queue's own annotation, unchanged by an update.
     - name: unchangedButStatus
       expression: >-
         request.operation != 'UPDATE' || (
@@ -95,7 +95,14 @@ spec:
           has(object.spec.taskRunSpecs) == has(oldObject.spec.taskRunSpecs) &&
           (!has(object.spec.taskRunSpecs) || object.spec.taskRunSpecs == oldObject.spec.taskRunSpecs) &&
           has(object.metadata.labels) == has(oldObject.metadata.labels) &&
-          (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels))
+          (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) &&
+          has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
+          (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) &&
+          (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k == 'image-builder.io/queued-behind' ||
+            (has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations &&
+             oldObject.metadata.annotations[k] == object.metadata.annotations[k]))) &&
+          (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k == 'image-builder.io/queued-behind' ||
+            (has(object.metadata.annotations) && k in object.metadata.annotations))))
     # The status stays as it was, or a waiting run is started.
     - name: startsOrKeepsStatus
       expression: >-

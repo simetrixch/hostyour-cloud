@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
-import {existsSync} from 'node:fs';
+import {execFileSync, spawnSync} from 'node:child_process';
+import {chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
 // The release queue starts one release at a time on the build plane. Its decision is the jq program
 // in clusters/inventories/image-builder/files, run here on planted PipelineRuns; the charts are
@@ -98,4 +100,29 @@ test('each build namespace grants the queue patch on its PipelineRuns and nothin
   assert.deepEqual(role.rules, [{apiGroups: ['tekton.dev'], resources: ['pipelineruns'], verbs: ['patch']}]);
   const binding = docs.find((d) => d.kind === 'RoleBinding' && d.metadata.name === 'release-queue-start-pipelineruns');
   assert.deepEqual(binding.subjects, [{kind: 'ServiceAccount', name: 'release-queue', namespace: 'image-builder'}]);
+});
+
+test('starts come before notes, so a note that cannot be written never holds a start back', () => {
+  const a = run('shop-build', 'a'), b = run('post-build', 'b', {pending: true}), a2 = run('shop-build', 'a', {pending: true});
+  assert.deepEqual(decide([a, b, a2]).map((c) => c.type), ['json', 'merge']);
+});
+
+test('planted defect: a patch that fails is reported, the next one still runs, and the tick fails', () => {
+  const bin = mkdtempSync(join(tmpdir(), 'release-queue-'));
+  try {
+    const runs = join(bin, 'runs.json'), log = join(bin, 'log');
+    writeFileSync(runs, JSON.stringify({items: [run('shop-build', 'a', {pending: true}), run('post-build', 'b', {pending: true})]}));
+    // The first patch is refused, as a unit whose grant has not synced yet would be.
+    writeFileSync(join(bin, 'kubectl'), '#!/usr/bin/env bash\nif [ "$1" = get ]; then cat "$RUNS"; exit 0; fi\n'
+      + 'echo "$*" >> "$LOG"\n[ "$(wc -l < "$LOG")" -gt 1 ]\n');
+    chmodSync(join(bin, 'kubectl'), 0o755);
+    const result = spawnSync('bash', ['clusters/inventories/image-builder/files/release-queue.sh'], {encoding: 'utf8',
+      env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, QUEUE_DIR: 'clusters/inventories/image-builder/files'}});
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /could not patch shop-build\//);
+    assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 2);
+    assert.match(result.stdout, /post-build\/.* waits for release shop-build\/a/);
+  } finally {
+    rmSync(bin, {recursive: true, force: true});
+  }
 });

@@ -1,7 +1,8 @@
 # Decides, from every PipelineRun that carries image-builder.io/consumer, which waiting release runs
 # start now and which wait, and emits one patch per run that has to change. Releases start one at a
 # time because the build plane is one node: parallel releases filled it until no task pod could start.
-# A release is one release tag in one build namespace; its stages run together.
+# A release is one release tag in one build namespace; its stages run together. Starts come first,
+# so a note that cannot be written never holds a start back.
 
 def isRelease: (.spec.pipelineRef.name // "") | endswith("-release");
 def succeeded: [(.status.conditions // [])[] | select(.type == "Succeeded") | .status][0] // "";
@@ -14,7 +15,7 @@ def queuedBehind: .metadata.annotations["image-builder.io/queued-behind"] // "";
 | ($live | map(select(isPending | not)) | sort_by(.metadata.creationTimestamp)) as $running
 | ($live | map(select(isPending)) | sort_by(.metadata.creationTimestamp)) as $waiting
 | (if ($running | length) > 0 then $running else $waiting[:1] end | map(releaseKey)) as $active
-| $waiting[]
+| [$waiting[]
 | releaseKey as $key
 | if any($active[]; . == $key) then
     {namespace: .metadata.namespace, name: .metadata.name, type: "json",
@@ -25,4 +26,5 @@ def queuedBehind: .metadata.annotations["image-builder.io/queued-behind"] // "";
     {namespace: .metadata.namespace, name: .metadata.name, type: "merge",
      patch: {metadata: {annotations: {"image-builder.io/queued-behind": $active[0]}}},
      say: "\(.metadata.namespace)/\(.metadata.name) (release \($key)) waits for release \($active[0])"}
-  else empty end
+  else empty end]
+| sort_by(.type != "json")[]

@@ -3,7 +3,7 @@ The release queue's grant in THIS unit's build namespace: it may patch a Pipelin
 it starts a waiting release run and notes what a run waits for. It reads runs through its own
 read-only ClusterRole (clusters/inventories/image-builder/templates/release-queue.yaml). A patch can
 change any field, so the admission policy image-builder-pipelinerun-guard limits this identity to
-dropping the waiting flag and to its annotation.
+dropping the waiting flag and to its own annotation.
 */ -}}
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
