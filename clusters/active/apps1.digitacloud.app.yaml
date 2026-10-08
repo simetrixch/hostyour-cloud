@@ -70,3 +70,8 @@ global:
     registry: false
     vault: false
     observability: false
+
+# Read by the coredns chart alone: serve DNS answers for their own TTL, and a stale one while the
+# provider's resolvers are slow. Set on apps1 first to measure it; it goes once it holds on every cluster.
+cache:
+  serveStale: true
