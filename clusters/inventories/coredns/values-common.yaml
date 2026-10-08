@@ -21,10 +21,3 @@ extraRewrites: []
 forward:
   upstreams: "/etc/resolv.conf"
   forceTcp: false
-
-# Whether outside names are cached for their own TTL and served stale while they
-# refresh (the `cache` block of the Corefile). Temporary: off here, turned on for
-# one cluster in clusters/active/<fqdn>.yaml with `cache: {serveStale: true}`, and
-# deleted with the old `cache 30` once that cluster has been measured.
-cache:
-  serveStale: false

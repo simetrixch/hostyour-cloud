@@ -128,16 +128,12 @@ data:
              The cluster's own zones are not cached at all: the kubernetes plugin
              answers them from memory, and a stale answer there would hand out the old
              address of a Service or pod that was just replaced. */}}
-        {{- if .Values.cache.serveStale }}
         cache {
           disable success cluster.local in-addr.arpa ip6.arpa
           disable denial cluster.local in-addr.arpa ip6.arpa
           denial 9984 30
           serve_stale 1h immediate
         }
-        {{- else }}
-        cache 30
-        {{- end }}
         loop
         reload
         loadbalance
