@@ -99,12 +99,12 @@ test('a red clone says that the commit was not cloned', () => {
 });
 
 test('two failed tasks are one mail, each with its own lines', () => {
-  const taskRuns = withFailure('fetch-branches', {}, withFailure('describe-commit', {steps: [{name: 'describe', container: 'step-describe', terminated: {exitCode: 128}}]}));
+  const taskRuns = withFailure('fetch', {}, withFailure('describe-commit', {steps: [{name: 'describe', container: 'step-describe', terminated: {exitCode: 128}}]}));
   delete taskRuns.check;
-  const result = execute({taskRuns, logs: {[`${RUN}-describe-commit-pod`]: 'describe broke\n', [`${RUN}-fetch-branches-pod`]: 'fetch broke\n'}});
+  const result = execute({taskRuns, logs: {[`${RUN}-describe-commit-pod`]: 'describe broke\n', [`${RUN}-fetch-pod`]: 'fetch broke\n'}});
   const alert = only(result.alerts);
   assert.equal(alert.labels.task, 'describe-commit', 'the first failed task names the alert');
-  assert.equal(alert.annotations.log, '== describe-commit, step describe ==\ndescribe broke\n\n== fetch-branches, step fetch-branches ==\nfetch broke');
+  assert.equal(alert.annotations.log, '== describe-commit, step describe ==\ndescribe broke\n\n== fetch, step fetch ==\nfetch broke');
 });
 
 test('a pod that is gone is said so, with no invented lines', () => {
