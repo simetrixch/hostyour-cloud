@@ -7,6 +7,9 @@ TaskRun waiting and tries the pod again every minute, so the run takes its turn 
 
 The release pods carry another class and are not counted: a release never waits for a ci run.
 
+With Tekton's coschedule on workspaces, the affinity-assistant pod of each running ci run inherits the ci class
+and takes one slot for the whole run, so the cap must rise with it or waiting runs hold every slot.
+
 It caps pods and not CPU or memory, because Tekton's init containers carry no requests and limits and a
 compute quota would refuse every pod. The compute a pod may take is bounded by the limits of its steps.
 */ -}}
