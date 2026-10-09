@@ -27,7 +27,7 @@ test('no Tekton test resources are rendered and production readers remain', () =
       assert.ok(!docs.some(d => d.kind === 'PipelineRun' || (d.kind === 'Pipeline' && d.metadata.name.endsWith('-tests'))));
       assert.ok(!docs.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa').imagePullSecrets);
       const readers = docs.filter(d => d.kind === 'ExternalSecret');
-      if (builds.length === 0) assert.equal(readers.length, 0, record.name + ' rendered a test-only reader');
+      if (builds.length === 0) assert.deepEqual(readers.map(d => d.metadata.name).sort(), ['build-git-https', 'build-npmrc'], record.name + ' holds the credentials of its ci check and no push or bump credential');
       else {
         const pull = readers.find(d => d.metadata.name === 'image-builder-registry-pull-opaque');
         assert.equal(pull.spec.target.name, pull.metadata.name);
@@ -136,7 +136,8 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const template = byKind('TriggerTemplate', 'ci-push').spec.resourcetemplates[0];
   assert.equal(template.metadata.generateName, '$(tt.params.unit)-ci-');
   assert.equal(template.spec.pipelineRef.name, '$(tt.params.unit)-ci');
-  assert.equal(template.spec.status, undefined, 'a ci run is created running, not waiting for the release queue');
+  assert.equal(template.spec.status, 'PipelineRunPending', 'a ci run is created waiting, and the ci run keeper starts it when a slot is free');
+  assert.equal(byKind('TriggerTemplate', 'deploy-request').spec.resourcetemplates[0].spec.status, 'PipelineRunPending', 'a release run waits for the release queue');
   assert.deepEqual(Object.keys(template.metadata.labels), ['image-builder.io/ci']);
   assert.equal(template.metadata.annotations['image-builder.io/ci-branch'], '$(tt.params.branch)', 'the keeper groups ci runs by branch');
   assert.equal(template.spec.taskRunTemplate.podTemplate.priorityClassName, CI_CLASS);
@@ -231,9 +232,29 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   assert.equal(pipeline.metadata.labels['image-builder.io/ci'], 'shop');
   assert.equal(pipeline.metadata.labels['image-builder.io/consumer'], undefined);
   assert.ok(docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release').metadata.labels['image-builder.io/consumer']);
-  assert.ok(!renderUnit('shop', []).some((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci'), 'a unit without builds has no clone credential and no ci pipeline');
   const grant = docs.find((d) => d.kind === 'Role' && d.metadata.name === 'eventlistener-create-pipelineruns');
   assert.ok(grant.rules.some((r) => r.resources.includes('pipelineruns') && r.verbs.includes('create')), 'the event listener may create the ci run');
+});
+
+// A unit that builds nothing ("CI only", `builds: []` in its registration) still gets a ci check on every
+// push, and gets no release pipeline and no credential that writes: the namespace runs repository code.
+const CI_PARTS = [['Pipeline', 'shop-ci'], ['ResourceQuota', 'ci-pods'], ['ExternalSecret', 'build-git-https'], ['ExternalSecret', 'build-npmrc'],
+  ['Role', 'ci-report-read'], ['Role', 'ci-run-keeper-pipelineruns']];
+const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'bump-git-https']];
+const holds = (docs, parts) => parts.map(([kind, name]) => docs.some((d) => d.kind === kind && d.metadata.name === name));
+const isCiOnly = (docs) => holds(docs, CI_PARTS).every(Boolean) && !holds(docs, RELEASE_PARTS).some(Boolean);
+
+test('a unit that builds nothing renders the ci check and no release, registry or bump part', () => {
+  const ciOnly = renderUnit('shop', []);
+  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, packages reader and the ci grants render; release pipeline, registry secret and bump secret do not');
+  const withBuilds = renderUnit('shop');
+  assert.deepEqual(holds(withBuilds, [...CI_PARTS, ...RELEASE_PARTS]), Array(CI_PARTS.length + RELEASE_PARTS.length).fill(true), 'PLANTED INNOCENT: a unit with builds renders both pipelines and every credential as before');
+  assert.ok(!isCiOnly(withBuilds), 'a unit with builds is not a ci-only unit');
+  // The condition this change replaced (a unit renders its ci parts only when it builds) leaves out the ci parts.
+  const oldCondition = ciOnly.filter((d) => !CI_PARTS.slice(0, 4).some(([kind, name]) => d.kind === kind && d.metadata.name === name));
+  assert.ok(!isCiOnly(oldCondition), 'PLANTED DEFECT: a render that keeps the ci parts behind the builds condition is caught');
+  const leaky = [...ciOnly, withBuilds.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https')];
+  assert.ok(!isCiOnly(leaky), 'PLANTED DEFECT: a ci-only render that carries the bump credential is caught');
 });
 
 const seconds = (duration) => ['h', 'm', 's'].reduce((sum, unit, i) => sum + Number(new RegExp(`(\\d+)${unit}`).exec(duration)?.[1] ?? 0) * [3600, 60, 1][i], 0);
@@ -258,7 +279,8 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
     for (const side of ['requests', 'limits']) assert.ok(step.computeResources?.[side]?.cpu && step.computeResources?.[side]?.memory, `report-failure/${step.name} has ${side}`);
   }
   assert.equal(seconds(report.timeout), 300);
-  // The clock of the tasks starts at the creation of the run, so it holds the wait for a free slot as well.
+  // Tekton sets no start time on a waiting run, so the clocks start when the keeper starts it and hold no wait for a ci slot.
+  // They do hold the wait of a pod for the quota of its unit.
   // The finally tasks run on a clock of their own, so a run that used up its tasks budget still mails.
   const timeouts = imageBuilder().find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push').spec.resourcetemplates[0].spec.timeouts;
   const mailsAfterTimeout = (t) => Boolean(t.tasks && t.finally) && seconds(t.pipeline) >= seconds(t.tasks) + seconds(t.finally) &&
@@ -276,39 +298,39 @@ const BYTES = {Gi: 1024 ** 3, Mi: 1024 ** 2};
 const quantity = (text) => Number(text.slice(0, -2)) * BYTES[text.slice(-2)];
 const podLimit = (task, cloneTask) => (task.taskSpec ?? cloneTask.spec).steps
   .reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0);
-// The limits of the ci pods that the quota allows, the report pod of each unit (its class is the one the quota
-// does not count, so it comes on top), plus the build pods of the one release that runs. One report pod per unit
-// is an assumption and no quota enforces it: the failures of a unit follow one another because its ci quota
-// holds one pod, and a report pod lives seconds (5 minutes at most).
+// The limits of the ci pods of the runs that run at once (one at a time per run, because the tasks form a chain),
+// the report pod of each of those runs (its class is the one the quota does not count, so it comes on top), plus
+// the build pods of the one release that runs. The ci run keeper holds the number of running runs at maxRunning.
 const fitsFreeMemory = (capacity, pipeline, cloneTask, release, buildahTask) => {
   const largest = (tasks) => Math.max(0, ...tasks.map((task) => podLimit(task, cloneTask)));
-  const ciPods = capacity.podsPerUnit * capacity.unitCount * largest(pipeline.spec.tasks);
-  const reportPods = capacity.unitCount * largest(pipeline.spec.finally);
+  const ciPods = capacity.maxRunning * largest(pipeline.spec.tasks);
+  const reportPods = capacity.maxRunning * largest(pipeline.spec.finally);
   const buildPods = release.spec.tasks.filter((task) => task.name.startsWith('build-') && task.runAfter?.includes('scan')).length;
   return ciPods + reportPods + buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask) <= quantity(capacity.limitsMemoryBudget);
 };
 
 test('the memory limits of all ci pods and one release together fit the free memory of the build node', () => {
-  const capacity = JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'}));
+  const capacity = {...JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'})),
+    maxRunning: Number(execFileSync('yq', ['.ciRunKeeper.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}))};
   const images = (count) => Array.from({length: count}, (_, i) => `image-${i + 1}`);
   const docs = renderUnit('shop', images(capacity.releaseBuildPods));
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
   const release = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
   const cloneTask = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'git-clone');
   const buildah = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'buildah-build-push');
-  assert.equal(String(capacity.podsPerUnit), docs.find((d) => d.kind === 'ResourceQuota').spec.hard.pods, 'the budget counts the pods the quota allows');
+  assert.equal(String(capacity.podsPerUnit), docs.find((d) => d.kind === 'ResourceQuota').spec.hard.pods, 'the quota renders the declared pods per unit');
+  assert.ok(pipeline.spec.tasks.every((t, i) => i === 0 || t.runAfter?.length === 1 && t.runAfter[0] === pipeline.spec.tasks[i - 1].name), 'the budget counts one ci pod per running run, so the tasks run one after the other');
   assert.equal(release.spec.tasks.filter((t) => t.name.startsWith('build-') && t.runAfter?.includes('scan')).length, capacity.releaseBuildPods, 'every image of the release builds in parallel after the scan');
   assert.ok(fitsFreeMemory(capacity, pipeline, cloneTask, release, buildah), 'PLANTED INNOCENT: the limits as they stand fit');
   const planted = structuredClone(pipeline);
   planted.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].computeResources.limits.memory = '4Gi';
   assert.ok(!fitsFreeMemory(capacity, planted, cloneTask, release, buildah), 'PLANTED DEFECT: a 4Gi limit on the check step is caught');
-  assert.ok(!fitsFreeMemory({...capacity, unitCount: capacity.unitCount + 2}, pipeline, cloneTask, release, buildah), 'PLANTED DEFECT: two more units, all 8 build namespaces of 2026-10-09, without a bigger budget are caught');
-  assert.ok(!fitsFreeMemory({...capacity, podsPerUnit: 2}, pipeline, cloneTask, release, buildah), 'PLANTED DEFECT: two pods per unit without a bigger budget are caught');
+  assert.ok(!fitsFreeMemory({...capacity, maxRunning: 14}, pipeline, cloneTask, release, buildah), 'PLANTED DEFECT: 14 runs at once, one per unit of 14 units and so no cap, is caught');
   const fourImages = renderUnit('shop', images(capacity.releaseBuildPods + 1)).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
   assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, fourImages, buildah), 'PLANTED DEFECT: a fourth image built in parallel is caught');
   const heavyReport = structuredClone(pipeline);
   heavyReport.spec.finally[0].taskSpec.steps[0].computeResources.limits.memory = '2Gi';
-  assert.ok(!fitsFreeMemory(capacity, heavyReport, cloneTask, release, buildah), 'PLANTED DEFECT: a 2Gi limit on the report step, one pod per unit outside the quota, is caught');
+  assert.ok(!fitsFreeMemory(capacity, heavyReport, cloneTask, release, buildah), 'PLANTED DEFECT: a 2Gi limit on the report step, one report pod per running run outside the quota, is caught');
   const heavy = structuredClone(buildah);
   heavy.spec.steps.find((step) => step.name === 'build').computeResources.limits.memory = '8Gi';
   assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, release, heavy), 'PLANTED DEFECT: a raised limit of the buildah build step is caught');
@@ -347,12 +369,12 @@ test('the ci run keeper runs every minute, reads runs cluster-wide, and may patc
 });
 
 const KEEPER = 'system:serviceaccount:image-builder:ci-run-keeper';
-const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run.';
+const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run, start a waiting one, or note what it waits for.';
 const PRIORITY_MESSAGE = "a managed run's podTemplate sets priorityClassName to the class of its pipeline and nothing else.";
 const OVERRIDE_MESSAGE = 'per-task pod, step, sidecar, metadata and account overrides are not allowed, except the report class on the task report-failure of a ci run.';
 const CI_CLASS_MESSAGE = 'a ci run carries the ci priority class: the capacity quota of its build namespace counts the pods of that class only.';
 
-test('the admission policy lets the ci run keeper cancel a ci run and change nothing else', () => {
+test('the admission policy lets the ci run keeper cancel, start and note a ci run and change nothing else', () => {
   const policy = guardOf(imageBuilder());
   const running = (pipeline = 'shop-ci') => ({...createsRun('shop-build', pipeline).object,
     metadata: {namespace: 'shop-build', name: `${pipeline}-x`, labels: {'image-builder.io/ci': 'shop'}, annotations: {'image-builder.io/ci-branch': 'main'}, finalizers: ['chains.tekton.dev/pipelinerun']}});
@@ -360,14 +382,26 @@ test('the admission policy lets the ci run keeper cancel a ci run and change not
   const base = withParams(running());
   const changed = (edit, from = base) => { const run = structuredClone(from); edit(run); return run; };
   const cancelled = changed((r) => { r.spec.status = 'Cancelled'; });
+  const waiting = changed((r) => { r.spec.status = 'PipelineRunPending'; });
+  const noted = changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'all 6 ci slots are in use'; }, waiting);
   const update = (username, object, oldObject) => ({object, oldObject, request: {operation: 'UPDATE', namespace: 'shop-build', userInfo: {username}}});
   const ADMITTED = {
     'the keeper cancels a running ci run': update(KEEPER, cancelled, base),
     'the keeper cancels a ci run again': update(KEEPER, cancelled, cancelled),
+    'the keeper cancels a waiting ci run': update(KEEPER, cancelled, waiting),
+    'the keeper starts a waiting ci run': update(KEEPER, base, waiting),
+    'the keeper starts a waiting ci run and drops its note': update(KEEPER, base, noted),
+    'the keeper notes a waiting ci run': update(KEEPER, noted, waiting),
+    'the keeper keeps a waiting ci run waiting': update(KEEPER, noted, noted),
     'the Tekton controller updates the cancelled ci run': update('system:serviceaccount:tekton:tekton-controller', changed((r) => { r.metadata.labels['tekton.dev/pipeline'] = 'shop-ci'; }, cancelled), cancelled),
   };
   const releaseRun = withParams(running('shop-release'));
+  const releaseWaiting = changed((r) => { r.spec.status = 'PipelineRunPending'; }, releaseRun);
   const DENIED = {
+    'the keeper starts a waiting release run': update(KEEPER, changed((r) => { delete r.spec.status; }, releaseWaiting), releaseWaiting),
+    'the keeper changes a param while it starts': update(KEEPER, changed((r) => { r.spec.params[0].value = 'other'; }), waiting),
+    'the keeper changes another annotation while it notes': update(KEEPER, changed((r) => { r.metadata.annotations['image-builder.io/ci-branch'] = 'other'; }, noted), waiting),
+    'the keeper changes a label while it starts': update(KEEPER, changed((r) => { r.metadata.labels['image-builder.io/consumer'] = 'shop'; }), waiting),
     'the keeper cancels a release run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; }, releaseRun), releaseRun),
     'the keeper changes a param while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.spec.params[0].value = 'other'; }), base),
     'the keeper changes a param and nothing else': update(KEEPER, changed((r) => { r.spec.params[0].value = 'other'; }), base),
@@ -447,7 +481,6 @@ test('releases rank above ci, neither preempts, and the quota counts the class t
   assert.ok(!JSON.stringify(quotas[0]).includes(REPORT_CLASS), 'the report pod is not counted by the ci quota');
   assert.deepEqual(Object.keys(quotas[0].spec.hard), ['pods'], 'a compute quota would refuse Tekton init containers, which carry no requests');
   assert.ok(Number(quotas[0].spec.hard.pods) >= 1);
-  assert.deepEqual(renderUnit('shop', []).filter((d) => d.kind === 'ResourceQuota'), [], 'a unit without builds has no ci run');
 });
 
 // The failure report. A ci run that fails mails the error through Alertmanager, and what keeps that from

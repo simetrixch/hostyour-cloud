@@ -44,8 +44,8 @@ WHAT IT BINDS (CEL, fail-closed logic):
      dropping spec.status PipelineRunPending, which starts it, and by its own
      annotation image-builder.io/queued-behind. Its RBAC grant is `patch`, and a patch can rewrite any field;
      without this clause the identity that only starts runs could change what
-     they run. It touches release runs only: a ci run is created running and
-     is no business of the queue, so the same grant cannot be turned on it.
+     they run. It touches release runs only: the ci runs have their own
+     identity (clause 9), so the same grant cannot be turned on them.
   8. the only podTemplate a run may carry sets priorityClassName, to the class
      of its pipeline: the release class on a release run, the ci class on a
      ci run. A ci run MUST carry it, because the capacity quota of the build
@@ -58,10 +58,15 @@ WHAT IT BINDS (CEL, fail-closed logic):
      podTemplate are listed here one by one because CEL cannot ask an object
      which fields it has; scripts/build-contract.test.mjs checks the list
      against the Tekton CRD the repository renders.
-  9. the ci run keeper (templates/ci-run-keeper.yaml) changes a run only by
-     setting spec.status to Cancelled, and only on a ci run. Its RBAC grant is
-     `patch` and `delete`; a patch can rewrite any field, so without this clause
-     the identity that only cancels superseded runs could change what they run.
+  9. the ci run keeper (templates/ci-run-keeper.yaml) changes a run only on a
+     ci run, and only in one of two ways: by setting spec.status to Cancelled, or
+     as the release queue does in clause 7, by dropping spec.status
+     PipelineRunPending, which starts the run, and by its own annotation
+     image-builder.io/queued-behind. Its RBAC grant is `patch` and `delete`; a
+     patch can rewrite any field, so without this clause the identity that only
+     cancels, starts and notes could change what the runs run, and the cap on
+     the ci runs that run at once could be lifted by starting a run it did not
+     count. Starting a release run stays the queue's alone.
 */ -}}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -122,7 +127,7 @@ spec:
         request.operation != 'UPDATE' || (
           has(object.metadata.annotations) == has(oldObject.metadata.annotations) &&
           (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations))
-    # Every field but spec.status and the queue's own annotation, unchanged by an update.
+    # Every field but spec.status and the annotation of the queue and the keeper, unchanged by an update.
     - name: unchangedButStatus
       expression: >-
         variables.sameBody && (request.operation != 'UPDATE' || (
@@ -213,8 +218,10 @@ spec:
     - expression: "!variables.isReleaseQueue || (request.operation == 'UPDATE' && variables.refName.endsWith('-release') && variables.unchangedButStatus && variables.startsOrKeepsStatus)"
       message: "the release queue may only start a waiting release run or note what it waits for."
       reason: Forbidden
-    - expression: "!variables.isCiRunKeeper || (request.operation == 'UPDATE' && variables.refName.endsWith('-ci') && variables.sameBody && variables.sameAnnotations && has(object.spec.status) && object.spec.status == 'Cancelled')"
-      message: "the ci run keeper may only cancel a ci run."
+    - expression: "!variables.isCiRunKeeper || (request.operation == 'UPDATE' && variables.refName.endsWith('-ci') && (
+        (variables.sameBody && variables.sameAnnotations && has(object.spec.status) && object.spec.status == 'Cancelled') ||
+        (variables.unchangedButStatus && variables.startsOrKeepsStatus)))"
+      message: "the ci run keeper may only cancel a ci run, start a waiting one, or note what it waits for."
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1
