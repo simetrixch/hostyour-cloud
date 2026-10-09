@@ -1,0 +1,8 @@
+name: "digita-deploy"
+repoURL: "https://github.com/digitaplatform/digita-deploy.git"
+owner: "digitaplatform"
+onboardedAt: "2026-10-09T13:31:36.225Z"
+suspended: false
+quiesced: false
+removing: false
+builds: []
