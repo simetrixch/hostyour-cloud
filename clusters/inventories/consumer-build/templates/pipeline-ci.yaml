@@ -8,6 +8,9 @@ build plane and not only on the machine of whoever pushed:
 
 and a finally task, report-failure, mails the error lines of every task that failed.
 
+It renders for every unit, also for one that builds nothing (builds: [] in its
+registration), which then has this Pipeline and no release Pipeline.
+
 It is not a release and shares nothing with one but the namespace, the
 ServiceAccount and the clone credential. The run is created by the
 github-ci-push Trigger (clusters/inventories/image-builder), running at once;
@@ -64,7 +67,7 @@ templates/triggers/github-ci-push.yaml). A run that is cancelled in place of
 failing, which is how a newer push replaces it, runs no finally task and mails
 nothing.
 */ -}}
-{{- if and .Values.unit (eq (include "consumer-build.hasBuilds" .) "true") }}
+{{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
 {{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
 {{- /* The image the shared git-clone Task runs (image-builder/templates/tasks/git-clone.yaml). */ -}}
