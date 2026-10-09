@@ -4,7 +4,7 @@ it starts a waiting release run and notes what a run waits for, and delete one, 
 the newest 20 finished release runs (files/release-queue.jq decides which). It reads runs through its own
 read-only ClusterRole (clusters/inventories/image-builder/templates/release-queue.yaml). A patch can
 change any field, so the admission policy image-builder-pipelinerun-guard limits this identity to
-dropping the waiting flag and to its own annotation.
+dropping the waiting flag and to its own annotation, and a delete by it to a finished release run of this unit.
 */ -}}
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}

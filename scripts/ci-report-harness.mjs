@@ -61,11 +61,11 @@ export const numbered = (count) => Array.from({length: count}, (_, i) => `line $
 export const SUCCESSFUL = {
   gate: taskRun('gate', {}), clone: taskRun('clone', {}),
   'describe-commit': taskRun('describe-commit', {ok: true, results: {subject: 'Fix the rounding of VAT', author: 'Ada <ada@example.com>'}, steps: [{name: 'describe', container: 'step-describe', terminated: {exitCode: 0}}]}),
-  'fetch-branches': taskRun('fetch-branches', {}), check: taskRun('check', {}),
+  'fetch': taskRun('fetch', {}), check: taskRun('check', {}),
 };
 export const withFailure = (task, options = {}, rest = SUCCESSFUL) => ({...rest, [task]: taskRun(task, {ok: false, ...options})});
 export const onlyBefore = (task, taskRuns) => {
-  const order = ['gate', 'clone', 'describe-commit', 'fetch-branches', 'check'];
+  const order = ['gate', 'clone', 'describe-commit', 'fetch', 'check'];
   return Object.fromEntries(Object.entries(taskRuns).filter(([name]) => order.indexOf(name) <= order.indexOf(task)));
 };
 

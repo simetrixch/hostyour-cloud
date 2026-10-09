@@ -4,7 +4,7 @@ from this template beside `<unit>-release`. Every push of a branch runs the
 repository's own scripts/check.sh at the pushed commit, so red is seen on the
 build plane and not only on the machine of whoever pushed:
 
-  gate → clone@commit → describe-commit → fetch-branches → check,
+  gate → clone@commit → describe-commit → fetch → check,
 
 and a finally task, report-failure, mails the error lines of every task that failed.
 
@@ -31,13 +31,27 @@ The trust split:
 
 THE CHECK RUNS THE REPOSITORY'S OWN CODE and holds nothing worth stealing:
 no ServiceAccount token (pipeline-sa mounts none), no clone credential
-(build-git-https belongs to the clone and fetch-branches tasks, whose
+(build-git-https belongs to the clone and fetch tasks, whose
 containers end before the check starts), and never the GitOps write tokens of
 the release bump, which this Pipeline does not reference at all. The one secret in
 reach is build-npmrc, the packages reader, mounted read-only as the user npmrc
 because `pnpm install` cannot read the private @<owner> packages without it.
 The pod runs under the namespace's build-egress policy, like every pod here:
 public 443/80 outward, nothing inward.
+
+SOURCES OF OTHER REPOSITORIES. A check may read pinned commits of sibling
+repositories (a handbook that cites their code). Those are private, and the
+check holds no credential, so the fetch task fetches them first. The
+repository lists them in ci-sources.json at its root, {"git": {"<repository>":
+"<40-hex commit>"}}, and nothing else of that file is read. Each comes from
+the unit's own owner on GitHub, never from another owner or host. Each lands
+as a bare repository <repository>.git in the run's volume beside the clone,
+which the check mounts read-only and finds through CI_SOURCES_DIR. The run's
+one volume holds the clone in its subPath repository and the sources in its
+subPath sources, so the sources are never part of the checked tree. The file
+is the branch's own, so a branch can have any repository of that owner
+fetched that the unit's PAT reads; whoever pushes a branch can read those
+already.
 
 WHAT THE CHECK NEEDS, read from the check.sh of every unit: Node 24, pnpm,
 git and bash; a mongod, which mongodb-memory-server downloads on first use; a
@@ -77,6 +91,9 @@ nothing.
 {{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
 {{- /* The image report-failure runs: bash, curl, jq and the shell tools its script uses. The release pipeline runs the same tag, unpinned, and the ci run keeper runs it for kubectl and jq. */ -}}
 {{- $reportImage := "alpine/k8s:1.35.6@sha256:b7a12c5ddf261994c33d2eaaa06fd69a0803ff6b38683bfa3d30a76dcdf92807" -}}
+{{- /* The unit's owner on GitHub, which every pinned source is fetched from. */ -}}
+{{- $sourcesOwnerURL := regexReplaceAll "/[^/]+$" $repoURL "" -}}
+{{- if not (regexMatch "^https://github[.]com/[A-Za-z0-9-]+$" $sourcesOwnerURL) }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://github.com/<owner>/<repository>, so its owner cannot be named for ci-sources.json" $repoURL) }}{{ end -}}
 {{- $alertmanager := required "consumer-build: ciFailureReport.alertmanager is required" .Values.ciFailureReport.alertmanager -}}
 apiVersion: tekton.dev/v1
 kind: Pipeline
@@ -105,7 +122,7 @@ spec:
       description: The webhook's claim of the repository, compared against the registered repoURL.
   workspaces:
     - name: source
-      description: The clone of the repository.
+      description: The clone of the repository in subPath repository, and the sources it pins in subPath sources.
   tasks:
     # ── 1. gate — the repo claim and the commit, BEFORE any clone ────────────
     - name: gate
@@ -174,7 +191,7 @@ spec:
         # The unit's OWN clone credential, as the release clones with.
         - { name: credentials-secret, value: build-git-https }
       workspaces:
-        - { name: source, workspace: source }
+        - { name: source, workspace: source, subPath: repository }
 
     # ── 3. describe-commit — the subject and the author, for the failure mail ─
     # It runs before the check, so the git of this pod reads a clone that no
@@ -186,7 +203,7 @@ spec:
       params:
         - { name: commit, value: "$(params.commit)" }
       workspaces:
-        - { name: source, workspace: source }
+        - { name: source, workspace: source, subPath: repository }
       taskSpec:
         params:
           - name: commit
@@ -214,23 +231,31 @@ spec:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
 
-    # ── 4. fetch-branches — the heads a check compares the commit against ────
+    # ── 4. fetch — what the check compares against and what it reads ─────────
     # The clone fetches the one commit and nothing else, so no origin/<branch>
     # exists. A check that diffs against its default branch (a freeze guard that
-    # reads origin/master) would refuse every run. It is a task
-    # of its own because the fetch needs the clone credential, which the check
-    # step must never hold. The credential store lives in /tmp of this
-    # container, never in the workspace.
-    - name: fetch-branches
+    # reads origin/master) would refuse every run. A check may also read the
+    # pinned commits of sibling repositories (SOURCES OF OTHER REPOSITORIES
+    # above). Both fetches need the clone credential, which the check step must
+    # never hold, so they run here, in one pod: under the namespace's ci quota
+    # of one pod, every further task would wait for the previous pod to go.
+    # Each credential store lives in /tmp of its own container, never in the
+    # workspace, and the step that reads ci-sources.json holds no credential.
+    - name: fetch
       runAfter: [describe-commit]
       timeout: 5m0s
       workspaces:
-        - { name: source, workspace: source }
+        - { name: source, workspace: source, subPath: repository }
+        - { name: sources, workspace: source, subPath: sources }
       taskSpec:
         workspaces:
           - name: source
+          - name: sources
+        volumes:
+          - name: source-list
+            emptyDir: {}
         steps:
-          - name: fetch
+          - name: branches
             image: {{ $gitImage }}
             envFrom:
               - secretRef:
@@ -244,22 +269,87 @@ spec:
               export HOME=/tmp
               git config --global credential.helper "store --file=/tmp/git-credentials"
               git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
-              echo "fetch-branches: ok — the branch heads of origin are at refs/remotes/origin"
+              echo "fetch: ok — the branch heads of origin are at refs/remotes/origin"
             # The fetch takes every branch head: 95 MiB of anonymous memory
             # for 183 branches, the most of the repositories measured.
             computeResources:
               requests: { cpu: 50m, memory: 128Mi }
               limits: { cpu: 500m, memory: 256Mi }
+          # Reads the branch's ci-sources.json into "<repository> <commit>"
+          # lines, refusing any name that is not a plain repository name and
+          # any commit that is not a full SHA-1, so the step that holds the
+          # credential reads nothing but those lines.
+          - name: list-sources
+            image: {{ $reportImage }}
+            workingDir: /workspace/source
+            env:
+              - name: SOURCE_LIST
+                value: /source-list/list
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              if [ ! -f ci-sources.json ]; then
+                : > "${SOURCE_LIST}"
+                echo "fetch: no ci-sources.json, so no sources to fetch"
+                exit 0
+              fi
+              jq -r '(.git // {}) | to_entries[]
+                | if (.key | test("^[A-Za-z0-9._-]+$")) and (.key | test("^[.]+$") | not)
+                     and (.value | type == "string" and test("^[0-9a-f]{40}$"))
+                  then "\(.key) \(.value)"
+                  else error("ci-sources.json: \(.key | tojson) must name a repository and a full commit, not \(.value | tojson)") end' \
+                ci-sources.json > "${SOURCE_LIST}"
+              echo "fetch: $(wc -l < "${SOURCE_LIST}") sources pinned in ci-sources.json"
+            computeResources:
+              requests: { cpu: 50m, memory: 32Mi }
+              limits: { cpu: 200m, memory: 64Mi }
+            volumeMounts:
+              - name: source-list
+                mountPath: /source-list
+          - name: sources
+            image: {{ $gitImage }}
+            envFrom:
+              - secretRef:
+                  name: build-git-https
+            env:
+              - name: SOURCES_OWNER_URL
+                value: {{ $sourcesOwnerURL | quote }}
+            script: |
+              #!/usr/bin/env sh
+              set -eu
+              if [ ! -s /source-list/list ]; then exit 0; fi
+              printf '%s\n' "${GITCREDENTIALS}" > /tmp/git-credentials
+              chmod 600 /tmp/git-credentials
+              export HOME=/tmp
+              git config --global credential.helper "store --file=/tmp/git-credentials"
+              while read -r repository commit; do
+                into="/workspace/sources/${repository}.git"
+                git init -q --bare "${into}"
+                if ! git --git-dir "${into}" fetch -q --depth=1 "${SOURCES_OWNER_URL}/${repository}.git" "${commit}"; then
+                  echo "fetch: ${repository} at ${commit} could not be fetched from ${SOURCES_OWNER_URL}" >&2
+                  exit 1
+                fi
+                echo "fetch: ${repository} at ${commit}"
+              done < /source-list/list
+            computeResources:
+              requests: { cpu: 50m, memory: 128Mi }
+              limits: { cpu: 500m, memory: 256Mi }
+            volumeMounts:
+              - name: source-list
+                mountPath: /source-list
 
     # ── 5. check — the repository's own scripts/check.sh ─────────────────────
     - name: check
-      runAfter: [fetch-branches]
+      runAfter: [fetch]
       timeout: 20m0s
       workspaces:
-        - { name: source, workspace: source }
+        - { name: source, workspace: source, subPath: repository }
+        - { name: sources, workspace: source, subPath: sources }
       taskSpec:
         workspaces:
           - name: source
+          - name: sources
+            readOnly: true
         volumes:
           # The unit's authenticated .npmrc, mounted as the buildah build step
           # mounts it (build-npmrc, optional: a unit without private packages
@@ -291,6 +381,9 @@ spec:
               # build plane (a missing sibling checkout) reads it to say so.
               - name: CI
                 value: "true"
+              # The bare repositories the fetch task filled from ci-sources.json.
+              - name: CI_SOURCES_DIR
+                value: /workspace/sources
               - name: NPM_CONFIG_USERCONFIG
                 value: /npmrc/.npmrc
               - name: pnpm_config_store_dir
