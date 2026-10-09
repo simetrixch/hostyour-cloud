@@ -1187,6 +1187,14 @@ spec:
                     } > "${pins}"
                     SEEDED=1
                   fi
+                  # A build the chart stopped declaring would stay in this file
+                  # for good, and a tenant copies every row of the file into the
+                  # versions it holds. Only declared rows remain, each at the tag
+                  # it holds. The shortened file is committed with the others of
+                  # this installation's books even where no pin of the chart moved.
+                  CHART_VALUES="${cdir}values.yaml" yq eval -i '
+                    load(strenv(CHART_VALUES)).builds as $declared
+                    | del(.builds[] | select(.name as $name | [$declared[] | select(.name == $name)] | length == 0))' "${pins}"
                   BUMPED=0
                   bump_file "${pins}" "${cdir}values.yaml"
                   if [ "${BUMPED}" = "1" ]; then
