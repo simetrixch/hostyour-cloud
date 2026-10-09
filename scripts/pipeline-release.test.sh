@@ -112,6 +112,38 @@ bump_file "$pins" "$chart_values" || fail 'freshly seeded pin refused'
 [ "$(yq '.builds[] | select(.name == "other") | .tag' "$pins")" = "$PLACEHOLDER_TAG" ] || fail 'first-pin seed invented another producer release'
 grep -qF 'bump_file "${pins}" "${cdir}values.yaml"' "$template" || fail 'Books caller did not supply chart declarations'
 ok 'absent pins retain native full-list seeding; unrelated images stay unreleased and the Books caller uses declarations'
+# A pins file written while a build was still declared keeps that build's row for good unless the
+# bump drops it, and a tenant copies every row of the file into the versions it holds. The same
+# block runs again over a file that exists: the chart declares backend, frontend and other, so the
+# row for dropped must go, while the declared rows stay at the tag they hold, the real one and the
+# placeholder.
+pins="$work/stale/pins-prod.yaml"; mkdir -p "$(dirname "$pins")"
+cat > "$work/stale-source.yaml" <<'EOF'
+# fixture header
+builds:
+  - name: backend
+    image: example-backend
+    tag: 0.4.001-stable-held
+  - name: dropped
+    image: example-dropped
+    tag: 0.4.001-stable-deleted
+  - name: other
+    image: another-producer
+    tag: unreleased-fixture
+EOF
+cp "$work/stale-source.yaml" "$pins"
+. "$work/seed.sh"
+[ "$(yq -o=json -I=0 '.builds | map(.name)' "$pins")" = '["backend","other"]' ] \
+  || fail 'PLANTED DEFECT: the row of a build the chart no longer declares stayed in the pins file'
+[ "$(yq '.builds[] | select(.name == "backend") | .tag' "$pins")" = 0.4.001-stable-held ] \
+  || fail 'a declared row at a real tag changed'
+[ "$(yq '.builds[] | select(.name == "other") | .tag' "$pins")" = unreleased-fixture ] \
+  || fail 'a declared row at the placeholder tag changed'
+[ "$(head -1 "$pins")" = '# fixture header' ] || fail 'the pins file lost its header comment'
+cp "$pins" "$work/pruned-once.yaml"
+. "$work/seed.sh"
+cmp -s "$pins" "$work/pruned-once.yaml" || fail 'a pins file that names only declared builds was rewritten'
+ok 'a row of a build the chart no longer declares is dropped; declared rows stay at their real or placeholder tag'
 
 # ── bundle_engine: the engine read the way the Manager reads it ─────────────
 apps="$work/apps.yaml"
@@ -282,5 +314,23 @@ exit 1'
 case "$OUT" in *"rejected by a concurrent update"*) fail "a protected branch was retried as a concurrent update: $OUT" ;; esac
 case "$OUT" in *"not as a concurrent release"*GH006*) ;; *) fail "a protected branch failed without git's own words: $OUT" ;; esac
 ok "a protected branch fails at once with git's words, and is not retried"
+
+# A pins file the bump only shortened has no bumped pin to ride on, so it must leave with the commit
+# of the books clone all the same: commit_push stages the whole clone, and its caller runs after the
+# loop whether or not any chart was bumped.
+rm -rf "$remote" "$work/seed" "$work/bump"
+{ git init -q --bare -b master "$remote" &&
+  git clone -q "$remote" "$work/seed" 2>/dev/null &&
+  ( cd "$work/seed" && mkdir -p charts/fixture && cp "$work/stale-source.yaml" charts/fixture/pins-prod.yaml &&
+    git add -A && git commit -q -m base && git push -q origin HEAD:master ) &&
+  git clone -q "$remote" "$work/bump"; } || fail "the bare repository the pruned pins are pushed to could not be made"
+pins="$work/bump/charts/fixture/pins-prod.yaml"
+. "$work/seed.sh"
+[ "$BUMPED" = 0 ] || fail 'the pruned chart was counted as bumped, so this case would not prove the commit of a pruned file alone'
+CODE=0; OUT="$(TMPDIR="$work" commit_push "$work/bump" master 'the pruned pins' 2>&1)" || CODE=$?
+[ "$CODE" = 0 ] || fail "PLANTED DEFECT: a pruned pins file was not pushed, and commit_push answered $CODE: $OUT"
+[ "$(git -C "$remote" show master:charts/fixture/pins-prod.yaml | yq -o=json -I=0 '.builds | map(.name)')" = '["backend","other"]' ] \
+  || fail 'the pushed pins file still names the build the chart no longer declares'
+ok 'a pins file only shortened by the bump is committed and pushed with no pin bumped'
 
 echo "pipeline-release.test: OK"
