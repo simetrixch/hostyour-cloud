@@ -235,12 +235,23 @@ spec:
         printf '[[registry]]\nprefix = "docker.io"\nlocation = "%s"\n' "$(params.registry)" \
           > /etc/containers/registries.conf.d/zot-docker-mirror.conf
 
+        # A Containerfile that starts FROM an image of this registry (one a
+        # <unit>-image run pushed) declares `ARG REGISTRY` and gets the host.
+        # It is offered only to one that declares it: buildah prints
+        # "[Warning] one or more build args were not consumed" for every build
+        # argument a Containerfile does not declare.
+        REGISTRY_FLAGS=()
+        if grep -Eq '^[[:space:]]*ARG[[:space:]]+REGISTRY([[:space:]=]|$)' "${CONTAINERFILE}"; then
+          REGISTRY_FLAGS+=(--build-arg "REGISTRY=$(params.registry)")
+        fi
+
         # THE UNTRUSTED PART: every RUN layer + every npm lifecycle script of the
         # consumer's dependency tree executes here. It builds into the SHARED
         # containers-storage (--root), which the `push` step below reads.
         buildah --root /var/lib/containers/storage --storage-driver=vfs bud \
           --format=oci \
           --build-arg "BUILD_VERSION=${BUILD_VERSION}" \
+          "${REGISTRY_FLAGS[@]}" \
           --label "org.opencontainers.image.source=$(params.git-url)" \
           --label "org.opencontainers.image.revision=$(params.git-revision)" \
           --label "org.opencontainers.image.created=$(params.build-timestamp)" \
