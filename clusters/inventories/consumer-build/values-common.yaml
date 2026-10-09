@@ -47,6 +47,28 @@ releaseQueue:
   serviceAccountName: release-queue
   namespace: image-builder
 
+# HOW MANY CI PODS A UNIT RUNS AT ONCE. templates/resourcequota-ci.yaml caps the pods of the ci priority
+# class in each build namespace; a pod over the cap waits and is retried, the run does not fail. The class
+# is created by clusters/inventories/image-builder (priorityClasses.ci) and named here for the same reason
+# as the identities above; scripts/build-contract.test.mjs renders both charts and fails when the two names
+# differ. The cap counts pods, not CPU or memory, because Tekton's own init containers carry no requests and
+# a compute quota would refuse every pod. Two pods per unit hold at most 8 GiB of the check step's limit,
+# six units 48 GiB: more than the free memory of the build node if every check used its whole limit at
+# once. The cap rests on the measured use of a check instead, which is at most 2.3 GiB.
+ciCapacity:
+  priorityClassName: image-builder-ci
+  podsPerUnit: 2
+
+# WHO CANCELS AND DELETES A CI RUN. The ci run keeper of clusters/inventories/image-builder cancels a
+# ci run that a newer push to the same branch replaces, and deletes the finished ci runs beyond the
+# newest 20 of each build namespace. Its grant is `patch` and `delete` on pipelineruns in the unit's
+# build namespace, rendered per unit by templates/rbac-ci-run-keeper.yaml, and named here for the same
+# reason as the release queue above. The admission policy of image-builder lets that identity set
+# spec.status Cancelled on a ci run and change nothing else.
+ciRunKeeper:
+  serviceAccountName: ci-run-keeper
+  namespace: image-builder
+
 # WHO MAY WATCH A RUN IT DID NOT START. The manager has no task in a release cycle — the webhook
 # starts the run and the pipeline finishes it — but it reports the run's progress to the operator who
 # asked for the release, so it needs get/list/watch on PipelineRuns in the unit's build namespace.

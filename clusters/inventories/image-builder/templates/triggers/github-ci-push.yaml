@@ -1,4 +1,6 @@
 {{- if .Values.eventListener.enabled }}
+{{- $owners := (default (dict) .Values.ciPush).owners -}}
+{{- if not $owners }}{{ fail "image-builder: ciPush.owners is required: list the GitHub owners whose repositories run their check here" }}{{ end -}}
 {{- /*
 GitHub BRANCH push → the unit's own ci pipeline. Every push of a branch fires
 ONE PipelineRun `<unit>-ci-…` in the unit's build namespace, which runs the
@@ -11,6 +13,12 @@ image-builder.io/consumer, which the release queue and the Manager select
 releases by. Tekton copies a Pipeline's labels onto its runs, so the ci
 Pipeline must not carry the consumer label either
 (clusters/inventories/consumer-build/templates/pipeline-ci.yaml).
+
+ONLY THE LISTED OWNERS (ciPush.owners): a repository's check is its owner's code,
+run here with the packages reader in reach, and only the listed owners have
+asked for it to run on this build plane. A push from any other owner, a customer
+repository registered for its releases among them, matches nothing. The deploy
+trigger has no such list: every registered repository may still be released.
 
 ROUTING is the deploy trigger's: the unit is body.repository.name, the name
 invariant makes namespace `<unit>-build` and pipelineRef `<unit>-ci` derivable
@@ -78,7 +86,8 @@ spec:
             body.ref.startsWith('refs/heads/') &&
             !body.ref.startsWith('refs/heads/deploy/') &&
             !(has(body.deleted) && body.deleted) &&
-            !body.after.matches(r'^0+$')
+            !body.after.matches(r'^0+$') &&
+            body.repository.owner.login in [{{ range $index, $owner := $owners }}{{ if $index }}, {{ end }}{{ $owner | squote }}{{ end }}]
   bindings:
     - ref: github-ci-push-binding
   template:
@@ -133,15 +142,27 @@ spec:
           # carrying that label as a release that holds the next one back,
           # and the Manager shows it as a release.
           image-builder.io/ci: $(tt.params.unit)
+        annotations:
+          # What the ci run keeper groups by: a newer push to this branch
+          # replaces the older run. An annotation, because a label value
+          # cannot hold the `/` of a branch name.
+          image-builder.io/ci-branch: $(tt.params.branch)
       spec:
         pipelineRef:
           name: $(tt.params.unit)-ci
         taskRunTemplate:
           serviceAccountName: pipeline-sa
-        # Bounds a hung check, which would otherwise hold its workspace PVC
-        # until the default timeout of an hour.
+          # Below every other pod, and counted by the quota of the build
+          # namespace (clusters/inventories/consumer-build/templates/
+          # resourcequota-ci.yaml): a pod over the cap waits, it does not fail.
+          podTemplate:
+            priorityClassName: {{ .Values.priorityClasses.ci.name }}
+        # A run waiting for the quota holds this budget as well, because the
+        # pipeline's clock runs from its start; the tasks carry their own
+        # timeouts (templates/pipeline-ci.yaml in consumer-build), and Tekton
+        # restarts a task's clock while its pod is refused for the quota.
         timeouts:
-          pipeline: 20m0s
+          pipeline: 2h0m0s
         params:
           - name: commit
             value: $(tt.params.commit)

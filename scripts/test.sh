@@ -12,6 +12,8 @@ echo 'test: production build chart and immutable-field contracts on the public r
 node --test scripts/build-contract.test.mjs || fail 'scripts/build-contract.test.mjs'
 echo 'test: release queue — one release at a time on the build plane, and the queue may only start a run.'
 node --test scripts/release-queue.test.mjs || fail 'scripts/release-queue.test.mjs'
+echo 'test: ci run keeper — a newer push replaces the older run of its branch, and the newest 20 finished ci runs of a build namespace stay.'
+node --test scripts/ci-run-keeper.test.mjs || fail 'scripts/ci-run-keeper.test.mjs'
 echo 'test: manager-generator-refresh — approved grant only.'
 helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'

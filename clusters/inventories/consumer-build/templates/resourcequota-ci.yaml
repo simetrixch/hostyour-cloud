@@ -1,0 +1,34 @@
+{{- /*
+The cap on the ci pods of THIS unit. Every branch push starts a ci run whose pods carry the ci priority
+class (the ci-push TriggerTemplate of clusters/inventories/image-builder sets it, and the admission policy
+requires it), so a flood of pushes would start as many checks as there are branches. This quota counts the
+non-finished pods of that class in the build namespace and refuses the ones over the cap; Tekton keeps the
+TaskRun waiting and tries the pod again every minute, so the run takes its turn instead of failing.
+
+The release pods carry another class and are not counted: a release never waits for a ci run.
+
+It caps pods and not CPU or memory, because Tekton's init containers carry no requests and limits and a
+compute quota would refuse every pod. The compute a pod may take is bounded by the limits of its steps.
+*/ -}}
+{{- if and .Values.unit (eq (include "consumer-build.hasBuilds" .) "true") }}
+{{- $unit := include "consumer-build.unitName" . -}}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ci-pods
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: ci-capacity
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    image-builder.io/ci: {{ $unit | quote }}
+spec:
+  hard:
+    pods: {{ required "consumer-build: ciCapacity.podsPerUnit is required" .Values.ciCapacity.podsPerUnit | quote }}
+  scopeSelector:
+    matchExpressions:
+      - scopeName: PriorityClass
+        operator: In
+        values:
+          - {{ required "consumer-build: ciCapacity.priorityClassName is required" .Values.ciCapacity.priorityClassName | quote }}
+{{- end }}

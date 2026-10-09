@@ -35,13 +35,16 @@ public 443/80 outward, nothing inward.
 
 WHAT THE CHECK NEEDS, read from the check.sh of every unit: Node 24, pnpm,
 git and bash; a mongod, which mongodb-memory-server downloads on first use; a
-Chrome for digita-report's PDF tests; and helm for digita-post. One public
-image carries all but the last, so the helm release is pinned here by its
-sha256 and installed by the check step. No image is built by us.
+Chrome for the tests of a unit that prints PDFs; and helm for the unit whose
+check renders charts. One public image carries all but the last, so the helm
+release is pinned here by its sha256 and installed by the check step. No image
+is built by us.
 
 THE LOG: the check step tees its full output, the install included, into the
-workspace at ci/check.log, so whoever reports a failed run reads the last lines
-of it from workspace `source` without asking the cluster for pod logs.
+workspace at .git/ci-check.log, so whoever reports a failed run reads the last
+lines of it from workspace `source` without asking the cluster for pod logs.
+It sits inside .git because no check lints, formats or asks `git status` about
+that folder, and a file in the working tree would be seen by all three.
 */ -}}
 {{- if and .Values.unit (eq (include "consumer-build.hasBuilds" .) "true") }}
 {{- $unit := include "consumer-build.unitName" . -}}
@@ -61,7 +64,7 @@ metadata:
 spec:
   description: >-
     Runs the repository's scripts/check.sh at one pushed commit. The full
-    output of the check is left in workspace `source` at ci/check.log.
+    output of the check is left in workspace `source` at .git/ci-check.log.
   params:
     - name: commit
       type: string
@@ -76,10 +79,11 @@ spec:
     - name: source
       description: >-
         The clone of the repository. The check leaves its full output at
-        ci/check.log.
+        .git/ci-check.log.
   tasks:
     # ── 1. gate — the repo claim and the commit, BEFORE any clone ────────────
     - name: gate
+      timeout: 5m0s
       params:
         - { name: commit, value: "$(params.commit)" }
         - { name: branch, value: "$(params.branch)" }
@@ -129,6 +133,7 @@ spec:
     # ── 2. clone — the pushed commit, from the PINNED repoURL ────────────────
     - name: clone
       runAfter: [gate]
+      timeout: 10m0s
       taskRef:
         resolver: cluster
         params:
@@ -147,13 +152,14 @@ spec:
 
     # ── 3. fetch-branches — the heads a check compares the commit against ────
     # The clone fetches the one commit and nothing else, so no origin/<branch>
-    # exists. A check that diffs against its default branch (digita-platform's
-    # engine-freeze reads origin/master) would refuse every run. It is a task
+    # exists. A check that diffs against its default branch (a freeze guard that
+    # reads origin/master) would refuse every run. It is a task
     # of its own because the fetch needs the clone credential, which the check
     # step must never hold. The credential store lives in /tmp of this
     # container, never in the workspace.
     - name: fetch-branches
       runAfter: [clone]
+      timeout: 5m0s
       workspaces:
         - { name: source, workspace: source }
       taskSpec:
@@ -175,13 +181,16 @@ spec:
               git config --global credential.helper "store --file=/tmp/git-credentials"
               git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
               echo "fetch-branches: ok — the branch heads of origin are at refs/remotes/origin"
+            # The fetch takes every branch head: 95 MiB of anonymous memory
+            # for 183 branches, the most of the repositories measured.
             computeResources:
-              requests: { cpu: 50m, memory: 64Mi }
+              requests: { cpu: 50m, memory: 128Mi }
               limits: { cpu: 500m, memory: 256Mi }
 
     # ── 4. check — the repository's own scripts/check.sh ─────────────────────
     - name: check
       runAfter: [fetch-branches]
+      timeout: 20m0s
       workspaces:
         - { name: source, workspace: source }
       taskSpec:
@@ -214,6 +223,10 @@ spec:
               runAsUser: 0
               allowPrivilegeEscalation: false
             env:
+              # What GitHub Actions also sets: a check that cannot run on a
+              # build plane (a missing sibling checkout) reads it to say so.
+              - name: CI
+                value: "true"
               - name: NPM_CONFIG_USERCONFIG
                 value: /npmrc/.npmrc
               - name: pnpm_config_store_dir
@@ -226,24 +239,26 @@ spec:
                 readOnly: true
               - name: pnpm-store
                 mountPath: /pnpm-store
-            # Sized from one cold run (install and check) of each of the six units
-            # on a 32-core development machine under a CPU quota of 4 cores: at
-            # most 2.3 GiB of anonymous memory (digita-report with Chrome), 2.9 GiB
-            # with the page cache (digita-platform), and up to three cores in use.
+            # Sized from the whole check.sh of the largest repository, every test
+            # suite included and the install cold, under a CPU quota of 4 cores
+            # and a memory cap of 4 GiB on a 32-core development machine: 8.75
+            # minutes, 1.4 cores on average, 1.7 GiB of anonymous memory. The
+            # repository whose tests print PDFs peaked at 2.3 GiB. The timeout
+            # of the task is twice the measured run, the install and the
+            # downloads included.
             computeResources:
               requests: { cpu: "1", memory: 2Gi }
               limits: { cpu: "4", memory: 4Gi }
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
-              mkdir -p ci
               {
                 # pnpm 11.7.0 is what the units' Dockerfiles activate. A unit
                 # whose package.json names packageManager overrides it.
                 corepack enable
                 corepack prepare pnpm@11.7.0 --activate
 
-                # helm 4.3.0, for the chart renders of digita-post's check.
+                # helm 4.3.0, for a check that renders charts.
                 curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
                 echo "86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb  /tmp/helm.tar.gz" | sha256sum -c -
                 tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm
@@ -258,5 +273,5 @@ spec:
 
                 pnpm install --frozen-lockfile
                 bash scripts/check.sh
-              } 2>&1 | tee ci/check.log
+              } 2>&1 | tee .git/ci-check.log
 {{- end }}

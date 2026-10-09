@@ -140,6 +140,9 @@ spec:
           name: $(tt.params.unit)-release
         taskRunTemplate:
           serviceAccountName: pipeline-sa
+          # Above every ci pod, so a flood of ci runs never delays a release build.
+          podTemplate:
+            priorityClassName: {{ .Values.priorityClasses.release.name }}
         timeouts:
           pipeline: 1h0m0s
         params:

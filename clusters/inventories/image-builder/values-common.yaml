@@ -23,6 +23,29 @@ pipeline:
 workspaces:
   sourceSize: 10Gi
 
+# WHO GOES FIRST ON THE BUILD NODE. Every release run carries the release class and every ci run the ci
+# class (taskRunTemplate.podTemplate of the two TriggerTemplates; the admission policy of this chart admits
+# no other pod template). The release class is above every pod without a class and the ci class below it, so
+# when the node is under pressure the kubelet evicts ci pods first, and the scheduler puts a waiting release
+# pod ahead of a waiting ci pod. Neither class preempts: a release build never evicts a platform pod, and a
+# ci pod never evicts anything. How much ci runs at once is capped by the ResourceQuota that
+# clusters/inventories/consumer-build renders in each build namespace for the ci class.
+priorityClasses:
+  release:
+    name: image-builder-release
+    value: 1000
+  ci:
+    name: image-builder-ci
+    value: -100
+
+# The GitHub owners whose repositories run their scripts/check.sh on the build plane for every
+# branch push (templates/triggers/github-ci-push.yaml). A repository of any other owner is released
+# through the deploy trigger as before, but its check never runs here. Required: an empty list fails
+# the render.
+ciPush:
+  owners:
+    - digitaplatform
+
 # EventListener config — exposed publicly so GitHub can call it on a branch
 # push and on a deploy/<stage>/<release-tag> tag push.
 eventListener:
@@ -40,7 +63,13 @@ eventListener:
 # The release queue (templates/release-queue.yaml) starts one release at a time on the build plane.
 # The image is the one the release pipeline's own kubectl steps use; it carries bash, kubectl and jq.
 releaseQueue:
-  image: alpine/k8s:1.35.6
+  image: &kubectlImage alpine/k8s:1.35.6
+
+# The ci run keeper (templates/ci-run-keeper.yaml) cancels the ci runs that a newer push replaces and
+# deletes the oldest finished ones with their workspace claims. It runs the same kubectl image as the
+# release queue.
+ciRunKeeper:
+  image: *kubectlImage
 
 externalsecret-webhooks:
   externalSecret:
