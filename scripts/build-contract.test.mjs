@@ -113,20 +113,20 @@ const createdCiRun = (docs) => JSON.parse(JSON.stringify(docs.find((d) => d.kind
   .replaceAll('$(tt.params.unit)', 'shop').replace(/\$\(tt\.params\.[a-z-]+\)/g, 'x'));
 const guardOf = (docs) => docs.find((d) => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
 
-const OWNERSHIP = 'a build namespace runs only its own release and ci Pipelines.';
+const OWNERSHIP = 'a build namespace runs only its own release, ci and image Pipelines.';
 const EVENT_LISTENER = 'system:serviceaccount:image-builder:eventlistener-sa';
 const RELEASE_CLASS = 'image-builder-release', CI_CLASS = 'image-builder-ci', REPORT_CLASS = 'image-builder-ci-report';
-const classOf = (pipeline) => (pipeline.endsWith('-release') ? RELEASE_CLASS : CI_CLASS);
+const classOf = (pipeline) => (pipeline.endsWith('-ci') ? CI_CLASS : RELEASE_CLASS);
 // podTemplate null leaves the template out.
 const createsRun = (namespace, pipeline, podTemplate = {priorityClassName: classOf(pipeline)}) => ({object: {metadata: {namespace, labels: {'image-builder.io/ci': 'shop'}},
   spec: {pipelineRef: {name: pipeline}, taskRunTemplate: {serviceAccountName: 'pipeline-sa', ...(podTemplate ? {podTemplate} : {})},
     workspaces: [{name: 'source', volumeClaimTemplate: {spec: {accessModes: ['ReadWriteOnce']}}}]}},
   oldObject: null, request: {operation: 'CREATE', namespace, userInfo: {username: EVENT_LISTENER}}});
 
-test('the admission policy admits the release and the ci pipeline of a unit in its own build namespace, and nothing else', () => {
+test('the admission policy admits the release, the ci and the image pipeline of a unit in its own build namespace, and nothing else', () => {
   const policy = guardOf(imageBuilder());
-  const ADMITTED = ['shop-release', 'shop-ci'];
-  const DENIED = ['post-ci', 'post-release', 'shop-ci-extra', 'shop-tests', 'shop', 'ci', 'release'];
+  const ADMITTED = ['shop-release', 'shop-ci', 'shop-image'];
+  const DENIED = ['post-ci', 'post-release', 'post-image', 'shop-image-extra', 'shop-ci-extra', 'shop-tests', 'shop', 'ci', 'release', 'image'];
   const verdicts = evaluate(policy, [...ADMITTED, ...DENIED].map((name) => createsRun('shop-build', name))).map((v) => v.denied);
   ADMITTED.forEach((name, i) => assert.deepEqual(verdicts[i], [], `PLANTED INNOCENT: ${name} in shop-build`));
   DENIED.forEach((name, i) => assert.deepEqual(verdicts[ADMITTED.length + i], [OWNERSHIP], `PLANTED DEFECT: ${name} in shop-build`));
@@ -253,6 +253,83 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   assert.ok(grant.rules.some((r) => r.resources.includes('pipelineruns') && r.verbs.includes('create')), 'the event listener may create the ci run');
 });
 
+// The by-hand image pipeline builds what an operator names in the run. What keeps that from overwriting
+// a release, from reaching another unit's images, and from reaching the release queue is asserted here.
+test('the image pipeline of a unit is no release and holds the clone credential in its clone only', () => {
+  const docs = renderUnit('shop');
+  const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-image');
+  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['clone', 'check', 'scan', 'build']);
+  assert.deepEqual(pipeline.spec.tasks.find((t) => t.name === 'build').runAfter, ['check', 'scan']);
+  // Tekton copies a Pipeline's labels onto its runs: a consumer label makes the release queue start it.
+  assert.equal(pipeline.metadata.labels['image-builder.io/consumer'], undefined);
+  assert.equal(pipeline.metadata.labels['image-builder.io/ci'], undefined);
+  assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['clone']);
+  assert.ok(!JSON.stringify(pipeline).includes('bump'), 'the image pipeline names no bump task, volume or secret');
+  const clone = pipeline.spec.tasks.find((t) => t.name === 'clone').params;
+  assert.equal(clone.find((p) => p.name === 'revision').value, 'HEAD', 'only the default branch is built');
+  const script = pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].script;
+  assert.ok(!script.includes('$(params.'), 'the run inputs reach the check as environment, never as script source');
+  assert.ok(!renderUnit('shop', []).some((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-image'), 'a unit that builds nothing has no registry to push to');
+});
+
+// The check step, run with the registry answer replaced by a stub: whether the build may go on.
+let imageCheckStep;
+const runImageCheck = (inputs, registryAnswer = '404') => {
+  imageCheckStep ??= renderUnit('shop', ['shop-web']).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-image')
+    .spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0];
+  const step = imageCheckStep;
+  const root = mkdtempSync(join(tmpdir(), 'image-check-')), source = join(root, 'source'), bin = join(root, 'bin');
+  mkdirSync(join(source, 'docker'), {recursive: true}); mkdirSync(bin);
+  writeFileSync(join(source, 'docker/base.Dockerfile'), 'FROM scratch\n');
+  writeFileSync(join(bin, 'curl'), `#!/usr/bin/env bash\nprintf '%s' '${registryAnswer}'\n`);
+  chmodSync(join(bin, 'curl'), 0o755);
+  const script = step.script.replaceAll('/workspace/source', source).replace('$(results.build-timestamp.path)', join(root, 'timestamp'));
+  const env = Object.fromEntries(step.env.filter((e) => e.value !== undefined && !e.value.startsWith('$(params.')).map((e) => [e.name, e.value]));
+  const result = spawnSync('bash', ['-c', script], {cwd: source, encoding: 'utf8', env: {PATH: `${bin}:${process.env.PATH}`,
+    REGISTRY_USERNAME: 'u', REGISTRY_PASSWORD: 'p', ...env, IMAGE: 'shop-base', VERSION: '1.0.0', CONTAINERFILE: 'docker/base.Dockerfile', CONTEXT: '.', ...inputs}});
+  rmSync(root, {recursive: true, force: true});
+  return result.status;
+};
+
+test('the image check builds only a new tag of an image named after the unit, from a file of the checkout', () => {
+  assert.equal(runImageCheck({}), 0, 'PLANTED INNOCENT: shop-base:1.0.0 from docker/base.Dockerfile, absent from the registry');
+  assert.equal(runImageCheck({CONTEXT: 'docker', CONTAINERFILE: 'base.Dockerfile'}), 0, 'PLANTED INNOCENT: a context below the root');
+  const DENIED = {
+    'an image of another unit': [{IMAGE: 'post-base'}],
+    'an image named the unit alone': [{IMAGE: 'shop'}],
+    'a release build of the unit': [{IMAGE: 'shop-web'}],
+    'an image name with upper case': [{IMAGE: 'shop-Base'}],
+    'an image name with a path': [{IMAGE: 'shop-base/x'}],
+    'an image name with a shell character': [{IMAGE: 'shop-base;id'}],
+    'a version with a slash': [{VERSION: '1.0/0'}],
+    'a version that starts with a dot': [{VERSION: '.1'}],
+    'a version with a shell character': [{VERSION: '1$(id)'}],
+    'a containerfile that leaves the checkout': [{CONTAINERFILE: '../base.Dockerfile'}],
+    'an absolute containerfile': [{CONTAINERFILE: '/etc/passwd'}],
+    'a containerfile that does not exist': [{CONTAINERFILE: 'docker/missing.Dockerfile'}],
+    'a context that leaves the checkout': [{CONTEXT: 'docker/..'}],
+    'a tag that exists': [{}, '200'],
+    'a registry that cannot answer': [{}, '503'],
+  };
+  for (const [name, [inputs, answer]] of Object.entries(DENIED)) {
+    assert.notEqual(runImageCheck(inputs, answer), 0, `PLANTED DEFECT: ${name}`);
+  }
+});
+
+test('the build offers REGISTRY only to a Containerfile that declares it', () => {
+  const script = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'buildah-build-push')
+    .spec.steps.find((step) => step.name === 'build').script;
+  const pattern = script.match(/if grep -Eq '([^']+)' "\$\{CONTAINERFILE\}"; then\n\s+REGISTRY_FLAGS\+=\(--build-arg "REGISTRY=\$\(params\.registry\)"\)/)?.[1];
+  assert.ok(pattern, 'the build step adds the REGISTRY build argument behind a grep of the Containerfile');
+  assert.match(script, /"\$\{REGISTRY_FLAGS\[@\]\}" \\\n/, 'buildah bud receives the flags');
+  // Run through grep itself, because the pattern is POSIX ERE and the shell's grep is what reads it.
+  const declares = (containerfile) => spawnSync('grep', ['-Eq', pattern], {input: containerfile}).status === 0;
+  assert.ok(declares('ARG REGISTRY\nFROM ${REGISTRY}/shop-base:1\n'), 'PLANTED INNOCENT: ARG REGISTRY');
+  assert.ok(declares('  ARG REGISTRY=zot.example\n'), 'PLANTED INNOCENT: ARG REGISTRY with a default');
+  assert.ok(!declares('ARG REGISTRY_MIRROR\nFROM node:24\n'), 'PLANTED DEFECT: another argument that starts with REGISTRY');
+  assert.ok(!declares('FROM node:24\n# ARG REGISTRY\n'), 'PLANTED DEFECT: a comment that names it');
+});
+
 // The pinned sources of other repositories: fetched with the clone credential before the check, read by the
 // check from a read-only volume beside the clone, never inside it.
 test('the fetch task fetches the pinned sources with the credential, and the check reads them read-only without it', () => {
@@ -305,7 +382,7 @@ test('list-sources passes only plain repository names with full commits, and a r
 // push, and gets no release pipeline and no credential that writes: the namespace runs repository code.
 const CI_PARTS = [['Pipeline', 'shop-ci'], ['ResourceQuota', 'ci-pods'], ['ExternalSecret', 'build-git-https'], ['ExternalSecret', 'build-npmrc'],
   ['Role', 'ci-report-read'], ['Role', 'ci-run-keeper-pipelineruns']];
-const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'bump-git-https']];
+const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['Pipeline', 'shop-image'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'bump-git-https']];
 const holds = (docs, parts) => parts.map(([kind, name]) => docs.some((d) => d.kind === kind && d.metadata.name === name));
 const isCiOnly = (docs) => holds(docs, CI_PARTS).every(Boolean) && !holds(docs, RELEASE_PARTS).some(Boolean);
 
@@ -414,6 +491,10 @@ test('the memory limits of all ci pods and one release together fit the free mem
   assert.equal(String(capacity.podsPerUnit), docs.find((d) => d.kind === 'ResourceQuota').spec.hard.pods, 'the quota renders the declared pods per unit');
   assert.ok(pipeline.spec.tasks.every((t, i) => i === 0 || t.runAfter?.length === 1 && t.runAfter[0] === pipeline.spec.tasks[i - 1].name), 'the budget counts one ci pod per running run, so the tasks run one after the other');
   assert.equal(release.spec.tasks.filter((t) => t.name.startsWith('build-') && t.runAfter?.includes('scan')).length, capacity.releaseBuildPods, 'every image of the release builds in parallel after the scan');
+  const admitsNextTask = (pods) => pods === 2;
+  assert.ok(admitsNextTask(capacity.podsPerUnit), 'the quota admits the pod of the next task while the finished pod before it still counts, and no more');
+  assert.ok(!admitsNextTask(1), 'PLANTED DEFECT: one pod per unit refuses the next task until the finished pod is gone, and Tekton tries it again a minute later');
+  assert.ok(!admitsNextTask(3), 'PLANTED DEFECT: a third pod has no task of a chain to run, and the memory budget counts one live ci pod per run');
   assert.ok(fitsFreeMemory(capacity, pipeline, cloneTask, release, buildah), 'PLANTED INNOCENT: the limits as they stand fit');
   const planted = structuredClone(pipeline);
   planted.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].computeResources.limits.memory = '4Gi';
@@ -564,6 +645,9 @@ test('a run carries the priority class of its pipeline and no other pod template
   assert.deepEqual(verdict('shop-ci', {priorityClassName: 'system-node-critical'}), refused, 'PLANTED DEFECT: a ci run takes a system class');
   assert.deepEqual(verdict('shop-release', {priorityClassName: CI_CLASS}), [PRIORITY_MESSAGE], 'PLANTED DEFECT: a release run takes the ci class');
   assert.deepEqual(verdict('shop-release', {priorityClassName: 'system-cluster-critical'}), [PRIORITY_MESSAGE], 'PLANTED DEFECT: a release run takes a system class');
+  // An image run is started by hand, outside the ci quota, so it takes the release class.
+  assert.deepEqual(verdict('shop-image', {priorityClassName: RELEASE_CLASS}), [], 'PLANTED INNOCENT: an image run with the release class');
+  assert.deepEqual(verdict('shop-image', {priorityClassName: CI_CLASS}), [PRIORITY_MESSAGE], 'PLANTED DEFECT: an image run takes the ci class');
   // Every other field Tekton's CRD knows for a pod template is refused beside a right class. The CRD
   // is the one the repository renders, so a Tekton upgrade that adds a field turns this red until the
   // policy lists it.
@@ -571,7 +655,7 @@ test('a run carries the priority class of its pipeline and no other pod template
   const fields = Object.keys(crd.spec.versions.find((v) => v.name === 'v1').schema.openAPIV3Schema.properties.spec.properties
     .taskRunTemplate.properties.podTemplate.properties).filter((field) => field !== 'priorityClassName');
   assert.ok(fields.includes('volumes') && fields.includes('automountServiceAccountToken') && fields.length > 10);
-  for (const pipeline of ['shop-release', 'shop-ci']) {
+  for (const pipeline of ['shop-release', 'shop-ci', 'shop-image']) {
     for (const field of fields) {
       const value = {volumes: [], automountServiceAccountToken: true}[field] ?? 'x';
       assert.deepEqual(verdict(pipeline, {priorityClassName: classOf(pipeline), [field]: value}), [PRIORITY_MESSAGE],
@@ -677,12 +761,12 @@ const quotaAdmits = (quota, runningClasses, newClass) => {
   return !counted.includes(newClass) || runningClasses.filter((c) => counted.includes(c)).length + 1 <= Number(quota.spec.hard.pods);
 };
 
-test('the report pod of a red run is admitted by the ci quota while the check of another branch holds its slot', () => {
+test('the report pod of a red run is admitted by the ci quota while the check of another branch holds its slots', () => {
   const builder = imageBuilder();
   const quota = renderUnit('shop').find((d) => d.kind === 'ResourceQuota');
   const run = createdCiRun(builder);
-  const held = [podClassOf(run, 'check')];
-  assert.equal(quota.spec.hard.pods, '1', 'the slot is held by the one check');
+  // Every slot is taken: the check of the other branch and the finished pod before it, which still counts.
+  const held = Array.from({length: Number(quota.spec.hard.pods)}, () => podClassOf(run, 'check'));
   assert.equal(quotaAdmits(quota, held, podClassOf(run, 'check')), false, 'a second ci pod waits');
   assert.equal(quotaAdmits(quota, held, podClassOf(run, 'report-failure')), true, 'PLANTED INNOCENT: the report pod of a red run does not wait for the slot');
   const noOverride = structuredClone(run);
