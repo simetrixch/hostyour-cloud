@@ -8,12 +8,14 @@ things each minute, to the ci runs only (the runs that carry image-builder.io/ci
     image-builder.io/ci-branch, set by the ci-push TriggerTemplate; a label cannot hold the `/` of a
     branch name.
   - it starts the oldest waiting runs while fewer than ciRunKeeper.maxRunning ci runs have started and
-    not finished. The ci-push TriggerTemplate creates every ci run waiting (spec.status
+    not finished, at most one run per build namespace and none in a namespace that has a started run,
+    because the ci quota of a unit lets one pod run and a second started run would hold a slot without
+    running. The ci-push TriggerTemplate creates every ci run waiting (spec.status
     PipelineRunPending), because the memory limits of the ci pods of every unit together do not fit the
     build node: the cap is what scripts/build-contract.test.mjs adds up. A run that stays waiting carries
-    the annotation image-builder.io/queued-behind with the reason, and a waiting run that a newer push
-    replaces is cancelled and never started. A start takes up to a minute, the CronJob's period, and
-    nothing starts while this CronJob does not run.
+    the annotation image-builder.io/queued-behind with the reason (a ci run of its unit runs, or all
+    slots are in use), and a waiting run that a newer push replaces is cancelled and never started. A start
+    takes up to a minute, the CronJob's period, and nothing starts while this CronJob does not run.
   - it deletes the finished runs of a build namespace beyond the newest 20. Kubernetes deletes a run's
     claim with it, through the claim's owner reference.
 

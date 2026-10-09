@@ -16,6 +16,8 @@ const FILES = 'clusters/inventories/image-builder/files';
 const KEPT = 20;
 const MAX = 6;
 const REASON = `all ${MAX} ci slots are in use`;
+const UNIT_REASON = 'a ci run of this unit runs';
+const namespaces = (count) => Array.from({length: count}, (_, i) => `unit${i + 1}-build`);
 
 let clock = 0;
 const timestamp = (minute) => new Date(Date.UTC(2026, 9, 9) + minute * 60000).toISOString().replace('.000Z', 'Z');
@@ -115,8 +117,8 @@ test('a run is not cancelled when it has finished, is cancelled already, has no 
   assert.deepEqual(cancelled([first, second, run('post-build', {branch: 'main', at: 501})]), names([first, second]));
 });
 
-test('7 waiting runs and none running start the 6 oldest, across build namespaces, and the 7th waits with its reason', () => {
-  const runs = ['shop', 'post', 'shop', 'post', 'shop', 'post', 'shop'].map((unit) => waiting(`${unit}-build`));
+test('7 waiting runs of 7 units and none running start the 6 oldest, and the 7th waits with its reason', () => {
+  const runs = namespaces(MAX + 1).map((namespace) => waiting(namespace));
   assert.deepEqual(started(runs), names(runs.slice(0, MAX)));
   const note = decide(runs).find((c) => c.type === 'merge');
   assert.equal(note.name, runs[MAX].metadata.name);
@@ -131,7 +133,7 @@ test('6 running runs start none, and every waiting run waits with its reason', (
 });
 
 test('a free slot is a slot: 4 running runs and 3 waiting runs start the 2 oldest', () => {
-  const waits = [waiting('shop-build'), waiting('shop-build'), waiting('shop-build')];
+  const waits = ['a-build', 'b-build', 'c-build'].map((namespace) => waiting(namespace));
   assert.deepEqual(started([...running(4, 'post-build'), ...waits]), names(waits.slice(0, 2)));
 });
 
@@ -143,7 +145,7 @@ test('a finished run holds no slot, and a started run holds one whatever its pod
 
 test('a waiting run that a newer push replaces is cancelled and never started, and takes no slot', () => {
   const old = waiting('shop-build', {branch: 'main'}), newest = waiting('shop-build', {branch: 'main'});
-  const others = Array.from({length: MAX - 1}, () => waiting('post-build'));
+  const others = namespaces(MAX - 1).map((namespace) => waiting(namespace));
   const changes = decide([old, newest, ...others]);
   assert.deepEqual(changes.filter((c) => c.verb === 'cancel').map((c) => c.name), [old.metadata.name]);
   assert.deepEqual(started([old, newest, ...others]), names([newest, ...others]));
@@ -170,13 +172,48 @@ test('the note is written once, and a start takes it back', () => {
 
 test('planted defect: a decision without the cap starts every waiting run, and the cap test goes red', () => {
   const cappedAtSix = (program) => {
-    const runs = Array.from({length: MAX + 1}, () => waiting('shop-build', {branch: null}));
+    const runs = namespaces(MAX + 1).map((namespace) => waiting(namespace, {branch: null}));
     const starts = decideWith(program, runs).filter((c) => c.type === 'json');
     assert.equal(starts.length, MAX, `${starts.length} ci runs start at once`);
   };
   cappedAtSix(PROGRAM);
-  assert.ok(PROGRAM.includes('$waiting[:$free][]'));
-  assert.throws(() => cappedAtSix(PROGRAM.replace('$waiting[:$free][]', '$waiting[]')), /7 ci runs start at once/);
+  assert.ok(PROGRAM.includes('[:$free]) as $startable'));
+  assert.throws(() => cappedAtSix(PROGRAM.replace('[:$free]) as $startable', ') as $startable')), /7 ci runs start at once/);
+});
+
+const reasonOf = (changes, run) => changes.find((c) => c.name === run.metadata.name && c.type === 'merge')?.patch.metadata.annotations['image-builder.io/queued-behind'];
+
+test('3 waiting runs of one unit and none running start only the oldest, and the others wait for it', () => {
+  const waits = [waiting('shop-build'), waiting('shop-build'), waiting('shop-build')];
+  assert.deepEqual(started(waits), names(waits.slice(0, 1)));
+  assert.deepEqual(noted(waits), names(waits.slice(1)));
+  assert.deepEqual(waits.slice(1).map((r) => reasonOf(decide(waits), r)), [UNIT_REASON, UNIT_REASON]);
+});
+
+test('a unit with a started run starts none, and another unit starts its oldest', () => {
+  const [busy, free] = ['a-build', 'b-build'];
+  const runs = [run(busy, {succeeded: 'Unknown'}), waiting(busy), waiting(free), waiting(free)];
+  assert.deepEqual(started(runs), names([runs[2]]));
+  const changes = decide(runs);
+  assert.equal(reasonOf(changes, runs[1]), UNIT_REASON, 'the unit of a started run waits for it');
+  assert.equal(reasonOf(changes, runs[3]), UNIT_REASON, 'the second run of a unit waits for the first');
+});
+
+test('6 waiting runs of 6 units all start, and a run of a 7th unit waits for a slot', () => {
+  const six = namespaces(MAX).map((namespace) => waiting(namespace)), seventh = waiting('late-build');
+  assert.deepEqual(started([...six, seventh]), names(six));
+  assert.equal(reasonOf(decide([...six, seventh]), seventh), REASON);
+  assert.equal(reasonOf(decide([...running(MAX, 'busy-build'), seventh]), seventh), REASON, 'a unit without a started run waits for a slot, not for itself');
+});
+
+test('planted defect: a keeper that starts two runs of one unit in one tick goes red', () => {
+  const sameUnit = (program) => {
+    const starts = decideWith(program, [waiting('shop-build'), waiting('shop-build')]).filter((c) => c.type === 'json');
+    assert.equal(starts.length, 1, `${starts.length} ci runs of one unit start at once`);
+  };
+  sameUnit(PROGRAM);
+  assert.ok(PROGRAM.includes('group_by(.metadata.namespace) | map(.[0])'));
+  assert.throws(() => sameUnit(PROGRAM.replace('group_by(.metadata.namespace) | map(.[0])', 'sort_by(created, .metadata.name)')), /2 ci runs of one unit start at once/);
 });
 
 test('planted defect: a change that fails is reported, the next one still runs, and the tick fails', () => {
@@ -210,7 +247,7 @@ test('the script starts a waiting run with a json patch, and refuses to run with
   const bin = mkdtempSync(join(tmpdir(), 'ci-run-keeper-'));
   try {
     const runs = join(bin, 'runs.json'), log = join(bin, 'log');
-    const items = [...running(MAX - 1, 'post-build'), waiting('shop-build', {branch: null}), waiting('shop-build', {branch: null})];
+    const items = [...running(MAX - 2, 'post-build'), waiting('shop-build', {branch: null}), waiting('shop-build', {branch: null})];
     writeFileSync(runs, JSON.stringify({items}));
     writeFileSync(join(bin, 'kubectl'), '#!/usr/bin/env bash\nif [ "$1" = get ]; then cat "$RUNS"; exit 0; fi\necho "$*" >> "$LOG"\n');
     chmodSync(join(bin, 'kubectl'), 0o755);
@@ -220,7 +257,7 @@ test('the script starts a waiting run with a json patch, and refuses to run with
     const calls = readFileSync(log, 'utf8').trim().split('\n');
     assert.equal(calls.length, 2);
     assert.match(calls[0], /^patch pipelinerun -n shop-build shop-ci-\S+ --type json -p \[\{"op":"remove","path":"\/spec\/status"\}\]$/);
-    assert.match(calls[1], new RegExp(`^patch pipelinerun -n shop-build shop-ci-\\S+ --type merge -p \\{"metadata":\\{"annotations":\\{"image-builder.io/queued-behind":"${REASON}"\\}\\}\\}$`));
+    assert.match(calls[1], new RegExp(`^patch pipelinerun -n shop-build shop-ci-\\S+ --type merge -p \\{"metadata":\\{"annotations":\\{"image-builder.io/queued-behind":"${UNIT_REASON}"\\}\\}\\}$`));
     assert.match(result.stdout, /started shop-build\/shop-ci-/);
     const without = spawnSync('bash', [`${FILES}/ci-run-keeper.sh`], {encoding: 'utf8', env});
     assert.notEqual(without.status, 0);
