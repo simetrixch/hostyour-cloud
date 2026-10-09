@@ -243,12 +243,14 @@ spec:
             # suite included and the install cold, under a CPU quota of 4 cores
             # and a memory cap of 4 GiB on a 32-core development machine: 8.75
             # minutes, 1.4 cores on average, 1.7 GiB of anonymous memory. The
-            # repository whose tests print PDFs peaked at 2.3 GiB. The timeout
-            # of the task is twice the measured run, the install and the
-            # downloads included.
+            # repository whose tests print PDFs peaked at 2.3 GiB. The memory
+            # limit is 3 GiB, 30 % above that peak: the limits of all ci pods
+            # together must fit the free memory of the build node
+            # (ciCapacity in values-common.yaml). The timeout of the task is
+            # twice the measured run, the install and the downloads included.
             computeResources:
               requests: { cpu: "1", memory: 2Gi }
-              limits: { cpu: "4", memory: 4Gi }
+              limits: { cpu: "4", memory: 3Gi }
             script: |
               #!/usr/bin/env bash
               set -euo pipefail

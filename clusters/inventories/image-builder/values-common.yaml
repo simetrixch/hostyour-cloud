@@ -26,10 +26,12 @@ workspaces:
 # WHO GOES FIRST ON THE BUILD NODE. Every release run carries the release class and every ci run the ci
 # class (taskRunTemplate.podTemplate of the two TriggerTemplates; the admission policy of this chart admits
 # no other pod template). The release class is above every pod without a class and the ci class below it, so
-# when the node is under pressure the kubelet evicts ci pods first, and the scheduler puts a waiting release
-# pod ahead of a waiting ci pod. Neither class preempts: a release build never evicts a platform pod, and a
-# ci pod never evicts anything. How much ci runs at once is capped by the ResourceQuota that
-# clusters/inventories/consumer-build renders in each build namespace for the ci class.
+# the scheduler puts a waiting release pod ahead of a waiting ci pod. Neither class preempts: a release build
+# never evicts a platform pod, and a ci pod never evicts anything. A class does not decide who the kernel
+# kills when the node runs out of memory: that follows the QoS class of a pod, so the memory the ci pods may
+# take is bounded by the sum of their limits instead (ciCapacity in clusters/inventories/consumer-build).
+# How much ci runs at once is capped by the ResourceQuota that clusters/inventories/consumer-build renders
+# in each build namespace for the ci class.
 priorityClasses:
   release:
     name: image-builder-release

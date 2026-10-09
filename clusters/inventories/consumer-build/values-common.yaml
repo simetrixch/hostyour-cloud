@@ -52,12 +52,24 @@ releaseQueue:
 # is created by clusters/inventories/image-builder (priorityClasses.ci) and named here for the same reason
 # as the identities above; scripts/build-contract.test.mjs renders both charts and fails when the two names
 # differ. The cap counts pods, not CPU or memory, because Tekton's own init containers carry no requests and
-# a compute quota would refuse every pod. Two pods per unit hold at most 8 GiB of the check step's limit,
-# six units 48 GiB: more than the free memory of the build node if every check used its whole limit at
-# once. The cap rests on the measured use of a check instead, which is at most 2.3 GiB.
+# a compute quota would refuse every pod.
+#
+# THE SUM OF THE LIMITS MUST FIT THE FREE MEMORY OF THE BUILD NODE. The scheduler admits a pod by its
+# requests, so it admits every ci pod that the caps allow, and the pods may then use their whole limits at
+# once. When the node runs out of memory the kernel kills by the QoS class of a pod and not by its priority
+# class, so the pods without requests (argocd, tekton, observability and ingress run many of them) die before
+# a ci pod does. What keeps them safe is a sum of limits that fits: podsPerUnit times unitCount times the
+# memory limit of the check step must stay within limitsMemoryBudget, and scripts/build-contract.test.mjs
+# fails when it does not.
+#
+# unitCount is DECLARED, not derived: the units come from the registrations of the books branch, which
+# this chart cannot read. Raise it with every unit that joins ci. limitsMemoryBudget is the memory the
+# build node (master1: 59 GiB, 18 GiB in use) had available on 2026-10-09, 40 GiB.
 ciCapacity:
   priorityClassName: image-builder-ci
   podsPerUnit: 2
+  unitCount: 6
+  limitsMemoryBudget: 40Gi
 
 # WHO CANCELS AND DELETES A CI RUN. The ci run keeper of clusters/inventories/image-builder cancels a
 # ci run that a newer push to the same branch replaces, and deletes the finished ci runs beyond the

@@ -267,6 +267,30 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
   assert.ok(whole >= 3 * Object.values(bounds).reduce((a, b) => a + b, 0), 'the run outlives three rounds of its own tasks');
 });
 
+// The scheduler admits a pod by its requests, and the kernel kills by QoS class when the node runs out of
+// memory, so what keeps the platform pods alive is a sum of limits that fits the free memory of the node.
+const BYTES = {Gi: 1024 ** 3, Mi: 1024 ** 2};
+const quantity = (text) => Number(text.slice(0, -2)) * BYTES[text.slice(-2)];
+const fitsFreeMemory = (capacity, pipeline, cloneTask) => {
+  const podLimit = Math.max(...pipeline.spec.tasks.map((task) => (task.taskSpec ?? cloneTask.spec).steps
+    .reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0)));
+  return capacity.podsPerUnit * capacity.unitCount * podLimit <= quantity(capacity.limitsMemoryBudget);
+};
+
+test('the memory limits of all ci pods together fit the free memory of the build node', () => {
+  const capacity = JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'}));
+  const docs = renderUnit('shop');
+  const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const cloneTask = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'git-clone');
+  assert.equal(String(capacity.podsPerUnit), docs.find((d) => d.kind === 'ResourceQuota').spec.hard.pods, 'the budget counts the pods the quota allows');
+  assert.ok(fitsFreeMemory(capacity, pipeline, cloneTask), 'PLANTED INNOCENT: the limits as they stand fit');
+  const planted = structuredClone(pipeline);
+  planted.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].computeResources.limits.memory = '4Gi';
+  assert.ok(!fitsFreeMemory(capacity, planted, cloneTask), 'PLANTED DEFECT: a 4Gi limit on the check step is caught');
+  assert.ok(!fitsFreeMemory({...capacity, unitCount: capacity.unitCount + 1}, pipeline, cloneTask), 'PLANTED DEFECT: one more unit without a bigger budget is caught');
+  assert.ok(!fitsFreeMemory({...capacity, podsPerUnit: capacity.podsPerUnit + 1}, pipeline, cloneTask), 'PLANTED DEFECT: one more pod per unit without a bigger budget is caught');
+});
+
 test('the egress policy of a build namespace selects every pod of it', () => {
   const policy = (docs) => docs.find((d) => d.kind === 'NetworkPolicy' && d.metadata.name === 'build-egress');
   const exempts = (doc) => Object.keys(doc.spec.podSelector ?? {}).length > 0;
