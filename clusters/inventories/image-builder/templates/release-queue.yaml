@@ -5,13 +5,14 @@ until its timeout. So every release run is created waiting (the deploy-request T
 spec.status PipelineRunPending), and this CronJob starts the oldest waiting release, all of its
 stages, once no other release runs. Each waiting run carries the annotation
 image-builder.io/queued-behind with the release it waits for, which the Tekton Dashboard and
-`kubectl get pipelinerun -o yaml` show. files/release-queue.jq decides; files/release-queue.sh
+`kubectl get pipelinerun -o yaml` show. It also deletes every finished release run of a build
+namespace but the newest 20, and never one that waits or runs. files/release-queue.jq decides; files/release-queue.sh
 applies; scripts/release-queue.test.mjs runs the decision on planted runs.
 
 A start takes up to a minute, the CronJob's period. Nothing starts while this CronJob does not run.
 
 ITS RIGHTS. Read on PipelineRuns cluster-wide (the build namespaces come and go with the units),
-and patch only in each <unit>-build namespace, rendered there by clusters/inventories/consumer-build
+and patch and delete only in each <unit>-build namespace, rendered there by clusters/inventories/consumer-build
 (templates/rbac-release-queue.yaml). The admission policy image-builder-pipelinerun-guard limits a
 patch by this identity to dropping the waiting flag and to its own annotation.
 */ -}}
