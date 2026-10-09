@@ -14,7 +14,8 @@ A start takes up to a minute, the CronJob's period. Nothing starts while this Cr
 ITS RIGHTS. Read on PipelineRuns cluster-wide (the build namespaces come and go with the units),
 and patch and delete only in each <unit>-build namespace, rendered there by clusters/inventories/consumer-build
 (templates/rbac-release-queue.yaml). The admission policy image-builder-pipelinerun-guard limits a
-patch by this identity to dropping the waiting flag and to its own annotation.
+patch by this identity to dropping the waiting flag and to its own annotation, and a delete by it to a finished run of the
+unit's own release Pipeline.
 */ -}}
 {{- if .Values.eventListener.enabled }}
 apiVersion: v1

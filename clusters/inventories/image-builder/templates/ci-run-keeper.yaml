@@ -27,7 +27,8 @@ ITS RIGHTS. Read on PipelineRuns cluster-wide (the build namespaces come and go 
 patch and delete only in each <unit>-build namespace, rendered there by clusters/inventories/consumer-build
 (templates/rbac-ci-run-keeper.yaml). A patch can rewrite any field, so the admission policy
 image-builder-pipelinerun-guard limits this identity on a ci run to setting spec.status Cancelled, to
-dropping the waiting flag, and to its own annotation. It does not see a deletion.
+dropping the waiting flag, and to its own annotation, and a delete by it to a finished run of the unit's own ci
+Pipeline.
 */ -}}
 {{- if .Values.eventListener.enabled }}
 apiVersion: v1

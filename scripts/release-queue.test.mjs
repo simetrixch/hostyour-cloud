@@ -239,3 +239,47 @@ test('planted defect: without the queue clause, every change the queue must not 
   policy.spec.validations = policy.spec.validations.filter((v) => v.message !== QUEUE_MESSAGE);
   assert.ok(evaluate(policy, Object.values(DENIED)).every((denied) => denied.length === 0));
 });
+
+// A delete is admitted from oldObject alone: object is null. A run is finished when its Succeeded condition
+// is True or False, as the queue's jq reads it.
+const DASHBOARD = 'system:serviceaccount:tekton-pipelines:tekton-dashboard';
+const withStatus = (status, edit = () => {}) => changed((r) => { delete r.spec.status; r.status = status; edit(r); });
+const succeeded = (status, edit) => withStatus({conditions: [{type: 'Succeeded', status}]}, edit);
+const deletes = (username, oldObject) => asks('DELETE', username, null, oldObject);
+const QUEUE_DELETE_MESSAGE = 'the release queue may only delete a finished release run of its own namespace.';
+const DELETE_ADMITTED = {
+  'the queue deletes a release run that succeeded': deletes(QUEUE_SA, succeeded('True')),
+  'the queue deletes a release run that failed': deletes(QUEUE_SA, succeeded('False')),
+  'the Tekton Dashboard deletes a running release run': deletes(DASHBOARD, succeeded('Unknown')),
+  'a user deletes a waiting release run': deletes('owner@example.com', waitingRun()),
+  'a user deletes a run that breaks every other clause': deletes('owner@example.com', {metadata: {name: 'x', namespace: 'shop-build'}, spec: {}}),
+};
+const DELETE_DENIED = {
+  'the queue deletes a running release run': deletes(QUEUE_SA, succeeded('Unknown')),
+  'the queue deletes a pending release run': deletes(QUEUE_SA, waitingRun()),
+  'the queue deletes a release run with an empty status': deletes(QUEUE_SA, withStatus({})),
+  'the queue deletes a release run with another condition only': deletes(QUEUE_SA, withStatus({conditions: [{type: 'Ready', status: 'True'}]})),
+  'the queue deletes a finished ci run': deletes(QUEUE_SA, succeeded('True', asCi)),
+  'the queue deletes a finished run of another unit\'s release pipeline': deletes(QUEUE_SA, succeeded('True', (r) => { r.spec.pipelineRef.name = 'post-release'; })),
+  'the queue deletes a finished run without a pipeline': deletes(QUEUE_SA, succeeded('True', (r) => { delete r.spec.pipelineRef; })),
+};
+
+test('the admission policy sees a delete, and lets the queue delete a finished release run of its own namespace and no other run', () => {
+  const policy = guard();
+  assert.ok(policy.spec.matchConstraints.resourceRules.every((rule) => rule.operations.includes('DELETE')));
+  const verdicts = evaluate(policy, [...Object.values(DELETE_ADMITTED), ...Object.values(DELETE_DENIED)]);
+  Object.keys(DELETE_ADMITTED).forEach((name, i) => assert.deepEqual(verdicts[i], [], `PLANTED INNOCENT: ${name}`));
+  Object.keys(DELETE_DENIED).forEach((name, i) => assert.deepEqual(verdicts[Object.keys(DELETE_ADMITTED).length + i], [QUEUE_DELETE_MESSAGE], `PLANTED DEFECT: ${name}`));
+});
+
+test('planted defect: without the queue delete clause, every run the queue must not delete is admitted', () => {
+  const policy = guard();
+  policy.spec.validations = policy.spec.validations.filter((v) => v.message !== QUEUE_DELETE_MESSAGE);
+  assert.ok(evaluate(policy, Object.values(DELETE_DENIED)).every((denied) => denied.length === 0));
+});
+
+test('planted defect: a clause that reads object without stepping aside refuses every delete, the Tekton Dashboard\'s too', () => {
+  const policy = guard();
+  policy.spec.validations = policy.spec.validations.map((v) => ({...v, expression: v.expression.replace("request.operation == 'DELETE' || ", '')}));
+  assert.ok(evaluate(policy, [DELETE_ADMITTED['the Tekton Dashboard deletes a running release run']])[0].length > 0);
+});
