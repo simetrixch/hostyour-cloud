@@ -1,0 +1,227 @@
+{{- /*
+The unit's by-hand image pipeline `<unit>-image`. It builds an image that is not
+a release: one that is built once per version and rarely, by an operator. An
+example is a base image that freezes one version of a system package, which the
+distribution keeps for one release only, so a later build could not produce the
+same bytes again. No webhook starts it. The release queue and the Manager's
+release watch never see it, because neither this Pipeline nor its runs carry
+image-builder.io/consumer (Tekton copies a Pipeline's labels onto its runs).
+
+  clone the default branch → check → scan → build and push.
+
+The run builds the tip of the repository's default branch, so an image comes only
+from reviewed code. It pushes <registry>/<image>:<version> and never overwrites:
+a tag that already answers is refused.
+
+RUN INPUTS, checked in `check` before anything is built:
+  image          a lowercase name that starts with `<unit>-`, so a unit builds only
+                 images named after itself, and that is none of the unit's release
+                 builds, whose tags the release owns;
+  version        the tag, an OCI tag of [A-Za-z0-9._-]. The Containerfile receives it
+                 as the build argument BUILD_VERSION;
+  containerfile  and context, relative paths inside the checkout.
+
+A Containerfile that starts FROM an image of this registry declares
+`ARG REGISTRY` before its FROM: buildah-build-push passes the registry host as
+REGISTRY to a Containerfile that declares it.
+
+HOW TO START IT, on the master cluster:
+
+  microk8s.kubectl create -f - <<'EOF'
+  apiVersion: tekton.dev/v1
+  kind: PipelineRun
+  metadata:
+    generateName: <unit>-image-
+    namespace: <unit>-build
+  spec:
+    pipelineRef:
+      name: <unit>-image
+    taskRunTemplate:
+      serviceAccountName: pipeline-sa
+      podTemplate:
+        priorityClassName: <the release class, priorityClasses.release.name of image-builder>
+    timeouts:
+      pipeline: 1h0m0s
+    params:
+      - { name: image, value: <unit>-<name> }
+      - { name: version, value: <tag> }
+      - { name: containerfile, value: <path> }
+    workspaces:
+      - name: source
+        volumeClaimTemplate:
+          spec:
+            accessModes: [ReadWriteOnce]
+            resources: { requests: { storage: <workspaces.sourceSize> } }
+  EOF
+
+The admission policy of clusters/inventories/image-builder admits such a run in
+the unit's own build namespace only.
+*/ -}}
+{{- if and .Values.unit (eq (include "consumer-build.hasBuilds" .) "true") }}
+{{- $unit := include "consumer-build.unitName" . -}}
+{{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
+{{- $registry := include "common.registryHost" . -}}
+{{- $builds := include "consumer-build.builds" . | fromJsonArray -}}
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: {{ printf "%s-image" $unit }}
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: image-pipeline
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    image-builder.io/image: {{ $unit | quote }}
+spec:
+  params:
+    - name: image
+      type: string
+    - name: version
+      type: string
+    - name: containerfile
+      type: string
+    - name: context
+      type: string
+      default: "."
+  workspaces:
+    - name: source
+  results:
+    - name: image-digest
+      description: The digest of the image this run pushed.
+      value: "$(tasks.build.results.image-digest)"
+  tasks:
+    - name: clone
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: git-clone }
+          - { name: namespace, value: image-builder }
+      params:
+        - { name: url, value: {{ $repoURL | quote }} }
+        # HEAD of the remote is its default branch.
+        - { name: revision, value: HEAD }
+        - { name: depth, value: "1" }
+        - { name: credentials-secret, value: build-git-https }
+      workspaces:
+        - { name: source, workspace: source }
+
+    # Checks the run inputs, then asks the registry for the tag. 404 = build;
+    # 200 = refuse, because a by-hand image is built once per version, and an
+    # answer from a sync upstream under the same name is refused the same way;
+    # anything else fails the run. The build waits for this task, because
+    # buildah-build-push writes image-name and image-tag into its script source.
+    - name: check
+      runAfter: [clone]
+      params:
+        - { name: image, value: "$(params.image)" }
+        - { name: version, value: "$(params.version)" }
+        - { name: containerfile, value: "$(params.containerfile)" }
+        - { name: context, value: "$(params.context)" }
+      taskSpec:
+        params:
+          - { name: image, type: string }
+          - { name: version, type: string }
+          - { name: containerfile, type: string }
+          - { name: context, type: string }
+        workspaces:
+          - name: source
+        results:
+          - name: build-timestamp
+            description: ISO-8601 UTC build time (OCI .created label).
+        steps:
+          - name: check
+            image: alpine/k8s:1.35.6
+            # The inputs are written by whoever creates the run. They reach the
+            # shell as values in its environment, never as script source.
+            env:
+              - { name: IMAGE, value: "$(params.image)" }
+              - { name: VERSION, value: "$(params.version)" }
+              - { name: CONTAINERFILE, value: "$(params.containerfile)" }
+              - { name: CONTEXT, value: "$(params.context)" }
+              - { name: UNIT, value: {{ $unit | quote }} }
+              - { name: RELEASE_BUILDS, value: {{ join " " $builds | quote }} }
+              - { name: REGISTRY, value: {{ $registry | quote }} }
+            envFrom:
+              # Read-only pull identity, enough to ask for a manifest.
+              - secretRef:
+                  name: {{ include "common.registryPullSecretName" . }}
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              fail() { echo "check: FAIL — $*" >&2; exit 1; }
+
+              printf '%s' "${IMAGE}" | grep -Eq '^[a-z0-9]+([._-][a-z0-9]+)*$' \
+                || fail "image '${IMAGE}' is not a lowercase image name"
+              case "${IMAGE}" in "${UNIT}"-*) ;; *) fail "image '${IMAGE}' does not start with '${UNIT}-'" ;; esac
+              for build in ${RELEASE_BUILDS}; do
+                [ "${IMAGE}" != "${build}" ] || fail "image '${IMAGE}' is a release build of ${UNIT}; its tags belong to the release"
+              done
+              printf '%s' "${VERSION}" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$' \
+                || fail "version '${VERSION}' is not an image tag"
+              for path in "${CONTAINERFILE}" "${CONTEXT}"; do
+                [ "${path}" = "." ] && continue
+                printf '%s' "${path}" | grep -Eq '^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$' \
+                  || fail "'${path}' is not a relative path of [A-Za-z0-9._-] segments"
+                ! printf '%s' "${path}" | tr '/' '\n' | grep -qx '\.\.' \
+                  || fail "'${path}' leaves the checkout with a '..' segment"
+              done
+              [ -f "/workspace/source/${CONTEXT}/${CONTAINERFILE}" ] \
+                || fail "${CONTAINERFILE} is not a file under ${CONTEXT} on the default branch"
+
+              # Bounded like the release probe: a miss can wait on the registry's
+              # own sync from its upstreams, and 600s says so before the run's timeout.
+              REF="${REGISTRY}/${IMAGE}:${VERSION}"
+              set +e
+              CODE="$(curl -sS --connect-timeout 10 --max-time 600 -o /dev/null -w '%{http_code}' \
+                -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" \
+                -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+                "https://${REGISTRY}/v2/${IMAGE}/manifests/${VERSION}")"
+              rc=$?
+              set -e
+              [ "${rc}" = "0" ] || fail "${REF}: curl exited ${rc}; whether the tag exists is not proven"
+              case "${CODE}" in
+                404) echo "check: ${REF} absent — build" ;;
+                200) fail "${REF} exists. A by-hand image is built once per version; give the new build a new version" ;;
+                *) fail "${REF} answered ${CODE}; whether the tag exists is not proven" ;;
+              esac
+              date -u +%Y-%m-%dT%H:%M:%SZ | tr -d '\n' > $(results.build-timestamp.path)
+            workingDir: /workspace/source
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
+      workspaces:
+        - { name: source, workspace: source }
+
+    - name: scan
+      runAfter: [clone]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: credential-scan }
+          - { name: namespace, value: image-builder }
+      workspaces:
+        - { name: source, workspace: source }
+
+    - name: build
+      runAfter: [check, scan]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: buildah-build-push }
+          - { name: namespace, value: image-builder }
+      params:
+        - { name: image-name, value: "$(params.image)" }
+        - { name: image-tag, value: "$(params.version)" }
+        - { name: registry, value: {{ $registry | quote }} }
+        - { name: containerfile, value: "$(params.containerfile)" }
+        - { name: context, value: "$(params.context)" }
+        - { name: git-url, value: {{ $repoURL | quote }} }
+        - { name: git-revision, value: "$(tasks.clone.results.commit)" }
+        - { name: build-timestamp, value: "$(tasks.check.results.build-timestamp)" }
+        - { name: version, value: "$(params.version)" }
+      workspaces:
+        - { name: source, workspace: source }
+{{- end }}

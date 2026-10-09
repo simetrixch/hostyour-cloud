@@ -1,7 +1,7 @@
 apiVersion: v2
 name: consumer-build
 version: 1.0.0
-description: Per-unit build namespaces for the release cycle and the repository check. In catalog mode (no unit values) the chart emits ONE ApplicationSet over registrations/*/build.yaml; each generated Application renders this same chart in unit mode — namespace <unit>-build, SecretStore, the <unit>-release and <unit>-ci Pipelines, credentials and NetworkPolicy. The webhook entry points (the deploy-request and ci-push Triggers) live in clusters/inventories/image-builder next to the EventListener; the shared Tasks it resolves stay there too.
+description: Per-unit build namespaces for the release cycle and the repository check. In catalog mode (no unit values) the chart emits ONE ApplicationSet over registrations/*/build.yaml; each generated Application renders this same chart in unit mode — namespace <unit>-build, SecretStore, the <unit>-release and <unit>-ci Pipelines, the by-hand <unit>-image Pipeline, credentials and NetworkPolicy. The webhook entry points (the deploy-request and ci-push Triggers) live in clusters/inventories/image-builder next to the EventListener; the shared Tasks it resolves stay there too.
 type: application
 
 dependencies:

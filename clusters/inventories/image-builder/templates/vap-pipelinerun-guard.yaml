@@ -25,7 +25,7 @@ WHAT IT BINDS (CEL, fail-closed logic):
      this rule is about which Pipeline runs, not which Tasks it uses);
   4. taskRunTemplate.serviceAccountName == pipeline-sa — the isolation SA;
   5. the referenced Pipeline is the NAMESPACE's own: in <unit>-build only
-     <unit>-release and <unit>-ci may run. This is the ownership binding — a
+     <unit>-release, <unit>-ci and <unit>-image may run. This is the ownership binding — a
      PipelineRun smuggled into a foreign build namespace cannot start that
      unit's pipeline under its credentials;
   6. no taskRunSpecs entry names another ServiceAccount. Without this, clause
@@ -53,8 +53,8 @@ WHAT IT BINDS (CEL, fail-closed logic):
      files/release-queue.jq cannot delete a run that waits or runs, nor a ci
      run.
   8. the only podTemplate a run may carry sets priorityClassName, to the class
-     of its pipeline: the release class on a release run, the ci class on a
-     ci run. A ci run MUST carry it, because the capacity quota of the build
+     of its pipeline: the ci class on a ci run, the release class on a
+     release run and on an image run. A ci run MUST carry it, because the capacity quota of the build
      namespace counts the pods of that class and no others, and a ci run
      without the class would run outside the cap. Every other field is refused,
      among them automountServiceAccountToken: pipeline-sa ships it off
@@ -104,12 +104,13 @@ spec:
       expression: >-
         (has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name))
           ? object.spec.pipelineRef.name : ''
-    # <unit>-build -> <unit>-release and <unit>-ci: the two pipelines this namespace owns.
+    # <unit>-build -> <unit>-release, <unit>-ci and <unit>-image: the pipelines this namespace owns.
     - name: ownPipelines
       expression: >-
         request.namespace.endsWith('-build')
           ? [request.namespace.substring(0, request.namespace.size() - 6) + '-release',
-             request.namespace.substring(0, request.namespace.size() - 6) + '-ci'] : []
+             request.namespace.substring(0, request.namespace.size() - 6) + '-ci',
+             request.namespace.substring(0, request.namespace.size() - 6) + '-image'] : []
     - name: isReleaseQueue
       expression: >-
         request.userInfo.username == 'system:serviceaccount:' + {{ .Release.Namespace | squote }} + ':release-queue'
@@ -172,8 +173,8 @@ spec:
     # The class a run of this pipeline carries in its podTemplate.
     - name: priorityClass
       expression: >-
-        variables.refName.endsWith('-release')
-          ? {{ .Values.priorityClasses.release.name | squote }} : {{ .Values.priorityClasses.ci.name | squote }}
+        variables.refName.endsWith('-ci')
+          ? {{ .Values.priorityClasses.ci.name | squote }} : {{ .Values.priorityClasses.release.name | squote }}
     # The one per-task override a run may carry: the report class on the task report-failure of a ci run.
 {{- $otherFields := list "affinity" "automountServiceAccountToken" "dnsConfig" "dnsPolicy" "enableServiceLinks" "env" "hostAliases" "hostNetwork" "hostUsers" "imagePullSecrets" "nodeSelector" "runtimeClassName" "schedulerName" "securityContext" "tolerations" "topologySpreadConstraints" "volumes" }}
 {{- $otherEntryFields := list "computeResources" "metadata" "serviceAccountName" "sidecarSpecs" "stepSpecs" "timeout" }}
@@ -217,7 +218,7 @@ spec:
       message: "PipelineRuns must run under taskRunTemplate.serviceAccountName: pipeline-sa."
       reason: Forbidden
     - expression: "request.operation == 'DELETE' || variables.refName in variables.ownPipelines"
-      message: "a build namespace runs only its own release and ci Pipelines."
+      message: "a build namespace runs only its own release, ci and image Pipelines."
       reason: Forbidden
     - expression: "request.operation == 'DELETE' || variables.overrideSAs.all(n, n == 'pipeline-sa')"
       message: "taskRunSpecs may not run a task under another ServiceAccount — every task pod runs as pipeline-sa."
