@@ -271,24 +271,36 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
 // memory, so what keeps the platform pods alive is a sum of limits that fits the free memory of the node.
 const BYTES = {Gi: 1024 ** 3, Mi: 1024 ** 2};
 const quantity = (text) => Number(text.slice(0, -2)) * BYTES[text.slice(-2)];
-const fitsFreeMemory = (capacity, pipeline, cloneTask) => {
-  const podLimit = Math.max(...pipeline.spec.tasks.map((task) => (task.taskSpec ?? cloneTask.spec).steps
-    .reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0)));
-  return capacity.podsPerUnit * capacity.unitCount * podLimit <= quantity(capacity.limitsMemoryBudget);
+const podLimit = (task, cloneTask) => (task.taskSpec ?? cloneTask.spec).steps
+  .reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0);
+// The limits of the ci pods that the quota allows, plus the build pods of the one release that runs.
+const fitsFreeMemory = (capacity, pipeline, cloneTask, release, buildahTask) => {
+  const ciPods = capacity.podsPerUnit * capacity.unitCount * Math.max(...pipeline.spec.tasks.map((task) => podLimit(task, cloneTask)));
+  const buildPods = release.spec.tasks.filter((task) => task.name.startsWith('build-') && task.runAfter?.includes('scan')).length;
+  return ciPods + buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask) <= quantity(capacity.limitsMemoryBudget);
 };
 
-test('the memory limits of all ci pods together fit the free memory of the build node', () => {
+test('the memory limits of all ci pods and one release together fit the free memory of the build node', () => {
   const capacity = JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'}));
-  const docs = renderUnit('shop');
+  const images = (count) => Array.from({length: count}, (_, i) => `image-${i + 1}`);
+  const docs = renderUnit('shop', images(capacity.releaseBuildPods));
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const release = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
   const cloneTask = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'git-clone');
+  const buildah = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'buildah-build-push');
   assert.equal(String(capacity.podsPerUnit), docs.find((d) => d.kind === 'ResourceQuota').spec.hard.pods, 'the budget counts the pods the quota allows');
-  assert.ok(fitsFreeMemory(capacity, pipeline, cloneTask), 'PLANTED INNOCENT: the limits as they stand fit');
+  assert.equal(release.spec.tasks.filter((t) => t.name.startsWith('build-') && t.runAfter?.includes('scan')).length, capacity.releaseBuildPods, 'every image of the release builds in parallel after the scan');
+  assert.ok(fitsFreeMemory(capacity, pipeline, cloneTask, release, buildah), 'PLANTED INNOCENT: the limits as they stand fit');
   const planted = structuredClone(pipeline);
   planted.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].computeResources.limits.memory = '4Gi';
-  assert.ok(!fitsFreeMemory(capacity, planted, cloneTask), 'PLANTED DEFECT: a 4Gi limit on the check step is caught');
-  assert.ok(!fitsFreeMemory({...capacity, unitCount: capacity.unitCount + 1}, pipeline, cloneTask), 'PLANTED DEFECT: one more unit without a bigger budget is caught');
-  assert.ok(!fitsFreeMemory({...capacity, podsPerUnit: capacity.podsPerUnit + 1}, pipeline, cloneTask), 'PLANTED DEFECT: one more pod per unit without a bigger budget is caught');
+  assert.ok(!fitsFreeMemory(capacity, planted, cloneTask, release, buildah), 'PLANTED DEFECT: a 4Gi limit on the check step is caught');
+  assert.ok(!fitsFreeMemory({...capacity, unitCount: capacity.unitCount + 2}, pipeline, cloneTask, release, buildah), 'PLANTED DEFECT: two more units, all 8 build namespaces of 2026-10-09, without a bigger budget are caught');
+  assert.ok(!fitsFreeMemory({...capacity, podsPerUnit: 2}, pipeline, cloneTask, release, buildah), 'PLANTED DEFECT: two pods per unit without a bigger budget are caught');
+  const fourImages = renderUnit('shop', images(capacity.releaseBuildPods + 1)).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
+  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, fourImages, buildah), 'PLANTED DEFECT: a fourth image built in parallel is caught');
+  const heavy = structuredClone(buildah);
+  heavy.spec.steps.find((step) => step.name === 'build').computeResources.limits.memory = '8Gi';
+  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, release, heavy), 'PLANTED DEFECT: a raised limit of the buildah build step is caught');
 });
 
 test('the egress policy of a build namespace selects every pod of it', () => {

@@ -52,23 +52,38 @@ releaseQueue:
 # is created by clusters/inventories/image-builder (priorityClasses.ci) and named here for the same reason
 # as the identities above; scripts/build-contract.test.mjs renders both charts and fails when the two names
 # differ. The cap counts pods, not CPU or memory, because Tekton's own init containers carry no requests and
-# a compute quota would refuse every pod.
+# a compute quota would refuse every pod. One pod per unit means the ci runs of one repository run one
+# after the other: the run of a second branch waits for the run of the first, about 9 minutes for the
+# largest repository.
 #
 # THE SUM OF THE LIMITS MUST FIT THE FREE MEMORY OF THE BUILD NODE. The scheduler admits a pod by its
-# requests, so it admits every ci pod that the caps allow, and the pods may then use their whole limits at
+# requests, so it admits every pod that the caps allow, and the pods may then use their whole limits at
 # once. When the node runs out of memory the kernel kills by the QoS class of a pod and not by its priority
 # class, so the pods without requests (argocd, tekton, observability and ingress run many of them) die before
-# a ci pod does. What keeps them safe is a sum of limits that fits: podsPerUnit times unitCount times the
-# memory limit of the check step must stay within limitsMemoryBudget, and scripts/build-contract.test.mjs
-# fails when it does not.
+# a ci pod does. What keeps them safe is a sum of limits that fits, and scripts/build-contract.test.mjs fails
+# when it does not:
 #
-# unitCount is DECLARED, not derived: the units come from the registrations of the books branch, which
-# this chart cannot read. Raise it with every unit that joins ci. limitsMemoryBudget is the memory the
-# build node (master1: 59 GiB, 18 GiB in use) had available on 2026-10-09, 40 GiB.
+#   podsPerUnit x unitCount x the largest memory limit of a ci pod (the sum of its steps)
+#   + releaseBuildPods x the memory limit of a buildah pod (the sum of its steps)
+#   <= limitsMemoryBudget
+#
+# The second term is one release, because the release queue starts one release at a time, and the build
+# pods of a release are not counted by the quota (they carry no ci class). Only the first stage run of a
+# release builds; the later stage runs find the image in the registry.
+#
+# unitCount and releaseBuildPods are DECLARED, not derived: the units and their attested builds come from the
+# registrations of the books branch, which this chart cannot read. unitCount counts the build namespaces
+# whose repository belongs to an owner of ciPush.owners (clusters/inventories/image-builder), because only
+# their pushes run a check: 6 of the 8 build namespaces that existed on 2026-10-09; the other two are kept
+# out by ciPush.owners. Raise it with every unit of such an owner that joins. releaseBuildPods is the number
+# of images the largest unit builds at once after the scan (3 on 2026-10-09); the test renders a release
+# with that many images and fails when they do not all run in parallel. limitsMemoryBudget is the memory
+# the build node (master1: 59 GiB, 18 GiB in use) had available on 2026-10-09, 40 GiB.
 ciCapacity:
   priorityClassName: image-builder-ci
-  podsPerUnit: 2
+  podsPerUnit: 1
   unitCount: 6
+  releaseBuildPods: 3
   limitsMemoryBudget: 40Gi
 
 # WHO CANCELS AND DELETES A CI RUN. The ci run keeper of clusters/inventories/image-builder cancels a
