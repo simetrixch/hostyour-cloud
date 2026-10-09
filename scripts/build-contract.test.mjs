@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
-import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
+import {execFileSync, spawnSync} from 'node:child_process';
+import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {immutableChanges, probeImmutableChanges} from './check-immutable.mjs';
@@ -69,21 +69,30 @@ test('immutable render guard catches the planted registry transition inside a gr
 test('admission guard selects typed Tekton fields and keeps native inline refusal', () => {
   const tekton = renderChart('tekton');
   const crd = tekton.find(d => d.kind === 'CustomResourceDefinition' && d.metadata.name === 'pipelineruns.tekton.dev');
-  const properties = crd.spec.versions.find(v => v.name === 'v1').schema.openAPIV3Schema.properties.spec.properties;
-  // Use the shipped schema, not a hand-maintained list of CEL-visible fields.
+  const schema = crd.spec.versions.find(v => v.name === 'v1').schema.openAPIV3Schema;
+  const properties = schema.properties.spec.properties;
+  // Use the shipped schema, not a hand-maintained list of CEL-visible fields. oldObject counts: a delete reads it.
   const guard = renderChart('image-builder').find(d => d.kind === 'ValidatingAdmissionPolicy' &&
     d.metadata.name === 'image-builder-pipelinerun-guard');
-  const untypedFields = policy => [...new Set([...JSON.stringify(policy.spec).matchAll(/object\.spec\.([A-Za-z0-9_]+)/g)]
+  const untypedFields = policy => [...new Set([...JSON.stringify(policy.spec).matchAll(/[oO]bject\.spec\.([A-Za-z0-9_]+)/g)]
     .map(match => match[1]))].filter(field => !properties[field]?.type).sort();
   assert.deepEqual(untypedFields(guard), []);
   const planted = structuredClone(guard);
   planted.spec.validations.push({expression: '!has(object.spec.pipelineSpec)'});
   assert.deepEqual(untypedFields(planted), ['pipelineSpec']);
+  planted.spec.validations.push({expression: '!has(oldObject.spec.notInTheCrd)'});
+  assert.deepEqual(untypedFields(planted), ['notInTheCrd', 'pipelineSpec']);
+  // The delete clauses read whether a run has finished from status.conditions.
+  const untypedConditionFields = root => ['type', 'status'].filter(field => !root.properties.status.properties.conditions?.items?.properties?.[field]?.type);
+  assert.deepEqual(untypedConditionFields(schema), []);
+  const untypedStatus = structuredClone(schema);
+  delete untypedStatus.properties.status.properties.conditions;
+  assert.deepEqual(untypedConditionFields(untypedStatus), ['type', 'status']);
   // Inline-only is denied by the typed reference requirement; an inline spec
   // with a reference is rejected by Tekton's native exactly-one validation.
   assert.equal(guard.spec.failurePolicy, 'Fail');
   assert.ok(guard.spec.validations.some(v => v.expression ===
-    'has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0'));
+    "request.operation == 'DELETE' || (has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0)"));
   const webhook = tekton.find(d => d.kind === 'ValidatingWebhookConfiguration' &&
     d.metadata.name === 'validation.webhook.pipeline.tekton.dev');
   assert.equal(webhook.metadata.labels['pipeline.tekton.dev/release'], 'v1.12.0');
@@ -175,6 +184,8 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a deploy tag push': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository},
     'a push of a delivery branch': {ref: 'refs/heads/deploy/prod', after: SHA, deleted: false, repository},
     'a branch named like a deploy tag': {ref: `refs/heads/deploy/prod/${tag}`, after: SHA, deleted: false, repository},
+    'a push of the books branch': {ref: 'refs/heads/check.example.invalid', after: SHA, deleted: false, repository},
+    'a branch whose name begins with the books branch': {ref: 'refs/heads/check.example.invalid-fix', after: SHA, deleted: false, repository},
     'another tag push': {ref: 'refs/tags/v1.0.0', after: SHA, deleted: false, repository},
     'a branch deletion': {ref: 'refs/heads/feature/x', after: '0'.repeat(40), deleted: true, repository},
     'a branch deletion without the deleted field': {ref: 'refs/heads/feature/x', after: '0'.repeat(40), repository},
@@ -186,8 +197,8 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   };
   const bodies = Object.values(pushes);
   const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies);
-  const verdicts = {ci: [true, true, false, false, false, false, false, false, false, false, false, false, false],
-    deploy: [false, false, true, false, false, false, false, false, false, false, false, true, true]};
+  const verdicts = {ci: [true, true, false, false, false, false, true, false, false, false, false, false, false, false, false],
+    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true]};
   Object.keys(pushes).forEach((name, i) => {
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
@@ -199,6 +210,9 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const anyOwner = (filter) => filter.replace(/ && body\.repository\.owner\.login in \[[^\]]*\]$/, '');
   assert.ok(matches('github-ci-push', [pushes['a branch push of a customer repository']], anyOwner)[0].matched);
   assert.ok(matches('github-ci-push', [pushes['a branch push of an owner that is not listed']], anyOwner)[0].matched);
+  const withBooksBranch = (filter) => filter.replace(/ &&\s+body\.ref != 'refs\/heads\/[^']*'/, '');
+  assert.ok(matches('github-ci-push', [pushes['a push of the books branch']], withBooksBranch)[0].matched,
+    'PLANTED DEFECT: a filter without the books branch exclusion runs the check on every commit of the Manager');
   const everyRef = (filter) => filter.replace("body.ref.startsWith('refs/heads/')", "body.ref.startsWith('refs/')");
   assert.ok(matches('github-ci-push', [pushes['another tag push']], everyRef)[0].matched);
 });
@@ -210,12 +224,13 @@ test('the ci trigger needs a list of owners, and an empty or missing list fails 
     .find((d) => d.kind === 'Trigger' && d.metadata.name === 'github-ci-push').spec.interceptors
     .find((i) => i.ref.name === 'cel').params.find((p) => p.name === 'filter').value;
   assert.ok(filter.endsWith("body.repository.owner.login in ['one', 'two']"), 'every listed owner reaches the filter');
+  assert.throws(() => renderChart('image-builder', ['--set', 'global.booksCluster=']), /global\.booksCluster is required/);
 });
 
 test('the ci pipeline of a unit holds no GitOps credential, mounts only the packages reader, and is no release', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'describe-commit', 'fetch-branches', 'check']);
+  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'describe-commit', 'fetch', 'check']);
   assert.deepEqual(pipeline.spec.finally.map((t) => t.name), ['report-failure']);
   const referencesBump = (doc) => JSON.stringify(doc).includes('bump');
   assert.ok(!referencesBump(pipeline), 'the ci pipeline names no bump task, volume or secret');
@@ -229,13 +244,61 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   assert.equal(check.steps[0].env.find((e) => e.name === 'CI')?.value, 'true', 'a check sees the variable GitHub Actions also sets');
   assert.deepEqual(check.volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
   assert.deepEqual(check.steps[0].volumeMounts.filter((m) => m.name === 'npmrc').map((m) => m.readOnly), [true]);
-  assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['clone', 'fetch-branches']);
+  assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['clone', 'fetch']);
   // Tekton copies a Pipeline's labels onto its runs: a consumer label here would make every ci run a release.
   assert.equal(pipeline.metadata.labels['image-builder.io/ci'], 'shop');
   assert.equal(pipeline.metadata.labels['image-builder.io/consumer'], undefined);
   assert.ok(docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release').metadata.labels['image-builder.io/consumer']);
   const grant = docs.find((d) => d.kind === 'Role' && d.metadata.name === 'eventlistener-create-pipelineruns');
   assert.ok(grant.rules.some((r) => r.resources.includes('pipelineruns') && r.verbs.includes('create')), 'the event listener may create the ci run');
+});
+
+// The pinned sources of other repositories: fetched with the clone credential before the check, read by the
+// check from a read-only volume beside the clone, never inside it.
+test('the fetch task fetches the pinned sources with the credential, and the check reads them read-only without it', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
+  const fetch = task('fetch').taskSpec;
+  assert.deepEqual(fetch.steps.map((s) => s.name), ['branches', 'list-sources', 'sources']);
+  const holdsCredential = (spec) => spec.steps.filter((s) => JSON.stringify(s.envFrom ?? []).includes('build-git-https')).map((s) => s.name);
+  assert.deepEqual(holdsCredential(fetch), ['branches', 'sources'], 'the step that reads the branch\'s ci-sources.json holds no credential');
+  const planted = structuredClone(fetch);
+  planted.steps[1].envFrom = [{secretRef: {name: 'build-git-https'}}];
+  assert.notDeepEqual(holdsCredential(planted), ['branches', 'sources'], 'PLANTED DEFECT: a credential on the reading step is caught');
+  assert.equal(fetch.steps[2].env.find((e) => e.name === 'SOURCES_OWNER_URL').value, 'https://github.com/check', 'sources come from the unit\'s own owner');
+  for (const name of ['clone', 'describe-commit', 'fetch', 'check']) {
+    assert.equal(task(name).workspaces.find((w) => w.name === 'source').subPath, 'repository', `${name} reads the clone from subPath repository`);
+  }
+  for (const name of ['fetch', 'check']) assert.equal(task(name).workspaces.find((w) => w.name === 'sources').subPath, 'sources');
+  const check = task('check').taskSpec;
+  assert.equal(check.workspaces.find((w) => w.name === 'sources').readOnly, true);
+  assert.equal(check.steps[0].env.find((e) => e.name === 'CI_SOURCES_DIR').value, '/workspace/sources');
+  assert.throws(() => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop', repoURL: 'https://gitlab.com/check/shop.git', buildsJson: '[]'})]),
+    /unit\.repoURL .* is not https:\/\/github\.com\/<owner>\/<repository>/);
+});
+
+test('list-sources passes only plain repository names with full commits, and a repository without ci-sources.json fetches nothing', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const script = pipeline.spec.tasks.find((t) => t.name === 'fetch').taskSpec.steps.find((s) => s.name === 'list-sources').script;
+  const SHA = 'a'.repeat(40);
+  const list = (sources) => {
+    const dir = mkdtempSync(join(tmpdir(), 'list-sources-'));
+    try {
+      if (sources !== undefined) writeFileSync(join(dir, 'ci-sources.json'), JSON.stringify(sources));
+      const result = spawnSync('bash', ['-c', script], {cwd: dir, encoding: 'utf8', env: {...process.env, SOURCE_LIST: join(dir, 'list')}});
+      return {status: result.status, lines: existsSync(join(dir, 'list')) && result.status === 0 ? readFileSync(join(dir, 'list'), 'utf8').split('\n').filter(Boolean) : null};
+    } finally {
+      rmSync(dir, {recursive: true, force: true});
+    }
+  };
+  assert.deepEqual(list({git: {'digita-auth': SHA, 'digita-post.v2': 'b'.repeat(40)}, npm: {mongodb: '7.5.0'}}),
+    {status: 0, lines: [`digita-auth ${SHA}`, `digita-post.v2 ${'b'.repeat(40)}`]}, 'PLANTED INNOCENT: plain names and full commits pass, and npm is not read');
+  assert.deepEqual(list(undefined), {status: 0, lines: []});
+  assert.deepEqual(list({npm: {mongodb: '7.5.0'}}), {status: 0, lines: []});
+  for (const [name, commit] of [['../digita-auth', SHA], ['owner/digita-auth', SHA], ['..', SHA], ['digita auth', SHA], ['digita-auth', 'a'.repeat(39)], ['digita-auth', 'A'.repeat(40)], ['digita-auth', 'master']]) {
+    assert.notEqual(list({git: {[name]: commit}}).status, 0, `PLANTED DEFECT: ${name} at ${commit} is refused`);
+  }
+  assert.notEqual(list({git: {'digita-auth': SHA, x: 1}}).status, 0, 'a commit that is not a string is refused');
 });
 
 // A unit that builds nothing ("CI only", `builds: []` in its registration) still gets a ci check on every
@@ -303,7 +366,7 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
     assert.ok(task.timeout, `${task.name} bounds its own run: the timeout of a task restarts while its pod waits for the quota`);
   }
   const bounds = Object.fromEntries(pipeline.spec.tasks.map((t) => [t.name, seconds(t.timeout)]));
-  assert.deepEqual(bounds, {gate: 300, clone: 600, 'describe-commit': 120, 'fetch-branches': 300, check: 1200});
+  assert.deepEqual(bounds, {gate: 300, clone: 600, 'describe-commit': 120, 'fetch': 300, check: 1200});
   const report = pipeline.spec.finally.find((t) => t.name === 'report-failure');
   for (const step of report.taskSpec.steps) {
     for (const side of ['requests', 'limits']) assert.ok(step.computeResources?.[side]?.cpu && step.computeResources?.[side]?.memory, `report-failure/${step.name} has ${side}`);
@@ -452,6 +515,39 @@ test('the admission policy lets the ci run keeper cancel, start and note a ci ru
   const without = structuredClone(policy);
   without.spec.validations = without.spec.validations.filter((v) => v.message !== KEEPER_MESSAGE);
   assert.ok(evaluate(without, Object.values(DENIED)).every((v) => v.denied.length === 0), 'without the keeper clause every one of them is admitted');
+});
+
+test('the admission policy lets the ci run keeper delete a finished ci run of its own namespace, and no other run', () => {
+  const policy = guardOf(imageBuilder());
+  // On a delete object is null; oldObject is the run, and it has finished when its Succeeded condition is True or False.
+  const run = (pipeline, status) => ({metadata: {namespace: 'shop-build', name: `${pipeline}-x`}, spec: {pipelineRef: {name: pipeline}}, ...(status ? {status} : {})});
+  const succeeded = (value) => ({conditions: [{type: 'Succeeded', status: value}]});
+  const deletes = (username, oldObject) => ({object: null, oldObject, request: {operation: 'DELETE', namespace: 'shop-build', userInfo: {username}}});
+  const QUEUE = 'system:serviceaccount:image-builder:release-queue';
+  const DASHBOARD = 'system:serviceaccount:tekton-pipelines:tekton-dashboard';
+  const KEEPER_DELETE_MESSAGE = 'the ci run keeper may only delete a finished ci run of its own namespace.';
+  const ADMITTED = {
+    'the keeper deletes a ci run that succeeded': deletes(KEEPER, run('shop-ci', succeeded('True'))),
+    'the keeper deletes a ci run that failed': deletes(KEEPER, run('shop-ci', succeeded('False'))),
+    'the Tekton Dashboard deletes a running ci run': deletes(DASHBOARD, run('shop-ci', succeeded('Unknown'))),
+    'a user deletes a waiting ci run': deletes('owner@example.com', {...run('shop-ci'), spec: {pipelineRef: {name: 'shop-ci'}, status: 'PipelineRunPending'}}),
+    'the release queue deletes a finished release run': deletes(QUEUE, run('shop-release', succeeded('True'))),
+  };
+  const DENIED = {
+    'the keeper deletes a running ci run': deletes(KEEPER, run('shop-ci', succeeded('Unknown'))),
+    'the keeper deletes a waiting ci run': deletes(KEEPER, {...run('shop-ci'), spec: {pipelineRef: {name: 'shop-ci'}, status: 'PipelineRunPending'}}),
+    'the keeper deletes a ci run with an empty status': deletes(KEEPER, run('shop-ci', {})),
+    'the keeper deletes a ci run with another condition only': deletes(KEEPER, run('shop-ci', {conditions: [{type: 'Ready', status: 'True'}]})),
+    'the keeper deletes a finished release run': deletes(KEEPER, run('shop-release', succeeded('True'))),
+    'the keeper deletes a finished run of another unit\'s ci pipeline': deletes(KEEPER, run('post-ci', succeeded('True'))),
+    'the keeper deletes a finished run without a pipeline': deletes(KEEPER, {metadata: {namespace: 'shop-build', name: 'x'}, spec: {}, status: succeeded('True')}),
+  };
+  const verdicts = evaluate(policy, [...Object.values(ADMITTED), ...Object.values(DENIED)]).map((v) => v.denied);
+  Object.keys(ADMITTED).forEach((name, i) => assert.deepEqual(verdicts[i], [], `PLANTED INNOCENT: ${name}`));
+  Object.keys(DENIED).forEach((name, i) => assert.deepEqual(verdicts[Object.keys(ADMITTED).length + i], [KEEPER_DELETE_MESSAGE], `PLANTED DEFECT: ${name}`));
+  const without = structuredClone(policy);
+  without.spec.validations = without.spec.validations.filter((v) => v.message !== KEEPER_DELETE_MESSAGE);
+  assert.ok(evaluate(without, Object.values(DENIED)).every((v) => v.denied.length === 0), 'without the keeper delete clause every one of them is admitted');
 });
 
 test('a run carries the priority class of its pipeline and no other pod template field', () => {
@@ -664,7 +760,7 @@ test('only the report pod of a ci run reaches the API server and Alertmanager, a
   // Alertmanager's pods and its one port: a namespace alone, or any other port, is wider.
   const alertmanagerRulesAreNarrow = (docs, task) => rulesFor(docs, task).filter(mentionsAlertmanager).every((rule) =>
     rule.to.every((to) => Object.keys(to.podSelector?.matchLabels ?? {}).length > 0) && JSON.stringify(rule.ports) === JSON.stringify([{protocol: 'TCP', port: 9093}]));
-  const CI_TASKS = ['gate', 'clone', 'describe-commit', 'fetch-branches', 'check'];
+  const CI_TASKS = ['gate', 'clone', 'describe-commit', 'fetch', 'check'];
   const holds = (docs) => reachesApiServer(docs, 'report-failure') && reachesAlertmanager(docs, 'report-failure') && alertmanagerRulesAreNarrow(docs, 'report-failure') &&
     CI_TASKS.every((task) => !reachesApiServer(docs, task) && !reachesAlertmanager(docs, task));
   const docs = renderUnit('shop');

@@ -126,8 +126,8 @@ test('the html part escapes the log, a repository\'s own output, and sets it in 
 });
 
 test('two failed tasks of one run are two blocks of one mail, and an annotation that is missing reads as empty', () => {
-  const second = {...posted, labels: {...posted.labels, task: 'fetch-branches', step: 'fetch-branches'},
-    annotations: {...posted.annotations, failure: 'fetch-branches, step fetch-branches: Failed: exited with code 128', log: 'fetch broke'}};
+  const second = {...posted, labels: {...posted.labels, task: 'fetch', step: 'fetch'},
+    annotations: {...posted.annotations, failure: 'fetch, step fetch: Failed: exited with code 128', log: 'fetch broke'}};
   const [text] = renders([{text: emailConfig.text, data: data([posted, second])}]);
   assert.equal(text.error, '');
   assert.ok(text.out.includes(posted.annotations.failure) && text.out.includes(second.annotations.failure) && text.out.includes('fetch broke'));

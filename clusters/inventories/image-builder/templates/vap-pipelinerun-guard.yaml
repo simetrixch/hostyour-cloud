@@ -46,6 +46,12 @@ WHAT IT BINDS (CEL, fail-closed logic):
      without this clause the identity that only starts runs could change what
      they run. It touches release runs only: the ci runs have their own
      identity (clause 9), so the same grant cannot be turned on them.
+     Its grant also holds `delete`, for the finished release runs beyond the
+     newest 20, and a delete by it is admitted only for a run of this
+     namespace's own release Pipeline whose Succeeded condition, read from
+     oldObject at the moment of the delete, is True or False. So a defect in
+     files/release-queue.jq cannot delete a run that waits or runs, nor a ci
+     run.
   8. the only podTemplate a run may carry sets priorityClassName, to the class
      of its pipeline: the release class on a release run, the ci class on a
      ci run. A ci run MUST carry it, because the capacity quota of the build
@@ -66,7 +72,17 @@ WHAT IT BINDS (CEL, fail-closed logic):
      patch can rewrite any field, so without this clause the identity that only
      cancels, starts and notes could change what the runs run, and the cap on
      the ci runs that run at once could be lifted by starting a run it did not
-     count. Starting a release run stays the queue's alone.
+     count. Starting a release run stays the queue's alone. A delete by it,
+     for the finished ci runs beyond the newest 20, is admitted only for a
+     run of this namespace's own ci Pipeline that has finished, the same way
+     as in clause 7, so a defect in files/ci-run-keeper.jq cannot delete a
+     run that waits or runs, nor a release run.
+ 10. a delete by any other identity, the Tekton Dashboard's among them, is not
+     this policy's concern. On a delete `object` is null, so every clause that
+     reads it steps aside with `request.operation == 'DELETE' ||`: an
+     evaluation error is a refusal under failurePolicy Fail and would block
+     every delete in the build namespaces. A variable is evaluated only where
+     a clause reads it, so the variables need no such step.
 */ -}}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -81,7 +97,7 @@ spec:
     resourceRules:
       - apiGroups: ["tekton.dev"]
         apiVersions: ["v1"]
-        operations: ["CREATE", "UPDATE"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
         resources: ["pipelineruns"]
   variables:
     - name: refName
@@ -100,6 +116,16 @@ spec:
     - name: isCiRunKeeper
       expression: >-
         request.userInfo.username == 'system:serviceaccount:' + {{ .Release.Namespace | squote }} + ':ci-run-keeper'
+    # The run a delete removes, read from oldObject: its Pipeline, and whether it has finished, which the
+    # jq programs of both keepers count as a Succeeded condition that is True or False.
+    - name: deletedRefName
+      expression: >-
+        (has(oldObject.spec.pipelineRef) && has(oldObject.spec.pipelineRef.name))
+          ? oldObject.spec.pipelineRef.name : ''
+    - name: deletedRunIsFinished
+      expression: >-
+        has(oldObject.status) && has(oldObject.status.conditions) &&
+        oldObject.status.conditions.exists(c, c.type == 'Succeeded' && (c.status == 'True' || c.status == 'False'))
     # Every field but spec.status and the annotations, unchanged by an update.
     - name: sameBody
       expression: >-
@@ -181,47 +207,53 @@ spec:
     # Native exactly-one validation: Tekton v1.12.0
     # pkg/apis/pipeline/v1/pipelinerun_validation.go:56-62.
     # Inline-only fails this required reference; inline + reference fails Tekton.
-    - expression: "has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0"
+    - expression: "request.operation == 'DELETE' || (has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0)"
       message: "spec.pipelineRef.name is required (a bare Pipeline name)."
       reason: Forbidden
-    - expression: "!has(object.spec.pipelineRef) || !has(object.spec.pipelineRef.resolver)"
+    - expression: "request.operation == 'DELETE' || !has(object.spec.pipelineRef) || !has(object.spec.pipelineRef.resolver)"
       message: "resolver-based / remote pipelineRef is not allowed — use a bare name."
       reason: Forbidden
-    - expression: "has(object.spec.taskRunTemplate) && has(object.spec.taskRunTemplate.serviceAccountName) && object.spec.taskRunTemplate.serviceAccountName == 'pipeline-sa'"
+    - expression: "request.operation == 'DELETE' || (has(object.spec.taskRunTemplate) && has(object.spec.taskRunTemplate.serviceAccountName) && object.spec.taskRunTemplate.serviceAccountName == 'pipeline-sa')"
       message: "PipelineRuns must run under taskRunTemplate.serviceAccountName: pipeline-sa."
       reason: Forbidden
-    - expression: "variables.refName in variables.ownPipelines"
+    - expression: "request.operation == 'DELETE' || variables.refName in variables.ownPipelines"
       message: "a build namespace runs only its own release and ci Pipelines."
       reason: Forbidden
-    - expression: "variables.overrideSAs.all(n, n == 'pipeline-sa')"
+    - expression: "request.operation == 'DELETE' || variables.overrideSAs.all(n, n == 'pipeline-sa')"
       message: "taskRunSpecs may not run a task under another ServiceAccount — every task pod runs as pipeline-sa."
       reason: Forbidden
-    - expression: "variables.onlyReportOverride"
+    - expression: "request.operation == 'DELETE' || variables.onlyReportOverride"
       message: "per-task pod, step, sidecar, metadata and account overrides are not allowed, except the report class on the task report-failure of a ci run."
       reason: Forbidden
-    - expression: "!has(object.spec.taskRunTemplate) || !has(object.spec.taskRunTemplate.podTemplate) || (variables.onlyPriorityClass && variables.carriedPriorityClass == variables.priorityClass)"
+    - expression: "request.operation == 'DELETE' || !has(object.spec.taskRunTemplate) || !has(object.spec.taskRunTemplate.podTemplate) || (variables.onlyPriorityClass && variables.carriedPriorityClass == variables.priorityClass)"
       message: "a managed run's podTemplate sets priorityClassName to the class of its pipeline and nothing else."
       reason: Forbidden
-    - expression: "!variables.refName.endsWith('-ci') || variables.carriedPriorityClass == variables.priorityClass"
+    - expression: "request.operation == 'DELETE' || !variables.refName.endsWith('-ci') || variables.carriedPriorityClass == variables.priorityClass"
       message: "a ci run carries the ci priority class: the capacity quota of its build namespace counts the pods of that class only."
       reason: Forbidden
-    - expression: "!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('tekton.dev/') || k == 'tekton.dev/pipeline')"
+    - expression: "request.operation == 'DELETE' || !has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('tekton.dev/') || k == 'tekton.dev/pipeline')"
       message: "caller labels may not impersonate Tekton task or pod identities."
       reason: Forbidden
     - expression: >-
-        has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
+        request.operation == 'DELETE' || (has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
         object.spec.workspaces.all(w, w.name == 'source' &&
           !has(w.subPath) && !has(w.persistentVolumeClaim) && !has(w.secret) && !has(w.configMap) &&
-          !has(w.emptyDir) && !has(w.projected) && !has(w.csi))
+          !has(w.emptyDir) && !has(w.projected) && !has(w.csi)))
       message: "a managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace."
       reason: Forbidden
-    - expression: "!variables.isReleaseQueue || (request.operation == 'UPDATE' && variables.refName.endsWith('-release') && variables.unchangedButStatus && variables.startsOrKeepsStatus)"
+    - expression: "!variables.isReleaseQueue || request.operation == 'DELETE' || (request.operation == 'UPDATE' && variables.refName.endsWith('-release') && variables.unchangedButStatus && variables.startsOrKeepsStatus)"
       message: "the release queue may only start a waiting release run or note what it waits for."
       reason: Forbidden
-    - expression: "!variables.isCiRunKeeper || (request.operation == 'UPDATE' && variables.refName.endsWith('-ci') && (
+    - expression: "!variables.isReleaseQueue || request.operation != 'DELETE' || (variables.deletedRefName in variables.ownPipelines && variables.deletedRefName.endsWith('-release') && variables.deletedRunIsFinished)"
+      message: "the release queue may only delete a finished release run of its own namespace."
+      reason: Forbidden
+    - expression: "!variables.isCiRunKeeper || request.operation == 'DELETE' || (request.operation == 'UPDATE' && variables.refName.endsWith('-ci') && (
         (variables.sameBody && variables.sameAnnotations && has(object.spec.status) && object.spec.status == 'Cancelled') ||
         (variables.unchangedButStatus && variables.startsOrKeepsStatus)))"
       message: "the ci run keeper may only cancel a ci run, start a waiting one, or note what it waits for."
+      reason: Forbidden
+    - expression: "!variables.isCiRunKeeper || request.operation != 'DELETE' || (variables.deletedRefName in variables.ownPipelines && variables.deletedRefName.endsWith('-ci') && variables.deletedRunIsFinished)"
+      message: "the ci run keeper may only delete a finished ci run of its own namespace."
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1
