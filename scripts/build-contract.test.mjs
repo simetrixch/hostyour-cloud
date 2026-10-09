@@ -414,6 +414,10 @@ test('the memory limits of all ci pods and one release together fit the free mem
   assert.equal(String(capacity.podsPerUnit), docs.find((d) => d.kind === 'ResourceQuota').spec.hard.pods, 'the quota renders the declared pods per unit');
   assert.ok(pipeline.spec.tasks.every((t, i) => i === 0 || t.runAfter?.length === 1 && t.runAfter[0] === pipeline.spec.tasks[i - 1].name), 'the budget counts one ci pod per running run, so the tasks run one after the other');
   assert.equal(release.spec.tasks.filter((t) => t.name.startsWith('build-') && t.runAfter?.includes('scan')).length, capacity.releaseBuildPods, 'every image of the release builds in parallel after the scan');
+  const admitsNextTask = (pods) => pods === 2;
+  assert.ok(admitsNextTask(capacity.podsPerUnit), 'the quota admits the pod of the next task while the finished pod before it still counts, and no more');
+  assert.ok(!admitsNextTask(1), 'PLANTED DEFECT: one pod per unit refuses the next task until the finished pod is gone, and Tekton tries it again a minute later');
+  assert.ok(!admitsNextTask(3), 'PLANTED DEFECT: a third pod has no task of a chain to run, and the memory budget counts one live ci pod per run');
   assert.ok(fitsFreeMemory(capacity, pipeline, cloneTask, release, buildah), 'PLANTED INNOCENT: the limits as they stand fit');
   const planted = structuredClone(pipeline);
   planted.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].computeResources.limits.memory = '4Gi';
@@ -677,12 +681,12 @@ const quotaAdmits = (quota, runningClasses, newClass) => {
   return !counted.includes(newClass) || runningClasses.filter((c) => counted.includes(c)).length + 1 <= Number(quota.spec.hard.pods);
 };
 
-test('the report pod of a red run is admitted by the ci quota while the check of another branch holds its slot', () => {
+test('the report pod of a red run is admitted by the ci quota while the check of another branch holds its slots', () => {
   const builder = imageBuilder();
   const quota = renderUnit('shop').find((d) => d.kind === 'ResourceQuota');
   const run = createdCiRun(builder);
-  const held = [podClassOf(run, 'check')];
-  assert.equal(quota.spec.hard.pods, '1', 'the slot is held by the one check');
+  // Every slot is taken: the check of the other branch and the finished pod before it, which still counts.
+  const held = Array.from({length: Number(quota.spec.hard.pods)}, () => podClassOf(run, 'check'));
   assert.equal(quotaAdmits(quota, held, podClassOf(run, 'check')), false, 'a second ci pod waits');
   assert.equal(quotaAdmits(quota, held, podClassOf(run, 'report-failure')), true, 'PLANTED INNOCENT: the report pod of a red run does not wait for the slot');
   const noOverride = structuredClone(run);
