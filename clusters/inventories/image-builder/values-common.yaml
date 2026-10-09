@@ -34,7 +34,7 @@ workspaces:
 # in each build namespace for the ci class.
 #
 # ciReport is the class of the one pod of a ci run that reports its failure. It ranks like ci, and the quota
-# does not count it: with a single ci pod per unit, a report pod that took that slot would wait for the check
+# does not count it: the quota caps the ci pods of a unit, so a report pod that took a slot could wait for the check
 # of another branch, and the failure mail would come up to 20 minutes late. The ci-push TriggerTemplate gives
 # it to the task report-failure alone, and the admission policy admits no other per-task pod template.
 priorityClasses:
@@ -78,7 +78,7 @@ releaseQueue:
 # The ci run keeper (templates/ci-run-keeper.yaml) starts the waiting ci runs, cancels the ones that a
 # newer push replaces and deletes the oldest finished ones with their workspace claims. It runs the same
 # kubectl image as the release queue. maxRunning is the number of ci runs that run at once across all
-# units, and each unit has at most one of them, because its ci quota lets one pod run. The memory budget
+# units, and each unit has at most one of them, because the keeper starts no second run of a unit. The memory budget
 # test in scripts/build-contract.test.mjs multiplies the memory limits of a ci pod and of the report pod
 # by it, and fails when the sum with one release leaves the budget of ciCapacity in
 # clusters/inventories/consumer-build.

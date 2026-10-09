@@ -9,8 +9,8 @@ things each minute, to the ci runs only (the runs that carry image-builder.io/ci
     branch name.
   - it starts the oldest waiting runs while fewer than ciRunKeeper.maxRunning ci runs have started and
     not finished, at most one run per build namespace and none in a namespace that has a started run,
-    because the ci quota of a unit lets one pod run and a second started run would hold a slot without
-    running. The ci-push TriggerTemplate creates every ci run waiting (spec.status
+    because the ci quota of a unit lets one task pod run (its second slot only covers the finished pod
+    before it) and a second started run would hold a slot without running. The ci-push TriggerTemplate creates every ci run waiting (spec.status
     PipelineRunPending), because the memory limits of the ci pods of every unit together do not fit the
     build node: the cap is what scripts/build-contract.test.mjs adds up. A run that stays waiting carries
     the annotation image-builder.io/queued-behind with the reason (a ci run of its unit runs, or all
