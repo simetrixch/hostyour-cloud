@@ -25,21 +25,34 @@ WHAT IT BINDS (CEL, fail-closed logic):
      this rule is about which Pipeline runs, not which Tasks it uses);
   4. taskRunTemplate.serviceAccountName == pipeline-sa — the isolation SA;
   5. the referenced Pipeline is the NAMESPACE's own: in <unit>-build only
-     <unit>-release may run. This is the ownership binding — a PipelineRun
-     smuggled into a foreign build namespace cannot start that unit's
-     pipeline under its credentials;
+     <unit>-release and <unit>-ci may run. This is the ownership binding — a
+     PipelineRun smuggled into a foreign build namespace cannot start that
+     unit's pipeline under its credentials;
   6. no taskRunSpecs entry names another ServiceAccount. Without this, clause
      4 says nothing: a per-task override picks the SA the task pods actually
      run as;
-  7. no podTemplate turns automountServiceAccountToken back on. pipeline-sa
-     ships it off (clusters/inventories/consumer-build/templates/serviceaccount.yaml) so the
-     step that runs the unit's own build holds no API credential, and a pod
-     spec that sets it true overrides the ServiceAccount.
-  8. the release queue (templates/release-queue.yaml) changes a run only by
+  7. the release queue (templates/release-queue.yaml) changes a run only by
      dropping spec.status PipelineRunPending, which starts it, and by its own
      annotation image-builder.io/queued-behind. Its RBAC grant is `patch`, and a patch can rewrite any field;
      without this clause the identity that only starts runs could change what
-     they run.
+     they run. It touches release runs only: a ci run is created running and
+     is no business of the queue, so the same grant cannot be turned on it.
+  8. the only podTemplate a run may carry sets priorityClassName, to the class
+     of its pipeline: the release class on a release run, the ci class on a
+     ci run. A ci run MUST carry it, because the capacity quota of the build
+     namespace counts the pods of that class and no others, and a ci run
+     without the class would run outside the cap. Every other field is refused,
+     among them automountServiceAccountToken: pipeline-sa ships it off
+     (clusters/inventories/consumer-build/templates/serviceaccount.yaml) so the
+     step that runs the unit's own build holds no API credential, and a pod
+     spec that sets it true overrides the ServiceAccount. The fields of a
+     podTemplate are listed here one by one because CEL cannot ask an object
+     which fields it has; scripts/build-contract.test.mjs checks the list
+     against the Tekton CRD the repository renders.
+  9. the ci run keeper (templates/ci-run-keeper.yaml) changes a run only by
+     setting spec.status to Cancelled, and only on a ci run. Its RBAC grant is
+     `patch` and `delete`; a patch can rewrite any field, so without this clause
+     the identity that only cancels superseded runs could change what they run.
 */ -}}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -61,25 +74,20 @@ spec:
       expression: >-
         (has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name))
           ? object.spec.pipelineRef.name : ''
-    # <unit>-build -> <unit>-release: the one pipeline this namespace owns.
-    - name: ownPipeline
+    # <unit>-build -> <unit>-release and <unit>-ci: the two pipelines this namespace owns.
+    - name: ownPipelines
       expression: >-
         request.namespace.endsWith('-build')
-          ? request.namespace.substring(0, request.namespace.size() - 6) + '-release' : ''
-    # Retired test runs may complete ordinary controller/owner garbage collection,
-    # but no new test run or changed spec is admitted.
-    - name: retiredCleanup
-      expression: >-
-        request.operation == 'UPDATE' &&
-        request.userInfo.username in ['system:serviceaccount:kube-system:generic-garbage-collector', 'system:serviceaccount:tekton:tekton-controller'] &&
-        has(oldObject.metadata.deletionTimestamp) && has(object.metadata.deletionTimestamp) &&
-        object.spec == oldObject.spec &&
-        variables.refName == request.namespace.substring(0, request.namespace.size() - 6) + '-tests'
+          ? [request.namespace.substring(0, request.namespace.size() - 6) + '-release',
+             request.namespace.substring(0, request.namespace.size() - 6) + '-ci'] : []
     - name: isReleaseQueue
       expression: >-
         request.userInfo.username == 'system:serviceaccount:' + {{ .Release.Namespace | squote }} + ':release-queue'
-    # Every field but spec.status and the queue's own annotation, unchanged by an update.
-    - name: unchangedButStatus
+    - name: isCiRunKeeper
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:' + {{ .Release.Namespace | squote }} + ':ci-run-keeper'
+    # Every field but spec.status and the annotations, unchanged by an update.
+    - name: sameBody
       expression: >-
         request.operation != 'UPDATE' || (
           has(object.spec.pipelineRef) == has(oldObject.spec.pipelineRef) &&
@@ -94,15 +102,26 @@ spec:
           (!has(object.spec.workspaces) || object.spec.workspaces == oldObject.spec.workspaces) &&
           has(object.spec.taskRunSpecs) == has(oldObject.spec.taskRunSpecs) &&
           (!has(object.spec.taskRunSpecs) || object.spec.taskRunSpecs == oldObject.spec.taskRunSpecs) &&
+          has(object.spec.managedBy) == has(oldObject.spec.managedBy) &&
+          (!has(object.spec.managedBy) || object.spec.managedBy == oldObject.spec.managedBy) &&
           has(object.metadata.labels) == has(oldObject.metadata.labels) &&
           (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) &&
           has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
-          (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) &&
+          (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers))
+    - name: sameAnnotations
+      expression: >-
+        request.operation != 'UPDATE' || (
+          has(object.metadata.annotations) == has(oldObject.metadata.annotations) &&
+          (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations))
+    # Every field but spec.status and the queue's own annotation, unchanged by an update.
+    - name: unchangedButStatus
+      expression: >-
+        variables.sameBody && (request.operation != 'UPDATE' || (
           (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k == 'image-builder.io/queued-behind' ||
             (has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations &&
              oldObject.metadata.annotations[k] == object.metadata.annotations[k]))) &&
           (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k == 'image-builder.io/queued-behind' ||
-            (has(object.metadata.annotations) && k in object.metadata.annotations))))
+            (has(object.metadata.annotations) && k in object.metadata.annotations)))))
     # The status stays as it was, or a waiting run is started.
     - name: startsOrKeepsStatus
       expression: >-
@@ -110,6 +129,22 @@ spec:
           has(object.spec.status)
             ? (has(oldObject.spec.status) && object.spec.status == oldObject.spec.status)
             : (!has(oldObject.spec.status) || oldObject.spec.status == 'PipelineRunPending'))
+    # The class a run of this pipeline carries in its podTemplate.
+    - name: priorityClass
+      expression: >-
+        variables.refName.endsWith('-release')
+          ? {{ .Values.priorityClasses.release.name | squote }} : {{ .Values.priorityClasses.ci.name | squote }}
+    - name: carriedPriorityClass
+      expression: >-
+        (has(object.spec.taskRunTemplate) && has(object.spec.taskRunTemplate.podTemplate)
+            && has(object.spec.taskRunTemplate.podTemplate.priorityClassName))
+          ? object.spec.taskRunTemplate.podTemplate.priorityClassName : ''
+    # True when the podTemplate sets none of its fields but priorityClassName.
+{{- $otherFields := list "affinity" "automountServiceAccountToken" "dnsConfig" "dnsPolicy" "enableServiceLinks" "env" "hostAliases" "hostNetwork" "hostUsers" "imagePullSecrets" "nodeSelector" "runtimeClassName" "schedulerName" "securityContext" "tolerations" "topologySpreadConstraints" "volumes" }}
+    - name: onlyPriorityClass
+      expression: >-
+        !(has(object.spec.taskRunTemplate) && has(object.spec.taskRunTemplate.podTemplate)) ||
+          ({{ range $index, $field := $otherFields }}{{ if $index }} && {{ end }}!has(object.spec.taskRunTemplate.podTemplate.{{ $field }}){{ end }})
     # Every ServiceAccount a per-task override would substitute for the one in
     # taskRunTemplate.
     - name: overrideSAs
@@ -117,18 +152,6 @@ spec:
         has(object.spec.taskRunSpecs)
           ? object.spec.taskRunSpecs.filter(s, has(s.serviceAccountName)).map(s, s.serviceAccountName)
           : []
-    # True when any pod template in the run asks for the ServiceAccount token
-    # to be mounted — in taskRunTemplate for the whole run, or per task.
-    - name: asksForToken
-      expression: >-
-        ((has(object.spec.taskRunTemplate) && has(object.spec.taskRunTemplate.podTemplate)
-            && has(object.spec.taskRunTemplate.podTemplate.automountServiceAccountToken))
-          ? object.spec.taskRunTemplate.podTemplate.automountServiceAccountToken : false)
-        || (has(object.spec.taskRunSpecs)
-            ? object.spec.taskRunSpecs.exists(s, has(s.podTemplate)
-                && has(s.podTemplate.automountServiceAccountToken)
-                && s.podTemplate.automountServiceAccountToken)
-            : false)
   validations:
     # Native exactly-one validation: Tekton v1.12.0
     # pkg/apis/pipeline/v1/pipelinerun_validation.go:56-62.
@@ -142,8 +165,8 @@ spec:
     - expression: "has(object.spec.taskRunTemplate) && has(object.spec.taskRunTemplate.serviceAccountName) && object.spec.taskRunTemplate.serviceAccountName == 'pipeline-sa'"
       message: "PipelineRuns must run under taskRunTemplate.serviceAccountName: pipeline-sa."
       reason: Forbidden
-    - expression: "variables.refName == variables.ownPipeline || variables.retiredCleanup"
-      message: "a build namespace runs only its own release Pipeline; deleting retired tests permit unchanged controller cleanup."
+    - expression: "variables.refName in variables.ownPipelines"
+      message: "a build namespace runs only its own release and ci Pipelines."
       reason: Forbidden
     - expression: "variables.overrideSAs.all(n, n == 'pipeline-sa')"
       message: "taskRunSpecs may not run a task under another ServiceAccount — every task pod runs as pipeline-sa."
@@ -151,8 +174,11 @@ spec:
     - expression: "!has(object.spec.taskRunSpecs) || object.spec.taskRunSpecs.size() == 0"
       message: "per-task pod, step, sidecar, metadata and account overrides are not allowed."
       reason: Forbidden
-    - expression: "!has(object.spec.taskRunTemplate) || !has(object.spec.taskRunTemplate.podTemplate)"
-      message: "caller pod templates are not allowed in managed build runs."
+    - expression: "!has(object.spec.taskRunTemplate) || !has(object.spec.taskRunTemplate.podTemplate) || (variables.onlyPriorityClass && variables.carriedPriorityClass == variables.priorityClass)"
+      message: "a managed run's podTemplate sets priorityClassName to the class of its pipeline and nothing else."
+      reason: Forbidden
+    - expression: "!variables.refName.endsWith('-ci') || variables.carriedPriorityClass == variables.priorityClass"
+      message: "a ci run carries the ci priority class: the capacity quota of its build namespace counts the pods of that class only."
       reason: Forbidden
     - expression: "!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('tekton.dev/') || k == 'tekton.dev/pipeline')"
       message: "caller labels may not impersonate Tekton task or pod identities."
@@ -164,11 +190,11 @@ spec:
           !has(w.emptyDir) && !has(w.projected) && !has(w.csi))
       message: "a managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace."
       reason: Forbidden
-    - expression: "!variables.asksForToken"
-      message: "podTemplate.automountServiceAccountToken must stay off — the step that runs the built repo's own code holds no API credential."
-      reason: Forbidden
-    - expression: "!variables.isReleaseQueue || (request.operation == 'UPDATE' && variables.unchangedButStatus && variables.startsOrKeepsStatus)"
+    - expression: "!variables.isReleaseQueue || (request.operation == 'UPDATE' && variables.refName.endsWith('-release') && variables.unchangedButStatus && variables.startsOrKeepsStatus)"
       message: "the release queue may only start a waiting release run or note what it waits for."
+      reason: Forbidden
+    - expression: "!variables.isCiRunKeeper || (request.operation == 'UPDATE' && variables.refName.endsWith('-ci') && variables.sameBody && variables.sameAnnotations && has(object.spec.status) && object.spec.status == 'Cancelled')"
+      message: "the ci run keeper may only cancel a ci run."
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

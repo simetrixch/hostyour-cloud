@@ -1,0 +1,28 @@
+{{- /*
+The two priorities of the build node (values: priorityClasses). A run carries its class through
+taskRunTemplate.podTemplate.priorityClassName of the TriggerTemplate that creates it, and the admission
+policy image-builder-pipelinerun-guard admits no other pod template.
+
+Neither class preempts. A release build must not evict a platform pod to find room, and a ci pod must not
+evict anything; the room a release needs is kept by the quota on the ci class, which bounds how many ci pods
+hold requests at once.
+*/ -}}
+{{- range $kind := list "release" "ci" }}
+{{- $class := get $.Values.priorityClasses $kind }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ $class.name }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: priority-class
+  annotations:
+    # A pod that names a class that does not exist is refused, so the classes sync before the
+    # trigger templates that put them on the pods.
+    argocd.argoproj.io/sync-wave: "-1"
+value: {{ $class.value }}
+globalDefault: false
+preemptionPolicy: Never
+description: {{ printf "Pods of %s runs on the build plane." $kind | quote }}
+---
+{{- end }}

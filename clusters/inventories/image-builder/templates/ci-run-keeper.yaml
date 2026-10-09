@@ -1,0 +1,139 @@
+{{- /*
+THE CI RUN KEEPER. Every branch push creates one ci run, and each run holds a PersistentVolumeClaim
+of workspaces.sourceSize on the one build node until the run is deleted. This CronJob does two things
+each minute, to the ci runs only (the runs that carry image-builder.io/ci):
+
+  - it cancels a run that has not finished while a newer push to the same branch has a run of its own,
+    because the newer push replaces it. The branch travels on each run as the annotation
+    image-builder.io/ci-branch, set by the ci-push TriggerTemplate; a label cannot hold the `/` of a
+    branch name.
+  - it deletes the finished runs of a build namespace beyond the newest 20. Kubernetes deletes a run's
+    claim with it, through the claim's owner reference.
+
+files/ci-run-keeper.jq decides; files/ci-run-keeper.sh applies; scripts/ci-run-keeper.test.mjs runs
+the decision on planted runs. Release runs carry no image-builder.io/ci label and are never listed.
+
+ITS RIGHTS. Read on PipelineRuns cluster-wide (the build namespaces come and go with the units), and
+patch and delete only in each <unit>-build namespace, rendered there by clusters/inventories/consumer-build
+(templates/rbac-ci-run-keeper.yaml). A patch can rewrite any field, so the admission policy
+image-builder-pipelinerun-guard limits this identity to setting spec.status Cancelled on a ci run. It
+does not see a deletion.
+*/ -}}
+{{- if .Values.eventListener.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ci-run-keeper
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: ci-run-keeper
+data:
+  ci-run-keeper.jq: |
+{{ .Files.Get "files/ci-run-keeper.jq" | indent 4 }}
+  ci-run-keeper.sh: |
+{{ .Files.Get "files/ci-run-keeper.sh" | indent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-run-keeper
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: ci-run-keeper
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: image-builder-ci-run-keeper-read
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: ci-run-keeper
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: image-builder-ci-run-keeper-read
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: ci-run-keeper
+subjects:
+  - kind: ServiceAccount
+    name: ci-run-keeper
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: image-builder-ci-run-keeper-read
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ci-run-keeper
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: ci-run-keeper
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 50
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 50
+      ttlSecondsAfterFinished: 120
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: image-builder
+            app.kubernetes.io/component: ci-run-keeper
+        spec:
+          serviceAccountName: ci-run-keeper
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+          containers:
+            - name: ci-run-keeper
+              image: {{ required "image-builder: ciRunKeeper.image is required" .Values.ciRunKeeper.image | quote }}
+              command: ["bash", "/keeper/ci-run-keeper.sh"]
+              env:
+                - name: KEEPER_DIR
+                  value: /keeper
+                # kubectl keeps its discovery cache under HOME; the root filesystem is read only.
+                - name: HOME
+                  value: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 128Mi
+              volumeMounts:
+                - name: keeper
+                  mountPath: /keeper
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            - name: keeper
+              configMap:
+                name: ci-run-keeper
+{{- end }}

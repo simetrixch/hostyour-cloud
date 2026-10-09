@@ -1,7 +1,7 @@
 apiVersion: v2
 name: image-builder
 version: 1.0.0
-description: The build plane's shared surface — the EventListener + deploy-request Trigger (the ONE webhook entry point of the release cycle) and the 3-Task library (git-clone -> credential-scan -> buildah-build-push) every <unit>-release Pipeline resolves via the cluster resolver. The per-unit pipelines, namespaces and credentials are rendered by clusters/inventories/consumer-build; images push to the GitOps-managed Zot registry at clusters/inventories/registry/ under their FLAT build names.
+description: The build plane's shared surface — the EventListener with the deploy-request Trigger (the ONE webhook entry point of the release cycle) and the ci-push Trigger (a branch push runs the repository's check), and the 3-Task library (git-clone -> credential-scan -> buildah-build-push) every <unit>-release Pipeline resolves via the cluster resolver. The per-unit pipelines, namespaces and credentials are rendered by clusters/inventories/consumer-build; images push to the GitOps-managed Zot registry at clusters/inventories/registry/ under their FLAT build names.
 type: application
 
 dependencies:

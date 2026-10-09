@@ -5,7 +5,7 @@ time from platform globals:
     <subdomain>.<domain>     (e.g. build.dev.<your-domain>)
 
 cert-manager issues the TLS cert via the platform's global ClusterIssuer.
-One path, /github — the deploy-request Trigger is the single webhook entry
+One path, /github — the EventListener's Triggers are the single webhook entry
 point, and GitHub is the platform's git host. The backend Service is
 `el-image-builder` (Tekton's controller names it `el-` + EventListener name).
 */ -}}

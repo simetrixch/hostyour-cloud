@@ -5,8 +5,13 @@
 // its string extension at version 2 as Kubernetes registers it. Objects are dynamically typed here;
 // the API server also checks them against the CRD's schema, which this does not.
 //
-// stdin:  {"policy": <the ValidatingAdmissionPolicy>, "requests": [{"object", "oldObject", "request"}, ...]}
-// stdout: one {"denied": ["<message>", ...]} per request, in order. A compile error exits 1.
+// The same environment also binds `body`, so the CEL of a Tekton Trigger's cel interceptor runs here
+// too: its filter is a validation (a request it denies is a push the trigger ignores) and each of its
+// overlays is a variable, read back from "variables".
+//
+// stdin:  {"policy": <the ValidatingAdmissionPolicy>, "requests": [{"object", "oldObject", "request", "body"}, ...]}
+// stdout: one {"denied": ["<message>", ...], "variables": {"<name>": "<value>", ...}} per request, in
+//         order; "variables" holds the variables that evaluate to a string. A compile error exits 1.
 package main
 
 import (
@@ -38,7 +43,7 @@ func main() {
 		fail("could not read the input: %v", err)
 	}
 	env, err := cel.NewEnv(
-		cel.Variable("object", cel.DynType), cel.Variable("oldObject", cel.DynType), cel.Variable("request", cel.DynType),
+		cel.Variable("object", cel.DynType), cel.Variable("oldObject", cel.DynType), cel.Variable("request", cel.DynType), cel.Variable("body", cel.DynType),
 		cel.Variable("variables", cel.MapType(cel.StringType, cel.DynType)), ext.Strings(ext.StringsVersion(2)))
 	if err != nil {
 		fail("could not build the CEL environment: %v", err)
@@ -65,10 +70,14 @@ func main() {
 	out := json.NewEncoder(os.Stdout)
 	for _, request := range input.Requests {
 		values := map[string]any{}
-		activation := map[string]any{"object": request["object"], "oldObject": request["oldObject"], "request": request["request"], "variables": values}
+		texts := map[string]string{}
+		activation := map[string]any{"object": request["object"], "oldObject": request["oldObject"], "request": request["request"], "body": request["body"], "variables": values}
 		for i, v := range input.Policy.Spec.Variables {
 			if result, _, err := variables[i].Eval(activation); err == nil {
 				values[v.Name] = result
+				if text, ok := result.Value().(string); ok {
+					texts[v.Name] = text
+				}
 			}
 		}
 		denied := []string{}
@@ -80,7 +89,7 @@ func main() {
 				denied = append(denied, v.Message)
 			}
 		}
-		if err := out.Encode(map[string]any{"denied": denied}); err != nil {
+		if err := out.Encode(map[string]any{"denied": denied, "variables": texts}); err != nil {
 			fail("could not write the answer: %v", err)
 		}
 	}
