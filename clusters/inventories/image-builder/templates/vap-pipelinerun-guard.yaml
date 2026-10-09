@@ -46,6 +46,10 @@ WHAT IT BINDS (CEL, fail-closed logic):
      without this clause the identity that only starts runs could change what
      they run. It touches release runs only: the ci runs have their own
      identity (clause 9), so the same grant cannot be turned on them.
+     Its grant also holds `delete`, for the finished release runs beyond the
+     newest 20. This policy matches CREATE and UPDATE only, so which runs it
+     deletes rests on files/release-queue.jq and its tests, as it does for
+     the ci run keeper.
   8. the only podTemplate a run may carry sets priorityClassName, to the class
      of its pipeline: the release class on a release run, the ci class on a
      ci run. A ci run MUST carry it, because the capacity quota of the build
