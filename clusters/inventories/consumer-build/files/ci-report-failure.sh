@@ -50,13 +50,22 @@ cleaned() {
 }
 
 # What one TaskRun says: whether it failed, which step, and the results it left.
+#
+# A TaskRun that Tekton cancelled is a failure when the time budget of the run ran out: Tekton cancels the
+# running TaskRuns with the message below (pkg/apis/pipeline/v1/taskrun_types.go, TaskRunCancelledByPipelineTimeoutMsg),
+# marks them failed with the reason TaskRunCancelled, and still runs this task. Any other cancel is a newer
+# push replacing the run; that cancels the PipelineRun itself, which runs no finally task, so such a
+# TaskRun is never read here as a failure.
 taskrun_info='
   (.status.conditions // [] | map(select(.type == "Succeeded")) | .[0] // {}) as $c
+  | ($c.reason == "TaskRunCancelled"
+     and (.spec.statusMessage // "") == "TaskRun cancelled as the PipelineRun it belongs to has timed out.") as $timed_out
   | ((.status.steps // []) as $steps
      | ($steps | map(select((.terminated.exitCode // 0) != 0)) | .[0])
        // ($steps | map(select(.terminated == null)) | .[0]) // {}) as $s
-  | {failed: ($c.status == "False" and $c.reason != "TaskRunCancelled"),
-     reason: ($c.reason // ""), message: ($c.message // ""),
+  | {failed: ($c.status == "False" and ($c.reason != "TaskRunCancelled" or $timed_out)),
+     reason: ($c.reason // ""),
+     message: (($c.message // "") + (if $timed_out then " The time budget of the run ran out, so Tekton cancelled this task." else "" end)),
      pod: (.status.podName // ""), step: ($s.name // ""), container: ($s.container // ""),
      exitCode: ($s.terminated.exitCode // null),
      results: ((.status.results // []) | map({(.name): .value}) | add // {})}'
@@ -108,7 +117,7 @@ if get "/apis/tekton.dev/v1/namespaces/${namespace}/pipelineruns/${PIPELINE_RUN}
 fi
 
 if [ ! -s "${work}/failures.jsonl" ] && [ "${#problems[@]}" -eq 0 ]; then
-  echo "report-failure: no task of ${PIPELINE_RUN} failed on its own (a cancelled run is not a failure), so there is nothing to mail"
+  echo "report-failure: no task of ${PIPELINE_RUN} failed on its own (a task cancelled by a newer push is not a failure), so there is nothing to mail"
   exit 0
 fi
 

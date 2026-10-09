@@ -25,6 +25,31 @@ test('a cancelled run posts nothing', () => {
   assert.deepEqual(result.alerts, [], 'PLANTED INNOCENT: a run that a newer push replaced is no failure');
 });
 
+// The message Tekton writes to a TaskRun it cancels because the PipelineRun's time budget ran out, and the
+// one for a PipelineRun that was cancelled (pkg/apis/pipeline/v1/taskrun_types.go in Tekton v1.12.0).
+const CANCELLED_BY_TIMEOUT = 'TaskRun cancelled as the PipelineRun it belongs to has timed out.';
+const CANCELLED_BY_PIPELINE = 'TaskRun cancelled as the PipelineRun it belongs to has been cancelled.';
+const cancelled = (statusMessage) => withFailure('check', {reason: 'TaskRunCancelled', statusMessage, steps: [{name: 'check', container: 'step-check'}],
+  message: `TaskRun "${RUN}-check" was cancelled. ${statusMessage ?? ''}`.trim()});
+
+test('a task that Tekton cancelled because the run\'s time budget ran out is mailed, with the reason and a note', () => {
+  const result = execute({taskRuns: cancelled(CANCELLED_BY_TIMEOUT)});
+  assert.equal(result.status, 0, result.stderr);
+  const alert = only(result.alerts);
+  assert.equal(alert.labels.task, 'check', 'PLANTED DEFECT: a script that treats every TaskRunCancelled as no failure posts nothing here');
+  assert.equal(alert.labels.step, 'check');
+  assert.match(alert.annotations.failure, /^check, step check: TaskRunCancelled: .*has timed out\. The time budget of the run ran out, so Tekton cancelled this task\.$/);
+  assert.match(alert.annotations.log, /^the pod of check is gone/, 'Tekton deletes the pod of a cancelled task, so the mail says so');
+});
+
+test('a task that a newer push cancelled, with or without a message, posts nothing', () => {
+  for (const statusMessage of [CANCELLED_BY_PIPELINE, undefined]) {
+    const result = execute({taskRuns: cancelled(statusMessage)});
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.alerts, [], `PLANTED INNOCENT: a cancel by a newer push (${statusMessage ?? 'no message'}) is no failure`);
+  }
+});
+
 test('a red check posts one alert with its labels, its links and exactly the last 60 lines of the failed step', () => {
   const result = execute({taskRuns: withFailure('check'), logs: {[`${RUN}-check-pod`]: numbered(500)}});
   assert.equal(result.status, 0, result.stderr);

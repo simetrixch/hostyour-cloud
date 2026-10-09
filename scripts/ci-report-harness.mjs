@@ -45,7 +45,8 @@ if [ -n "$lines" ]; then tail -n "$lines" "$file" > "$out"; else cp "$file" "$ou
 printf 200
 `;
 
-export const taskRun = (task, {pod = `${RUN}-${task}-pod`, container, ok = true, reason, exitCode = 1, message = ok ? '' : `"step-${task}" exited with code ${exitCode}`, results = {}, steps} = {}) => ({
+export const taskRun = (task, {pod = `${RUN}-${task}-pod`, container, ok = true, reason, exitCode = 1, message = ok ? '' : `"step-${task}" exited with code ${exitCode}`, results = {}, steps, statusMessage} = {}) => ({
+  spec: statusMessage ? {status: 'Cancelled', statusMessage} : {},
   status: {
     podName: pod,
     conditions: [{type: 'Succeeded', status: ok ? 'True' : 'False', reason: reason ?? (ok ? 'Succeeded' : 'Failed'), message}],
