@@ -6,6 +6,10 @@ AlertmanagerConfig platform-default routes every alert but severity=info.
 The Manager writes a failed run as one error line `"msg":"run failed"` (with runId, kind and the
 masked runError), and a nightly backup that did not start as a warning "nightly backup was not
 started today" (hostyour-manager server/executor/executor.ts, server/boot/nightly-backup-schedule.ts).
+A run queued behind a failed or cancelled run's lock is one warning `"msg":"a run waits behind a failed
+run's lock"` per waiting run and holder, with waitingRunId, holderRunId, holderFailedStep and holderError
+(server/executor/queue-dispatch.ts). A failed run keeps its locks until it is retried, aborted or
+deleted, so that wait has no end of its own.
 
 A digita engine writes one error line `"msg":"Engine plugin switched off after repeated failures"` (with
 plugin, reason and ports) when three failed calls in a row switch an engine plugin off (digita-platform
@@ -29,6 +33,13 @@ data:
             annotations:
               summary: 'A Manager run of kind {{`{{ $labels.kind }}`}} failed'
               description: 'The run is in the Manager''s run list; its log line in Loki carries runId and runError.'
+          - alert: ManagerRunWaitsBehindFailedRun
+            expr: 'sum by (holderRunId) (count_over_time({namespace="manager"} |= "\"msg\":\"a run waits behind a failed run''s lock\"" | json holderRunId="holderRunId" [15m])) > 0'
+            labels:
+              severity: warning
+            annotations:
+              summary: 'A Manager run waits behind the failed run {{`{{ $labels.holderRunId }}`}}'
+              description: 'The waiting run stays queued until the failed run is retried, aborted or deleted on the Manager''s Runs page. Its log line in Loki carries waitingRunId, holderRunId, holderFailedStep and holderError.'
           - alert: NightlyBackupNotStarted
             expr: 'sum(count_over_time({namespace="manager"} |= "nightly backup was not started today" [1h])) > 0'
             labels:
