@@ -102,10 +102,10 @@ test('release runs are created waiting, and the queue runs every minute with rea
 
 test('each build namespace grants the queue patch and delete on its PipelineRuns and nothing else', () => {
   const docs = renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop', repoURL: 'https://github.com/check/shop.git', buildsJson: '[]'})]);
-  const role = docs.find((d) => d.kind === 'Role' && d.metadata.name === 'release-queue-start-pipelineruns');
+  const role = docs.find((d) => d.kind === 'Role' && d.metadata.name === 'release-queue-start-and-prune-pipelineruns');
   assert.equal(role.metadata.namespace, 'shop-build');
   assert.deepEqual(role.rules, [{apiGroups: ['tekton.dev'], resources: ['pipelineruns'], verbs: ['patch', 'delete']}]);
-  const binding = docs.find((d) => d.kind === 'RoleBinding' && d.metadata.name === 'release-queue-start-pipelineruns');
+  const binding = docs.find((d) => d.kind === 'RoleBinding' && d.metadata.name === 'release-queue-start-and-prune-pipelineruns');
   assert.deepEqual(binding.subjects, [{kind: 'ServiceAccount', name: 'release-queue', namespace: 'image-builder'}]);
 });
 
