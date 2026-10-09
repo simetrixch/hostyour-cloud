@@ -4,7 +4,9 @@ from this template beside `<unit>-release`. Every push of a branch runs the
 repository's own scripts/check.sh at the pushed commit, so red is seen on the
 build plane and not only on the machine of whoever pushed:
 
-  gate → clone@commit → fetch-branches → check.
+  gate → clone@commit → describe-commit → fetch-branches → check,
+
+and a finally task, report-failure, mails the error lines of every task that failed.
 
 It is not a release and shares nothing with one but the namespace, the
 ServiceAccount and the clone credential. The run is created by the
@@ -40,17 +42,36 @@ check renders charts. One public image carries all but the last, so the helm
 release is pinned here by its sha256 and installed by the check step. No image
 is built by us.
 
-THE LOG: the check step tees its full output, the install included, into the
-workspace at .git/ci-check.log, so whoever reports a failed run reads the last
-lines of it from workspace `source` without asking the cluster for pod logs.
-It sits inside .git because no check lints, formats or asks `git status` about
-that folder, and a file in the working tree would be seen by all three.
+THE FAILURE MAIL. When a task fails, report-failure reads the last 60 lines of
+the step that failed from the Kubernetes API, as pods/log of the pod that the
+task's TaskRun names, and posts ONE alert, CIRunFailed, to Alertmanager. The
+route for that alert mails it (clusters/inventories/observability), so the mail
+carries the error and needs no click to be read. The grant is a Role that reads
+nothing but the run, its TaskRuns and pod logs (templates/rbac-ci-report.yaml),
+and report-failure is the only task of this Pipeline that mounts a token. Its
+pod is also the only one in the namespace that may reach the API server and
+Alertmanager (templates/networkpolicy.yaml): Alertmanager takes any alert from
+anybody, so a pod that runs the repository's code must not reach it.
+
+The subject and the author of the commit come from describe-commit, which runs
+before any code of the repository does. report-failure does not run git itself,
+because a pod that holds a token must not read the .git/config of a workspace
+that the check has had in its hands.
+
+report-failure runs after a task timeout because the ci TriggerTemplate bounds
+the tasks and the finally task separately (clusters/inventories/image-builder,
+templates/triggers/github-ci-push.yaml). A run that is cancelled in place of
+failing, which is how a newer push replaces it, runs no finally task and mails
+nothing.
 */ -}}
 {{- if and .Values.unit (eq (include "consumer-build.hasBuilds" .) "true") }}
 {{- $unit := include "consumer-build.unitName" . -}}
 {{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
 {{- /* The image the shared git-clone Task runs (image-builder/templates/tasks/git-clone.yaml). */ -}}
 {{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
+{{- /* The image report-failure runs: bash, curl, jq and the shell tools its script uses. The release pipeline runs the same tag, unpinned, and the ci run keeper runs it for kubectl and jq. */ -}}
+{{- $reportImage := "alpine/k8s:1.35.6@sha256:b7a12c5ddf261994c33d2eaaa06fd69a0803ff6b38683bfa3d30a76dcdf92807" -}}
+{{- $alertmanager := required "consumer-build: ciFailureReport.alertmanager is required" .Values.ciFailureReport.alertmanager -}}
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
@@ -63,8 +84,9 @@ metadata:
     image-builder.io/ci: {{ $unit | quote }}
 spec:
   description: >-
-    Runs the repository's scripts/check.sh at one pushed commit. The full
-    output of the check is left in workspace `source` at .git/ci-check.log.
+    Runs the repository's scripts/check.sh at one pushed commit. When a task
+    fails, the finally task report-failure mails the last 60 lines of the step
+    that failed through Alertmanager.
   params:
     - name: commit
       type: string
@@ -77,9 +99,7 @@ spec:
       description: The webhook's claim of the repository, compared against the registered repoURL.
   workspaces:
     - name: source
-      description: >-
-        The clone of the repository. The check leaves its full output at
-        .git/ci-check.log.
+      description: The clone of the repository.
   tasks:
     # ── 1. gate — the repo claim and the commit, BEFORE any clone ────────────
     - name: gate
@@ -150,7 +170,45 @@ spec:
       workspaces:
         - { name: source, workspace: source }
 
-    # ── 3. fetch-branches — the heads a check compares the commit against ────
+    # ── 3. describe-commit — the subject and the author, for the failure mail ─
+    # It runs before the check, so the git of this pod reads a clone that no
+    # code of the repository has touched. The results are read from the
+    # TaskRun by report-failure, which runs no git.
+    - name: describe-commit
+      runAfter: [clone]
+      timeout: 2m0s
+      params:
+        - { name: commit, value: "$(params.commit)" }
+      workspaces:
+        - { name: source, workspace: source }
+      taskSpec:
+        params:
+          - name: commit
+            type: string
+        workspaces:
+          - name: source
+        results:
+          - name: subject
+            description: The first line of the commit message, cut at 200 characters.
+          - name: author
+            description: The name and the address of the commit's author.
+        steps:
+          - name: describe
+            image: {{ $gitImage }}
+            workingDir: /workspace/source
+            env:
+              - name: COMMIT
+                value: "$(params.commit)"
+            script: |
+              #!/usr/bin/env sh
+              set -eu
+              git log -1 --format=%s "${COMMIT}" | cut -c1-200 | tr -d '\n' > "$(results.subject.path)"
+              git log -1 --format='%an <%ae>' "${COMMIT}" | cut -c1-200 | tr -d '\n' > "$(results.author.path)"
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
+
+    # ── 4. fetch-branches — the heads a check compares the commit against ────
     # The clone fetches the one commit and nothing else, so no origin/<branch>
     # exists. A check that diffs against its default branch (a freeze guard that
     # reads origin/master) would refuse every run. It is a task
@@ -158,7 +216,7 @@ spec:
     # step must never hold. The credential store lives in /tmp of this
     # container, never in the workspace.
     - name: fetch-branches
-      runAfter: [clone]
+      runAfter: [describe-commit]
       timeout: 5m0s
       workspaces:
         - { name: source, workspace: source }
@@ -187,7 +245,7 @@ spec:
               requests: { cpu: 50m, memory: 128Mi }
               limits: { cpu: 500m, memory: 256Mi }
 
-    # ── 4. check — the repository's own scripts/check.sh ─────────────────────
+    # ── 5. check — the repository's own scripts/check.sh ─────────────────────
     - name: check
       runAfter: [fetch-branches]
       timeout: 20m0s
@@ -254,26 +312,97 @@ spec:
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
-              {
-                # pnpm 11.7.0 is what the units' Dockerfiles activate. A unit
-                # whose package.json names packageManager overrides it.
-                corepack enable
-                corepack prepare pnpm@11.7.0 --activate
 
-                # helm 4.3.0, for a check that renders charts.
-                curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
-                echo "86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb  /tmp/helm.tar.gz" | sha256sum -c -
-                tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm
+              # pnpm 11.7.0 is what the units' Dockerfiles activate. A unit
+              # whose package.json names packageManager overrides it.
+              corepack enable
+              corepack prepare pnpm@11.7.0 --activate
 
-                # The Chrome of the image, for the units whose tests print PDFs.
-                # A unit that has no use for the variables ignores them.
-                REPORT_CHROMIUM_PATH="$(ls /home/pptruser/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome | head -n 1)"
-                export REPORT_CHROMIUM_PATH
-                # Root in a container cannot use Chrome's sandbox, and the pod's
-                # /dev/shm is 64 MiB.
-                export REPORT_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage
+              # helm 4.3.0, for a check that renders charts.
+              curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
+              echo "86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb  /tmp/helm.tar.gz" | sha256sum -c -
+              tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm
 
-                pnpm install --frozen-lockfile
-                bash scripts/check.sh
-              } 2>&1 | tee .git/ci-check.log
+              # The Chrome of the image, for the units whose tests print PDFs.
+              # A unit that has no use for the variables ignores them.
+              REPORT_CHROMIUM_PATH="$(ls /home/pptruser/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome | head -n 1)"
+              export REPORT_CHROMIUM_PATH
+              # Root in a container cannot use Chrome's sandbox, and the pod's
+              # /dev/shm is 64 MiB.
+              export REPORT_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage
+
+              pnpm install --frozen-lockfile
+              bash scripts/check.sh
+
+  finally:
+    # ── report-failure — one mail for a failed run, with the error in it ──────
+    # Runs when a task failed or timed out (a cancelled run runs no finally
+    # task). It needs no workspace: everything it mails it reads from the API.
+    # The projected token is the only credential, and this is the only task of
+    # the Pipeline that mounts one.
+    - name: report-failure
+      timeout: 5m0s
+      when:
+        - input: "$(tasks.status)"
+          operator: in
+          values: ["Failed"]
+      params:
+        - { name: pipeline-run, value: "$(context.pipelineRun.name)" }
+        - { name: branch, value: "$(params.branch)" }
+        - { name: commit, value: "$(params.commit)" }
+      taskSpec:
+        params:
+          - name: pipeline-run
+            type: string
+          - name: branch
+            type: string
+          - name: commit
+            type: string
+        volumes:
+          # The shape of the release bump's API credential: the token, the
+          # cluster CA and the namespace in one directory, which is where an
+          # in-cluster client looks. 600 seconds is the shortest life the API
+          # server accepts, and the task is bounded at 5 minutes.
+          - name: api-token
+            projected:
+              sources:
+                - serviceAccountToken:
+                    path: token
+                    expirationSeconds: 600
+                - configMap:
+                    name: kube-root-ca.crt
+                    items:
+                      - { key: ca.crt, path: ca.crt }
+                - downwardAPI:
+                    items:
+                      - path: namespace
+                        fieldRef:
+                          fieldPath: metadata.namespace
+        steps:
+          - name: report
+            image: {{ $reportImage }}
+            env:
+              - name: SERVICE_ACCOUNT_DIR
+                value: /var/run/secrets/kubernetes.io/serviceaccount
+              - name: PIPELINE_RUN
+                value: "$(params.pipeline-run)"
+              - name: REPOSITORY
+                value: {{ $unit | quote }}
+              - name: BRANCH
+                value: "$(params.branch)"
+              - name: COMMIT
+                value: "$(params.commit)"
+              - name: DASHBOARD_URL
+                value: {{ printf "https://tekton.%s" (required "consumer-build: global.domain is required (clusters/active/<fqdn>.yaml, the fqdn of the cluster this build plane runs on — the failure mail links to the Tekton Dashboard there)" .Values.global.domain) | quote }}
+              - name: GRAFANA_URL
+                value: {{ printf "https://grafana.%s" (required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, the install branch of the cluster holding the master role — the failure mail links to the Grafana there)" .Values.global.booksCluster) | quote }}
+              - name: ALERTMANAGER_URL
+                value: {{ printf "http://%s.%s.svc:%v" $alertmanager.serviceName $alertmanager.namespace $alertmanager.port | quote }}
+            volumeMounts:
+              - { name: api-token, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true }
+            script: |
+{{ .Files.Get "files/ci-report-failure.sh" | indent 14 }}
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 500m, memory: 256Mi }
 {{- end }}

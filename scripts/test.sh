@@ -14,6 +14,11 @@ echo 'test: release queue — one release at a time on the build plane, and the 
 node --test scripts/release-queue.test.mjs || fail 'scripts/release-queue.test.mjs'
 echo 'test: ci run keeper — a newer push replaces the older run of its branch, and the newest 20 finished ci runs of a build namespace stay.'
 node --test scripts/ci-run-keeper.test.mjs || fail 'scripts/ci-run-keeper.test.mjs'
+echo 'test: ci report — a failed ci run posts one alert with the last 60 lines of the failed step, and a green or cancelled run posts nothing.'
+node --test scripts/ci-report-failure.test.mjs || fail 'scripts/ci-report-failure.test.mjs'
+echo 'test: ci failure mail — the alert reaches its own route once, and becomes a mail that carries the error and escapes it.'
+helm dependency update clusters/inventories/observability
+node --test scripts/ci-failure-mail.test.mjs || fail 'scripts/ci-failure-mail.test.mjs'
 echo 'test: manager-generator-refresh — approved grant only.'
 helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'

@@ -1,0 +1,51 @@
+{{- /*
+What the ci failure report may read in THIS unit's build namespace: its own PipelineRun,
+the TaskRuns of it and the log of a pod, and nothing else. `get` only: no list, no watch,
+no resource beyond these three, and not the pods themselves. The report finds the failed
+task from the run's own record, which names each TaskRun, and each TaskRun names its pod.
+
+The Role is bound to pipeline-sa, because the run's pods run under it. The grant reaches
+a pod only when the pod mounts a token, and pipeline-sa mounts none by default
+(templates/serviceaccount.yaml): only the finally task report-failure of the ci pipeline
+does, and the release bump's argo-sync step mounts one as well. So the bump's token gains
+this read: it can read the runs and the pod logs of this namespace, which hold no secret
+(a step that printed one would be a defect of that step) and which a release run's own
+steps could read before.
+*/ -}}
+{{- if .Values.unit }}
+{{- $unit := include "consumer-build.unitName" . -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-report-read
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: ci-report-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns", "taskruns"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-report-read
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: ci-report-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-sa
+    namespace: {{ printf "%s-build" $unit }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ci-report-read
+{{- end }}

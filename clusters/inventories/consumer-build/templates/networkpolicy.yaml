@@ -151,4 +151,56 @@ spec:
         - protocol: TCP
           port: {{ . }}
         {{- end }}
+---
+{{- /*
+API-server and Alertmanager pinhole for the ci REPORT pod ONLY (the finally task
+report-failure of the ci pipeline). Tekton stamps every TaskRun pod with
+tekton.dev/pipelineTask=<task name>, so this selects exactly that pod, which runs
+no code of the repository. It reads the run from the API server and posts one alert
+to Alertmanager.
+
+ALERTMANAGER HAS NO AUTHENTICATION and the observability namespace carries no
+NetworkPolicy, so whoever reaches port 9093 can mail the owner anything. That is why
+this port is opened to this pod and not in build-egress, which every pod of the
+namespace, the check step that runs the repository's code and its dependencies'
+install scripts among them, falls under. The destination is the Alertmanager pod and
+port 9093 only, selected by namespace and pod labels in the same `to` entry, so both
+must hold. The API-server rule is the bump's: the node addresses and ports, post-DNAT.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ci-report-egress
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    image-builder.io/consumer: {{ $unit | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: report-failure
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{- range $nodeCidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range .Values.bump.apiServer.ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.ciFailureReport.alertmanager.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.ciFailureReport.alertmanager.podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.ciFailureReport.alertmanager.port }}
 {{- end }}

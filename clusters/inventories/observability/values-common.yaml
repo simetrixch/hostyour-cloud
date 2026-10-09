@@ -685,15 +685,52 @@ monitoring:
       # alert carrying no severity label, because Alertmanager reads an absent
       # label as the empty string; it is not what keeps Watchdog out, since
       # kube-prometheus-stack labels Watchdog `severity: none`.
+      #
+      # CIRunFailed is the fourth: it has its own route below, and every
+      # AlertmanagerConfig route is a first-level sibling that continues, so an
+      # alert that both routes match is mailed twice, once in each form.
       matchers:
         - { name: alertname, matchType: "!=", value: Watchdog }
         - { name: alertname, matchType: "!=", value: InfoInhibitor }
+        - { name: alertname, matchType: "!=", value: CIRunFailed }
         - { name: severity, matchType: "!=", value: info }
       # How long a still-firing group waits before it is mailed again. The
       # chart template's default is the same 4h.
       repeatInterval: 4h
       # No emails → falls back to .Values.global.alertRecipients.
       # The receiver name defaults to the entry key ("platform-default").
+
+    # A ci run on the build plane that failed, mailed with the error in it. The
+    # finally task of the ci pipeline (clusters/inventories/consumer-build) posts one
+    # CIRunFailed alert for the run, so this route has nothing to evaluate: no rule
+    # fires it, and it is not a state that clears.
+    #
+    # ONE RED RUN SENDS ONE MAIL because of three settings together.
+    #   The alert is posted once and ends by its own endsAt, 10 minutes later, so it
+    #     is firing for 10 minutes and then resolved.
+    #   repeatInterval is 12h, far above those 10 minutes, so the group that is
+    #     still firing is not mailed again at its later flushes.
+    #   sendResolved is false, so the end of the alert mails nothing. Alertmanager
+    #     still records the resolution at the next flush, and a later failure of the
+    #     same commit on the same task is then a first notification again.
+    # groupInterval stays at 5m for that last reason: the resolution is recorded at
+    # the first flush after the alert ends, and until then a second failure with the
+    # same labels would count as the one already mailed.
+    #
+    # groupBy names the run: the repository, the branch and the commit, so the
+    # failures of two branches, or of two commits of one branch, are two mails, and a
+    # second alert of the same commit (another failed task) joins the group of the
+    # first. groupWait is 5s, the time the mail waits for it.
+    ci-run-failed:
+      enabled: true
+      template: ci
+      sendResolved: false
+      matchers:
+        - { name: alertname, matchType: "=", value: CIRunFailed }
+      groupBy: [alertname, repository, branch, commit]
+      groupWait: 5s
+      groupInterval: 5m
+      repeatInterval: 12h
 
 # ============================================================================
 # Who may open Prometheus' query API (templates/networkpolicy.yaml)
@@ -817,6 +854,60 @@ kube-prometheus-stack:
     # alertmanager.templateFiles stands OUTSIDE that block and `tpl` never reaches it at either
     # setting, so the Go template in alert.tmpl arrives byte for byte and Alertmanager renders it.
     tplConfig: true
+    # The mail of a failed ci run (route ci-run-failed above), rendered by Alertmanager like alert.tmpl,
+    # which stands in values-{dev,test,prod}.yaml: the two files merge into one map. The alert comes from
+    # the finally task of the ci pipeline (clusters/inventories/consumer-build/files/ci-report-failure.sh),
+    # which sets every label and annotation read here. Its group is one run (group_by repository, branch,
+    # commit), so the subject reads the group's common labels and the body reads each alert. The failure
+    # annotation names every failed task and step with the reason, and the log annotation holds their lines.
+    # The log is plain text and html/template escapes it: a log line is the repository's own output, and the
+    # html part must not be able to carry markup of it.
+    templateFiles:
+      ci.tmpl: |-
+        {{- define "ci.subject" -}}
+        CI red: {{ .CommonLabels.repository }} {{ .CommonLabels.branch }} {{ .CommonLabels.commit }}
+        {{- end -}}
+
+        {{- define "ci.text" -}}
+        {{ range .Alerts -}}
+        Repository: {{ .Labels.repository }}
+        Branch:     {{ .Labels.branch }}
+        Commit:     {{ .Labels.commit }}
+        Subject:    {{ .Annotations.subject }}
+        Author:     {{ .Annotations.author }}
+
+        Failed:
+        {{ .Annotations.failure }}
+
+        Log:
+        {{ .Annotations.log }}
+
+        Run:        {{ .Annotations.run_url }}
+        Logs:       {{ .Annotations.logs_url }}
+        {{ end }}
+        {{- end -}}
+
+        {{- define "ci.html" -}}
+        <!DOCTYPE html>
+        <html><head><meta charset="utf-8"><title>{{ template "ci.subject" . }}</title></head>
+        <body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1f2937;max-width:900px;margin:0 auto;padding:16px;">
+        {{ range .Alerts -}}
+        <h2 style="margin:0 0 8px 0;color:#dc2626;">CI red: {{ .Labels.repository }}</h2>
+        <table style="border-collapse:collapse;margin:0 0 16px 0;">
+        <tr><td style="padding:2px 12px 2px 0;color:#6b7280;">Branch</td><td>{{ .Labels.branch }}</td></tr>
+        <tr><td style="padding:2px 12px 2px 0;color:#6b7280;">Commit</td><td>{{ .Labels.commit }}</td></tr>
+        <tr><td style="padding:2px 12px 2px 0;color:#6b7280;">Subject</td><td>{{ .Annotations.subject }}</td></tr>
+        <tr><td style="padding:2px 12px 2px 0;color:#6b7280;">Author</td><td>{{ .Annotations.author }}</td></tr>
+        </table>
+        <p style="margin:0 0 4px 0;color:#6b7280;">Failed</p>
+        <pre style="white-space:pre-wrap;margin:0 0 16px 0;">{{ .Annotations.failure }}</pre>
+        <p style="margin:0 0 4px 0;color:#6b7280;">Log</p>
+        <pre style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;background:#111827;color:#e5e7eb;padding:12px;white-space:pre-wrap;word-break:break-word;margin:0 0 16px 0;">{{ .Annotations.log }}</pre>
+        <p style="margin:0 0 4px 0;"><a href="{{ .Annotations.run_url }}">The run in the Tekton Dashboard</a></p>
+        <p style="margin:0;"><a href="{{ .Annotations.logs_url }}">The logs of the run in Grafana</a></p>
+        {{ end }}
+        </body></html>
+        {{- end -}}
     alertmanagerSpec:
       storage:
         volumeClaimTemplate:

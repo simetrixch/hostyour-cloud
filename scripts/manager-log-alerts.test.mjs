@@ -5,9 +5,10 @@ import {copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
-// A failed Manager run, and a nightly backup that did not start, reach Alertmanager through a rule of
-// the master's Loki: the Manager writes them only to its process log ("run failed" at error, "nightly
-// backup was not started today" at warn), and Alloy ships that log to Loki under namespace="manager".
+// A failed Manager run, a nightly backup that did not start, and a run that waits behind a failed run's
+// lock reach Alertmanager through a rule of the master's Loki: the Manager writes them only to its
+// process log ("run failed" at error, "nightly backup was not started today" and "a run waits behind a
+// failed run's lock" at warn), and Alloy ships that log to Loki under namespace="manager".
 // The single-binary Loki renders no `ruler.directories`, so the rules come as this chart's ConfigMap,
 // mounted where the ruler's local storage reads the rules of its one tenant, "fake".
 
@@ -47,7 +48,11 @@ test('the ruler reads local rules and sends to the master\'s Alertmanager', () =
 
 test('PLANTED DEFECT: each Manager line has its alert, on the manager namespace, never at severity info', () => {
   const rules = rulesOf(rendered());
-  const expected = {ManagerRunFailed: '"msg":"run failed"', NightlyBackupNotStarted: 'nightly backup was not started today'};
+  const expected = {
+    ManagerRunFailed: '"msg":"run failed"',
+    ManagerRunWaitsBehindFailedRun: '"msg":"a run waits behind a failed run\'s lock"',
+    NightlyBackupNotStarted: 'nightly backup was not started today',
+  };
   for (const [alert, line] of Object.entries(expected)) {
     const rule = rules.find((r) => r.alert === alert);
     assert.ok(rule, `no ${alert} rule`);
@@ -55,4 +60,38 @@ test('PLANTED DEFECT: each Manager line has its alert, on the manager namespace,
     assert.ok(rule.expr.includes(line.replaceAll('"', '\\"')) || rule.expr.includes(line), `${alert} does not match the Manager's line ${line}`);
     assert.notEqual(rule.labels?.severity, 'info', `${alert} is info, which platform-default does not route`);
   }
+});
+
+// What LogQL matches each log line against: the string of the rule's `|=` filter.
+const lineFilterOf = (expr) => {
+  const filter = expr.match(/\|= "((?:[^"\\]|\\.)*)"/);
+  assert.ok(filter, `no line filter in ${expr}`);
+  return JSON.parse(`"${filter[1]}"`);
+};
+
+test('PLANTED DEFECT: a run that waits behind a failed run is alerted by the holder, with what the log line carries', () => {
+  const rules = rulesOf(rendered());
+  const rule = rules.find((r) => r.alert === 'ManagerRunWaitsBehindFailedRun');
+  assert.ok(rule, 'no ManagerRunWaitsBehindFailedRun rule');
+  assert.equal(rule.labels?.severity, 'warning');
+  assert.match(rule.expr, /^sum by \(holderRunId\) \(count_over_time\(.* \| json holderRunId="holderRunId" \[15m\]\)\) > 0$/);
+  assert.match(rule.annotations?.summary, /\{\{ \$labels\.holderRunId \}\}/);
+  for (const field of ['waitingRunId', 'holderRunId', 'holderFailedStep', 'holderError']) assert.match(rule.annotations?.description, new RegExp(field));
+  assert.match(rule.annotations?.description, /retried, aborted or deleted/);
+
+  // The line the Manager writes (hostyour-manager server/executor/queue-dispatch.ts), as pino prints it.
+  const planted = JSON.stringify({
+    level: 40, time: 1791543396858, waitingRunId: 'run_waiting', waitingKind: 'tenant-refresh-members', holderRunId: 'run_holder', holderKind: 'tenant-refresh-members',
+    holderStatus: 'failed', holderFailedStep: 'Wait for the Applications to converge', holderError: 'three Applications are Degraded', resource: 'master-kube', key: 'master', msg: "a run waits behind a failed run's lock",
+  });
+  assert.ok(planted.includes(lineFilterOf(rule.expr)), 'the rule does not match the line the Manager writes');
+  assert.ok(!planted.includes(lineFilterOf(rules.find((r) => r.alert === 'ManagerRunFailed').expr)), 'a waiting run would also read as a failed run');
+});
+
+test('PLANTED INNOCENT: the lines of a failed run and of a nightly backup are not a run waiting behind a failed run', () => {
+  const filter = lineFilterOf(rulesOf(rendered()).find((r) => r.alert === 'ManagerRunWaitsBehindFailedRun').expr);
+  const failedRun = JSON.stringify({level: 50, runId: 'run_holder', kind: 'tenant-refresh-members', runError: 'three Applications are Degraded', msg: 'run failed'});
+  const backup = JSON.stringify({level: 40, kind: 'consumer', err: 'busy', msg: 'nightly backup was not started today'});
+  assert.ok(!failedRun.includes(filter));
+  assert.ok(!backup.includes(filter));
 });
