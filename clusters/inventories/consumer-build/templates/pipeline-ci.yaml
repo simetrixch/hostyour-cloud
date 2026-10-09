@@ -1,0 +1,262 @@
+{{- /*
+The unit's ci pipeline `<unit>-ci` — ONE generic pipeline, rendered per unit
+from this template beside `<unit>-release`. Every push of a branch runs the
+repository's own scripts/check.sh at the pushed commit, so red is seen on the
+build plane and not only on the machine of whoever pushed:
+
+  gate → clone@commit → fetch-branches → check.
+
+It is not a release and shares nothing with one but the namespace, the
+ServiceAccount and the clone credential. The run is created by the
+github-ci-push Trigger (clusters/inventories/image-builder), running at once;
+the release queue never sees it, because neither this Pipeline nor its run
+carries image-builder.io/consumer. Tekton copies a Pipeline's labels onto its
+runs, so the label of this Pipeline is image-builder.io/ci and nothing else
+may be added to it that a release selector reads.
+
+The trust split:
+
+  PINNED LITERALS: repoURL, the images, the pnpm and helm versions.
+
+  RUN INPUTS (from the push webhook, proven in-pipeline): git-url is the
+  webhook's own claim of the repo and is compared fail-closed against the
+  pinned repoURL before any credential is in reach; commit must be a full
+  lowercase SHA-1 before it reaches a shell; branch is only displayed.
+
+THE CHECK RUNS THE REPOSITORY'S OWN CODE and holds nothing worth stealing:
+no ServiceAccount token (pipeline-sa mounts none), no clone credential
+(build-git-https belongs to the clone and fetch-branches tasks, whose
+containers end before the check starts), and never the GitOps write tokens of
+the release bump, which this Pipeline does not reference at all. The one secret in
+reach is build-npmrc, the packages reader, mounted read-only as the user npmrc
+because `pnpm install` cannot read the private @<owner> packages without it.
+The pod runs under the namespace's build-egress policy, like every pod here:
+public 443/80 outward, nothing inward.
+
+WHAT THE CHECK NEEDS, read from the check.sh of every unit: Node 24, pnpm,
+git and bash; a mongod, which mongodb-memory-server downloads on first use; a
+Chrome for digita-report's PDF tests; and helm for digita-post. One public
+image carries all but the last, so the helm release is pinned here by its
+sha256 and installed by the check step. No image is built by us.
+
+THE LOG: the check step tees its full output, the install included, into the
+workspace at ci/check.log, so whoever reports a failed run reads the last lines
+of it from workspace `source` without asking the cluster for pod logs.
+*/ -}}
+{{- if and .Values.unit (eq (include "consumer-build.hasBuilds" .) "true") }}
+{{- $unit := include "consumer-build.unitName" . -}}
+{{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
+{{- /* The image the shared git-clone Task runs (image-builder/templates/tasks/git-clone.yaml). */ -}}
+{{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: {{ printf "%s-ci" $unit }}
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: ci-pipeline
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    image-builder.io/ci: {{ $unit | quote }}
+spec:
+  description: >-
+    Runs the repository's scripts/check.sh at one pushed commit. The full
+    output of the check is left in workspace `source` at ci/check.log.
+  params:
+    - name: commit
+      type: string
+      description: The pushed commit, a full lowercase SHA-1.
+    - name: branch
+      type: string
+      description: The pushed branch, without refs/heads/.
+    - name: git-url
+      type: string
+      description: The webhook's claim of the repository, compared against the registered repoURL.
+  workspaces:
+    - name: source
+      description: >-
+        The clone of the repository. The check leaves its full output at
+        ci/check.log.
+  tasks:
+    # ── 1. gate — the repo claim and the commit, BEFORE any clone ────────────
+    - name: gate
+      params:
+        - { name: commit, value: "$(params.commit)" }
+        - { name: branch, value: "$(params.branch)" }
+        - { name: git-url, value: "$(params.git-url)" }
+      taskSpec:
+        params:
+          - name: commit
+            type: string
+          - name: branch
+            type: string
+          - name: git-url
+            type: string
+        steps:
+          - name: gate
+            image: {{ $gitImage }}
+            env:
+              - name: REPO_URL
+                value: {{ $repoURL | quote }}
+              # Run inputs travel as environment variables, never as text of
+              # the script: a branch name may hold shell syntax.
+              - name: GIT_URL
+                value: "$(params.git-url)"
+              - name: COMMIT
+                value: "$(params.commit)"
+              - name: BRANCH
+                value: "$(params.branch)"
+            script: |
+              #!/usr/bin/env sh
+              set -eu
+              if [ "${GIT_URL}" != "${REPO_URL}" ]; then
+                echo "gate: REJECT — webhook repo '${GIT_URL}' is not the registered repoURL '${REPO_URL}'" >&2
+                exit 1
+              fi
+              case "${COMMIT}" in
+                *[!0-9a-f]*) valid=no ;;
+                *) valid=yes ;;
+              esac
+              if [ "${valid}" != yes ] || [ "${#COMMIT}" -ne 40 ]; then
+                echo "gate: REJECT — commit '${COMMIT}' is not a full lowercase SHA-1" >&2
+                exit 1
+              fi
+              printf 'gate: ok — %s at %s (branch %s)\n' "${REPO_URL}" "${COMMIT}" "${BRANCH}"
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
+
+    # ── 2. clone — the pushed commit, from the PINNED repoURL ────────────────
+    - name: clone
+      runAfter: [gate]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: git-clone }
+          - { name: namespace, value: image-builder }
+      params:
+        - { name: url, value: {{ $repoURL | quote }} }
+        - { name: revision, value: "$(params.commit)" }
+        # Full history of the commit: a check may compare against its base.
+        - { name: depth, value: "0" }
+        # The unit's OWN clone credential, as the release clones with.
+        - { name: credentials-secret, value: build-git-https }
+      workspaces:
+        - { name: source, workspace: source }
+
+    # ── 3. fetch-branches — the heads a check compares the commit against ────
+    # The clone fetches the one commit and nothing else, so no origin/<branch>
+    # exists. A check that diffs against its default branch (digita-platform's
+    # engine-freeze reads origin/master) would refuse every run. It is a task
+    # of its own because the fetch needs the clone credential, which the check
+    # step must never hold. The credential store lives in /tmp of this
+    # container, never in the workspace.
+    - name: fetch-branches
+      runAfter: [clone]
+      workspaces:
+        - { name: source, workspace: source }
+      taskSpec:
+        workspaces:
+          - name: source
+        steps:
+          - name: fetch
+            image: {{ $gitImage }}
+            envFrom:
+              - secretRef:
+                  name: build-git-https
+            workingDir: /workspace/source
+            script: |
+              #!/usr/bin/env sh
+              set -eu
+              printf '%s\n' "${GITCREDENTIALS}" > /tmp/git-credentials
+              chmod 600 /tmp/git-credentials
+              export HOME=/tmp
+              git config --global credential.helper "store --file=/tmp/git-credentials"
+              git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+              echo "fetch-branches: ok — the branch heads of origin are at refs/remotes/origin"
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 500m, memory: 256Mi }
+
+    # ── 4. check — the repository's own scripts/check.sh ─────────────────────
+    - name: check
+      runAfter: [fetch-branches]
+      workspaces:
+        - { name: source, workspace: source }
+      taskSpec:
+        workspaces:
+          - name: source
+        volumes:
+          # The unit's authenticated .npmrc, mounted as the buildah build step
+          # mounts it (build-npmrc, optional: a unit without private packages
+          # has no such Secret).
+          - name: npmrc
+            secret:
+              secretName: build-npmrc
+              optional: true
+          # The pnpm content store of this run. It cannot sit on the workspace,
+          # which is the repository itself, and a store shared between runs
+          # saves nothing worth a claim: a cold install takes seconds.
+          - name: pnpm-store
+            emptyDir: {}
+        steps:
+          - name: check
+            # ghcr.io/puppeteer/puppeteer: Node 24, git, bash, curl, and the
+            # Chrome for Testing its PDF tests need, on the node:24-bookworm
+            # base. The tag and the digest were read from the registry
+            # (manifest of 25.13.0, linux/amd64).
+            image: ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
+            workingDir: /workspace/source
+            securityContext:
+              # The clone leaves the workspace to root, and the image's own
+              # user is 10042. Root without the ability to gain more.
+              runAsUser: 0
+              allowPrivilegeEscalation: false
+            env:
+              - name: NPM_CONFIG_USERCONFIG
+                value: /npmrc/.npmrc
+              - name: pnpm_config_store_dir
+                value: /pnpm-store
+              - name: COREPACK_ENABLE_DOWNLOAD_PROMPT
+                value: "0"
+            volumeMounts:
+              - name: npmrc
+                mountPath: /npmrc
+                readOnly: true
+              - name: pnpm-store
+                mountPath: /pnpm-store
+            # Sized from one cold run (install and check) of each of the six units
+            # on a 32-core development machine under a CPU quota of 4 cores: at
+            # most 2.3 GiB of anonymous memory (digita-report with Chrome), 2.9 GiB
+            # with the page cache (digita-platform), and up to three cores in use.
+            computeResources:
+              requests: { cpu: "1", memory: 2Gi }
+              limits: { cpu: "4", memory: 4Gi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              mkdir -p ci
+              {
+                # pnpm 11.7.0 is what the units' Dockerfiles activate. A unit
+                # whose package.json names packageManager overrides it.
+                corepack enable
+                corepack prepare pnpm@11.7.0 --activate
+
+                # helm 4.3.0, for the chart renders of digita-post's check.
+                curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
+                echo "86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb  /tmp/helm.tar.gz" | sha256sum -c -
+                tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm
+
+                # The Chrome of the image, for the units whose tests print PDFs.
+                # A unit that has no use for the variables ignores them.
+                REPORT_CHROMIUM_PATH="$(ls /home/pptruser/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome | head -n 1)"
+                export REPORT_CHROMIUM_PATH
+                # Root in a container cannot use Chrome's sandbox, and the pod's
+                # /dev/shm is 64 MiB.
+                export REPORT_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage
+
+                pnpm install --frozen-lockfile
+                bash scripts/check.sh
+              } 2>&1 | tee ci/check.log
+{{- end }}

@@ -17,13 +17,14 @@ pipeline:
   eventListenerServiceAccountName: eventlistener-sa
 
 # Workspace sizing. The `source` workspace holds the cloned source for the
-# duration of one PipelineRun (PVC-backed; auto-cleaned by Tekton's pruner).
-# Read by the deploy-request TriggerTemplate's volumeClaimTemplate.
+# duration of one PipelineRun (PVC-backed; Kubernetes deletes the claim with
+# its PipelineRun). Read by the volumeClaimTemplate of the deploy-request and
+# ci-push TriggerTemplates.
 workspaces:
   sourceSize: 10Gi
 
-# EventListener config — exposed publicly so GitHub can call it on a
-# deploy/<stage>/<release-tag> tag push.
+# EventListener config — exposed publicly so GitHub can call it on a branch
+# push and on a deploy/<stage>/<release-tag> tag push.
 eventListener:
   enabled: true
 

@@ -46,11 +46,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     image-builder.io/consumer: {{ $unit | quote }}
 spec:
-  podSelector:
-    matchExpressions:
-      - key: tekton.dev/pipelineTask
-        operator: NotIn
-        values: [tests]
+  podSelector: {}
   policyTypes:
     - Egress
   egress:

@@ -1,0 +1,160 @@
+{{- if .Values.eventListener.enabled }}
+{{- /*
+GitHub BRANCH push → the unit's own ci pipeline. Every push of a branch fires
+ONE PipelineRun `<unit>-ci-…` in the unit's build namespace, which runs the
+repository's scripts/check.sh at the pushed commit, so a red check is seen on
+the build plane and not only on the machine of whoever pushed.
+
+It is NOT a release. The run is created running, not waiting: it never passes
+through the release queue, and it carries image-builder.io/ci, never
+image-builder.io/consumer, which the release queue and the Manager select
+releases by. Tekton copies a Pipeline's labels onto its runs, so the ci
+Pipeline must not carry the consumer label either
+(clusters/inventories/consumer-build/templates/pipeline-ci.yaml).
+
+ROUTING is the deploy trigger's: the unit is body.repository.name, the name
+invariant makes namespace `<unit>-build` and pipelineRef `<unit>-ci` derivable
+from the webhook alone, an unregistered repository resolves to a namespace
+that does not exist so the run is never created, and the pipeline's own first
+task compares clone_url fail-closed against its pinned repoURL.
+
+The two triggers never overlap. This filter takes refs/heads/ only, and the
+deploy trigger takes refs/tags/deploy/ only, so a branch push never builds a
+release and a tag push never runs the check.
+
+DELIVERY BRANCHES are NOT pushed to check. The release bump force-pushes
+deploy/<stage> of the unit's repository (templates/pipeline-release.yaml, the
+bump's place_delivery_branch) with the release commit plus its pins, a commit
+that was checked on its branch before its tag was cut. Without the exclusion
+every release would start one more run per stage and per repository.
+
+BRANCH DELETION is NOT a push to check: GitHub sends the SAME push event
+(deleted:true, after:000…0, head_commit:null), and a run for it could only die
+at clone. The deleted guard is has()-wrapped so a payload without the field
+cannot error the cel interceptor, and the all-zero `after` is refused on its
+own because the commit is the one thing the run cannot do without.
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: github-ci-push
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: github
+spec:
+  interceptors:
+    - ref:
+        name: github
+      params:
+        - name: secretRef
+          value:
+            secretName: image-builder-webhook-secrets
+            secretKey: github
+        - name: eventTypes
+          value: ["push"]
+    - ref:
+        name: cel
+      params:
+        - name: overlays
+          value:
+            # The unit, by the name invariant: body.repository.name IS
+            # basename(repoURL) of the registration this push belongs to.
+            - key: unit
+              expression: body.repository.name.lowerAscii()
+            # Everything after `refs/heads/` (11 characters). A branch name
+            # may contain '/', so the ref is cut, not split.
+            - key: branch
+              expression: body.ref.substring(11)
+            - key: commit
+              expression: body.after
+            # The webhook's own claim of the repo — the pipeline's first task
+            # compares it fail-closed against its pinned repoURL.
+            - key: git-url
+              expression: body.repository.clone_url
+        - name: filter
+          value: >-
+            body.ref.startsWith('refs/heads/') &&
+            !body.ref.startsWith('refs/heads/deploy/') &&
+            !(has(body.deleted) && body.deleted) &&
+            !body.after.matches(r'^0+$')
+  bindings:
+    - ref: github-ci-push-binding
+  template:
+    ref: ci-push
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-ci-push-binding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: github
+spec:
+  params:
+    - name: unit
+      value: $(extensions.unit)
+    - name: branch
+      value: $(extensions.branch)
+    - name: commit
+      value: $(extensions.commit)
+    - name: git-url
+      value: $(extensions.git-url)
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: ci-push
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: github
+spec:
+  params:
+    - name: unit
+    - name: branch
+    - name: commit
+    - name: git-url
+  resourcetemplates:
+    # ONE PipelineRun in the unit's own build namespace, under the same
+    # per-unit create grant the release run uses
+    # (clusters/inventories/consumer-build/templates/rbac-eventlistener.yaml).
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: $(tt.params.unit)-ci-
+        namespace: $(tt.params.unit)-build
+        labels:
+          # Not image-builder.io/consumer: the release queue counts a run
+          # carrying that label as a release that holds the next one back,
+          # and the Manager shows it as a release.
+          image-builder.io/ci: $(tt.params.unit)
+      spec:
+        pipelineRef:
+          name: $(tt.params.unit)-ci
+        taskRunTemplate:
+          serviceAccountName: pipeline-sa
+        # Bounds a hung check, which would otherwise hold its workspace PVC
+        # until the default timeout of an hour.
+        timeouts:
+          pipeline: 20m0s
+        params:
+          - name: commit
+            value: $(tt.params.commit)
+          - name: branch
+            value: $(tt.params.branch)
+          - name: git-url
+            value: $(tt.params.git-url)
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                resources:
+                  requests:
+                    storage: {{ .Values.workspaces.sourceSize }}
+{{- end }}
