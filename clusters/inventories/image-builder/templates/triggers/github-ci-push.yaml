@@ -1,6 +1,7 @@
 {{- if .Values.eventListener.enabled }}
 {{- $owners := (default (dict) .Values.ciPush).owners -}}
 {{- if not $owners }}{{ fail "image-builder: ciPush.owners is required: list the GitHub owners whose repositories run their check here" }}{{ end -}}
+{{- $booksBranch := required "image-builder: global.booksCluster is required (clusters/active/<fqdn>.yaml, the install branch of the cluster holding the master role): the ci trigger leaves that branch out" (.Values.global).booksCluster -}}
 {{- /*
 GitHub BRANCH push → the unit's own ci pipeline. Every push of a branch fires
 ONE PipelineRun `<unit>-ci-…` in the unit's build namespace, which runs the
@@ -36,6 +37,13 @@ deploy/<stage> of the unit's repository (templates/pipeline-release.yaml, the
 bump's place_delivery_branch) with the release commit plus its pins, a commit
 that was checked on its branch before its tag was cut. Without the exclusion
 every release would start one more run per stage and per repository.
+
+THE BOOKS BRANCH is NOT pushed to check. It is named after the cluster that
+holds the master role (global.booksCluster), and the Manager commits to it in
+every repository that carries the installation's books, the deploy repository
+among them: registrations and pins, written by a program, not code a person
+pushed. Without the exclusion every such commit would start a ci run, and the
+check of the trunk fails on content the books branch does not carry.
 
 BRANCH DELETION is NOT a push to check: GitHub sends the SAME push event
 (deleted:true, after:000…0, head_commit:null), and a run for it could only die
@@ -86,6 +94,7 @@ spec:
           value: >-
             body.ref.startsWith('refs/heads/') &&
             !body.ref.startsWith('refs/heads/deploy/') &&
+            body.ref != {{ printf "refs/heads/%s" $booksBranch | squote }} &&
             !(has(body.deleted) && body.deleted) &&
             !body.after.matches(r'^0+$') &&
             body.repository.owner.login in [{{ range $index, $owner := $owners }}{{ if $index }}, {{ end }}{{ $owner | squote }}{{ end }}]

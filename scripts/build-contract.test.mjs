@@ -175,6 +175,8 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a deploy tag push': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository},
     'a push of a delivery branch': {ref: 'refs/heads/deploy/prod', after: SHA, deleted: false, repository},
     'a branch named like a deploy tag': {ref: `refs/heads/deploy/prod/${tag}`, after: SHA, deleted: false, repository},
+    'a push of the books branch': {ref: 'refs/heads/check.example.invalid', after: SHA, deleted: false, repository},
+    'a branch whose name begins with the books branch': {ref: 'refs/heads/check.example.invalid-fix', after: SHA, deleted: false, repository},
     'another tag push': {ref: 'refs/tags/v1.0.0', after: SHA, deleted: false, repository},
     'a branch deletion': {ref: 'refs/heads/feature/x', after: '0'.repeat(40), deleted: true, repository},
     'a branch deletion without the deleted field': {ref: 'refs/heads/feature/x', after: '0'.repeat(40), repository},
@@ -186,8 +188,8 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   };
   const bodies = Object.values(pushes);
   const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies);
-  const verdicts = {ci: [true, true, false, false, false, false, false, false, false, false, false, false, false],
-    deploy: [false, false, true, false, false, false, false, false, false, false, false, true, true]};
+  const verdicts = {ci: [true, true, false, false, false, false, true, false, false, false, false, false, false, false, false],
+    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true]};
   Object.keys(pushes).forEach((name, i) => {
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
@@ -199,6 +201,9 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const anyOwner = (filter) => filter.replace(/ && body\.repository\.owner\.login in \[[^\]]*\]$/, '');
   assert.ok(matches('github-ci-push', [pushes['a branch push of a customer repository']], anyOwner)[0].matched);
   assert.ok(matches('github-ci-push', [pushes['a branch push of an owner that is not listed']], anyOwner)[0].matched);
+  const withBooksBranch = (filter) => filter.replace(/ &&\s+body\.ref != 'refs\/heads\/[^']*'/, '');
+  assert.ok(matches('github-ci-push', [pushes['a push of the books branch']], withBooksBranch)[0].matched,
+    'PLANTED DEFECT: a filter without the books branch exclusion runs the check on every commit of the Manager');
   const everyRef = (filter) => filter.replace("body.ref.startsWith('refs/heads/')", "body.ref.startsWith('refs/')");
   assert.ok(matches('github-ci-push', [pushes['another tag push']], everyRef)[0].matched);
 });
@@ -210,6 +215,7 @@ test('the ci trigger needs a list of owners, and an empty or missing list fails 
     .find((d) => d.kind === 'Trigger' && d.metadata.name === 'github-ci-push').spec.interceptors
     .find((i) => i.ref.name === 'cel').params.find((p) => p.name === 'filter').value;
   assert.ok(filter.endsWith("body.repository.owner.login in ['one', 'two']"), 'every listed owner reaches the filter');
+  assert.throws(() => renderChart('image-builder', ['--set', 'global.booksCluster=']), /global\.booksCluster is required/);
 });
 
 test('the ci pipeline of a unit holds no GitOps credential, mounts only the packages reader, and is no release', () => {
