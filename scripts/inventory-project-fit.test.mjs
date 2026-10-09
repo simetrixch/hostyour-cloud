@@ -66,3 +66,24 @@ test('the project of the cert-manager family whitelists every cluster-scoped kin
   const missing = CERT_MANAGER_CLUSTER_KINDS.filter(([group, kind]) => !whitelist.some(w => (w.group === group || w.group === '*') && (w.kind === kind || w.kind === '*')));
   assert.deepEqual(missing, []);
 });
+
+// The image builder renders cluster-scoped kinds of its own (its read-only roles, the admission policy,
+// the two priority classes of the build node). A kind its project does not whitelist is refused at
+// sync, and the whole application stands OutOfSync. The kinds below are the cluster-scoped ones a
+// manifest can name; a rendered document of any of them is held against the project.
+const CLUSTER_SCOPED = new Set(['ClusterRole', 'ClusterRoleBinding', 'ValidatingAdmissionPolicy', 'ValidatingAdmissionPolicyBinding',
+  'PriorityClass', 'Namespace', 'CustomResourceDefinition', 'ValidatingWebhookConfiguration', 'MutatingWebhookConfiguration']);
+
+test('the project of the image builder whitelists every cluster-scoped kind it renders', () => {
+  const {app} = inventories.find(i => i.dir === 'image-builder');
+  const rendered = execFileSync('helm', ['template', 'image-builder', 'clusters/inventories/image-builder', '--namespace', app.namespace,
+    '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml',
+    '-f', 'clusters/inventories/image-builder/values-common.yaml', '-f', 'clusters/inventories/image-builder/values-prod.yaml',
+    '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml'], {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
+  const docs = yq(['ea', '-o=json', '-I=0', '[.]', '-'], rendered).filter(Boolean);
+  const kinds = [...new Set(docs.filter(d => CLUSTER_SCOPED.has(d.kind)).map(d => `${d.apiVersion.split('/')[0]} ${d.kind}`))].sort();
+  assert.ok(kinds.includes('scheduling.k8s.io PriorityClass') && kinds.includes('rbac.authorization.k8s.io ClusterRole'));
+  const whitelist = projects.find(p => p.metadata.name === app.project).spec.clusterResourceWhitelist;
+  const missing = kinds.filter(k => !whitelist.some(w => (w.group === k.split(' ')[0] || w.group === '*') && (w.kind === k.split(' ')[1] || w.kind === '*')));
+  assert.deepEqual(missing, []);
+});

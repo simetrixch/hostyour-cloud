@@ -1,0 +1,43 @@
+{{- /*
+The ci run keeper's grant in THIS unit's build namespace: it may patch a PipelineRun, which is how it
+cancels a ci run that a newer push replaces, and delete one, which is how it removes a finished ci run
+beyond the newest 20 together with the workspace claim the run owns. It reads runs through its own
+read-only ClusterRole (clusters/inventories/image-builder/templates/ci-run-keeper.yaml). A patch can
+change any field, so the admission policy image-builder-pipelinerun-guard limits this identity to setting
+spec.status Cancelled on a ci run; the keeper chooses what to delete, which is why the choice is tested in
+scripts/ci-run-keeper.test.mjs.
+*/ -}}
+{{- if .Values.unit }}
+{{- $unit := include "consumer-build.unitName" . -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-run-keeper-pipelineruns
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: ci-run-keeper-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-run-keeper-pipelineruns
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: ci-run-keeper-grant
+    image-builder.io/consumer: {{ $unit | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ required "consumer-build: ciRunKeeper.serviceAccountName is required" .Values.ciRunKeeper.serviceAccountName }}
+    namespace: {{ required "consumer-build: ciRunKeeper.namespace is required" .Values.ciRunKeeper.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ci-run-keeper-pipelineruns
+{{- end }}

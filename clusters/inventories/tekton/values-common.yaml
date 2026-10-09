@@ -129,7 +129,7 @@ monitoring:
                 severity: critical
               annotations:
                 summary: "The build plane counts more than one node while Tekton's coschedule is disabled"
-                description: "Release PipelineRuns mount a ReadWriteOnce workspace from several pods; on a second node one of them stays Pending. Set coschedule back to workspaces in clusters/inventories/tekton/templates/release-pipelines.yaml, or make the source workspace ReadWriteMany."
+                description: "Release PipelineRuns mount a ReadWriteOnce workspace from several pods; on a second node one of them stays Pending. Set coschedule back to workspaces in clusters/inventories/tekton/templates/release-pipelines.yaml, or make the source workspace ReadWriteMany. With coschedule on workspaces, the affinity-assistant pod of each running ci run carries the ci priority class and takes one ci-pods slot for the whole run, so raise ciCapacity.podsPerUnit in clusters/inventories/consumer-build/values-common.yaml with it, or waiting runs hold every slot and none of their task pods is admitted."
 
             - alert: PipelineRunRunningTooLong
               expr: time() - max(tekton_pipelines_controller_running_pipelineruns_count > 0) > 1800

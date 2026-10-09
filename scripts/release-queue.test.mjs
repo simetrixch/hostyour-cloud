@@ -57,6 +57,13 @@ test('runs of other pipelines neither hold a release back nor are touched', () =
   assert.deepEqual(changes.map((c) => c.name), [b.metadata.name]);
 });
 
+test('a running ci run neither holds a release back nor is touched, and the waiting release starts', () => {
+  const b = run('post-build', 'b', {pending: true});
+  const changes = decide([run('shop-build', 'c', {pipeline: 'shop-ci'}), run('post-build', 'd', {pipeline: 'post-ci'}), b]);
+  assert.deepEqual(changes.map((c) => c.name), [b.metadata.name]);
+  assert.deepEqual(started(changes), [b.metadata.name]);
+});
+
 test('a run that already notes what it waits for is not patched again, and its note goes when it starts', () => {
   const a = run('shop-build', 'a'), b = run('post-build', 'b', {pending: true, behind: 'shop-build/a'});
   assert.deepEqual(decide([a, b]), []);
@@ -139,12 +146,15 @@ const waitingRun = () => ({
     annotations: {'chains.tekton.dev/signed': 'false'}, finalizers: ['chains.tekton.dev/pipelinerun']},
   spec: {status: 'PipelineRunPending', pipelineRef: {name: 'shop-release'},
     params: [{name: 'release-tag', value: '1.0.0-stable-1'}, {name: 'stage', value: 'prod'}],
-    taskRunTemplate: {serviceAccountName: 'pipeline-sa'}, timeouts: {pipeline: '1h0m0s'},
+    taskRunTemplate: {serviceAccountName: 'pipeline-sa', podTemplate: {priorityClassName: 'image-builder-release'}}, timeouts: {pipeline: '1h0m0s'},
     workspaces: [{name: 'source', volumeClaimTemplate: {spec: {accessModes: ['ReadWriteOnce']}}}]},
 });
 const changed = (edit) => { const run = waitingRun(); edit(run); return run; };
 const asks = (operation, username, object, oldObject) => ({object, oldObject, request: {operation, namespace: 'shop-build', userInfo: {username}}});
 const startedRun = changed((r) => delete r.spec.status);
+const asCi = (r) => { r.spec.pipelineRef.name = 'shop-ci'; r.spec.taskRunTemplate.podTemplate.priorityClassName = 'image-builder-ci'; };
+const waitingCiRun = changed(asCi);
+const startedCiRun = changed((r) => { asCi(r); delete r.spec.status; });
 const ADMITTED = {
   'the EventListener creates a waiting run': asks('CREATE', 'system:serviceaccount:image-builder:eventlistener-sa', waitingRun(), null),
   'the queue starts a waiting run': asks('UPDATE', QUEUE_SA, startedRun, waitingRun()),
@@ -158,6 +168,8 @@ const DENIED = {
   'the queue cancels a waiting run': asks('UPDATE', QUEUE_SA, changed((r) => { r.spec.status = 'Cancelled'; }), waitingRun()),
   'the queue puts a started run back to waiting': asks('UPDATE', QUEUE_SA, waitingRun(), startedRun),
   'the queue creates a run': asks('CREATE', QUEUE_SA, waitingRun(), null),
+  'the queue starts a waiting ci run': asks('UPDATE', QUEUE_SA, startedCiRun, waitingCiRun),
+  'the queue notes what a ci run waits for': asks('UPDATE', QUEUE_SA, changed((r) => { asCi(r); r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; }), waitingCiRun),
   'the queue changes a label': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.labels['image-builder.io/consumer'] = 'post'; }), waitingRun()),
   'the queue adds another annotation': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['chains.tekton.dev/x'] = 'y'; }), waitingRun()),
   'the queue changes another annotation': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['chains.tekton.dev/signed'] = 'true'; }), waitingRun()),
