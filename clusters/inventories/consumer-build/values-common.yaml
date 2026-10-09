@@ -70,8 +70,14 @@ releaseQueue:
 #
 # maxRunning is ciRunKeeper.maxRunning in clusters/inventories/image-builder: the ci run keeper starts a
 # waiting ci run only while fewer ci runs than that have started and not finished, whatever the number of
-# units. A run holds one ci pod at a time, because the tasks of the ci pipeline run one after the other
+# units. A run holds one live ci pod at a time, because the tasks of the ci pipeline run one after the other
 # (the test asserts the chain), and one report pod after them.
+#
+# podsPerUnit is 2 for that same chain, not for a second live pod. Tekton creates the pod of the next task as
+# soon as the steps of the one before have exited, and for a moment that pod is not yet Succeeded, so the
+# quota still counts it. With a cap of 1 the next pod is refused (ExceededResourceQuota) and Tekton tries it
+# again a minute later, at every task boundary: a check of 30 s took 5 min. The finished pod holds no running
+# step, so the memory budget still counts one ci pod per run.
 #
 # The report pod carries the class image-builder-ci-report, which the quota does not count, so a red run
 # reports at once even while the next check of its unit holds the slot. Each running run has at most one,
@@ -84,13 +90,13 @@ releaseQueue:
 # releaseBuildPods is DECLARED, not derived: the attested builds come from the registrations of the books
 # branch, which this chart cannot read. It is the number of images the largest unit builds at once after
 # the scan (3 on 2026-10-09); the test renders a release with that many images and fails when they do not
-# all run in parallel. limitsMemoryBudget is the memory the build node (master1: 59 GiB, 18 GiB in use)
-# had available on 2026-10-09, 40 GiB.
+# all run in parallel. limitsMemoryBudget is the memory the build node had available on 2026-10-09 at 15:10Z,
+# with no build pod running: master1 has 59.5 GiB, and 21.3 GiB was in use, so 38 GiB.
 ciCapacity:
   priorityClassName: image-builder-ci
-  podsPerUnit: 1
+  podsPerUnit: 2
   releaseBuildPods: 3
-  limitsMemoryBudget: 40Gi
+  limitsMemoryBudget: 38Gi
 
 # WHO STARTS, CANCELS AND DELETES A CI RUN. The ci run keeper of clusters/inventories/image-builder starts
 # the waiting ci runs up to ciRunKeeper.maxRunning, cancels a ci run that a newer push to the same branch
