@@ -1,23 +1,31 @@
 {{- /*
 THE CI RUN KEEPER. Every branch push creates one ci run, and each run holds a PersistentVolumeClaim
-of workspaces.sourceSize on the one build node until the run is deleted. This CronJob does two things
-each minute, to the ci runs only (the runs that carry image-builder.io/ci):
+of workspaces.sourceSize on the one build node until the run is deleted. This CronJob does these
+things each minute, to the ci runs only (the runs that carry image-builder.io/ci):
 
   - it cancels a run that has not finished while a newer push to the same branch has a run of its own,
     because the newer push replaces it. The branch travels on each run as the annotation
     image-builder.io/ci-branch, set by the ci-push TriggerTemplate; a label cannot hold the `/` of a
     branch name.
+  - it starts the oldest waiting runs while fewer than ciRunKeeper.maxRunning ci runs have started and
+    not finished. The ci-push TriggerTemplate creates every ci run waiting (spec.status
+    PipelineRunPending), because the memory limits of the ci pods of every unit together do not fit the
+    build node: the cap is what scripts/build-contract.test.mjs adds up. A run that stays waiting carries
+    the annotation image-builder.io/queued-behind with the reason, and a waiting run that a newer push
+    replaces is cancelled and never started. A start takes up to a minute, the CronJob's period, and
+    nothing starts while this CronJob does not run.
   - it deletes the finished runs of a build namespace beyond the newest 20. Kubernetes deletes a run's
     claim with it, through the claim's owner reference.
 
 files/ci-run-keeper.jq decides; files/ci-run-keeper.sh applies; scripts/ci-run-keeper.test.mjs runs
-the decision on planted runs. Release runs carry no image-builder.io/ci label and are never listed.
+the decision on planted runs. Release runs carry no image-builder.io/ci label and are never listed; the
+release queue (templates/release-queue.yaml) starts those.
 
 ITS RIGHTS. Read on PipelineRuns cluster-wide (the build namespaces come and go with the units), and
 patch and delete only in each <unit>-build namespace, rendered there by clusters/inventories/consumer-build
 (templates/rbac-ci-run-keeper.yaml). A patch can rewrite any field, so the admission policy
-image-builder-pipelinerun-guard limits this identity to setting spec.status Cancelled on a ci run. It
-does not see a deletion.
+image-builder-pipelinerun-guard limits this identity on a ci run to setting spec.status Cancelled, to
+dropping the waiting flag, and to its own annotation. It does not see a deletion.
 */ -}}
 {{- if .Values.eventListener.enabled }}
 apiVersion: v1
@@ -109,6 +117,8 @@ spec:
               env:
                 - name: KEEPER_DIR
                   value: /keeper
+                - name: CI_MAX_RUNNING
+                  value: {{ required "image-builder: ciRunKeeper.maxRunning is required" .Values.ciRunKeeper.maxRunning | quote }}
                 # kubectl keeps its discovery cache under HOME; the root filesystem is read only.
                 - name: HOME
                   value: /tmp
