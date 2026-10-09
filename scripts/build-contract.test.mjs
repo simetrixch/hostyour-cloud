@@ -69,21 +69,30 @@ test('immutable render guard catches the planted registry transition inside a gr
 test('admission guard selects typed Tekton fields and keeps native inline refusal', () => {
   const tekton = renderChart('tekton');
   const crd = tekton.find(d => d.kind === 'CustomResourceDefinition' && d.metadata.name === 'pipelineruns.tekton.dev');
-  const properties = crd.spec.versions.find(v => v.name === 'v1').schema.openAPIV3Schema.properties.spec.properties;
-  // Use the shipped schema, not a hand-maintained list of CEL-visible fields.
+  const schema = crd.spec.versions.find(v => v.name === 'v1').schema.openAPIV3Schema;
+  const properties = schema.properties.spec.properties;
+  // Use the shipped schema, not a hand-maintained list of CEL-visible fields. oldObject counts: a delete reads it.
   const guard = renderChart('image-builder').find(d => d.kind === 'ValidatingAdmissionPolicy' &&
     d.metadata.name === 'image-builder-pipelinerun-guard');
-  const untypedFields = policy => [...new Set([...JSON.stringify(policy.spec).matchAll(/object\.spec\.([A-Za-z0-9_]+)/g)]
+  const untypedFields = policy => [...new Set([...JSON.stringify(policy.spec).matchAll(/[oO]bject\.spec\.([A-Za-z0-9_]+)/g)]
     .map(match => match[1]))].filter(field => !properties[field]?.type).sort();
   assert.deepEqual(untypedFields(guard), []);
   const planted = structuredClone(guard);
   planted.spec.validations.push({expression: '!has(object.spec.pipelineSpec)'});
   assert.deepEqual(untypedFields(planted), ['pipelineSpec']);
+  planted.spec.validations.push({expression: '!has(oldObject.spec.notInTheCrd)'});
+  assert.deepEqual(untypedFields(planted), ['notInTheCrd', 'pipelineSpec']);
+  // The delete clauses read whether a run has finished from status.conditions.
+  const untypedConditionFields = root => ['type', 'status'].filter(field => !root.properties.status.properties.conditions?.items?.properties?.[field]?.type);
+  assert.deepEqual(untypedConditionFields(schema), []);
+  const untypedStatus = structuredClone(schema);
+  delete untypedStatus.properties.status.properties.conditions;
+  assert.deepEqual(untypedConditionFields(untypedStatus), ['type', 'status']);
   // Inline-only is denied by the typed reference requirement; an inline spec
   // with a reference is rejected by Tekton's native exactly-one validation.
   assert.equal(guard.spec.failurePolicy, 'Fail');
   assert.ok(guard.spec.validations.some(v => v.expression ===
-    'has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0'));
+    "request.operation == 'DELETE' || (has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0)"));
   const webhook = tekton.find(d => d.kind === 'ValidatingWebhookConfiguration' &&
     d.metadata.name === 'validation.webhook.pipeline.tekton.dev');
   assert.equal(webhook.metadata.labels['pipeline.tekton.dev/release'], 'v1.12.0');
@@ -452,6 +461,39 @@ test('the admission policy lets the ci run keeper cancel, start and note a ci ru
   const without = structuredClone(policy);
   without.spec.validations = without.spec.validations.filter((v) => v.message !== KEEPER_MESSAGE);
   assert.ok(evaluate(without, Object.values(DENIED)).every((v) => v.denied.length === 0), 'without the keeper clause every one of them is admitted');
+});
+
+test('the admission policy lets the ci run keeper delete a finished ci run of its own namespace, and no other run', () => {
+  const policy = guardOf(imageBuilder());
+  // On a delete object is null; oldObject is the run, and it has finished when its Succeeded condition is True or False.
+  const run = (pipeline, status) => ({metadata: {namespace: 'shop-build', name: `${pipeline}-x`}, spec: {pipelineRef: {name: pipeline}}, ...(status ? {status} : {})});
+  const succeeded = (value) => ({conditions: [{type: 'Succeeded', status: value}]});
+  const deletes = (username, oldObject) => ({object: null, oldObject, request: {operation: 'DELETE', namespace: 'shop-build', userInfo: {username}}});
+  const QUEUE = 'system:serviceaccount:image-builder:release-queue';
+  const DASHBOARD = 'system:serviceaccount:tekton-pipelines:tekton-dashboard';
+  const KEEPER_DELETE_MESSAGE = 'the ci run keeper may only delete a finished ci run of its own namespace.';
+  const ADMITTED = {
+    'the keeper deletes a ci run that succeeded': deletes(KEEPER, run('shop-ci', succeeded('True'))),
+    'the keeper deletes a ci run that failed': deletes(KEEPER, run('shop-ci', succeeded('False'))),
+    'the Tekton Dashboard deletes a running ci run': deletes(DASHBOARD, run('shop-ci', succeeded('Unknown'))),
+    'a user deletes a waiting ci run': deletes('owner@example.com', {...run('shop-ci'), spec: {pipelineRef: {name: 'shop-ci'}, status: 'PipelineRunPending'}}),
+    'the release queue deletes a finished release run': deletes(QUEUE, run('shop-release', succeeded('True'))),
+  };
+  const DENIED = {
+    'the keeper deletes a running ci run': deletes(KEEPER, run('shop-ci', succeeded('Unknown'))),
+    'the keeper deletes a waiting ci run': deletes(KEEPER, {...run('shop-ci'), spec: {pipelineRef: {name: 'shop-ci'}, status: 'PipelineRunPending'}}),
+    'the keeper deletes a ci run with an empty status': deletes(KEEPER, run('shop-ci', {})),
+    'the keeper deletes a ci run with another condition only': deletes(KEEPER, run('shop-ci', {conditions: [{type: 'Ready', status: 'True'}]})),
+    'the keeper deletes a finished release run': deletes(KEEPER, run('shop-release', succeeded('True'))),
+    'the keeper deletes a finished run of another unit\'s ci pipeline': deletes(KEEPER, run('post-ci', succeeded('True'))),
+    'the keeper deletes a finished run without a pipeline': deletes(KEEPER, {metadata: {namespace: 'shop-build', name: 'x'}, spec: {}, status: succeeded('True')}),
+  };
+  const verdicts = evaluate(policy, [...Object.values(ADMITTED), ...Object.values(DENIED)]).map((v) => v.denied);
+  Object.keys(ADMITTED).forEach((name, i) => assert.deepEqual(verdicts[i], [], `PLANTED INNOCENT: ${name}`));
+  Object.keys(DENIED).forEach((name, i) => assert.deepEqual(verdicts[Object.keys(ADMITTED).length + i], [KEEPER_DELETE_MESSAGE], `PLANTED DEFECT: ${name}`));
+  const without = structuredClone(policy);
+  without.spec.validations = without.spec.validations.filter((v) => v.message !== KEEPER_DELETE_MESSAGE);
+  assert.ok(evaluate(without, Object.values(DENIED)).every((v) => v.denied.length === 0), 'without the keeper delete clause every one of them is admitted');
 });
 
 test('a run carries the priority class of its pipeline and no other pod template field', () => {
