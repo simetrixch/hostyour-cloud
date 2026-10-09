@@ -41,10 +41,12 @@ public 443/80 outward, nothing inward.
 
 WHAT THE CHECK NEEDS, read from the check.sh of every unit: Node 24, pnpm,
 git and bash; a mongod, which mongodb-memory-server downloads on first use; a
-Chrome for the tests of a unit that prints PDFs; and helm for the unit whose
-check renders charts. One public image carries all but the last, so the helm
-release is pinned here by its sha256 and installed by the check step. No image
-is built by us.
+Chrome for the tests of a unit that prints PDFs; and helm and yq for the units
+whose check renders charts. One public image carries all but the last two, so
+their releases are pinned here by their sha256 and installed by the check step.
+No image is built by us. A repository without pnpm-lock.yaml has nothing for
+pnpm to install: some carry no package.json, one keeps an npm lockfile its
+check never reads.
 
 THE FAILURE MAIL. When a task fails, report-failure reads the last 60 lines of
 the step that failed from the Kubernetes API, as pods/log of the pod that the
@@ -327,6 +329,11 @@ spec:
               echo "86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb  /tmp/helm.tar.gz" | sha256sum -c -
               tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm
 
+              # yq 4.53.6, for a check that reads rendered charts.
+              curl -fsSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64
+              echo "c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385  /usr/local/bin/yq" | sha256sum -c -
+              chmod +x /usr/local/bin/yq
+
               # The Chrome of the image, for the units whose tests print PDFs.
               # A unit that has no use for the variables ignores them.
               REPORT_CHROMIUM_PATH="$(ls /home/pptruser/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome | head -n 1)"
@@ -335,7 +342,7 @@ spec:
               # /dev/shm is 64 MiB.
               export REPORT_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage
 
-              pnpm install --frozen-lockfile
+              if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; fi
               bash scripts/check.sh
 
   finally:

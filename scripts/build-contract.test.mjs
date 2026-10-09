@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {immutableChanges, probeImmutableChanges} from './check-immutable.mjs';
 import {renderChart} from './render-chart.mjs';
 
@@ -255,6 +257,34 @@ test('a unit that builds nothing renders the ci check and no release, registry o
   assert.ok(!isCiOnly(oldCondition), 'PLANTED DEFECT: a render that keeps the ci parts behind the builds condition is caught');
   const leaky = [...ciOnly, withBuilds.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https')];
   assert.ok(!isCiOnly(leaky), 'PLANTED DEFECT: a ci-only render that carries the bump credential is caught');
+});
+
+// The lines of the check step from the install on, run in a repository directory with pnpm replaced by a stub
+// that records each call: true when the repository's check ran, and whether pnpm was called.
+const runInstallAndCheck = (installAndCheck, files) => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-check-')), repo = join(root, 'repo'), bin = join(root, 'bin');
+  mkdirSync(join(repo, 'scripts'), {recursive: true}); mkdirSync(bin);
+  for (const file of files) writeFileSync(join(repo, file), '');
+  writeFileSync(join(repo, 'scripts/check.sh'), 'touch checked\n');
+  writeFileSync(join(bin, 'pnpm'), `#!/usr/bin/env bash\ntouch "${join(root, 'pnpm-called')}"\n[ -f pnpm-lock.yaml ]\n`);
+  chmodSync(join(bin, 'pnpm'), 0o755);
+  try {
+    execFileSync('bash', ['-euo', 'pipefail', '-c', installAndCheck], {cwd: repo, env: {...process.env, PATH: `${bin}:${process.env.PATH}`}});
+  } catch { /* a failed install is read from the missing marker below */ }
+  return {checked: existsSync(join(repo, 'checked')), pnpm: existsSync(join(root, 'pnpm-called'))};
+};
+
+test('the ci check installs with pnpm only a repository that carries pnpm-lock.yaml, and checks every repository', () => {
+  const script = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci')
+    .spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].script;
+  const lines = script.split('\n');
+  const installAndCheck = lines.slice(lines.findIndex((line) => line.includes('pnpm install'))).join('\n');
+  assert.ok(installAndCheck.includes('bash scripts/check.sh'), 'the install is followed by the repository check');
+  assert.deepEqual(runInstallAndCheck(installAndCheck, ['package.json', 'pnpm-lock.yaml']), {checked: true, pnpm: true}, 'PLANTED INNOCENT: a pnpm repository is installed, then checked');
+  assert.deepEqual(runInstallAndCheck(installAndCheck, []), {checked: true, pnpm: false}, 'a repository without package.json is checked without an install');
+  assert.deepEqual(runInstallAndCheck(installAndCheck, ['package.json', 'package-lock.json']), {checked: true, pnpm: false}, 'a repository with an npm lockfile is checked without a pnpm install');
+  const unconditional = 'pnpm install --frozen-lockfile\nbash scripts/check.sh\n';
+  assert.deepEqual(runInstallAndCheck(unconditional, []), {checked: false, pnpm: true}, 'PLANTED DEFECT: an install that runs in every repository fails the repository without package.json before its check');
 });
 
 const seconds = (duration) => ['h', 'm', 's'].reduce((sum, unit, i) => sum + Number(new RegExp(`(\\d+)${unit}`).exec(duration)?.[1] ?? 0) * [3600, 60, 1][i], 0);
