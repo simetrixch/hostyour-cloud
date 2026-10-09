@@ -75,11 +75,16 @@ eventListener:
 releaseQueue:
   image: &kubectlImage alpine/k8s:1.35.6
 
-# The ci run keeper (templates/ci-run-keeper.yaml) cancels the ci runs that a newer push replaces and
-# deletes the oldest finished ones with their workspace claims. It runs the same kubectl image as the
-# release queue.
+# The ci run keeper (templates/ci-run-keeper.yaml) starts the waiting ci runs, cancels the ones that a
+# newer push replaces and deletes the oldest finished ones with their workspace claims. It runs the same
+# kubectl image as the release queue. maxRunning is the number of ci runs that run at once across all
+# units, and each unit has at most one of them, because its ci quota lets one pod run. The memory budget
+# test in scripts/build-contract.test.mjs multiplies the memory limits of a ci pod and of the report pod
+# by it, and fails when the sum with one release leaves the budget of ciCapacity in
+# clusters/inventories/consumer-build.
 ciRunKeeper:
   image: *kubectlImage
+  maxRunning: 6
 
 externalsecret-webhooks:
   externalSecret:

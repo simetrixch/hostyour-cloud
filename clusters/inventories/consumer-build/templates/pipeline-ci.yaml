@@ -13,7 +13,8 @@ registration), which then has this Pipeline and no release Pipeline.
 
 It is not a release and shares nothing with one but the namespace, the
 ServiceAccount and the clone credential. The run is created by the
-github-ci-push Trigger (clusters/inventories/image-builder), running at once;
+github-ci-push Trigger (clusters/inventories/image-builder), waiting, and the
+ci run keeper starts it while fewer ci runs than ciRunKeeper.maxRunning run;
 the release queue never sees it, because neither this Pipeline nor its run
 carries image-builder.io/consumer. Tekton copies a Pipeline's labels onto its
 runs, so the label of this Pipeline is image-builder.io/ci and nothing else

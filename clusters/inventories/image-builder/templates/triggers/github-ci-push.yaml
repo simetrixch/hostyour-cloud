@@ -7,9 +7,10 @@ ONE PipelineRun `<unit>-ci-…` in the unit's build namespace, which runs the
 repository's scripts/check.sh at the pushed commit, so a red check is seen on
 the build plane and not only on the machine of whoever pushed.
 
-It is NOT a release. The run is created running, not waiting: it never passes
-through the release queue, and it carries image-builder.io/ci, never
-image-builder.io/consumer, which the release queue and the Manager select
+It is NOT a release. The run is created waiting (spec.status PipelineRunPending)
+and the ci run keeper (templates/ci-run-keeper.yaml) starts it while fewer than
+ciRunKeeper.maxRunning ci runs run. It never passes through the release queue,
+and it carries image-builder.io/ci, never image-builder.io/consumer, which the release queue and the Manager select
 releases by. Tekton copies a Pipeline's labels onto its runs, so the ci
 Pipeline must not carry the consumer label either
 (clusters/inventories/consumer-build/templates/pipeline-ci.yaml).
@@ -148,6 +149,9 @@ spec:
           # cannot hold the `/` of a branch name.
           image-builder.io/ci-branch: $(tt.params.branch)
       spec:
+        # Created waiting: the ci run keeper starts it once a ci slot is free. Tekton starts the
+        # clock of the timeouts below at the start, not at the creation, so the wait uses none of it.
+        status: PipelineRunPending
         pipelineRef:
           name: $(tt.params.unit)-ci
         taskRunTemplate:
@@ -166,7 +170,7 @@ spec:
           - pipelineTaskName: report-failure
             podTemplate:
               priorityClassName: {{ .Values.priorityClasses.ciReport.name }}
-        # A run waiting for the quota holds the tasks budget as well, because
+        # A run whose pod waits for the quota holds the tasks budget as well, because
         # its clock runs from the start of the run; the tasks carry their own
         # timeouts (templates/pipeline-ci.yaml in consumer-build), and Tekton
         # restarts a task's clock while its pod is refused for the quota.
