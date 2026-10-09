@@ -32,12 +32,20 @@ workspaces:
 # take is bounded by the sum of their limits instead (ciCapacity in clusters/inventories/consumer-build).
 # How much ci runs at once is capped by the ResourceQuota that clusters/inventories/consumer-build renders
 # in each build namespace for the ci class.
+#
+# ciReport is the class of the one pod of a ci run that reports its failure. It ranks like ci, and the quota
+# does not count it: with a single ci pod per unit, a report pod that took that slot would wait for the check
+# of another branch, and the failure mail would come up to 20 minutes late. The ci-push TriggerTemplate gives
+# it to the task report-failure alone, and the admission policy admits no other per-task pod template.
 priorityClasses:
   release:
     name: image-builder-release
     value: 1000
   ci:
     name: image-builder-ci
+    value: -100
+  ciReport:
+    name: image-builder-ci-report
     value: -100
 
 # The GitHub owners whose repositories run their scripts/check.sh on the build plane for every

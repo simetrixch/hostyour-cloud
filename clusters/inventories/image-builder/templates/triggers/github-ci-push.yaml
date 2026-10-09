@@ -157,12 +157,30 @@ spec:
           # resourcequota-ci.yaml): a pod over the cap waits, it does not fail.
           podTemplate:
             priorityClassName: {{ .Values.priorityClasses.ci.name }}
-        # A run waiting for the quota holds this budget as well, because the
-        # pipeline's clock runs from its start; the tasks carry their own
+        # The pod of report-failure carries another class, which the quota does
+        # not count. With one ci pod per unit it would otherwise wait for the
+        # check of another branch, and the mail would come late. Tekton merges
+        # this entry over taskRunTemplate for that one task, so its priority
+        # class replaces the ci class there.
+        taskRunSpecs:
+          - pipelineTaskName: report-failure
+            podTemplate:
+              priorityClassName: {{ .Values.priorityClasses.ciReport.name }}
+        # A run waiting for the quota holds the tasks budget as well, because
+        # its clock runs from the start of the run; the tasks carry their own
         # timeouts (templates/pipeline-ci.yaml in consumer-build), and Tekton
         # restarts a task's clock while its pod is refused for the quota.
+        #
+        # THE THREE ARE SET TOGETHER so that the failure mail is sent after a
+        # timeout too. With the pipeline timeout alone, Tekton cancels the
+        # finally tasks together with the rest when it runs out; with a budget
+        # for the tasks and one for the finally tasks, a run that exhausts the
+        # tasks budget still runs report-failure inside its own 10 minutes.
+        # pipeline must not be shorter than tasks plus finally.
         timeouts:
           pipeline: 2h0m0s
+          tasks: 1h45m0s
+          finally: 10m0s
         params:
           - name: commit
             value: $(tt.params.commit)

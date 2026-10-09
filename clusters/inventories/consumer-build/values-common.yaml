@@ -64,8 +64,14 @@ releaseQueue:
 # when it does not:
 #
 #   podsPerUnit x unitCount x the largest memory limit of a ci pod (the sum of its steps)
+#   + unitCount x the memory limit of the report pod (the finally task of the ci pipeline)
 #   + releaseBuildPods x the memory limit of a buildah pod (the sum of its steps)
 #   <= limitsMemoryBudget
+#
+# The report pod carries the class image-builder-ci-report, which the quota does not count, so a red run
+# reports at once even while the next check of its unit holds the slot. It is counted here once per unit:
+# the failures of one unit are serialized by its one ci slot, and a report pod lives seconds (its timeout
+# is 5 minutes). That is an assumption nothing enforces; a quota on the report class would bound it.
 #
 # The second term is one release, because the release queue starts one release at a time, and the build
 # pods of a release are not counted by the quota (they carry no ci class). Only the first stage run of a
@@ -96,6 +102,22 @@ ciRunKeeper:
   serviceAccountName: ci-run-keeper
   namespace: image-builder
 
+# WHERE A FAILED CI RUN IS REPORTED. The finally task of the ci pipeline posts one alert to this
+# Alertmanager, and templates/networkpolicy.yaml opens its port to that task's pod and to no other pod
+# of the namespace: Alertmanager takes any alert from anybody, so a pod that runs a repository's code
+# must not reach it. The address is the in-cluster Service of the observability release, which stands
+# on the master cluster; a build plane on another cluster reaches nothing there, and its failed runs
+# fail the report task visibly instead of mailing. The pod labels are the ones the Prometheus operator
+# puts on the Alertmanager pod.
+ciFailureReport:
+  alertmanager:
+    namespace: observability
+    serviceName: observability-alertmanager
+    port: 9093
+    podLabels:
+      app.kubernetes.io/name: alertmanager
+      alertmanager: observability-alertmanager
+
 # WHO MAY WATCH A RUN IT DID NOT START. The manager has no task in a release cycle — the webhook
 # starts the run and the pipeline finishes it — but it reports the run's progress to the operator who
 # asked for the release, so it needs get/list/watch on PipelineRuns in the unit's build namespace.
@@ -120,7 +142,8 @@ manager:
 
 # Post-DNAT API-server egress pinhole for the BUMP pod only (second
 # NetworkPolicy in templates/networkpolicy.yaml — the gate-runner
-# reportWriter pattern): the bump's last step patches the unit's own
+# reportWriter pattern), and for the ci failure report pod (the policy beside
+# it, which reads the same ports): the bump's last step patches the unit's own
 # Applications for the argo-sync, and Calico evaluates egress AFTER kube-proxy
 # DNAT, so kubernetes.default.svc resolves to the node's apiserver endpoint
 # inside the fenced private ranges. Default admits the 10/8 range on the usual
