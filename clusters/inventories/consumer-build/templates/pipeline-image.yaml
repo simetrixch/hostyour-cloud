@@ -25,7 +25,9 @@ A Containerfile that starts FROM an image of this registry declares
 `ARG REGISTRY` before its FROM: buildah-build-push passes the registry host as
 REGISTRY to a Containerfile that declares it.
 
-HOW TO START IT, on the master cluster:
+HOW TO START IT, on the master cluster, while no release runs: the release queue
+does not count this run's buildah pod, so a release started beside it can wait
+on the same nodes.
 
   microk8s.kubectl create -f - <<'EOF'
   apiVersion: tekton.dev/v1
