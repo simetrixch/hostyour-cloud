@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
-import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
+import {execFileSync, spawnSync} from 'node:child_process';
+import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {immutableChanges, probeImmutableChanges} from './check-immutable.mjs';
@@ -215,7 +215,7 @@ test('the ci trigger needs a list of owners, and an empty or missing list fails 
 test('the ci pipeline of a unit holds no GitOps credential, mounts only the packages reader, and is no release', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'describe-commit', 'fetch-branches', 'check']);
+  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'describe-commit', 'fetch', 'check']);
   assert.deepEqual(pipeline.spec.finally.map((t) => t.name), ['report-failure']);
   const referencesBump = (doc) => JSON.stringify(doc).includes('bump');
   assert.ok(!referencesBump(pipeline), 'the ci pipeline names no bump task, volume or secret');
@@ -229,13 +229,61 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   assert.equal(check.steps[0].env.find((e) => e.name === 'CI')?.value, 'true', 'a check sees the variable GitHub Actions also sets');
   assert.deepEqual(check.volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
   assert.deepEqual(check.steps[0].volumeMounts.filter((m) => m.name === 'npmrc').map((m) => m.readOnly), [true]);
-  assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['clone', 'fetch-branches']);
+  assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['clone', 'fetch']);
   // Tekton copies a Pipeline's labels onto its runs: a consumer label here would make every ci run a release.
   assert.equal(pipeline.metadata.labels['image-builder.io/ci'], 'shop');
   assert.equal(pipeline.metadata.labels['image-builder.io/consumer'], undefined);
   assert.ok(docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release').metadata.labels['image-builder.io/consumer']);
   const grant = docs.find((d) => d.kind === 'Role' && d.metadata.name === 'eventlistener-create-pipelineruns');
   assert.ok(grant.rules.some((r) => r.resources.includes('pipelineruns') && r.verbs.includes('create')), 'the event listener may create the ci run');
+});
+
+// The pinned sources of other repositories: fetched with the clone credential before the check, read by the
+// check from a read-only volume beside the clone, never inside it.
+test('the fetch task fetches the pinned sources with the credential, and the check reads them read-only without it', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
+  const fetch = task('fetch').taskSpec;
+  assert.deepEqual(fetch.steps.map((s) => s.name), ['branches', 'list-sources', 'sources']);
+  const holdsCredential = (spec) => spec.steps.filter((s) => JSON.stringify(s.envFrom ?? []).includes('build-git-https')).map((s) => s.name);
+  assert.deepEqual(holdsCredential(fetch), ['branches', 'sources'], 'the step that reads the branch\'s ci-sources.json holds no credential');
+  const planted = structuredClone(fetch);
+  planted.steps[1].envFrom = [{secretRef: {name: 'build-git-https'}}];
+  assert.notDeepEqual(holdsCredential(planted), ['branches', 'sources'], 'PLANTED DEFECT: a credential on the reading step is caught');
+  assert.equal(fetch.steps[2].env.find((e) => e.name === 'SOURCES_OWNER_URL').value, 'https://github.com/check', 'sources come from the unit\'s own owner');
+  for (const name of ['clone', 'describe-commit', 'fetch', 'check']) {
+    assert.equal(task(name).workspaces.find((w) => w.name === 'source').subPath, 'repository', `${name} reads the clone from subPath repository`);
+  }
+  for (const name of ['fetch', 'check']) assert.equal(task(name).workspaces.find((w) => w.name === 'sources').subPath, 'sources');
+  const check = task('check').taskSpec;
+  assert.equal(check.workspaces.find((w) => w.name === 'sources').readOnly, true);
+  assert.equal(check.steps[0].env.find((e) => e.name === 'CI_SOURCES_DIR').value, '/workspace/sources');
+  assert.throws(() => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop', repoURL: 'https://gitlab.com/check/shop.git', buildsJson: '[]'})]),
+    /unit\.repoURL .* is not https:\/\/github\.com\/<owner>\/<repository>/);
+});
+
+test('list-sources passes only plain repository names with full commits, and a repository without ci-sources.json fetches nothing', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const script = pipeline.spec.tasks.find((t) => t.name === 'fetch').taskSpec.steps.find((s) => s.name === 'list-sources').script;
+  const SHA = 'a'.repeat(40);
+  const list = (sources) => {
+    const dir = mkdtempSync(join(tmpdir(), 'list-sources-'));
+    try {
+      if (sources !== undefined) writeFileSync(join(dir, 'ci-sources.json'), JSON.stringify(sources));
+      const result = spawnSync('bash', ['-c', script], {cwd: dir, encoding: 'utf8', env: {...process.env, SOURCE_LIST: join(dir, 'list')}});
+      return {status: result.status, lines: existsSync(join(dir, 'list')) && result.status === 0 ? readFileSync(join(dir, 'list'), 'utf8').split('\n').filter(Boolean) : null};
+    } finally {
+      rmSync(dir, {recursive: true, force: true});
+    }
+  };
+  assert.deepEqual(list({git: {'digita-auth': SHA, 'digita-post.v2': 'b'.repeat(40)}, npm: {mongodb: '7.5.0'}}),
+    {status: 0, lines: [`digita-auth ${SHA}`, `digita-post.v2 ${'b'.repeat(40)}`]}, 'PLANTED INNOCENT: plain names and full commits pass, and npm is not read');
+  assert.deepEqual(list(undefined), {status: 0, lines: []});
+  assert.deepEqual(list({npm: {mongodb: '7.5.0'}}), {status: 0, lines: []});
+  for (const [name, commit] of [['../digita-auth', SHA], ['owner/digita-auth', SHA], ['..', SHA], ['digita auth', SHA], ['digita-auth', 'a'.repeat(39)], ['digita-auth', 'A'.repeat(40)], ['digita-auth', 'master']]) {
+    assert.notEqual(list({git: {[name]: commit}}).status, 0, `PLANTED DEFECT: ${name} at ${commit} is refused`);
+  }
+  assert.notEqual(list({git: {'digita-auth': SHA, x: 1}}).status, 0, 'a commit that is not a string is refused');
 });
 
 // A unit that builds nothing ("CI only", `builds: []` in its registration) still gets a ci check on every
@@ -303,7 +351,7 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
     assert.ok(task.timeout, `${task.name} bounds its own run: the timeout of a task restarts while its pod waits for the quota`);
   }
   const bounds = Object.fromEntries(pipeline.spec.tasks.map((t) => [t.name, seconds(t.timeout)]));
-  assert.deepEqual(bounds, {gate: 300, clone: 600, 'describe-commit': 120, 'fetch-branches': 300, check: 1200});
+  assert.deepEqual(bounds, {gate: 300, clone: 600, 'describe-commit': 120, 'fetch': 300, check: 1200});
   const report = pipeline.spec.finally.find((t) => t.name === 'report-failure');
   for (const step of report.taskSpec.steps) {
     for (const side of ['requests', 'limits']) assert.ok(step.computeResources?.[side]?.cpu && step.computeResources?.[side]?.memory, `report-failure/${step.name} has ${side}`);
@@ -664,7 +712,7 @@ test('only the report pod of a ci run reaches the API server and Alertmanager, a
   // Alertmanager's pods and its one port: a namespace alone, or any other port, is wider.
   const alertmanagerRulesAreNarrow = (docs, task) => rulesFor(docs, task).filter(mentionsAlertmanager).every((rule) =>
     rule.to.every((to) => Object.keys(to.podSelector?.matchLabels ?? {}).length > 0) && JSON.stringify(rule.ports) === JSON.stringify([{protocol: 'TCP', port: 9093}]));
-  const CI_TASKS = ['gate', 'clone', 'describe-commit', 'fetch-branches', 'check'];
+  const CI_TASKS = ['gate', 'clone', 'describe-commit', 'fetch', 'check'];
   const holds = (docs) => reachesApiServer(docs, 'report-failure') && reachesAlertmanager(docs, 'report-failure') && alertmanagerRulesAreNarrow(docs, 'report-failure') &&
     CI_TASKS.every((task) => !reachesApiServer(docs, task) && !reachesAlertmanager(docs, task));
   const docs = renderUnit('shop');
