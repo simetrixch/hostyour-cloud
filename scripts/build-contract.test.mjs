@@ -27,7 +27,7 @@ test('no Tekton test resources are rendered and production readers remain', () =
       assert.ok(!docs.some(d => d.kind === 'PipelineRun' || (d.kind === 'Pipeline' && d.metadata.name.endsWith('-tests'))));
       assert.ok(!docs.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa').imagePullSecrets);
       const readers = docs.filter(d => d.kind === 'ExternalSecret');
-      if (builds.length === 0) assert.equal(readers.length, 0, record.name + ' rendered a test-only reader');
+      if (builds.length === 0) assert.deepEqual(readers.map(d => d.metadata.name).sort(), ['build-git-https', 'build-npmrc'], record.name + ' holds the credentials of its ci check and no push or bump credential');
       else {
         const pull = readers.find(d => d.metadata.name === 'image-builder-registry-pull-opaque');
         assert.equal(pull.spec.target.name, pull.metadata.name);
@@ -231,9 +231,29 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   assert.equal(pipeline.metadata.labels['image-builder.io/ci'], 'shop');
   assert.equal(pipeline.metadata.labels['image-builder.io/consumer'], undefined);
   assert.ok(docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release').metadata.labels['image-builder.io/consumer']);
-  assert.ok(!renderUnit('shop', []).some((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci'), 'a unit without builds has no clone credential and no ci pipeline');
   const grant = docs.find((d) => d.kind === 'Role' && d.metadata.name === 'eventlistener-create-pipelineruns');
   assert.ok(grant.rules.some((r) => r.resources.includes('pipelineruns') && r.verbs.includes('create')), 'the event listener may create the ci run');
+});
+
+// A unit that builds nothing ("CI only", `builds: []` in its registration) still gets a ci check on every
+// push, and gets no release pipeline and no credential that writes: the namespace runs repository code.
+const CI_PARTS = [['Pipeline', 'shop-ci'], ['ResourceQuota', 'ci-pods'], ['ExternalSecret', 'build-git-https'], ['ExternalSecret', 'build-npmrc'],
+  ['Role', 'ci-report-read'], ['Role', 'ci-run-keeper-pipelineruns']];
+const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'bump-git-https']];
+const holds = (docs, parts) => parts.map(([kind, name]) => docs.some((d) => d.kind === kind && d.metadata.name === name));
+const isCiOnly = (docs) => holds(docs, CI_PARTS).every(Boolean) && !holds(docs, RELEASE_PARTS).some(Boolean);
+
+test('a unit that builds nothing renders the ci check and no release, registry or bump part', () => {
+  const ciOnly = renderUnit('shop', []);
+  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, packages reader and the ci grants render; release pipeline, registry secret and bump secret do not');
+  const withBuilds = renderUnit('shop');
+  assert.deepEqual(holds(withBuilds, [...CI_PARTS, ...RELEASE_PARTS]), Array(CI_PARTS.length + RELEASE_PARTS.length).fill(true), 'PLANTED INNOCENT: a unit with builds renders both pipelines and every credential as before');
+  assert.ok(!isCiOnly(withBuilds), 'a unit with builds is not a ci-only unit');
+  // The condition this change replaced (a unit renders its ci parts only when it builds) leaves out the ci parts.
+  const oldCondition = ciOnly.filter((d) => !CI_PARTS.slice(0, 4).some(([kind, name]) => d.kind === kind && d.metadata.name === name));
+  assert.ok(!isCiOnly(oldCondition), 'PLANTED DEFECT: a render that keeps the ci parts behind the builds condition is caught');
+  const leaky = [...ciOnly, withBuilds.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https')];
+  assert.ok(!isCiOnly(leaky), 'PLANTED DEFECT: a ci-only render that carries the bump credential is caught');
 });
 
 const seconds = (duration) => ['h', 'm', 's'].reduce((sum, unit, i) => sum + Number(new RegExp(`(\\d+)${unit}`).exec(duration)?.[1] ?? 0) * [3600, 60, 1][i], 0);
@@ -447,7 +467,6 @@ test('releases rank above ci, neither preempts, and the quota counts the class t
   assert.ok(!JSON.stringify(quotas[0]).includes(REPORT_CLASS), 'the report pod is not counted by the ci quota');
   assert.deepEqual(Object.keys(quotas[0].spec.hard), ['pods'], 'a compute quota would refuse Tekton init containers, which carry no requests');
   assert.ok(Number(quotas[0].spec.hard.pods) >= 1);
-  assert.deepEqual(renderUnit('shop', []).filter((d) => d.kind === 'ResourceQuota'), [], 'a unit without builds has no ci run');
 });
 
 // The failure report. A ci run that fails mails the error through Alertmanager, and what keeps that from
