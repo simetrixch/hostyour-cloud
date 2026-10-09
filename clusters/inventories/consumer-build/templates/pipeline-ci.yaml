@@ -22,7 +22,7 @@ may be added to it that a release selector reads.
 
 The trust split:
 
-  PINNED LITERALS: repoURL, the images, the pnpm and helm versions.
+  PINNED LITERALS: repoURL, the images, the pnpm, helm and yq versions.
 
   RUN INPUTS (from the push webhook, proven in-pipeline): git-url is the
   webhook's own claim of the repo and is compared fail-closed against the
