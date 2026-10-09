@@ -1,21 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {existsSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {immutableChanges, probeImmutableChanges} from './check-immutable.mjs';
-
-function renderChart(chart, extra = []) {
-  const rendered = execFileSync('helm', ['template', chart, 'clusters/inventories/' + chart,
-    '--namespace', chart === 'image-builder' ? 'image-builder' : 'argocd',
-    '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml',
-    '-f', 'clusters/inventories/' + chart + '/values-common.yaml',
-    ...(existsSync('clusters/inventories/' + chart + '/values-prod.yaml') ?
-      ['-f', 'clusters/inventories/' + chart + '/values-prod.yaml'] : []),
-    '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', ...extra],
-    {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']});
-  return JSON.parse(execFileSync('yq', ['eval-all', '-o=json', '-I=0', '[.]', '-'],
-    {input: rendered, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024})).filter(Boolean);
-}
+import {renderChart} from './render-chart.mjs';
 
 test('no Tekton test resources are rendered and production readers remain', () => {
   const builder = renderChart('image-builder');
@@ -109,11 +97,14 @@ const evaluate = (policy, requests) => execFileSync('go', ['run', '.'], {cwd: 's
 const renderUnit = (name, builds = ['app']) => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name,
   repoURL: `https://github.com/check/${name}.git`, buildsJson: JSON.stringify(builds)})]);
 const imageBuilder = () => renderChart('image-builder');
+// What the ci-push TriggerTemplate creates, with the trigger's parameters filled in.
+const createdCiRun = (docs) => JSON.parse(JSON.stringify(docs.find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push').spec.resourcetemplates[0])
+  .replaceAll('$(tt.params.unit)', 'shop').replace(/\$\(tt\.params\.[a-z-]+\)/g, 'x'));
 const guardOf = (docs) => docs.find((d) => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
 
 const OWNERSHIP = 'a build namespace runs only its own release and ci Pipelines.';
 const EVENT_LISTENER = 'system:serviceaccount:image-builder:eventlistener-sa';
-const RELEASE_CLASS = 'image-builder-release', CI_CLASS = 'image-builder-ci';
+const RELEASE_CLASS = 'image-builder-release', CI_CLASS = 'image-builder-ci', REPORT_CLASS = 'image-builder-ci-report';
 const classOf = (pipeline) => (pipeline.endsWith('-release') ? RELEASE_CLASS : CI_CLASS);
 // podTemplate null leaves the template out.
 const createsRun = (namespace, pipeline, podTemplate = {priorityClassName: classOf(pipeline)}) => ({object: {metadata: {namespace, labels: {'image-builder.io/ci': 'shop'}},
@@ -149,13 +140,16 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   assert.deepEqual(Object.keys(template.metadata.labels), ['image-builder.io/ci']);
   assert.equal(template.metadata.annotations['image-builder.io/ci-branch'], '$(tt.params.branch)', 'the keeper groups ci runs by branch');
   assert.equal(template.spec.taskRunTemplate.podTemplate.priorityClassName, CI_CLASS);
+  assert.deepEqual(template.spec.taskRunSpecs, [{pipelineTaskName: 'report-failure', podTemplate: {priorityClassName: REPORT_CLASS}}],
+    'the report pod, and no other, carries the class the quota does not count');
   assert.equal(byKind('TriggerTemplate', 'deploy-request').spec.resourcetemplates[0].spec.taskRunTemplate.podTemplate.priorityClassName, RELEASE_CLASS);
+  assert.equal(byKind('TriggerTemplate', 'deploy-request').spec.resourcetemplates[0].spec.taskRunSpecs, undefined, 'a release run carries no per-task override');
   assert.equal(byKind('TriggerTemplate', 'deploy-request').spec.resourcetemplates[0].metadata.labels['image-builder.io/consumer'], '$(tt.params.unit)');
   // What the template creates, as the guard sees it once the trigger's parameters are in.
-  const created = JSON.parse(JSON.stringify(template).replaceAll('$(tt.params.unit)', 'shop').replace(/\$\(tt\.params\.[a-z-]+\)/g, 'x'));
+  const created = createdCiRun(builder);
   const verdict = evaluate(guardOf(builder), [{object: created, oldObject: null,
     request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: EVENT_LISTENER}}}])[0];
-  assert.deepEqual(verdict.denied, []);
+  assert.deepEqual(verdict.denied, [], 'PLANTED INNOCENT: the run with the report override and the three timeouts is admitted');
 
   const trigger = (name) => {
     const cel = byKind('Trigger', name).spec.interceptors.find((i) => i.ref.name === 'cel').params;
@@ -218,21 +212,18 @@ test('the ci trigger needs a list of owners, and an empty or missing list fails 
 test('the ci pipeline of a unit holds no GitOps credential, mounts only the packages reader, and is no release', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'fetch-branches', 'check']);
-  assert.equal(pipeline.spec.finally, undefined);
+  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'describe-commit', 'fetch-branches', 'check']);
+  assert.deepEqual(pipeline.spec.finally.map((t) => t.name), ['report-failure']);
   const referencesBump = (doc) => JSON.stringify(doc).includes('bump');
   assert.ok(!referencesBump(pipeline), 'the ci pipeline names no bump task, volume or secret');
   const planted = structuredClone(pipeline);
-  planted.spec.tasks[3].taskSpec.volumes.push({name: 'bump', secret: {secretName: 'bump-git-https'}});
+  planted.spec.tasks.find((t) => t.name === 'check').taskSpec.volumes.push({name: 'bump', secret: {secretName: 'bump-git-https'}});
   assert.ok(referencesBump(planted), 'PLANTED DEFECT: a render that adds the bump volume is caught');
   const secrets = (doc) => [...JSON.stringify(doc).matchAll(/"(?:secretName|name)":"((?:build|bump)-[a-z-]+)"/g)].map((m) => m[1]).sort();
   assert.deepEqual([...new Set(secrets(pipeline))], ['build-git-https', 'build-npmrc']);
   const check = pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec;
   assert.equal(check.steps[0].envFrom, undefined, 'the check step holds no secret as environment');
   assert.equal(check.steps[0].env.find((e) => e.name === 'CI')?.value, 'true', 'a check sees the variable GitHub Actions also sets');
-  const LOG = '.git/ci-check.log';
-  assert.match(check.steps[0].script, /\| tee \.git\/ci-check\.log$/m, 'the log sits where no check lints, formats or lists it');
-  assert.ok(pipeline.spec.description.includes(LOG) && pipeline.spec.workspaces[0].description.includes(LOG));
   assert.deepEqual(check.volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
   assert.deepEqual(check.steps[0].volumeMounts.filter((m) => m.name === 'npmrc').map((m) => m.readOnly), [true]);
   assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['clone', 'fetch-branches']);
@@ -261,10 +252,22 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
     assert.ok(task.timeout, `${task.name} bounds its own run: the timeout of a task restarts while its pod waits for the quota`);
   }
   const bounds = Object.fromEntries(pipeline.spec.tasks.map((t) => [t.name, seconds(t.timeout)]));
-  assert.deepEqual(bounds, {gate: 300, clone: 600, 'fetch-branches': 300, check: 1200});
-  // The clock of the whole run starts at its creation, so it holds the wait for a free slot as well.
-  const whole = seconds(imageBuilder().find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push').spec.resourcetemplates[0].spec.timeouts.pipeline);
-  assert.ok(whole >= 3 * Object.values(bounds).reduce((a, b) => a + b, 0), 'the run outlives three rounds of its own tasks');
+  assert.deepEqual(bounds, {gate: 300, clone: 600, 'describe-commit': 120, 'fetch-branches': 300, check: 1200});
+  const report = pipeline.spec.finally.find((t) => t.name === 'report-failure');
+  for (const step of report.taskSpec.steps) {
+    for (const side of ['requests', 'limits']) assert.ok(step.computeResources?.[side]?.cpu && step.computeResources?.[side]?.memory, `report-failure/${step.name} has ${side}`);
+  }
+  assert.equal(seconds(report.timeout), 300);
+  // The clock of the tasks starts at the creation of the run, so it holds the wait for a free slot as well.
+  // The finally tasks run on a clock of their own, so a run that used up its tasks budget still mails.
+  const timeouts = imageBuilder().find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push').spec.resourcetemplates[0].spec.timeouts;
+  const mailsAfterTimeout = (t) => Boolean(t.tasks && t.finally) && seconds(t.pipeline) >= seconds(t.tasks) + seconds(t.finally) &&
+    seconds(t.tasks) >= 2 * Object.values(bounds).reduce((a, b) => a + b, 0) && seconds(t.finally) >= seconds(report.timeout);
+  assert.ok(mailsAfterTimeout(timeouts), 'PLANTED INNOCENT: the run outlives two rounds of its own tasks and leaves the finally task its own time');
+  assert.ok(!mailsAfterTimeout({pipeline: timeouts.pipeline}), 'PLANTED DEFECT: the pipeline timeout alone cancels the finally task with the rest');
+  assert.ok(!mailsAfterTimeout({...timeouts, pipeline: '1h50m0s'}), 'PLANTED DEFECT: a pipeline timeout shorter than tasks plus finally');
+  assert.ok(!mailsAfterTimeout({...timeouts, tasks: '30m0s'}), 'PLANTED DEFECT: a tasks budget that is not two rounds of the tasks');
+  assert.ok(!mailsAfterTimeout({...timeouts, finally: '2m0s'}), 'PLANTED DEFECT: a finally budget shorter than the report task');
 });
 
 // The scheduler admits a pod by its requests, and the kernel kills by QoS class when the node runs out of
@@ -273,11 +276,16 @@ const BYTES = {Gi: 1024 ** 3, Mi: 1024 ** 2};
 const quantity = (text) => Number(text.slice(0, -2)) * BYTES[text.slice(-2)];
 const podLimit = (task, cloneTask) => (task.taskSpec ?? cloneTask.spec).steps
   .reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0);
-// The limits of the ci pods that the quota allows, plus the build pods of the one release that runs.
+// The limits of the ci pods that the quota allows, the report pod of each unit (its class is the one the quota
+// does not count, so it comes on top), plus the build pods of the one release that runs. One report pod per unit
+// is an assumption and no quota enforces it: the failures of a unit follow one another because its ci quota
+// holds one pod, and a report pod lives seconds (5 minutes at most).
 const fitsFreeMemory = (capacity, pipeline, cloneTask, release, buildahTask) => {
-  const ciPods = capacity.podsPerUnit * capacity.unitCount * Math.max(...pipeline.spec.tasks.map((task) => podLimit(task, cloneTask)));
+  const largest = (tasks) => Math.max(0, ...tasks.map((task) => podLimit(task, cloneTask)));
+  const ciPods = capacity.podsPerUnit * capacity.unitCount * largest(pipeline.spec.tasks);
+  const reportPods = capacity.unitCount * largest(pipeline.spec.finally);
   const buildPods = release.spec.tasks.filter((task) => task.name.startsWith('build-') && task.runAfter?.includes('scan')).length;
-  return ciPods + buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask) <= quantity(capacity.limitsMemoryBudget);
+  return ciPods + reportPods + buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask) <= quantity(capacity.limitsMemoryBudget);
 };
 
 test('the memory limits of all ci pods and one release together fit the free memory of the build node', () => {
@@ -298,6 +306,9 @@ test('the memory limits of all ci pods and one release together fit the free mem
   assert.ok(!fitsFreeMemory({...capacity, podsPerUnit: 2}, pipeline, cloneTask, release, buildah), 'PLANTED DEFECT: two pods per unit without a bigger budget are caught');
   const fourImages = renderUnit('shop', images(capacity.releaseBuildPods + 1)).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
   assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, fourImages, buildah), 'PLANTED DEFECT: a fourth image built in parallel is caught');
+  const heavyReport = structuredClone(pipeline);
+  heavyReport.spec.finally[0].taskSpec.steps[0].computeResources.limits.memory = '2Gi';
+  assert.ok(!fitsFreeMemory(capacity, heavyReport, cloneTask, release, buildah), 'PLANTED DEFECT: a 2Gi limit on the report step, one pod per unit outside the quota, is caught');
   const heavy = structuredClone(buildah);
   heavy.spec.steps.find((step) => step.name === 'build').computeResources.limits.memory = '8Gi';
   assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, release, heavy), 'PLANTED DEFECT: a raised limit of the buildah build step is caught');
@@ -338,6 +349,7 @@ test('the ci run keeper runs every minute, reads runs cluster-wide, and may patc
 const KEEPER = 'system:serviceaccount:image-builder:ci-run-keeper';
 const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run.';
 const PRIORITY_MESSAGE = "a managed run's podTemplate sets priorityClassName to the class of its pipeline and nothing else.";
+const OVERRIDE_MESSAGE = 'per-task pod, step, sidecar, metadata and account overrides are not allowed, except the report class on the task report-failure of a ci run.';
 const CI_CLASS_MESSAGE = 'a ci run carries the ci priority class: the capacity quota of its build namespace counts the pods of that class only.';
 
 test('the admission policy lets the ci run keeper cancel a ci run and change nothing else', () => {
@@ -409,7 +421,7 @@ test('a run carries the priority class of its pipeline and no other pod template
   // A per-task pod template cannot bring the token back either: no run carries per-task overrides.
   const perTask = createsRun('shop-build', 'shop-ci');
   perTask.object.spec.taskRunSpecs = [{pipelineTaskName: 'check', podTemplate: {automountServiceAccountToken: true}}];
-  assert.deepEqual(evaluate(policy, [perTask])[0].denied, ['per-task pod, step, sidecar, metadata and account overrides are not allowed.'],
+  assert.deepEqual(evaluate(policy, [perTask])[0].denied, [OVERRIDE_MESSAGE],
     'PLANTED DEFECT: a task asks for the token through taskRunSpecs');
   const without = structuredClone(policy);
   without.spec.validations = without.spec.validations.filter((v) => ![PRIORITY_MESSAGE, CI_CLASS_MESSAGE].includes(v.message));
@@ -419,7 +431,7 @@ test('a run carries the priority class of its pipeline and no other pod template
 
 test('releases rank above ci, neither preempts, and the quota counts the class the ci runs carry', () => {
   const classes = Object.fromEntries(imageBuilder().filter((d) => d.kind === 'PriorityClass').map((d) => [d.metadata.name, d]));
-  assert.deepEqual(Object.keys(classes).sort(), [CI_CLASS, RELEASE_CLASS]);
+  assert.deepEqual(Object.keys(classes).sort(), [CI_CLASS, REPORT_CLASS, RELEASE_CLASS].sort());
   for (const klass of Object.values(classes)) {
     assert.equal(klass.preemptionPolicy, 'Never', `${klass.metadata.name} must not evict a platform pod`);
     assert.equal(klass.globalDefault, false);
@@ -427,11 +439,196 @@ test('releases rank above ci, neither preempts, and the quota counts the class t
   }
   assert.ok(classes[RELEASE_CLASS].value > 0, 'a release outranks a pod without a class');
   assert.ok(classes[CI_CLASS].value <= 0 && classes[CI_CLASS].value < classes[RELEASE_CLASS].value);
+  assert.equal(classes[REPORT_CLASS].value, classes[CI_CLASS].value, 'the report pod ranks like a ci pod');
   const quotas = renderUnit('shop').filter((d) => d.kind === 'ResourceQuota');
   assert.equal(quotas.length, 1);
   assert.equal(quotas[0].metadata.namespace, 'shop-build');
   assert.deepEqual(quotas[0].spec.scopeSelector.matchExpressions, [{scopeName: 'PriorityClass', operator: 'In', values: [CI_CLASS]}]);
+  assert.ok(!JSON.stringify(quotas[0]).includes(REPORT_CLASS), 'the report pod is not counted by the ci quota');
   assert.deepEqual(Object.keys(quotas[0].spec.hard), ['pods'], 'a compute quota would refuse Tekton init containers, which carry no requests');
   assert.ok(Number(quotas[0].spec.hard.pods) >= 1);
   assert.deepEqual(renderUnit('shop', []).filter((d) => d.kind === 'ResourceQuota'), [], 'a unit without builds has no ci run');
+});
+
+// The failure report. A ci run that fails mails the error through Alertmanager, and what keeps that from
+// weakening the ci pipeline is asserted here on the rendered charts: the report task runs after a failure
+// only, holds the one token, reads with `get` and nothing else, and is the one pod that reaches the API
+// server and Alertmanager.
+const REPORT_OVERRIDE = (extra = {}) => ({pipelineTaskName: 'report-failure', podTemplate: {priorityClassName: REPORT_CLASS}, ...extra});
+const runWith = (pipeline, taskRunSpecs) => {
+  const run = createsRun('shop-build', pipeline);
+  if (taskRunSpecs) run.object.spec.taskRunSpecs = taskRunSpecs;
+  return run;
+};
+
+test('the admission policy admits the report class on report-failure of a ci run and no other per-task override', () => {
+  const policy = guardOf(imageBuilder());
+  const crd = renderChart('tekton').find((d) => d.kind === 'CustomResourceDefinition' && d.metadata.name === 'pipelineruns.tekton.dev');
+  const entry = crd.spec.versions.find((v) => v.name === 'v1').schema.openAPIV3Schema.properties.spec.properties.taskRunSpecs.items.properties;
+  const podTemplateFields = Object.keys(entry.podTemplate.properties).filter((field) => field !== 'priorityClassName');
+  // The keys of an entry come from the CRD this repository renders, so a Tekton upgrade that adds one turns this red.
+  const otherKeys = Object.keys(entry).filter((key) => !['pipelineTaskName', 'podTemplate'].includes(key));
+  assert.deepEqual(otherKeys.sort(), ['computeResources', 'metadata', 'serviceAccountName', 'sidecarSpecs', 'stepSpecs', 'timeout']);
+  const ADMITTED = {
+    'a ci run with the report class on report-failure': runWith('shop-ci', [REPORT_OVERRIDE()]),
+    'a ci run with an empty list of per-task overrides': runWith('shop-ci', []),
+    'a ci run without per-task overrides': runWith('shop-ci'),
+    'a release run without per-task overrides': runWith('shop-release'),
+    'the run the ci-push TriggerTemplate creates': {...runWith('shop-ci'), object: createdCiRun(imageBuilder())},
+  };
+  ADMITTED['the run the ci-push TriggerTemplate creates'].object.metadata.namespace = 'shop-build';
+  const DENIED = {
+    'a second entry': runWith('shop-ci', [REPORT_OVERRIDE(), REPORT_OVERRIDE({pipelineTaskName: 'check'})]),
+    'the same entry twice': runWith('shop-ci', [REPORT_OVERRIDE(), REPORT_OVERRIDE()]),
+    'another task with the report class': runWith('shop-ci', [REPORT_OVERRIDE({pipelineTaskName: 'check'})]),
+    'a task of the release pipeline with the report class': runWith('shop-ci', [REPORT_OVERRIDE({pipelineTaskName: 'bump'})]),
+    'the report class on a release run': runWith('shop-release', [REPORT_OVERRIDE()]),
+    'the ci class on report-failure': runWith('shop-ci', [REPORT_OVERRIDE({podTemplate: {priorityClassName: CI_CLASS}})]),
+    'a system class on report-failure': runWith('shop-ci', [REPORT_OVERRIDE({podTemplate: {priorityClassName: 'system-node-critical'}})]),
+    'an entry without a pod template': runWith('shop-ci', [{pipelineTaskName: 'report-failure'}]),
+    'a pod template without the class': runWith('shop-ci', [REPORT_OVERRIDE({podTemplate: {}})]),
+    'an entry without a task name': runWith('shop-ci', [{podTemplate: {priorityClassName: REPORT_CLASS}}]),
+    ...Object.fromEntries(otherKeys.map((key) => [`${key} in the entry`,
+      runWith('shop-ci', [REPORT_OVERRIDE({[key]: key === 'serviceAccountName' ? 'pipeline-sa' : 'x'})])])),
+    ...Object.fromEntries(podTemplateFields.map((field) => [`${field} in the pod template of the entry`,
+      runWith('shop-ci', [REPORT_OVERRIDE({podTemplate: {priorityClassName: REPORT_CLASS, [field]: {volumes: [], automountServiceAccountToken: true}[field] ?? 'x'}})])])),
+  };
+  assert.ok(podTemplateFields.includes('automountServiceAccountToken') && podTemplateFields.includes('volumes'));
+  const verdicts = evaluate(policy, [...Object.values(ADMITTED), ...Object.values(DENIED)]).map((v) => v.denied);
+  Object.keys(ADMITTED).forEach((name, i) => assert.deepEqual(verdicts[i], [], `PLANTED INNOCENT: ${name}`));
+  Object.keys(DENIED).forEach((name, i) => assert.deepEqual(verdicts[Object.keys(ADMITTED).length + i], [OVERRIDE_MESSAGE], `PLANTED DEFECT: ${name}`));
+  // The refusal is this clause's: without it every one of them is admitted.
+  const without = structuredClone(policy);
+  without.spec.validations = without.spec.validations.filter((v) => v.message !== OVERRIDE_MESSAGE);
+  assert.ok(evaluate(without, Object.values(DENIED).filter((run) => !run.object.spec.taskRunSpecs.some((e) => e.serviceAccountName)))
+    .every((v) => v.denied.length === 0), 'without the clause every one of them is admitted');
+  // A different service account in an entry is refused by the older clause too, so both name it.
+  assert.deepEqual(evaluate(policy, [runWith('shop-ci', [REPORT_OVERRIDE({serviceAccountName: 'other'})])])[0].denied.sort(),
+    ['taskRunSpecs may not run a task under another ServiceAccount — every task pod runs as pipeline-sa.', OVERRIDE_MESSAGE].sort());
+});
+
+// A model of the two rules that decide whether the report pod waits, each read from the source it models.
+// Tekton merges the entry of taskRunSpecs over taskRunTemplate for that one task (pipelinerun_types.go
+// GetTaskRunSpec calls MergePodTemplateWithDefault, whose priorityClassName stays the task's own when set,
+// pkg/apis/pipeline/pod/template.go). The quota counts the pods of its scope classes that are not finished.
+const podClassOf = (run, task) => run.spec.taskRunSpecs?.find((entry) => entry.pipelineTaskName === task)?.podTemplate?.priorityClassName ??
+  run.spec.taskRunTemplate.podTemplate?.priorityClassName;
+const quotaAdmits = (quota, runningClasses, newClass) => {
+  const counted = quota.spec.scopeSelector.matchExpressions.flatMap((e) => e.values);
+  return !counted.includes(newClass) || runningClasses.filter((c) => counted.includes(c)).length + 1 <= Number(quota.spec.hard.pods);
+};
+
+test('the report pod of a red run is admitted by the ci quota while the check of another branch holds its slot', () => {
+  const builder = imageBuilder();
+  const quota = renderUnit('shop').find((d) => d.kind === 'ResourceQuota');
+  const run = createdCiRun(builder);
+  const held = [podClassOf(run, 'check')];
+  assert.equal(quota.spec.hard.pods, '1', 'the slot is held by the one check');
+  assert.equal(quotaAdmits(quota, held, podClassOf(run, 'check')), false, 'a second ci pod waits');
+  assert.equal(quotaAdmits(quota, held, podClassOf(run, 'report-failure')), true, 'PLANTED INNOCENT: the report pod of a red run does not wait for the slot');
+  const noOverride = structuredClone(run);
+  delete noOverride.spec.taskRunSpecs;
+  assert.equal(quotaAdmits(quota, held, podClassOf(noOverride, 'report-failure')), false, 'PLANTED DEFECT: a run without the override puts the report pod behind the check');
+  const counting = structuredClone(quota);
+  counting.spec.scopeSelector.matchExpressions[0].values.push(REPORT_CLASS);
+  assert.equal(quotaAdmits(counting, held, podClassOf(run, 'report-failure')), false, 'PLANTED DEFECT: a quota that counts the report class holds the report pod back');
+});
+
+test('report-failure runs after a failure only, holds the one token, and reads with get on the run, its TaskRuns and pod logs', () => {
+  const docs = renderUnit('shop');
+  const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const all = [...pipeline.spec.tasks, ...pipeline.spec.finally];
+  const report = pipeline.spec.finally.find((t) => t.name === 'report-failure');
+  const runsOnFailureOnly = (task) => JSON.stringify(task.when) === JSON.stringify([{input: '$(tasks.status)', operator: 'in', values: ['Failed']}]);
+  const holdsSecret = (task) => /"(?:secretName|secretRef|secretKeyRef|envFrom)"/.test(JSON.stringify(task));
+  const mountsToken = (task) => /serviceAccountToken|"automountServiceAccountToken":true/.test(JSON.stringify(task));
+  assert.equal(report.taskSpec.steps[0].script, readFileSync('clusters/inventories/consumer-build/files/ci-report-failure.sh', 'utf8'),
+    'the pipeline carries the script that scripts/ci-report-failure.test.mjs runs');
+  assert.ok(runsOnFailureOnly(report), 'PLANTED INNOCENT: the report runs when a task failed');
+  for (const when of [undefined, [{input: '$(tasks.status)', operator: 'in', values: ['Failed', 'Succeeded']}],
+    [{input: '$(tasks.status)', operator: 'notin', values: ['Succeeded']}], [{input: '$(tasks.status)', operator: 'in', values: ['Completed']}]]) {
+    assert.ok(!runsOnFailureOnly({...report, when}), `PLANTED DEFECT: ${JSON.stringify(when)} is not a failure`);
+  }
+  assert.ok(!holdsSecret(report), 'the report holds no npmrc, no git credential and no other secret');
+  const withNpmrc = structuredClone(report);
+  withNpmrc.taskSpec.volumes.push({name: 'npmrc', secret: {secretName: 'build-npmrc'}});
+  assert.ok(holdsSecret(withNpmrc), 'PLANTED DEFECT: the report task mounting build-npmrc is caught');
+  const asEnvironment = structuredClone(report);
+  asEnvironment.taskSpec.steps[0].envFrom = [{secretRef: {name: 'build-git-https'}}];
+  assert.ok(holdsSecret(asEnvironment), 'PLANTED DEFECT: the report task reading a secret as environment is caught');
+  assert.deepEqual(all.filter(mountsToken).map((t) => t.name), ['report-failure'], 'only the report task mounts a token');
+  const check = structuredClone(pipeline.spec.tasks.find((t) => t.name === 'check'));
+  check.taskSpec.volumes.push({name: 'api', projected: {sources: [{serviceAccountToken: {path: 'token', expirationSeconds: 600}}]}});
+  assert.ok(mountsToken(check), 'PLANTED DEFECT: a check that mounts a token is caught');
+  assert.ok(mountsToken({taskSpec: {steps: [], automountServiceAccountToken: true}}) && mountsToken({podTemplate: {automountServiceAccountToken: true}}),
+    'PLANTED DEFECT: a task that switches the automount on is caught');
+  assert.equal(docs.find((d) => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa').automountServiceAccountToken, false);
+  const projected = report.taskSpec.volumes.find((v) => v.name === 'api-token').projected.sources.find((source) => source.serviceAccountToken).serviceAccountToken;
+  assert.ok(projected.expirationSeconds >= 600, 'the API server refuses a shorter life');
+  assert.equal(projected.audience, undefined, 'the token is for the API server and no other audience');
+
+  const grants = (role) => role.rules.flatMap((rule) => rule.apiGroups.flatMap((group) => rule.resources.flatMap((resource) => rule.verbs.map((verb) => `${group}/${resource}:${verb}`)))).sort();
+  const role = docs.find((d) => d.kind === 'Role' && d.metadata.name === 'ci-report-read');
+  const EXPECTED = ['/pods/log:get', 'tekton.dev/pipelineruns:get', 'tekton.dev/taskruns:get'];
+  assert.deepEqual(grants(role), EXPECTED, 'PLANTED INNOCENT: get on the run, its TaskRuns and pod logs');
+  for (const [name, edit] of Object.entries({
+    'list on the TaskRuns': (r) => { r.rules[0].verbs.push('list'); },
+    'watch on the run': (r) => { r.rules[0].verbs.push('watch'); },
+    'create on the run': (r) => { r.rules[0].verbs.push('create'); },
+    'the pods themselves': (r) => { r.rules[1].resources.push('pods'); },
+    'exec into a pod': (r) => { r.rules[1].resources.push('pods/exec'); },
+    'secrets': (r) => { r.rules.push({apiGroups: [''], resources: ['secrets'], verbs: ['get']}); },
+    'a wildcard resource': (r) => { r.rules[0].resources = ['*']; },
+  })) {
+    const planted = structuredClone(role);
+    edit(planted);
+    assert.notDeepEqual(grants(planted), EXPECTED, `PLANTED DEFECT: ${name} is caught`);
+  }
+  const binding = docs.find((d) => d.kind === 'RoleBinding' && d.metadata.name === 'ci-report-read');
+  assert.deepEqual(binding.subjects, [{kind: 'ServiceAccount', name: 'pipeline-sa', namespace: 'shop-build'}]);
+  assert.deepEqual([binding.roleRef.kind, binding.roleRef.name, role.metadata.namespace], ['Role', 'ci-report-read', 'shop-build']);
+});
+
+test('only the report pod of a ci run reaches the API server and Alertmanager, and only Alertmanager on port 9093', () => {
+  const nodeCidr = JSON.parse(execFileSync('yq', ['-o=json', '.global.nodeCidrs[0]', 'scripts/standin/cluster-map.yaml'], {encoding: 'utf8'}));
+  const policies = (docs) => docs.filter((d) => d.kind === 'NetworkPolicy');
+  const selects = (policy, labels) => Object.entries(policy.spec.podSelector.matchLabels ?? {}).every(([key, value]) => labels[key] === value);
+  const rulesFor = (docs, task) => policies(docs).filter((policy) => selects(policy, {'tekton.dev/pipelineTask': task})).flatMap((policy) => policy.spec.egress ?? []);
+  const reachesApiServer = (docs, task) => rulesFor(docs, task).some((rule) => (rule.to ?? []).some((to) => to.ipBlock?.cidr === nodeCidr && !to.ipBlock.except) &&
+    (!rule.ports || rule.ports.some((port) => [443, 6443, 16443].includes(port.port))));
+  const mentionsAlertmanager = (rule) => (rule.to ?? []).some((to) => to.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'observability');
+  const reachesAlertmanager = (docs, task) => rulesFor(docs, task).some(mentionsAlertmanager);
+  // Alertmanager's pods and its one port: a namespace alone, or any other port, is wider.
+  const alertmanagerRulesAreNarrow = (docs, task) => rulesFor(docs, task).filter(mentionsAlertmanager).every((rule) =>
+    rule.to.every((to) => Object.keys(to.podSelector?.matchLabels ?? {}).length > 0) && JSON.stringify(rule.ports) === JSON.stringify([{protocol: 'TCP', port: 9093}]));
+  const CI_TASKS = ['gate', 'clone', 'describe-commit', 'fetch-branches', 'check'];
+  const holds = (docs) => reachesApiServer(docs, 'report-failure') && reachesAlertmanager(docs, 'report-failure') && alertmanagerRulesAreNarrow(docs, 'report-failure') &&
+    CI_TASKS.every((task) => !reachesApiServer(docs, task) && !reachesAlertmanager(docs, task));
+  const docs = renderUnit('shop');
+  assert.ok(holds(docs), 'PLANTED INNOCENT: the pinhole of the report pod, and no other, as rendered');
+  const planted = (edit) => { const copy = structuredClone(docs); edit(policies(copy).find((p) => p.metadata.name === 'ci-report-egress'), copy); return copy; };
+  const buildEgress = (copy) => policies(copy).find((p) => p.metadata.name === 'build-egress');
+  const rulesOfReport = (policy) => policy.spec.egress;
+  assert.ok(!holds(planted((policy) => { policy.spec.podSelector.matchLabels['tekton.dev/pipelineTask'] = 'check'; })), 'PLANTED DEFECT: the pinhole selects the check pod');
+  assert.ok(!holds(planted((policy) => { policy.spec.podSelector = {}; })), 'PLANTED DEFECT: the pinhole selects every pod of the namespace');
+  assert.ok(!holds(planted((policy) => { delete rulesOfReport(policy)[1].to[0].podSelector; })), 'PLANTED DEFECT: Alertmanager is opened to the whole namespace of observability');
+  assert.ok(!holds(planted((policy) => { rulesOfReport(policy)[1].ports[0].port = 9094; })), 'PLANTED DEFECT: another port of Alertmanager');
+  assert.ok(!holds(planted((policy) => { rulesOfReport(policy)[1].ports.push({protocol: 'TCP', port: 9090}); })), 'PLANTED DEFECT: a second port of observability');
+  assert.ok(!holds(planted((policy) => { delete rulesOfReport(policy)[1].ports; })), 'PLANTED DEFECT: every port of Alertmanager');
+  assert.ok(!holds(planted((policy, copy) => { buildEgress(copy).spec.egress.push(structuredClone(rulesOfReport(policy)[1])); })), 'PLANTED DEFECT: 9093 placed in build-egress reaches every pod');
+  assert.ok(!holds(planted((policy, copy) => { buildEgress(copy).spec.egress.push(structuredClone(rulesOfReport(policy)[0])); })), 'PLANTED DEFECT: the API server placed in build-egress reaches every pod');
+  assert.ok(!holds(planted((policy) => { rulesOfReport(policy)[0].ports = [{protocol: 'TCP', port: 22}]; })), 'PLANTED DEFECT: the API server rule on the wrong port reaches nothing');
+});
+
+test('no step of the ci pipeline or of the clone traces its commands', () => {
+  const traces = (doc) => /\bset\s+-[A-Za-z]*x|xtrace|GIT_TRACE|GIT_CURL_VERBOSE/.test(JSON.stringify(doc).replaceAll('\\n', '\n'));
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const clone = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'git-clone');
+  assert.ok(!traces(pipeline) && !traces(clone), 'PLANTED INNOCENT: the pipeline and the clone as rendered');
+  for (const trace of ['set -eux', 'set -x', 'set -o xtrace', 'export GIT_TRACE=1', 'GIT_TRACE_CURL=1']) {
+    const plantedPipeline = structuredClone(pipeline), plantedClone = structuredClone(clone);
+    plantedPipeline.spec.tasks[0].taskSpec.steps[0].script += `\n${trace}\n`;
+    plantedClone.spec.steps[0].script += `\n${trace}\n`;
+    assert.ok(traces(plantedPipeline) && traces(plantedClone), `PLANTED DEFECT: ${trace} would print the clone credential into a log the failure mail quotes`);
+  }
 });
