@@ -667,9 +667,12 @@ echo "check: no file under clusters/bootstrap carries a placeholder, which nothi
 # machine. The installation branches on origin are the real merge targets, so HEAD is merged into
 # each of them as the release would be, in memory, without a working tree.
 #
-# A BRANCH WHOSE NAME CARRIES A DOT IS AN INSTALLATION'S, because it is named after a domain and no
-# other branch of this repository names one. A clone that holds none, a shallow one or one that
-# never fetched, has nothing to merge into, and says so instead of reporting a pass.
+# A BRANCH IS AN INSTALLATION'S WHEN IT HOLDS clusters/active/<its own name>.yaml, the cluster map the
+# branch program writes there and the default branch never carries. A name alone tells nothing: a
+# dot in a branch name is a version as often as a domain. The branches are fetched first, because
+# the installation branch moves with every release pin and a copy fetched an hour ago answers for
+# an hour ago. A clone that holds no installation branch has nothing to merge into, and says so
+# instead of reporting a pass.
 merges_into() {
   git -C "$1" merge-tree --write-tree --name-only --no-messages "$2" "$3" >"$work/merge-tree" 2>&1
 }
@@ -697,7 +700,11 @@ echo "check: the merge probe refuses the planted change beside a stamped line an
 # same pins, so HEAD alone would conflict on lines the change never touched. Where HEAD does not
 # hold the default branch, the two are merged in memory into a commit nothing points at; where
 # they conflict, the landing reports that, and HEAD alone is merged here.
-installations="$(git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep '\.')"
+git fetch -q origin || fail "origin could not be fetched, so the installation branches a release merges into are unknown"
+installations=""
+for branch in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin); do
+  git cat-file -e "$branch:clusters/active/${branch#origin/}.yaml" 2>/dev/null && installations="$installations $branch"
+done
 if [ -z "$installations" ]; then
   echo "check: NOT RUN — no installation branch in this clone, so no merge of HEAD into one was tried."
 else
@@ -716,7 +723,7 @@ else
       fail "HEAD does not merge into $installation: a release of it would stop at that machine's merge — move the change off the line the installation stamped and off the lines beside it"
     }
   done
-  echo "check: HEAD on $default_branch merges into every installation branch of this clone, as last fetched: $(echo $installations)."
+  echo "check: HEAD on $default_branch merges into every installation branch on origin: $(echo $installations)."
 fi
 
 # ── Every stamp site of this tree, held to its pin ───────────────────────────────────────────
