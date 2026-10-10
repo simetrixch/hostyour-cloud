@@ -4,10 +4,9 @@
 # composes its stage zones into the __PREVIOUS_STAGE_APEX_*__ markers by the rule of the new ones.
 #
 # WHICH HOSTS. Every host the platform composes from the unit apex, composed from the old one: a
-# consumer's `<label>.<stage apex>` and a tenant's zone `<subdomain>.<stage apex>`, and for a tenant
-# routed by host every member's `<member>.<zone>` (digita-deploy digita-lib.memberHost, which takes
-# an empty routing for host). A unit's own domains, its aliases and a consumer's fqdn never stood
-# under the apex and keep answering as they do.
+# consumer's `<label>.<stage apex>` and a tenant's zone `<subdomain>.<stage apex>`. A tenant's members
+# are served under paths of its zone, so the zone's redirect carries them. A unit's own domains, its
+# aliases and a consumer's fqdn never stood under the apex and keep answering as they do.
 #
 # THEIR OWN NAMESPACE AND PROJECT. A consumer's namespace admits an Ingress for its granted host
 # alone (clusters/units/admissionpolicy), and a tenant member's chart is the deploy repository's,
@@ -179,9 +178,3 @@ spec:
               redirects:
                 - from: "{{ .subdomain }}.{{ $old }}"
                   to: "{{ .subdomain }}.{{ $new }}"
-                {{- if ne .routing "path" }}
-                {{- range .members }}
-                - from: "{{ .name }}.{{ $.subdomain }}.{{ $old }}"
-                  to: "{{ .name }}.{{ $.subdomain }}.{{ $new }}"
-                {{- end }}
-                {{- end }}

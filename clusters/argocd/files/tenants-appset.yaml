@@ -217,15 +217,11 @@ spec:
                 # THE TENANT'S ZONE, DELIVERED: `<subdomain>.<stage apex>`, where the stage apex is
                 # the unit apex itself for prod and `<stage>.<unit apex>` otherwise — picked off the
                 # markers the chart at clusters/argocd fills from the map (#208). The identity
-                # provider scopes the tenant's session cookie to it; a member chart composes its
-                # address from this and `routing`, never from the subdomain and the apex.
+                # provider scopes the tenant's session cookie to it; a member chart serves under a path
+                # of it and composes its address from it, never from the subdomain and the apex.
                 zone: "{{ $.subdomain }}.{{ index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") $.values.stage }}"
-                # WHERE THE MEMBERS STAND, as the Manager recorded it: `host` puts every member one
-                # level below the zone (`<member>.<zone>`), `path` serves every member under a path
-                # of the zone itself. The Manager's tenant-set-routing moves a standing tenant.
-                routing: "{{ $.routing }}"
-                # The tenant's OWN DOMAIN, or "" where it is reached at its zone: set only on a `path`
-                # tenant, it replaces the zone as the tenant's one host (the zone then redirects to it).
+                # The tenant's OWN DOMAIN, or "" where it is reached at its zone: set, it replaces the
+                # zone as the tenant's one host (the zone then redirects to it).
                 # The Manager's tenant-set-own-domain sets and switches it.
                 ownDomain: "{{ $.ownDomain }}"
                 # The hosts that answer with a redirect to the own domain; empty without one. Named
