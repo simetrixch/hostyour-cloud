@@ -13,7 +13,7 @@ const docs = input => JSON.parse(execFileSync('yq', ['ea', '-o=json', '[.]', '-'
 const helm = args => execFileSync('helm', ['template', ...args], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
 const argocd = (...extra) => helm(['argocd-apps', 'clusters/argocd', '--namespace', 'argocd',
   '-f', 'clusters/platform/values-common.yaml', '-f', 'scripts/standin/installation-values.yaml',
-  '-f', 'scripts/standin/cluster-map.yaml', ...extra]);
+  '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', ...extra]);
 const withPrevious = apex => argocd('--set', `global.previousUnitApex=${apex}`);
 // helm prints every document under its own `---` and `# Source:` line, kinds in its install order.
 const split = output => output.split(/^(?=---\n)/m);
