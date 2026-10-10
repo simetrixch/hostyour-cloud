@@ -65,7 +65,8 @@ WHAT IT BINDS (CEL, fail-closed logic):
      which fields it has; scripts/build-contract.test.mjs checks the list
      against the Tekton CRD the repository renders.
   9. the ci run keeper (templates/ci-run-keeper.yaml) changes a run only on a
-     ci run, and only in one of two ways: by setting spec.status to Cancelled, or
+     ci run, and only in one of two ways: by setting spec.status to Cancelled or
+     CancelledRunFinally (a started run, so its finally tasks set its commit status), or
      as the release queue does in clause 7, by dropping spec.status
      PipelineRunPending, which starts the run, and by its own annotation
      image-builder.io/queued-behind. Its RBAC grant is `patch` and `delete`; a
@@ -249,7 +250,7 @@ spec:
       message: "the release queue may only delete a finished release run of its own namespace."
       reason: Forbidden
     - expression: "!variables.isCiRunKeeper || request.operation == 'DELETE' || (request.operation == 'UPDATE' && variables.refName.endsWith('-ci') && (
-        (variables.sameBody && variables.sameAnnotations && has(object.spec.status) && object.spec.status == 'Cancelled') ||
+        (variables.sameBody && variables.sameAnnotations && has(object.spec.status) && object.spec.status in ['Cancelled', 'CancelledRunFinally']) ||
         (variables.unchangedButStatus && variables.startsOrKeepsStatus)))"
       message: "the ci run keeper may only cancel a ci run, start a waiting one, or note what it waits for."
       reason: Forbidden

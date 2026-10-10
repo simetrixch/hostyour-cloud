@@ -66,15 +66,9 @@ install-transcripts/
 /graft/
 # setup-ai-core start: what agents and the harness put into a checkout is never committed
 /.ai-core/
-/GEMINI.md
-/.mcp.json
 /.agents/
-/.codex/
 /.openhands/microagents/
-/.gemini/
 /.cursorrules
-/.cursor/
 /.windsurfrules
-/.windsurf/
 /.github/copilot-instructions.md
 # setup-ai-core end

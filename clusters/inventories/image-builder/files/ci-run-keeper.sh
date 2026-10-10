@@ -5,9 +5,8 @@
 set -euo pipefail
 apply() {
   case "$1" in
-    cancel) kubectl patch pipelinerun -n "$2" "$3" --type merge -p '{"spec":{"status":"Cancelled"}}' ;;
     delete) kubectl delete pipelinerun -n "$2" "$3" --ignore-not-found --wait=false ;;
-    patch) kubectl patch pipelinerun -n "$2" "$3" --type "$4" -p "$5" ;;
+    cancel | patch) kubectl patch pipelinerun -n "$2" "$3" --type "$4" -p "$5" ;;
   esac
 }
 changes="$(kubectl get pipelineruns -A -l image-builder.io/ci -o json | jq -c --argjson max "${CI_MAX_RUNNING:?CI_MAX_RUNNING is required}" -f "${KEEPER_DIR}/ci-run-keeper.jq")"

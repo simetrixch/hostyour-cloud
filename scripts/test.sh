@@ -16,6 +16,8 @@ echo 'test: ci run keeper — at most 6 ci runs run at once, a newer push replac
 node --test scripts/ci-run-keeper.test.mjs || fail 'scripts/ci-run-keeper.test.mjs'
 echo 'test: ci report — a failed ci run posts one alert with the last 60 lines of the failed step, and a green or cancelled run posts nothing.'
 node --test scripts/ci-report-failure.test.mjs || fail 'scripts/ci-report-failure.test.mjs'
+echo 'test: ci commit status — tekton/ci is pending while a run runs, then success, failure or error, and the token travels only in a header file.'
+node --test scripts/ci-commit-status.test.mjs || fail 'scripts/ci-commit-status.test.mjs'
 echo 'test: ci failure mail — the alert reaches its own route once, and becomes a mail that carries the error and escapes it.'
 helm dependency update clusters/inventories/observability
 node --test scripts/ci-failure-mail.test.mjs || fail 'scripts/ci-failure-mail.test.mjs'

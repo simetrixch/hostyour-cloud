@@ -34,3 +34,18 @@ and no other, so the scope is a fact of the registration and never a value of th
 {{- define "consumer-build.hasBuilds" -}}
 {{- if gt (len (include "consumer-build.builds" . | fromJsonArray)) 0 -}}true{{- else -}}false{{- end -}}
 {{- end -}}
+
+{{/* The environment of the two commit status tasks of the ci Pipeline: the repository token from
+     build-git-https, the repository as GitHub's API names it, the commit the gate proved and the run
+     in the Tekton Dashboard. Takes a dict of repositoryPath and runURL. */}}
+{{- define "consumer-build.ciCommitStatusEnv" -}}
+- name: GITHUB_TOKEN
+  valueFrom:
+    secretKeyRef: { name: build-git-https, key: token }
+- name: REPOSITORY_PATH
+  value: {{ .repositoryPath | quote }}
+- name: COMMIT
+  value: "$(params.commit)"
+- name: RUN_URL
+  value: {{ .runURL | quote }}
+{{- end }}

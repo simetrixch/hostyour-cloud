@@ -91,15 +91,16 @@ test('a consumer redirects its old unit host, named by its host label or else it
   }
 });
 
-// The deploy charts serve every member of a tenant routed by host at <member>.<zone>, and take an
-// empty routing for host (digita-lib.routing); the zone itself is served either way.
-test('a tenant redirects its old zone, and the old host of every member when routed by host', () => {
-  const tenant = (routing, members) => ({cluster: 'check', subdomain: 'acme', routing, ownDomain: '',
+// The deploy charts serve every member of a tenant under a path of its zone, so the zone's redirect
+// carries them. A registration carries no routing, and under missingkey=error a read of one would
+// stop every registration of the set.
+test('a tenant redirects its old zone alone, and renders without a routing', () => {
+  const tenant = members => ({cluster: 'check', subdomain: 'acme', ownDomain: '',
     members: members.map(name => ({name, namespaceLabels: {}, sources: []}))});
   const sets = [
-    fileParams('aaaaaaaaaaaa', 'prod', tenant('path', ['web', 'auth']), {guid: 'aaaaaaaaaaaa'}),
-    fileParams('bbbbbbbbbbbb', 'test', tenant('host', ['web', 'auth']), {guid: 'bbbbbbbbbbbb'}),
-    fileParams('cccccccccccc', 'dev', tenant('', ['web']), {guid: 'cccccccccccc'}),
+    fileParams('aaaaaaaaaaaa', 'prod', tenant(['web', 'auth']), {guid: 'aaaaaaaaaaaa'}),
+    fileParams('bbbbbbbbbbbb', 'test', tenant(['web', 'auth']), {guid: 'bbbbbbbbbbbb'}),
+    fileParams('cccccccccccc', 'dev', tenant(['web']), {guid: 'cccccccccccc'}),
   ];
   const results = render(tenants, sets);
   assert.deepEqual(results.map(result => result.name),
@@ -107,8 +108,8 @@ test('a tenant redirects its old zone, and the old host of every member when rou
   const pair = (host, stage) => ({from: `${host}.${previousStageApex[stage]}`, to: `${host}.${stageApex[stage]}`});
   assert.deepEqual(results.map(result => redirectsOf(result.patch)), [
     [pair('acme', 'prod')],
-    [pair('acme', 'test'), pair('web.acme', 'test'), pair('auth.acme', 'test')],
-    [pair('acme', 'dev'), pair('web.acme', 'dev')],
+    [pair('acme', 'test')],
+    [pair('acme', 'dev')],
   ]);
 });
 
