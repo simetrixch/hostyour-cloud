@@ -676,6 +676,14 @@ echo "check: no file under clusters/bootstrap carries a placeholder, which nothi
 merges_into() {
   git -C "$1" merge-tree --write-tree --name-only --no-messages "$2" "$3" >"$work/merge-tree" 2>&1
 }
+# THE LANDING IS A COMMIT, AND A COMMIT NEEDS AN AUTHOR. A CI runner has no git identity, and
+# commit-tree refuses to write without one, so the landing carries its own: it is never pushed and
+# nothing points at it, so the name only has to exist.
+landing_commit() {
+  GIT_AUTHOR_NAME=check GIT_AUTHOR_EMAIL=check@example.invalid \
+    GIT_COMMITTER_NAME=check GIT_COMMITTER_EMAIL=check@example.invalid \
+    git -C "$1" commit-tree "$2" -p "$3" -p "$4" -m "check: $4 on $3"
+}
 probe="$work/merge-probe"
 git -c init.defaultBranch=probe init -q "$probe" || fail "the merge probe could not make its repository"
 probe_commit() {
@@ -693,14 +701,20 @@ merges_into "$probe" "$probe_installation" "$probe_defect" \
   && fail "the merge probe took a change beside a stamped line without a conflict, so this check cannot see one"
 merges_into "$probe" "$probe_installation" "$probe_innocent" \
   || { cat "$work/merge-tree"; fail "the merge probe refused a change one line away from a stamped line, which git merges"; }
-echo "check: the merge probe refuses the planted change beside a stamped line and takes the planted innocent."
+# The landing is written once more as a runner would write it, with no identity anywhere: no global
+# or system configuration and no repository one.
+mkdir "$work/no-identity" || fail "the merge probe could not make an empty home"
+HOME="$work/no-identity" XDG_CONFIG_HOME="$work/no-identity" GIT_CONFIG_NOSYSTEM=1 \
+  landing_commit "$probe" "$(git -C "$probe" rev-parse "$probe_innocent^{tree}")" "$probe_base" "$probe_innocent" >/dev/null \
+  || fail "the merge probe could not write a landing without a git identity, the way a CI runner has none"
+echo "check: the merge probe refuses the planted change beside a stamped line and takes the planted innocent, and writes a landing with no git identity."
 
 # WHAT IS MERGED IS WHAT A RELEASE WOULD CUT: HEAD on top of the default branch. A branch that is
 # behind it lacks the release pins written there since, and the installation branch carries the
 # same pins, so HEAD alone would conflict on lines the change never touched. Where HEAD does not
 # hold the default branch, the two are merged in memory into a commit nothing points at; where
-# they conflict, the landing reports that, and HEAD alone is merged here.
-git fetch -q origin || fail "origin could not be fetched, so the installation branches a release merges into are unknown"
+# they conflict, nothing could be released, and that conflict is the failure named.
+git fetch -q --prune origin || fail "origin could not be fetched, so the installation branches a release merges into are unknown"
 installations=""
 for branch in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin); do
   git cat-file -e "$branch:clusters/active/${branch#origin/}.yaml" 2>/dev/null && installations="$installations $branch"
@@ -712,15 +726,17 @@ else
     || fail "origin/HEAD names no default branch, so what a release would cut is unknown — run git remote set-head origin --auto"
   candidate=HEAD
   if ! git merge-base --is-ancestor "$default_branch" HEAD; then
-    if tree="$(git merge-tree --write-tree --no-messages "$default_branch" HEAD 2>/dev/null)"; then
-      candidate="$(git commit-tree "$tree" -p "$default_branch" -p HEAD -m "check: HEAD on $default_branch")" \
-        || fail "HEAD on $default_branch could not be written as a commit to merge"
-    fi
+    git merge-tree --write-tree --name-only --no-messages "$default_branch" HEAD >"$work/merge-tree" 2>&1 || {
+      sed 's/^/  /' "$work/merge-tree"
+      fail "HEAD conflicts with $default_branch, so no release of it can be cut — merge $default_branch into it first"
+    }
+    candidate="$(landing_commit "$root" "$(head -n 1 "$work/merge-tree")" "$default_branch" HEAD)" \
+      || fail "HEAD on $default_branch could not be written as a commit to merge"
   fi
   for installation in $installations; do
     merges_into "$root" "$installation" "$candidate" || {
       sed 's/^/  /' "$work/merge-tree"
-      fail "HEAD does not merge into $installation: a release of it would stop at that machine's merge — move the change off the line the installation stamped and off the lines beside it"
+      fail "HEAD on $default_branch does not merge into $installation: a release of it would stop at that machine's merge — move the change off the line the installation stamped and off the lines beside it"
     }
   done
   echo "check: HEAD on $default_branch merges into every installation branch on origin: $(echo $installations)."
