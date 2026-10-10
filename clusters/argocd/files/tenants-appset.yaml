@@ -32,9 +32,9 @@
 # has, where a release reaches a cluster by a merge and never by a second revision on a source.
 # A tenant lands on a cluster carrying the slave part, and a cluster's own branch does not exist
 # in the deploy repository at all, so every one of these lines takes the books branch and not this cluster's own. The $values source is
-# the ONE hostyour-cloud line, and it names that same one branch there: the chart above fills
-# __BRANCH__ from global.booksCluster, so the platform values chain follows the installation's
-# install branch too.
+# the ONE hostyour-cloud line, and it names the commit of the books branch the root Application
+# synced: the chart above fills __BRANCH__ with it, so the platform values chain follows the
+# installation's install branch too, one synced commit at a time.
 #
 # THE THREE MARKERS IN THIS FILE, AND WHAT PUTS A VALUE IN EACH.
 #

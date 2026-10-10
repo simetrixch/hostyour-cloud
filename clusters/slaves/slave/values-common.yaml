@@ -32,11 +32,6 @@ global:
 #   name       s1                        — the slave's short name (first label of the map's fqdn)
 #   fqdn       s1.example.com            — the slave's own domain, which names its cluster map
 #                                          (clusters/active/<fqdn>.yaml) on the books branch
-#   branch     m1.example.com            — the BOOKS branch: the install branch of the cluster
-#                                          holding the master role, and the one branch an
-#                                          installation keeps every cluster map on. A pure slave
-#                                          has no branch of its own, so this is where its whole
-#                                          tree is read from
 #   apiHost    100.64.0.11               — the address this master's in-cluster components dial the
 #                                          slave's kube-apiserver on: its tailnet address once the
 #                                          two share that private network, its LAN address on a
@@ -50,7 +45,6 @@ global:
 slave:
   name: ""
   fqdn: ""
-  branch: ""
   apiHost: ""
   apiPort: "16443"
   masterFqdn: ""

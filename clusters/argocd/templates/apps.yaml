@@ -19,27 +19,28 @@ argocd.argoproj.io, and the word `master` stands in prose and once as the deploy
 repository's own branch, so files/ carries __ARGOCD_NAMESPACE__ and __BRANCH__ at
 the sites where those two are values.
 
-ONE REPOSITORY, ONE REVISION, PER APPLICATION. Every source of one Application
-that names this repository stands on __BRANCH__, and no second ref of it exists
-to disagree with. ArgoCD's repo-server refuses an Application whose `ref` source
-and the source referencing it resolve one repository to two commits — "cannot
-reference a different revision of the same repository" — and it refuses at
-manifest generation, so the Application stands Unknown, carries no manifest at
-all, and a deployment's verification waits out its clock on it. A release
-reaches a cluster BY ARRIVING ON THAT BRANCH: the branch program merges the
-release tag into it, so a source reading the branch reads the release. Where two
-sources of one Application must name the same ref, they take it from one YAML
-anchor, so moving one of them cannot leave the other behind.
+ONE REPOSITORY, ONE REVISION, AND IT IS THE ROOT APPLICATION'S. Every source and
+every git generator that names this repository stands on __BRANCH__, which is
+the commit the root Application synced, handed to this chart as `revision`
+(root-app.yaml, and clusters/slaves/slave/templates/root-application.yaml for a
+slave). A generated Application therefore reaches a commit only after the root
+Application has applied that commit's AppProjects at wave -1. One that followed
+the branch on its own could sync a kind before its project admits it, and its
+sync would fail until a retry. A release reaches a cluster BY ARRIVING ON THE
+BOOKS BRANCH: the branch program merges the release tag into it, the root
+Application syncs that commit, and this chart hands it on. ArgoCD's repo-server
+also refuses an Application whose `ref` source and the source referencing it
+resolve one repository to two commits — "cannot reference a different revision
+of the same repository" — so where two sources must name the same ref, they take
+it from one YAML anchor, and moving one cannot leave the other behind.
 
-__BRANCH__ AND __FQDN__ ARE TWO QUESTIONS THAT WERE ONE WORD. __FQDN__ is what
-this cluster is called — it names the cluster map, and it is a fqdn a selector
-compares. __BRANCH__ is which branch a source reads this installation's tree
-from, and that is the BOOKS branch for every cluster: an installation has one
-install branch, named after the cluster carrying the master part, and a cluster
-carrying only the slave part has none. They are the same word on a cluster that
-keeps its own books and different words on every other one, so a slave whose
-sources took __FQDN__ would target a branch nothing ever cut and generate
-nothing at all.
+__BRANCH__, __BOOKS_FQDN__ AND __FQDN__ ARE THREE QUESTIONS. __FQDN__ is what
+this cluster is called: it names the cluster map, and it is a fqdn a selector
+compares. __BOOKS_FQDN__ is the cluster that keeps this installation's books:
+the name of the one install branch an installation has, which a selector
+compares and which the deploy repository's branch is named after. __BRANCH__ is
+the commit of this repository a source or a generator reads, and only the root
+Application knows it.
 
 `# file: <name>` opens each emitted document. Helm writes one `# Source:` line
 for this template, and all the documents come from it, so that line cannot
@@ -47,10 +48,10 @@ tell them apart.
 */ -}}
 {{- /*
 THE BLOCK BEFORE THE KEYS IN IT. This chart is the ONE chart of this repository
-whose whole values chain is a single file: root-app.yaml:33 beside this template
-and clusters/slaves/slave/templates/root-application.yaml:83 both hand it
-$values/clusters/active/<fqdn>.yaml and nothing else, so `global` reaches it from
-the cluster map or from nowhere. Every other chart is handed
+whose whole values chain is a single file: root-app.yaml beside this template
+and clusters/slaves/slave/templates/root-application.yaml both hand it
+$values/clusters/active/<fqdn>.yaml and the parameter `revision` and nothing
+else, so `global` reaches it from the cluster map or from nowhere. Every other chart is handed
 clusters/platform/values-common.yaml first, and that file carries the block.
 A guard written as `required "..." .Values.global.clusterName` cannot answer for
 a map with no block at all: the dereference of the missing block fails before
@@ -63,7 +64,8 @@ block is bound once here and every key below is read out of the binding.
 {{- $global := required "argocd-apps: the cluster map states no global: block (clusters/active/<fqdn>.yaml), and this chart is handed that one file and nothing else. Every value below stands under global: in it. A map written before the block existed carries those values flat at the top level instead, and no chart of this tree can be rendered against it" .Values.global }}
 {{- $clusterName := required "argocd-apps: global.clusterName is required (clusters/active/<fqdn>.yaml) — this cluster registers itself under that name and the unit generators select the registrations carrying it" $global.clusterName }}
 {{- $fqdn := required "argocd-apps: global.domain is required (clusters/active/<fqdn>.yaml) — this cluster's own domain, which names its cluster map, the file the value chains load last" $global.domain }}
-{{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role. It carries this installation's registrations AND every cluster map of it, and it is the branch every source of this tree reads from: a cluster carrying only the slave part has no branch of its own" $global.booksCluster }}
+{{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role. It carries this installation's registrations AND every cluster map of it, and the deploy repository's branch is named after it: a cluster carrying only the slave part has no branch of its own" $global.booksCluster }}
+{{- $revision := required "argocd-apps: revision is required — the commit of this repository the root Application synced, which it hands this chart as the Helm parameter revision ($ARGOCD_APP_REVISION in clusters/argocd/root-app.yaml, the slave's own commit in clusters/slaves/slave/templates/root-application.yaml). Every source and generator of this repository stands at it" .Values.revision }}
 {{- $deployRepo := required "argocd-apps: global.deployRepo is required (clusters/active/<fqdn>.yaml) — the deploy repository as bare owner/name, written inside a URL these files already carry" $global.deployRepo }}
 {{- $holdsBooks := required "argocd-apps: global.servicesLocal.vault is required (clusters/active/<fqdn>.yaml) — it says whether this cluster keeps the books, and the two files below exist only on the cluster that does" (dig "servicesLocal" "vault" "" $global) }}
 {{- /* THIS CLUSTER'S TAILNET ADDRESS, read by consumers-appset.yaml alone: a unit that declares an
@@ -154,7 +156,7 @@ syncs at once — the state the steps exist to end, arrived at in silence.
 {{- end }}
 {{- range $name := $names }}
 {{- if or $holdsBooks (not (has $name $booksOnly)) }}
-{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__DEPLOY_REPO__" $deployRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__CLUSTER_ROLE_WHOLE__" $roleWhole | replace "__BRANCH__" $booksFqdn | replace "__ARGOCD_NAMESPACE__" $namespace | replace "__SYNC_WAVE_LABEL__" $waveLabel | replace "__SYNC_WAVE_STEPS__" $waveStepList | replace "__STAGE_APEX_DEV__" $stageApexDev | replace "__STAGE_APEX_TEST__" $stageApexTest | replace "__STAGE_APEX_PROD__" $stageApexProd | replace "__API_HOST__" $apiHost | replace "__PREVIOUS_STAGE_APEX_DEV__" $previousStageApexDev | replace "__PREVIOUS_STAGE_APEX_TEST__" $previousStageApexTest | replace "__PREVIOUS_STAGE_APEX_PROD__" $previousStageApexProd }}
+{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__DEPLOY_REPO__" $deployRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__CLUSTER_ROLE_WHOLE__" $roleWhole | replace "__BRANCH__" $revision | replace "__ARGOCD_NAMESPACE__" $namespace | replace "__SYNC_WAVE_LABEL__" $waveLabel | replace "__SYNC_WAVE_STEPS__" $waveStepList | replace "__STAGE_APEX_DEV__" $stageApexDev | replace "__STAGE_APEX_TEST__" $stageApexTest | replace "__STAGE_APEX_PROD__" $stageApexProd | replace "__API_HOST__" $apiHost | replace "__PREVIOUS_STAGE_APEX_DEV__" $previousStageApexDev | replace "__PREVIOUS_STAGE_APEX_TEST__" $previousStageApexTest | replace "__PREVIOUS_STAGE_APEX_PROD__" $previousStageApexProd }}
 {{- $docs = append $docs (printf "# file: %s\n%s" $name $doc) }}
 {{- end }}
 {{- end }}
