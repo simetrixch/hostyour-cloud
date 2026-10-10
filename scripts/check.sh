@@ -293,8 +293,9 @@ $found"
 # WHAT IS READ. Every line of the render, so a source inside an ApplicationSet's templatePatch,
 # which is a string to any YAML reader, is read like one in its template: a repoURL of this
 # repository and the targetRevision or git generator revision that follows it, through the anchors
-# either may be written with. A source of this repository that names no revision at all is not
-# seen. $1 says where the render came from, $2 is a file holding it, $3 is the revision the chart
+# either may be written with. A revision written ahead of its repoURL, and a source of this
+# repository that names no revision at all, are not seen; every source of this tree writes repoURL
+# first. $1 says where the render came from, $2 is a file holding it, $3 is the revision the chart
 # was handed. A finding is named by the document's `metadata.name`, because helm sorts the documents
 # by kind and a `# file:` line stands ahead of only the first document a file emits.
 off_revision_awk="$source_fields_awk"'
