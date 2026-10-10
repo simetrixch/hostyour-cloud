@@ -253,7 +253,7 @@ test('planted defect: a change that fails is reported, the next one still runs, 
     assert.match(calls[1], /^delete pipelinerun -n shop-build shop-ci-\S+ --ignore-not-found --wait=false$/);
     assert.match(result.stdout, /deleted shop-build\//);
     // Only ci runs are listed: the decision is never taken on a release run.
-    assert.match(readFileSync(`${log}.get`, 'utf8'), / -l image-builder\.io\/ci /);
+    assert.match(readFileSync(`${log}.get`, 'utf8'), /^get --raw \/apis\/tekton\.dev\/v1\/pipelineruns\?labelSelector=image-builder\.io%2Fci&limit=50$/m);
   } finally {
     rmSync(bin, {recursive: true, force: true});
   }
@@ -281,4 +281,99 @@ test('the script starts a waiting run with a json patch, and refuses to run with
   } finally {
     rmSync(bin, {recursive: true, force: true});
   }
+});
+
+// A stand-in kubectl that serves the planted runs as the API server pages a list: limit runs a page, and a
+// continue token holding a "+", which reaches it intact only when the script encodes the token. FAIL_PAGE
+// refuses that page, as an API server that times out would.
+const PAGED_KUBECTL = `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+if (args[0] !== 'get') { fs.appendFileSync(process.env.LOG, args.join(' ') + '\\n'); process.exit(0); }
+fs.appendFileSync(process.env.LOG + '.get', args.join(' ') + '\\n');
+const url = new URL(args[2], 'https://api.invalid');
+const token = url.searchParams.get('continue');
+if (token !== null && !/^page\\+\\d+=$/.test(token)) { console.error('bad continue token: ' + token); process.exit(1); }
+const from = token === null ? 0 : Number(token.slice(5, -1));
+if (Number(process.env.FAIL_PAGE) === from / 50 + 1) { console.error('the server timed out'); process.exit(1); }
+const items = JSON.parse(fs.readFileSync(process.env.RUNS, 'utf8')).items;
+const to = from + Number(url.searchParams.get('limit'));
+process.stdout.write(JSON.stringify({kind: 'PipelineRunList', metadata: to < items.length ? {continue: 'page+' + to + '='} : {}, items: items.slice(from, to)}));
+`;
+const runPaged = (script, items, env = {}) => {
+  const bin = mkdtempSync(join(tmpdir(), 'ci-run-keeper-paged-'));
+  try {
+    const runs = join(bin, 'runs.json'), log = join(bin, 'log'), file = join(bin, 'ci-run-keeper.sh');
+    writeFileSync(runs, JSON.stringify({items}));
+    writeFileSync(log, '');
+    writeFileSync(join(bin, 'kubectl'), PAGED_KUBECTL);
+    chmodSync(join(bin, 'kubectl'), 0o755);
+    writeFileSync(file, script);
+    const result = spawnSync('bash', [file], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+      env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, KEEPER_DIR: FILES, CI_MAX_RUNNING: String(MAX), ...env}});
+    const lines = (path) => readFileSync(path, 'utf8').split('\n').filter(Boolean);
+    return {...result, calls: lines(log), gets: lines(`${log}.get`)};
+  } finally {
+    rmSync(bin, {recursive: true, force: true});
+  }
+};
+const SCRIPT = readFileSync(`${FILES}/ci-run-keeper.sh`, 'utf8');
+// A run as the API server returns it: the resolved pipeline in status.pipelineSpec (about 23 KB a run on
+// master, nearly all of its size), task references, labels, annotations and conditions the decision never reads.
+const pipelineSpec = {tasks: Array.from({length: 30}, (_, i) => ({name: `task-${i}`, taskSpec: {steps: [{name: 'run', image: 'alpine/k8s:1.35.6', script: 'x'.repeat(700)}]}}))};
+const asServed = (r) => ({...r,
+  metadata: {...r.metadata, uid: `uid-${r.metadata.name}`, labels: {...r.metadata.labels, 'tekton.dev/pipeline': 'ci'},
+    annotations: {...r.metadata.annotations, 'image-builder.io/commit': 'a'.repeat(40)}},
+  spec: {...r.spec, params: [{name: 'revision', value: 'a'.repeat(40)}]},
+  status: {...r.status, pipelineSpec, childReferences: [{name: `${r.metadata.name}-build`, pipelineTaskName: 'build'}],
+    conditions: [...(r.status.conditions ?? []).map((c) => ({...c, reason: 'Running'})), {type: 'Ready', status: 'True'}]}});
+// The steady state of today's 12 build namespaces and 20 more: each keeps 20 finished runs and has
+// one more, with a replaced run, started runs, waiting runs and a note already written among them.
+const steadyState = () => {
+  const units = namespaces(32);
+  const replacedRun = run(units[0], {branch: 'main', succeeded: 'Unknown'});
+  return [
+    ...units.flatMap((namespace) => finished(KEPT + 1, namespace)),
+    ...finished(1, units[1], {succeeded: 'False'}),
+    replacedRun, run(units[0], {branch: 'main', succeeded: 'Unknown'}),
+    ...units.slice(2, 5).flatMap((namespace) => running(1, namespace)),
+    waiting(units[5]), waiting(units[6]), waiting(units[7], {at: 0}),
+    {...waiting(units[8]), metadata: {...waiting(units[8]).metadata, annotations: {'image-builder.io/queued-behind': REASON}}},
+  ].map(asServed);
+};
+
+test('the steady state of 32 build namespaces is listed raw, 50 runs a page, and decided as the full runs decide', () => {
+  const items = steadyState();
+  const expected = decide(items);
+  assert.deepEqual([...new Set(expected.map((c) => c.verb + (c.type ? ` ${c.type}` : '')))].sort(), ['cancel merge', 'delete', 'patch json', 'patch merge']);
+  const result = runPaged(SCRIPT, items);
+  assert.equal(result.status, 0, result.stderr);
+  // The projection drops nothing the decision reads: the same changes come out, in the same order.
+  assert.deepEqual(result.stdout.split('\n').filter(Boolean), expected.map((c) => c.say));
+  assert.equal(result.calls.length, expected.length);
+  assert.equal(result.gets.length, Math.ceil(items.length / 50));
+  result.gets.forEach((get, page) => assert.equal(get, `get --raw /apis/tekton.dev/v1/pipelineruns?labelSelector=image-builder.io%2Fci&limit=50${page ? `&continue=page%2B${page * 50}%3D` : ''}`));
+});
+
+test('planted defects: a keeper that reads one page, drops spec.status or sends the token unencoded goes red', () => {
+  const items = steadyState();
+  const expected = decide(items).map((c) => c.say);
+  const variants = {
+    'one page': SCRIPT.replace('[ -n "$continue_token" ] || return 0', 'return 0'),
+    'no spec.status': SCRIPT.replace('spec: {status: .spec.status},', 'spec: {},'),
+    'unencoded token': SCRIPT.replace(' | @uri', ''),
+  };
+  for (const [name, script] of Object.entries(variants)) {
+    assert.notEqual(script, SCRIPT, `${name}: the planted defect no longer applies to the script`);
+    const result = runPaged(script, items);
+    assert.ok(result.status !== 0 || result.stdout.split('\n').filter(Boolean).join('\n') !== expected.join('\n'), `${name} went unnoticed`);
+  }
+});
+
+test('a page that fails fails the tick, and nothing is changed on part of the runs', () => {
+  const result = runPaged(SCRIPT, steadyState(), {FAIL_PAGE: '3'});
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /the server timed out/);
+  assert.deepEqual(result.calls, []);
+  assert.equal(result.gets.length, 3);
 });
