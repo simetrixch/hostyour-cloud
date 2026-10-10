@@ -827,6 +827,8 @@ test('tekton/ci is set to pending after the gate and to the outcome in a finally
     assert.match(env.RUN_URL, /^https:\/\/tekton\.[^/]+\/#\/namespaces\/shop-build\/pipelineruns\/\$\(context\.pipelineRun\.name\)$/);
   }
   assert.deepEqual(pending.runAfter, ['gate']);
+  assert.deepEqual(pipeline.spec.tasks.filter((t) => t.when), [],
+    'ci-commit-status.sh reads Completed as a stopped run, which holds only while no task is skipped by a when');
   assert.equal(envOf(pending).RUN_STATE, 'running');
   assert.deepEqual(outcome.when, [{input: '$(tasks.gate.status)', operator: 'in', values: ['Succeeded']}],
     'a run the gate refused set no pending, so it sets no outcome');

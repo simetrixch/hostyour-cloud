@@ -8,7 +8,10 @@
 # task it cancelled as failed: TaskRunCancelled when a newer push replaced the run (the ci run keeper
 # cancels a started run gracefully, so this task still runs) or when the time of the run ran out, and
 # TaskRunTimeout when the task's own time ran out. Such a run never finished its check, so the commit
-# gets `error`, not `failure`, which GitHub keeps for a check that ran and failed.
+# gets `error`, not `failure`, which GitHub keeps for a check that ran and failed. A graceful cancel
+# that lands between two tasks cancels no TaskRun and skips the rest, so Tekton reports `Completed`:
+# no task of this pipeline has a when, so a skipped task is always a stopped run, and `Completed` is
+# `error` too, never a passed check.
 #
 # The token is the unit's repository token from build-git-https. It travels in a header file, so it is
 # in no argument list, and nothing here prints it.
@@ -19,14 +22,14 @@ set -euo pipefail
 stopped="The run stopped before its check finished: a newer push replaced it, or its time ran out."
 case "${RUN_STATE}" in
   running) state=pending description="The check runs." ;;
-  Succeeded | Completed) state=success description="The check passed." ;;
+  Succeeded) state=success description="The check passed." ;;
   Failed)
     case " ${TASK_REASONS:-} " in
       *" TaskRunCancelled "* | *" TaskRunTimeout "*) state=error description="${stopped}" ;;
       *) state=failure description="A task of the run failed. The mail CIRunFailed carries its error." ;;
     esac
     ;;
-  None) state=error description="${stopped}" ;;
+  Completed | None) state=error description="${stopped}" ;;
   *)
     echo "commit-status: '${RUN_STATE}' is no state of a run, so ${COMMIT} keeps its status" >&2
     exit 1

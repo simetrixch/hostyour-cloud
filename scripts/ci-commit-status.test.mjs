@@ -67,9 +67,10 @@ test('the first task sets pending on the commit, linked to the run, and the toke
   assert.match(result.stdout, /tekton\/ci is pending on digitaplatform\/shop@a1b2c3d/);
 });
 
-test('a run whose tasks all passed or were skipped sets success', () => {
-  assert.equal(stateOf({RUN_STATE: 'Succeeded'}), 'success');
-  assert.equal(stateOf({RUN_STATE: 'Completed'}), 'success');
+test('a run whose tasks all passed sets success, and a run whose tasks were skipped sets error', () => {
+  assert.equal(stateOf({RUN_STATE: 'Succeeded'}), 'success', 'PLANTED INNOCENT: a run that passed');
+  // A cancel between two tasks skips the rest without a failed TaskRun; the check never ran.
+  assert.equal(stateOf({RUN_STATE: 'Completed'}), 'error', 'PLANTED DEFECT: a run cancelled before its check is no passed check');
 });
 
 test('a task that ran and failed sets failure, and a run that was stopped before its check finished sets error', () => {
