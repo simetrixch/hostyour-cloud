@@ -24,7 +24,8 @@
 # cluster release delivers the bumped master to running clusters.
 
 # The unit whose release builds the manager and dbtools images and pins them in values-<stage>.yaml.
-# Its release pipeline may refresh this inventory's Application (templates/rbac-argo-sync.yaml).
+# Its release pipeline may read this inventory's Application to wait until it is live
+# (templates/rbac-argo-sync.yaml).
 releasedBy: hostyour-manager
 
 replicas: 1

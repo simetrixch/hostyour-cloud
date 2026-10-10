@@ -2,7 +2,7 @@
 # (templates/task-run-case.yaml), so nothing here differs between stages.
 
 # The unit whose release builds the E2E cases image and pins it in values-<stage>.yaml. Its release
-# pipeline may refresh this inventory's Application (templates/rbac-argo-sync.yaml).
+# pipeline may read this inventory's Application to wait until it is live (templates/rbac-argo-sync.yaml).
 releasedBy: digita-testkit
 
 pipeline:

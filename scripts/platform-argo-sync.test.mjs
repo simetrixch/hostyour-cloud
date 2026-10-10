@@ -5,17 +5,18 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 
-// THE REFRESH: a release pins the images an inventory's values-<stage>.yaml carries under `builds` on
-// the books branch, then its pipeline refreshes the inventory's Application `<inventory>-<stage>` in
-// ns argocd (consumer-build pipeline-release.yaml, its platform hits) and fails a Forbidden. So every
-// such inventory grants the releasing unit's pipeline-sa get and patch on its Application at every
-// stage of the channel table, and nothing else (common.argoSyncGrant).
+// THE WAIT: a release pins the images an inventory's values-<stage>.yaml carries under `builds` on
+// the books branch, then its pipeline reads the inventory's Application `<inventory>-<stage>` in
+// ns argocd until it is live (consumer-build pipeline-release.yaml, its platform hits) and fails a
+// Forbidden. So every such inventory grants the releasing unit's pipeline-sa get on its Application
+// at every stage of the channel table, and nothing else (common.argoSyncGrant). A patch would
+// refresh nothing there, so the grant carries none.
 
 const yq = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', ...args], {encoding: 'utf8', ...(input ? {input} : {})}));
 const stages = ['dev', 'test', 'prod'];
 const channelStages = [...new Set(Object.values(yq(['.global.channelStages', 'clusters/platform/values-common.yaml'])).flat())].sort();
 
-/** Every value file of an inventory that carries builds, which a release pins and then refreshes. */
+/** Every value file of an inventory that carries builds, which a release pins and then waits for. */
 const pinned = readdirSync('clusters/inventories').flatMap(inventory => stages
   .filter(stage => existsSync(`clusters/inventories/${inventory}/values-${stage}.yaml`))
   .filter(stage => yq(['.builds // [] | length', `clusters/inventories/${inventory}/values-${stage}.yaml`]) > 0)
@@ -50,7 +51,7 @@ function grantFindings(chart, inventory, stage) {
   if (!role || !binding) return [`${inventory} ${stage}: no Role and RoleBinding platform-${inventory}-argo-sync in ns argocd`];
   const releasedBy = yq(['.releasedBy', `clusters/inventories/${inventory}/values-common.yaml`]);
   const found = [];
-  const rules = [{apiGroups: ['argoproj.io'], resources: ['applications'], resourceNames: channelStages.map(s => `${inventory}-${s}`), verbs: ['get', 'patch']}];
+  const rules = [{apiGroups: ['argoproj.io'], resources: ['applications'], resourceNames: channelStages.map(s => `${inventory}-${s}`), verbs: ['get']}];
   try { assert.deepEqual(role.rules, rules); } catch { found.push(`${inventory} ${stage}: the Role grants ${JSON.stringify(role.rules)}`); }
   try {
     assert.deepEqual(binding.roleRef, {apiGroup: 'rbac.authorization.k8s.io', kind: 'Role', name: role.metadata.name});
@@ -65,7 +66,7 @@ test('the inventories a release pins are read: e2e-runner, gate-runner and manag
   assert.ok(!inventories.has('coredns'), 'the planted innocent: an inventory whose value files carry no builds');
 });
 
-test('every inventory a release pins lets its releasing unit\'s pipeline get and patch its Applications in ns argocd, and nothing else', () => {
+test('every inventory a release pins lets its releasing unit\'s pipeline get its Applications in ns argocd, and nothing else', () => {
   assert.deepEqual(pinned.flatMap(({inventory, stage}) => grantFindings(`clusters/inventories/${inventory}`, inventory, stage)), []);
 });
 
