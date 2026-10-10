@@ -655,6 +655,52 @@ if [ -n "$placeholders" ]; then
 fi
 echo "check: no file under clusters/bootstrap carries a placeholder, which nothing there would replace."
 
+# ── What an installation's branch must be able to take ───────────────────────────────────────
+# A RELEASE REACHES A MACHINE AS A MERGE into its installation's branch, the branch named after its
+# domain, on which the branch program replaced example.invalid with that domain in every file it
+# stamps. git refuses to merge a change to a line the branch rewrote, and also one to the line
+# beside it, so a release that edits next to a stamped line stops at that merge and reaches no
+# machine. The installation branches on origin are the real merge targets, so HEAD is merged into
+# each of them as the release would be, in memory, without a working tree.
+#
+# A BRANCH WHOSE NAME CARRIES A DOT IS AN INSTALLATION'S, because it is named after a domain and no
+# other branch of this repository names one. A clone that holds none, a shallow one or one that
+# never fetched, has nothing to merge into, and says so instead of reporting a pass.
+merges_into() {
+  git -C "$1" merge-tree --write-tree --name-only --no-messages "$2" "$3" >"$work/merge-tree" 2>&1
+}
+probe="$work/merge-probe"
+git -c init.defaultBranch=probe init -q "$probe" || fail "the merge probe could not make its repository"
+probe_commit() {
+  printf '%s\n' "$@" >"$probe/root-app.yaml"
+  git -C "$probe" add root-app.yaml && git -C "$probe" -c user.name=probe -c user.email=probe@example.invalid commit -qm probe && git -C "$probe" rev-parse HEAD
+}
+probe_base="$(probe_commit '      helm:' '        valueFiles:' '          - $values/example.invalid.yaml' '' '  destination:')"
+probe_installation="$(probe_commit '      helm:' '        valueFiles:' '          - $values/installation.example.yaml' '' '  destination:')"
+git -C "$probe" checkout -q "$probe_base" 2>/dev/null
+probe_defect="$(probe_commit '      helm:' '        valueFiles:' '          - $values/example.invalid.yaml' '        parameters: planted-defect' '' '  destination:')"
+git -C "$probe" checkout -q "$probe_base" 2>/dev/null
+probe_innocent="$(probe_commit '      helm:' '        parameters: planted-innocent' '        valueFiles:' '          - $values/example.invalid.yaml' '' '  destination:')"
+[ -n "$probe_installation" ] && [ -n "$probe_defect" ] && [ -n "$probe_innocent" ] || fail "the merge probe could not write its commits"
+merges_into "$probe" "$probe_installation" "$probe_defect" \
+  && fail "the merge probe took a change beside a stamped line without a conflict, so this check cannot see one"
+merges_into "$probe" "$probe_installation" "$probe_innocent" \
+  || { cat "$work/merge-tree"; fail "the merge probe refused a change one line away from a stamped line, which git merges"; }
+echo "check: the merge probe refuses the planted change beside a stamped line and takes the planted innocent."
+
+installations="$(git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep '\.')"
+if [ -z "$installations" ]; then
+  echo "check: NOT RUN — no installation branch in this clone, so no merge of HEAD into one was tried."
+else
+  for installation in $installations; do
+    merges_into "$root" "$installation" HEAD || {
+      sed 's/^/  /' "$work/merge-tree"
+      fail "HEAD does not merge into $installation: a release of it would stop at that machine's merge — move the change off the line the installation stamped and off the lines beside it"
+    }
+  done
+  echo "check: HEAD merges into every installation branch of this clone: $(echo $installations)."
+fi
+
 # ── Every stamp site of this tree, held to its pin ───────────────────────────────────────────
 # clusters/platform/versions.yaml names, per pin, the sites a version sync writes it into. The
 # sync is an ansiwise program and does not run here, so a site it left behind went unnoticed

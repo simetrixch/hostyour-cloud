@@ -29,15 +29,18 @@ spec:
       targetRevision: *branch
       path: clusters/argocd
       helm:
-        valueFiles:
-          - $values/clusters/active/example.invalid.yaml
         # THE COMMIT THIS APPLICATION SYNCED, which ArgoCD writes into the parameter for this source
         # as the resolved revision of the branch above. The chart puts it on every source and every
         # generator of this repository it emits, so a generated Application reaches a commit only
         # after this one has applied that commit's AppProjects.
+        # It stands ABOVE valueFiles: and not below it, because an installation's branch rewrites the
+        # line under valueFiles: with its own domain, and git refuses to merge two changes to
+        # touching lines.
         parameters:
           - name: revision
             value: $ARGOCD_APP_REVISION
+        valueFiles:
+          - $values/clusters/active/example.invalid.yaml
 
   destination:
     server: https://kubernetes.default.svc
