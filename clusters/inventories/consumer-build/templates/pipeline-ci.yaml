@@ -26,8 +26,9 @@ The trust split:
 
   RUN INPUTS (from the push webhook, proven in-pipeline): git-url is the
   webhook's own claim of the repo and is compared fail-closed against the
-  pinned repoURL before any credential is in reach; commit must be a full
-  lowercase SHA-1 before it reaches a shell; branch is only displayed.
+  pinned repoURL before any credential is in reach; commit and before must
+  each be a full lowercase SHA-1 before they reach a shell; branch is only
+  displayed.
 
 THE CHECK RUNS THE REPOSITORY'S OWN CODE and holds nothing worth stealing:
 no ServiceAccount token (pipeline-sa mounts none), no clone credential
@@ -114,6 +115,9 @@ spec:
     - name: commit
       type: string
       description: The pushed commit, a full lowercase SHA-1.
+    - name: before
+      type: string
+      description: The commit the branch stood at before the push, a full lowercase SHA-1; all zeros for a new branch.
     - name: branch
       type: string
       description: The pushed branch, without refs/heads/.
@@ -129,11 +133,14 @@ spec:
       timeout: 5m0s
       params:
         - { name: commit, value: "$(params.commit)" }
+        - { name: before, value: "$(params.before)" }
         - { name: branch, value: "$(params.branch)" }
         - { name: git-url, value: "$(params.git-url)" }
       taskSpec:
         params:
           - name: commit
+            type: string
+          - name: before
             type: string
           - name: branch
             type: string
@@ -151,6 +158,8 @@ spec:
                 value: "$(params.git-url)"
               - name: COMMIT
                 value: "$(params.commit)"
+              - name: BEFORE
+                value: "$(params.before)"
               - name: BRANCH
                 value: "$(params.branch)"
             script: |
@@ -160,12 +169,18 @@ spec:
                 echo "gate: REJECT — webhook repo '${GIT_URL}' is not the registered repoURL '${REPO_URL}'" >&2
                 exit 1
               fi
-              case "${COMMIT}" in
-                *[!0-9a-f]*) valid=no ;;
-                *) valid=yes ;;
-              esac
-              if [ "${valid}" != yes ] || [ "${#COMMIT}" -ne 40 ]; then
+              is_sha1() {
+                case "$1" in
+                  *[!0-9a-f]*) return 1 ;;
+                esac
+                [ "${#1}" -eq 40 ]
+              }
+              if ! is_sha1 "${COMMIT}"; then
                 echo "gate: REJECT — commit '${COMMIT}' is not a full lowercase SHA-1" >&2
+                exit 1
+              fi
+              if ! is_sha1 "${BEFORE}"; then
+                echo "gate: REJECT — before '${BEFORE}' is not a full lowercase SHA-1" >&2
                 exit 1
               fi
               printf 'gate: ok — %s at %s (branch %s)\n' "${REPO_URL}" "${COMMIT}" "${BRANCH}"
@@ -342,10 +357,15 @@ spec:
     - name: check
       runAfter: [fetch]
       timeout: 20m0s
+      params:
+        - { name: before, value: "$(params.before)" }
       workspaces:
         - { name: source, workspace: source, subPath: repository }
         - { name: sources, workspace: source, subPath: sources }
       taskSpec:
+        params:
+          - name: before
+            type: string
         workspaces:
           - name: source
           - name: sources
@@ -384,6 +404,12 @@ spec:
               # The bare repositories the fetch task filled from ci-sources.json.
               - name: CI_SOURCES_DIR
                 value: /workspace/sources
+              # The commit the branch stood at before this push, proven a SHA-1
+              # by the gate, all zeros for a new branch. A check that compares
+              # the push against its base reads it: on a master push the merge
+              # base with origin/master is the pushed commit itself.
+              - name: CI_BEFORE_COMMIT
+                value: "$(params.before)"
               - name: NPM_CONFIG_USERCONFIG
                 value: /npmrc/.npmrc
               - name: pnpm_config_store_dir

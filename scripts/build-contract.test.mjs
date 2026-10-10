@@ -195,6 +195,9 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a deploy tag push of a customer repository': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: customer},
     'a deploy tag push of an owner that is not listed': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: demo},
   };
+  // GitHub sends `before` with every push; a deletion carries the deleted commit there.
+  const BEFORE = 'b'.repeat(40);
+  for (const push of Object.values(pushes)) push.before = BEFORE;
   const bodies = Object.values(pushes);
   const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies);
   const verdicts = {ci: [true, true, false, false, false, false, true, false, false, false, false, false, false, false, false],
@@ -203,7 +206,11 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
   });
-  assert.deepEqual(ci[0].overlays, {unit: 'shop', branch: 'feature/x', commit: SHA, 'git-url': repository.clone_url});
+  assert.deepEqual(ci[0].overlays, {unit: 'shop', branch: 'feature/x', commit: SHA, before: BEFORE, 'git-url': repository.clone_url});
+  // The commit before the push travels from the webhook to the run's parameter, and the check reads that parameter.
+  assert.equal(byKind('TriggerBinding', 'github-ci-push-binding').spec.params.find((p) => p.name === 'before')?.value, '$(extensions.before)');
+  assert.ok(byKind('TriggerTemplate', 'ci-push').spec.params.some((p) => p.name === 'before'));
+  assert.equal(template.spec.params.find((p) => p.name === 'before')?.value, '$(tt.params.before)');
   // PLANTED DEFECT: a filter without the deletion guards, and one that takes every ref, each match a push they must not.
   const unguarded = (filter) => filter.replace(/ &&\s+!\(has\(body\.deleted\).*$/s, '');
   assert.ok(matches('github-ci-push', [pushes['a branch deletion']], unguarded)[0].matched);
@@ -242,6 +249,9 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   const check = pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec;
   assert.equal(check.steps[0].envFrom, undefined, 'the check step holds no secret as environment');
   assert.equal(check.steps[0].env.find((e) => e.name === 'CI')?.value, 'true', 'a check sees the variable GitHub Actions also sets');
+  assert.equal(check.steps[0].env.find((e) => e.name === 'CI_BEFORE_COMMIT')?.value, '$(params.before)', 'a check sees the commit the branch stood at before the push');
+  assert.deepEqual(pipeline.spec.tasks.find((t) => t.name === 'check').params, [{name: 'before', value: '$(params.before)'}]);
+  assert.ok(pipeline.spec.params.some((p) => p.name === 'before'));
   assert.deepEqual(check.volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
   assert.deepEqual(check.steps[0].volumeMounts.filter((m) => m.name === 'npmrc').map((m) => m.readOnly), [true]);
   assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['clone', 'fetch']);
@@ -352,6 +362,23 @@ test('the fetch task fetches the pinned sources with the credential, and the che
   assert.equal(check.steps[0].env.find((e) => e.name === 'CI_SOURCES_DIR').value, '/workspace/sources');
   assert.throws(() => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop', repoURL: 'https://gitlab.com/check/shop.git', buildsJson: '[]'})]),
     /unit\.repoURL .* is not https:\/\/github\.com\/<owner>\/<repository>/);
+});
+
+test('the ci gate takes a full SHA-1 as commit and as before, all zeros for a new branch, and refuses anything else', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const script = pipeline.spec.tasks.find((t) => t.name === 'gate').taskSpec.steps[0].script;
+  const SHA = 'a'.repeat(40), REPO = 'https://github.com/check/shop.git';
+  const gate = (script, before, commit = SHA) => spawnSync('sh', ['-c', script], {encoding: 'utf8',
+    env: {...process.env, REPO_URL: REPO, GIT_URL: REPO, COMMIT: commit, BEFORE: before, BRANCH: 'feature/x'}}).status;
+  assert.equal(gate(script, 'b'.repeat(40)), 0, 'PLANTED INNOCENT: a fast-forward push passes');
+  assert.equal(gate(script, '0'.repeat(40)), 0, 'PLANTED INNOCENT: the first push of a new branch passes');
+  for (const before of ['', 'master', 'b'.repeat(39), 'b'.repeat(41), 'B'.repeat(40), `${'b'.repeat(38)};x`, '$(id)']) {
+    assert.notEqual(gate(script, before), 0, `PLANTED DEFECT: before '${before}' is refused`);
+  }
+  assert.notEqual(gate(script, 'b'.repeat(40), 'master'), 0, 'a commit that is no SHA-1 is still refused');
+  const unchecked = script.replace(/\n\s*if ! is_sha1 "\$\{BEFORE\}"; then[\s\S]*?\n\s*fi\n/, '\n');
+  assert.notEqual(unchecked, script);
+  assert.equal(gate(unchecked, 'master'), 0, 'PLANTED DEFECT: a gate without the before check lets any text through');
 });
 
 test('list-sources passes only plain repository names with full commits, and a repository without ci-sources.json fetches nothing', () => {
