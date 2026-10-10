@@ -39,7 +39,7 @@ test('PLANTED DEFECT: a bare read of releaseName fails every app that names none
 
 // The selector as clusters/argocd hands it to a cluster's ArgoCD, rendered from the stand-in cluster map.
 const clusterMap = JSON.parse(execFileSync('yq', ['-o=json', '.', 'scripts/standin/cluster-map.yaml'], {encoding: 'utf8'}));
-const appsets = execFileSync('helm', ['template', 'argocd-apps', 'clusters/argocd', '-f', 'scripts/standin/cluster-map.yaml'], {encoding: 'utf8'});
+const appsets = execFileSync('helm', ['template', 'argocd-apps', 'clusters/argocd', '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml'], {encoding: 'utf8'});
 const runsOnValues = JSON.parse(execFileSync('yq', ['-o=json', '-I=0',
   'select(.kind == "ApplicationSet" and (.metadata.name | test("^platform-apps-"))) | .spec.generators[0].selector.matchExpressions[] | select(.key == "runsOn") | .values'],
   {input: appsets, encoding: 'utf8'}));
