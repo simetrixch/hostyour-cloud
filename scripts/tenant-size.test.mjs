@@ -13,7 +13,7 @@ const render = (template, paramSets) => JSON.parse(execFileSync('go', ['run', '.
 
 // A registration with the fields the standing one carries (registrations/<guid>/prod.yaml on the books branch).
 const registration = (members, extra) => ({
-  cluster: 'apps1', subdomain: 'acme', apps: [], identityProvider: {}, routing: 'host', ownDomain: '',
+  cluster: 'apps1', subdomain: 'acme', apps: [], identityProvider: {}, ownDomain: '',
   ownDomainRedirects: [], approvedTags: {}, senderDomain: '', seedUsers: false, demo: false, resetNonce: '',
   suspended: false, quiesced: false, appsRepo: '', appsImage: '', appsImageTag: '',
   quota: {requestsCpu: '100m', requestsMemory: '576Mi', limitsCpu: '2', limitsMemory: '2Gi', pods: '4', persistentVolumeClaims: '1'},
