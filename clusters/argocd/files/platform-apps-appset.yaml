@@ -128,6 +128,13 @@ spec:
               - $values/installation/values/{{ .name }}-__STAGE__.yaml
               - $values/clusters/active/__FQDN__.yaml
             ignoreMissingValueFiles: true
+            # THE COMMIT THIS APPLICATION SYNCED, which ArgoCD writes into the parameter for this
+            # source. It is the root Application's, because the sources above stand at it. A chart
+            # that emits an ApplicationSet of this repository (consumer-build) stands that set's
+            # generator and sources at it, so they reach a commit only after its AppProjects.
+            parameters:
+              - name: revision
+                value: $ARGOCD_APP_REVISION
       # BY NAME, NOT "IN-CLUSTER". The apps of this appset belong to the cluster this branch
       # describes, and "in-cluster" answers a different question: it names the cluster the ArgoCD
       # INSTANCE runs on. For the cluster that keeps the books those are the same machine, and this

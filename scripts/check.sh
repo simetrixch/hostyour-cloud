@@ -290,7 +290,8 @@ $found"
 }
 
 # A SOURCE OR A GENERATOR OF THIS REPOSITORY STANDS AT THE COMMIT ITS ROOT APPLICATION SYNCED, which
-# that Application hands clusters/argocd and clusters/slaves/slave as `revision`. One standing at a
+# that Application hands clusters/argocd and clusters/slaves/slave as `revision`, and which every
+# platform Application, standing at it, hands consumer-build the same way. One standing at a
 # branch follows the branch on its own, so it can reach a commit before the root Application has
 # applied that commit's AppProjects, and its sync fails on a kind the project does not admit yet.
 # WHAT IS READ. Every line of the render, so a source inside an ApplicationSet's templatePatch,
@@ -328,9 +329,10 @@ sources_off_revision() {
 }
 
 # $1 says where the render came from, $2 is the render itself. Adds what it finds to $off_revision,
-# for the two charts the root Application hands a revision and for no other.
+# for the charts handed a revision that emit sources or generators of this repository: the two the
+# root Application hands one, and consumer-build, which its platform Application hands one.
 collect_off_revision() {
-  case "$chart" in clusters/argocd|clusters/slaves/slave) ;; *) return 0 ;; esac
+  case "$chart" in clusters/argocd|clusters/slaves/slave|clusters/inventories/consumer-build) ;; *) return 0 ;; esac
   printf '%s\n' "$2" > "$work/render"
   found="$(sources_off_revision "$1" "$work/render" "$handed_revision")"
   [ -n "$found" ] || return 0
@@ -561,7 +563,7 @@ if [ -n "$off_revision" ]; then
   echo "These name this repository at another revision than the one their root Application synced, so they can reach a commit before its AppProjects:$off_revision"
   fail "a source or a generator of this repository is off the handed revision"
 fi
-echo "check: every source and generator of this repository in clusters/argocd and clusters/slaves/slave stands at the handed revision."
+echo "check: every source and generator of this repository in clusters/argocd, clusters/slaves/slave and clusters/inventories/consumer-build stands at the handed revision."
 
 # ── clusters/argocd as ArgoCD is handed it: the cluster map ALONE ────────────────────────────
 # THE LOOP ABOVE RENDERS IT WITH THE PLATFORM CHAIN, AND NO CLUSTER EVER DOES. clusters/argocd is
