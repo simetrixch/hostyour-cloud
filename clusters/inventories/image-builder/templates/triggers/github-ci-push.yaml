@@ -86,6 +86,11 @@ spec:
               expression: body.ref.substring(11)
             - key: commit
               expression: body.after
+            # The commit the branch stood at before this push, all zeros for
+            # a new branch: a check that compares the push against its base
+            # reads it, because on a master push the merge base is the push.
+            - key: before
+              expression: body.before
             # The webhook's own claim of the repo — the pipeline's first task
             # compares it fail-closed against its pinned repoURL.
             - key: git-url
@@ -120,6 +125,8 @@ spec:
       value: $(extensions.branch)
     - name: commit
       value: $(extensions.commit)
+    - name: before
+      value: $(extensions.before)
     - name: git-url
       value: $(extensions.git-url)
 ---
@@ -137,6 +144,7 @@ spec:
     - name: unit
     - name: branch
     - name: commit
+    - name: before
     - name: git-url
   resourcetemplates:
     # ONE PipelineRun in the unit's own build namespace, under the same
@@ -197,6 +205,8 @@ spec:
         params:
           - name: commit
             value: $(tt.params.commit)
+          - name: before
+            value: $(tt.params.before)
           - name: branch
             value: $(tt.params.branch)
           - name: git-url
