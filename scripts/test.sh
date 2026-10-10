@@ -78,4 +78,7 @@ node --test scripts/trust-manager-adoption.test.mjs || fail 'scripts/trust-manag
 echo 'test: cert-manager issuers — platform-acme as every cluster holds it, or the cluster authority, nothing else.'
 node --test scripts/cert-manager-issuers.test.mjs || fail 'scripts/cert-manager-issuers.test.mjs'
 node --test scripts/inventory-project-fit.test.mjs || fail 'scripts/inventory-project-fit.test.mjs'
+echo 'test: e2e runner — the password of a demo target stays bound to its host, and a run names a path on it and a case, nothing else.'
+helm dependency build clusters/inventories/e2e-runner
+node --test scripts/e2e-runner.test.mjs || fail 'scripts/e2e-runner.test.mjs'
 echo 'test: OK — all suites green'

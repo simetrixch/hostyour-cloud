@@ -1,0 +1,33 @@
+# e2e-runner — the same values on every stage. A run names its target per TaskRun
+# (templates/task-run-case.yaml), so nothing here differs between stages.
+
+pipeline:
+  # The account every TaskRun names. It holds no API grant, and no token mounts into
+  # its pods (templates/rbac.yaml): the browser of a run loads a tenant's app, and the
+  # pod beside it holds the E2E password, so it must hold no cluster credential too.
+  serviceAccountName: pipeline-sa
+
+run:
+  # The `node` user of the E2E image (digita-testkit docker/e2e.Containerfile).
+  runAsUser: 1000
+  # One headless Chrome and the Playwright runner.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# The default SecretStore: vault-backend under the `external-secrets` role.
+secret-store: {}
+
+# The SecretStore the targets' ExternalSecrets read the E2E passwords through. Its role
+# reads `secret/data/+/tenants/+/e2e` and nothing else; it is installed by
+# hostyour-deploy's deploy-platform-services program and bound to exactly this
+# ServiceAccount in this namespace. The targets' Applications load this file, so the
+# store's name is written here once.
+e2e-password-store:
+  name: e2e-passwords
+  role: e2e-runner
+  serviceAccountName: e2e-runner-eso

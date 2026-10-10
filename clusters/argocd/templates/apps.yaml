@@ -1,7 +1,7 @@
 {{- /*
 THE RECONCILER'S OWN TREE, RENDERED FROM THE CLUSTER MAP.
 
-The eight manifests stand in files/ and not in templates/. ArgoCD reads its own
+The manifests stand in files/ and not in templates/. ArgoCD reads its own
 {{ }} goTemplate expressions inside them, and anything under templates/ is read
 by Helm first, so a manifest placed there would lose those expressions. This
 template reads each file whole with .Files.Get and puts this cluster's own
@@ -42,7 +42,7 @@ sources took __FQDN__ would target a branch nothing ever cut and generate
 nothing at all.
 
 `# file: <name>` opens each emitted document. Helm writes one `# Source:` line
-for this template, and all eight documents come from it, so that line cannot
+for this template, and all the documents come from it, so that line cannot
 tell them apart.
 */ -}}
 {{- /*
@@ -146,9 +146,9 @@ syncs at once — the state the steps exist to end, arrived at in silence.
 {{- end }}
 {{- $waveSteps = append $waveSteps (printf "        - matchExpressions: [{ key: %q, operator: NotIn, values: [%s] }]" $waveLabel (join ", " $waveValues)) }}
 {{- $waveStepList := printf "\n%s" (join "\n" $waveSteps) }}
-{{- $booksOnly := list "cluster-self.yaml" "slaves-appset.yaml" }}
+{{- $booksOnly := list "cluster-self.yaml" "e2e-targets-appset.yaml" "slaves-appset.yaml" }}
 {{- $docs := list }}
-{{- $names := list "cluster-self.yaml" "consumers-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "slaves-appset.yaml" "tenants-appset.yaml" "units-appset.yaml" }}
+{{- $names := list "cluster-self.yaml" "consumers-appset.yaml" "e2e-targets-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "slaves-appset.yaml" "tenants-appset.yaml" "units-appset.yaml" }}
 {{- if $previousUnitApex }}
 {{- $names = append $names "redirects-appset.yaml" | sortAlpha }}
 {{- end }}

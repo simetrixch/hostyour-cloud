@@ -1,0 +1,7 @@
+name: e2e-runner
+project: cicd
+syncWave: "27"
+namespace: e2e-runner
+prune: "true"
+createNamespace: "true"
+runsOn: master
