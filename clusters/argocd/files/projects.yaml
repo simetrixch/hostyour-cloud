@@ -241,7 +241,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Build plane — Tekton, Zot registry, image-builder, gate-runner. Centralized on ONE build cluster (promote test->prod reuses the same image); off unless this cluster's role is the one their app.yaml names. Privileged (Tekton CRDs, buildah).
+  description: Build plane — Tekton, Zot registry, image-builder, gate-runner, e2e-runner. Centralized on ONE build cluster (promote test->prod reuses the same image); off unless this cluster's role is the one their app.yaml names. Privileged (Tekton CRDs, buildah).
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
   # cicd destinations are static.
@@ -261,6 +261,8 @@ spec:
       namespace: image-builder
     - name: __CLUSTER_NAME__
       namespace: gate-runner
+    - name: __CLUSTER_NAME__
+      namespace: e2e-runner
     - name: __CLUSTER_NAME__
       namespace: __ARGOCD_NAMESPACE__
   clusterResourceWhitelist:

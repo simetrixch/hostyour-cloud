@@ -1,0 +1,132 @@
+{{- /*
+run-case — one E2E case against one target, as that target's E2E account. A session starts it
+with a TaskRun and reads the step's log:
+
+  apiVersion: tekton.dev/v1
+  kind: TaskRun
+  metadata: {generateName: run-case-, namespace: e2e-runner}
+  spec:
+    serviceAccountName: pipeline-sa
+    taskRef: {name: run-case}
+    params:
+      - {name: target, value: <guid>-<stage>}
+      - {name: path, value: /app/<name>/}
+      - {name: case, value: cases/settings.spec.ts}
+
+THE TARGET BINDS THE PASSWORD TO ITS HOST. The Secret e2e-<target> carries both the tenant's E2E
+password and the host that tenant is served at, from one ExternalSecret that
+clusters/argocd/files/e2e-targets-appset.yaml derives from the books. A run names the path on that
+host, never a host, so no run can type a tenant's password into another site. The path is
+refused unless it starts with `/` and holds only path characters, because `https://<host>` followed
+by anything else could name another authority.
+
+THE PASSWORD TRAVELS ONLY AS THE STEP'S ENVIRONMENT, through secretKeyRef, and never as a param,
+which the TaskRun's spec would print. The run's log holds no value of it because the testkit's
+Playwright config allows only the `list` reporter and keeps traces off, and this step sets no
+PLAYWRIGHT_LIST_PRINT_STEPS and adds no reporter: a step title quotes what a fill typed.
+
+NOTHING A RUN WRITES OUTLIVES ITS POD. The signed-in session (.auth) and the test output
+(test-results) go to emptyDir volumes, .auth in memory, and the Task declares no workspace and no
+result, so nothing hands them to another pod.
+
+The paths below are the E2E image's: digita-testkit docker/e2e.Containerfile puts the repository
+at /e2e and runs as the `node` user.
+*/ -}}
+{{- $builds := dict "root" $ "builds" .Values.builds "name" "digita-testkit-e2e" }}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: run-case
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  description: >-
+    Run one E2E case of digita-testkit against one demo tenant's stage, signed in as its E2E
+    account.
+  params:
+    - name: target
+      type: string
+      description: The tenant and stage, `<guid>-<stage>`. The Secret e2e-<target> must exist.
+    - name: path
+      type: string
+      description: The app's path on the target's host, from its leading slash, for example /app/<name>/.
+    - name: case
+      type: string
+      description: The case file under packages/e2e, for example cases/settings.spec.ts.
+  steps:
+    - name: run-case
+      # Built inside this installation by the release of digita-testkit and pushed to its own
+      # registry, so the ref is composed against common.registryHost, not common.buildRegistry.
+      image: {{ printf "%s/%s:%s" (include "common.registryHost" $) (include "common.buildImageName" $builds) (include "common.buildTag" $builds) | quote }}
+      workingDir: /e2e/packages/e2e
+      env:
+        - name: E2E_TARGET_HOST
+          valueFrom:
+            secretKeyRef:
+              name: e2e-$(params.target)
+              key: host
+        - name: E2E_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: e2e-$(params.target)
+              key: password
+        - name: E2E_APP_PATH
+          value: $(params.path)
+        - name: E2E_CASE
+          value: $(params.case)
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+      # The params reach the script as environment and are never pasted into its text, so a value
+      # cannot become shell code.
+      script: |
+        #!/bin/sh
+        set -eu
+        refuse() { echo "run-case: $1" >&2; exit 2; }
+        case "${E2E_APP_PATH}" in
+          /*) ;;
+          *) refuse "path ${E2E_APP_PATH} does not start with /, so it could name another host" ;;
+        esac
+        case "${E2E_APP_PATH}" in
+          *[!A-Za-z0-9._~/-]*) refuse "path ${E2E_APP_PATH} holds a character that is not a path character" ;;
+        esac
+        case "${E2E_CASE}" in
+          *..*) refuse "case ${E2E_CASE} names a parent directory, so it could leave cases/" ;;
+          cases/*) ;;
+          *) refuse "case ${E2E_CASE} is not a file under cases/" ;;
+        esac
+        case "${E2E_CASE}" in
+          *[!A-Za-z0-9._/-]*) refuse "case ${E2E_CASE} holds a character that is not a path character" ;;
+        esac
+        export PLAYWRIGHT_BASE_URL="https://${E2E_TARGET_HOST}${E2E_APP_PATH}"
+        echo "run-case: ${E2E_CASE} against ${PLAYWRIGHT_BASE_URL}"
+        exec node_modules/.bin/playwright test "${E2E_CASE}"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.run.runAsUser }}
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+        readOnlyRootFilesystem: true
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: signed-in-session
+          mountPath: /e2e/packages/e2e/.auth
+        - name: test-results
+          mountPath: /e2e/packages/e2e/test-results
+      computeResources:
+        {{- toYaml .Values.run.resources | nindent 8 }}
+  volumes:
+    - name: tmp
+      emptyDir: {}
+    - name: signed-in-session
+      emptyDir:
+        medium: Memory
+    - name: test-results
+      emptyDir: {}

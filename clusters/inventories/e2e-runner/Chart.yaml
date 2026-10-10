@@ -1,0 +1,29 @@
+apiVersion: v2
+name: e2e-runner
+version: 1.0.0
+description: >-
+  Runs one E2E case of a demo tenant as its E2E account, as a Tekton TaskRun in
+  the egress-fenced `e2e-runner` namespace on the master. The account's
+  password reaches the test step from Vault through ESO and nothing else: no
+  session and no dev machine holds it. The cases come as a released image, so
+  a run tests the cases of one reviewed commit. Which tenants a run may target
+  is not stated here: clusters/argocd/files/e2e-targets-appset.yaml derives one
+  target per demo tenant and stage from the books.
+type: application
+
+dependencies:
+  # The namespace's default SecretStore, under the app-tier `external-secrets`
+  # role, for the registry pull credential
+  # (templates/externalsecret-registry-pull.yaml).
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  # A second SecretStore under its own Vault role, which may read the E2E
+  # password entries and nothing else. The targets' ExternalSecrets name it.
+  - name: secret-store
+    alias: e2e-password-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

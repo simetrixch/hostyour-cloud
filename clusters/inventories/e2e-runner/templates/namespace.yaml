@@ -1,0 +1,20 @@
+{{- /*
+Rendered here as well as by ArgoCD's CreateNamespace, so the PodSecurity levels hold before the
+first TaskRun pod starts. Enforce is `baseline` for the reason gate-runner's namespace states: the
+cluster's Tekton injects init containers without a securityContext (clusters/inventories/tekton,
+feature flag set-security-context "false"), and `restricted` admission would reject every TaskRun
+pod. The run step itself is restricted-grade; warn and audit stay `restricted` so a gap shows.
+*/ -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    # The label the platform-apps ApplicationSet stamps on every workload namespace. Vault's
+    # `external-secrets` role admits a namespace by it, which the registry pull credential needs.
+    hostyour.cloud/workload: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

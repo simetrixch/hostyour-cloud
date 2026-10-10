@@ -58,6 +58,15 @@ slave:
   apiPort: "16443"
   masterFqdn: check.example.invalid
   stage: dev
+# What clusters/argocd/files/e2e-targets-appset.yaml hands clusters/units/e2e-target: a demo tenant at
+# one stage and the one host it is served at, and the E2E runner's password store, whose name that
+# Application reads from clusters/inventories/e2e-runner/values-common.yaml.
+target:
+  guid: 00000000-0000-0000-0000-000000000000
+  stage: dev
+  host: check.dev.check.example.invalid
+e2e-password-store:
+  name: check
 externalsecret-mongodb:
   externalSecret:
     vaultPath: secret/dev/units/check/mongodb

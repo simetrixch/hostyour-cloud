@@ -1,0 +1,6 @@
+{{- /*
+A run's browser loads a tenant's app, which is code this namespace does not vouch for, and it
+reaches that app at its public address. So the namespace gets DNS and the public internet and
+nothing else; common.publicEgressFence states what it denies and why.
+*/ -}}
+{{ include "common.publicEgressFence" (dict "root" $ "name" "e2e-egress-fence") }}

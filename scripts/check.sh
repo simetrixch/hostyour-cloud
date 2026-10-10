@@ -44,14 +44,18 @@ git archive "$baseline" clusters | tar -x -C "$work/baseline" || fail "cannot ex
 node scripts/check-immutable.mjs --probe || fail "immutable-field counter-probe failed"
 immutable_rendered=0
 
-# args, chart, name and namespace are the same value chain used by the render below.
+# args, chart, name and namespace are the same value chain used by the render below. Every
+# argument after the first is one the candidate was rendered with beyond that chain, and the
+# baseline gets it too: a chart rendered with the placeholder taken for a tag stops at the
+# baseline without it, the same as it would at the candidate.
 check_immutable_render() {
   local current="$1" previous
+  shift
   [ -f "$work/baseline/$chart/Chart.yaml" ] || return 0
   previous="$(cd "$work/baseline" &&
-    { helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" 2>/dev/null ||
+    { helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" "$@" 2>/dev/null ||
       helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" \
-        -f "$installation_values" -f "$cluster_map" -f "$registration"; })" \
+        -f "$installation_values" -f "$cluster_map" -f "$registration" "$@"; })" \
     || fail "cannot render $chart at preceding stable release $baseline"
   printf '%s' "$previous" | yq eval-all -o=json -I=0 '[.]' - > "$work/immutable-before.json" \
     || fail "cannot parse preceding render"
@@ -326,13 +330,14 @@ stages="dev test prod"
 rendered=0
 skipped_library=""
 needed_standin=""
+awaiting_release=""
 broken=""
 expressions=""
 disagreeing=""
 plain_http=""
 
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
-# renders the eight manifests of clusters/argocd/files from the cluster map, and it is the only
+# renders the manifests of clusters/argocd/files from the cluster map, and it is the only
 # writer of their markers.
 for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ clusters/argocd/; do
   chart="${chart%/}"
@@ -407,7 +412,25 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       continue
     fi
 
-    # It renders from neither. The chart is named with the stage it failed at and the whole
+    # One cause is no defect: a pin at global.placeholderTag, the tag a stage carries before its
+    # first release, stops the render on purpose (clusters/charts/common common.buildTag), and that
+    # release can write over the pin only once the pin stands on the trunk. So the chart is
+    # rendered once more with the placeholder taken for a tag. Nothing else changes, so a chart
+    # that renders now has no defect but a pin no release has written yet, and it is named below.
+    out="$(helm template "$name" "$chart" --namespace "$namespace" \
+      "${args[@]}" -f "$installation_values" -f "$cluster_map" -f "$registration" \
+      --set global.placeholderTag=check-takes-the-placeholder-for-a-tag 2>&1)"
+    if [ $? -eq 0 ]; then
+      rendered=$((rendered + 1))
+      collect_expressions "$name at stage $stage" "$out"
+      collect_disagreeing "$name at stage $stage" "$out"
+      collect_plain_http "$name at stage $stage" "$out"
+      check_immutable_render "$out" --set global.placeholderTag=check-takes-the-placeholder-for-a-tag
+      awaiting_release="$awaiting_release $name at $stage,"
+      continue
+    fi
+
+    # It renders from none of these. The chart is named with the stage it failed at and the whole
     # message helm gave, because that message names the template and the value.
     broken="$broken
   $name at stage $stage:
@@ -432,6 +455,7 @@ echo "check: $immutable_rendered immutable render comparisons green against $bas
 
 [ -n "$skipped_library" ] && echo "check: library charts, which render only through what depends on them:$skipped_library"
 [ -n "$needed_standin" ] && echo "check: charts that render only with an installation's own answers, which no file of this repository carries:$needed_standin"
+[ -n "$awaiting_release" ] && echo "check: charts that render only once a release has written the pin their stage carries before its first one:${awaiting_release%,}"
 
 if [ -n "$broken" ]; then
   echo "These charts render from neither the trunk nor a stand-in installation:$broken"
@@ -635,6 +659,89 @@ if [ -n "$placeholders" ]; then
 fi
 echo "check: no file under clusters/bootstrap carries a placeholder, which nothing there would replace."
 
+# ── What an installation's branch must be able to take ───────────────────────────────────────
+# A RELEASE REACHES A MACHINE AS A MERGE into its installation's branch, the branch named after its
+# domain, on which the branch program replaced example.invalid with that domain in every file it
+# stamps. git refuses to merge a change to a line the branch rewrote, and also one to the line
+# beside it, so a release that edits next to a stamped line stops at that merge and reaches no
+# machine. The installation branches on origin are the real merge targets, so HEAD is merged into
+# each of them as the release would be, in memory, without a working tree.
+#
+# A BRANCH IS AN INSTALLATION'S WHEN IT HOLDS clusters/active/<its own name>.yaml, the cluster map the
+# branch program writes there and the default branch never carries. A name alone tells nothing: a
+# dot in a branch name is a version as often as a domain. The branches are fetched first, because
+# the installation branch moves with every release pin and a copy fetched an hour ago answers for
+# an hour ago. A clone that holds no installation branch has nothing to merge into, and says so
+# instead of reporting a pass.
+merges_into() {
+  git -C "$1" merge-tree --write-tree --name-only --no-messages "$2" "$3" >"$work/merge-tree" 2>&1
+}
+# THE LANDING IS A COMMIT, AND A COMMIT NEEDS AN AUTHOR. A CI runner has no git identity, and
+# commit-tree refuses to write without one, so the landing carries its own: it is never pushed and
+# nothing points at it, so the name only has to exist.
+landing_commit() {
+  GIT_AUTHOR_NAME=check GIT_AUTHOR_EMAIL=check@example.invalid \
+    GIT_COMMITTER_NAME=check GIT_COMMITTER_EMAIL=check@example.invalid \
+    git -C "$1" commit-tree "$2" -p "$3" -p "$4" -m "check: $4 on $3"
+}
+probe="$work/merge-probe"
+git -c init.defaultBranch=probe init -q "$probe" || fail "the merge probe could not make its repository"
+probe_commit() {
+  printf '%s\n' "$@" >"$probe/root-app.yaml"
+  git -C "$probe" add root-app.yaml && git -C "$probe" -c user.name=probe -c user.email=probe@example.invalid commit -qm probe && git -C "$probe" rev-parse HEAD
+}
+probe_base="$(probe_commit '      helm:' '        valueFiles:' '          - $values/example.invalid.yaml' '' '  destination:')"
+probe_installation="$(probe_commit '      helm:' '        valueFiles:' '          - $values/installation.example.yaml' '' '  destination:')"
+git -C "$probe" checkout -q "$probe_base" 2>/dev/null
+probe_defect="$(probe_commit '      helm:' '        valueFiles:' '          - $values/example.invalid.yaml' '        parameters: planted-defect' '' '  destination:')"
+git -C "$probe" checkout -q "$probe_base" 2>/dev/null
+probe_innocent="$(probe_commit '      helm:' '        parameters: planted-innocent' '        valueFiles:' '          - $values/example.invalid.yaml' '' '  destination:')"
+[ -n "$probe_installation" ] && [ -n "$probe_defect" ] && [ -n "$probe_innocent" ] || fail "the merge probe could not write its commits"
+merges_into "$probe" "$probe_installation" "$probe_defect" \
+  && fail "the merge probe took a change beside a stamped line without a conflict, so this check cannot see one"
+merges_into "$probe" "$probe_installation" "$probe_innocent" \
+  || { cat "$work/merge-tree"; fail "the merge probe refused a change one line away from a stamped line, which git merges"; }
+# The landing is written once more as a runner would write it, with no identity anywhere: no global
+# or system configuration and no repository one.
+mkdir "$work/no-identity" || fail "the merge probe could not make an empty home"
+HOME="$work/no-identity" XDG_CONFIG_HOME="$work/no-identity" GIT_CONFIG_NOSYSTEM=1 \
+  landing_commit "$probe" "$(git -C "$probe" rev-parse "$probe_innocent^{tree}")" "$probe_base" "$probe_innocent" >/dev/null \
+  || fail "the merge probe could not write a landing without a git identity, the way a CI runner has none"
+echo "check: the merge probe refuses the planted change beside a stamped line and takes the planted innocent, and writes a landing with no git identity."
+
+# WHAT IS MERGED IS WHAT A RELEASE WOULD CUT: HEAD on top of the default branch. A branch that is
+# behind it lacks the release pins written there since, and the installation branch carries the
+# same pins, so HEAD alone would conflict on lines the change never touched. Where HEAD does not
+# hold the default branch, the two are merged in memory into a commit nothing points at; where
+# they conflict, nothing could be released, and that conflict is the failure named.
+git fetch -q --prune origin || fail "origin could not be fetched, so the installation branches a release merges into are unknown"
+installations=""
+for branch in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin); do
+  git cat-file -e "$branch:clusters/active/${branch#origin/}.yaml" 2>/dev/null && installations="$installations $branch"
+done
+if [ -z "$installations" ]; then
+  echo "check: NOT RUN — no installation branch in this clone, so no merge of HEAD into one was tried."
+else
+  default_branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" \
+    || fail "origin/HEAD names no default branch, so what a release would cut is unknown — run git remote set-head origin --auto"
+  candidate=HEAD
+  if ! git merge-base --is-ancestor "$default_branch" HEAD; then
+    git merge-tree --write-tree --name-only --no-messages "$default_branch" HEAD >"$work/merge-tree" 2>&1 || {
+      sed 's/^/  /' "$work/merge-tree"
+      fail "HEAD conflicts with $default_branch, so no release of it can be cut — merge $default_branch into it first"
+    }
+    candidate="$(landing_commit "$root" "$(head -n 1 "$work/merge-tree")" "$default_branch" HEAD)" \
+      || fail "HEAD on $default_branch could not be written as a commit to merge"
+  fi
+  for installation in $installations; do
+    merges_into "$root" "$installation" "$candidate" || {
+      sed 's/^/  /' "$work/merge-tree"
+      fail "HEAD on $default_branch does not merge into $installation: a release of it would stop at that machine's merge — move the change off the line the installation stamped and off the lines beside it"
+    }
+  done
+  echo "check: HEAD on $default_branch merges into every installation branch on origin: $(echo $installations)."
+fi
+
 # ── Every stamp site of this tree, held to its pin ───────────────────────────────────────────
 # clusters/platform/versions.yaml names, per pin, the sites a version sync writes it into. The
 # sync is an ansiwise program and does not run here, so a site it left behind went unnoticed
@@ -750,7 +857,7 @@ echo "check: every yaml_value stamp site of this tree holds its pin from cluster
 echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
-for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs; do
+for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in public GitHub Actions.'
@@ -764,6 +871,7 @@ echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in public Gi
 echo 'check: NOT RUN locally — scripts/unit-mongodb-exporter.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in public GitHub Actions.'
+echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in public GitHub Actions.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
