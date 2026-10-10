@@ -31,6 +31,13 @@ spec:
       helm:
         valueFiles:
           - $values/clusters/active/example.invalid.yaml
+        # THE COMMIT THIS APPLICATION SYNCED, which ArgoCD writes into the parameter for this source
+        # as the resolved revision of the branch above. The chart puts it on every source and every
+        # generator of this repository it emits, so a generated Application reaches a commit only
+        # after this one has applied that commit's AppProjects.
+        parameters:
+          - name: revision
+            value: $ARGOCD_APP_REVISION
 
   destination:
     server: https://kubernetes.default.svc
