@@ -44,7 +44,7 @@ generated child Applications remain as inert CRs in ns <name> (offboard/rebuild
 cleanup is the job of removing the slave).
 */ -}}
 {{- $slave := .Values.slave }}
-{{- $branch := required "slave.branch is required (clusters/argocd/files/slaves-appset.yaml valuesObject — the BOOKS branch, the one branch an installation keeps every cluster map on)" $slave.branch }}
+{{- $revision := required "revision is required (clusters/argocd/files/slaves-appset.yaml hands it as the Helm parameter revision) — the commit of the books branch the master's root Application synced, the one branch an installation keeps every cluster map on" .Values.revision }}
 {{- $fqdn := required "slave.fqdn is required (clusters/argocd/files/slaves-appset.yaml valuesObject — this slave's own domain, which names its cluster map on the books branch)" $slave.fqdn }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -59,28 +59,35 @@ spec:
   # TWO SOURCES, BECAUSE clusters/argocd IS A CHART. It renders the slave's reconciler tree from the
   # slave's OWN cluster map, and a chart reaches a file outside its own directory only through a
   # source declared `ref:`. The first entry carries no path and exists only to give `$values` a
-  # meaning. Both entries stand on the BOOKS branch, and which map the chart reads is decided by the
-  # file name below rather than by the branch.
+  # meaning. Both entries stand at the commit of the books branch the master's root Application
+  # synced, so the slave's tree moves with the master's and never ahead of the AppProjects the
+  # master applied. Which map the chart reads is decided by the file name below rather than by the
+  # revision.
   sources:
     - repoURL: {{ .Values.repo.url }}
-      targetRevision: {{ $branch }}
+      targetRevision: {{ $revision }}
       ref: values
     - repoURL: {{ .Values.repo.url }}
-      targetRevision: {{ $branch }}
+      targetRevision: {{ $revision }}
       # THE TREE HAS NO STAGE SEGMENT. A path carrying one — `clusters/argocd/<stage>` — names a
       # layout that does not exist: ArgoCD answers `app path does not exist`, the Application stands
       # Unknown, and the deployment's verification waits its whole 30 minutes on it.
       path: clusters/argocd
       helm:
         valueFiles:
-          # THE SLAVE'S OWN MAP AND NEVER THE MASTER'S, which is the one thing the branch above no
-          # longer says: the books branch carries a map per cluster of this installation, so the
+          # THE SLAVE'S OWN MAP AND NEVER THE MASTER'S, which is the one thing the revision above
+          # does not say: the books branch carries a map per cluster of this installation, so the
           # file name is what picks this instance's. It is also what makes the chart render the
           # slave's namespace rather than `argocd` — role there does not open with `master`, so
           # __ARGOCD_NAMESPACE__ becomes the slave's short name. Named with the master's map here,
           # this instance would render role master, namespace argocd and the three books-only
           # manifests, into a namespace it does not manage.
           - $values/clusters/active/{{ $fqdn }}.yaml
+        # The same commit, handed on: clusters/argocd puts it on every source and generator of this
+        # repository it emits for the slave.
+        parameters:
+          - name: revision
+            value: {{ $revision | quote }}
 
   destination:
     # In-cluster from the instance's perspective = the MASTER: the directory's

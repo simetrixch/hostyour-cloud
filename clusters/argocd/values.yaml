@@ -1,10 +1,17 @@
 # WHAT THIS CHART READS, AND WHERE EACH VALUE COMES FROM.
 #
-# This file sets nothing. Every value below stands in clusters/active/<fqdn>.yaml, the cluster map,
-# which is the last file of every valueFiles chain and the one file that says what one cluster is. A
-# default here would be a second place to carry an installation's own name, and the installation
-# that inherited it would never learn which of the two it was running on.
+# This file sets nothing. Every value below but `revision` stands in clusters/active/<fqdn>.yaml,
+# the cluster map, which is the last file of every valueFiles chain and the one file that says what
+# one cluster is. A default here would be a second place to carry an installation's own name, and
+# the installation that inherited it would never learn which of the two it was running on.
 #
+#   revision                     the marker __BRANCH__ — the commit of this repository the root
+#                                Application synced, handed as a Helm parameter by
+#                                clusters/argocd/root-app.yaml ($ARGOCD_APP_REVISION) and by
+#                                clusters/slaves/slave/templates/root-application.yaml. Every source
+#                                and git generator of this repository stands at it, so a generated
+#                                Application reaches a commit only after the root Application has
+#                                applied that commit's AppProjects.
 #   stage                        the marker __STAGE__ — the PLATFORM'S stage, standing in
 #                                platform-apps-appset.yaml, slaves-appset.yaml and projects.yaml
 #                                alone. The three unit sets carry no marker for it: a unit's stage
@@ -27,14 +34,14 @@
 #                                master.
 #   global.domain                the marker __FQDN__ — this cluster's own domain, which names the
 #                                cluster map the value chains load last (cluster-map.tpl:35). NOT
-#                                __BRANCH__: a cluster carrying only the slave part has no install
+#                                a branch: a cluster carrying only the slave part has no install
 #                                branch of its own.
-#   global.booksCluster          the markers __BOOKS_FQDN__ and __BRANCH__ — the install branch of
-#                                the cluster that keeps the books (cluster-map.tpl:42), which is the
-#                                one install branch an installation has and therefore the branch
-#                                every source of this tree reads from. The two markers are one value
-#                                and two questions: __BOOKS_FQDN__ is a cluster a selector compares
-#                                against, __BRANCH__ is a git revision a source targets.
+#   global.booksCluster          the marker __BOOKS_FQDN__ — the install branch of the cluster that
+#                                keeps the books (cluster-map.tpl:42), which is the one install
+#                                branch an installation has. A selector compares against it, and
+#                                the deploy repository's branch is named after it. The root
+#                                Application syncs this branch, and the commit it synced is
+#                                `revision` above.
 #   global.deployRepo            the marker __DEPLOY_REPO__ — the deploy repository as bare
 #                                owner/name, written inside a URL the file already carries
 #                                (cluster-map.tpl:75).

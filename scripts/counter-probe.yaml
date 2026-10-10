@@ -1,6 +1,7 @@
-# THE COUNTER-PROBE OF THE THREE SCANS THAT READ A RENDER: the one that looks for an unresolved Helm
-# expression, the one that looks for an Application naming one repository at two revisions, and the
-# one that looks for an Ingress served over plain http. scripts/check.sh runs each over this file
+# THE COUNTER-PROBE OF THE FOUR SCANS THAT READ A RENDER: the one that looks for an unresolved Helm
+# expression, the one that looks for an Application naming one repository at two revisions, the
+# one that looks for an Ingress served over plain http, and the one that looks for a source or a
+# generator of this repository at another revision than the one the chart was handed. scripts/check.sh runs each over this file
 # before any of them touches a real chart, and ends the run red
 # unless each reports EXACTLY the defects planted for it below and says nothing at all about the
 # innocents beside them. Without the defects neither scan can be shown to go red; without the
@@ -63,6 +64,19 @@
 #      the shape the Manager's and Grafana's Ingresses had.                  MUST BE REPORTED
 #  10. an Ingress that names web beside websecure.                           MUST BE REPORTED
 #  11. an Ingress that binds websecure alone.                                MUST STAY UNREPORTED
+#
+# WHAT THE FOURTH SCAN IS PLANTED. scripts/check.sh hands it the revision the stand-in registration
+# carries as `revision`, the commit a reconciler's root Application synced, and every planted case
+# below is read against that one value:
+#
+#  12. a git generator of this repository at a branch. Its repoURL is spelled without .git and with
+#      the owner in capitals, both of which ArgoCD reads as the same repository, so a scan that
+#      compared the URL as written would miss it.                         MUST BE REPORTED
+#  13. two template sources of this repository at a branch, taken from one anchor each, so the
+#      second scan finds them in agreement and only this one can see them.  MUST BE REPORTED
+#  14. a generator and two sources of this repository at the handed revision, the second source
+#      through an anchor, beside a source of another repository at a branch. It is the shape the
+#      reconciler's tree writes.                                           MUST STAY UNREPORTED
 #
 # The two decoded payloads are, in full:
 #
@@ -198,3 +212,60 @@ spec:
   ingressClassName: public
   rules:
     - host: planted.example.invalid
+---
+# Source: counter-probe/planted-defect-generator-on-a-branch.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: planted-defect-generator-on-a-branch
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/SimetrixCH/hostyour-cloud
+        revision: planted.example.invalid
+        files:
+          - path: "registrations/*/dev.yaml"
+---
+# Source: counter-probe/planted-defect-sources-on-a-branch.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: planted-defect-sources-on-a-branch
+spec:
+  sources:
+    - repoURL: &cloud "https://github.com/simetrixch/hostyour-cloud.git"
+      targetRevision: &cloudref planted.example.invalid
+      ref: values
+    - repoURL: *cloud
+      targetRevision: *cloudref
+      path: clusters/planted
+      helm:
+        valueFiles:
+          - $values/planted/values.yaml
+---
+# Source: counter-probe/planted-innocent-at-the-handed-revision.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: planted-innocent-at-the-handed-revision
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        revision: 0123456789abcdef0123456789abcdef01234567
+        files:
+          - path: "registrations/*/dev.yaml"
+  template:
+    metadata:
+      name: planted
+    spec:
+      sources:
+        - repoURL: &here "https://github.com/simetrixch/hostyour-cloud.git"
+          targetRevision: &handed 0123456789abcdef0123456789abcdef01234567
+          ref: values
+        - repoURL: *here
+          targetRevision: *handed
+          path: clusters/planted
+        - repoURL: "https://github.com/simetrixch/planted-state.git"
+          targetRevision: planted-branch
+          path: planted/chart

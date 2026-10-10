@@ -40,17 +40,21 @@ fi
 baseline="$(git describe --tags --match '*-stable-*' --abbrev=0 "$revision" 2>/dev/null)" \
   || fail "no preceding stable release available for immutable comparison; fetch complete release history"
 mkdir "$work/baseline" || fail "cannot prepare immutable baseline"
-git archive "$baseline" clusters | tar -x -C "$work/baseline" || fail "cannot extract immutable baseline"
+git archive "$baseline" clusters scripts/standin | tar -x -C "$work/baseline" || fail "cannot extract immutable baseline"
 node scripts/check-immutable.mjs --probe || fail "immutable-field counter-probe failed"
 immutable_rendered=0
 
-# args, chart, name and namespace are the same value chain used by the render below.
+# args, chart, name and namespace are the same value chain used by the render below. The baseline's
+# own stand-ins load first and the candidate's over them, so every key both answer takes the
+# candidate's value, and a key the candidate renamed is still answered for the baseline chart that
+# requires it under its old name.
 check_immutable_render() {
   local current="$1" previous
   [ -f "$work/baseline/$chart/Chart.yaml" ] || return 0
   previous="$(cd "$work/baseline" &&
     { helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" 2>/dev/null ||
       helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" \
+        -f scripts/standin/installation-values.yaml -f scripts/standin/cluster-map.yaml -f scripts/standin/registration.yaml \
         -f "$installation_values" -f "$cluster_map" -f "$registration"; })" \
     || fail "cannot render $chart at preceding stable release $baseline"
   printf '%s' "$previous" | yq eval-all -o=json -I=0 '[.]' - > "$work/immutable-before.json" \
@@ -73,6 +77,8 @@ installation_values="$root/scripts/standin/installation-values.yaml"
 for standin in "$cluster_map" "$registration" "$installation_values"; do
   [ -f "$standin" ] || fail "$standin is missing, and it is what lets the charts of an installation render here"
 done
+handed_revision="$(yq '.revision // ""' "$registration")"
+[ -n "$handed_revision" ] || fail "$registration carries no revision, and it is what the reconciler's charts are handed as the commit their root Application synced"
 
 # ── What a render must never carry ──────────────────────────────────────────────────────────
 # A HELM EXPRESSION THAT SURVIVED THE RENDER REACHES A CLUSTER AS TEXT. helm resolves `{{ ... }}`
@@ -184,16 +190,9 @@ $found"
 # https form this tree writes; an ssh form would read as a second repository here and as the same
 # one there. A single-source Application is not read, because one source cannot disagree with
 # itself.
-revisions_awk='
-function reset() { split("", first); split("", second); split("", order); split("", anchors); n = 0; repo = "" }
-function emit(   i, name, where) {
-  where = (fil != "" ? fil : src)
-  for (i = 1; i <= n; i++) {
-    name = order[i]
-    if (name in second) print where "\t" name "\t" first[name] "\t" second[name]
-  }
-  reset()
-}
+# A source's fields as the two scans below read them: a value with its YAML anchor resolved or
+# recorded, and a repository URL the way ArgoCD normalizes it.
+source_fields_awk='
 function value(s,   name) {
   sub(/^[A-Za-z]+:[ \t]*/, "", s)
   sub(/[ \t]+#.*$/, "", s)
@@ -212,6 +211,18 @@ function value(s,   name) {
   return s
 }
 function repository(u) { u = tolower(u); sub(/\/+$/, "", u); sub(/\.git$/, "", u); return u }
+'
+
+revisions_awk="$source_fields_awk"'
+function reset() { split("", first); split("", second); split("", order); split("", anchors); n = 0; repo = "" }
+function emit(   i, name, where) {
+  where = (fil != "" ? fil : src)
+  for (i = 1; i <= n; i++) {
+    name = order[i]
+    if (name in second) print where "\t" name "\t" first[name] "\t" second[name]
+  }
+  reset()
+}
 function record(name, revision) {
   if (name == "" || revision == "") return
   if (!(name in first)) { first[name] = revision; order[++n] = name }
@@ -275,6 +286,54 @@ collect_plain_http() {
 $found"
 }
 
+# A SOURCE OR A GENERATOR OF THIS REPOSITORY STANDS AT THE COMMIT ITS ROOT APPLICATION SYNCED, which
+# that Application hands clusters/argocd and clusters/slaves/slave as `revision`. One standing at a
+# branch follows the branch on its own, so it can reach a commit before the root Application has
+# applied that commit's AppProjects, and its sync fails on a kind the project does not admit yet.
+# WHAT IS READ. Every line of the render, so a source inside an ApplicationSet's templatePatch,
+# which is a string to any YAML reader, is read like one in its template: a repoURL of this
+# repository and the targetRevision or git generator revision that follows it, through the anchors
+# either may be written with. A source of this repository that names no revision at all is not
+# seen. $1 says where the render came from, $2 is a file holding it, $3 is the revision the chart
+# was handed. A finding is named by the document's `metadata.name`, because helm sorts the documents
+# by kind and a `# file:` line stands ahead of only the first document a file emits.
+off_revision_awk="$source_fields_awk"'
+/^# Source: / { src = substr($0, 11); next }
+/^---[ \t]*$/ { split("", anchors); repo = ""; name = ""; next }
+/^metadata:/ { meta = 1; next }
+/^[^ ]/ { meta = 0 }
+meta && /^  name:[ \t]/ { name = value(substr($0, 3)); meta = 0; next }
+{
+  item = $0
+  sub(/^[ \t]*/, "", item)
+  if (item == "" || substr(item, 1, 1) == "#") next
+  sub(/^-[ \t]+/, "", item)
+  if (item ~ /^repoURL:[ \t]/) { repo = repository(value(item)); next }
+  if (item ~ /^(targetRevision|revision):[ \t]/) {
+    revision = value(item)
+    if (repo == "https://github.com/simetrixch/hostyour-cloud" && revision != handed) print src "\t" name "\t" revision
+    repo = ""
+  }
+}
+'
+sources_off_revision() {
+  awk -v handed="$3" "$off_revision_awk" "$2" | awk '!seen[$0]++' > "$work/off-revision" || fail "the render of $1 could not be read"
+  while IFS="$tab" read -r where name revision; do
+    printf '  %s, %s: %s names this repository at %s\n' "$1" "$where" "$name" "${revision:-no revision}"
+  done < "$work/off-revision"
+}
+
+# $1 says where the render came from, $2 is the render itself. Adds what it finds to $off_revision,
+# for the two charts the root Application hands a revision and for no other.
+collect_off_revision() {
+  case "$chart" in clusters/argocd|clusters/slaves/slave) ;; *) return 0 ;; esac
+  printf '%s\n' "$2" > "$work/render"
+  found="$(sources_off_revision "$1" "$work/render" "$handed_revision")"
+  [ -n "$found" ] || return 0
+  off_revision="$off_revision
+$found"
+}
+
 # ── The counter-probe of that scan ──────────────────────────────────────────────────────────
 # THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
 # plants two defects it has to report and three innocents it has to leave alone, and its own header
@@ -319,6 +378,18 @@ if [ "$plain_reported" != "$plain_expected" ]; then
 fi
 echo "check: the counter-probe reports both planted Ingresses served over plain http and not the planted innocent."
 
+off_expected='  scripts/counter-probe.yaml, counter-probe/planted-defect-generator-on-a-branch.yaml: planted-defect-generator-on-a-branch names this repository at planted.example.invalid
+  scripts/counter-probe.yaml, counter-probe/planted-defect-sources-on-a-branch.yaml: planted-defect-sources-on-a-branch names this repository at planted.example.invalid'
+off_reported="$(sources_off_revision 'scripts/counter-probe.yaml' "$counter_probe" "$handed_revision")"
+if [ "$off_reported" != "$off_expected" ]; then
+  echo "The counter-probe plants two documents naming this repository at a branch and one at the handed revision. The scan had to report:"
+  echo "$off_expected"
+  echo "and it reported:"
+  echo "${off_reported:-  (nothing)}"
+  fail "the scan for a source of this repository off the handed revision does not report what scripts/counter-probe.yaml plants"
+fi
+echo "check: the counter-probe reports both planted sources of this repository at a branch and not the planted innocent."
+
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
 echo "check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves, and clusters/argocd."
 
@@ -331,6 +402,7 @@ broken=""
 expressions=""
 disagreeing=""
 plain_http=""
+off_revision=""
 
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
 # renders the manifests of clusters/argocd/files from the cluster map, and it is the only
@@ -387,6 +459,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_expressions "$name at stage $stage" "$trunk_only"
       collect_disagreeing "$name at stage $stage" "$trunk_only"
       collect_plain_http "$name at stage $stage" "$trunk_only"
+      collect_off_revision "$name at stage $stage" "$trunk_only"
       check_immutable_render "$trunk_only"
       continue
     fi
@@ -400,6 +473,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_expressions "$name at stage $stage" "$out"
       collect_disagreeing "$name at stage $stage" "$out"
       collect_plain_http "$name at stage $stage" "$out"
+      collect_off_revision "$name at stage $stage" "$out"
       check_immutable_render "$out"
       case " $needed_standin " in
         *" $name "*) ;;
@@ -421,6 +495,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_expressions "$name at stage $stage" "$out"
       collect_disagreeing "$name at stage $stage" "$out"
       collect_plain_http "$name at stage $stage" "$out"
+      collect_off_revision "$name at stage $stage" "$out"
       check_immutable_render "$out"
       awaiting_release="$awaiting_release $name at $stage,"
       continue
@@ -478,11 +553,18 @@ if [ -n "$plain_http" ]; then
 fi
 echo "check: every Ingress of those $rendered renders binds websecure alone."
 
+if [ -n "$off_revision" ]; then
+  echo "These name this repository at another revision than the one their root Application synced, so they can reach a commit before its AppProjects:$off_revision"
+  fail "a source or a generator of this repository is off the handed revision"
+fi
+echo "check: every source and generator of this repository in clusters/argocd and clusters/slaves/slave stands at the handed revision."
+
 # ── clusters/argocd as ArgoCD is handed it: the cluster map ALONE ────────────────────────────
 # THE LOOP ABOVE RENDERS IT WITH THE PLATFORM CHAIN, AND NO CLUSTER EVER DOES. clusters/argocd is
 # the one chart of this repository whose whole values chain is a single file:
-# clusters/argocd/root-app.yaml:33 and clusters/slaves/slave/templates/root-application.yaml:83
-# both name $values/clusters/active/<fqdn>.yaml and nothing else. So `global:` reaches this chart
+# clusters/argocd/root-app.yaml and clusters/slaves/slave/templates/root-application.yaml both name
+# $values/clusters/active/<fqdn>.yaml and the parameter `revision`, which the stand-in registration
+# answers here, and nothing else. So `global:` reaches this chart
 # from the cluster map or from nowhere, while every other chart is handed
 # clusters/platform/values-common.yaml first and can never see the block missing.
 #
@@ -491,14 +573,14 @@ echo "check: every Ingress of those $rendered renders binds websecure alone."
 # from its `global:` line onward cut off. Deriving it means the two shapes cannot drift apart and
 # there is no third stand-in document to keep in step.
 echo "check: clusters/argocd from the cluster map alone, the way its root Application is handed it."
-if ! helm template argocd-apps clusters/argocd -f "$cluster_map" > "$work/argocd-alone" 2>&1; then
+if ! helm template argocd-apps clusters/argocd -f "$cluster_map" --set "revision=$handed_revision" > "$work/argocd-alone" 2>&1; then
   cat "$work/argocd-alone"
   fail "clusters/argocd does not render from the cluster map alone, which is the only chain it ever gets"
 fi
 
 refusal_said='the cluster map states no global: block'
 awk '/^global:/ { exit } { print }' "$cluster_map" > "$work/map-without-global"
-refused="$(helm template argocd-apps clusters/argocd -f "$work/map-without-global" 2>&1)"
+refused="$(helm template argocd-apps clusters/argocd -f "$work/map-without-global" --set "revision=$handed_revision" 2>&1)"
 case "$refused" in
   *"$refusal_said"*) ;;
   *)
@@ -519,6 +601,13 @@ if [ -n "$argocd_disagreeing" ]; then
   fail "an Application of clusters/argocd names one repository at two revisions"
 fi
 echo "check: every Application of clusters/argocd names each repository it uses at one revision."
+
+argocd_off_revision="$(sources_off_revision 'clusters/argocd from the cluster map alone' "$work/argocd-alone" "$handed_revision")"
+if [ -n "$argocd_off_revision" ]; then
+  echo "These name this repository at another revision than the one their root Application synced, so they can reach a commit before its AppProjects:$argocd_off_revision"
+  fail "a source or a generator of clusters/argocd names this repository off the handed revision"
+fi
+echo "check: every source and generator of this repository in clusters/argocd stands at the handed revision."
 
 # ── The per-unit fences, held to the objects they must render ────────────────────────────────
 # NOTHING ELSE HERE WOULD NOTICE ONE MISSING. The chart loop above renders every chart and reads

@@ -10,7 +10,7 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: __BOOKS_FQDN__
+        revision: __BRANCH__
         files:
           - path: "clusters/active/*.yaml"
         values:
@@ -66,6 +66,12 @@ spec:
             # where the three stages genuinely differ. Without this the Application stops syncing on
             # a file nobody was ever obliged to write.
             ignoreMissingValueFiles: true
+            # THE COMMIT THIS APPLICATION SYNCED, which ArgoCD writes into the parameter for this
+            # source. The chart's root Application stands at it and hands it on to clusters/argocd,
+            # so the slave's tree is the commit the master's root Application synced.
+            parameters:
+              - name: revision
+                value: $ARGOCD_APP_REVISION
             valuesObject:
               slave:
                 name: "{{ .values.cluster }}"
@@ -77,12 +83,6 @@ spec:
                 # above, a template naming a key that is not there produces no Application at all
                 # for the slave it was generating.
                 fqdn: "{{ .global.domain }}"
-                # THE BRANCH THE SLAVE'S WHOLE TREE IS READ FROM: the books. One installation keeps
-                # every cluster map on one branch, and a pure slave has no branch of its own — so
-                # the chart, the values chain and the slave's own map all come from here. The
-                # selector above matches on this same key, so the generator can never produce an
-                # element whose map does not carry it.
-                branch: "{{ .global.booksCluster }}"
                 apiHost: "{{ .global.apiHost }}"
                 apiPort: "{{ .global.apiPort }}"
                 masterFqdn: "{{ .global.master }}"
