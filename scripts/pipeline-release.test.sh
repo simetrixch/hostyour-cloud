@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # The release pipeline's own shell, where it decides something a fixture can hold it to:
-# class (b) appends newly declared image pins without losing held entries;
-# class (d) of the bump moves a tenant onto the bundle it just built only where the bundle and
-# the tenant's engines are of one line (clusters/inventories/consumer-build/templates/
-# pipeline-release.yaml, bundle_engine and engine_line_off), and the bump's push retries only a
-# concurrent update (concurrent_push_refusal, and commit_push against a local bare repository).
-# The functions are read out of the template, as the Pipeline carries them, and run against
-# fixture files; the engine-line call is held to standing before the registration is written.
+# class (b) appends newly declared image pins without losing held entries; class (c) pins an
+# inventory's value file on the install branch and on master and names the Application to refresh;
+# class (d) pins a tenant bundle on its stage pin and writes no registration; and the bump's push
+# retries only a concurrent update (concurrent_push_refusal, and commit_push against a local bare
+# repository). The functions are read out of the template
+# (clusters/inventories/consumer-build/templates/pipeline-release.yaml), as the Pipeline carries
+# them, and run against fixture files and repositories.
 #
 #   bash scripts/pipeline-release.test.sh
 set -uo pipefail
@@ -26,7 +26,7 @@ extract() { # function name -> its text out of the template
     on && /^ *\}$/ && match($0, /[^ ]/) == indent { exit }
   ' "$template"
 }
-for fn in bundle_engine engine_line_off concurrent_push_refusal commit_push bump_file; do
+for fn in concurrent_push_refusal commit_push bump_file pin_bundles; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
@@ -145,115 +145,6 @@ cp "$pins" "$work/pruned-once.yaml"
 cmp -s "$pins" "$work/pruned-once.yaml" || fail 'a pins file that names only declared builds was rewritten'
 ok 'a row of a build the chart no longer declares is dropped; declared rows stay at their real or placeholder tag'
 
-# ── bundle_engine: the engine read the way the Manager reads it ─────────────
-apps="$work/apps.yaml"
-engine_of() { # apps.yaml text -> CODE, and what bundle_engine set
-  printf '%s' "$1" > "$apps"
-  CODE=0
-  bundle_engine "$apps" || CODE=$?
-}
-
-rm -f "$apps"
-CODE=0; bundle_engine "$apps" || CODE=$?
-[ "$CODE" = 0 ] && [ -z "$BUNDLE_ENGINE_BUILD" ] || fail "a release without apps.yaml was taken for one with an engine, or refused (exit $CODE)"
-engine_of $'apps:\n  - { name: erp }\n'
-[ "$CODE" = 0 ] && [ -z "$BUNDLE_ENGINE_BUILD" ] && [ -z "$BUNDLE_ENGINE_LINE" ] \
-  || fail "an apps.yaml without engine was taken for one with an engine, or refused (exit $CODE: $ENGINE_REFUSAL)"
-engine_of ''
-[ "$CODE" = 0 ] && [ -z "$BUNDLE_ENGINE_BUILD" ] || fail "an empty apps.yaml was taken for one with an engine, or refused (exit $CODE: $ENGINE_REFUSAL)"
-ok "a release without apps.yaml, an empty apps.yaml and one without engine declare no engine and are not refused"
-
-engine_of $'engine:\n  build: digita-engine\n  line: "0.3"\n'
-[ "$CODE" = 0 ] && [ "$BUNDLE_ENGINE_BUILD" = digita-engine ] && [ "$BUNDLE_ENGINE_LINE" = 0.3 ] \
-  || fail "an engine the Manager reads was refused or misread (exit $CODE, '$BUNDLE_ENGINE_BUILD' '$BUNDLE_ENGINE_LINE': $ENGINE_REFUSAL)"
-ok "build digita-engine with the quoted line \"0.3\" is read as the Manager reads it"
-
-refused() { # label, apps.yaml text, a phrase the refusal carries
-  engine_of "$2"
-  [ "$CODE" = 1 ] || fail "PLANTED DEFECT: $1 must be refused, and bundle_engine answered $CODE with '$BUNDLE_ENGINE_BUILD' '$BUNDLE_ENGINE_LINE'"
-  [ -z "$BUNDLE_ENGINE_BUILD" ] && [ -z "$BUNDLE_ENGINE_LINE" ] || fail "$1 was refused and still left an engine behind"
-  case "$ENGINE_REFUSAL" in *"$3"*) ;; *) fail "$1 was refused without saying '$3': $ENGINE_REFUSAL" ;; esac
-}
-refused 'an unquoted line 0.3' $'engine:\n  build: digita-engine\n  line: 0.3\n' 'a quoted x.y'
-refused 'an unquoted line 0.10, the number 0.1 to the Manager' $'engine:\n  build: digita-engine\n  line: 0.10\n' 'a quoted x.y'
-refused 'a build without a line' $'engine:\n  build: digita-engine\n' 'declares an engine the Manager cannot read'
-refused 'a line without a build' $'engine:\n  line: "0.3"\n' 'declares an engine the Manager cannot read'
-refused 'a build of other characters' $'engine:\n  build: \'x"] | [load("/etc/hostname")] | .[0] // ["\'\n  line: "0.3"\n' 'lowercase letters, digits and dashes'
-refused 'an engine that is no map' $'engine: digita-engine\n' 'declares an engine the Manager cannot read'
-refused 'an engine key with no value' $'engine: null\n' 'declares an engine the Manager cannot read'
-refused 'an engine key written ~' $'engine: ~\n' 'declares an engine the Manager cannot read'
-refused 'an apps.yaml yq cannot parse' $'engine: [digita-engine\n' 'cannot be read:'
-refused 'an apps.yaml that is a list' $'- erp\n' 'cannot be read:'
-ok "an unquoted line, a half-declared engine, a build of other characters, an engine that is no map or null, and an apps.yaml yq cannot read are refused by name"
-
-# ── engine_line_off: the versions of the build a registration holds off the line ──
-reg="$work/registration.yaml"
-cat > "$reg" <<'EOF'
-approvedTags:
-  erp: { digita-engine: "0.3.004-stable-20260928080242-a1b2c3d", digita-app: "0.3.004-stable-20260928080242-a1b2c3d" }
-  auth: { digita-auth-backend: "0.4.000-stable-20261001000000-abc1234" }
-  crm: { digita-engine: "0.3.005-stable-20260929080242-b2c3d4e" }
-EOF
-[ -z "$(engine_line_off digita-engine 0.3 "$reg")" ] \
-  || fail "a tenant whose engines run 0.3.004 and 0.3.005 was taken for one of another line than 0.3"
-ok "a tenant whose engines run 0.3.x fits a bundle written for 0.3, and a member without the engine pairs with nothing"
-
-off="$(engine_line_off digita-engine 0.4 "$reg")"
-[ "$off" = "0.3.004-stable-20260928080242-a1b2c3d, 0.3.005-stable-20260929080242-b2c3d4e" ] \
-  || fail "PLANTED DEFECT: a tenant on 0.3 beside a bundle written for 0.4 must be named with each tag it runs, joined with a comma, and the answer was '$off'"
-ok "a tenant on 0.3 beside a bundle written for 0.4 is named with each tag it runs"
-
-cat > "$reg" <<'EOF'
-approvedTags:
-  erp: { digita-engine: "0.4.001-stable-20261010000000-3333333", digita-app: "0.4.001-stable-20261010000000-3333333" }
-EOF
-[ -z "$(engine_line_off digita-engine 0.4 "$reg")" ] \
-  || fail "a tenant moved to 0.4 was taken for one of another line beside a bundle written for 0.4, so it could not follow 0.4 releases"
-ok "a tenant whose engines run 0.4.x fits a bundle written for 0.4, so after its line move it follows 0.4 releases"
-cat > "$reg" <<'EOF'
-approvedTags:
-  erp: { digita-engine: "0.3.004-stable-20260928080242-a1b2c3d", digita-app: "0.3.004-stable-20260928080242-a1b2c3d" }
-  auth: { digita-auth-backend: "0.4.000-stable-20261001000000-abc1234" }
-  crm: { digita-engine: "0.3.005-stable-20260929080242-b2c3d4e" }
-EOF
-
-# THE BUILD IS DATA TO yq, never text of its expression: a build shaped to close the key and
-# call load() must find no member, and must not hand the file it names back.
-printf 'the-secret-this-step-can-read\n' > "$work/secret"
-off="$(engine_line_off "x\"] | [load(\"$work/secret\")] | .[0] // [\"" 0.4 "$reg" 2>&1)"
-case "$off" in *the-secret-this-step-can-read*) fail "PLANTED DEFECT: a build out of the tenant's apps.yaml ran yq's load() and read a file back: '$off'" ;; esac
-[ -z "$off" ] || fail "a build that names no member of the registration was answered with '$off'"
-ok "a build shaped as a yq expression is a key no member holds, and reads no file"
-
-cat > "$reg" <<'EOF'
-cluster: s1
-appsImage: example-apps-acme
-EOF
-[ -z "$(engine_line_off digita-engine 0.3 "$reg")" ] || fail "a registration that holds no versions was taken for one off the line"
-ok "a registration that holds no versions pairs with nothing"
-
-# ── the order inside class (d) ──────────────────────────────────────────────
-# The call has to stand before the write it guards: a check placed after the registration is
-# written would report a mismatch it had already committed.
-call="$(grep -n 'off="$(engine_line_off ' "$template" | head -1 | cut -d: -f1)"
-write="$(grep -n 'yq eval -i ".appsImageTag = ' "$template" | head -1 | cut -d: -f1)"
-read="$(grep -n 'if ! bundle_engine "${SRC}/apps.yaml"' "$template" | head -1 | cut -d: -f1)"
-[ -n "$call" ] && [ -n "$write" ] && [ -n "$read" ] \
-  || fail "the template lost the engine read, the engine-line call or the appsImageTag write"
-[ "$read" -lt "$call" ] && [ "$call" -lt "$write" ] \
-  || fail "class (d) must read the engine (line $read), then judge the line (line $call), then write appsImageTag (line $write)"
-ok "class (d) reads the engine (line $read), judges the line (line $call), then writes appsImageTag (line $write)"
-
-# The refusal names the way forward, which exists: the Manager's tenant-line-move, offered in the
-# tenant's Versions dialog. A refusal saying that nothing moves a tenant to a new line would be false.
-refusal_line="$(sed -n "${call},\$p" "$template" | grep -m1 'bump: FAIL — ')"
-case "$refusal_line" in
-  *'Move to line'*'tenant-line-move'*) ;;
-  *) fail "PLANTED DEFECT: class (d)'s line refusal must name the dialog's Move to line and the Manager run tenant-line-move: $refusal_line" ;;
-esac
-case "$refusal_line" in *'which nothing does yet'*) fail "class (d)'s line refusal still says nothing moves a tenant to a new line" ;; esac
-ok "class (d)'s line refusal names the dialog's Move to line and the run tenant-line-move"
-
 # ── concurrent_push_refusal: which refusals of a bump's push are a race ──────
 # A race is retried after a rebase, and anything else fails at once with git's words. Each case is
 # git's or GitHub's own text: the three that name a concurrent update, and a protected branch and a
@@ -332,5 +223,81 @@ CODE=0; OUT="$(TMPDIR="$work" commit_push "$work/bump" master 'the pruned pins' 
 [ "$(git -C "$remote" show master:charts/fixture/pins-prod.yaml | yq -o=json -I=0 '.builds | map(.name)')" = '["backend","other"]' ] \
   || fail 'the pushed pins file still names the build the chart no longer declares'
 ok 'a pins file only shortened by the bump is committed and pushed with no pin bumped'
+
+# ── class (c): an inventory pin on the install branch and on master ─────────
+# Every cluster of an installation renders its platform apps from the install branch, so a pin
+# written on master alone is not live until a cluster release merges it. The block runs as the bump
+# runs it, against a bare repository holding master and an install branch. Beside the inventory both
+# branches carry, master holds one more, which the install branch does not carry yet.
+awk '/# ── class \(c\)/ {on=1} /# ── the reach must exist/ {exit} on' "$template" > "$work/class-c.sh"
+[ -s "$work/class-c.sh" ] || fail 'the template carries no class (c) block'
+inventory_pins() { # class (c) block -> CODE and OUT of the block, the branches in $remote, the hits in $work/hits
+  rm -rf "$remote" "$work/seed" "$work/cloud"
+  { git init -q --bare -b master "$remote" &&
+    git clone -q "$remote" "$work/seed" 2>/dev/null &&
+    ( cd "$work/seed" && mkdir -p clusters/inventories/e2e-runner clusters/inventories/manager &&
+      printf 'builds:\n  - {name: digita-testkit-e2e, image: digita-testkit-e2e, tag: "0.4.001-old"}\n' > clusters/inventories/e2e-runner/values-prod.yaml &&
+      printf 'builds:\n  - {name: manager, image: hostyour-manager, tag: "held"}\n' > clusters/inventories/manager/values-prod.yaml &&
+      git add -A && git commit -q -m base && git push -q origin HEAD:master HEAD:refs/heads/install.example.test &&
+      mkdir -p clusters/inventories/trunk-only && cp clusters/inventories/e2e-runner/values-prod.yaml clusters/inventories/trunk-only/ &&
+      git add -A && git commit -q -m 'trunk only' && git push -q origin HEAD:master ) &&
+    git clone -q --branch master "$remote" "$work/cloud/hostyour-cloud" &&
+    git clone -q --branch install.example.test "$remote" "$work/cloud/books"; } || fail 'the bare repository class (c) pushes to could not be made'
+  : > "$work/hits"
+  IMAGES=digita-testkit-e2e; HIT_COUNT[digita-testkit-e2e]=0
+  CODE=0; OUT="$(WORK="$work/cloud" BOOKS_BRANCH=install.example.test HITS_FILE="$work/hits" TMPDIR="$work"; . "$1" 2>&1)" || CODE=$?
+}
+tag_on() { git -C "$remote" show "$1:clusters/inventories/$2/values-prod.yaml" 2>/dev/null | yq '.builds[0].tag'; }
+class_c_fault() { # the first way the branches and hits differ from what class (c) must leave, or nothing
+  [ "$CODE" = 0 ] || { echo "the block failed: $OUT"; return; }
+  [ "$(tag_on install.example.test e2e-runner)" = "$IMAGE_TAG" ] || { echo 'the install branch kept the old pin'; return; }
+  [ "$(tag_on master e2e-runner)" = "$IMAGE_TAG" ] || { echo 'master kept the old pin'; return; }
+  [ "$(tag_on master trunk-only)" = "$IMAGE_TAG" ] || { echo 'the inventory master alone carries kept the old pin'; return; }
+  ! git -C "$remote" cat-file -e install.example.test:clusters/inventories/trunk-only/values-prod.yaml 2>/dev/null \
+    || { echo 'the inventory master alone carries was written onto the install branch'; return; }
+  [ "$(tag_on install.example.test manager)" = held ] || { echo 'an inventory pin of another image moved'; return; }
+  [ "$(cat "$work/hits")" = 'platform e2e-runner-prod' ] || { echo "the hits are not exactly the install branch's inventory: $(cat "$work/hits")"; return; }
+}
+inventory_pins "$work/class-c.sh"
+fault="$(class_c_fault)"
+[ -z "$fault" ] || fail "class (c): $fault"
+ok 'class (c) pins the inventory on the install branch and on master, and names its Application platform e2e-runner-prod'
+ok 'PLANTED INNOCENT: an inventory master alone carries is pinned on master, and the install branch and the hits stay without it'
+grep -vF 'pin_platform_inventories "${WORK}/books"' "$work/class-c.sh" > "$work/class-c-master-only.sh"
+cmp -s "$work/class-c.sh" "$work/class-c-master-only.sh" && fail 'the mutant could not be planted: class (c) has no call for the install branch'
+inventory_pins "$work/class-c-master-only.sh"
+[ "$(class_c_fault)" = 'the install branch kept the old pin' ] \
+  || fail "PLANTED MUTANT: a class (c) that writes master only must go red on the install branch, and the check said: $(class_c_fault)"
+ok 'PLANTED MUTANT: a class (c) that writes master only goes red'
+
+# ── class (d): a bundle release is pinned on its stage pin, and no registration moves ──
+# The tenant's Versions run in the Manager moves a tenant onto the pin, with its database lists and
+# its engine-line check, so the bump writes the pin and leaves every registration as it stands.
+books="$work/deploy-books"; rm -rf "$books"
+mkdir -p "$books"/registrations/aaaaaaaaaaaa "$books"/registrations/bbbbbbbbbbbb "$books"/registrations/cccccccccccc "$books"/registrations/dddddddddddd
+printf 'cluster: apps1\nappsImage: example-apps\nappsImageTag: "0.1.0-old"\n' > "$books/registrations/aaaaaaaaaaaa/prod.yaml"
+printf 'cluster: apps1\nappsImage: example-apps\nappsImageTag: "0.1.0-old"\n' > "$books/registrations/bbbbbbbbbbbb/prod.yaml"
+printf 'cluster: apps1\nappsImage: other-apps\nappsImageTag: "held"\n' > "$books/registrations/cccccccccccc/prod.yaml"
+printf 'cluster: apps1\nappsImage: example-apps\nappsImageTag: "0.1.0-old"\n' > "$books/registrations/dddddddddddd/test.yaml"
+cp -R "$books/registrations" "$work/registrations-before"
+IMAGES='example-apps example-engine'; HIT_COUNT[example-apps]=0; HIT_COUNT[example-engine]=0
+pin_bundles "$books" >/dev/null || fail 'pin_bundles refused'
+[ "$(yq -o=json -I=0 . "$books/bundles/example-apps/pins-prod.yaml")" = "{\"builds\":[{\"name\":\"example-apps\",\"image\":\"example-apps\",\"tag\":\"$IMAGE_TAG\"}]}" ] \
+  || fail "a bundle two tenants name was not pinned once at $IMAGE_TAG: $(cat "$books/bundles/example-apps/pins-prod.yaml" 2>&1)"
+diff -r "$work/registrations-before" "$books/registrations" >/dev/null || fail 'PLANTED DEFECT: a bundle release wrote a tenant registration'
+[ ! -e "$books/bundles/example-apps/pins-test.yaml" ] || fail 'a stage the release did not reach got a bundle pin'
+[ ! -e "$books/bundles/example-engine" ] || fail 'PLANTED INNOCENT: an image no tenant names as appsImage got a bundle pin'
+[ "${HIT_COUNT[example-apps]}" = 1 ] && [ "${HIT_COUNT[example-engine]}" = 0 ] \
+  || fail "the bundle pin was counted ${HIT_COUNT[example-apps]} times, the image no tenant names ${HIT_COUNT[example-engine]} times"
+ok 'a bundle release writes bundles/<image>/pins-<stage>.yaml once and leaves every registration as it stands; an image no tenant names gets no pin'
+IMAGES=example-apps; IMAGE_TAG=0.1.2-stable-next
+pin_bundles "$books" >/dev/null || fail 'pin_bundles refused the next release'
+[ "$(yq -o=json -I=0 '.builds | map(.tag)' "$books/bundles/example-apps/pins-prod.yaml")" = '["0.1.2-stable-next"]' ] \
+  || fail 'the next release did not replace the bundle pin with its own tag'
+ok 'the next release replaces the bundle pin'
+grep -nE 'bundle_engine|engine_line_off|BUNDLE_HIT' "$template" && fail 'the deleted class (d) shell still stands in the template'
+grep -nF '.appsImageTag = ' "$template" && fail 'the bump still writes appsImageTag on a registration'
+grep -qF 'pin_bundles "${WORK}/deploy-books"' "$template" || fail 'the bump does not pin the bundles on the books clone'
+ok 'the template writes no registration, calls pin_bundles on the books clone, and carries no engine-line shell'
 
 echo "pipeline-release.test: OK"

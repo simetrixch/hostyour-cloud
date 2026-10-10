@@ -1,6 +1,10 @@
 # e2e-runner — the same values on every stage. A run names its target per TaskRun
 # (templates/task-run-case.yaml), so nothing here differs between stages.
 
+# The unit whose release builds the E2E cases image and pins it in values-<stage>.yaml. Its release
+# pipeline may refresh this inventory's Application (templates/rbac-argo-sync.yaml).
+releasedBy: digita-testkit
+
 pipeline:
   # The account every TaskRun names. It holds no API grant, and no token mounts into
   # its pods (templates/rbac.yaml): the browser of a run loads a tenant's app, and the
