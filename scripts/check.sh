@@ -44,14 +44,18 @@ git archive "$baseline" clusters | tar -x -C "$work/baseline" || fail "cannot ex
 node scripts/check-immutable.mjs --probe || fail "immutable-field counter-probe failed"
 immutable_rendered=0
 
-# args, chart, name and namespace are the same value chain used by the render below.
+# args, chart, name and namespace are the same value chain used by the render below. Every
+# argument after the first is one the candidate was rendered with beyond that chain, and the
+# baseline gets it too: a chart rendered with the placeholder taken for a tag stops at the
+# baseline without it, the same as it would at the candidate.
 check_immutable_render() {
   local current="$1" previous
+  shift
   [ -f "$work/baseline/$chart/Chart.yaml" ] || return 0
   previous="$(cd "$work/baseline" &&
-    { helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" 2>/dev/null ||
+    { helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" "$@" 2>/dev/null ||
       helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" \
-        -f "$installation_values" -f "$cluster_map" -f "$registration"; })" \
+        -f "$installation_values" -f "$cluster_map" -f "$registration" "$@"; })" \
     || fail "cannot render $chart at preceding stable release $baseline"
   printf '%s' "$previous" | yq eval-all -o=json -I=0 '[.]' - > "$work/immutable-before.json" \
     || fail "cannot parse preceding render"
@@ -421,7 +425,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_expressions "$name at stage $stage" "$out"
       collect_disagreeing "$name at stage $stage" "$out"
       collect_plain_http "$name at stage $stage" "$out"
-      check_immutable_render "$out"
+      check_immutable_render "$out" --set global.placeholderTag=check-takes-the-placeholder-for-a-tag
       awaiting_release="$awaiting_release $name at $stage,"
       continue
     fi
