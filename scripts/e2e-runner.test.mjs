@@ -123,6 +123,7 @@ test('a path that could name another host, or a case that is not a file under ca
     ['/app?next=https://evil.example.test', 'cases/settings.spec.ts'],
     ['/app/shop/', '--reporter=line'],
     ['/app/shop/', '--headed'],
+    ['/app/shop/', 'cases/../../x.spec.ts'],
     ['/app/shop/', 'cases/settings.spec.ts --reporter=line'],
   ]) {
     const run = runScript(path, testCase);

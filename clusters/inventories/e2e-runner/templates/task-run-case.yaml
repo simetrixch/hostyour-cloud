@@ -94,6 +94,7 @@ spec:
           *[!A-Za-z0-9._~/-]*) refuse "path ${E2E_APP_PATH} holds a character that is not a path character" ;;
         esac
         case "${E2E_CASE}" in
+          *..*) refuse "case ${E2E_CASE} names a parent directory, so it could leave cases/" ;;
           cases/*) ;;
           *) refuse "case ${E2E_CASE} is not a file under cases/" ;;
         esac
