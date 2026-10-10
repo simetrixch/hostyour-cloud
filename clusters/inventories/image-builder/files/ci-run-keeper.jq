@@ -6,7 +6,9 @@
 #           the newer push replaces it; a run that waits for a slot is cancelled the same way and never
 #           started. A run without the branch annotation is never grouped, and the newest run of a branch
 #           is never cancelled. Two runs created in the same second are not ordered, so neither cancels
-#           the other.
+#           the other. A run that has started is cancelled gracefully (CancelledRunFinally), so its
+#           finally tasks still run and set the commit status that its first task set to pending; a run
+#           that waits has set none, and is cancelled outright (Cancelled).
 #   start   the oldest waiting runs (spec.status PipelineRunPending), as many as there are free slots,
 #           where a slot is held by every ci run that has started and not finished, whatever its pods
 #           wait for. Every ci run is created waiting, because ci pods at the same moment overran the
@@ -55,7 +57,8 @@ def identity: {namespace: .metadata.namespace, name: .metadata.name};
 | "all \($max) ci slots are in use" as $slotsReason
 | "a ci run of this unit runs" as $unitReason
 | [$replaced[]
-   | identity + {verb: "cancel",
+   | identity + {verb: "cancel", type: "merge",
+      patch: {spec: {status: (if isPending then "Cancelled" else "CancelledRunFinally" end)}},
       say: "cancelled \(.metadata.namespace)/\(.metadata.name): a newer push to \(branch) replaces it"}] as $cancels
 | [$startable[]
    | identity + {verb: "patch", type: "json",

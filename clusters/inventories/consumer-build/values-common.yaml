@@ -104,7 +104,7 @@ ciCapacity:
 # newest 20 of each build namespace. Its grant is `patch` and `delete` on pipelineruns in the unit's
 # build namespace, rendered per unit by templates/rbac-ci-run-keeper.yaml, and named here for the same
 # reason as the release queue above. The admission policy of image-builder lets that identity set
-# spec.status Cancelled on a ci run, drop its waiting flag and set the note of what it waits for, and change
+# spec.status Cancelled or CancelledRunFinally on a ci run, drop its waiting flag and set the note of what it waits for, and change
 # nothing else.
 ciRunKeeper:
   serviceAccountName: ci-run-keeper
