@@ -27,11 +27,10 @@
 # fqdn's first DNS label and the name the Manager writes into a
 # registration's `cluster:` field; the cluster map carries it as
 # global.clusterName, derived from the fqdn rather than answered twice. The
-# generator revision is __BOOKS_FQDN__ and deliberately
-# not this branch: the registrations stand on the install branch of the cluster
-# holding the master role, which on a pure slave is another branch, and the map
-# carries it as global.booksCluster — the same value the map's own
-# `books-cluster` is written from.
+# generator revision is the commit the root Application synced, and that commit
+# stands on the books branch: the install branch of the cluster holding the
+# master role, where the registrations stand. A pure slave has no branch of its
+# own, and its root Application syncs the books branch as well.
 #
 # SO WHAT THIS BRANCH CARRIES IS NOT WHAT THIS SELECTS. The generator names the
 # ref it reads, so registrations/ standing on this branch, or absent from it,
@@ -78,7 +77,7 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: __BOOKS_FQDN__  # the chart fills it from global.booksCluster — the registrations stand on the install branch of the cluster holding the MASTER role, which on a pure slave is not this branch
+        revision: __BRANCH__  # the commit the root Application synced, on the books branch, where the registrations stand
         files:
           # THE THREE STAGES, ONE PATH EACH. The generator hands a path to `git ls-files`, whose
           # globbing knows no brace alternation, so `{dev,test,prod}.yaml` matches no file and

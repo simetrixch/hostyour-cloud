@@ -56,7 +56,7 @@ spec:
   generators:  # consumers-appset.yaml's, so a consumer's redirect is generated where the consumer is
     - git:
         repoURL: https://github.com/simetrixch/hostyour-cloud.git
-        revision: __BOOKS_FQDN__
+        revision: __BRANCH__
         files:
           - path: "registrations/*/dev.yaml"
           - path: "registrations/*/test.yaml"

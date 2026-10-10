@@ -50,10 +50,14 @@ quota:
   limitsMemory: 2Gi
   pods: "10"
   persistentVolumeClaims: "4"
+# The commit a reconciler's root Application synced, which ArgoCD hands clusters/argocd and
+# clusters/slaves/slave as the parameter `revision` (clusters/argocd/root-app.yaml,
+# clusters/argocd/files/slaves-appset.yaml). Every source and generator of this repository in their
+# render stands at it, and scripts/check.sh holds the render to that.
+revision: 0123456789abcdef0123456789abcdef01234567
 slave:
   name: check
   fqdn: check.example.invalid
-  branch: books.example.invalid
   apiHost: 10.0.0.1
   apiPort: "16443"
   masterFqdn: check.example.invalid
