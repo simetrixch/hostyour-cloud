@@ -692,17 +692,31 @@ merges_into "$probe" "$probe_installation" "$probe_innocent" \
   || { cat "$work/merge-tree"; fail "the merge probe refused a change one line away from a stamped line, which git merges"; }
 echo "check: the merge probe refuses the planted change beside a stamped line and takes the planted innocent."
 
+# WHAT IS MERGED IS WHAT A RELEASE WOULD CUT: HEAD on top of the default branch. A branch that is
+# behind it lacks the release pins written there since, and the installation branch carries the
+# same pins, so HEAD alone would conflict on lines the change never touched. Where HEAD does not
+# hold the default branch, the two are merged in memory into a commit nothing points at; where
+# they conflict, the landing reports that, and HEAD alone is merged here.
 installations="$(git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep '\.')"
 if [ -z "$installations" ]; then
   echo "check: NOT RUN — no installation branch in this clone, so no merge of HEAD into one was tried."
 else
+  default_branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" \
+    || fail "origin/HEAD names no default branch, so what a release would cut is unknown — run git remote set-head origin --auto"
+  candidate=HEAD
+  if ! git merge-base --is-ancestor "$default_branch" HEAD; then
+    if tree="$(git merge-tree --write-tree --no-messages "$default_branch" HEAD 2>/dev/null)"; then
+      candidate="$(git commit-tree "$tree" -p "$default_branch" -p HEAD -m "check: HEAD on $default_branch")" \
+        || fail "HEAD on $default_branch could not be written as a commit to merge"
+    fi
+  fi
   for installation in $installations; do
-    merges_into "$root" "$installation" HEAD || {
+    merges_into "$root" "$installation" "$candidate" || {
       sed 's/^/  /' "$work/merge-tree"
       fail "HEAD does not merge into $installation: a release of it would stop at that machine's merge — move the change off the line the installation stamped and off the lines beside it"
     }
   done
-  echo "check: HEAD merges into every installation branch of this clone: $(echo $installations)."
+  echo "check: HEAD on $default_branch merges into every installation branch of this clone, as last fetched: $(echo $installations)."
 fi
 
 # ── Every stamp site of this tree, held to its pin ───────────────────────────────────────────
