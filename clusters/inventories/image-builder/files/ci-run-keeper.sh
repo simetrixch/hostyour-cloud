@@ -12,9 +12,9 @@ apply() {
 max="${CI_MAX_RUNNING:?CI_MAX_RUNNING is required}"
 # Every run carries its whole resolved pipeline in status.pipelineSpec, nearly all of its size, which the
 # decision never reads. So the runs come raw, which kubectl passes on without decoding them, a page at a
-# time, and jq keeps of each run only the fields ci-run-keeper.jq reads: the memory the keeper needs does
-# not grow with the number of kept runs. A failed page fails the tick: a decision on part of the runs
-# would start runs past the cap.
+# time, and jq keeps of each run only the fields ci-run-keeper.jq reads: kubectl and jq hold one page,
+# and only the slim list grows with the kept runs, by about 340 bytes a run. A failed page fails the
+# tick: a decision on part of the runs would start runs past the cap.
 list_ci_runs() {
   local page continue_token=""
   while :; do
