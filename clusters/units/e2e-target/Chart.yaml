@@ -1,0 +1,5 @@
+apiVersion: v2
+name: e2e-target
+version: 1.0.0
+description: One target of the E2E runner, a demo tenant at one stage, into the namespace e2e-runner. Rendered by clusters/argocd/files/e2e-targets-appset.yaml, which hands it the tenant's guid, stage and host from the books; this chart holds none of its own.
+type: application

@@ -1,0 +1,17 @@
+{{- /*
+The account of every run. No Role binds it, and no token mounts into its pods: a run's pod holds a
+tenant's E2E password and a browser that loads that tenant's app, and it must hold no cluster
+credential beside them. It only carries the registry pull Secret, which the kubelet reads without
+any API permission.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.pipeline.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+automountServiceAccountToken: false
+imagePullSecrets:
+  - name: e2e-runner-registry-pull

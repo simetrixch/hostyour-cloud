@@ -90,12 +90,15 @@ the unit), so the ref is <buildRegistry>/<image>:<tag>. The release bump finds
 pins by exactly this grammar; an image composed any other way would be
 invisible to it.
 
-IT IS buildRegistry AND NOT registryHost. Every pin in this grammar names an
-image of an open-source repository this platform is built from, published to
+IT IS buildRegistry AND NOT registryHost. common.buildImage composes the pin of
+an image of an open-source repository this platform is built from, published to
 ghcr.io by the seed-images workflow on the release tag, and the pods pull it
 from there. `common.registryHost` — the cluster's own zot — carries what is
-built INSIDE a cluster instead: the consumer and tenant images of the release
-pipeline, which are customer code. The two are separate on purpose, and a pin
+built INSIDE a cluster instead: the images the release pipeline builds from a
+consumer's repository, which may be private. A pin in this grammar can name
+such an image too (the E2E runner's, clusters/inventories/e2e-runner); its
+template composes the ref against common.registryHost from common.buildImageName
+and common.buildTag. The two registries are separate on purpose, and a pin
 composed against the wrong one reaches a registry that was never asked to hold
 it.
 Call: include "common.buildImage" (dict "root" $ "builds" .Values.builds "name" "manager")

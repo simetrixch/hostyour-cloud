@@ -1,0 +1,96 @@
+# E2E targets — ONE Application "e2e-<guid>-<stage>" per demo tenant and stage, from the tenant
+# registrations registrations/<guid>/<stage>.yaml in this installation's books, into the namespace
+# of the E2E runner (clusters/inventories/e2e-runner). Each renders clusters/units/e2e-target: the
+# Secret a run names, holding the tenant's E2E password and its host.
+#
+# THE BOOKS ARE THE ONE LIST OF TARGETS. Only a demo tenant has an E2E account (the Manager mints its
+# password when the tenant is switched to demo), so the selector is the registration's own `demo`.
+# A tenant switched off leaves the selection, and its Application and Secret are deleted with it.
+# The tenants may stand on any cluster; the runner and the books stand on this one, so this file is
+# rendered only where the books are kept.
+#
+# THE HOST IS DERIVED HERE, from the same registration fields tenants-appset.yaml hands every member:
+# the tenant's own domain where it has one, else its zone. Every member of a tenant serves under a
+# path of that one host, so a run names the path.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: e2e-targets
+  namespace: __ARGOCD_NAMESPACE__
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: The targets of the E2E runner, one ExternalSecret per demo tenant and stage, in the runner's namespace and nowhere else.
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+  destinations:
+    - name: __CLUSTER_NAME__
+      namespace: e2e-runner
+  namespaceResourceWhitelist:
+    - group: external-secrets.io
+      kind: ExternalSecret
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: e2e-targets
+  namespace: __ARGOCD_NAMESPACE__
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:  # the git half of tenants-appset.yaml's matrix: one Application per registration and stage
+    - git:
+        repoURL: https://github.com/__DEPLOY_REPO__.git
+        revision: __BOOKS_FQDN__
+        files:
+          - path: "registrations/*/dev.yaml"
+          - path: "registrations/*/test.yaml"
+          - path: "registrations/*/prod.yaml"
+        values:
+          guid: "{{ index .path.segments 1 }}"
+          stage: '{{ trimSuffix ".yaml" .path.filename }}'
+      selector:
+        matchLabels:
+          demo: "true"
+  template:
+    metadata:
+      name: "e2e-{{ .values.guid }}-{{ .values.stage }}"
+      namespace: __ARGOCD_NAMESPACE__
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: e2e-targets
+      destination:
+        name: __CLUSTER_NAME__
+        namespace: e2e-runner
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+  templatePatch: |
+    {{- $zone := printf "%s.%s" .subdomain (index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") .values.stage) }}
+    spec:
+      sources:
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          ref: values
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          path: clusters/units/e2e-target
+          helm:
+            valueFiles:
+              - $values/clusters/inventories/e2e-runner/values-common.yaml
+            valuesObject:
+              target:
+                guid: "{{ .values.guid }}"
+                stage: "{{ .values.stage }}"
+                host: "{{ .ownDomain | default $zone }}"

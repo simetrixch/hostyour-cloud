@@ -1,0 +1,7 @@
+# The target, out of the tenant's registration (clusters/argocd/files/e2e-targets-appset.yaml).
+# Empty and required on purpose: a default would be a second source for what the books state.
+target:
+  guid: ""
+  stage: ""
+  # The one host the tenant is served at on that stage: its own domain, else its zone.
+  host: ""

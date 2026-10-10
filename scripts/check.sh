@@ -326,13 +326,14 @@ stages="dev test prod"
 rendered=0
 skipped_library=""
 needed_standin=""
+awaiting_release=""
 broken=""
 expressions=""
 disagreeing=""
 plain_http=""
 
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
-# renders the eight manifests of clusters/argocd/files from the cluster map, and it is the only
+# renders the manifests of clusters/argocd/files from the cluster map, and it is the only
 # writer of their markers.
 for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ clusters/argocd/; do
   chart="${chart%/}"
@@ -407,7 +408,25 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       continue
     fi
 
-    # It renders from neither. The chart is named with the stage it failed at and the whole
+    # One cause is no defect: a pin at global.placeholderTag, the tag a stage carries before its
+    # first release, stops the render on purpose (clusters/charts/common common.buildTag), and that
+    # release can write over the pin only once the pin stands on the trunk. So the chart is
+    # rendered once more with the placeholder taken for a tag. Nothing else changes, so a chart
+    # that renders now has no defect but a pin no release has written yet, and it is named below.
+    out="$(helm template "$name" "$chart" --namespace "$namespace" \
+      "${args[@]}" -f "$installation_values" -f "$cluster_map" -f "$registration" \
+      --set global.placeholderTag=check-takes-the-placeholder-for-a-tag 2>&1)"
+    if [ $? -eq 0 ]; then
+      rendered=$((rendered + 1))
+      collect_expressions "$name at stage $stage" "$out"
+      collect_disagreeing "$name at stage $stage" "$out"
+      collect_plain_http "$name at stage $stage" "$out"
+      check_immutable_render "$out"
+      awaiting_release="$awaiting_release $name at $stage,"
+      continue
+    fi
+
+    # It renders from none of these. The chart is named with the stage it failed at and the whole
     # message helm gave, because that message names the template and the value.
     broken="$broken
   $name at stage $stage:
@@ -432,6 +451,7 @@ echo "check: $immutable_rendered immutable render comparisons green against $bas
 
 [ -n "$skipped_library" ] && echo "check: library charts, which render only through what depends on them:$skipped_library"
 [ -n "$needed_standin" ] && echo "check: charts that render only with an installation's own answers, which no file of this repository carries:$needed_standin"
+[ -n "$awaiting_release" ] && echo "check: charts that render only once a release has written the pin their stage carries before its first one:${awaiting_release%,}"
 
 if [ -n "$broken" ]; then
   echo "These charts render from neither the trunk nor a stand-in installation:$broken"
@@ -750,7 +770,7 @@ echo "check: every yaml_value stamp site of this tree holds its pin from cluster
 echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
-for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs; do
+for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in public GitHub Actions.'
@@ -764,6 +784,7 @@ echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in public Gi
 echo 'check: NOT RUN locally — scripts/unit-mongodb-exporter.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in public GitHub Actions.'
+echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in public GitHub Actions.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
