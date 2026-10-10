@@ -9,7 +9,27 @@ apply() {
     cancel | patch) kubectl patch pipelinerun -n "$2" "$3" --type "$4" -p "$5" ;;
   esac
 }
-changes="$(kubectl get pipelineruns -A -l image-builder.io/ci -o json | jq -c --argjson max "${CI_MAX_RUNNING:?CI_MAX_RUNNING is required}" -f "${KEEPER_DIR}/ci-run-keeper.jq")"
+max="${CI_MAX_RUNNING:?CI_MAX_RUNNING is required}"
+# Every run carries its whole resolved pipeline in status.pipelineSpec, nearly all of its size, which the
+# decision never reads. So the runs come raw, which kubectl passes on without decoding them, a page at a
+# time, and jq keeps of each run only the fields ci-run-keeper.jq reads: kubectl and jq hold one page,
+# and only the slim list grows with the kept runs, by about 340 bytes a run. A failed page fails the
+# tick: a decision on part of the runs would start runs past the cap.
+list_ci_runs() {
+  local page continue_token=""
+  while :; do
+    page="$(kubectl get --raw "/apis/tekton.dev/v1/pipelineruns?labelSelector=image-builder.io%2Fci&limit=50${continue_token:+&continue=$continue_token}")" || return
+    jq -c '.items[] | {
+      metadata: (.metadata | {namespace, name, creationTimestamp,
+        labels: {"image-builder.io/ci": .labels["image-builder.io/ci"]},
+        annotations: ((.annotations // {}) | with_entries(select(.key == "image-builder.io/ci-branch" or .key == "image-builder.io/queued-behind")))}),
+      spec: {status: .spec.status},
+      status: {conditions: [(.status.conditions // [])[] | select(.type == "Succeeded") | {type, status}]}}' <<<"$page" || return
+    continue_token="$(jq -r '.metadata.continue // "" | @uri' <<<"$page")" || return
+    [ -n "$continue_token" ] || return 0
+  done
+}
+changes="$(list_ci_runs | jq -cs '{items: .}' | jq -c --argjson max "$max" -f "${KEEPER_DIR}/ci-run-keeper.jq")"
 failed=0
 while IFS= read -r change; do
   [ -n "$change" ] || continue
