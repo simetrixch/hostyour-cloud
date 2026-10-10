@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The release pipeline's own shell, where it decides something a fixture can hold it to:
 # class (b) appends newly declared image pins without losing held entries;
-# class (d) of the bump moves a tenant onto the bundle it just built only where the bundle and
+# class (c) pins an inventory's value file on the install branch and on master and names the
+# Application to refresh; class (d) of the bump moves a tenant onto the bundle it just built only where the bundle and
 # the tenant's engines are of one line (clusters/inventories/consumer-build/templates/
 # pipeline-release.yaml, bundle_engine and engine_line_off), and the bump's push retries only a
 # concurrent update (concurrent_push_refusal, and commit_push against a local bare repository).
@@ -332,5 +333,51 @@ CODE=0; OUT="$(TMPDIR="$work" commit_push "$work/bump" master 'the pruned pins' 
 [ "$(git -C "$remote" show master:charts/fixture/pins-prod.yaml | yq -o=json -I=0 '.builds | map(.name)')" = '["backend","other"]' ] \
   || fail 'the pushed pins file still names the build the chart no longer declares'
 ok 'a pins file only shortened by the bump is committed and pushed with no pin bumped'
+
+# ── class (c): an inventory pin on the install branch and on master ─────────
+# Every cluster of an installation renders its platform apps from the install branch, so a pin
+# written on master alone is not live until a cluster release merges it. The block runs as the bump
+# runs it, against a bare repository holding master and an install branch. Beside the inventory both
+# branches carry, master holds one more, which the install branch does not carry yet.
+awk '/# ── class \(c\)/ {on=1} /# ── the reach must exist/ {exit} on' "$template" > "$work/class-c.sh"
+[ -s "$work/class-c.sh" ] || fail 'the template carries no class (c) block'
+inventory_pins() { # class (c) block -> CODE and OUT of the block, the branches in $remote, the hits in $work/hits
+  rm -rf "$remote" "$work/seed" "$work/cloud"
+  { git init -q --bare -b master "$remote" &&
+    git clone -q "$remote" "$work/seed" 2>/dev/null &&
+    ( cd "$work/seed" && mkdir -p clusters/inventories/e2e-runner clusters/inventories/manager &&
+      printf 'builds:\n  - {name: digita-testkit-e2e, image: digita-testkit-e2e, tag: "0.4.001-old"}\n' > clusters/inventories/e2e-runner/values-prod.yaml &&
+      printf 'builds:\n  - {name: manager, image: hostyour-manager, tag: "held"}\n' > clusters/inventories/manager/values-prod.yaml &&
+      git add -A && git commit -q -m base && git push -q origin HEAD:master HEAD:refs/heads/install.example.test &&
+      mkdir -p clusters/inventories/trunk-only && cp clusters/inventories/e2e-runner/values-prod.yaml clusters/inventories/trunk-only/ &&
+      git add -A && git commit -q -m 'trunk only' && git push -q origin HEAD:master ) &&
+    git clone -q --branch master "$remote" "$work/cloud/hostyour-cloud" &&
+    git clone -q --branch install.example.test "$remote" "$work/cloud/books"; } || fail 'the bare repository class (c) pushes to could not be made'
+  : > "$work/hits"
+  IMAGES=digita-testkit-e2e; HIT_COUNT[digita-testkit-e2e]=0
+  CODE=0; OUT="$(WORK="$work/cloud" BOOKS_BRANCH=install.example.test HITS_FILE="$work/hits" TMPDIR="$work"; . "$1" 2>&1)" || CODE=$?
+}
+tag_on() { git -C "$remote" show "$1:clusters/inventories/$2/values-prod.yaml" 2>/dev/null | yq '.builds[0].tag'; }
+class_c_fault() { # the first way the branches and hits differ from what class (c) must leave, or nothing
+  [ "$CODE" = 0 ] || { echo "the block failed: $OUT"; return; }
+  [ "$(tag_on install.example.test e2e-runner)" = "$IMAGE_TAG" ] || { echo 'the install branch kept the old pin'; return; }
+  [ "$(tag_on master e2e-runner)" = "$IMAGE_TAG" ] || { echo 'master kept the old pin'; return; }
+  [ "$(tag_on master trunk-only)" = "$IMAGE_TAG" ] || { echo 'the inventory master alone carries kept the old pin'; return; }
+  ! git -C "$remote" cat-file -e install.example.test:clusters/inventories/trunk-only/values-prod.yaml 2>/dev/null \
+    || { echo 'the inventory master alone carries was written onto the install branch'; return; }
+  [ "$(tag_on install.example.test manager)" = held ] || { echo 'an inventory pin of another image moved'; return; }
+  [ "$(cat "$work/hits")" = 'platform e2e-runner-prod' ] || { echo "the hits are not exactly the install branch's inventory: $(cat "$work/hits")"; return; }
+}
+inventory_pins "$work/class-c.sh"
+fault="$(class_c_fault)"
+[ -z "$fault" ] || fail "class (c): $fault"
+ok 'class (c) pins the inventory on the install branch and on master, and names its Application platform e2e-runner-prod'
+ok 'PLANTED INNOCENT: an inventory master alone carries is pinned on master, and the install branch and the hits stay without it'
+grep -vF 'pin_platform_inventories "${WORK}/books"' "$work/class-c.sh" > "$work/class-c-master-only.sh"
+cmp -s "$work/class-c.sh" "$work/class-c-master-only.sh" && fail 'the mutant could not be planted: class (c) has no call for the install branch'
+inventory_pins "$work/class-c-master-only.sh"
+[ "$(class_c_fault)" = 'the install branch kept the old pin' ] \
+  || fail "PLANTED MUTANT: a class (c) that writes master only must go red on the install branch, and the check said: $(class_c_fault)"
+ok 'PLANTED MUTANT: a class (c) that writes master only goes red'
 
 echo "pipeline-release.test: OK"

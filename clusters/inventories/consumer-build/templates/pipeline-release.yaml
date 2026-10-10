@@ -37,7 +37,9 @@ THAT registration's OWN credential, which the bump reads out of Vault at run
 time (see the class-(a) note in the search below), (b) the deploy repository's
 per-chart pins-<S>.yaml on THIS INSTALLATION'S books branch, seeded the
 first time from the chart's builds[] at the placeholder tag and bumped in
-place after, (c) hostyour-cloud master clusters/inventories/<app>/values-<S>.yaml, (d) the
+place after, (c) hostyour-cloud clusters/inventories/<app>/values-<S>.yaml on THIS
+INSTALLATION'S books branch, which every cluster renders its platform apps from, and on
+master, (d) the
 tenant registrations registrations/<guid>/<S>.yaml on THAT SAME books branch
 of the deploy repository, where a tenant's own apps bundle is pinned as appsImageTag
 beside the appsImage that names it — and bumps every hit. An image with NO hit
@@ -60,9 +62,9 @@ Application; a class-(b) hit is a deploy repository chart that tenant member
 Applications render, and WHICH member Applications is derived from the tenant
 ApplicationSets + the registrations on the books branch, never from a member
 list; a class-(d) hit is one tenant at one stage, and its reach is EVERY
-member Application of that tenant, derived the same way. Class-(c) pins are
-never synced from here — they live on master and the cluster release delivers
-them.
+member Application of that tenant, derived the same way. A class-(c) hit is
+the master's own Application of the inventory, `<inventory>-<S>` in ns argocd,
+as the platform-apps ApplicationSet names it.
 
 The shared Tasks (git-clone, credential-scan, buildah-build-push) stay in ns
 image-builder and are resolved via the cluster resolver; they RUN in this
@@ -953,11 +955,10 @@ spec:
               # hostyour-cloud is cloned TWICE, because two different kinds of
               # thing live on two different refs. The trunk is the product: the
               # tenant ApplicationSets whose render derives the tenant reach of
-              # a class-(b) hit, and the platform image pins class (c) bumps and
-              # pushes back. The install branch named by BOOKS_BRANCH carries
+              # a class-(b) hit. The install branch named by BOOKS_BRANCH carries
               # this installation's books: the consumer registrations class (a)
               # searches, which the Manager writes there and nothing takes
-              # away. One clone cannot serve both: the trunk carries no customer
+              # away. Class (c) pins the platform images on both. One clone cannot serve both: the trunk carries no customer
               # registration at all, and the tenant render below reads the
               # product's ApplicationSets as released, not as one installation's
               # branch carries them.
@@ -1446,14 +1447,30 @@ spec:
                 done
               fi
 
-              # ── class (c): the hostyour-cloud platform pins on master ────────
-              # NOT synced from here: they live on master and the cluster
-              # release delivers them.
-              for vf in "${WORK}"/hostyour-cloud/clusters/inventories/*/"values-${STAGE}.yaml"; do
-                [ -f "${vf}" ] || continue
-                bump_file "${vf}"
-              done
-              commit_push "${WORK}/hostyour-cloud" master "hostyour-cloud clusters/inventories/*/values-${STAGE}.yaml"
+              # ── class (c): the hostyour-cloud platform pins ─────────────────
+              # Every cluster of this installation renders its platform apps from
+              # the books branch, so an inventory's value file is pinned there,
+              # where the release goes live, and on master, which a cluster
+              # release merges into the books branch and which must not carry
+              # the pin back. A file that stands on master alone is pinned there
+              # alone. Each inventory pinned on the books branch is a hit: the
+              # master's own Application of it, `<inventory>-<stage>`, as the
+              # platform-apps ApplicationSet names it.
+              # pin_platform_inventories <hostyour-cloud clone> <branch>
+              pin_platform_inventories() {
+                local clone="$1" branch="$2" vf
+                for vf in "${clone}"/clusters/inventories/*/"values-${STAGE}.yaml"; do
+                  [ -f "${vf}" ] || continue
+                  BUMPED=0
+                  bump_file "${vf}"
+                  if [ "${BUMPED}" = "1" ] && [ "${branch}" = "${BOOKS_BRANCH}" ]; then
+                    echo "platform $(basename "$(dirname "${vf}")")-${STAGE}" >> "${HITS_FILE}"
+                  fi
+                done
+                commit_push "${clone}" "${branch}" "hostyour-cloud clusters/inventories/*/values-${STAGE}.yaml"
+              }
+              pin_platform_inventories "${WORK}/books" "${BOOKS_BRANCH}"
+              pin_platform_inventories "${WORK}/hostyour-cloud" master
 
               # ── the reach must exist: an image nothing pins is a defect ────
               # With ONE exception, and it is named by the manifest: the
@@ -1476,7 +1493,7 @@ spec:
                 echo "bump: FAIL — no pin found for builds[].image ==${MISSING}:" >&2
                 echo "  searched (a) registrations with chartPath on ${CLOUD_URL} ${BOOKS_BRANCH}," >&2
                 echo "           (b) ${DEPLOY_URL} charts/*/ declaring the image, pinned on ${BOOKS_BRANCH}," >&2
-                echo "           (c) ${CLOUD_URL} master clusters/inventories/*/values-${STAGE}.yaml," >&2
+                echo "           (c) ${CLOUD_URL} clusters/inventories/*/values-${STAGE}.yaml on ${BOOKS_BRANCH} and on master," >&2
                 echo "           (d) ${DEPLOY_URL} registrations/*/${STAGE}.yaml on ${BOOKS_BRANCH} whose appsImage names the image." >&2
                 echo "  A release nothing pins deploys nowhere — add the pin or drop the build." >&2
                 echo "  With (b) and (d): a deploy repository image or a tenant bundle is pinned only once this installation" >&2
@@ -1498,7 +1515,10 @@ spec:
           # Tenant hits carry the full member Application name
           # <guid>-<member>-<stage>: the create-tenant run put it in the
           # tenant grant's resourceNames, so the patch reaches exactly that
-          # one Application — "sync that one namespace only".
+          # one Application — "sync that one namespace only". Platform hits
+          # name the master's own Application of an inventory, in ns argocd,
+          # which the inventory's own grant names (clusters/inventories/
+          # e2e-runner/templates/rbac-argo-sync.yaml).
           #
           # THIS STEP RUNS AFTER EVERY PIN IS COMMITTED AND PUSHED, and kubectl
           # here reads the in-cluster config of the cluster the BUILD PLANE runs
@@ -1559,11 +1579,18 @@ spec:
                     # <guid>-<member>-<stage>, as the bump derived it.
                     app="${rname}"
                     ;;
+                  platform)
+                    # rname is the Application name <inventory>-<stage>.
+                    app="${rname}"
+                    ;;
                   *) continue ;;
                 esac
                 # The Application lives beside its ArgoCD instance: ns argocd
-                # for this master's own cluster, ns <slave> for a slave.
-                if [ -n "${CLUSTER_NAME}" ] && [ "${rcluster}" = "${CLUSTER_NAME}" ]; then
+                # for this master's own cluster, ns <slave> for a slave. A
+                # platform hit names the master's own Application.
+                if [ "${kind}" = platform ]; then
+                  ns="argocd"
+                elif [ -n "${CLUSTER_NAME}" ] && [ "${rcluster}" = "${CLUSTER_NAME}" ]; then
                   ns="argocd"
                 else
                   ns="${rcluster}"
@@ -1593,6 +1620,8 @@ spec:
                 if refreshed=$(kubectl annotate application.argoproj.io "${app}" -n "${ns}" \
                      argocd.argoproj.io/refresh=normal --overwrite 2>&1); then
                   printf '%s\n' "${refreshed}"
+                elif [ "${kind}" = platform ] && printf '%s' "${refreshed}" | grep -qi 'notfound\|not found'; then
+                  echo "argo-sync: ${app} in ns ${ns} does not exist — the master runs no platform app of that name, as at a stage it does not run. The pin is committed and pushed, and a cluster that runs the inventory at this stage renders it on ArgoCD's own poll."
                 elif printf '%s' "${refreshed}" | grep -qi 'notfound\|not found'; then
                   echo "argo-sync: ${app} in ns ${ns} does not exist yet — nothing to refresh. The ApplicationSet generates it from the registration committed before this cycle, and it syncs the pins THIS run just pushed on its first pass. The manager's watch-deployment step is what proves it arrived."
                 else
