@@ -22,6 +22,11 @@
 # writes the tag (the bump's own glob stands in
 # clusters/inventories/consumer-build/templates/pipeline-release.yaml); the
 # cluster release delivers the bumped master to running clusters.
+
+# The unit whose release builds the manager and dbtools images and pins them in values-<stage>.yaml.
+# Its release pipeline may refresh this inventory's Application (templates/rbac-argo-sync.yaml).
+releasedBy: hostyour-manager
+
 replicas: 1
 
 # registry-reaper — prunes aged, UNREFERENCED image tags of OUR flat, single-segment repos from the

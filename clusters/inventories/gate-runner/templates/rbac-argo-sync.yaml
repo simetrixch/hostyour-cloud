@@ -1,0 +1,5 @@
+{{- /*
+The release pipeline of the unit named by `releasedBy` may refresh this inventory's Application in
+ns argocd once it pinned a new tag of the images in values-<stage>.yaml.
+*/ -}}
+{{ include "common.argoSyncGrant" . }}

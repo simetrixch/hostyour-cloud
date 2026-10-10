@@ -3,6 +3,10 @@
 # as the `stage` PipelineRun param from the Manager, and all hostnames are
 # composed from the platform globals at render time.
 
+# The unit whose release builds the gate-runner image and pins it in values-<stage>.yaml. Its release
+# pipeline may refresh this inventory's Application (templates/rbac-argo-sync.yaml).
+releasedBy: hostyour-manager
+
 pipeline:
   # SA for the clone + gate PipelineRun pods (the PipelineRun's default SA).
   # Deliberately ZERO API grants and automountServiceAccountToken=false (see

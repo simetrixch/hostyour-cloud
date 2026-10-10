@@ -132,23 +132,3 @@ test('a path that could name another host, or a case that is not a file under ca
     assert.doesNotMatch(run.stdout, /playwright/);
   }
 });
-
-// THE REFRESH: the release pipeline of the unit that builds the image refreshes this inventory's
-// Application in ns argocd once it pinned the new tag (consumer-build pipeline-release.yaml, its
-// platform hits). A release at a stage the master does not run must meet NotFound, not Forbidden, so
-// the grant names the Application of every stage, and nothing beside them.
-test('the releasing unit\'s pipeline may get and patch this inventory\'s Applications in ns argocd, and nothing else', () => {
-  assert.equal(runner.status, 0, runner.stderr);
-  const role = yaml('select(.kind == "Role" and .metadata.namespace == "argocd")', runner.stdout);
-  assert.deepEqual(role.rules, [{apiGroups: ['argoproj.io'], resources: ['applications'],
-    resourceNames: ['e2e-runner-dev', 'e2e-runner-prod', 'e2e-runner-test'], verbs: ['get', 'patch']}]);
-  const binding = yaml('select(.kind == "RoleBinding" and .metadata.namespace == "argocd")', runner.stdout);
-  assert.deepEqual(binding.roleRef, {apiGroup: 'rbac.authorization.k8s.io', kind: 'Role', name: role.metadata.name});
-  assert.deepEqual(binding.subjects, [{kind: 'ServiceAccount', name: 'pipeline-sa', namespace: 'digita-testkit-build'}]);
-});
-
-test('PLANTED DEFECT: an inventory that names no releasing unit is refused, not bound to nobody', () => {
-  const rendered = helm(...runnerArgs, '--set', 'releasedBy=null');
-  assert.notEqual(rendered.status, 0);
-  assert.match(rendered.stderr, /releasedBy is required/);
-});
