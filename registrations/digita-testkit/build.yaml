@@ -5,4 +5,4 @@ onboardedAt: "2026-10-09T13:14:55.079Z"
 suspended: false
 quiesced: false
 removing: false
-builds: []
+builds: ["digita-testkit-e2e"]
