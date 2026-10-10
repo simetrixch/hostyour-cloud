@@ -1,8 +1,0 @@
-name: "digita-catalog-showcase"
-repoURL: "https://github.com/digitaplatform/digita-catalog-showcase.git"
-owner: "simetrix"
-onboardedAt: "2026-10-09T20:43:55.328Z"
-suspended: false
-quiesced: false
-removing: false
-builds: ["digita-catalog-showcase"]
