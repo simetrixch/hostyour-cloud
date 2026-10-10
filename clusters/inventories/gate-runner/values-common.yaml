@@ -4,7 +4,7 @@
 # composed from the platform globals at render time.
 
 # The unit whose release builds the gate-runner image and pins it in values-<stage>.yaml. Its release
-# pipeline may refresh this inventory's Application (templates/rbac-argo-sync.yaml).
+# pipeline may read this inventory's Application to wait until it is live (templates/rbac-argo-sync.yaml).
 releasedBy: hostyour-manager
 
 pipeline:

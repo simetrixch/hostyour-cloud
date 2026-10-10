@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # The release pipeline's own shell, where it decides something a fixture can hold it to:
 # class (b) appends newly declared image pins without losing held entries; class (c) pins an
-# inventory's value file on the install branch and on master and names the Application to refresh;
-# class (d) pins a tenant bundle on its stage pin and writes no registration; and the bump's push
+# inventory's value file on the install branch and on master, names the Application to wait for and
+# the commit the pins stand on; platform_live passes that Application only once it stands on that
+# commit or a later one, Synced and Healthy; class (d) pins a tenant bundle on its stage pin and
+# writes no registration; and the bump's push
 # retries only a concurrent update (concurrent_push_refusal, and commit_push against a local bare
 # repository). The functions are read out of the template
 # (clusters/inventories/consumer-build/templates/pipeline-release.yaml), as the Pipeline carries
@@ -243,9 +245,9 @@ inventory_pins() { # class (c) block -> CODE and OUT of the block, the branches 
       git add -A && git commit -q -m 'trunk only' && git push -q origin HEAD:master ) &&
     git clone -q --branch master "$remote" "$work/cloud/hostyour-cloud" &&
     git clone -q --branch install.example.test "$remote" "$work/cloud/books"; } || fail 'the bare repository class (c) pushes to could not be made'
-  : > "$work/hits"
+  : > "$work/hits"; rm -f "$work/platform-commit"
   IMAGES=digita-testkit-e2e; HIT_COUNT[digita-testkit-e2e]=0
-  CODE=0; OUT="$(WORK="$work/cloud" BOOKS_BRANCH=install.example.test HITS_FILE="$work/hits" TMPDIR="$work"; . "$1" 2>&1)" || CODE=$?
+  CODE=0; OUT="$(WORK="$work/cloud" BOOKS_BRANCH=install.example.test HITS_FILE="$work/hits" PLATFORM_COMMIT_FILE="$work/platform-commit" TMPDIR="$work"; . "$1" 2>&1)" || CODE=$?
 }
 tag_on() { git -C "$remote" show "$1:clusters/inventories/$2/values-prod.yaml" 2>/dev/null | yq '.builds[0].tag'; }
 class_c_fault() { # the first way the branches and hits differ from what class (c) must leave, or nothing
@@ -257,11 +259,13 @@ class_c_fault() { # the first way the branches and hits differ from what class (
     || { echo 'the inventory master alone carries was written onto the install branch'; return; }
   [ "$(tag_on install.example.test manager)" = held ] || { echo 'an inventory pin of another image moved'; return; }
   [ "$(cat "$work/hits")" = 'platform e2e-runner-prod' ] || { echo "the hits are not exactly the install branch's inventory: $(cat "$work/hits")"; return; }
+  [ "$(cat "$work/platform-commit" 2>&1)" = "$(git -C "$remote" rev-parse install.example.test)" ] \
+    || { echo "the platform commit is not the install branch's pushed head: $(cat "$work/platform-commit" 2>&1)"; return; }
 }
 inventory_pins "$work/class-c.sh"
 fault="$(class_c_fault)"
 [ -z "$fault" ] || fail "class (c): $fault"
-ok 'class (c) pins the inventory on the install branch and on master, and names its Application platform e2e-runner-prod'
+ok "class (c) pins the inventory on the install branch and on master, names its Application platform e2e-runner-prod and the install branch's pushed head"
 ok 'PLANTED INNOCENT: an inventory master alone carries is pinned on master, and the install branch and the hits stay without it'
 grep -vF 'pin_platform_inventories "${WORK}/books"' "$work/class-c.sh" > "$work/class-c-master-only.sh"
 cmp -s "$work/class-c.sh" "$work/class-c-master-only.sh" && fail 'the mutant could not be planted: class (c) has no call for the install branch'
@@ -269,6 +273,65 @@ inventory_pins "$work/class-c-master-only.sh"
 [ "$(class_c_fault)" = 'the install branch kept the old pin' ] \
   || fail "PLANTED MUTANT: a class (c) that writes master only must go red on the install branch, and the check said: $(class_c_fault)"
 ok 'PLANTED MUTANT: a class (c) that writes master only goes red'
+
+# ── platform_live: a platform hit passes once its Application is live with the pins ────────
+# A refresh of the master's own Application of an inventory delivers nothing, so the argo-sync step
+# waits for it. The fixture repository stands in for hostyour-cloud with three commits: the one
+# before the pins, the pins, and a later one. kubectl answers one Application state per poll from a
+# list, and repeats the last; a line "! <text>" is a refusal with that text.
+extract platform_live > "$work/platform_live.sh"
+[ -s "$work/platform_live.sh" ] || fail 'the template carries no platform_live function'
+# shellcheck source=/dev/null
+. "$work/platform_live.sh"
+cloud_bare="$work/live-cloud.git"
+{ git init -q --bare -b master "$cloud_bare" &&
+  git -C "$cloud_bare" config uploadpack.allowAnySHA1InWant true &&
+  git clone -q "$cloud_bare" "$work/live-seed" 2>/dev/null &&
+  ( cd "$work/live-seed" && git commit -q --allow-empty -m before && git commit -q --allow-empty -m pins &&
+    git commit -q --allow-empty -m later && git push -q origin HEAD:master ); } || fail 'the repository platform_live fetches from could not be made'
+before="$(git -C "$work/live-seed" rev-parse HEAD~2)"; pinned="$(git -C "$work/live-seed" rev-parse HEAD~1)"; later="$(git -C "$work/live-seed" rev-parse HEAD)"
+echo "$pinned" > "$work/live-pins"
+application() { # revision, sync, health -> the Application kubectl prints, both sources at the revision
+  printf '{"status":{"sync":{"status":"%s","revisions":["%s","%s"]},"health":{"status":"%s"}}}\n' "$2" "$1" "$1" "$3"
+}
+kubectl() {
+  local poll line
+  poll="$(($(cat "$work/polls") + 1))"; echo "$poll" > "$work/polls"
+  line="$(sed -n "${poll}p" "$work/answers")"; [ -n "$line" ] || line="$(tail -n 1 "$work/answers")"
+  case "$line" in '!'*) printf '%s\n' "${line#! }"; return 1 ;; *) printf '%s\n' "$line" ;; esac
+}
+sleep() { :; }
+live() { # Application states, one per poll -> CODE and OUT of platform_live e2e-runner-prod
+  printf '%s\n' "$@" > "$work/answers"; echo 0 > "$work/polls"
+  CODE=0; OUT="$(PLATFORM_COMMIT_FILE="$work/live-pins" CLOUD_URL="file://$cloud_bare" PLATFORM_LIVE_SECONDS=60 PLATFORM_POLL_SECONDS=15 BOOKS_BRANCH=install.example.test TMPDIR="$work"; platform_live e2e-runner-prod 2>&1)" || CODE=$?
+}
+live "$(application "$before" Synced Healthy)"
+[ "$CODE" = 1 ] && grep -qF 'FAIL — e2e-runner-prod is not live with this release after 60s' <<<"$OUT" && grep -qF "carries the pins of $pinned: no" <<<"$OUT" \
+  || fail "PLANTED DEFECT: an Application that stays on the commit before the pins must fail at the bound, and platform_live said ($CODE): $OUT"
+ok 'PLANTED DEFECT: an Application that stays Synced and Healthy on the commit before the pins fails at the bound and names the pins'
+live "$(application "$before" Synced Healthy)" "$(application "$pinned" Synced Progressing)" "$(application "$pinned" Synced Healthy)"
+[ "$CODE" = 0 ] && grep -qF 'e2e-runner-prod is live with this release after 30s' <<<"$OUT" \
+  || fail "PLANTED INNOCENT: an Application that reaches the pins and turns Healthy must pass, and platform_live said ($CODE): $OUT"
+ok 'PLANTED INNOCENT: an Application on the pinned commit passes once it is Synced and Healthy, and waits while it is Progressing'
+live "$(application "$later" Synced Healthy)"
+[ "$CODE" = 0 ] && grep -qF 'e2e-runner-prod is live with this release after 0s' <<<"$OUT" \
+  || fail "an Application on a later commit carries the pins and must pass, and platform_live said ($CODE): $OUT"
+ok 'an Application on a later commit of the branch carries the pins and passes'
+live '! Error from server (NotFound): applications.argoproj.io "e2e-runner-prod" not found'
+[ "$CODE" = 0 ] && grep -qF 'e2e-runner-prod in ns argocd does not exist' <<<"$OUT" \
+  || fail "an Application the master does not run must pass with its reason, and platform_live said ($CODE): $OUT"
+ok 'an Application the master does not run passes with its reason'
+live '! Error from server (Forbidden): applications.argoproj.io "e2e-runner-prod" is forbidden'
+[ "$CODE" = 1 ] && grep -qF 'cannot be read, and NOT because it is absent' <<<"$OUT" \
+  || fail "PLANTED DEFECT: a Forbidden must fail as a missing reach, and platform_live said ($CODE): $OUT"
+ok 'PLANTED DEFECT: a Forbidden fails as a missing reach'
+live "$(application 0123456789abcdef0123456789abcdef01234567 Synced Healthy)"
+[ "$CODE" = 1 ] && grep -qF 'which cannot be fetched from' <<<"$OUT" \
+  || fail "a revision the repository does not hold must fail at once, and platform_live said ($CODE): $OUT"
+ok 'a revision the repository does not hold fails at once instead of waiting'
+unset -f kubectl sleep
+grep -qF 'platform_live "${rname}" < /dev/null || exit 1' "$template" || fail 'the argo-sync loop does not wait for its platform hits'
+ok 'the argo-sync loop waits for every platform hit and fails the release when one is not live'
 
 # ── class (d): a bundle release is pinned on its stage pin, and no registration moves ──
 # The tenant's Versions run in the Manager moves a tenant onto the pin, with its database lists and

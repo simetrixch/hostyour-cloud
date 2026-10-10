@@ -81,7 +81,7 @@ node --test scripts/inventory-project-fit.test.mjs || fail 'scripts/inventory-pr
 echo 'test: e2e runner — the password of a demo target stays bound to its host, and a run names a path on it and a case, nothing else.'
 helm dependency build clusters/inventories/e2e-runner
 node --test scripts/e2e-runner.test.mjs || fail 'scripts/e2e-runner.test.mjs'
-echo 'test: platform argo-sync — every inventory a release pins lets that release refresh its Application, and nothing else.'
+echo 'test: platform argo-sync — every inventory a release pins lets that release read its Application, and nothing else.'
 helm dependency build clusters/inventories/gate-runner
 node --test scripts/platform-argo-sync.test.mjs || fail 'scripts/platform-argo-sync.test.mjs'
 echo 'test: OK — all suites green'

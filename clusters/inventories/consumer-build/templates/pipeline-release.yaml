@@ -77,6 +77,7 @@ namespace, so the credential Secrets they envFrom by name are rendered here
 {{- $registry := include "common.registryHost" . -}}
 {{- $releaseTagRe := printf "^%s$" (required "consumer-build: global.releaseTagFilter is required (platform values chain)" .Values.global.releaseTagFilter) -}}
 {{- $builds := include "consumer-build.builds" . | fromJsonArray -}}
+{{- $cloudURL := "https://github.com/simetrixch/hostyour-cloud.git" -}}
 {{- $channelStages := required "consumer-build: global.channelStages is required (platform values chain)" .Values.global.channelStages -}}
 {{- /* The channel table, serialized for shell consumption: one line per
        channel, `<channel> <stage> <stage>…`. Helm ranges maps key-sorted, so
@@ -616,7 +617,7 @@ spec:
               - name: UNIT
                 value: {{ $unit | quote }}
               - name: CLOUD_URL
-                value: https://github.com/simetrixch/hostyour-cloud.git
+                value: {{ $cloudURL }}
               # This unit's own repository, the pinned repoURL: its delivery
               # branch is placed from its release tag below.
               - name: REPO_URL
@@ -666,6 +667,8 @@ spec:
                 value: {{ .Values.global.clusterName | default "" | quote }}
               - name: HITS_FILE
                 value: /bump/hits
+              - name: PLATFORM_COMMIT_FILE
+                value: /bump/platform-commit
               - name: HOME
                 value: /tmp
               # ── the bump's OWN Vault identity ──────────────────────────────
@@ -1400,6 +1403,10 @@ spec:
                 commit_push "${clone}" "${branch}" "hostyour-cloud clusters/inventories/*/values-${STAGE}.yaml"
               }
               pin_platform_inventories "${WORK}/books" "${BOOKS_BRANCH}"
+              # The books commit the platform pins stand on, pushed or found
+              # there: the argo-sync step waits until each platform hit's
+              # Application stands on it or on a commit after it.
+              git -C "${WORK}/books" rev-parse HEAD > "${PLATFORM_COMMIT_FILE}"
               pin_platform_inventories "${WORK}/hostyour-cloud" master
 
               # ── the reach must exist: an image nothing pins is a defect ────
@@ -1436,19 +1443,24 @@ spec:
               requests: { cpu: 100m, memory: 128Mi }
               limits: { cpu: 500m, memory: 512Mi }
 
-          # The sync: poke ArgoCD for every Application hit so the bump
-          # commit deploys now instead of on the next poll. Consumer hits are
-          # scoped to the UNIT's own Applications — exactly what the
-          # onboarding argo-sync grant admits (resourceNames
+          # The sync: poke ArgoCD for every consumer and tenant Application
+          # hit so the bump commit deploys now instead of on the next poll.
+          # Consumer hits are scoped to the UNIT's own Applications — exactly
+          # what the onboarding argo-sync grant admits (resourceNames
           # <unit>-dev/-test/-prod in the unit's argoNamespace); a foreign
           # registration's hit is left to ArgoCD's own poll and said so.
           # Tenant hits carry the full member Application name
           # <guid>-<member>-<stage>: the create-tenant run put it in the
           # tenant grant's resourceNames, so the patch reaches exactly that
-          # one Application — "sync that one namespace only". Platform hits
-          # name the master's own Application of an inventory, in ns argocd,
-          # which the inventory's own grant names (clusters/inventories/
-          # e2e-runner/templates/rbac-argo-sync.yaml).
+          # one Application — "sync that one namespace only".
+          #
+          # PLATFORM HITS ARE WAITED FOR, NOT POKED. They name the master's
+          # own Application of an inventory, in ns argocd, which the
+          # inventory's own grant lets this step read (clusters/inventories/
+          # e2e-runner/templates/rbac-argo-sync.yaml). Every source of this
+          # repository in it stands at the commit root-applications synced
+          # (clusters/argocd/templates/apps.yaml), so a refresh compares the
+          # old commit again; platform_live below says why it waits instead.
           #
           # THIS STEP RUNS AFTER EVERY PIN IS COMMITTED AND PUSHED, and kubectl
           # here reads the in-cluster config of the cluster the BUILD PLANE runs
@@ -1480,12 +1492,92 @@ spec:
                 value: {{ required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map — the install branch of the cluster holding the master role, which carries this installation's registrations)" .Values.global.booksCluster | quote }}
               - name: HITS_FILE
                 value: /bump/hits
+              - name: PLATFORM_COMMIT_FILE
+                value: /bump/platform-commit
+              # Read only, to tell whether an Application's revision carries the
+              # platform pins: the repository is public, so the fetch carries
+              # no credential.
+              - name: CLOUD_URL
+                value: {{ $cloudURL }}
+              # root-applications polls every 120 s with up to 60 s of jitter,
+              # and RollingSync then walks every wave before an inventory's:
+              # up to wave 40 for the manager. Fifteen minutes holds that with
+              # room, and stays far inside the PipelineRun's hour.
+              - name: PLATFORM_LIVE_SECONDS
+                value: "900"
+              - name: PLATFORM_POLL_SECONDS
+                value: "15"
             volumeMounts:
               - { name: bump-scratch, mountPath: /bump }
               - { name: argo-sync-token, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true }
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
+
+              # platform_live <application>: waits until the master's own
+              # Application of an inventory stands on a commit that carries
+              # this release's platform pins and reports Synced and Healthy,
+              # and fails when it does not within PLATFORM_LIVE_SECONDS. Then a
+              # green pipeline means the release is live.
+              #
+              # A REFRESH WOULD DELIVER NOTHING. The platform-apps
+              # ApplicationSet stamps every source of this repository at the
+              # commit root-applications last synced, and RollingSync holds
+              # the child's automated sync. The pin reaches the child only
+              # after root-applications polls the books branch and RollingSync
+              # walks the waves up to it, and that is what this waits for.
+              #
+              # A LATER COMMIT CARRIES THE PINS TOO. Another release may push
+              # to the books branch before root-applications polls, and the
+              # child then stands on a descendant of the pinned commit. git
+              # answers whether it does, from a shallow fetch of the revision.
+              platform_live() {
+                local app="$1" pins waited=0 answer revisions revision carried sync health state seen="" ancestry
+                pins="$(cat "${PLATFORM_COMMIT_FILE}")" || return 1
+                ancestry="$(mktemp -d)"
+                git -C "${ancestry}" init -q
+                while :; do
+                  if ! answer="$(kubectl get application.argoproj.io "${app}" -n argocd -o json 2>&1)"; then
+                    if printf '%s' "${answer}" | grep -qi 'notfound\|not found'; then
+                      echo "argo-sync: ${app} in ns argocd does not exist — the master runs no platform app of that name, as at a stage it does not run. The pin is committed and pushed, and a cluster that runs the inventory at this stage renders it on ArgoCD's own poll."
+                      return 0
+                    fi
+                    printf '%s\n' "${answer}" >&2
+                    echo "argo-sync: FAIL — ${app} in ns argocd cannot be read, and NOT because it is absent. THE PINS OF THIS RELEASE ARE ALREADY COMMITTED AND PUSHED; the thing to fix is the reach, the argo-sync Role in ns argocd." >&2
+                    return 1
+                  fi
+                  revisions="$(printf '%s' "${answer}" | yq -p json '(.status.sync.revisions // [.status.sync.revision]) | .[] | select(. != null)' | sort -u)"
+                  sync="$(printf '%s' "${answer}" | yq -p json '.status.sync.status // ""')"
+                  health="$(printf '%s' "${answer}" | yq -p json '.status.health.status // ""')"
+                  carried=no
+                  if [ -n "${revisions}" ]; then
+                    carried=yes
+                    for revision in ${revisions}; do
+                      [ "${revision}" = "${pins}" ] && continue
+                      if ! git -C "${ancestry}" cat-file -e "${revision}^{commit}" 2>/dev/null \
+                         && ! git -C "${ancestry}" fetch -q --depth 64 "${CLOUD_URL}" "${revision}"; then
+                        echo "argo-sync: FAIL — ${app} stands on ${revision}, which cannot be fetched from ${CLOUD_URL}, so whether it carries this release's platform pins (${pins}) cannot be told. THE PINS ARE COMMITTED AND PUSHED." >&2
+                        return 1
+                      fi
+                      git -C "${ancestry}" merge-base --is-ancestor "${pins}" "${revision}" 2>/dev/null || carried=no
+                    done
+                  fi
+                  state="stands on $(printf '%s ' ${revisions:-no revision})(carries the pins of ${pins}: ${carried}), ${sync:-no sync status}, ${health:-no health}"
+                  if [ "${carried}" = yes ] && [ "${sync}" = Synced ] && [ "${health}" = Healthy ]; then
+                    echo "argo-sync: ${app} is live with this release after ${waited}s: it ${state}"
+                    return 0
+                  fi
+                  if [ "${waited}" -ge "${PLATFORM_LIVE_SECONDS}" ]; then
+                    echo "argo-sync: FAIL — ${app} is not live with this release after ${waited}s: it ${state}. The pins are committed and pushed on ${BOOKS_BRANCH}. root-applications polls that branch and RollingSync walks its waves to ${app}; read both Applications for what holds it." >&2
+                    return 1
+                  fi
+                  [ "${state}" = "${seen}" ] || echo "argo-sync: waiting for ${app}: it ${state}"
+                  seen="${state}"
+                  sleep "${PLATFORM_POLL_SECONDS}"
+                  waited=$((waited + PLATFORM_POLL_SECONDS))
+                done
+              }
+
               if [ ! -s "${HITS_FILE}" ]; then
                 echo "argo-sync: no Application hits — nothing to sync"
                 exit 0
@@ -1511,16 +1603,15 @@ spec:
                     ;;
                   platform)
                     # rname is the Application name <inventory>-<stage>.
-                    app="${rname}"
+                    # Its stdin stays off the hits this loop reads.
+                    platform_live "${rname}" < /dev/null || exit 1
+                    continue
                     ;;
                   *) continue ;;
                 esac
                 # The Application lives beside its ArgoCD instance: ns argocd
-                # for this master's own cluster, ns <slave> for a slave. A
-                # platform hit names the master's own Application.
-                if [ "${kind}" = platform ]; then
-                  ns="argocd"
-                elif [ -n "${CLUSTER_NAME}" ] && [ "${rcluster}" = "${CLUSTER_NAME}" ]; then
+                # for this master's own cluster, ns <slave> for a slave.
+                if [ -n "${CLUSTER_NAME}" ] && [ "${rcluster}" = "${CLUSTER_NAME}" ]; then
                   ns="argocd"
                 else
                   ns="${rcluster}"
@@ -1550,8 +1641,6 @@ spec:
                 if refreshed=$(kubectl annotate application.argoproj.io "${app}" -n "${ns}" \
                      argocd.argoproj.io/refresh=normal --overwrite 2>&1); then
                   printf '%s\n' "${refreshed}"
-                elif [ "${kind}" = platform ] && printf '%s' "${refreshed}" | grep -qi 'notfound\|not found'; then
-                  echo "argo-sync: ${app} in ns ${ns} does not exist — the master runs no platform app of that name, as at a stage it does not run. The pin is committed and pushed, and a cluster that runs the inventory at this stage renders it on ArgoCD's own poll."
                 elif printf '%s' "${refreshed}" | grep -qi 'notfound\|not found'; then
                   echo "argo-sync: ${app} in ns ${ns} does not exist yet — nothing to refresh. The ApplicationSet generates it from the registration committed before this cycle, and it syncs the pins THIS run just pushed on its first pass. The manager's watch-deployment step is what proves it arrived."
                 else
