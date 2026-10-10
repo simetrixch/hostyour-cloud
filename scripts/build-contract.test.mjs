@@ -237,8 +237,8 @@ test('the ci trigger needs a list of owners, and an empty or missing list fails 
 test('the ci pipeline of a unit holds no GitOps credential, mounts only the packages reader, and is no release', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'describe-commit', 'fetch', 'check']);
-  assert.deepEqual(pipeline.spec.finally.map((t) => t.name), ['report-failure']);
+  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'commit-status-pending', 'clone', 'describe-commit', 'fetch', 'check']);
+  assert.deepEqual(pipeline.spec.finally.map((t) => t.name), ['report-failure', 'commit-status']);
   const referencesBump = (doc) => JSON.stringify(doc).includes('bump');
   assert.ok(!referencesBump(pipeline), 'the ci pipeline names no bump task, volume or secret');
   const planted = structuredClone(pipeline);
@@ -254,7 +254,8 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   assert.ok(pipeline.spec.params.some((p) => p.name === 'before'));
   assert.deepEqual(check.volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
   assert.deepEqual(check.steps[0].volumeMounts.filter((m) => m.name === 'npmrc').map((m) => m.readOnly), [true]);
-  assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['clone', 'fetch']);
+  assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['commit-status-pending', 'clone', 'fetch']);
+  assert.deepEqual(pipeline.spec.finally.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['commit-status']);
   // Tekton copies a Pipeline's labels onto its runs: a consumer label here would make every ci run a release.
   assert.equal(pipeline.metadata.labels['image-builder.io/ci'], 'shop');
   assert.equal(pipeline.metadata.labels['image-builder.io/consumer'], undefined);
@@ -470,12 +471,13 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
     assert.ok(task.timeout, `${task.name} bounds its own run: the timeout of a task restarts while its pod waits for the quota`);
   }
   const bounds = Object.fromEntries(pipeline.spec.tasks.map((t) => [t.name, seconds(t.timeout)]));
-  assert.deepEqual(bounds, {gate: 300, clone: 600, 'describe-commit': 120, 'fetch': 300, check: 1200});
+  assert.deepEqual(bounds, {gate: 300, 'commit-status-pending': 120, clone: 600, 'describe-commit': 120, 'fetch': 300, check: 1200});
   const report = pipeline.spec.finally.find((t) => t.name === 'report-failure');
   for (const step of report.taskSpec.steps) {
     for (const side of ['requests', 'limits']) assert.ok(step.computeResources?.[side]?.cpu && step.computeResources?.[side]?.memory, `report-failure/${step.name} has ${side}`);
   }
   assert.equal(seconds(report.timeout), 300);
+  assert.equal(seconds(pipeline.spec.finally.find((t) => t.name === 'commit-status').timeout), 120);
   // Tekton sets no start time on a waiting run, so the clocks start when the keeper starts it and hold no wait for a ci slot.
   // They do hold the wait of a pod for the quota of its unit.
   // The finally tasks run on a clock of their own, so a run that used up its tasks budget still mails.
@@ -495,13 +497,15 @@ const BYTES = {Gi: 1024 ** 3, Mi: 1024 ** 2};
 const quantity = (text) => Number(text.slice(0, -2)) * BYTES[text.slice(-2)];
 const podLimit = (task, cloneTask) => (task.taskSpec ?? cloneTask.spec).steps
   .reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0);
-// The limits of the ci pods of the runs that run at once (one at a time per run, because the tasks form a chain),
-// the report pod of each of those runs (its class is the one the quota does not count, so it comes on top), plus
-// the build pods of the one release that runs. The ci run keeper holds the number of running runs at maxRunning.
+// The limits of the ci pods of the runs that run at once (one at a time per run, because the tasks form a chain,
+// and the finally task commit-status runs after them in the same class), the report pod of each of those runs (its
+// class is the one the quota does not count, so it comes on top), plus the build pods of the one release that runs.
+// The ci run keeper holds the number of running runs at maxRunning.
 const fitsFreeMemory = (capacity, pipeline, cloneTask, release, buildahTask) => {
   const largest = (tasks) => Math.max(0, ...tasks.map((task) => podLimit(task, cloneTask)));
-  const ciPods = capacity.maxRunning * largest(pipeline.spec.tasks);
-  const reportPods = capacity.maxRunning * largest(pipeline.spec.finally);
+  const isReport = (task) => task.name === 'report-failure';
+  const ciPods = capacity.maxRunning * largest([...pipeline.spec.tasks, ...pipeline.spec.finally.filter((t) => !isReport(t))]);
+  const reportPods = capacity.maxRunning * largest(pipeline.spec.finally.filter(isReport));
   const buildPods = release.spec.tasks.filter((task) => task.name.startsWith('build-') && task.runAfter?.includes('scan')).length;
   return ciPods + reportPods + buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask) <= quantity(capacity.limitsMemoryBudget);
 };
@@ -588,6 +592,7 @@ test('the admission policy lets the ci run keeper cancel, start and note a ci ru
   const update = (username, object, oldObject) => ({object, oldObject, request: {operation: 'UPDATE', namespace: 'shop-build', userInfo: {username}}});
   const ADMITTED = {
     'the keeper cancels a running ci run': update(KEEPER, cancelled, base),
+    'the keeper cancels a running ci run gracefully, so its finally tasks run': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; }), base),
     'the keeper cancels a ci run again': update(KEEPER, cancelled, cancelled),
     'the keeper cancels a waiting ci run': update(KEEPER, cancelled, waiting),
     'the keeper starts a waiting ci run': update(KEEPER, base, waiting),
@@ -605,6 +610,8 @@ test('the admission policy lets the ci run keeper cancel, start and note a ci ru
     'the keeper changes a label while it starts': update(KEEPER, changed((r) => { r.metadata.labels['image-builder.io/consumer'] = 'shop'; }), waiting),
     'the keeper cancels a release run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; }, releaseRun), releaseRun),
     'the keeper changes a param while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.spec.params[0].value = 'other'; }), base),
+    'the keeper changes a param while it cancels gracefully': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; r.spec.params[0].value = 'other'; }), base),
+    'the keeper sets a status Tekton does not know': update(KEEPER, changed((r) => { r.spec.status = 'StoppedRunFinally'; }), base),
     'the keeper changes a param and nothing else': update(KEEPER, changed((r) => { r.spec.params[0].value = 'other'; }), base),
     'the keeper hands the run to another controller while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.spec.managedBy = 'example.com/other'; }), base),
     'the keeper changes the timeouts while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.spec.timeouts.pipeline = '24h0m0s'; }), base),
@@ -802,6 +809,37 @@ test('the report pod of a red run is admitted by the ci quota while the check of
   const counting = structuredClone(quota);
   counting.spec.scopeSelector.matchExpressions[0].values.push(REPORT_CLASS);
   assert.equal(quotaAdmits(counting, held, podClassOf(run, 'report-failure')), false, 'PLANTED DEFECT: a quota that counts the report class holds the report pod back');
+});
+
+test('tekton/ci is set to pending after the gate and to the outcome in a finally task, with the repository token and the run link', () => {
+  const docs = renderUnit('shop');
+  const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const pending = pipeline.spec.tasks.find((t) => t.name === 'commit-status-pending');
+  const outcome = pipeline.spec.finally.find((t) => t.name === 'commit-status');
+  const script = readFileSync('clusters/inventories/consumer-build/files/ci-commit-status.sh', 'utf8');
+  const envOf = (task) => Object.fromEntries(task.taskSpec.steps[0].env.map((e) => [e.name, e.value ?? e.valueFrom]));
+  for (const task of [pending, outcome]) {
+    assert.equal(task.taskSpec.steps[0].script, script, 'the pipeline carries the script that scripts/ci-commit-status.test.mjs runs');
+    const env = envOf(task);
+    assert.deepEqual(env.GITHUB_TOKEN, {secretKeyRef: {name: 'build-git-https', key: 'token'}});
+    assert.equal(env.REPOSITORY_PATH, 'check/shop');
+    assert.equal(env.COMMIT, '$(params.commit)');
+    assert.match(env.RUN_URL, /^https:\/\/tekton\.[^/]+\/#\/namespaces\/shop-build\/pipelineruns\/\$\(context\.pipelineRun\.name\)$/);
+  }
+  assert.deepEqual(pending.runAfter, ['gate']);
+  assert.deepEqual(pipeline.spec.tasks.filter((t) => t.when), [],
+    'ci-commit-status.sh reads Completed as a stopped run, which holds only while no task is skipped by a when');
+  assert.equal(envOf(pending).RUN_STATE, 'running');
+  assert.deepEqual(outcome.when, [{input: '$(tasks.gate.status)', operator: 'in', values: ['Succeeded']}],
+    'a run the gate refused set no pending, so it sets no outcome');
+  const params = Object.fromEntries(outcome.params.map((p) => [p.name, p.value]));
+  assert.equal(params['run-state'], '$(tasks.status)');
+  assert.deepEqual(params['task-reasons'].split(' '), pipeline.spec.tasks.map((t) => `$(tasks.${t.name}.reason)`),
+    'the outcome reads the reason of every task, so a cancelled one is told from a failed one');
+  const secret = docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-git-https');
+  assert.ok('token' in secret.spec.target.template.data, 'build-git-https carries the key the status tasks read');
+  assert.throws(() => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop',
+    repoURL: 'https://gitlab.com/check/shop.git', buildsJson: '["app"]'})]), /not https:\/\/github\.com\/<owner>\/<repository>/);
 });
 
 test('report-failure runs after a failure only, holds the one token, and reads with get on the run, its TaskRuns and pod logs', () => {

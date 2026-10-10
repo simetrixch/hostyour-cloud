@@ -95,6 +95,21 @@ test('a newer push replaces the older run of its branch, whether that waits for 
   assert.deepEqual(cancelled([newest, running, waiting]), names([waiting, running]));
 });
 
+// A started run has set its commit status to pending, so it is cancelled with its finally tasks, which set
+// the status it ends with; a waiting run has set none and runs no task at all.
+test('a replaced run that has started is cancelled gracefully, and a replaced run that waits outright', () => {
+  const statuses = (program, items) => Object.fromEntries(decideWith(program, items).filter((c) => c.verb === 'cancel')
+    .map((c) => [c.name, c.patch.spec.status]));
+  const queued = waiting('shop-build', {branch: 'main'}), started = run('shop-build', {branch: 'main', succeeded: 'Unknown'});
+  const newest = run('shop-build', {branch: 'main'});
+  const expected = {[queued.metadata.name]: 'Cancelled', [started.metadata.name]: 'CancelledRunFinally'};
+  assert.deepEqual(statuses(PROGRAM, [queued, started, newest]), expected);
+  const graceless = 'patch: {spec: {status: (if isPending then "Cancelled" else "CancelledRunFinally" end)}}';
+  assert.ok(PROGRAM.includes(graceless));
+  assert.notDeepEqual(statuses(PROGRAM.replace(graceless, 'patch: {spec: {status: "Cancelled"}}'), [queued, started, newest]), expected,
+    'PLANTED DEFECT: a keeper that cancels a started run outright leaves its commit status at pending');
+});
+
 test('planted defect: the newest run of a branch is not cancelled', () => {
   const older = run('shop-build', {branch: 'main'}), newest = run('shop-build', {branch: 'main'});
   assert.deepEqual(cancelled([older, newest]), [older.metadata.name]);
@@ -108,9 +123,10 @@ test('planted innocent: two branches with one running run each stay untouched, a
 
 test('a run is not cancelled when it has finished, is cancelled already, has no branch, or ties with the newest', () => {
   const done = run('shop-build', {branch: 'main', succeeded: 'True'}), stopped = run('shop-build', {branch: 'main', status: 'Cancelled'});
+  const stopping = run('shop-build', {branch: 'main', status: 'CancelledRunFinally', succeeded: 'Unknown'});
   const noBranchA = run('shop-build', {branch: null}), noBranchB = run('shop-build', {branch: null});
   const newest = run('shop-build', {branch: 'main'});
-  assert.deepEqual(cancelled([done, stopped, noBranchA, noBranchB, newest]), []);
+  assert.deepEqual(cancelled([done, stopped, stopping, noBranchA, noBranchB, newest]), []);
   // Two pushes in the same second cannot be ordered, so neither replaces the other.
   const first = run('post-build', {branch: 'main', at: 500}), second = run('post-build', {branch: 'main', at: 500});
   assert.deepEqual(cancelled([first, second]), []);
@@ -233,7 +249,7 @@ test('planted defect: a change that fails is reported, the next one still runs, 
     assert.match(result.stderr, /could not change shop-build\/shop-ci-/);
     const calls = readFileSync(log, 'utf8').trim().split('\n');
     assert.equal(calls.length, 2);
-    assert.match(calls[0], /^patch pipelinerun -n shop-build shop-ci-\S+ --type merge -p \{"spec":\{"status":"Cancelled"\}\}$/);
+    assert.match(calls[0], /^patch pipelinerun -n shop-build shop-ci-\S+ --type merge -p \{"spec":\{"status":"CancelledRunFinally"\}\}$/);
     assert.match(calls[1], /^delete pipelinerun -n shop-build shop-ci-\S+ --ignore-not-found --wait=false$/);
     assert.match(result.stdout, /deleted shop-build\//);
     // Only ci runs are listed: the decision is never taken on a release run.

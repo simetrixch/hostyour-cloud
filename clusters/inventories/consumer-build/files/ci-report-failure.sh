@@ -54,8 +54,8 @@ cleaned() {
 # A TaskRun that Tekton cancelled is a failure when the time budget of the run ran out: Tekton cancels the
 # running TaskRuns with the message below (pkg/apis/pipeline/v1/taskrun_types.go, TaskRunCancelledByPipelineTimeoutMsg),
 # marks them failed with the reason TaskRunCancelled, and still runs this task. Any other cancel is a newer
-# push replacing the run; that cancels the PipelineRun itself, which runs no finally task, so such a
-# TaskRun is never read here as a failure.
+# push replacing the run: the ci run keeper cancels a started run gracefully, so this task runs then too,
+# and such a TaskRun is never read here as a failure.
 taskrun_info='
   (.status.conditions // [] | map(select(.type == "Succeeded")) | .[0] // {}) as $c
   | ($c.reason == "TaskRunCancelled"

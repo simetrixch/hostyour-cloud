@@ -4,9 +4,10 @@ from this template beside `<unit>-release`. Every push of a branch runs the
 repository's own scripts/check.sh at the pushed commit, so red is seen on the
 build plane and not only on the machine of whoever pushed:
 
-  gate → clone@commit → describe-commit → fetch → check,
+  gate → commit-status-pending → clone@commit → describe-commit → fetch → check,
 
-and a finally task, report-failure, mails the error lines of every task that failed.
+and two finally tasks: report-failure mails the error lines of every task that
+failed, and commit-status sets the commit status tekton/ci to the outcome.
 
 It renders for every unit, also for one that builds nothing (builds: [] in its
 registration), which then has this Pipeline and no release Pipeline.
@@ -32,8 +33,8 @@ The trust split:
 
 THE CHECK RUNS THE REPOSITORY'S OWN CODE and holds nothing worth stealing:
 no ServiceAccount token (pipeline-sa mounts none), no clone credential
-(build-git-https belongs to the clone and fetch tasks, whose
-containers end before the check starts), and never the GitOps write tokens of
+(build-git-https belongs to the clone, fetch and commit-status
+tasks, whose containers run before or after the check, never beside it), and never the GitOps write tokens of
 the release bump, which this Pipeline does not reference at all. The one secret in
 reach is build-npmrc, the packages reader, mounted read-only as the user npmrc
 because `pnpm install` cannot read the private @<owner> packages without it.
@@ -69,7 +70,8 @@ task's TaskRun names, and posts ONE alert, CIRunFailed, to Alertmanager. The
 route for that alert mails it (clusters/inventories/observability), so the mail
 carries the error and needs no click to be read. The grant is a Role that reads
 nothing but the run, its TaskRuns and pod logs (templates/rbac-ci-report.yaml),
-and report-failure is the only task of this Pipeline that mounts a token. Its
+and report-failure is the only task of this Pipeline that mounts a
+ServiceAccount token. Its
 pod is also the only one in the namespace that may reach the API server and
 Alertmanager (templates/networkpolicy.yaml): Alertmanager takes any alert from
 anybody, so a pod that runs the repository's code must not reach it.
@@ -81,9 +83,16 @@ that the check has had in its hands.
 
 report-failure runs after a task timeout because the ci TriggerTemplate bounds
 the tasks and the finally task separately (clusters/inventories/image-builder,
-templates/triggers/github-ci-push.yaml). A run that is cancelled in place of
-failing, which is how a newer push replaces it, runs no finally task and mails
-nothing.
+templates/triggers/github-ci-push.yaml). A newer push replaces a started run by
+cancelling it gracefully (CancelledRunFinally): its finally tasks still run,
+report-failure finds no failure to mail, and commit-status sets error.
+
+THE COMMIT STATUS. commit-status-pending sets tekton/ci to pending once the
+gate has proven the commit, and commit-status sets success, failure or error,
+each linked to the run in the Tekton Dashboard. Both run files/ci-commit-status.sh
+in a pod of their own that holds the key token of build-git-https, the unit's
+repository token, and runs no code of the repository. A run the gate refused
+sets no status, because it names a commit it did not prove.
 */ -}}
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
@@ -96,6 +105,11 @@ nothing.
 {{- $sourcesOwnerURL := regexReplaceAll "/[^/]+$" $repoURL "" -}}
 {{- if not (regexMatch "^https://github[.]com/[A-Za-z0-9-]+$" $sourcesOwnerURL) }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://github.com/<owner>/<repository>, so its owner cannot be named for ci-sources.json" $repoURL) }}{{ end -}}
 {{- $alertmanager := required "consumer-build: ciFailureReport.alertmanager is required" .Values.ciFailureReport.alertmanager -}}
+{{- /* The repository as GitHub's API names it, <owner>/<repository>, for the commit status. */ -}}
+{{- $repositoryPath := trimSuffix ".git" (trimPrefix "https://github.com/" $repoURL) -}}
+{{- if not (regexMatch "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" $repositoryPath) }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://github.com/<owner>/<repository>, so its commits cannot carry a status" $repoURL) }}{{ end -}}
+{{- $dashboardURL := printf "https://tekton.%s" (required "consumer-build: global.domain is required (clusters/active/<fqdn>.yaml, the fqdn of the cluster this build plane runs on — the failure mail and the commit status link to the Tekton Dashboard there)" .Values.global.domain) -}}
+{{- $runURL := printf "%s/#/namespaces/%s-build/pipelineruns/$(context.pipelineRun.name)" $dashboardURL $unit -}}
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
@@ -188,9 +202,35 @@ spec:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
 
+    # ── commit-status-pending — tekton/ci is pending on the commit ──────────
+    # After the gate proved the commit and before the clone: the tasks run one
+    # after the other, because the ci quota counts one pod per run. Its finally
+    # twin, commit-status, replaces the pending with the outcome.
+    - name: commit-status-pending
+      runAfter: [gate]
+      timeout: 2m0s
+      params:
+        - { name: commit, value: "$(params.commit)" }
+      taskSpec:
+        params:
+          - name: commit
+            type: string
+        steps:
+          - name: commit-status
+            image: {{ $reportImage }}
+            env:
+{{ include "consumer-build.ciCommitStatusEnv" (dict "repositoryPath" $repositoryPath "runURL" $runURL) | indent 14 }}
+              - name: RUN_STATE
+                value: running
+            script: |
+{{ .Files.Get "files/ci-commit-status.sh" | indent 14 }}
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
+
     # ── 2. clone — the pushed commit, from the PINNED repoURL ────────────────
     - name: clone
-      runAfter: [gate]
+      runAfter: [commit-status-pending]
       timeout: 10m0s
       taskRef:
         resolver: cluster
@@ -523,7 +563,7 @@ spec:
               - name: COMMIT
                 value: "$(params.commit)"
               - name: DASHBOARD_URL
-                value: {{ printf "https://tekton.%s" (required "consumer-build: global.domain is required (clusters/active/<fqdn>.yaml, the fqdn of the cluster this build plane runs on — the failure mail links to the Tekton Dashboard there)" .Values.global.domain) | quote }}
+                value: {{ $dashboardURL | quote }}
               - name: GRAFANA_URL
                 value: {{ printf "https://grafana.%s" (required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, the install branch of the cluster holding the master role — the failure mail links to the Grafana there)" .Values.global.booksCluster) | quote }}
               - name: ALERTMANAGER_URL
@@ -535,4 +575,42 @@ spec:
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 500m, memory: 256Mi }
+
+    # ── commit-status — tekton/ci gets the outcome of the run ─────────────────
+    # Runs after every run whose gate passed, which is every run that set the
+    # pending; a run the gate refused names a commit it did not prove. A run the
+    # ci run keeper replaces is cancelled gracefully, so this task runs for it too.
+    - name: commit-status
+      timeout: 2m0s
+      when:
+        - input: "$(tasks.gate.status)"
+          operator: in
+          values: ["Succeeded"]
+      params:
+        - { name: commit, value: "$(params.commit)" }
+        - { name: run-state, value: "$(tasks.status)" }
+        - name: task-reasons
+          value: "$(tasks.gate.reason) $(tasks.commit-status-pending.reason) $(tasks.clone.reason) $(tasks.describe-commit.reason) $(tasks.fetch.reason) $(tasks.check.reason)"
+      taskSpec:
+        params:
+          - name: commit
+            type: string
+          - name: run-state
+            type: string
+          - name: task-reasons
+            type: string
+        steps:
+          - name: commit-status
+            image: {{ $reportImage }}
+            env:
+{{ include "consumer-build.ciCommitStatusEnv" (dict "repositoryPath" $repositoryPath "runURL" $runURL) | indent 14 }}
+              - name: RUN_STATE
+                value: "$(params.run-state)"
+              - name: TASK_REASONS
+                value: "$(params.task-reasons)"
+            script: |
+{{ .Files.Get "files/ci-commit-status.sh" | indent 14 }}
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
 {{- end }}
