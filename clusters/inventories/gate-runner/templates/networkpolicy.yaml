@@ -1,111 +1,15 @@
 {{- /*
-gate-egress-fence — THE security boundary of the gate sandbox, replacing the
-old host-nftables fence around the podman Quadlet gate-runner. Applies to
-EVERY pod in this namespace (podSelector: {}). Calico-enforced, like
-clusters/inventories/redis/templates/networkpolicy.yaml.
+gate-egress-fence: the security boundary of the gate sandbox, which runs chart code a tenant
+wrote. A gate run needs exactly DNS and the public internet, for the github clone and the
+chart-dependency fetch; common.publicEgressFence states what it denies and why.
 
-A gate run legitimately needs exactly two things: (a) DNS and (b) the public
-internet — the github clone and the chart-dependency fetch. Everything else is
-denied by carving two sets of addresses out of the allow-all-egress rule:
-
-  the private and special-use ranges — the cluster LAN (10.1.1.x), the
-  cluster's own pod/service CIDRs (microk8s defaults: pods 10.1.0.0/16,
-  services 10.152.183.0/24, both inside 10.0.0.0/8), cloud metadata
-  (169.254.x);
-
-  global.nodeCidrs — this cluster's own node addresses, which are what a pod
-  reaches the API server at, anything with hostNetwork at (the Manager,
-  clusters/inventories/manager/values-common.yaml hostNetwork) and the ingress
-  controller's host ports at, and through those every Ingress of the cluster.
-
-THE SECOND SET IS NOT INSIDE THE FIRST, and believing it was is what left this
-fence open. A cloud node's own address is a PUBLIC address: on a real
-onboarding run the sandbox reached that node's API server on 16443 and the
-Manager's address, and the report said so in mustFailDenied and
-managerAddrDenied. A node's addresses cannot be derived at render time, so
-they are stated as a value, and this template REFUSES TO RENDER without them
-rather than emitting a boundary that names nothing to deny.
-
-The gate CLI's own fail-closed self-probe (fence.ts) verifies this fence from
-INSIDE before running any gate: the must-fail targets (Manager, API server,
-cluster LAN) must be unreachable and the must-pass target (github.com)
-reachable, otherwise the run refuses to validate anything.
+The gate CLI's own fail-closed self-probe (fence.ts) verifies this fence from INSIDE before running
+any gate: the must-fail targets (Manager, API server, cluster LAN) must be unreachable and the
+must-pass target (github.com) reachable, otherwise the run refuses to validate anything.
 */ -}}
-{{- $nodeCidrs := .Values.global.nodeCidrs | default list -}}
-{{- if not $nodeCidrs }}
-{{- fail "global.nodeCidrs is empty, so the gate sandbox fence has no address to deny and the sandbox would reach this cluster's API server, its hostNetwork workloads and every Ingress at the node's own address. Write the CIDRs of this cluster's nodes and its API server into clusters/active/<fqdn>.yaml (global.nodeCidrs), which loads last in this app's valueFiles chain; clusters/platform/values-common.yaml states the key and what belongs in it." }}
-{{- end }}
-{{- range $nodeCidrs }}
-{{- if contains ":" . }}
-{{- fail (printf "global.nodeCidrs carries the IPv6 range %q, and the fence below denies it by carving it out of an ipBlock whose cidr is 0.0.0.0/0. Kubernetes refuses an `except` that does not lie inside its own cidr, so this renders a NetworkPolicy the API server rejects — and a rejected fence is no fence, while the sandbox runs anyway. Write IPv4 ranges only: the fence's rules are all IPv4, and a pod under an egress policy may go nowhere a rule does not name, so IPv6 destinations are already denied whole." .) }}
-{{- end }}
-{{- end }}
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: gate-egress-fence
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: gate-runner
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-spec:
-  # Every pod in the namespace — the fence has no exceptions. (The
-  # publish-report pod gets its API-server pinhole ADDITIVELY from the second
-  # policy below; NetworkPolicy rules across policies are additive by design.)
-  podSelector: {}
-  policyTypes:
-    - Ingress
-    - Egress
-  # Empty ingress rule list = deny ALL inbound. Tekton needs no inbound path
-  # to TaskRun pods (step results travel via files and pod status, logs are
-  # collected node-side), and nothing on the platform may address the sandbox.
-  ingress: []
-  egress:
-    # (1) kube-dns only, for name resolution (github.com, public chart repos).
-    # Needed as an explicit selector rule because the kube-dns Service and pod
-    # IPs sit inside 10.0.0.0/8, which rule (2) deliberately excludes. Calico
-    # matches the post-DNAT destination (the coredns POD in kube-system,
-    # labelled k8s-app=kube-dns), so this pinhole is DNS-only — it does NOT
-    # re-open the rest of the cluster range.
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    # (2) Public internet ONLY. The except list removes every private and
-    # special-use range, so the partially tenant-authored chart code under
-    # validation can reach github + public dependency registries but never:
-    #   10.0.0.0/8     — cluster LAN (10.1.1.x), microk8s pod + service CIDRs,
-    #                    every in-cluster service
-    #   172.16.0.0/12  — private range (docker bridges etc.)
-    #   192.168.0.0/16 — private range (office/home LANs)
-    #   100.64.0.0/10  — CGNAT / VPN overlay range
-    #   169.254.0.0/16 — link-local incl. cloud metadata endpoints
-    # and then this cluster's own node addresses, which are the Manager
-    # (hostNetwork), the API server and the ingress controller's host ports,
-    # and which are inside none of the five above when the node's address is
-    # public. Nothing else may be added here: an entry is a hole the sandbox
-    # is not allowed to have.
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-              - 100.64.0.0/10
-              - 169.254.0.0/16
-              {{- range $nodeCidrs }}
-              - {{ . }}
-              {{- end }}
+{{ include "common.publicEgressFence" (dict "root" $ "name" "gate-egress-fence") }}
 ---
+{{- $nodeCidrs := .Values.global.nodeCidrs | default list }}
 {{/*
 gate-report-writer-apiserver — the ONE additive pinhole on top of the fence:
 the publish-report finally task must kubectl-apply the GateReport ConfigMap,
