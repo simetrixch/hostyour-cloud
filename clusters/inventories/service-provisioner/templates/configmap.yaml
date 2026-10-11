@@ -24,6 +24,8 @@ a foreign database is the platform (onboard-time validation + the
 ApplicationSet-injected mongodb.databases value), not a provisioner prefix; the
 provisioner trusts the literal names. The consumer still reads the names back from
 the Secret (MONGODB_DATABASES / the MONGODB_URI path) rather than re-deriving them.
+A database that leaves a mongodb claim's list is NEVER dropped for leaving alone: it goes only when the claim's
+drop annotation (DROP_ANNOTATION) names it too, and every other one is logged as an orphan and kept.
 A redis claim's .spec.keyPatterns is that same contract in redis' own words: the ACL
 user is granted EXACTLY those patterns and reads them back as REDIS_KEY_PATTERNS. A claim
 served by the consumer's own Redis names none and is granted every key (_redis_grant).
@@ -83,6 +85,13 @@ data:
     # release the finalizer on the next poll even if teardown keeps failing (the
     # orphan is still recorded LOUD). Freeform annotation ⇒ no CRD schema change.
     FORCE_RELEASE_ANNOTATION = "platform.hostyour.cloud/force-release"
+    # The databases of a mongodb claim that its owner wants DROPPED once they leave the claim's
+    # list: a comma-separated list of claim-level names, spelled as spec.databases spells them.
+    # The tenant's chart renders it from the registration's removedApps, which the Manager writes
+    # for a demo tenant's removed member and for a member it purged. A name that leaves the list
+    # without standing here is kept (_drop_left_databases), because a list shortened by a hand
+    # edit or a defect must never delete a customer's data.
+    DROP_ANNOTATION = "platform.hostyour.cloud/drop"
     # Bounded escape: after this many FAILED teardown passes we record the orphan
     # and release the finalizer anyway. A permanently-failing finalizer wedges the
     # namespace forever AND stalls the Manager offboard for its full 10-min watch
@@ -500,10 +509,40 @@ data:
                 out.append(doc)
         return out
 
+    def _drop_left_databases(core, spec, ns, claim, mongo, granted, dbs, own):
+        """Drop the databases that LEFT a mongodb claim's list, and only those its owner marked.
+
+        `granted` is what the claim's user holds readWrite on: the list the claim was served under
+        the last time, read off the server. A name in it that `dbs` (the list now) lacks has left.
+        Leaving proves no intent, so a database goes only when DROP_ANNOTATION names it too; any
+        other that left is logged as an orphan and kept. The mark holds claim-level names, which
+        _served_databases composes like the list itself, so the two compare like with like. Only
+        a database this very user was granted can go, so a mark never reaches another claim's data.
+
+        Returns the marked databases whose drop a RELOCATION holds back (the same hold
+        deprovision_mongodb honours: a move still reads them). The caller keeps their grants, so
+        the next poll finds them left again — a grant removed now would hide them from every later
+        poll and they would never be dropped. A failed read of the hold is not swallowed
+        (relocation_held says why): the claim goes to Error and nothing is dropped."""
+        left = [d for d in granted if d not in dbs]
+        marked = _served_databases(core, ns, [n.strip() for n in (spec.get("_drop") or "").split(",") if n.strip()], own)
+        for d in left:
+            if d not in marked:
+                log.info("orphan database %s of claim %s/%s: it left the list without the drop mark; kept", d, ns, claim)
+        due = [d for d in left if d in marked]
+        if due and relocation_held(core, ns):
+            for d in due:
+                log.info("drop of %s held: namespace %s is relocating", d, ns)
+            return due
+        for d in due:
+            # dropDatabase on a non-existent DB returns ok:1 — inherently idempotent.
+            mongo[d].command("dropDatabase")
+            log.info("dropped database %s of claim %s/%s: it left the list with the drop mark", d, ns, claim)
+        return []
+
     # ---- Backend handlers — each returns (payload_dict, secret_type) ------------
     def handle_mongodb(core, spec, ns, claim, user, password, prefix):
         from pymongo import MongoClient
-        from pymongo.errors import OperationFailure
         # The claim's own namespace first, the cluster's shared replica set otherwise —
         # _mongo_backend states the rule and is the ONLY place that decides it.
         host, root_pw, replica_set, own = _mongo_backend(core, ns)
@@ -518,14 +557,19 @@ data:
                             serverSelectionTimeoutMS=10000)
         try:
             admin = mongo[MONGO_AUTH_SOURCE]
-            try:
-                admin.command("createUser", user, pwd=password, roles=roles)
-                log.info("created mongo user %s", user)
-            except OperationFailure as exc:
-                if exc.code != 51003 and "already exists" not in str(exc).lower():
-                    raise
+            found = admin.command("usersInfo", user)["users"]
+            if found:
+                # An existing user holds what the claim was served under the last time. The drops
+                # come BEFORE the update, which takes the grants of what left away: afterwards
+                # nothing would say it had been served.
+                granted = [r["db"] for r in found[0].get("roles", []) if r["role"] == "readWrite"]
+                held = _drop_left_databases(core, spec, ns, claim, mongo, granted, dbs, own)
+                roles += [{"role": "readWrite", "db": d} for d in held]
                 admin.command("updateUser", user, pwd=password, roles=roles)
                 log.info("updated mongo user %s", user)
+            else:
+                admin.command("createUser", user, pwd=password, roles=roles)
+                log.info("created mongo user %s", user)
         finally:
             mongo.close()
         # Roles-only claims (no databases) get the PATH-LESS URI form so nothing
@@ -1102,6 +1146,8 @@ data:
 
         secret_name = spec.get("secretName") or ("%s-%s" % (name, service))
         spec["_secret_name"] = secret_name
+        # Carried on the spec like _secret_name: a handler takes its whole input from there.
+        spec["_drop"] = (meta.get("annotations") or {}).get(DROP_ANNOTATION, "")
         prefix = sanitize(ns, name)          # per-claim resource-name prefix (isolation)
         user = ("sp_" + prefix)[:63]         # sp_ marks every user this controller mints
         try:
