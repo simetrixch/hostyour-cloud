@@ -9,7 +9,7 @@
 # The tenants may stand on any cluster; the runner and the books stand on this one, so this file is
 # rendered only where the books are kept.
 #
-# THE HOST IS DERIVED HERE, from the same registration fields tenants-appset.yaml hands every member:
+# THE HOST IS DERIVED HERE, from the same registration fields tenants-appset.yaml hands every chart:
 # the tenant's own domain where it has one, else its zone. Every member of a tenant serves under a
 # path of that one host, so a run names the path.
 apiVersion: argoproj.io/v1alpha1
@@ -41,7 +41,7 @@ spec:
   goTemplate: true
   goTemplateOptions:
     - missingkey=error
-  generators:  # the git half of tenants-appset.yaml's matrix: one Application per registration and stage
+  generators:  # the generator of tenants-appset.yaml: one Application per registration and stage
     - git:
         repoURL: https://github.com/__DEPLOY_REPO__.git
         revision: __BOOKS_FQDN__
