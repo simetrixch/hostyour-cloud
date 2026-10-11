@@ -177,7 +177,7 @@ surface of the manager's onboarding adapters:
     the Manager writes it from that StatefulSet's own volumeClaimTemplate, so
     the restore job can mount it and the StatefulSet adopts it by name when it
     scales up. Cluster scope because the jobs run where their credentials are —
-    the mongodb namespace, a consumer's own namespace, a tenant member's —
+    the mongodb namespace, a consumer's own namespace, a tenant's —
     none known ahead of time. create and delete on secrets, and deliberately
     NOT get: the Storage Box credentials the job needs exist nowhere in the
     unit's namespace, so the manager places a Secret named after the job

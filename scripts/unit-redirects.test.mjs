@@ -47,8 +47,7 @@ const project = named('AppProject', 'unit-redirects');
 
 test('the redirects select exactly the registrations the units select', () => {
   assert.deepEqual(consumers.spec.generators, named('ApplicationSet', 'consumer-apps').spec.generators);
-  const [units] = named('ApplicationSet', 'tenants').spec.generators;
-  assert.deepEqual(tenants.spec.generators, [{git: units.matrix.generators[0].git, selector: units.selector}]);
+  assert.deepEqual(tenants.spec.generators, named('ApplicationSet', 'tenants').spec.generators);
 });
 
 // The template and its patch rendered once per parameter set, as the ApplicationSet controller

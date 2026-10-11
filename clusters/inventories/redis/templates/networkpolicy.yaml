@@ -6,7 +6,7 @@
 # carries. Admitted: platform namespaces by name (global.dataConsumerNamespaces),
 # namespaces carrying the REDIS-specific global.consumerLabels.redis=true — stamped
 # where the registration claims `redis` in services[] (consumers-appset
-# templatePatch), where a tenant member's own registration carries the label, and on
+# templatePatch), where a tenant's registration carries the label, and on
 # the service-provisioner's own namespace, which has to reach the port to write each
 # claim's ACL user — and same-namespace pods (metrics exporter). Any other workload
 # is denied. Calico-enforced.

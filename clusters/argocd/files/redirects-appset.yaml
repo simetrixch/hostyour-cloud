@@ -9,7 +9,7 @@
 # aliases and a consumer's fqdn never stood under the apex and keep answering as they do.
 #
 # THEIR OWN NAMESPACE AND PROJECT. A consumer's namespace admits an Ingress for its granted host
-# alone (clusters/units/admissionpolicy), and a tenant member's chart is the deploy repository's,
+# alone (clusters/units/admissionpolicy), and a tenant's charts are the deploy repository's,
 # so the redirects are no part of either: one Application per registration and stage renders
 # clusters/units/redirect into `unit-redirects`, selected exactly as the unit's own Application
 # is, so they come and go with the unit.
@@ -121,7 +121,7 @@ spec:
   goTemplate: true
   goTemplateOptions:
     - missingkey=error
-  generators:  # the git half of tenants-appset.yaml's matrix with its selector: one Application per registration and stage, not per member
+  generators:  # the generator of tenants-appset.yaml with its selector: one Application per registration and stage
     - git:
         repoURL: https://github.com/__DEPLOY_REPO__.git
         revision: __BOOKS_FQDN__
