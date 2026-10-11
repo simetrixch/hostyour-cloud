@@ -28,6 +28,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/check-tools"
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP/check-tools" gitleaks
           echo "$RUNNER_TEMP/check-tools" >> "$GITHUB_PATH"
+      - name: Install rule tester
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/prometheus.tar.gz" \
+            https://github.com/prometheus/prometheus/releases/download/v3.13.1/prometheus-3.13.1.linux-amd64.tar.gz
+          echo "962b812371aff838d152b6ff2d56fdb7a6396f5542f48ebf73421b9721f0d103  $RUNNER_TEMP/prometheus.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/check-tools"
+          tar -xzf "$RUNNER_TEMP/prometheus.tar.gz" -C "$RUNNER_TEMP/check-tools" --strip-components=1 prometheus-3.13.1.linux-amd64/promtool
+          echo "$RUNNER_TEMP/check-tools" >> "$GITHUB_PATH"
       - name: Local checks
         run: bash scripts/check.sh
       - name: Fixture suites
