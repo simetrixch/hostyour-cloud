@@ -423,6 +423,14 @@ spec:
           # saves nothing worth a claim: a cold install takes seconds.
           - name: pnpm-store
             emptyDir: {}
+          # The runtime gives a pod a 64 MiB tmpfs at /dev/shm. The engine suite
+          # of digita-platform keeps its MongoDB files there where it exists, and
+          # mongod refuses to run with less than 500 MiB free. A volume mounted
+          # over it is a directory of the node's disk, which has no size limit
+          # of its own: df shows the disk and the pod's memory limit is not
+          # charged for what the databases write.
+          - name: shm
+            emptyDir: {}
         steps:
           - name: check
             # ghcr.io/puppeteer/puppeteer: Node 24, git, bash, curl, and the
@@ -462,6 +470,8 @@ spec:
                 readOnly: true
               - name: pnpm-store
                 mountPath: /pnpm-store
+              - name: shm
+                mountPath: /dev/shm
             # Sized from the whole check.sh of the largest repository, every test
             # suite included and the install cold, under a CPU quota of 4 cores
             # and a memory cap of 4 GiB on a 32-core development machine: 8.75
@@ -477,6 +487,20 @@ spec:
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
+
+              # 1 GiB free in the workspace, in /tmp and in /dev/shm, measured
+              # before anything is installed and left in the log: a repository's
+              # test database refuses to run on less, and its failures then name
+              # the database and not the disk.
+              for dir in /workspace/source /tmp /dev/shm; do
+                usage="$(df -Pk "$dir")"
+                echo "$usage"
+                free_kib="$(echo "$usage" | awk 'NR==2 { print $4 }')"
+                if [ "$free_kib" -lt 1048576 ]; then
+                  echo "check: $dir has $free_kib KiB free, the check needs 1048576 KiB" >&2
+                  exit 1
+                fi
+              done
 
               # pnpm 11.7.0 is what the units' Dockerfiles activate. A unit
               # whose package.json names packageManager overrides it.
@@ -497,8 +521,9 @@ spec:
               # A unit that has no use for the variables ignores them.
               REPORT_CHROMIUM_PATH="$(ls /home/pptruser/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome | head -n 1)"
               export REPORT_CHROMIUM_PATH
-              # Root in a container cannot use Chrome's sandbox, and the pod's
-              # /dev/shm is 64 MiB.
+              # Root in a container cannot use Chrome's sandbox, and /dev/shm
+              # holds the databases of the engine suite, so Chrome keeps its
+              # shared memory in /tmp.
               export REPORT_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage
 
               if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; fi

@@ -40,9 +40,11 @@ helm dependency update clusters/inventories/redis
 helm dependency update clusters/units/redis
 node --test scripts/redis-maxmemory.test.mjs || fail 'scripts/redis-maxmemory.test.mjs'
 node --test scripts/coredns-cache.test.mjs || fail 'scripts/coredns-cache.test.mjs'
+echo 'test: tenant appset — one Application, one namespace and one project per tenant stage, every chart handed the whole member set.'
+node --test scripts/tenant-appset.test.mjs || fail 'scripts/tenant-appset.test.mjs'
 echo 'test: tenant size — every registration renders, with the word or without it.'
 node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
-echo 'test: tenant own domain aliases — every member gets the list, or [] without one.'
+echo 'test: tenant own domain aliases — every chart gets the list, or [] without one.'
 node --test scripts/tenant-own-domain-aliases.test.mjs || fail 'scripts/tenant-own-domain-aliases.test.mjs'
 node --test scripts/tenant-display-name.test.mjs || fail 'scripts/tenant-display-name.test.mjs'
 echo 'test: tekton feature flags — a refresh of the vendored manifest keeps coschedule disabled and the build plane alert stands.'

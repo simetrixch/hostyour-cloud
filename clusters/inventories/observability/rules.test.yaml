@@ -1,0 +1,48 @@
+# `promtool test rules` over this chart's PrometheusRules as they render. scripts/check.sh sets
+# rule_files to the rules of each stage's render before it runs this file, so it names none here.
+#
+# EVERY TEST READS ALERTS, NOT alert_rule_test: alert_rule_test compares the annotations byte for
+# byte, so a reworded description would turn a test red while the rule is right. ALERTS carries
+# the labels alone, and an alert on a cluster the test does not expect is a sample it did not
+# expect, so one test proves both the alert and the silence.
+evaluation_interval: 1m
+tests:
+  - name: PodStuckPending alerts on the cluster where the pod is stuck, not on another cluster that runs a pod of the same name
+    interval: 1m
+    input_series:
+      # On apps1 the pod waits for a reason no other rule of the group reports.
+      - series: kube_pod_status_phase{cluster="apps1", namespace="shop", pod="web-0", phase="Pending"}
+        values: 1x30
+      - series: kube_pod_container_status_waiting_reason{cluster="apps1", namespace="shop", pod="web-0", container="web", reason="CreateContainerConfigError"}
+        values: 1x30
+      # On apps2 the pod of the same name waits in ContainerCreating, which PodStuckContainerCreating reports.
+      - series: kube_pod_status_phase{cluster="apps2", namespace="shop", pod="web-0", phase="Pending"}
+        values: 1x30
+      - series: kube_pod_container_status_waiting_reason{cluster="apps2", namespace="shop", pod="web-0", container="web", reason="ContainerCreating"}
+        values: 1x30
+    promql_expr_test:
+      - expr: ALERTS{alertname="PodStuckPending"}
+        eval_time: 20m
+        exp_samples:
+          - labels: ALERTS{alertname="PodStuckPending", alertstate="firing", cluster="apps1", namespace="shop", pod="web-0", phase="Pending", severity="warning"}
+            value: 1
+
+  - name: PodNotReady alerts on the cluster where the running pod is not ready, not on another cluster that runs a pod of the same name
+    interval: 1m
+    input_series:
+      # On apps1 the pod is Running and not ready.
+      - series: kube_pod_status_ready{cluster="apps1", namespace="shop", pod="web-0", condition="true"}
+        values: 0x30
+      - series: kube_pod_status_phase{cluster="apps1", namespace="shop", pod="web-0", phase="Running"}
+        values: 1x30
+      # On apps2 the pod of the same name is not ready because it is not Running yet.
+      - series: kube_pod_status_ready{cluster="apps2", namespace="shop", pod="web-0", condition="true"}
+        values: 0x30
+      - series: kube_pod_status_phase{cluster="apps2", namespace="shop", pod="web-0", phase="Running"}
+        values: 0x30
+    promql_expr_test:
+      - expr: ALERTS{alertname="PodNotReady"}
+        eval_time: 20m
+        exp_samples:
+          - labels: ALERTS{alertname="PodNotReady", alertstate="firing", cluster="apps1", condition="true", namespace="shop", pod="web-0", severity="warning"}
+            value: 1
