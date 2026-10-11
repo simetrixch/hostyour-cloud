@@ -64,11 +64,12 @@ test('a target without a host is refused', () => {
 });
 
 // THE RUN: the Task as master renders it, with a pin standing in for the release's.
-const runner = helm('e2e-runner', 'clusters/inventories/e2e-runner', '--namespace', 'e2e-runner',
+const runnerArgs = ['e2e-runner-prod', 'clusters/inventories/e2e-runner', '--namespace', 'e2e-runner',
   '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml',
   '-f', 'clusters/inventories/e2e-runner/values-common.yaml', '-f', 'clusters/inventories/e2e-runner/values-prod.yaml',
   '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/installation-values.yaml',
-  '--set-string', 'builds[0].name=digita-testkit-e2e,builds[0].image=digita-testkit-e2e,builds[0].tag=0.1.0');
+  '--set-string', 'builds[0].name=digita-testkit-e2e,builds[0].image=digita-testkit-e2e,builds[0].tag=0.1.0'];
+const runner = helm(...runnerArgs);
 const task = () => {
   assert.equal(runner.status, 0, runner.stderr);
   return yaml('select(.kind == "Task" and .metadata.name == "run-case")', runner.stdout);
