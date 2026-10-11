@@ -1,0 +1,10 @@
+apiVersion: v2
+name: trust-manager-bundles
+version: 1.0.0
+description: |
+  The trust bundle platform-trust, which trust-manager writes into the ConfigMap every namespace
+  reads, in the form of the cluster issuer.
+
+  A chart of its own, beside trust-manager, because a Bundle can only be created once the release
+  that brings its CustomResourceDefinition and its admission webhook answers: Helm maps every object
+  of a release before it creates any, so one release holding both cannot install on a new cluster.
