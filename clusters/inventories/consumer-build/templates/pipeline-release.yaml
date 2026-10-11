@@ -57,9 +57,9 @@ version and let the next bump overwrite it. The charts stay product on the
 trunk; the pin goes to the books branch beside the tenant registrations.
 
 THE SYNC FOLLOWS THE SAME DERIVATION: a class-(a) hit is the unit's own
-Application; a class-(b) hit is a deploy repository chart that tenant member
-Applications render, and WHICH member Applications is derived from the tenant
-ApplicationSets + the registrations on the books branch, never from a member
+Application; a class-(b) hit is a deploy repository chart that tenant
+Applications render, and WHICH tenant Applications is derived from the tenant
+ApplicationSets + the registrations on the books branch, never from a tenant
 list; a class-(c) hit is the master's own Application of the inventory,
 `<inventory>-<S>` in ns argocd, as the platform-apps ApplicationSet names it.
 Class-(d) pins move no tenant and are not synced from here: the tenant's
@@ -537,7 +537,7 @@ spec:
     # Step 1 searches the three carrier classes for every declared image,
     # writes the pins and derives the Applications each hit reaches; step 2
     # pokes ArgoCD for those Applications — the unit's own for a class-(a)
-    # hit, the tenant member Applications for a class-(b) hit. The two
+    # hit, the tenant Applications for a class-(b) hit. The two
     # platform PATs live ONLY in this task (bump-git-https), and the task
     # runs no unit code.
     - name: bump
@@ -1243,10 +1243,10 @@ spec:
               fi
 
               # ── tenant hits: who renders a bumped deploy repository chart ──
-              # A class-(b) hit changes a chart that tenant member Applications
+              # A class-(b) hit changes a chart that tenant Applications
               # render. WHICH Applications is derived, never listed: the
               # tenant ApplicationSets under clusters/argocd/files/ state which
-              # member sources which chart and how its Application is named,
+              # tenant sources which chart and how its Application is named,
               # and the tenant registrations state which tenants exist on which
               # cluster. Those registrations are NOT on the deploy repository's trunk —
               # the Manager writes them onto this installation's books
@@ -1256,10 +1256,10 @@ spec:
               # which is also when nothing was pinned.
               # Each appset's template is evaluated
               # with helm's go-template engine against the generator's own
-              # param set — the registration's flat fields, plus the file-path
+              # param set — the registration's fields, plus the file-path
               # metadata and the derived values.guid the generator adds, one
-              # render per apps[] element for a matrix appset — so a new
-              # member appset or a new tenant is picked up with no edit here.
+              # render per registration — so a new tenant appset or a new
+              # tenant is picked up with no edit here.
               # The trunk appsets are read (the per-cluster selector is only
               # WHERE an Application lives, which the registration's cluster
               # field answers for the sync below).
@@ -1267,11 +1267,11 @@ spec:
                 SIM="${WORK}/appset-sim"
                 mkdir -p "${SIM}/templates"
                 printf 'apiVersion: v2\nname: appset-sim\nversion: 0.0.0\n' > "${SIM}/Chart.yaml"
-                # render_member <appset file> <params file> — the Application
+                # render_application <appset file> <params file> — the Application
                 # name and its chart sources, rendered as the generator would.
                 # The brace escapes keep the with/end wrapper OUT of this
                 # chart's own render and IN the emitted sim template.
-                render_member() {
+                render_application() {
                   { printf '{{ "{{" }}- define "app" -}}\n'
                     yq eval '.spec.template' "$1"
                     printf '{{ "{{" }}- end -}}\n{{ "{{" }} include "app" .Values.params }}\n'
@@ -1290,7 +1290,7 @@ spec:
                 # the template and not the generator, so it hands values.stage
                 # for the stage being bumped in the params below, beside the
                 # guid the generator would derive the same way. The Application
-                # name is then "<guid>-<member>-<stage>", which the shape check
+                # name is then "<guid>-<stage>", which the shape check
                 # holds. The six markers of this tree (__CLUSTER_NAME__,
                 # __BOOKS_FQDN__, __DEPLOY_REPO__, __BRANCH__, __FQDN__ and
                 # __ARGOCD_NAMESPACE__) stand in the generator, the selector,
@@ -1304,78 +1304,57 @@ spec:
                   # platform/tenant; every other appset in the directory is
                   # not a tenant carrier.
                   [ -n "$(yq eval '.spec.template.metadata.labels."platform/tenant" // ""' "${as}")" ] || continue
-                  matrix="$(yq eval '.spec.generators[0] | has("matrix")' "${as}")"
-                  # Which registration list the matrix fans out over, read off the
-                  # appset itself: elementsYaml is a template action over one field.
-                  LEG=""
-                  if [ "${matrix}" = "true" ]; then
-                    LEG="$(yq eval '.spec.generators[0].matrix.generators[1].list.elementsYaml // ""' "${as}" \
-                           | sed -nE 's/^.*\{\{[[:space:]]*\.([A-Za-z0-9_]+)[[:space:]]*\|.*$/\1/p')"
-                    [ -n "${LEG}" ] || { echo "bump: FAIL — ${asname} is a matrix whose list leg names no registration field; the tenant reach cannot be derived" >&2; exit 1; }
-                  fi
                   [ -n "${TENANT_REGS}" ] || continue
                   for reg in "${TENANT_REGS}"/*/"${STAGE}.yaml"; do
                     [ -f "${reg}" ] || continue
                     guid="$(basename "$(dirname "${reg}")")"
                     rcluster="$(yq eval '.cluster' "${reg}")"
-                    if [ -n "${LEG}" ]; then
-                      IDX="$(seq 0 $(( $(yq eval ".${LEG} | length" "${reg}") - 1 )))"
-                    else
-                      IDX="-"
+                    PARAMS="${WORK}/params.yaml"
+                    yq eval ". as \$r | {\"params\": (\$r * {\"values\": {\"guid\": \"${guid}\", \"stage\": \"${STAGE}\"}, \"path\": {\"segments\": [\"registrations\", \"${guid}\"], \"filename\": \"${STAGE}.yaml\"}})}" \
+                      "${reg}" > "${PARAMS}"
+                    RENDERED="$(render_application "${as}" "${PARAMS}")"
+                    # Three resolution checks guard the sync decision, and the
+                    # Application name plus the source paths are all of the
+                    # render it consumes. An unconsumed template action would
+                    # leave braces behind; an unfilled marker would leave its
+                    # own text; and a param helm could not resolve leaves a GAP,
+                    # because helm strips the missing-key marker from every
+                    # render — which is why the third check is the name's
+                    # <guid>-<stage> shape and not marker text.
+                    if printf '%s' "${RENDERED}" | grep -qE '[{][{]'; then
+                      echo "bump: FAIL — ${asname} left unrendered template actions against ${reg#"${WORK}/"} — the tenant sync cannot be derived:" >&2
+                      printf '%s\n' "${RENDERED}" | grep -nE '[{][{]' >&2
+                      exit 1
                     fi
-                    for i in ${IDX}; do
-                      PARAMS="${WORK}/params.yaml"
-                      if [ "${i}" = "-" ]; then
-                        yq eval ". as \$r | {\"params\": (\$r * {\"values\": {\"guid\": \"${guid}\", \"stage\": \"${STAGE}\"}, \"path\": {\"segments\": [\"registrations\", \"${guid}\"], \"filename\": \"${STAGE}.yaml\"}})}" \
-                          "${reg}" > "${PARAMS}"
-                      else
-                        yq eval ". as \$r | {\"params\": ((\$r * .${LEG}[${i}]) * {\"values\": {\"guid\": \"${guid}\", \"stage\": \"${STAGE}\"}, \"path\": {\"segments\": [\"registrations\", \"${guid}\"], \"filename\": \"${STAGE}.yaml\"}})}" \
-                          "${reg}" > "${PARAMS}"
-                      fi
-                      RENDERED="$(render_member "${as}" "${PARAMS}")"
-                      # Three resolution checks guard the sync decision, and the
-                      # Application name plus the source paths are all of the
-                      # render it consumes. An unconsumed template action would
-                      # leave braces behind; an unfilled marker would leave its
-                      # own text; and a param helm could not resolve leaves a GAP,
-                      # because helm strips the missing-key marker from every
-                      # render — which is why the third check is the name's
-                      # <guid>-<member>-<stage> shape and not marker text.
-                      if printf '%s' "${RENDERED}" | grep -qE '[{][{]'; then
-                        echo "bump: FAIL — ${asname} left unrendered template actions against ${reg#"${WORK}/"} — the tenant sync cannot be derived:" >&2
-                        printf '%s\n' "${RENDERED}" | grep -nE '[{][{]' >&2
-                        exit 1
-                      fi
-                      ANAME="$(printf '%s\n' "${RENDERED}" | yq eval-all 'select(.metadata != null) | .metadata.name')"
-                      APATHS="$(printf '%s\n' "${RENDERED}" | yq eval-all 'select(.spec.sources != null) | .spec.sources[].path // ""')"
-                      # A marker still standing in one of those two values is an
-                      # unanswered value rather than a mismatch: the name would
-                      # name no Application and the path would match no chart,
-                      # and either takes the reach to empty with nothing said.
-                      # The markers in the source repoURLs and targetRevisions
-                      # are not read here and are left where they are.
-                      if printf '%s\n%s\n' "${ANAME}" "${APATHS}" | grep -q '__[A-Z][A-Z_]*__'; then
-                        echo "bump: FAIL — ${asname} rendered an unfilled __MARKER__ into a value the tenant reach reads against ${reg#"${WORK}/"} — name '${ANAME}', source paths:" >&2
-                        printf '%s\n' "${APATHS}" >&2
-                        exit 1
-                      fi
-                      case "${ANAME}" in
-                        "${guid}"-?*-"${STAGE}") ;;
-                        *)
-                          echo "bump: FAIL — ${asname} derived Application name '${ANAME}' against ${reg#"${WORK}/"}, not <guid>-<member>-<stage> — a generator param did not resolve" >&2
-                          exit 1 ;;
-                      esac
-                      # A member is reached by a class-(b) hit on a chart it
-                      # renders.
-                      HIT=0
-                      for C in ${BUMPED_CHARTS}; do
-                        if printf '%s\n' "${APATHS}" | grep -qx "charts/${C}"; then HIT=1; fi
-                      done
-                      if [ "${HIT}" = "1" ]; then
-                        grep -qxF "tenant ${ANAME} ${rcluster}" "${HITS_FILE}" \
-                          || echo "tenant ${ANAME} ${rcluster}" >> "${HITS_FILE}"
-                      fi
+                    ANAME="$(printf '%s\n' "${RENDERED}" | yq eval-all 'select(.metadata != null) | .metadata.name')"
+                    APATHS="$(printf '%s\n' "${RENDERED}" | yq eval-all 'select(.spec.sources != null) | .spec.sources[].path // ""')"
+                    # A marker still standing in one of those two values is an
+                    # unanswered value rather than a mismatch: the name would
+                    # name no Application and the path would match no chart,
+                    # and either takes the reach to empty with nothing said.
+                    # The markers in the source repoURLs and targetRevisions
+                    # are not read here and are left where they are.
+                    if printf '%s\n%s\n' "${ANAME}" "${APATHS}" | grep -q '__[A-Z][A-Z_]*__'; then
+                      echo "bump: FAIL — ${asname} rendered an unfilled __MARKER__ into a value the tenant reach reads against ${reg#"${WORK}/"} — name '${ANAME}', source paths:" >&2
+                      printf '%s\n' "${APATHS}" >&2
+                      exit 1
+                    fi
+                    case "${ANAME}" in
+                      "${guid}-${STAGE}") ;;
+                      *)
+                        echo "bump: FAIL — ${asname} derived Application name '${ANAME}' against ${reg#"${WORK}/"}, not <guid>-<stage> — a generator param did not resolve" >&2
+                        exit 1 ;;
+                    esac
+                    # A tenant is reached by a class-(b) hit on a chart it
+                    # renders.
+                    HIT=0
+                    for C in ${BUMPED_CHARTS}; do
+                      if printf '%s\n' "${APATHS}" | grep -qx "charts/${C}"; then HIT=1; fi
                     done
+                    if [ "${HIT}" = "1" ]; then
+                      grep -qxF "tenant ${ANAME} ${rcluster}" "${HITS_FILE}" \
+                        || echo "tenant ${ANAME} ${rcluster}" >> "${HITS_FILE}"
+                    fi
                   done
                 done
               fi
@@ -1449,8 +1428,8 @@ spec:
           # what the onboarding argo-sync grant admits (resourceNames
           # <unit>-dev/-test/-prod in the unit's argoNamespace); a foreign
           # registration's hit is left to ArgoCD's own poll and said so.
-          # Tenant hits carry the full member Application name
-          # <guid>-<member>-<stage>: the create-tenant run put it in the
+          # Tenant hits carry the full tenant Application name
+          # <guid>-<stage>: the create-tenant run put it in the
           # tenant grant's resourceNames, so the patch reaches exactly that
           # one Application — "sync that one namespace only".
           #
@@ -1597,8 +1576,8 @@ spec:
                     app="${rname}-${STAGE}"
                     ;;
                   tenant)
-                    # rname is already the full member Application name
-                    # <guid>-<member>-<stage>, as the bump derived it.
+                    # rname is already the full tenant Application name
+                    # <guid>-<stage>, as the bump derived it.
                     app="${rname}"
                     ;;
                   platform)

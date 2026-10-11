@@ -541,6 +541,74 @@ test('the memory limits of all ci pods and one release together fit the free mem
   assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, release, heavy), 'PLANTED DEFECT: a raised limit of the buildah build step is caught');
 });
 
+// The engine suite of a repository keeps its MongoDB files in /dev/shm where that exists, and mongod refuses to run with
+// less than 500 MiB free, so the check step needs 1 GiB in the workspace, in /tmp and in /dev/shm. A path the pod spec
+// gives no volume is the container's own: /tmp is its writable layer on the node's disk, and /dev/shm is the 64 MiB tmpfs
+// the runtime mounts. A volume sized by its sizeLimit has that size; one without a sizeLimit is the node's disk.
+const MIN_FREE = BYTES.Gi, RUNTIME_SHM = 64 * BYTES.Mi;
+const storageShort = (run, check) => {
+  const claim = run.spec.workspaces.find((w) => w.name === 'source').volumeClaimTemplate.spec.resources.requests.storage;
+  const sizeAt = (path, fallback) => {
+    const mount = check.taskSpec.steps[0].volumeMounts?.find((m) => m.mountPath === path);
+    const volume = mount && check.taskSpec.volumes.find((v) => v.name === mount.name);
+    return !volume ? fallback : volume.emptyDir.sizeLimit ? quantity(volume.emptyDir.sizeLimit) : Infinity;
+  };
+  return Object.entries({workspace: quantity(claim), '/tmp': sizeAt('/tmp', Infinity), '/dev/shm': sizeAt('/dev/shm', RUNTIME_SHM)})
+    .filter(([, bytes]) => bytes < MIN_FREE).map(([path]) => path);
+};
+
+test('the ci check has 1 GiB in its workspace, in /tmp and in /dev/shm', () => {
+  const run = createdCiRun(imageBuilder());
+  const check = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'check');
+  assert.deepEqual(storageShort(run, check), [], 'PLANTED INNOCENT: the run and the check step as they stand');
+  const withVolume = (path, emptyDir) => {
+    const planted = structuredClone(check), name = `planted-${path.replaceAll('/', '')}`;
+    planted.taskSpec.volumes = [...planted.taskSpec.volumes.filter((v) => v.name !== name), {name, emptyDir}];
+    planted.taskSpec.steps[0].volumeMounts = [...planted.taskSpec.steps[0].volumeMounts.filter((m) => m.mountPath !== path), {name, mountPath: path}];
+    return planted;
+  };
+  const withoutMount = (path) => {
+    const planted = structuredClone(check);
+    planted.taskSpec.steps[0].volumeMounts = planted.taskSpec.steps[0].volumeMounts.filter((m) => m.mountPath !== path);
+    return planted;
+  };
+  assert.deepEqual(storageShort(run, withoutMount('/dev/shm')), ['/dev/shm'], 'PLANTED DEFECT: no volume at /dev/shm leaves the 64 MiB tmpfs of the runtime');
+  const workspace = structuredClone(run);
+  workspace.spec.workspaces[0].volumeClaimTemplate.spec.resources.requests.storage = '512Mi';
+  assert.deepEqual(storageShort(workspace, check), ['workspace'], 'PLANTED DEFECT: a workspace claim of 512Mi');
+  assert.deepEqual(storageShort(run, withVolume('/tmp', {sizeLimit: '256Mi'})), ['/tmp'], 'PLANTED DEFECT: /tmp on a volume of 256Mi');
+  assert.deepEqual(storageShort(run, withVolume('/dev/shm', {sizeLimit: '45Mi'})), ['/dev/shm'], 'PLANTED DEFECT: /dev/shm on a volume of 45Mi');
+  assert.deepEqual(storageShort(run, withVolume('/dev/shm', {})), [], 'PLANTED INNOCENT: /dev/shm on an unsized volume of the node disk');
+});
+
+// The lines of the check step before the tools are installed, run with a df that reports a short path as 45 MB free.
+const runStorageGuard = (guard, shortPath) => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-storage-')), bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'df'), '#!/usr/bin/env bash\n' +
+    'echo "Filesystem 1024-blocks Used Available Capacity Mounted on"\n' +
+    `if [ "$2" = "${shortPath}" ]; then free=43908; else free=789012345; fi\n` +
+    'echo "stub 800000000 1 $free 1% $2"\n');
+  chmodSync(join(bin, 'df'), 0o755);
+  const result = spawnSync('bash', ['-euo', 'pipefail', '-c', guard], {env: {...process.env, PATH: `${bin}:${process.env.PATH}`}, encoding: 'utf8'});
+  rmSync(root, {recursive: true, force: true});
+  return result;
+};
+
+test('the ci check prints the free space of its workspace, /tmp and /dev/shm, and stops before the tools when one is under 1 GiB', () => {
+  const script = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].script;
+  const lines = script.split('\n');
+  const guard = lines.slice(0, lines.findIndex((line) => line.includes('corepack enable'))).join('\n');
+  const roomy = runStorageGuard(guard, 'none');
+  assert.equal(roomy.status, 0, 'PLANTED INNOCENT: 1 GiB or more free everywhere passes');
+  for (const path of ['/workspace/source', '/tmp', '/dev/shm']) {
+    assert.ok(roomy.stdout.includes(path), `the log shows the free space of ${path}`);
+    const short = runStorageGuard(guard, path);
+    assert.notEqual(short.status, 0, `PLANTED DEFECT: 45 MB free in ${path} stops the step`);
+    assert.ok(short.stderr.includes(path), `the message names ${path}`);
+  }
+});
+
 test('the egress policy of a build namespace selects every pod of it', () => {
   const policy = (docs) => docs.find((d) => d.kind === 'NetworkPolicy' && d.metadata.name === 'build-egress');
   const exempts = (doc) => Object.keys(doc.spec.podSelector ?? {}).length > 0;

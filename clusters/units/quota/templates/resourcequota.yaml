@@ -1,8 +1,8 @@
 {{- /*
 The unit's ceiling. ONE ResourceQuota over the whole namespace — not one per
 workload — because the namespace IS the unit: a consumer's namespace holds its
-chart plus, when it claims postgresql, its own database; a tenant member's holds
-that member's charts. What the unit may take is a property of the unit, so it is
+chart plus, when it claims postgresql, its own database; a tenant's holds
+all the charts of the tenant at that stage. What the unit may take is a property of the unit, so it is
 stated once.
 
 EVERY FIGURE IS `required`. The values.yaml header says why there is no default:

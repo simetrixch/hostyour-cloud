@@ -33,16 +33,6 @@ registration:
 # what a cluster carrying the master part answers; on a pure slave the ApplicationSet fills the
 # slave's own short name instead.
 argoNamespace: argocd
-tenant:
-  guid: 00000000-0000-0000-0000-000000000000
-  member: check
-  appName: check
-  appsImage: ""
-  appsImageTag: ""
-  subdomain: check
-  stage: dev
-  # The tenant\'s zone, as clusters/argocd/files/tenants-appset.yaml delivers it: `<subdomain>.<stage apex>`.
-  zone: check.dev.check.example.invalid
 quota:
   requestsCpu: "1"
   requestsMemory: 1Gi

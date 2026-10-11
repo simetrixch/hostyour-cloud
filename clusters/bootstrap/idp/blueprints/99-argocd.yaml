@@ -46,7 +46,8 @@ entries:
       redirect_uris:
         - matching_mode: strict
           url: !Format ["https://argo.%s/auth/callback", !Env IDP_DOMAIN]
-      access_token_validity: hours=1
+      # The ID token lives as long as this and is the operator's session: at least a day (scripts/operator-sign-in-length.test.mjs).
+      access_token_validity: hours=24
       refresh_token_validity: days=30
       sub_mode: hashed_user_id
       include_claims_in_id_token: true

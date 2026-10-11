@@ -436,8 +436,7 @@ spec:
         #    policy is the gap this closes, so a consumer that claims no service is
         #    exactly the case that must not be skipped. It rides in the consumer's OWN
         #    Application so it is created, healed and pruned with the namespace it
-        #    protects. The tenant-sibling rule its values.yaml carries stays off for a
-        #    consumer, which is one namespace with no siblings.
+        #    protects.
         #
         #    A $values FILE ONLY FOR A UNIT THAT DECLARES AN SMTP ENTRY. The fence then
         #    admits the entry's port from the books cluster's tailnet address, because the

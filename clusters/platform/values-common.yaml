@@ -237,8 +237,8 @@ global:
   #             gains nothing by carrying it.
   #   redis   — stamped ONLY where the registration claims `redis` in
   #             services[] (consumers-appset templatePatch), on the tenant
-  #             member whose own registration carries the label (the tenant
-  #             appset stamps a member's namespaceLabels and names none
+  #             namespace whose registration carries the label (the tenant
+  #             appset stamps the registration's namespaceLabels and names none
   #             itself), and on clusters/inventories/service-provisioner's own
   #             namespace, which has to reach :6379 to write each claim's ACL
   #             user. The password is a SECOND boundary, never a replacement

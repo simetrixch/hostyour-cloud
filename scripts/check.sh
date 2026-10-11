@@ -21,9 +21,10 @@ fail() { echo "check: FAIL — $1"; exit 1; }
 # All of them up front. Each is needed by a later step, and finding the third one missing after
 # the first two have run costs a minute for an answer that was knowable at the start.
 #
-# base64 decodes rendered values; yq reads the version stamp declarations.
+# base64 decodes rendered values; yq reads the version stamp declarations; promtool runs the rule
+# tests.
 missing=""
-for tool in helm gitleaks base64 yq node; do
+for tool in helm gitleaks base64 yq node promtool; do
   command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
 done
 [ -n "$missing" ] && fail "these tools are not on this path:$missing"
@@ -396,6 +397,21 @@ if [ "$off_reported" != "$off_expected" ]; then
 fi
 echo "check: the counter-probe reports both planted sources of this repository at a branch and not the planted innocent."
 
+# A CHART THAT CARRIES rules.test.yaml HAS IT RUN OVER ITS OWN RENDER, so the test reads the rules
+# that reach the cluster and not the values they are written in. The .spec of every PrometheusRule
+# goes to a file of its own, because two objects may carry one group name and one rule file
+# refuses that. $1 is the render of $chart at $stage. Adds the chart and the stage to $rule_tests.
+collect_rule_test() {
+  [ -f "$chart/rules.test.yaml" ] || return 0
+  local dir="$work/rules/$name/$stage"
+  mkdir -p "$dir" && printf '%s\n' "$1" > "$dir/render" \
+    && (cd "$dir" && yq eval-all -N -s '"rule-" + $index' 'select(.kind == "PrometheusRule") | .spec' render) \
+    && yq '.rule_files = ["rule-*.yml"]' "$chart/rules.test.yaml" > "$dir/rules.test.yaml" \
+    || fail "the rule test of $name at stage $stage could not be prepared"
+  rule_tests="$rule_tests
+$chart $stage"
+}
+
 # ── 1. The charts ───────────────────────────────────────────────────────────────────────────
 echo "check: rendering every chart under clusters/inventories, clusters/units and clusters/slaves, and clusters/argocd."
 
@@ -409,6 +425,7 @@ expressions=""
 disagreeing=""
 plain_http=""
 off_revision=""
+rule_tests=""
 
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
 # renders the manifests of clusters/argocd/files from the cluster map, and it is the only
@@ -466,6 +483,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_disagreeing "$name at stage $stage" "$trunk_only"
       collect_plain_http "$name at stage $stage" "$trunk_only"
       collect_off_revision "$name at stage $stage" "$trunk_only"
+      collect_rule_test "$trunk_only"
       check_immutable_render "$trunk_only"
       continue
     fi
@@ -480,6 +498,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_disagreeing "$name at stage $stage" "$out"
       collect_plain_http "$name at stage $stage" "$out"
       collect_off_revision "$name at stage $stage" "$out"
+      collect_rule_test "$out"
       check_immutable_render "$out"
       case " $needed_standin " in
         *" $name "*) ;;
@@ -502,6 +521,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_disagreeing "$name at stage $stage" "$out"
       collect_plain_http "$name at stage $stage" "$out"
       collect_off_revision "$name at stage $stage" "$out"
+      collect_rule_test "$out"
       check_immutable_render "$out" --set global.placeholderTag=check-takes-the-placeholder-for-a-tag
       awaiting_release="$awaiting_release $name at $stage,"
       continue
@@ -564,6 +584,43 @@ if [ -n "$off_revision" ]; then
   fail "a source or a generator of this repository is off the handed revision"
 fi
 echo "check: every source and generator of this repository in clusters/argocd, clusters/slaves/slave and clusters/inventories/consumer-build stands at the handed revision."
+
+# ── The rule tests, over the rules as they render ────────────────────────────────────────────
+# PROMTOOL ANSWERS FOR THE MASTER'S PROMETHEUS ONLY AT ITS VERSION, which is read from the render
+# the tests run over and is pinned nowhere else. A chart upgrade that moves Prometheus turns this
+# red until promtool follows it.
+prometheus_version="$(yq eval-all -N 'select(.kind == "Prometheus") | .spec.version' "$work"/rules/*/*/render | sed 's/^v//; s/-.*//' | sort -u)"
+promtool_version="$(promtool --version | sed -n '1s/^promtool, version \([^ ]*\).*/\1/p')"
+[ -n "$prometheus_version" ] && [ "$promtool_version" = "$prometheus_version" ] \
+  || fail "promtool is ${promtool_version:-of a version it does not state}, and the master's Prometheus runs ${prometheus_version:-at a version no render states}"
+echo "check: promtool $promtool_version, the version of the master's Prometheus."
+
+# promtool names a failing test case by its expression and time; the test group it stands in is
+# named only in its JUnit report.
+while read -r test_chart test_stage; do
+  [ -n "$test_chart" ] || continue
+  test_dir="$work/rules/$(basename "$test_chart")/$test_stage"
+  if ! out="$(cd "$test_dir" && promtool test rules --junit=junit.xml rules.test.yaml 2>&1)"; then
+    echo "$out"
+    failing_groups="$(yq -p xml -oy '.. | select(has("failure")) | "  " + ."+@name"' "$test_dir/junit.xml")"
+    [ -n "$failing_groups" ] && printf 'These test groups of %s/rules.test.yaml fail at stage %s:\n%s\n' "$test_chart" "$test_stage" "$failing_groups"
+    fail "the rule test $test_chart/rules.test.yaml fails at stage $test_stage"
+  fi
+  echo "check: the rule test $test_chart/rules.test.yaml passes at stage $test_stage."
+done <<< "$rule_tests"
+
+# THE PLANTED DEFECT is the join across clusters the test was written for: the dev rules run once
+# more with cluster taken out of PodNotReady's `on (cluster, namespace, pod)`, and that run fails.
+planted="$work/rules-planted"
+cp -R "$work/rules/observability/dev" "$planted" \
+  || fail "the planted run of the rule test needs the rules of observability at stage dev"
+planted_rules="$(grep -l 'alert: PodNotReady' "$planted"/rule-*.yml)" \
+  && yq -i '(.groups[].rules[] | select(.alert == "PodNotReady") | .expr) |= sub("on [(]cluster, namespace, pod[)]"; "on (namespace, pod)")' "$planted_rules" \
+  || fail "PodNotReady could not be planted with cluster taken out of its on list"
+if (cd "$planted" && promtool test rules rules.test.yaml >/dev/null 2>&1); then
+  fail "the rule test clusters/inventories/observability/rules.test.yaml passes at stage dev with cluster taken out of PodNotReady's on (cluster, namespace, pod), so it cannot catch a join across clusters, or PodNotReady carries that on list no more"
+fi
+echo "check: the rule test goes red at stage dev with cluster taken out of PodNotReady's on (cluster, namespace, pod)."
 
 # ── clusters/argocd as ArgoCD is handed it: the cluster map ALONE ────────────────────────────
 # THE LOOP ABOVE RENDERS IT WITH THE PLATFORM CHAIN, AND NO CLUSTER EVER DOES. clusters/argocd is
@@ -948,7 +1005,7 @@ echo "check: every yaml_value stamp site of this tree holds its pin from cluster
 echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
-for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
+for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-appset-fixture.mjs scripts/tenant-appset.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in public GitHub Actions.'
@@ -956,6 +1013,7 @@ echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in p
 echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in public GitHub Actions.'
+echo 'check: NOT RUN locally — scripts/tenant-appset.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in public GitHub Actions.'
