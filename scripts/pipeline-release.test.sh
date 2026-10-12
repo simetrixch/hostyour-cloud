@@ -373,12 +373,14 @@ for fn in engine_image bundle_members check_members; do
   . "$work/$fn.sh"
 done
 
-# engine_image: the stage's pin of the engine build the bundle names, on the bundle's line.
+# engine_image: the stage's pin of the engine build the bundle names, on the bundle's line. It reads the
+# manifest the engine reads at the root of the tagged tree: tenant.yaml, then catalog.yaml, and apps.yaml
+# only for the older layout.
 STAGE=prod; BOOKS_BRANCH=install.example.test; REGISTRY=registry.example.test
 engine_books="$work/engine-books"; mkdir -p "$engine_books/charts/example-engine"
 printf 'builds:\n  - {name: example-engine, image: example-engine, tag: 0.6.021-stable-20261012165632}\n' > "$engine_books/charts/example-engine/pins-prod.yaml"
-engine_apps="$work/engine-apps.yaml"
-printf 'engine:\n  build: example-engine\n  line: "0.6"\napps: []\n' > "$engine_apps"
+engine_apps="$work/engine-apps"; mkdir -p "$engine_apps"
+printf 'engine:\n  build: example-engine\n  line: "0.6"\napps: []\n' > "$engine_apps/apps.yaml"
 ENGINE_IMAGE=
 engine_image "$engine_apps" "$engine_books" >/dev/null || fail 'the pin of the bundle line was refused'
 [ "$ENGINE_IMAGE" = registry.example.test/example-engine:0.6.021-stable-20261012165632 ] || fail "the engine image of the pin is $ENGINE_IMAGE"
@@ -392,12 +394,38 @@ STAGE=dev
 OUT="$(engine_image "$engine_apps" "$engine_books" 2>&1)" && fail 'PLANTED DEFECT: a stage with no pin of the engine must fail'
 grep -qF 'example-engine has no pin for dev' <<<"$OUT" || fail "the refusal does not name the missing pin: $OUT"
 STAGE=prod
-printf 'engine:\n  build: example-engine\n  line: 0.6\napps: []\n' > "$work/engine-float.yaml"
-engine_image "$work/engine-float.yaml" "$engine_books" >/dev/null 2>&1 && fail 'PLANTED DEFECT: an unquoted line, which the Manager refuses, must fail'
-printf 'apps: []\n' > "$work/engine-none.yaml"
-OUT="$(engine_image "$work/engine-none.yaml" "$engine_books" 2>&1)" && fail 'PLANTED DEFECT: a bundle naming no engine must fail, not pass unchecked'
+mkdir -p "$work/engine-float" "$work/engine-none"
+printf 'engine:\n  build: example-engine\n  line: 0.6\napps: []\n' > "$work/engine-float/apps.yaml"
+engine_image "$work/engine-float" "$engine_books" >/dev/null 2>&1 && fail 'PLANTED DEFECT: an unquoted line, which the Manager refuses, must fail'
+printf 'apps: []\n' > "$work/engine-none/apps.yaml"
+OUT="$(engine_image "$work/engine-none" "$engine_books" 2>&1)" && fail 'PLANTED DEFECT: a bundle naming no engine must fail, not pass unchecked'
 grep -qF 'names no engine the check could run' <<<"$OUT" || fail "the refusal does not say that no engine is named: $OUT"
 ok 'PLANTED DEFECT: a pin on another line, a stage without a pin, an unquoted line and no engine block all fail the task and name why'
+# The tenant.yaml of a tenant unit the Manager creates, as digita-catalog-proofapps carries it: no apps.yaml.
+engine_tenant="$work/engine-tenant"; mkdir -p "$engine_tenant"
+cat > "$engine_tenant/tenant.yaml" <<'YAML'
+engine: {build: example-engine, line: "0.6"}
+apps:
+  - {name: workshop, version: 01.02.015}
+webs:
+  - {name: starter}
+YAML
+ENGINE_IMAGE=
+engine_image "$engine_tenant" "$engine_books" >/dev/null 2>&1 || fail 'PLANTED DEFECT: a tree with tenant.yaml and no apps.yaml, the layout of every tenant unit the Manager creates, was refused'
+[ "$ENGINE_IMAGE" = registry.example.test/example-engine:0.6.021-stable-20261012165632 ] || fail "the engine image of a tenant.yaml tree is $ENGINE_IMAGE"
+engine_catalog="$work/engine-catalog"; mkdir -p "$engine_catalog"
+cp "$engine_tenant/tenant.yaml" "$engine_catalog/catalog.yaml"
+ENGINE_IMAGE=
+engine_image "$engine_catalog" "$engine_books" >/dev/null 2>&1 || fail 'PLANTED DEFECT: a tree with catalog.yaml and no apps.yaml was refused'
+engine_both="$work/engine-both"; mkdir -p "$engine_both"
+cp "$engine_tenant/tenant.yaml" "$engine_both/"
+printf 'engine:\n  build: example-engine\n  line: "0.5"\napps: []\n' > "$engine_both/apps.yaml"
+ENGINE_IMAGE=
+engine_image "$engine_both" "$engine_books" >/dev/null 2>&1 || fail 'PLANTED DEFECT: apps.yaml was read before tenant.yaml, which the engine reads first'
+mkdir -p "$work/engine-empty"
+OUT="$(engine_image "$work/engine-empty" "$engine_books" 2>&1)" && fail 'PLANTED DEFECT: a tree with no manifest must fail, not pass unchecked'
+grep -qF 'holds no tenant.yaml, catalog.yaml or apps.yaml' <<<"$OUT" || fail "the refusal does not name the manifests: $OUT"
+ok 'engine_image reads tenant.yaml, then catalog.yaml, and apps.yaml only for the older layout, and fails where none stands'
 
 # bundle_members: the app members, a key set each, the website members named as not checked.
 bundle="$work/bundle"; settings="$work/settings"; mkdir -p "$bundle" "$settings"
@@ -423,9 +451,37 @@ printf 'apps:\n  - {name: web, title: Website content, version: 01.01.046, sites
 OUT="$(bundle_members "$bundle" "$settings" 2>&1)" || fail "bundle_members refused a bundle with no app folder: $OUT"
 [ "$(cat "$settings/members.json")" = '[]' ] && grep -qF 'the bundle held no app folder to check' <<<"$OUT" || fail "a bundle with no app folder is not named as such: $OUT"
 ok 'a bundle without an app folder passes with a log saying it held no app folder to check'
+# The tenant.yaml of a tenant unit the Manager creates, as digita-catalog-proofapps carries it: the apps under
+# apps:, the websites under webs:, and no apps.yaml.
+cat > "$bundle/tenant.yaml" <<'YAML'
+engine: {build: example-engine, line: "0.6"}
+apps:
+  - {name: workshop, version: 01.02.015}
+webs:
+  - {name: starter}
+YAML
 rm "$bundle/apps.yaml"
-bundle_members "$bundle" "$settings" >/dev/null 2>&1 && fail 'PLANTED DEFECT: a bundle without apps.yaml must fail'
-ok 'PLANTED DEFECT: a bundle that holds no apps.yaml fails'
+OUT="$(bundle_members "$bundle" "$settings" 2>&1)" || fail "PLANTED DEFECT: a bundle with tenant.yaml and no apps.yaml, the layout of every tenant unit the Manager creates, was refused: $OUT"
+[ "$(yq -o=json -I=0 'map(.name)' "$settings/members.json")" = '["workshop"]' ] && [ "$(yq -o=json -I=0 'keys' "$settings/keys.json")" = '["workshop"]' ] \
+  || fail "the member of a tenant.yaml bundle is not workshop: $(cat "$settings/members.json")"
+grep -qF 'not checked: the website member starter' <<<"$OUT" || fail "the log does not name the webs: member as not checked: $OUT"
+printf 'apps:\n  - {name: web, version: 01.01.046, sites: [show]}\n  - {name: workshop, version: 01.02.015}\nwebs:\n  - {name: starter}\n' > "$bundle/tenant.yaml"
+OUT="$(bundle_members "$bundle" "$settings" 2>&1)" || fail "bundle_members refused a tenant.yaml with an entry with sites and a webs: list: $OUT"
+[ "$(yq -o=json -I=0 'map(.name)' "$settings/members.json")" = '["workshop"]' ] && grep -qF 'the website member web, starter' <<<"$OUT" || fail "the website members are not web and starter: $OUT"
+printf 'apps:\n  - {name: stale, version: 01.00.001}\n' > "$bundle/apps.yaml"
+printf 'webs:\n  - {name: starter}\n' > "$bundle/tenant.yaml"
+OUT="$(bundle_members "$bundle" "$settings" 2>&1)" || fail "bundle_members refused a tenant that runs a website alone: $OUT"
+[ "$(cat "$settings/members.json")" = '[]' ] && grep -qF 'the bundle held no app folder to check' <<<"$OUT" || fail "PLANTED DEFECT: apps.yaml was read before tenant.yaml, or a tenant with no apps: list was not a bundle with no app folder: $OUT"
+rm "$bundle/apps.yaml"
+printf 'apps:\n  - {name: crm, version: 01.00.001}\n' > "$bundle/catalog.yaml"
+rm "$bundle/tenant.yaml"
+bundle_members "$bundle" "$settings" >/dev/null 2>&1 || fail 'PLANTED DEFECT: a bundle with catalog.yaml and no apps.yaml was refused'
+[ "$(yq -o=json -I=0 'map(.name)' "$settings/members.json")" = '["crm"]' ] || fail 'the member of a catalog.yaml bundle is not crm'
+ok 'bundle_members reads tenant.yaml, then catalog.yaml, and apps.yaml only for the older layout: apps: without sites are the members, apps: with sites and webs: the websites'
+rm "$bundle/catalog.yaml"
+OUT="$(bundle_members "$bundle" "$settings" 2>&1)" && fail 'PLANTED DEFECT: a bundle without a manifest must fail'
+grep -qF 'holds no tenant.yaml, catalog.yaml or apps.yaml' <<<"$OUT" || fail "the refusal does not name the manifests: $OUT"
+ok 'PLANTED DEFECT: a bundle that holds no tenant.yaml, catalog.yaml or apps.yaml fails'
 
 # check_members: the engine's exit code is the verdict of the task.
 node() {

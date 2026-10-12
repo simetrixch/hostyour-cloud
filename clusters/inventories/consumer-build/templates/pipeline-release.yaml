@@ -544,7 +544,7 @@ spec:
 {{ end }}
     # ── engine-pin — the engine the stage runs, for the bundle's check ───────
     # Runs only where the manifest names an appsBundle (a build of this unit).
-    # The bundle's apps.yaml names the engine it is written for, `engine.build`
+    # The bundle's manifest names the engine it is written for, `engine.build`
     # and `engine.line`; the engine image is the stage's pin of that build on the
     # deploy repository's books branch (charts/<build>/pins-<stage>.yaml), which
     # holds the image the stage's tenants run. A pin on another line than the
@@ -602,11 +602,18 @@ spec:
               #!/usr/bin/env bash
               set -euo pipefail
 
-              # engine_image <apps.yaml> <books clone> — ENGINE_IMAGE, the
+              # engine_image <tree> <books clone> — ENGINE_IMAGE, the
               # registry reference of this stage's pin of the engine build the
-              # bundle names; 1, with the reason, where there is none to run.
+              # bundle's manifest names; 1, with the reason, where there is
+              # none to run. The manifest is the one the engine reads at the
+              # root of the bundle (digita-platform app-version.ts): tenant.yaml,
+              # then catalog.yaml; apps.yaml stands for the older layout.
               engine_image() {
-                local apps="$1" books="$2" build line pins image tag version
+                local tree="$1" books="$2" apps="" name build line pins image tag version
+                for name in tenant.yaml catalog.yaml apps.yaml; do
+                  [ -f "${tree}/${name}" ] && { apps="${tree}/${name}"; break; }
+                done
+                [ -n "${apps}" ] || { echo "engine-pin: FAIL — ${tree} holds no tenant.yaml, catalog.yaml or apps.yaml, so the engine of the bundle is not named" >&2; return 1; }
                 build="$(yq eval '.engine.build // ""' "${apps}")"
                 line="$(yq eval '.engine.line // ""' "${apps}")"
                 if [ "$(yq eval '.engine.build | tag' "${apps}")" != '!!str' ] || [ "$(yq eval '.engine.line | tag' "${apps}")" != '!!str' ] \
@@ -641,10 +648,9 @@ spec:
               chmod 600 /tmp/git-credentials
               git config --global credential.helper "store --file=/tmp/git-credentials"
 
-              [ -f "${SRC}/apps.yaml" ] || { echo "engine-pin: FAIL — the tagged tree holds no apps.yaml, so the engine of the bundle is not named" >&2; exit 1; }
               git clone -q --depth 1 --branch "${BOOKS_BRANCH}" "${DEPLOY_URL}" /tmp/books \
                 || { echo "engine-pin: FAIL — cannot read ${DEPLOY_URL}@${BOOKS_BRANCH}, which holds the pins of the stage's engine" >&2; exit 1; }
-              engine_image "${SRC}/apps.yaml" /tmp/books
+              engine_image "${SRC}" /tmp/books
               printf '%s' "${ENGINE_IMAGE}" > "$(results.engine-image.path)"
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
@@ -660,8 +666,8 @@ spec:
     # text, and exits 1 when a member is refused; the exit fails this run, so
     # no pin moves and PipelineRunFailed mails it.
     #
-    # The members are the entries of apps.yaml that name an app folder (an
-    # entry without `sites`), settings as the chart hands them to the engine
+    # The members are the entries of the bundle's manifest that name an app
+    # folder (an entry of apps: without `sites`), settings as the chart hands them to the engine
     # (digita-deploy charts/digita-engine: TENANT_MEMBERS, and a key set per
     # member in PASSWORD_FIELD_KEYS as a provisioned tenant has one). The key
     # sets are made in this pod, are the engine's alone and are never printed.
@@ -717,20 +723,26 @@ spec:
               set -euo pipefail
 
               # bundle_members <bundle dir> <settings dir> — members.json, the
-              # TENANT_MEMBERS of the entries of apps.yaml that name an app
-              # folder, and keys.json, a key set for each: `1=<32 bytes in
-              # base64>`. 1, with the reason, where the bundle has no apps.yaml. map(),
-              # not a stream into an object: yq builds one object out of an empty
+              # TENANT_MEMBERS of the entries of apps: that name an app folder,
+              # and keys.json, a key set for each: `1=<32 bytes in base64>`.
+              # The manifest is the one the engine reads: tenant.yaml, then
+              # catalog.yaml; apps.yaml stands for the older layout. 1, with the
+              # reason, where the bundle has none. The websites are the entries
+              # of apps: with `sites` and the names under webs:. map(), not a
+              # stream into an object: yq builds one object out of an empty
               # stream, a member with no name.
               bundle_members() {
-                local bundle="$1" out="$2" name websites
-                [ -f "${bundle}/apps.yaml" ] || { echo "check-definitions: FAIL — the bundle holds no apps.yaml, so its members are not named" >&2; return 1; }
-                BUNDLE="${bundle}" yq eval -o=json -I=0 '[.apps[] | select(has("sites") | not)] | map({"name": .name, "dir": (strenv(BUNDLE) + "/" + .name), "seedReference": false, "seedDemo": false})' "${bundle}/apps.yaml" > "${out}/members.json"
+                local bundle="$1" out="$2" name manifest="" websites
+                for name in tenant.yaml catalog.yaml apps.yaml; do
+                  [ -f "${bundle}/${name}" ] && { manifest="${bundle}/${name}"; break; }
+                done
+                [ -n "${manifest}" ] || { echo "check-definitions: FAIL — the bundle holds no tenant.yaml, catalog.yaml or apps.yaml, so its members are not named" >&2; return 1; }
+                BUNDLE="${bundle}" yq eval -o=json -I=0 '[(.apps // [])[] | select(has("sites") | not)] | map({"name": .name, "dir": (strenv(BUNDLE) + "/" + .name), "seedReference": false, "seedDemo": false})' "${manifest}" > "${out}/members.json"
                 printf '{}' > "${out}/keys.json"
                 while read -r name; do
                   N="${name}" K="1=$(head -c 32 /dev/urandom | base64 | tr -d '\n')" yq eval -o=json -I=0 -i '.[strenv(N)] = strenv(K)' "${out}/keys.json"
                 done < <(yq eval -p=json -o=y '.[].name' "${out}/members.json")
-                websites="$(yq eval '[.apps[] | select(has("sites")) | .name] | join(", ")' "${bundle}/apps.yaml")"
+                websites="$(yq eval '[(.apps // [])[] | select(has("sites")) | .name] + [(.webs // [])[] | .name] | join(", ")' "${manifest}")"
                 [ -z "${websites}" ] || echo "check-definitions: not checked: the website member ${websites}. Its definitions come from the engine image, not from the bundle"
                 [ "$(yq eval 'length' "${out}/members.json")" != 0 ] || echo "check-definitions: the bundle held no app folder to check"
               }
