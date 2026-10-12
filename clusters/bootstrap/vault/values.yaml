@@ -91,7 +91,7 @@ server:
   #
   # THE FILE IS A SUPERSET, so pointing at it takes nothing away: trust-manager writes the public
   # roots into it in both states of the certificate switch, and this installation's own authority
-  # beside them only where there is one. See clusters/bootstrap/cert-manager/trust-bundle-public.yaml.
+  # beside them only where there is one. See clusters/inventories/trust-manager-bundles/templates/bundle.yaml.
   extraEnvironmentVars:
     SSL_CERT_FILE: /vault/userconfig/platform-trust/ca-certificates.crt
 
