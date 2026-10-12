@@ -29,7 +29,7 @@ test('no Tekton test resources are rendered and production readers remain', () =
       assert.ok(!docs.some(d => d.kind === 'PipelineRun' || (d.kind === 'Pipeline' && d.metadata.name.endsWith('-tests'))));
       assert.ok(!docs.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa').imagePullSecrets);
       const readers = docs.filter(d => d.kind === 'ExternalSecret');
-      if (builds.length === 0) assert.deepEqual(readers.map(d => d.metadata.name).sort(), ['build-git-https', 'build-npmrc'], record.name + ' holds the credentials of its ci check and no push or bump credential');
+      if (builds.length === 0) assert.deepEqual(readers.map(d => d.metadata.name).sort(), ['build-git-https', 'build-issues-read', 'build-npmrc'], record.name + ' holds the credentials of its ci check and no push or bump credential');
       else {
         const pull = readers.find(d => d.metadata.name === 'image-builder-registry-pull-opaque');
         assert.equal(pull.spec.target.name, pull.metadata.name);
@@ -245,7 +245,7 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   planted.spec.tasks.find((t) => t.name === 'check').taskSpec.volumes.push({name: 'bump', secret: {secretName: 'bump-git-https'}});
   assert.ok(referencesBump(planted), 'PLANTED DEFECT: a render that adds the bump volume is caught');
   const secrets = (doc) => [...JSON.stringify(doc).matchAll(/"(?:secretName|name)":"((?:build|bump)-[a-z-]+)"/g)].map((m) => m[1]).sort();
-  assert.deepEqual([...new Set(secrets(pipeline))], ['build-git-https', 'build-npmrc']);
+  assert.deepEqual([...new Set(secrets(pipeline))], ['build-git-https', 'build-issues-read', 'build-npmrc']);
   const check = pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec;
   assert.equal(check.steps[0].envFrom, undefined, 'the check step holds no secret as environment');
   assert.equal(check.steps[0].env.find((e) => e.name === 'CI')?.value, 'true', 'a check sees the variable GitHub Actions also sets');
@@ -262,6 +262,33 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   assert.ok(docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release').metadata.labels['image-builder.io/consumer']);
   const grant = docs.find((d) => d.kind === 'Role' && d.metadata.name === 'eventlistener-create-pipelineruns');
   assert.ok(grant.rules.some((r) => r.resources.includes('pipelineruns') && r.verbs.includes('create')), 'the event listener may create the ci run');
+});
+
+// The check runs the repository's own code, so the one GitHub token in its reach reads the issues of the unit's
+// own repository and nothing else: the property `issues` the Manager mints for that alone, never `pat` or `push`.
+const checkTokenReadsIssuesOnly = (docs, unit) => {
+  const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === `${unit}-ci`);
+  const token = pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].env.find((e) => e.name === 'GITHUB_TOKEN');
+  const reader = docs.find((d) => d.kind === 'ExternalSecret' && d.spec.target.name === 'build-issues-read');
+  return JSON.stringify(token?.valueFrom) === JSON.stringify({secretKeyRef: {name: 'build-issues-read', key: 'token', optional: true}})
+    && JSON.stringify(reader?.spec.target.template.data) === JSON.stringify({token: '{{ .issues }}'})
+    && JSON.stringify(reader.spec.data.map((d) => [d.secretKey, d.remoteRef.key, d.remoteRef.property])) === JSON.stringify([['issues', `build/${unit}/repo-pat`, 'issues']]);
+};
+
+test('the ci check holds a GITHUB_TOKEN that reads the issues of its own repository and nothing else', () => {
+  for (const builds of [['app'], []]) assert.ok(checkTokenReadsIssuesOnly(renderUnit('shop', builds), 'shop'), `the check of a unit with builds ${JSON.stringify(builds)} reads issues`);
+  const docs = renderUnit('shop');
+  const plant = (change) => { const planted = structuredClone(docs); change(planted); return checkTokenReadsIssuesOnly(planted, 'shop'); };
+  const checkEnv = (planted) => planted.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].env;
+  const reader = (planted) => planted.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-issues-read');
+  assert.ok(!plant((p) => checkEnv(p).splice(checkEnv(p).findIndex((e) => e.name === 'GITHUB_TOKEN'), 1)), 'PLANTED DEFECT: a check without GITHUB_TOKEN is caught');
+  assert.ok(!plant((p) => { checkEnv(p).find((e) => e.name === 'GITHUB_TOKEN').valueFrom.secretKeyRef.name = 'build-git-https'; }), 'PLANTED DEFECT: the repository token on the check is caught');
+  assert.ok(!plant((p) => { reader(p).spec.data[0].remoteRef.property = 'push'; }), 'PLANTED DEFECT: the issues reader filled from the push token is caught');
+  assert.ok(!plant((p) => { reader(p).spec.target.template.data.token = '{{ .pat }}'; }), 'PLANTED DEFECT: the issues reader templated from another property is caught');
+  const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const holdsIssuesToken = (tasks) => tasks.filter((t) => JSON.stringify(t).includes('build-issues-read')).map((t) => t.name);
+  assert.deepEqual([holdsIssuesToken(pipeline.spec.tasks), holdsIssuesToken(pipeline.spec.finally)], [['check'], []]);
+  assert.equal(reader(docs).spec.refreshPolicy, 'OnChange', 'the Manager rewrites the token in Vault and asks for the Secret again, as for build-git-https');
 });
 
 // The by-hand image pipeline builds what an operator names in the run. What keeps that from overwriting
@@ -408,7 +435,7 @@ test('list-sources passes only plain repository names with full commits, and a r
 
 // A unit that builds nothing ("CI only", `builds: []` in its registration) still gets a ci check on every
 // push, and gets no release pipeline and no credential that writes: the namespace runs repository code.
-const CI_PARTS = [['Pipeline', 'shop-ci'], ['ResourceQuota', 'ci-pods'], ['ExternalSecret', 'build-git-https'], ['ExternalSecret', 'build-npmrc'],
+const CI_PARTS = [['Pipeline', 'shop-ci'], ['ResourceQuota', 'ci-pods'], ['ExternalSecret', 'build-git-https'], ['ExternalSecret', 'build-issues-read'], ['ExternalSecret', 'build-npmrc'],
   ['Role', 'ci-report-read'], ['Role', 'ci-run-keeper-pipelineruns']];
 const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['Pipeline', 'shop-image'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'bump-git-https']];
 const holds = (docs, parts) => parts.map(([kind, name]) => docs.some((d) => d.kind === kind && d.metadata.name === name));
@@ -416,7 +443,7 @@ const isCiOnly = (docs) => holds(docs, CI_PARTS).every(Boolean) && !holds(docs, 
 
 test('a unit that builds nothing renders the ci check and no release, registry or bump part', () => {
   const ciOnly = renderUnit('shop', []);
-  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, packages reader and the ci grants render; release pipeline, registry secret and bump secret do not');
+  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, packages reader, issues reader and the ci grants render; release pipeline, registry secret and bump secret do not');
   const withBuilds = renderUnit('shop');
   assert.deepEqual(holds(withBuilds, [...CI_PARTS, ...RELEASE_PARTS]), Array(CI_PARTS.length + RELEASE_PARTS.length).fill(true), 'PLANTED INNOCENT: a unit with builds renders both pipelines and every credential as before');
   assert.ok(!isCiOnly(withBuilds), 'a unit with builds is not a ci-only unit');
