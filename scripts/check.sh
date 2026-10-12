@@ -832,23 +832,59 @@ landing_commit() {
     GIT_COMMITTER_NAME=check GIT_COMMITTER_EMAIL=check@example.invalid \
     git -C "$1" commit-tree "$2" -p "$3" -p "$4" -m "check: $4 on $3"
 }
+# AN INSTALLATION'S COMMIT IS JUDGED AGAINST THE DEFAULT BRANCH AS IT STOOD WHEN THE COMMIT WAS MADE.
+# A release pins the default branch and then the installation's branch, stage by stage, seconds apart,
+# so the run a branch push starts finds the default branch already one pin ahead of a commit that was
+# made before that pin existed. That commit conflicts with the newest pin until its own pin lands, a
+# minute later, and the run it starts is green: a red run the release itself leaves behind. A
+# conflict that stands in the default branch of the commit's own time is still a conflict. Any other
+# commit is judged against the tip, which is what a release of it would be cut onto. An installation's
+# commit is one that holds a cluster map under clusters/active; the default branch holds none.
+default_when() { # <repo> <default branch> <commit> -> the commit of the default branch to judge it against
+  if git -C "$1" ls-tree -r --name-only "$3" -- clusters/active | grep -q '\.yaml$'; then
+    git -C "$1" rev-list -1 --first-parent --before="$(git -C "$1" log -1 --format=%cI "$3")" "$2"
+  else
+    git -C "$1" rev-parse "$2"
+  fi
+}
 probe="$work/merge-probe"
 git -c init.defaultBranch=probe init -q "$probe" || fail "the merge probe could not make its repository"
+# Each probe commit is made one second after the one before, so the order in which they are made is
+# the order of their dates, which is what default_when reads.
+# The clock is a file because every call runs in a command substitution, which keeps no variable.
+echo 1760000000 >"$work/probe-clock"
 probe_commit() {
   printf '%s\n' "$@" >"$probe/root-app.yaml"
-  git -C "$probe" add root-app.yaml && git -C "$probe" -c user.name=probe -c user.email=probe@example.invalid commit -qm probe && git -C "$probe" rev-parse HEAD
+  mkdir -p "$probe/clusters/active"
+  [ -n "${probe_map:-}" ] && : >"$probe/clusters/active/installation.example.yaml"
+  echo $(($(cat "$work/probe-clock") + 1)) >"$work/probe-clock"
+  git -C "$probe" add -A && GIT_COMMITTER_DATE="$(cat "$work/probe-clock") +0000" git -C "$probe" -c user.name=probe -c user.email=probe@example.invalid commit -qm probe && git -C "$probe" rev-parse HEAD
 }
 probe_base="$(probe_commit '      helm:' '        valueFiles:' '          - $values/example.invalid.yaml' '' '  destination:')"
-probe_installation="$(probe_commit '      helm:' '        valueFiles:' '          - $values/installation.example.yaml' '' '  destination:')"
+probe_installation="$(probe_map=1 probe_commit '      helm:' '        valueFiles:' '          - $values/installation.example.yaml' '' '  destination:')"
 git -C "$probe" checkout -q "$probe_base" 2>/dev/null
 probe_defect="$(probe_commit '      helm:' '        valueFiles:' '          - $values/example.invalid.yaml' '        parameters: planted-defect' '' '  destination:')"
 git -C "$probe" checkout -q "$probe_base" 2>/dev/null
 probe_innocent="$(probe_commit '      helm:' '        parameters: planted-innocent' '        valueFiles:' '          - $values/example.invalid.yaml' '' '  destination:')"
-[ -n "$probe_installation" ] && [ -n "$probe_defect" ] && [ -n "$probe_innocent" ] || fail "the merge probe could not write its commits"
+# An installation commit made after the default branch took the planted change, and without it.
+git -C "$probe" checkout -q "$probe_base" 2>/dev/null
+probe_late="$(probe_map=1 probe_commit '      helm:' '        valueFiles:' '          - $values/installation.example.yaml' '' '  destination:')"
+[ -n "$probe_installation" ] && [ -n "$probe_defect" ] && [ -n "$probe_innocent" ] && [ -n "$probe_late" ] || fail "the merge probe could not write its commits"
 merges_into "$probe" "$probe_installation" "$probe_defect" \
   && fail "the merge probe took a change beside a stamped line without a conflict, so this check cannot see one"
 merges_into "$probe" "$probe_installation" "$probe_innocent" \
   || { cat "$work/merge-tree"; fail "the merge probe refused a change one line away from a stamped line, which git merges"; }
+# The default branch of the probe stands on the planted change, which the installation commit made
+# before it lacks: that is the race of a release, and it is judged against the default branch of its
+# own time. The commit made after it, still lacking it, is a conflict that stands, and stays one.
+# A commit that is no installation's is judged against the tip whatever its date.
+git -C "$probe" update-ref refs/heads/trunk "$probe_defect"
+merges_into "$probe" "$(default_when "$probe" trunk "$probe_installation")" "$probe_installation" \
+  || { cat "$work/merge-tree"; fail "the merge probe refused an installation commit for a change the default branch took after it was made, which a release leaves behind for a minute"; }
+merges_into "$probe" "$(default_when "$probe" trunk "$probe_late")" "$probe_late" \
+  && fail "the merge probe took an installation commit made after the default branch's change that conflicts with it, so this check cannot see a conflict that stands"
+[ "$(default_when "$probe" trunk "$probe_base")" = "$probe_defect" ] \
+  || fail "the merge probe judged a commit that is no installation's against the default branch of its own time, not against its tip"
 # The landing is written once more as a runner would write it, with no identity anywhere: no global
 # or system configuration and no repository one.
 mkdir "$work/no-identity" || fail "the merge probe could not make an empty home"
@@ -872,13 +908,16 @@ if [ -z "$installations" ]; then
 else
   default_branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" \
     || fail "origin/HEAD names no default branch, so what a release would cut is unknown — run git remote set-head origin --auto"
+  # An installation's HEAD is judged against $default_branch as it stood when HEAD was made (default_when above).
+  release_base="$(default_when "$root" "$default_branch" HEAD)"
+  [ -n "$release_base" ] || fail "$default_branch holds no commit as old as HEAD, so what HEAD was released with is unknown"
   candidate=HEAD
-  if ! git merge-base --is-ancestor "$default_branch" HEAD; then
-    git merge-tree --write-tree --name-only --no-messages "$default_branch" HEAD >"$work/merge-tree" 2>&1 || {
+  if ! git merge-base --is-ancestor "$release_base" HEAD; then
+    git merge-tree --write-tree --name-only --no-messages "$release_base" HEAD >"$work/merge-tree" 2>&1 || {
       sed 's/^/  /' "$work/merge-tree"
       fail "HEAD conflicts with $default_branch, so no release of it can be cut — merge $default_branch into it first"
     }
-    candidate="$(landing_commit "$root" "$(head -n 1 "$work/merge-tree")" "$default_branch" HEAD)" \
+    candidate="$(landing_commit "$root" "$(head -n 1 "$work/merge-tree")" "$release_base" HEAD)" \
       || fail "HEAD on $default_branch could not be written as a commit to merge"
   fi
   for installation in $installations; do
