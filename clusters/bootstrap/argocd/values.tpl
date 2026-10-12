@@ -25,7 +25,7 @@ global:
   #
   # The file is a SUPERSET — the public roots are in it in both states of the certificate switch —
   # so this adds an authority and takes none away. See
-  # clusters/bootstrap/cert-manager/trust-bundle-public.yaml.
+  # clusters/inventories/trust-manager-bundles/templates/bundle.yaml.
   env:
     - name: SSL_CERT_FILE
       value: /etc/platform-trust/ca-certificates.crt

@@ -175,8 +175,7 @@ spec:
             #
             # THE SAME SOURCE external-secrets READS, and the same one argocd and vault read: the
             # `platform-trust` ConfigMap that trust-manager writes into every namespace
-            # (clusters/bootstrap/cert-manager/trust-bundle-public.yaml and its
-            # -with-platform-authority twin). It is a SUPERSET in both states of the certificate
+            # (clusters/inventories/trust-manager-bundles/templates/bundle.yaml). It is a SUPERSET in both states of the certificate
             # switch — the public roots, the cluster's own kube-root-ca.crt, and this
             # installation's authority where it has one — so this adds authorities and takes none
             # away, and nothing here has to know which state the installation is in.
@@ -632,8 +631,7 @@ spec:
           emptyDir: {}
         # The trust store NODE_EXTRA_CA_CERTS names. trust-manager reconciles this ConfigMap into
         # every namespace of the cluster, including ones created after it
-        # (clusters/bootstrap/cert-manager/trust-bundle-public.yaml and its
-        # -with-platform-authority twin), so it is present in both states of the certificate switch
+        # (clusters/inventories/trust-manager-bundles/templates/bundle.yaml), so it is present in both states of the certificate switch
         # and its CONTENTS are what differ.
         #
         # NOT optional, unlike the two secrets below. An optional ConfigMap that is absent mounts an
