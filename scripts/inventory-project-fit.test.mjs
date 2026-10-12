@@ -44,6 +44,7 @@ test('PLANTED DEFECT: a project without the namespace of an inventory that names
     'cert-manager: project core admits no namespace cert-manager',
     'cert-manager-issuers: project core admits no namespace cert-manager',
     'trust-manager: project core admits no namespace cert-manager',
+    'trust-manager-bundles: project core admits no namespace cert-manager',
   ]);
 });
 
@@ -60,7 +61,7 @@ const CERT_MANAGER_CLUSTER_KINDS = [
 ];
 
 test('the project of the cert-manager family whitelists every cluster-scoped kind it renders', () => {
-  const names = new Set(['cert-manager', 'trust-manager', 'cert-manager-issuers'].map(dir => inventories.find(i => i.dir === dir).app.project));
+  const names = new Set(['cert-manager', 'trust-manager', 'trust-manager-bundles', 'cert-manager-issuers'].map(dir => inventories.find(i => i.dir === dir).app.project));
   assert.deepEqual([...names], ['core']);
   const whitelist = projects.find(p => p.metadata.name === 'core').spec.clusterResourceWhitelist;
   const missing = CERT_MANAGER_CLUSTER_KINDS.filter(([group, kind]) => !whitelist.some(w => (w.group === group || w.group === '*') && (w.kind === kind || w.kind === '*')));

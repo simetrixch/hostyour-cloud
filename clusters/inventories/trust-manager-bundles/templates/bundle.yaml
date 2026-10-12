@@ -9,10 +9,6 @@ apiVersion: trust.cert-manager.io/v1alpha1
 kind: Bundle
 metadata:
   name: platform-trust
-  annotations:
-    # The Bundle is admitted by trust-manager's own webhook, so it is applied once the Deployment of
-    # this Application runs.
-    argocd.argoproj.io/sync-wave: "1"
 spec:
   sources:
     - useDefaultCAs: true

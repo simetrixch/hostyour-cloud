@@ -3,7 +3,7 @@ import {execFileSync} from 'node:child_process';
 import test from 'node:test';
 
 // trust-manager under ArgoCD adopts the installer's Helm release in place: the same chart, the same
-// release name, the same objects, and its Bundle in the form of the cluster issuer.
+// release name, the same objects. Its Bundle stands in trust-manager-bundles (scripts/trust-manager-bundles.test.mjs).
 
 const app = JSON.parse(execFileSync('yq', ['-o=json', '.', 'clusters/inventories/trust-manager/app.yaml'], {encoding: 'utf8'}));
 const render = (extra = []) => execFileSync('helm', ['template', app.releaseName, 'clusters/inventories/trust-manager', '--namespace', app.namespace,
@@ -27,23 +27,6 @@ test('PLANTED DEFECT: every CRD carries helm.sh/resource-policy: keep, and with 
   assert.ok(crds.length >= 1, 'CRDs exist');
   assert.deepEqual(crdsWithoutKeep(docs), []);
   assert.ok(crdsWithoutKeep(objects(render(['--set', 'trust-manager.crds.keep=false']))).length >= 1);
-});
-
-test('the Bundle for platform-acme has two sources and for platform-local three, the third the platform-ca secret', () => {
-  const acmeDocs = objects(render(['--set', 'global.clusterIssuer=platform-acme']));
-  const acmeBundle = acmeDocs.find(d => d.kind === 'Bundle' && d.metadata.name === 'platform-trust');
-  assert.ok(acmeBundle, 'Bundle platform-trust exists for platform-acme');
-  assert.equal(acmeBundle.spec.sources.length, 2);
-
-  const localDocs = objects(render(['--set', 'global.clusterIssuer=platform-local']));
-  const localBundle = localDocs.find(d => d.kind === 'Bundle' && d.metadata.name === 'platform-trust');
-  assert.ok(localBundle, 'Bundle platform-trust exists for platform-local');
-  assert.equal(localBundle.spec.sources.length, 3);
-  assert.deepEqual(localBundle.spec.sources[2], {secret: {name: 'platform-ca', key: 'ca.crt'}});
-});
-
-test('PLANTED DEFECT: --set global.clusterIssuer=letsencrypt-prod makes helm template fail with a message containing global.clusterIssuer', () => {
-  assert.throws(() => render(['--set', 'global.clusterIssuer=letsencrypt-prod']), /global\.clusterIssuer/);
 });
 
 const appset = JSON.parse(execFileSync('yq', ['-o=json', '.spec', 'clusters/argocd/files/platform-apps-appset.yaml'], {encoding: 'utf8'}));

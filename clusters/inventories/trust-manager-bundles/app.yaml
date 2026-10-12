@@ -1,0 +1,12 @@
+name: trust-manager-bundles
+project: core
+# After trust-manager (wave 1), whose webhook admits a Bundle.
+syncWave: "2"
+namespace: cert-manager
+# Never pruned: the Bundle writes the platform-trust ConfigMap the secret store and the Manager
+# mount. An object a later chart stops rendering is removed by an operator.
+prune: "false"
+createNamespace: "true"
+serverSideApply: "true"
+# With cert-manager and trust-manager, on every cluster (cert-manager/app.yaml says why).
+runsOn: every-cluster
