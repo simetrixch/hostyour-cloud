@@ -106,6 +106,30 @@ test('all existing registration generators exclude TLS preparations beside ordin
     assertOneApplication(applications([paramSet(guid, stage, body)]), paramSet(guid, stage, body));
   }
   assert.ok(patterns.some(pattern => accepts(pattern, `registrations/${guid}/build.yaml`)));
+  for (const [file, expression, matches, defect] of [
+    ['lifecycle/abandon-installation.sh', /case "\$file" in ([^;]+)\) ;; \*\) continue ;; esac/g,
+      (pattern, path) => pattern.split('|').some(glob => accepts(glob, path)), 'registrations/*/*.yaml'],
+    ['lifecycle/abandon-installation.ps1', /\$file -notmatch '([^']+)'/g,
+      (pattern, path) => new RegExp(pattern).test(path), '^registrations/([^/]+)/([^/]+)\\.yaml$'],
+    ['clusters/inventories/consumer-build/templates/pipeline-release.yaml', /for reg in [^;\n]*?\/(registrations\/[^;\n]+); do/g,
+      (pattern, path, stage) => accepts(pattern.replaceAll('"', '').replaceAll('${STAGE}', stage), path), 'registrations/*/*.yaml'],
+  ]) {
+    const text = readFileSync(file, 'utf8');
+    const checkReader = source => {
+      const readers = [...source.matchAll(expression)];
+      assert.equal(readers.length, 2, file);
+      for (const [, pattern] of readers) for (const stage of ['dev', 'test', 'prod']) {
+        assert.ok(matches(pattern, `registrations/${guid}/${stage}.yaml`, stage), `${file}: ${stage} innocent`);
+        assert.ok(!matches(pattern, `registrations/${guid}/tls-${stage}.yaml`, stage), `${file}: TLS preparation`);
+        assert.ok(!matches(pattern, `registrations/${guid}/build.yaml`, stage), `${file}: build pointer`);
+      }
+    };
+    checkReader(text);
+    for (const match of text.matchAll(expression)) {
+      const planted = text.slice(0, match.index) + match[0].replace(match[1], defect) + text.slice(match.index + match[0].length);
+      assert.throws(() => checkReader(planted), /TLS preparation/);
+    }
+  }
 });
 
 // What the retired matrix did: a parameter set per standing member, the member's fields over the

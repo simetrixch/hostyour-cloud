@@ -114,6 +114,20 @@ test('preparation refuses wrong path identity, reserved labels and product/grant
   for (const key of ['platform/tenant', 'platform/tenant-managed', 'platform/tenant-stage', 'platform/db-consumer']) {
     assert.throws(() => application({...params, namespaceLabels: {[key]: 'foreign'}}));
   }
+  for (const [key, value] of Object.entries({'hostyour.cloud/workload': 'true', 'hostyour.cloud/build': 'true',
+    'hostyour.cloud/consumer': 'true', 'pod-security.kubernetes.io/enforce': 'privileged',
+    'pod-security.kubernetes.io/audit': 'privileged', 'pod-security.kubernetes.io/warn': 'privileged',
+    'platform/unapproved': 'true', 'platform/redis-consumer': 'false'})) {
+    assert.throws(() => application({...params, namespaceLabels: {...params.namespaceLabels, [key]: value}}), undefined, key);
+  }
+  for (const prefix of ['hostyour.cloud/', 'platform/', 'pod-security.kubernetes.io/']) {
+    assert.throws(() => application({...params, namespaceLabels: {[`${prefix}unapproved`]: ''}}), undefined, prefix);
+  }
+  const labels = application(params).spec.syncPolicy.managedNamespaceMetadata.labels;
+  assert.deepEqual(application({...params, namespaceLabels: labels}).spec.syncPolicy.managedNamespaceMetadata.labels, labels);
+  assert.deepEqual(application({...params, namespaceLabels: {...params.namespaceLabels, 'product.example/team': 'shop'}})
+    .spec.syncPolicy.managedNamespaceMetadata.labels, {...labels, 'product.example/team': 'shop'});
+  assert.equal(application({...params, namespaceLabels: {}}).spec.syncPolicy.managedNamespaceMetadata.labels['platform/redis-consumer'], undefined);
   const innocent = application(params);
   for (const mutate of [got => {got.spec.sources[0].repoURL = 'https://github.com/product/product.git';},
     got => {got.spec.destination.name = 'foreign';}, got => {got.spec.destination.namespace = '*';},

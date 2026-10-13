@@ -50,9 +50,11 @@ spec:
     {{- end }}
     {{- end }}
     {{- $labels := dict "platform/tenant" .values.guid "platform/tenant-managed" "true" "platform/tenant-stage" .values.stage "platform/db-consumer" "true" }}
+    {{- $reserved := mustMerge (dict "platform/redis-consumer" "true") $labels }}
     {{- range $key, $value := .namespaceLabels }}
-    {{- if and (hasKey $labels $key) (ne (index $labels $key) $value) }}
-    {{- fail "tenant-tls: reserved namespace label does not match preparation identity" }}
+    {{- $isReserved := or (hasPrefix "hostyour.cloud/" $key) (hasPrefix "platform/" $key) (hasPrefix "pod-security.kubernetes.io/" $key) }}
+    {{- if and $isReserved (or (not (hasKey $reserved $key)) (ne (index $reserved $key) $value)) }}
+    {{- fail "tenant-tls: unapproved reserved namespace label" }}
     {{- end }}
     {{- $_ := set $labels $key $value }}
     {{- end }}
