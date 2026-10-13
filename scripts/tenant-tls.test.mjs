@@ -10,9 +10,9 @@ const guid = 'aaaaaaaaaaaa';
 const names = ['workshop-tls', 'auth-tls'];
 const subject = [{kind: 'ServiceAccount', name: 'manager', namespace: 'manager'}];
 const documents = input => JSON.parse(execFileSync('yq', ['eval-all', '-o=json', '[.]', '-'], {input, encoding: 'utf8'})).filter(Boolean);
-const preparation = stage => ({...paramSet(guid, stage, {cluster: 'apps1', secretNames: names,
+const preparation = (stage, tenant = guid) => ({...paramSet(tenant, stage, {cluster: 'apps1', secretNames: names,
   namespaceLabels: {'platform/redis-consumer': 'true'}}),
-  path: {path: `registrations/${guid}`, basename: guid, filename: `tls-${stage}.yaml`, segments: ['registrations', guid]}});
+  path: {path: `registrations/${tenant}`, basename: tenant, filename: `tls-${stage}.yaml`, segments: ['registrations', tenant]}});
 const tlsSet = () => yaml('.spec', readFileSync(file, 'utf8'));
 const application = (params, set = tlsSet()) => {
   const [typed, patched] = [set.template, set.templatePatch].map(value => {
@@ -102,6 +102,16 @@ test('the chart refuses wildcard, empty and malformed names and caller-supplied 
   checkGrant(manifests(names), names);
   for (const bad of [['*'], [''], ['Bad_Name'], ['valid', '*'], ['a'.repeat(254)], [3], 'all', null]) assert.throws(() => manifests(bad));
   for (const key of ['subjects', 'rules', 'sources']) assert.throws(() => manifests(names, {[key]: []}));
+});
+
+test('preparation enforces the Manager GUID grammar with legal-alphabet innocents at every stage', () => {
+  for (const stage of ['dev', 'test', 'prod']) for (const tenant of ['0123456789ab', 'cdefghjkmnpq', 'rstvwxyz0123']) {
+    assert.equal(application(preparation(stage, tenant)).spec.destination.namespace, `${tenant}-${stage}`);
+  }
+  for (const stage of ['dev', 'test', 'prod']) for (const tenant of ['llllllllllll', 'iiiiiiiiiiii', 'oooooooooooo',
+    'uuuuuuuuuuuu', 'AAAAAAAAAAAA', 'aaaaaaaaaaa-', 'a'.repeat(11), 'a'.repeat(13)]) {
+    assert.throws(() => application(preparation(stage, tenant)), /preparation identity/, `${tenant}: ${stage}`);
+  }
 });
 
 test('preparation refuses wrong path identity, reserved labels and product/grant inputs', () => {

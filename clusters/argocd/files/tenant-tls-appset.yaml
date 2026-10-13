@@ -41,7 +41,7 @@ spec:
           backoff: {duration: 5s, factor: 2, maxDuration: 3m}
         syncOptions: [CreateNamespace=true]
   templatePatch: |
-    {{- if or (not (regexMatch "^[a-z0-9]{12}$" .values.guid)) (ne .values.guid (index .path.segments 1)) (not (has .values.stage (list "dev" "test" "prod"))) (ne .path.filename (printf "tls-%s.yaml" .values.stage)) (ne .cluster "__CLUSTER_NAME__") }}
+    {{- if or (not (regexMatch "^[0-9a-hjkmnp-tv-z]{12}$" .values.guid)) (ne .values.guid (index .path.segments 1)) (not (has .values.stage (list "dev" "test" "prod"))) (ne .path.filename (printf "tls-%s.yaml" .values.stage)) (ne .cluster "__CLUSTER_NAME__") }}
     {{- fail "tenant-tls: preparation identity does not match its path and target cluster" }}
     {{- end }}
     {{- range $key, $_ := . }}
