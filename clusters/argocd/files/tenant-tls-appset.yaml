@@ -1,0 +1,69 @@
+# Separate from product sync so the Manager can restore TLS before publishing an ordinary pointer.
+# Namespace creation belongs to ArgoCD; no Namespace manifest may be pruned with this grant.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tenant-tls
+  namespace: __ARGOCD_NAMESPACE__
+spec:
+  goTemplate: true
+  goTemplateOptions: [missingkey=error]
+  generators:
+    - git:
+        repoURL: https://github.com/__DEPLOY_REPO__.git
+        revision: __BOOKS_FQDN__
+        files:
+          - path: "registrations/*/tls-dev.yaml"
+          - path: "registrations/*/tls-test.yaml"
+          - path: "registrations/*/tls-prod.yaml"
+        values:
+          guid: "{{ index .path.segments 1 }}"
+          stage: '{{ trimPrefix "tls-" (trimSuffix ".yaml" .path.filename) }}'
+      selector:
+        matchLabels:
+          cluster: __CLUSTER_NAME__
+  template:
+    metadata:
+      name: "tenant-tls-{{ .values.guid }}-{{ .values.stage }}"
+      namespace: __ARGOCD_NAMESPACE__
+      labels:
+        platform/tenant: "{{ .values.guid }}"
+      finalizers: [resources-finalizer.argocd.argoproj.io]
+    spec:
+      project: "tenant-tls-{{ .values.guid }}-{{ .values.stage }}"
+      destination:
+        name: __CLUSTER_NAME__
+        namespace: "{{ .values.guid }}-{{ .values.stage }}"
+      syncPolicy:
+        automated: {prune: true, selfHeal: true}
+        retry:
+          limit: 5
+          backoff: {duration: 5s, factor: 2, maxDuration: 3m}
+        syncOptions: [CreateNamespace=true]
+  templatePatch: |
+    {{- if or (not (regexMatch "^[a-z0-9]{12}$" .values.guid)) (ne .values.guid (index .path.segments 1)) (not (has .values.stage (list "dev" "test" "prod"))) (ne .path.filename (printf "tls-%s.yaml" .values.stage)) (ne .cluster "__CLUSTER_NAME__") }}
+    {{- fail "tenant-tls: preparation identity does not match its path and target cluster" }}
+    {{- end }}
+    {{- range $key, $_ := . }}
+    {{- if not (has $key (list "cluster" "namespaceLabels" "secretNames" "path" "values")) }}
+    {{- fail "tenant-tls: unsupported preparation field" }}
+    {{- end }}
+    {{- end }}
+    {{- $labels := dict "platform/tenant" .values.guid "platform/tenant-managed" "true" "platform/tenant-stage" .values.stage "platform/db-consumer" "true" }}
+    {{- range $key, $value := .namespaceLabels }}
+    {{- if and (hasKey $labels $key) (ne (index $labels $key) $value) }}
+    {{- fail "tenant-tls: reserved namespace label does not match preparation identity" }}
+    {{- end }}
+    {{- $_ := set $labels $key $value }}
+    {{- end }}
+    spec:
+      syncPolicy:
+        managedNamespaceMetadata:
+          labels: {{ $labels | toJson }}
+      sources:
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          path: clusters/units/tenant-tls
+          helm:
+            valuesObject:
+              secretNames: {{ .secretNames | toJson }}

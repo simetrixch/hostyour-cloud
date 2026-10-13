@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import test from 'node:test';
+import {readdirSync, readFileSync} from 'node:fs';
 import {paramSet, patch, registration, render, yaml} from './tenant-appset-fixture.mjs';
 
 // The typed half of the ApplicationSet, which the other tenant tests do not render: the name, the
@@ -86,6 +87,25 @@ test('a tenant with three apps renders one Application, one namespace and one pr
 test('two tenants, one of them a demo without an app, render one Application each', () => {
   const bare = paramSet('bbbbbbbbbbbb', 'dev', registration(['charts/engine', 'charts/web'], {apps: [], demo: true}));
   [params, bare].forEach(set => assertOneApplication(applications([set]), set));
+});
+
+test('all existing registration generators exclude TLS preparations beside ordinary and build pointers', () => {
+  const files = readdirSync('clusters/argocd/files').filter(file => file.endsWith('.yaml') && file !== 'tenant-tls-appset.yaml');
+  const texts = [...files.map(file => readFileSync(`clusters/argocd/files/${file}`, 'utf8')),
+    readFileSync('clusters/inventories/consumer-build/files/applicationset.yaml', 'utf8')];
+  const patterns = texts.flatMap(text => [...text.matchAll(/path: ["']?(registrations\/[^"'\s]+)/g)].map(match => match[1]));
+  assert.ok(patterns.length >= 20);
+  const accepts = (pattern, path) => new RegExp(`^${pattern.replaceAll('.', '\\.').replaceAll('*', '[^/]*')}$`).test(path);
+  const check = patterns => {
+    for (const stage of ['dev', 'test', 'prod']) assert.ok(patterns.every(pattern => !accepts(pattern, `registrations/${guid}/tls-${stage}.yaml`)));
+  };
+  check(patterns);
+  assert.throws(() => check([...patterns, 'registrations/*/*.yaml']));
+  for (const stage of ['dev', 'test', 'prod']) {
+    assert.ok(patterns.some(pattern => accepts(pattern, `registrations/${guid}/${stage}.yaml`)));
+    assertOneApplication(applications([paramSet(guid, stage, body)]), paramSet(guid, stage, body));
+  }
+  assert.ok(patterns.some(pattern => accepts(pattern, `registrations/${guid}/build.yaml`)));
 });
 
 // What the retired matrix did: a parameter set per standing member, the member's fields over the
