@@ -307,6 +307,9 @@ serviceaccount.yaml / deployment.yaml.
       (dict "name" "manager-tenant-bootstrap-reader" "rules" (list
         (dict "apiGroups" (list "") "resources" (list "secrets") "resourceNames" (list "hostyour-app-secrets") "verbs" (list "get"))
       ))
+      (dict "name" "manager-tenant-certificates-reader" "rules" (list
+        (dict "apiGroups" (list "cert-manager.io") "resources" (list "certificates") "verbs" (list "get" "list"))
+      ))
       (dict "name" "manager-relocation-jobs" "rules" (list
         (dict "apiGroups" (list "batch") "resources" (list "jobs") "verbs" (list "create" "get" "delete"))
         (dict "apiGroups" (list "") "resources" (list "pods") "verbs" (list "list"))
