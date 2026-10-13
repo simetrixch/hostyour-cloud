@@ -1,0 +1,39 @@
+{{- range $key := list "rules" "subjects" "source" "sources" }}
+{{- if hasKey $.Values $key }}
+{{- fail "tenant-tls: caller-supplied grant controls are forbidden" }}
+{{- end }}
+{{- end }}
+{{- if not (kindIs "slice" .Values.secretNames) }}
+{{- fail "tenant-tls: secretNames must be a list of exact Secret names" }}
+{{- end }}
+{{- range .Values.secretNames }}
+{{- if or (not (kindIs "string" .)) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" .)) (gt (len .) 253) }}
+{{- fail "tenant-tls: secretNames must contain only exact Secret names" }}
+{{- end }}
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tenant-tls
+  namespace: {{ .Release.Namespace }}
+rules: {{ if not .Values.secretNames }}[]{{ end }}
+{{- if .Values.secretNames }}
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: {{ .Values.secretNames | toJson }}
+    verbs: [get]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-tls
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tenant-tls
+subjects:
+  - kind: ServiceAccount
+    name: manager
+    namespace: manager
