@@ -210,3 +210,41 @@ test('no log line names the password', () => {
   assert.ok(lines.some(line => line.includes('dropped database')));
   assert.ok(lines.every(line => !line.includes(password)));
 });
+
+const mixedDatabases = ['abcdef123456_tenant_test', 'abcdef123456_a_test', 'abcdef123456_b_test', 'abcdef123456_site_test'];
+const mixedNamespace = 'abcdef123456-test';
+const mixedTenant = {'platform/tenant': 'abcdef123456', 'platform/tenant-stage': 'test'};
+const checkMixedRoles = roles => assert.deepEqual(roles, [
+  {role: 'readWrite', db: 'abcdef123456_tenant_test'},
+  {role: 'readWrite', db: 'abcdef123456_a_test'},
+  {role: 'readWrite', db: 'abcdef123456_b_test'},
+  {role: 'readWrite', db: 'abcdef123456_site_test'},
+], '#339 mixed tenant role/db pairs');
+
+test('#339 innocent: two apps and one site request exactly four readWrite roles on create and unchanged update', () => {
+  const created = run('handle', mixedNamespace, mixedTenant, 'shared', {databases: mixedDatabases});
+  checkMixedRoles(created.roles);
+  const updated = update({databases: mixedDatabases, granted: mixedDatabases}, mixedNamespace, mixedTenant);
+  assert.equal(updated.error, null);
+  assert.equal(updated.created, false);
+  assert.equal(updated.updated.length, 1);
+  checkMixedRoles(updated.updated[0]);
+  assert.deepEqual(updated.dropped, []);
+});
+
+test('#339 PLANTED: missing, wrong-database and broader roles are refused on create and update', () => {
+  const created = run('handle', mixedNamespace, mixedTenant, 'shared', {databases: mixedDatabases});
+  const updated = update({databases: mixedDatabases, granted: mixedDatabases}, mixedNamespace, mixedTenant);
+  for (const roles of [created.roles, updated.updated[0]]) {
+    for (const change of [
+      roles => { roles.pop(); },
+      roles => { roles[1].db = 'abcdef123456_wrong_test'; },
+      roles => { roles[1].role = 'readWriteAnyDatabase'; },
+    ]) {
+      const planted = structuredClone(roles);
+      change(planted);
+      assert.notDeepEqual(planted, roles);
+      assert.throws(() => checkMixedRoles(planted), /#339 mixed tenant role\/db pairs/);
+    }
+  }
+});
