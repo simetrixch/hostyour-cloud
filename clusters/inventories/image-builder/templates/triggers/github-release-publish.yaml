@@ -1,0 +1,130 @@
+{{- if .Values.eventListener.enabled }}
+{{- /*
+GitHub RELEASE TAG push → the unit's own publish pipeline. A push of the release
+tag itself (refs/tags/<release-tag>, never the deploy ref deploy/<stage>/<tag>)
+fires ONE PipelineRun `<unit>-publish` in the unit's build namespace, which
+publishes the repository's npm packages at that tag to this build plane's
+registry (clusters/inventories/consumer-build templates/pipeline-publish.yaml).
+A repository with nothing to publish ends that run at its scan.
+
+ROUTING is the deploy-request trigger's: the unit is body.repository.name, so
+namespace `<unit>-build` and pipelineRef `<unit>-publish` follow from the
+webhook alone; an unregistered repository resolves to a namespace that does not
+exist, and the pipeline's gate compares the webhook's clone_url fail-closed
+against its pinned repoURL.
+
+THE RUN WAITS IN THE RELEASE QUEUE (templates/release-queue.yaml), under a key
+of its own, so it never builds beside a release. It carries
+image-builder.io/publish and never image-builder.io/consumer, the label the
+Manager's release watch selects release runs by.
+
+TAG DELETION is NOT a publication (the same push event, deleted:true), and the
+grammar is global.releaseTagFilter in a CEL RAW string, as in
+github-deploy-request.yaml.
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: github-release-publish
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: github
+spec:
+  interceptors:
+    - ref:
+        name: github
+      params:
+        - name: secretRef
+          value:
+            secretName: image-builder-webhook-secrets
+            secretKey: github
+        - name: eventTypes
+          value: ["push"]
+    - ref:
+        name: cel
+      params:
+        - name: overlays
+          value:
+            - key: unit
+              expression: body.repository.name.lowerAscii()
+            # ["refs","tags","<release-tag>"]: the filter below has proven that shape.
+            - key: release-tag
+              expression: body.ref.split('/')[2]
+            - key: git-url
+              expression: body.repository.clone_url
+        - name: filter
+          value: >-
+            body.ref.matches(r'^refs/tags/{{ .Values.global.releaseTagFilter }}$') &&
+            !(has(body.deleted) && body.deleted)
+  bindings:
+    - ref: github-release-publish-binding
+  template:
+    ref: release-publish
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-release-publish-binding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: github
+spec:
+  params:
+    - name: unit
+      value: $(extensions.unit)
+    - name: release-tag
+      value: $(extensions.release-tag)
+    - name: git-url
+      value: $(extensions.git-url)
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: release-publish
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: github
+spec:
+  params:
+    - name: unit
+    - name: release-tag
+    - name: git-url
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: $(tt.params.unit)-publish-
+        namespace: $(tt.params.unit)-build
+        labels:
+          image-builder.io/publish: $(tt.params.unit)
+      spec:
+        # Created waiting: the release queue starts it once no release and no other publish run runs.
+        status: PipelineRunPending
+        pipelineRef:
+          name: $(tt.params.unit)-publish
+        taskRunTemplate:
+          serviceAccountName: pipeline-sa
+          podTemplate:
+            priorityClassName: {{ .Values.priorityClasses.release.name }}
+        timeouts:
+          pipeline: 1h0m0s
+        params:
+          - name: release-tag
+            value: $(tt.params.release-tag)
+          - name: git-url
+            value: $(tt.params.git-url)
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                resources:
+                  requests:
+                    storage: {{ .Values.workspaces.sourceSize }}
+{{- end }}

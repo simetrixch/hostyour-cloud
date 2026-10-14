@@ -27,7 +27,7 @@ and no other, so the scope is a fact of the registration and never a value of th
 {{- define "consumer-build.repoOwner" -}}
 {{- $url := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
 {{- $owner := regexReplaceAll "^https://github\\.com/([^/]+)/[^/]+$" $url "${1}" -}}
-{{- if eq $owner $url }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://github.com/<owner>/<repo>[.git], and the build's npm scope is read off its owner" $url) }}{{ end -}}
+{{- if eq $owner $url }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://github.com/<owner>/<repository>[.git], and the build's npm scope is read off its owner" $url) }}{{ end -}}
 {{- $owner -}}
 {{- end -}}
 

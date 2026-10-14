@@ -19,6 +19,12 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.21.0
+      # scripts/pipeline-publish.test.sh installs, builds and packs with pnpm, at the version the publish
+      # Pipeline's pack step activates.
+      - name: Install pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
       - name: Install credential scanner
         shell: bash
         run: |
