@@ -731,14 +731,16 @@ helm template consumer-build clusters/inventories/consumer-build --namespace arg
   --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[\"check\"]"}' \
   > "$work/fence-render" 2>&1 \
   || { cat "$work/fence-render"; fail "clusters/inventories/consumer-build does not render in unit mode, which is where a unit's build grants stand"; }
-# The build's .npmrc routes the unit's OWN scope — the owner of its repository — to GitHub
-# Packages with the organisation's packages reader, the `packages` property of the unit's build
-# entry, never the repository token (templates/externalsecret-npmrc.yaml, hostyour-manager#220).
-# The stand-in unit is github.com/check/check.git, so its scope is @check; a fixed scope here
-# would build no unit of another organisation.
-for line in '@check:registry=https://npm.pkg.github.com' '//npm.pkg.github.com/:_authToken={{ .packages }}' 'property: packages'; do
-  grep -qF -- "$line" "$work/fence-render" \
-    || { grep -A3 -F '.npmrc: |' "$work/fence-render"; fail "the build .npmrc of unit check does not carry '$line' — a unit's private packages would resolve against registry.npmjs.org and 404"; }
+# The build's .npmrc reads no npm package from GitHub Packages: no line names npm.pkg.github.com, and the
+# ExternalSecret reads no `packages` property of the unit's build entry, which the Manager writes no more
+# (templates/externalsecret-npmrc.yaml).
+npmrc_secret="$(yq e 'select(.kind == "ExternalSecret" and .metadata.name == "build-npmrc")' "$work/fence-render")"
+[ -n "$npmrc_secret" ] || fail "unit check renders no ExternalSecret build-npmrc"
+for gone in 'npm.pkg.github.com' '{{ .packages }}' 'secretKey: packages' 'property: packages'; do
+  if printf '%s\n' "$npmrc_secret" | grep -qF -- "$gone"; then
+    printf '%s\n' "$npmrc_secret" | grep -nF -- "$gone"
+    fail "the build .npmrc of unit check still carries '$gone' — the npm packages are read from this build plane's registry alone"
+  fi
 done
 # The same .npmrc reads the npm packages this build plane publishes (templates/pipeline-publish.yaml), which a
 # lockfile names by their tarball URL under the registry's npm prefix, with the registry's pull identity.

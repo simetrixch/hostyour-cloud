@@ -105,6 +105,15 @@ test('release runs are created waiting, and the queue runs every minute with rea
   assert.ok(guard.spec.validations.some((v) => v.expression.includes('variables.isReleaseQueue')));
 });
 
+test('the release queue and the ci run keeper each carry the shared lister their scripts source', () => {
+  const docs = renderChart('image-builder');
+  const lister = readFileSync('clusters/inventories/image-builder/files/list-pipelineruns.sh', 'utf8');
+  for (const name of ['release-queue', 'ci-run-keeper']) {
+    const map = docs.find((d) => d.kind === 'ConfigMap' && d.metadata.name === name);
+    assert.equal(map?.data?.['list-pipelineruns.sh'], lister, `the ConfigMap ${name} does not carry files/list-pipelineruns.sh, which ${name}.sh sources`);
+  }
+});
+
 test('each build namespace grants the queue patch and delete on its PipelineRuns and nothing else', () => {
   const docs = renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop', repoURL: 'https://github.com/check/shop.git', buildsJson: '[]'})]);
   const role = docs.find((d) => d.kind === 'Role' && d.metadata.name === 'release-queue-start-and-prune-pipelineruns');
