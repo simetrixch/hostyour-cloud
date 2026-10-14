@@ -32,14 +32,15 @@ WHAT IS PUBLISHED, read at the tag by `scan`:
 ONLY THE DEFAULT BRANCH IS PUBLISHED: `reviewed` fetches the default branch of
 origin and passes a release commit that is on it, or one that differs from the
 last commit it shares with it in nothing but the stamped version fields of
-manifests (the stamp of a release minted with --from, which stands on no branch).
+manifests (the stamp commit of a release the retired release kit minted with
+--from, which stands on no branch; the Manager commits nothing).
 
 THE VERSION IS THE TAG'S: `pack` writes, in its workspace only, the version of
 the release tag over the first "version" of every tracked package.json, in the
-form the release kit's release.sh stamps (0.3.001 is 0.3.1, a channel other than
-stable is the prerelease part), before `pnpm pack` writes the workspace: ranges
-from those versions. Nothing is committed, and on a tag the kit stamped it
-changes nothing. A tarball that declares another version fails the run.
+strict form npm takes (0.3.001 is 0.3.1, a channel other than stable is the
+prerelease part), before `pnpm pack` writes the workspace: ranges from those
+versions. Nothing is committed: the Manager tags the commit chosen as it stands,
+and on a tag of the retired kit's stamp commit this changes nothing. A tarball that declares another version fails the run.
 
 THE PUSH. Each tarball is one manifest in npm/<owner>/<name>:<version>: an empty
 config, one layer that is the .tgz, and the annotations
@@ -264,7 +265,7 @@ spec:
               set -euo pipefail
               # True when every change from the last commit HEAD shares with the default branch is a stamped
               # version: a manifest that stands on both sides and equals its base as JSON once the fields the
-              # release kit's stamp writes are deleted (the top-level version of a package.json, the version of
+              # retired release kit's stamp wrote are deleted (the top-level version of a package.json, the version of
               # the root and of the workspace members of a package-lock.json).
               stamp_only() { # <the default branch>
                 local base changed status path unstamped before after
@@ -431,7 +432,7 @@ spec:
                 fi
                 echo "seed: ${count} tarballs match their lines in npm-seed/pins.tsv"
               }
-              # The version the release kit's release.sh stamps for a tag x.y.z-<channel>-<stamp>.
+              # The version a tag x.y.z-<channel>-<stamp> names, in the strict form npm takes.
               release_version() { # <release tag>
                 local core="${1%%-*}" channel="${1#*-}" version
                 channel="${channel%%-*}"
@@ -439,7 +440,7 @@ spec:
                 [ "${channel}" = stable ] || version="${version}-${channel}"
                 printf '%s' "${version}"
               }
-              # The first "version" line of every tracked package.json, as the kit's stamp writes it.
+              # The first "version" line of every tracked package.json, set to that version.
               stamp_versions() { # <version>
                 git -c core.quotePath=false ls-files -z -- package.json '*/package.json' | VERSION="$1" node -e '
                   const fs = require("fs");

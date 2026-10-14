@@ -775,7 +775,7 @@ spec:
 
               # ── this unit's OWN delivery branch, placed only now ───────────
               # deploy/<stage> is the branch the unit's Application renders its
-              # chart off. The release kit does not move it (hostyour-manager#293):
+              # chart off. The release does not move it:
               # it is placed HERE, once every image of this release exists, on
               # the release commit plus the pin commit, in one push. ArgoCD
               # therefore never renders the release tree with its placeholder
