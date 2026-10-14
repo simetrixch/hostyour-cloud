@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # remove-slave-driver.sh — the removal of ONE slave's registration, ON THE MASTER
-# ITSELF. remove-slave-from-master.sh and remove-slave-from-master.ps1 stream this
-# file over the session they open, exactly as install-machine.sh and
-# install-machine.ps1 stream driver.sh.
+# ITSELF. remove-slave-from-master.sh streams this file over the session it opens,
+# exactly as install-machine.sh streams driver.sh.
 # =============================================================================
 #
 # WHAT THIS IS. A driver. It runs no step and changes nothing a program would not
@@ -11,12 +10,6 @@
 # program, once per mode. The removal itself is remove-slave.yaml in the programs checkout
 # standing on this machine, and every decision about what goes and what stays is a
 # row of that file.
-#
-# WHY IT IS A FILE OF ITS OWN RATHER THAN TEXT INSIDE THE TWO LAUNCHERS. The
-# answers are composed HERE, out of the program's own declaration, and the
-# launchers are two spellings of one act — so text carried inside them would be
-# two copies of this composition and the pair would come to disagree the first
-# time one was corrected. One file, streamed by both, cannot.
 #
 # WHY THE ANSWERS ARE COMPOSED ON THIS MACHINE AND NOT ON THE WORKSTATION. The
 # names are read off remove-slave.yaml in the programs checkout standing here, so nothing
@@ -79,9 +72,9 @@ BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?
 # after the closing quote, where [[:space:]] matches it — and a bash on Linux
 # then reads it as part of the value, so a slave's domain ending in a control
 # character would name a mount nothing ever created and the removal would report
-# every one of its rows as already gone. COUNTED RATHER THAN MATCHED: grep on a
-# Windows workstation opens a file in text mode and strips the very byte it is
-# being asked about, and tr reads bytes on both.
+# every one of its rows as already gone. COUNTED WITH tr, which reads bytes and
+# nothing else, so no tool's reading of a line ending stands between the file
+# and the check.
 [ "$(tr -dc '\r' < "$CONFIG" | wc -c)" -eq 0 ] \
   || die 'the config carries carriage returns, so every value would end in one. Write it with Unix line endings' 65
 
@@ -296,10 +289,7 @@ printf '\n'
 good "$SLAVE_FQDN is off $MASTER_FQDN: its auth mount, its policies, its entries in the slaves tier, its reconciler project and its membership at the coordinator are gone"
 say "the machine's own records stand under $RUNS"
 
-# THIS FILE IS READ FROM STANDARD INPUT, so what follows it on that stream is
-# read as more of it. PowerShell appends its own newline when it pipes a string
-# to a native command, and on Windows that newline is CRLF — so the last thing to
-# arrive is a lone carriage return on a line of its own, which bash tries to run.
-# An explicit exit ends the script where the script ends, and bash reads no
-# further.
+# THIS FILE IS READ FROM STANDARD INPUT, so whatever the sender writes after it on
+# that stream would be read as more of it. An explicit exit ends the script where
+# the script ends, and bash reads no further.
 exit 0

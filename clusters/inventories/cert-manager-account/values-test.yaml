@@ -1,0 +1,2 @@
+# The stage whose Vault entries hold the account: test/app/acme-account and test/app/acme-eab.
+stage: test

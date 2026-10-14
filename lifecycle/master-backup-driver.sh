@@ -2,7 +2,7 @@
 # ===========================================================================
 # master-backup-driver.sh — the backup of a master, ON THE MACHINE.
 #
-# Started by master-backup.sh / master-backup.ps1 over the one session they open, with the config
+# Started by master-backup.sh over the one session it opens, with the config
 # ahead of it on the same standard input. Never started by hand.
 #
 # WHAT A MASTER IS THAT NOTHING ELSE HOLDS. The install branch, the registrations and the deploy repository

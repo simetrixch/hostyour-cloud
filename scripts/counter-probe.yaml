@@ -35,7 +35,7 @@
 #      tenants-appset.yaml. A matcher that ignores case reads them as
 #      `.Values` and `.Chart` and reports all of them. Every defect planted above is spelled the
 #      way the matcher expects, so these two lines are the only thing in this file that catches a
-#      matcher folding case. There is ONE matcher — scripts/check.ps1 starts scripts/check.sh —
+#      matcher folding case. There is ONE matcher, in scripts/check.sh,
 #      and changing its `case` glob to fold case turns the probe red on these two lines alone.
 #                                                                          MUST STAY UNREPORTED
 #

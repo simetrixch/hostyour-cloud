@@ -2,7 +2,6 @@
 # Everything this repository can be held to on one machine, before anything leaves it.
 #
 # Local chart validation and credential scanning. Fixture suites run in GitHub Actions.
-# scripts/check.ps1 is the standard Windows entry point for this file.
 
 set -uo pipefail
 
@@ -1053,8 +1052,6 @@ echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in 
 echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/tenant-appset.test.mjs; runs in public GitHub Actions.'
-node --check scripts/tenant-tls.test.mjs || fail 'Node syntax: scripts/tenant-tls.test.mjs'
-echo 'check: NOT RUN locally — scripts/tenant-tls.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in public GitHub Actions.'
 echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in public GitHub Actions.'

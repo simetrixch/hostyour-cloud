@@ -21,8 +21,6 @@
 # ONE SESSION, THE CONFIG AHEAD OF THE DRIVER, like install-machine. The machine is bare, so the
 # door may be the password door: the key is tried first, and where it is refused ssh asks for the
 # login password ONCE, on this terminal. It is not read from the config and it is not kept.
-#
-# Written twice, in bash and in PowerShell, held to the same bytes by lifecycle/test.sh.
 # ===========================================================================
 set -uo pipefail
 die() { printf 'restore: %s. Nothing has been changed\n' "$1" >&2; exit "${2:-65}"; }
@@ -77,8 +75,8 @@ DOOR_HOST="${MACHINE_HOST:-$FQDN}"
 PORT=22
 TARGET="$OPERATOR_USER@$DOOR_HOST"
 BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 PROBE=$(ssh "${BASE[@]}" -n -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)

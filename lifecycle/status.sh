@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # status.sh — which platform release each installation stands on, and how far
-# origin/master has moved past it. PowerShell twin: status.ps1 (same folder),
-# which answers identically on the same repository. lifecycle/test.sh measures
-# that.
+# origin/master has moved past it.
 # =============================================================================
 #
 #   bash lifecycle/status.sh                          every installation
@@ -67,11 +65,6 @@ set -uo pipefail
 # install branch and from nowhere else. See the header.
 REGENERATION_TREE=clusters
 
-# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
-# spellings are held to printing the same bytes, and PowerShell writes its output
-# in whatever code page the console carries -- so a dash from outside ASCII
-# arrives there as a different byte and the pair quietly stops agreeing. The
-# comments in these files are read by people and may say what they like.
 die() { printf 'status: %s\n' "$1" >&2; exit "${2:-65}"; }
 say() { printf '%s\n' "$1"; }
 
@@ -149,7 +142,7 @@ for fqdn in "${INSTALLATIONS[@]}"; do
   pin="$(value_in_map "$fqdn" release)"
   if [ -z "$pin" ]; then
     say '  release: none'
-    say '  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh / release-platform.ps1 beside this file writes that line.'
+    say '  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh beside this file writes that line.'
     continue
   fi
   say "  release: $pin"

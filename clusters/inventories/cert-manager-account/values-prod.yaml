@@ -1,0 +1,2 @@
+# The stage whose Vault entries hold the account: prod/app/acme-account and prod/app/acme-eab.
+stage: prod

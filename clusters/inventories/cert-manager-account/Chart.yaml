@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cert-manager-account
+version: 1.0.0
+description: |
+  The platform's one ACME account, read out of the secret store into cert-manager: the account key
+  and the MAC key of its External Account Binding, for ClusterIssuer platform-acme.
