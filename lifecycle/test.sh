@@ -101,45 +101,13 @@ export GIT_COMMITTER_DATE='2026-01-01T00:00:00+0000'
 # localised machine would translate.
 export LC_ALL=C
 
-# NO GIT CALL OF A FIXTURE LEAVES A PROCESS BEHIND IT. A commit, a fetch and the
-# receiving end of a push each start `git maintenance run --auto --detach`, which
-# forks away, takes objects/maintenance.lock in the repository and works there
-# after the caller has gone on. A case that removes its repository then races it
-# — release-platform's throwaway clone does, straight after the pin it pushed —
-# and `rm` ends "Directory not empty" with a line in the standard error that the
-# case records. The setting stands in the repository's own config, put there by a
-# template every `git init` and `git clone` copies — the scripts under test make
-# their clones under it too. The environment's own `-c` is no use: git leaves it out
-# of the environment of the other end of a local push, which is the one that matters.
-mkdir "$WORK/git-template"
-printf '[maintenance]\n\tauto = false\n' > "$WORK/git-template/config"
-export GIT_TEMPLATE_DIR="$WORK/git-template"
-
-# WHAT IS MEASURED IS THE START, not the race it loses: whether the removal lost
-# depends on the disk, so a test of the race goes red on one runner and not on
-# another. A fixture commits and pushes with the trace on, which names every
-# process git starts, the one at the far end of the push included.
-detached() { # prints how many background maintenances a fixture's commit and push started
-  local d
-  d="$(mktemp -d "$WORK/detached.XXXXXX")"
-  git init --quiet --bare --initial-branch=master "$d/origin.git"
-  git init --quiet --initial-branch=master "$d/work"
-  git -C "$d/work" remote add origin "$d/origin.git"
-  echo x > "$d/work/f"
-  git -C "$d/work" add f
-  GIT_TRACE="$d/trace" git -C "$d/work" commit --quiet -m x
-  GIT_TRACE="$d/trace" git -C "$d/work" push --quiet origin master
-  [ "$(git --git-dir="$d/origin.git" rev-parse master)" = "$(git -C "$d/work" rev-parse master)" ] \
-    || fail 'the traced fixture push did not reach its origin, so a count of nothing would prove nothing'
-  grep -cE 'built-in: git (maintenance run|gc) --auto' "$d/trace" || true
-}
-STARTED="$(detached)"
-[ "$STARTED" = '0' ] || fail "a fixture's commit and push started $STARTED background maintenance(s), which can still be writing when the case removes its repository"
+# No git call of a fixture leaves a process behind it, which a case removing its repository would
+# race: scripts/standin/git-quiet.sh sets the template that prevents it and measures that it does.
+# shellcheck disable=SC1091
+. "$HERE/../scripts/standin/git-quiet.sh"
+PLANTED="$(git_quiet_proof "$WORK")" || fail 'a fixture git starts a background maintenance'
 ok 'a fixture commits and pushes without starting a background maintenance, and the push reaches its origin'
-# A PLANTED DEFECT: the same commit and push in repositories made without the template.
-PLANTED="$(unset GIT_TEMPLATE_DIR; detached)"
-[ "$PLANTED" -gt 0 ] || fail 'a commit and push without the setting started no background maintenance, so the count above proves nothing'
-ok "the planted defect was caught — without the setting the same commit and push start $PLANTED background maintenance(s)"
+ok "the planted defect was caught — without the template the same commit and push start $PLANTED background maintenance(s)"
 
 OUT="$WORK/out"
 mkdir -p "$OUT"
@@ -287,6 +255,35 @@ git -C "$SEED" checkout --quiet master
 
 git clone --quiet "$ORIGIN_A" "$WORK_A"
 ok "fixture built — one origin, one trunk, four installations and one ref that is none"
+
+# ── the clone a pin is written in leaves no maintenance behind it ──────────
+# The template above keeps the fixtures quiet. The clone release-platform makes for the pin is the
+# script's own, and is removed straight after its commit and push, so it is measured with the
+# template taken away: one run of the script on a copy of the fixture, traced.
+pin_maintenance_starts() { # the release script to run; prints how many background maintenances its pin of apps3 started
+  local d
+  d="$(mktemp -d "$WORK/pin.XXXXXX")" || return 1
+  cp -a "$ORIGIN_A" "$d/origin.git"
+  git clone --quiet "$d/origin.git" "$d/checkout"
+  ( cd "$d/checkout" && unset GIT_TEMPLATE_DIR && GIT_TRACE="$d/trace" bash "$1" 0.4.0 alpha apps3.example.invalid ) > /dev/null 2>&1 || {
+    echo "the traced release of $1 did not end clean" >&2
+    return 1
+  }
+  git --git-dir="$d/origin.git" show 'apps3.example.invalid:clusters/active/apps3.example.invalid.yaml' | grep -q '^release: 0.4.0-alpha-' || {
+    echo "the traced release of $1 pinned nothing on origin, so a count of nothing would prove nothing" >&2
+    return 1
+  }
+  grep -cE 'built-in: git (maintenance run|gc) --auto' "$d/trace" || true
+}
+STARTED="$(pin_maintenance_starts "$HERE/release-platform.sh")" || fail 'the traced release did not pin'
+[ "$STARTED" = '0' ] || fail "release-platform's clone for a pin started $STARTED background maintenance(s), which can still be writing when the clone is removed"
+ok "release-platform pins an installation in a clone that starts no background maintenance, with the template taken away"
+PLANTED_P="$WORK/planted-pin.sh"
+sed 's/ -c maintenance.auto=false//' "$HERE/release-platform.sh" > "$PLANTED_P"
+! cmp -s "$HERE/release-platform.sh" "$PLANTED_P" || fail 'the planted clone was not planted — the probe proves nothing'
+PLANTED_N="$(pin_maintenance_starts "$PLANTED_P")" || fail 'the traced planted release did not pin'
+[ "$PLANTED_N" -gt 0 ] || fail 'a copy of release-platform.sh whose clone does not carry the setting started no background maintenance, so the count above proves nothing'
+ok "the planted defect was caught — a copy of release-platform.sh whose clone does not carry the setting starts $PLANTED_N background maintenance(s)"
 
 # ── the refusals, which cost nothing and must leave nothing behind ──────────
 run_bash release-platform 1.2 stable apps3.example.invalid
@@ -2478,7 +2475,8 @@ echo "test:   with the fixture root, this folder, the home folder, a mint stamp 
 echo "test:   reason for a host name it cannot resolve normalised, in the C locale."
 echo "test: covered — a fixture's commit and push start no background maintenance, at either end,"
 echo "test:   that could still be writing when a case removes its repository, and a planted run"
-echo "test:   without the template that prevents it is caught; the four release refusals, the mint, the pin, the reuse of a standing"
+echo "test:   without the template that prevents it is caught, and so is a copy of release-platform whose"
+echo "test:   clone for a pin does not carry the setting; the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
 echo "test:   the mint that names no installation — which pins nothing, moves no branch and"
