@@ -24,7 +24,7 @@ app:
     # restart it. The value is "config-" and 12 hex digits of the git hash of the
     # config.json every stage renders. scripts/check.sh refuses any other value and
     # prints the one to set.
-    hostyour.cloud/config-revision: "config-815478355391"
+    hostyour.cloud/config-revision: "config-8a6be16b4bfb"
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
   # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
   # With RollingUpdate, the new pod fails to start until the old pod
