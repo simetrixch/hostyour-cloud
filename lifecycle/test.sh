@@ -1139,6 +1139,59 @@ expect 'install-machine: a config of mode 644 named by a relative path' 77 <<'RE
 
 RECORDED
 
+# ── install-machine refuses a first master stated on the ACME account ────────
+# AN INSTALLATION IS BORN ON platform-local: a config that states ACME_CREDENTIALS_JSON is refused
+# in its sentence, with 65, before the first session, and never with its value. A recording ssh
+# stands first on PATH; the refusal must leave it uncalled, and a copy without the refusal calls it.
+ACMESSH="$WORK/acme-ssh"
+mkdir -p "$ACMESSH"
+cat > "$ACMESSH/ssh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$(dirname "$0")/called"
+echo 'ssh: connect to host stub port 22: Connection refused' >&2
+exit 255
+STUB
+chmod +x "$ACMESSH/ssh"
+IMACME="$WORK/install-machine-acme.env"
+cat > "$IMACME" <<'CONFIG'
+FQDN='master.example.invalid'
+OPERATOR_USER='operator'
+STAGE='prod'
+DEPLOY_REPO='https://example.invalid/deploy.git'
+PROGRAMS_REPO='https://example.invalid/programs.git'
+PLATFORM_REPO='https://example.invalid/platform.git'
+PLATFORM_REF='master'
+ELEVATION_PASSWORD='elevation-test'
+CLUSTER_ISSUER='platform-acme'
+ACME_CREDENTIALS_JSON='{"keyId":"kid-shown-nowhere","b64MacKey":"mac-shown-nowhere"}'
+CONFIG
+chmod 600 "$IMACME"
+run_acme() { # the script, then its config
+  A_CODE=0
+  ( cd "$WORK_A" && PATH="$ACMESSH:$PATH" bash "$1" "$2" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+run_acme "$HERE/install-machine.sh" "$IMACME"
+[ ! -e "$ACMESSH/called" ] || fail "install-machine: a config stating ACME_CREDENTIALS_JSON opened a session: $(cat "$ACMESSH/called")"
+must_not 'shown-nowhere' 'install-machine: the refusal does not show the binding'
+expect 'install-machine: a first master stated on the ACME account' 65 <<'RECORDED'
+~~~ standard error ~~~
+
+  <WORK>/install-machine-acme.env states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out, ACME_EMAIL and ACME_SERVER still stated, and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh master.example.invalid <WORK>/install-machine-acme.env and the Manager's cluster-redeploy of this machine
+
+RECORDED
+# The planted defect: a copy without the refusal, beside the driver and the guard, reaches the session.
+PLANTED_ACME="$WORK/planted-install-machine-acme"
+mkdir -p "$PLANTED_ACME"
+cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$PLANTED_ACME/"
+grep -vF '[ -z "${ACME_CREDENTIALS_JSON:-}" ] ||' "$HERE/install-machine.sh" > "$PLANTED_ACME/install-machine.sh"
+cmp -s "$HERE/install-machine.sh" "$PLANTED_ACME/install-machine.sh" \
+  && fail 'the refusal was not taken out of the planted install-machine.sh — the probe proves nothing'
+run_acme "$PLANTED_ACME/install-machine.sh" "$IMACME"
+[ -e "$ACMESSH/called" ] || fail 'the planted install-machine without the refusal opened no session either — the case cannot go red'
+[ "$A_CODE" = '69' ] || fail "the planted install-machine must end at the recording ssh with 69, got $A_CODE"
+rm -f "$ACMESSH/called"
+ok 'the planted defect was caught — a copy without the refusal opens a session with the ACME config'
+
 # ===========================================================================
 # FIVE — abandon-installation, against a fixture of an installation that is gone
 #
@@ -2388,9 +2441,10 @@ fi
 ok "clusters/platform/ansiwise.sha256 names both assets of the committed pin $TREE_PIN once each, and a file of another release or a second line is caught"
 
 # ── THE OWNER'S ACME BLOCK, read by both drivers' composition of the answers ──
-# ACME_SERVER and ACME_EMAIL stand over LETSENCRYPT_SERVER and LETSENCRYPT_EMAIL, and
+# ACME_SERVER and ACME_EMAIL alone answer letsencrypt_server and letsencrypt_email, and
 # ACME_CREDENTIALS_JSON, one line of JSON, gives the External Account Binding's two halves as
-# acme_eab_key_id and acme_eab_mac_key. A config without the block composes what it always did.
+# acme_eab_key_id and acme_eab_mac_key. The LETSENCRYPT lines older configs carry are read by nothing
+# so a config with them alone composes none of the four.
 # Each driver's own COMPOSE block is run out of its own text, against a stand-in config and a
 # stand-in declaration, so what is measured is what a machine runs. Every value is synthetic, and
 # the MAC key is a sentinel no refusal may print.
@@ -2430,17 +2484,14 @@ ACME_ANSWERS='{
   }
 }'
 LEGACY_ANSWERS='{
-  "answers": {
-    "letsencrypt_email": "legacy@example.invalid",
-    "letsencrypt_server": "https://acme-v02.api.letsencrypt.org/directory"
-  }
+  "answers": {}
 }'
 acme_cases() { # <composer> — every case, or the first that fails, named on standard error
   local composer="$1" json
   acme_config "$ACME_WORK/legacy.env"
   composed "$composer" "$ACME_WORK/legacy.env" || { echo 'a config without the block was refused' >&2; return 1; }
-  [ "$(cat "$ACME_WORK/answers.json")" = "$LEGACY_ANSWERS" ] || { echo 'a config without the block composed other answers than before' >&2; return 1; }
-  [ "$(cat "$ACME_WORK/composed.out")" = '2 of the 4 it declares, and 2 left to its own default: acme_eab_key_id acme_eab_mac_key' ] \
+  [ "$(cat "$ACME_WORK/answers.json")" = "$LEGACY_ANSWERS" ] || { echo "a config without the block composed out of the LETSENCRYPT lines: $(cat "$ACME_WORK/answers.json")" >&2; return 1; }
+  [ "$(cat "$ACME_WORK/composed.out")" = '0 of the 4 it declares, and 4 left to its own default: letsencrypt_email letsencrypt_server acme_eab_key_id acme_eab_mac_key' ] \
     || { echo "a config without the block printed: $(cat "$ACME_WORK/composed.out")" >&2; return 1; }
   acme_config "$ACME_WORK/owner.env" '{"keyId":"synthetic-key-id","b64MacKey":"SYNTHETIC-MAC-SENTINEL"}'
   composed "$composer" "$ACME_WORK/owner.env" || { echo 'the owner'"'"'s block was refused' >&2; return 1; }
@@ -2460,15 +2511,17 @@ for driver in driver.sh regenerate-driver.sh; do
   [ -s "$ACME_WORK/$driver.py" ] || fail "$driver carries no COMPOSE block to measure"
   acme_cases "$ACME_WORK/$driver.py" 2> "$ACME_WORK/why" || fail "$driver: $(cat "$ACME_WORK/why")"
 done
-# PLANTED: a composer that lets LETSENCRYPT_SERVER stand over ACME_SERVER, and one whose refusal
-# prints the value it refuses. Each is caught, or the cases above prove nothing.
+# PLANTED: a composer that lets LETSENCRYPT_SERVER stand over ACME_SERVER, one that still reads
+# LETSENCRYPT_SERVER where ACME_SERVER is not stated, and one whose refusal prints the value it
+# refuses. Each is caught, or the cases above prove nothing.
 sed "s/stated\['letsencrypt_server'\] = stated\['acme_server'\]/pass/" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-server.py"
+sed "/stated.pop('letsencrypt_server', None)/d" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-fallback.py"
 sed "s/; its value is not shown'/: ' + stated['acme_credentials_json']/" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-print.py"
-for planted in planted-server planted-print; do
+for planted in planted-server planted-fallback planted-print; do
   ! cmp -s "$ACME_WORK/driver.sh.py" "$ACME_WORK/$planted.py" || fail "the plant $planted changed nothing in the composer"
   if acme_cases "$ACME_WORK/$planted.py" 2>/dev/null; then fail "a composer with the plant $planted passed every ACME case"; fi
 done
-ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config without the block composes as before, and two planted composers are caught"
+ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config with only the LETSENCRYPT lines composes none of the four, and three planted composers are caught"
 
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
@@ -2505,7 +2558,8 @@ echo "test:   run after it that installs alone; the refusals a master backup and
 echo "test:   make before they open a session, the door each composes from MACHINE_HOST and not"
 echo "test:   from the identity, the id a restore refuses, and the one list of stores both drivers"
 echo "test:   carry; install-machine's refusal of a missing config, with no exit code in its"
-echo "test:   sentence. Eight planted defects, a copy of each act with one printed line changed,"
+echo "test:   sentence, and of a first master stated on the ACME account before any session,"
+echo "test:   where a copy without that refusal opens one. Eight planted defects, a copy of each act with one printed line changed,"
 echo "test:   prove the comparison can go red."
 echo "test:   Both drivers' placement, run from their own text in a sandbox, gives a clean machine the"
 echo "test:   engine at its pinned digests, refuses a swapped asset with nothing placed, places a"
@@ -2516,9 +2570,9 @@ echo "test:   stops its heartbeat ticker on a signal. A refusal that does not st
 echo "test:   that resumes after a TERM, a skip that asks ansiwise alone, a FETCHED left as the environment"
 echo "test:   set it, a check that takes any digest and a cleanup that leaves the ticker running are each"
 echo "test:   planted, and each is caught."
-echo "test:   Both drivers' composition of the answers, run from their own text: the owner's ACME block over"
-echo "test:   the LETSENCRYPT lines and the binding's two halves out of its JSON, six bindings refused by"
-echo "test:   name without their value, a config without the block as before, and two planted composers."
+echo "test:   Both drivers' composition of the answers, run from their own text: the owner's ACME block"
+echo "test:   alone and the binding's two halves out of its JSON, six bindings refused by"
+echo "test:   name without their value, the LETSENCRYPT lines read by nothing, and three planted composers."
 echo "test: covered — a config of mode 644, refused in its recorded sentence by the"
 echo "test:   regeneration, the backup, the restore and install-machine, and a planted defect in"
 echo "test:   the guard beside the backup and beside the restore that proves the launcher reads it."
