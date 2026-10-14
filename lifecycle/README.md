@@ -57,9 +57,9 @@ the homepage `https://manager.<UNIT_APEX>`, the eight repository permissions `ac
 `contents`, `webhooks` and `workflows` at write and `issues`, `metadata` and `packages` at read, no webhook,
 private — and waits. `issues` at read lets the Manager mint each unit's ci check a token that reads the
 issues of the unit's own repository and nothing else. `packages` at read does NOT let the App's token install a private npm package: GitHub
-grants an installation token no access to a private package whatever the App's permissions say, so
-a build's `.npmrc` carries the organisation's PACKAGES READER — a PAT recorded once on the Manager's
-Organisations page (hostyour-manager#218) — while the App stays the identity of every repository.
+grants an installation token no access to a private package whatever the App's permissions say, and
+a build reads its npm packages from the build plane's registry with the registry's pull identity,
+while the App stays the identity of every repository.
 The first click is GitHub's own **Create GitHub App**. GitHub sends the browser back with a code, the
 act turns the code into the App, refuses when the answered permissions are not the eight asked, and
 writes `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` into the config at once, in place, the key as one
