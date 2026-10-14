@@ -6,7 +6,8 @@ build-only alike:
   gate-stage → clone@tag (+verify: tag → commit, sha7) → builds (manifest vs
   attestation) → probe per build → build/push per missing build → engine-pin →
   check-definitions (only where the manifest names an appsBundle) → bump (the
-  reach search) → argo-sync.
+  reach search, which pins that appsBundle and no other build as a tenant
+  bundle) → argo-sync.
 
 The trust split:
 
@@ -42,7 +43,8 @@ place after, (c) hostyour-cloud clusters/inventories/<app>/values-<S>.yaml on TH
 INSTALLATION'S books branch, which every cluster renders its platform apps from, and on
 master, (d) a tenant's own apps bundle, pinned in bundles/<image>/pins-<S>.yaml on THAT
 SAME books branch of the deploy repository wherever a tenant registration
-registrations/<guid>/<S>.yaml names the image as its appsImage — and bumps every hit. An image with NO hit
+registrations/<guid>/<S>.yaml names the image as its appsImage, which only the
+manifest's appsBundle, the build the engine's check opened, may be — and bumps every hit. An image with NO hit
 anywhere fails the run loudly: a release nothing pins deploys nowhere, and
 silently succeeding would hide exactly the rot the derived reach exists to
 prevent. The ONE exception is the bundle's first release: the manifest names
@@ -824,12 +826,15 @@ spec:
         - {{ printf "build-%s" $b }}
         {{- end }}
         # Where the manifest names an appsBundle, the engine's check of it ends
-        # before a pin is written. A skipped check does not hold the bump back.
+        # before a pin is written. A skipped check does not hold the bump back,
+        # and the bump pins no tenant bundle but apps-bundle, the build the
+        # check's `when` read (pin_bundles).
         - check-definitions
       params:
         - { name: release-tag, value: "$(params.release-tag)" }
         - { name: stage, value: "$(params.stage)" }
         - { name: image-tag, value: "$(tasks.verify.results.image-tag)" }
+        - { name: apps-bundle, value: "$(tasks.builds.results.apps-bundle)" }
       workspaces:
         - { name: source, workspace: source }
       taskSpec:
@@ -839,6 +844,8 @@ spec:
           - name: stage
             type: string
           - name: image-tag
+            type: string
+          - name: apps-bundle
             type: string
         workspaces:
           - name: source
@@ -925,6 +932,10 @@ spec:
                 value: $(params.release-tag)
               - name: IMAGE_TAG
                 value: $(params.image-tag)
+              # The build the builds task handed on as the manifest's
+              # appsBundle, the one the engine's check opened, or nothing.
+              - name: APPS_BUNDLE
+                value: $(params.apps-bundle)
               # The tag a pin carries before its first release. The seed of a
               # chart's first pins-<stage>.yaml writes it for every image this
               # release did not build, and clusters/charts/common
@@ -1028,15 +1039,16 @@ spec:
               # The declared images of this release — the manifest in the
               # tagged workspace, already attested by the builds task.
               IMAGES="$(yq eval '.builds[].name' "${SRC}/deploy/platform.yaml")"
-              # The build this manifest declares as a tenant's apps bundle, or
-              # nothing. A bundle is pinned by class (d) below and by no chart's
+              # APPS_BUNDLE, the build this manifest declares as a tenant's apps
+              # bundle, or nothing: the builds task's result, which the check's
+              # `when` read, so the bump never pins a bundle the engine did not
+              # open. A bundle is pinned by class (d) below and by no chart's
               # builds[]; the Manager writes the declaration into the tenant
               # repository's manifest (hostyour-manager tenant-apps-tree.ts
               # tenantAppsManifest) and its schema holds it to one of
               # builds[].name. Held again here, because the manifest at the tag
               # is what this run releases: a bundle naming no build of this
               # release is a pin nothing could ever write.
-              APPS_BUNDLE="$(yq eval '.appsBundle // ""' "${SRC}/deploy/platform.yaml")"
               if [ -n "${APPS_BUNDLE}" ] && ! printf '%s\n' "${IMAGES}" | grep -qxF "${APPS_BUNDLE}"; then
                 echo "bump: FAIL — ${SRC}/deploy/platform.yaml declares appsBundle '${APPS_BUNDLE}', which is not one of its builds[].name ($(printf '%s' "${IMAGES:-<none>}" | tr '\n' ',')); a tenant's apps bundle is one of the builds this release ships" >&2
                 exit 1
@@ -1491,7 +1503,10 @@ spec:
                 # tenant onto it with both of its database lists, refuses a bundle
                 # written for another engine line, and restores all of it on an
                 # abort. The file holds the one build, so each release writes it
-                # whole.
+                # whole. Only APPS_BUNDLE is pinned here: it is the one build the
+                # engine's check opened, and a registration naming another build
+                # of this release as its appsImage fails the run before any of
+                # these pins is pushed.
                 # pin_bundles <books clone>
                 pin_bundles() {
                   local books="$1" P reg pins
@@ -1499,6 +1514,10 @@ spec:
                     for reg in "${books}"/registrations/*/"${STAGE}.yaml"; do
                       [ -f "${reg}" ] || continue
                       [ "$(yq eval '.appsImage // ""' "${reg}")" = "${P}" ] || continue
+                      if [ "${P}" != "${APPS_BUNDLE}" ]; then
+                        echo "bump: FAIL — ${reg#"${books}/"} names ${P} as its appsImage, and deploy/platform.yaml declares appsBundle '${APPS_BUNDLE}': the engine checked no other build of this release, so ${P} is not pinned as a tenant bundle. Declare it as appsBundle" >&2
+                        exit 1
+                      fi
                       pins="${books}/bundles/${P}/pins-${STAGE}.yaml"
                       mkdir -p "$(dirname "${pins}")"
                       BUNDLE="${P}" yq eval -n '{"builds": [{"name": strenv(BUNDLE), "image": strenv(BUNDLE), "tag": strenv(IMAGE_TAG)}]}' > "${pins}"

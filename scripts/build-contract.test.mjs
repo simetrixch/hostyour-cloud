@@ -605,6 +605,13 @@ test('the release pipeline checks an apps bundle with the stage engine before th
   assert.deepEqual(task('engine-pin').runAfter, ['builds', 'scan', ...attested.map((b) => `build-${b}`)], 'engine-pin starts after the bundle build, as the bump does');
   assert.deepEqual(task('check-definitions').runAfter, ['engine-pin']);
   assert.ok(task('bump').runAfter.includes('check-definitions'), 'a refused bundle ends the run before the bump writes a pin');
+  // The bump pins as a tenant bundle only its APPS_BUNDLE, so that is the value the `when` above reads, taken from the
+  // same result and not read again off the manifest.
+  const bumpBundle = (t) => [t.params.find((p) => p.name === 'apps-bundle')?.value, t.taskSpec.steps[0].env.find((e) => e.name === 'APPS_BUNDLE')?.value];
+  assert.deepEqual(bumpBundle(task('bump')), [onBundle[0].input, '$(params.apps-bundle)'], 'the bump pins as a bundle the one build the check opened');
+  const rewired = structuredClone(task('bump'));
+  rewired.params.find((p) => p.name === 'apps-bundle').value = '$(tasks.verify.results.image-tag)';
+  assert.notDeepEqual(bumpBundle(rewired), [onBundle[0].input, '$(params.apps-bundle)'], 'PLANTED DEFECT: a bump whose bundle comes from elsewhere than the check\'s is caught');
   const check = task('check-definitions');
   assert.deepEqual(check.params.map((p) => [p.name, p.value]), [
     ['bundle-image', 'zot.check.example.invalid/$(tasks.builds.results.apps-bundle):$(tasks.verify.results.image-tag)'],

@@ -3,7 +3,8 @@
 # class (b) appends newly declared image pins without losing held entries; class (c) pins an
 # inventory's value file on the install branch and on master, names the Application to wait for and
 # the commit the pins stand on; platform_live passes that Application only once it stands on that
-# commit or a later one, Synced and Healthy; class (d) pins a tenant bundle on its stage pin and
+# commit or a later one, Synced and Healthy; class (d) pins a tenant bundle on its stage pin, only the
+# appsBundle the engine checked, and
 # writes no registration; the bump's push
 # retries only a concurrent update (concurrent_push_refusal, and commit_push against a local bare
 # repository); and a carrier's record is its `push` token, never its `pat` (carrier_credential). The functions are read out of the template
@@ -349,7 +350,7 @@ printf 'cluster: apps1\nappsImage: example-apps\nappsImageTag: "0.1.0-old"\n' > 
 printf 'cluster: apps1\nappsImage: other-apps\nappsImageTag: "held"\n' > "$books/registrations/cccccccccccc/prod.yaml"
 printf 'cluster: apps1\nappsImage: example-apps\nappsImageTag: "0.1.0-old"\n' > "$books/registrations/dddddddddddd/test.yaml"
 cp -R "$books/registrations" "$work/registrations-before"
-IMAGES='example-apps example-engine'; HIT_COUNT[example-apps]=0; HIT_COUNT[example-engine]=0
+IMAGES='example-apps example-engine'; APPS_BUNDLE=example-apps; HIT_COUNT[example-apps]=0; HIT_COUNT[example-engine]=0
 pin_bundles "$books" >/dev/null || fail 'pin_bundles refused'
 [ "$(yq -o=json -I=0 . "$books/bundles/example-apps/pins-prod.yaml")" = "{\"builds\":[{\"name\":\"example-apps\",\"image\":\"example-apps\",\"tag\":\"$IMAGE_TAG\"}]}" ] \
   || fail "a bundle two tenants name was not pinned once at $IMAGE_TAG: $(cat "$books/bundles/example-apps/pins-prod.yaml" 2>&1)"
@@ -364,6 +365,23 @@ pin_bundles "$books" >/dev/null || fail 'pin_bundles refused the next release'
 [ "$(yq -o=json -I=0 '.builds | map(.tag)' "$books/bundles/example-apps/pins-prod.yaml")" = '["0.1.2-stable-next"]' ] \
   || fail 'the next release did not replace the bundle pin with its own tag'
 ok 'the next release replaces the bundle pin'
+# The engine checks the one build the builds task hands on as apps-bundle (the `when` of
+# check-definitions), so that build is the only one a release pins as a tenant bundle. A build a
+# registration names as its appsImage, while the manifest names no appsBundle or another build, would
+# otherwise move its pin with the check skipped.
+cp -R "$books" "$work/books-before"
+IMAGES='example-apps example-web'; IMAGE_TAG=0.1.3-stable-unchecked
+for APPS_BUNDLE in '' example-web; do
+  CODE=0; OUT="$(pin_bundles "$books" 2>&1)" || CODE=$?
+  [ "$CODE" != 0 ] && grep -qF "registrations/aaaaaaaaaaaa/prod.yaml names example-apps as its appsImage" <<<"$OUT" \
+    || fail "PLANTED DEFECT: a bundle pinned through its registration only, with appsBundle '${APPS_BUNDLE}', must fail the bump, and pin_bundles said ($CODE): $OUT"
+  diff -r "$work/books-before" "$books" >/dev/null || fail "PLANTED DEFECT: the refused bundle moved its pin with appsBundle '${APPS_BUNDLE}'"
+done
+ok 'PLANTED DEFECT: a bundle a registration names as appsImage, where the manifest names no appsBundle or another build, fails the bump and moves no pin'
+IMAGES=example-engine; APPS_BUNDLE=''; HIT_COUNT[example-engine]=0
+pin_bundles "$books" >/dev/null || fail 'PLANTED INNOCENT: a unit with no appsBundle whose builds no tenant names was refused'
+diff -r "$work/books-before" "$books" >/dev/null || fail 'PLANTED INNOCENT: a unit with no appsBundle wrote a bundle pin'
+ok 'PLANTED INNOCENT: a unit with no appsBundle whose builds no tenant names as appsImage passes and pins no bundle'
 grep -nE 'bundle_engine|engine_line_off|BUNDLE_HIT' "$template" && fail 'the deleted class (d) shell still stands in the template'
 grep -nF '.appsImageTag = ' "$template" && fail 'the bump still writes appsImageTag on a registration'
 grep -qF 'pin_bundles "${WORK}/deploy-books"' "$template" || fail 'the bump does not pin the bundles on the books clone'
@@ -537,6 +555,9 @@ printf 'name: example\nbuilds:\n  - {name: example-backend}\n' > "$MANIFEST"
 . "$work/apps-bundle.sh"
 [ -f "$RESULT" ] && [ ! -s "$RESULT" ] || fail "PLANTED INNOCENT: the result of a unit that names no bundle is not empty: $(cat "$RESULT")"
 ok 'PLANTED INNOCENT: a unit that declares no appsBundle writes an empty result, which no attested build equals'
+# The bump takes that result as its APPS_BUNDLE, and reads no appsBundle of its own off the manifest.
+[ "$(grep -cF '.appsBundle // ""' "$template")" = 1 ] || fail 'the appsBundle of the manifest is read in more than one place, so the bump could pin a bundle the check did not open'
+ok 'the appsBundle of the manifest is read once, by the builds task, whose result the check and the bump both take'
 
 # ── carrier_credential: a carrier's record is its push token, never its pat ──
 # Vault stands in as two shell functions: the login, and a curl that answers 200 with the fixture
