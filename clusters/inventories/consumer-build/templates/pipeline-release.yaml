@@ -1029,14 +1029,15 @@ spec:
                 fi
               }
 
-              # carrier_credential <unit> <repoURL> — put THAT unit's own PAT,
-              # path-qualified to THAT repository, in front of git for the clone
+              # carrier_credential <unit> <repoURL> — put THAT unit's own push
+              # token (property `push`, which writes that one repository and no
+              # other), path-qualified to THAT repository, in front of git for the clone
               # and the push below. Fail-closed at every arm: a registration
               # states this unit deploys at this stage, so a credential that
               # cannot be read is a search that cannot be made, never one that
               # found nothing.
               carrier_credential() {
-                local cname="$1" crepo="$2" body code rc pat
+                local cname="$1" crepo="$2" body code rc push
                 vault_login
                 body="$(mktemp)"
                 set +e
@@ -1053,13 +1054,13 @@ spec:
                   echo "bump: FAIL — Vault answered ${code} for ${VAULT_KV_MOUNT}/build/${cname}/repo-pat. The registration of ${cname} names a repo credential, so that entry is what onboarding seeded for it; 404 means it is gone and 403 means role ${VAULT_ROLE} may not read it." >&2
                   return 1
                 fi
-                pat="$(yq -p=json -o=y '.data.data.pat // ""' "${body}")"
+                push="$(yq -p=json -o=y '.data.data.push // ""' "${body}")"
                 rm -f "${body}"
-                if [ -z "${pat}" ]; then
-                  echo "bump: FAIL — ${VAULT_KV_MOUNT}/build/${cname}/repo-pat carries no property 'pat'; that is the one property every reader of this entry takes" >&2
+                if [ -z "${push}" ]; then
+                  echo "bump: FAIL — ${VAULT_KV_MOUNT}/build/${cname}/repo-pat carries no property 'push'; the Manager writes it for every unit that releases, and a carrier deploys from a stage file, so it releases" >&2
                   return 1
                 fi
-                printf 'https://x-access-token:%s@%s\n' "${pat}" "${crepo#https://}" >> "${CREDENTIALS_FILE}"
+                printf 'https://x-access-token:%s@%s\n' "${push}" "${crepo#https://}" >> "${CREDENTIALS_FILE}"
               }
 
               # ── class (a): every registration with a chartPath ─────────────
