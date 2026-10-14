@@ -4,4 +4,4 @@
 builds:
   - name: digita-testkit-e2e
     image: digita-testkit-e2e
-    tag: "0.4.003-stable-20261011004303-cf46af8"
+    tag: "0.4.004-stable-20261014195830-9a74f83"
