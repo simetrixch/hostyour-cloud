@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 fail() { echo "test: FAIL — $1"; exit 1; }
-echo 'test: lifecycle/test.sh — delivery tooling in both spellings.'
+echo 'test: lifecycle/test.sh — delivery tooling, held to its recorded bytes.'
 bash lifecycle/test.sh || fail 'lifecycle/test.sh'
 echo 'test: scripts/pipeline-release.test.sh — release pipeline decisions.'
 bash scripts/pipeline-release.test.sh || fail 'scripts/pipeline-release.test.sh'
@@ -26,7 +26,7 @@ helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'
 echo 'test: ingress entrypoints — the shared ingress chart writes websecure once, whatever a consumer sets.'
 node --test scripts/ingress-entrypoints.test.mjs || fail 'scripts/ingress-entrypoints.test.mjs'
-echo 'test: installation domain planning and paired launchers.'
+echo 'test: installation domain planning and its launcher.'
 node --test scripts/installation-domain.test.mjs || fail 'scripts/installation-domain.test.mjs'
 node --test scripts/tenant-stage-label.test.mjs || fail 'scripts/tenant-stage-label.test.mjs'
 echo 'test: post stage callbacks — strict nonproduction allowlist.'

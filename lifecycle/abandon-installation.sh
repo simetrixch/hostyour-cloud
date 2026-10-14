@@ -2,9 +2,7 @@
 # =============================================================================
 # abandon-installation.sh — take down what ONE installation left outside its
 # machines: the DNS records it wrote, its install branches and its books branch
-# in the deploy repository. PowerShell twin: abandon-installation.ps1 (same folder), which
-# does the same in the same order and prints the same lines. lifecycle/test.sh
-# measures that.
+# in the deploy repository.
 # =============================================================================
 #
 # USAGE (run from anywhere inside a hostyour-cloud checkout)
@@ -67,12 +65,6 @@
 # THE CONFIG STAYS. A local config is the record of the answers a machine was
 # installed with, nothing but the file itself carries it, and the next machine
 # of that name is installed from it. This names it and leaves it.
-#
-# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
-# spellings are held to printing the same bytes, and PowerShell writes its output
-# in whatever code page the console carries -- so a dash from outside ASCII
-# arrives there as a different byte and the pair quietly stops agreeing. The
-# comments in these files are read by people and may say what they like.
 # =============================================================================
 
 set -uo pipefail

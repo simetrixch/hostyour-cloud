@@ -2,7 +2,6 @@
 # Everything this repository can be held to on one machine, before anything leaves it.
 #
 # Local chart validation and credential scanning. Fixture suites run in GitHub Actions.
-# scripts/check.ps1 is the standard Windows entry point for this file.
 
 set -uo pipefail
 

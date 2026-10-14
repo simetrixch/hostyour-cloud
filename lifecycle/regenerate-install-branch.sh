@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # regenerate-install-branch.sh — bring ONE installation onto the release its map
-# is pinned to. PowerShell twin: regenerate-install-branch.ps1 (same folder),
-# which does the same in the same order and prints the same lines.
-# lifecycle/test.sh measures that.
+# is pinned to.
 # =============================================================================
 #
 # USAGE (run from anywhere inside a hostyour-cloud checkout)
@@ -44,12 +42,6 @@
 # install-machine.sh uses to start driver.sh, and for the same
 # reason: what runs on a machine is fetched by that machine, and what this
 # carries over is the operator's own config and nothing else.
-#
-# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
-# spellings are held to printing the same bytes, and PowerShell writes its output
-# in whatever code page the console carries -- so a dash from outside ASCII
-# arrives there as a different byte and the pair quietly stops agreeing. The
-# comments in these files are read by people and may say what they like.
 # =============================================================================
 
 set -uo pipefail
@@ -130,7 +122,7 @@ MAPTEXT="$(git show "FETCH_HEAD:$MAP" 2>/dev/null)" \
 
 PIN="$(printf '%s\n' "$MAPTEXT" | value_in_text release)"
 [ -n "$PIN" ] \
-  || die "$MAP on branch $FQDN carries no release line, so nothing records which state this installation is to stand on. release-platform.sh / release-platform.ps1 beside this file writes that line" 65
+  || die "$MAP on branch $FQDN carries no release line, so nothing records which state this installation is to stand on. release-platform.sh beside this file writes that line" 65
 
 # THE TAG IS ASKED OF THE REMOTE, because the remote is what the machine fetches
 # from. A pin naming a tag this workstation happens to carry and origin does not
@@ -164,8 +156,7 @@ say "regenerate: $FQDN carries role $ROLE in $MAP, and the branch is regenerated
 [ -r "$CONFIG" ] \
   || die "there is no config at $CONFIG. It states the installation this regenerates: copy config.example.env beside it, fill it in, and name it as the second argument" 66
 
-# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
-# Windows, where a mode says nothing, and the mode everywhere else.
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: mode 600 or 400.
 require_owner_only "$CONFIG" \
   || die "$CONFIG $REACH and carries credentials, the elevation password of the machine among them. Run: $OWNER_ONLY_COMMAND" 77
 
@@ -226,8 +217,8 @@ BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 # the case here, and the password is the exception a machine still at its birth
 # would need. The key is tried first and the password only where the key is
 # refused, so neither case needs a flag.
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 PROBE=$(ssh "${BASE[@]}" -n -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)

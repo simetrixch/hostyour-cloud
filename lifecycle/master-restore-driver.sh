@@ -2,7 +2,7 @@
 # ===========================================================================
 # master-restore-driver.sh — stages a master's backup on a bare machine, ON THE MACHINE.
 #
-# Started by master-restore.sh / master-restore.ps1 over the one session they open, with the config
+# Started by master-restore.sh over the one session it opens, with the config
 # ahead of it on the same standard input and the backup's id as its second argument. Never started
 # by hand.
 #

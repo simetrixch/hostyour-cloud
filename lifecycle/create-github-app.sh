@@ -2,8 +2,6 @@
 # =============================================================================
 # create-github-app.sh — create the platform's GitHub App in the customer's
 # organisation, install it there, and write its three answers into the config.
-# PowerShell twin: create-github-app.ps1 (same folder), which does the same in
-# the same order and prints the same lines. lifecycle/test.sh measures that.
 # =============================================================================
 #
 # USAGE (run from anywhere)
@@ -42,7 +40,7 @@
 # carrying all three refuses, so every run of this is safe to repeat.
 #
 # THE LISTENER is one perl process on 127.0.0.1 at a port the system picks,
-# and perl because it is the one interpreter Git Bash, Linux and macOS all
+# and perl because it is the one interpreter Linux and macOS both
 # carry with a socket module. It serves the manifest page, which submits itself,
 # answers GitHub's redirect with one line, records the code, and exits. After
 # ten minutes without the redirect it exits empty and this refuses.
@@ -50,14 +48,7 @@
 # THE KEY TOUCHES DISK IN TWO PLACES: the config, and — for as long as it takes
 # openssl to sign a JWT — a file in a temporary directory that nobody but the
 # owner can reach, removed on every path this can end on. openssl reads a key
-# from a file and not from a pipe, and on Git Bash process substitution hands
-# the native openssl a path it cannot open.
-#
-# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
-# spellings are held to printing the same bytes, and PowerShell writes its output
-# in whatever code page the console carries -- so a dash from outside ASCII
-# arrives there as a different byte and the pair quietly stops agreeing. The
-# comments in these files are read by people and may say what they like.
+# from a file and not from a pipe.
 # =============================================================================
 
 set -uo pipefail
@@ -111,21 +102,12 @@ write_config_value() { # KEY, value -> KEY='value' rewritten in place, appended 
   : > "$CONFIG"
   for line in "${lines[@]}"; do printf '%s\n' "$line" >> "$CONFIG"; done
 }
-make_owner_only() { # a file -> nobody but the owner reaches it, in this platform's own words
-  if [ -n "${MSYSTEM:-}" ] || [ "$(uname -o 2>/dev/null)" = 'Msys' ]; then
-    icacls "$(cygpath -aw "$1")" /inheritance:r /grant:r "${USERNAME:-$(stat -c '%U' "$1")}:(F)" >/dev/null
-  else
-    chmod 600 "$1"
-  fi
-}
 # THE BROWSER IS $BROWSER WHERE IT IS SET, the way gh reads it, and the
-# platform's own opener otherwise: start on Git Bash, open on macOS, xdg-open
-# on Linux. Each returns once the browser was asked, and the listener is
+# platform's own opener otherwise: open on macOS, xdg-open on Linux. Each returns once the browser was asked, and the listener is
 # already standing when it is.
 open_in_browser() { # a URL -> 0 when a browser was asked to open it
   if [ -n "${BROWSER:-}" ]; then "$BROWSER" "$1"; return; fi
   case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) start '' "$1" ;;
     Darwin) open "$1" ;;
     *) xdg-open "$1" ;;
   esac
@@ -232,7 +214,7 @@ app_jwt() { # -> the JWT; 1 when openssl does not read KEYFILE as a private key
 write_key_file() { # PEM_JSON, one line with \n for each line break -> KEYFILE holds the PEM, owner-only
   KEYFILE="$WORK/app.pem"
   : > "$KEYFILE"
-  make_owner_only "$KEYFILE"
+  chmod 600 "$KEYFILE"
   printf '%s' "${PEM_JSON//'\n'/$'\n'}" > "$KEYFILE"
 }
 # The App's id and html_url stand at the top of GitHub's answer, and so do the

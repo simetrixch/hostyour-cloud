@@ -160,13 +160,11 @@ BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?
 # closing quote, where [[:space:]] matches it — and a bash on Linux then reads it as part
 # of the value, so a config written in Notepad would give this machine an FQDN ending in
 # a control character and the first thing to say so would be a certificate issued for a
-# name nobody typed. Both launchers strip it; this refuses it, because what arrives is
+# name nobody typed. install-machine.sh strips it; this refuses it, because what arrives is
 # what matters.
 #
-# COUNTED RATHER THAN MATCHED, because `grep` on a Windows workstation opens a file in
-# text mode and strips the very byte it is being asked about — so the obvious spelling
-# is green on the machine where the file is WRITTEN and only works on the one where it
-# is read. `tr` reads bytes on both.
+# COUNTED WITH `tr`, which reads bytes and nothing else, so no tool's reading of a line
+# ending stands between the file and the check.
 [ "$(tr -dc '\r' < "$CONFIG" | wc -c)" -eq 0 ] \
   || die 'the config carries carriage returns, so every value would end in one. Write it with Unix line endings' 65
 
@@ -1030,15 +1028,7 @@ good "$FQDN is installed: ${#PROGRAMS[@]} programs, ${#RUN_IDS[@]} runs, every o
 say "the machine's own records stand under $RUNS"
 summary
 
-# THIS FILE IS READ FROM STANDARD INPUT, so what follows it on that stream is read as
-# more of it. PowerShell appends its own newline when it pipes a string to a native
-# command, and on Windows that newline is CRLF — so the last thing to arrive is a lone
-# carriage return on a line of its own, which bash tries to run:
-#
-#   bash: line 828: $'\r': command not found
-#
-# Stripping carriage returns cannot reach it: it is added after the stripping, by the
-# thing doing the sending.
-#
-# An explicit exit ends the script where the script ends, and bash reads no further.
+# THIS FILE IS READ FROM STANDARD INPUT, so whatever the sender writes after it on that
+# stream would be read as more of it. An explicit exit ends the script where the script
+# ends, and bash reads no further.
 exit 0

@@ -111,8 +111,6 @@ test('all existing registration generators exclude TLS preparations beside ordin
   for (const [file, expression, matches, defect] of [
     ['lifecycle/abandon-installation.sh', /case "\$file" in ([^;]+)\) ;; \*\) continue ;; esac/g,
       (pattern, path) => pattern.split('|').some(glob => accepts(glob, path)), 'registrations/*/*.yaml'],
-    ['lifecycle/abandon-installation.ps1', /\$file -notmatch '([^']+)'/g,
-      (pattern, path) => new RegExp(pattern).test(path), '^registrations/([^/]+)/([^/]+)\\.yaml$'],
     ['clusters/inventories/consumer-build/templates/pipeline-release.yaml', /for reg in [^;\n]*?\/(registrations\/[^;\n]+); do/g,
       (pattern, path, stage) => accepts(pattern.replaceAll('"', '').replaceAll('${STAGE}', stage), path), 'registrations/*/*.yaml'],
   ]) {
