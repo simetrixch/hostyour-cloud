@@ -421,8 +421,10 @@ const fill = (text, values) => String(text).replace(/\$\(([a-z.-]+)\)/g, (ref, k
   return values[key];
 });
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const mount = (text, mounts) => Object.keys(mounts).sort((a, b) => b.length - a.length).reduce((t, path) =>
-  t.replace(new RegExp(`(^|[\\s"'=:(])${escape(path)}(?=/|$|[\\s"';)])`, 'gm'), (_, before) => before + mounts[path]), text);
+// One pass over all mount paths, longest first, and before any $(...) is filled, so a folder of the run
+// (which may itself lie under /tmp) is never mapped again.
+const mount = (text, mounts) => text.replace(new RegExp(`(^|[\\s"'=:(])(${Object.keys(mounts).sort((a, b) => b.length - a.length).map(escape).join('|')})(?=/|$|[\\s"';)])`, 'gm'),
+  (_, before, path) => before + mounts[path]);
 const git = (...args) => spawnSync('git', args, {encoding: 'utf8'});
 const done = new Set();
 while (done.size < tasks.length) {
@@ -465,12 +467,12 @@ while (done.size < tasks.length) {
     Object.values(mounts).forEach((dir) => mkdirSync(dir, {recursive: true}));
     const env = {PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1',
       ...Object.assign({}, ...(step.envFrom ?? []).map((e) => secrets[e.secretRef.name] ?? {})),
-      ...Object.fromEntries((step.env ?? []).map((e) => [e.name, mount(fill(e.value, values), mounts)]))};
+      ...Object.fromEntries((step.env ?? []).map((e) => [e.name, fill(mount(e.value, mounts), values)]))};
     const script = join(home, 'script');
-    writeFileSync(script, mount(fill(step.script, values), mounts));
+    writeFileSync(script, fill(mount(step.script, mounts), values));
     chmodSync(script, 0o755);
     const ran = spawnSync(script, [], {cwd: step.workingDir ? mount(step.workingDir, mounts) : home, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
-    process.stdout.write(ran.stdout + ran.stderr);
+    process.stdout.write(ran.error ? `${ran.error}\n` : ran.stdout + ran.stderr);
     if (ran.status !== 0) { console.log(`run: ${task.name} failed at ${step.name}`); process.exit(1); }
   }
   for (const [name, file] of Object.entries(results)) scope[`tasks.${task.name}.results.${name}`] = existsSync(file) ? readFileSync(file, 'utf8') : '';
