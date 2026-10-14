@@ -761,6 +761,27 @@ for line in open(config_path, encoding='utf-8'):
     if named and named.group(2) != '':
         stated[named.group(1).lower()] = named.group(2)
 
+# THE OWNER'S ACME BLOCK. Where the config states them, ACME_SERVER and ACME_EMAIL stand over
+# LETSENCRYPT_SERVER and LETSENCRYPT_EMAIL, and ACME_CREDENTIALS_JSON, the External Account
+# Binding Google Trust Services issued as one line of JSON, gives acme_eab_key_id its keyId and
+# acme_eab_mac_key its b64MacKey. A binding that cannot be read is refused by the key's name, and
+# never with its value: the MAC key is a credential.
+if 'acme_server' in stated:
+    stated['letsencrypt_server'] = stated['acme_server']
+if 'acme_email' in stated:
+    stated['letsencrypt_email'] = stated['acme_email']
+if 'acme_credentials_json' in stated:
+    try:
+        binding = json.loads(stated['acme_credentials_json'])
+    except ValueError:
+        binding = None
+    if not isinstance(binding, dict) or not all(
+            isinstance(binding.get(field), str) and binding[field] for field in ('keyId', 'b64MacKey')):
+        sys.exit('ACME_CREDENTIALS_JSON in the config is not one line of JSON carrying keyId and '
+                 'b64MacKey, the External Account Binding Google Trust Services issued; its value is not shown')
+    stated['acme_eab_key_id'] = binding['keyId']
+    stated['acme_eab_mac_key'] = binding['b64MacKey']
+
 # WHAT EACH ANSWER IS, not only what it is called. An answer declared as a list and
 # given a string is refused by kind — "alert_recipients" holds textList, and was
 # given String — and the config has one line per name, so the shape has to be read
