@@ -51,10 +51,13 @@ priorityClasses:
 # The GitHub owners whose repositories run their scripts/check.sh on the build plane for every
 # branch push (templates/triggers/github-ci-push.yaml). A repository of any other owner is released
 # through the deploy trigger as before, but its check never runs here. Required: an empty list fails
-# the render.
+# the render. digitaplatform is the owner of the product repositories and simetrixch the owner of
+# this platform's own (hostyour-*, ansiwise-*): each is an organisation of the operator, and a push
+# needs write access to its repositories.
 ciPush:
   owners:
     - digitaplatform
+    - simetrixch
 
 # EventListener config — exposed publicly so GitHub can call it on a branch
 # push and on a deploy/<stage>/<release-tag> tag push.

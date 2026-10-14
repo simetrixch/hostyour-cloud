@@ -26,8 +26,6 @@
 # The Manager is one of them, so a run in flight when this starts is a run this interrupts — start
 # this at a quiet hour. The units on the master keep running; what they read from a stopped store
 # they read again once it is back.
-#
-# Written twice, in bash and in PowerShell, held to the same bytes by lifecycle/test.sh.
 # ===========================================================================
 set -uo pipefail
 die() { printf 'backup: %s. Nothing has been changed\n' "$1" >&2; exit "${2:-65}"; }
@@ -75,8 +73,8 @@ DOOR_HOST="${MACHINE_HOST:-$FQDN}"
 PORT=22
 TARGET="$OPERATOR_USER@$DOOR_HOST"
 BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new -o BatchMode=yes)
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 PROBE=$(ssh "${BASE[@]}" -n "$TARGET" true 2>&1)
 if [ $? -ne 0 ]; then
   case "$PROBE" in

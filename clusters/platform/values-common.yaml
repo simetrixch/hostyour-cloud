@@ -57,10 +57,11 @@ global:
   # not carry leaves every GitOps-deployed Certificate Pending forever on
   # "ClusterIssuer not found".
   #
-  # IT SAYS NOTHING ABOUT WHICH AUTHORITY. That is the `letsencrypt_server`
-  # answer of that same program, and it varies per installation while this name
-  # may not: every manifest that asks for a certificate references it by this
-  # exact string.
+  # IT SAYS NOTHING ABOUT WHICH AUTHORITY. There is one: Google Trust Services,
+  # whose directory the `letsencrypt_server` answer of that same program names,
+  # with the installation's one ACME account named in the cluster's map as
+  # `acmeEabKeyId`. This name stays while the form behind it changes: every
+  # manifest that asks for a certificate references it by this exact string.
   clusterIssuer: platform-acme
 
   # WHERE A TENANT'S UPLOADS ARE KEPT — the Cloudflare account the platform makes each tenant's
@@ -273,7 +274,10 @@ global:
   # needs it reads the SAME literal through the shared $values chain:
   #   - clusters/inventories/image-builder github-deploy-request Trigger CEL
   #     (^refs/tags/deploy/(dev|test|prod)/<filter>$),
-  #   - clusters/inventories/consumer-build pipeline-release gate-stage re-verify.
+  #   - clusters/inventories/image-builder github-release-publish Trigger CEL
+  #     (^refs/tags/<filter>$),
+  #   - clusters/inventories/consumer-build pipeline-release gate-stage re-verify,
+  #   - clusters/inventories/consumer-build pipeline-publish gate.
   # It is the INNER pattern only (no ^/$ anchors) so it composes as above (CEL)
   # and as `^<filter>$` (shell / release.ts source).
   # The major and the minor reject leading zeros (a lone 0 excepted); the third
@@ -325,6 +329,13 @@ global:
   # through `common.registryHost`, a different helper reached by a different
   # path, so nothing here touches them.
   buildRegistry: "ghcr.io/simetrixch"
+
+  # The unit whose builds ARE this platform's own images, the ones every builds[] pin above
+  # composes through common.buildImage. Its release pipeline pushes them to
+  # <registry>/<owner>/<build> where <registry>/<owner> is buildRegistry, which happens on the
+  # owner's master alone; every other unit, and every unit of another installation, pushes flat
+  # (clusters/inventories/consumer-build templates/pipeline-release.yaml, the push path).
+  buildRegistryUnit: hostyour-manager
 
   # ── Channel ceiling — the ONE literal table ────────────────────────────────
   # Which stages a release channel may reach. The channel is read FROM THE TAG

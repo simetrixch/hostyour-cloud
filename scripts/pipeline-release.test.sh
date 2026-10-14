@@ -4,9 +4,9 @@
 # inventory's value file on the install branch and on master, names the Application to wait for and
 # the commit the pins stand on; platform_live passes that Application only once it stands on that
 # commit or a later one, Synced and Healthy; class (d) pins a tenant bundle on its stage pin and
-# writes no registration; and the bump's push
+# writes no registration; the bump's push
 # retries only a concurrent update (concurrent_push_refusal, and commit_push against a local bare
-# repository). The functions are read out of the template
+# repository); and a carrier's record is its `push` token, never its `pat` (carrier_credential). The functions are read out of the template
 # (clusters/inventories/consumer-build/templates/pipeline-release.yaml), as the Pipeline carries
 # them, and run against fixture files and repositories.
 #
@@ -19,6 +19,12 @@ ok() { echo "pipeline-release.test: ok — $*"; }
 command -v yq >/dev/null 2>&1 || fail "yq is not on this path, and the functions under test run it"
 work="$(mktemp -d)" || fail "no temporary directory could be made"
 trap 'rm -rf "$work"' EXIT
+# No git call of a fixture leaves a process behind it, which a case removing its repository would
+# race: scripts/standin/git-quiet.sh sets the template that prevents it and measures that it does.
+# shellcheck disable=SC1091
+. "$root/scripts/standin/git-quiet.sh"
+planted="$(git_quiet_proof "$work")" || fail 'a fixture git starts a background maintenance'
+ok "a fixture commits and pushes without starting a background maintenance; the planted defect, repositories made without the template, starts $planted"
 
 # A function from its first line to the brace that closes it at the same indent.
 extract() { # function name -> its text out of the template
@@ -28,7 +34,7 @@ extract() { # function name -> its text out of the template
     on && /^ *\}$/ && match($0, /[^ ]/) == indent { exit }
   ' "$template"
 }
-for fn in concurrent_push_refusal commit_push bump_file pin_bundles; do
+for fn in concurrent_push_refusal commit_push bump_file pin_bundles carrier_credential; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
@@ -531,5 +537,32 @@ printf 'name: example\nbuilds:\n  - {name: example-backend}\n' > "$MANIFEST"
 . "$work/apps-bundle.sh"
 [ -f "$RESULT" ] && [ ! -s "$RESULT" ] || fail "PLANTED INNOCENT: the result of a unit that names no bundle is not empty: $(cat "$RESULT")"
 ok 'PLANTED INNOCENT: a unit that declares no appsBundle writes an empty result, which no attested build equals'
+
+# ── carrier_credential: a carrier's record is its push token, never its pat ──
+# Vault stands in as two shell functions: the login, and a curl that answers 200 with the fixture
+# body in the file the function names with -o. Each call runs in a subshell, because the function
+# turns errexit on as it returns from its curl.
+vault_login() { VAULT_CLIENT_TOKEN=fixture-vault-token; }
+curl() { # -o <file> and -w are what carrier_credential passes; the rest is the request
+  local out=''
+  while [ "$#" -gt 0 ]; do [ "$1" = -o ] && { out="$2"; shift; }; shift; done
+  printf '%s' "$carrier_body" > "$out"
+  printf 200
+}
+VAULT_ADDR=https://vault.fixture.invalid VAULT_KV_MOUNT=secret VAULT_ROLE=fixture-bump
+CREDENTIALS_FILE="$work/carrier-credentials"
+carrier_body='{"data":{"data":{"pat":"pat-of-shop","packages":"","push":"push-of-shop","issues":"","statuses":"statuses-of-shop"}}}'
+: > "$CREDENTIALS_FILE"
+( carrier_credential shop https://github.com/acme/shop.git ) 2> "$work/carrier.err" || fail "an entry with push was refused: $(cat "$work/carrier.err")"
+[ "$(cat "$CREDENTIALS_FILE")" = 'https://x-access-token:push-of-shop@github.com/acme/shop.git' ] \
+  || fail 'PLANTED DEFECT: the carrier record is not the push token, path-qualified to the carrier repository'
+grep -qF pat-of-shop "$CREDENTIALS_FILE" && fail 'PLANTED DEFECT: the carrier record carries the pat'
+ok 'a carrier entry with pat and push appends the push token, path-qualified to its repository, and never the pat'
+carrier_body='{"data":{"data":{"pat":"pat-of-shop","packages":"","issues":"","statuses":"statuses-of-shop"}}}'
+: > "$CREDENTIALS_FILE"
+( carrier_credential shop https://github.com/acme/shop.git ) 2> "$work/carrier.err" && fail 'PLANTED DEFECT: an entry without push was taken'
+grep -qF "secret/build/shop/repo-pat carries no property 'push'" "$work/carrier.err" || fail "the refusal does not name push: $(cat "$work/carrier.err")"
+[ -s "$CREDENTIALS_FILE" ] && fail 'an entry without push appended a record'
+ok 'a carrier entry without push is refused by name, and appends nothing'
 
 echo "pipeline-release.test: OK"

@@ -181,8 +181,10 @@ ENABLE_RECONCILER=true
 # WHICH AUTHORITY THIS INSTALLATION'S CERTIFICATES ARE ISSUED BY. Two names, and the name is the
 # whole of the choice:
 #
-#   platform-acme    the public authority. Every browser, every operating system and every container
-#                    image already carries its root, so nothing has to be told to trust it.
+#   platform-acme    the public authority, Google Trust Services, the one this platform registers
+#                    with, through the installation's one ACME account. Every browser, every
+#                    operating system and every container image already carries its root, so nothing
+#                    has to be told to trust it.
 #   platform-local   an authority this cluster mints for itself. Nothing outside this installation
 #                    trusts it, and no request ever leaves the machine - which is what lets an
 #                    installation be built and rebuilt as often as it needs to be, against an

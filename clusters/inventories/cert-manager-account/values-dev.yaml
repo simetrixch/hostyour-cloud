@@ -1,0 +1,2 @@
+# The stage whose Vault entries hold the account: dev/app/acme-account and dev/app/acme-eab.
+stage: dev

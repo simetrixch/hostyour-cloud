@@ -1,0 +1,11 @@
+name: cert-manager-account
+project: core
+# The wave of cert-manager-issuers and external-secrets: the issuer that reads the Secret turns
+# Healthy when it lands, and the step waits on nothing across waves.
+syncWave: "1"
+namespace: cert-manager
+prune: "true"
+# cert-manager-issuers creates the namespace, with the label the store's Vault role admits.
+createNamespace: "false"
+# Where cert-manager-issuers stands; it renders only where the cluster's map names the account.
+runsOn: every-cluster

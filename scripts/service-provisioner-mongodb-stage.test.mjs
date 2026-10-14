@@ -41,8 +41,8 @@ sys.modules["pymongo"] = pymongo; sys.modules["pymongo.errors"] = errors
 tree = ast.parse(sys.stdin.read())
 fns = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name in (
     "_databases", "_served_databases", "_extra_roles", "_mongo_backend", "_mongo_uri", "_replica_set_of",
-    "handle_mongodb", "_drop_left_databases", "deprovision_mongodb", "read_secret_key", "describe_orphans", "deprovision", "deletion_age_seconds", "sanitize")]
-consts = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("CONSUMER_STAGE_LABEL", "CONSUMER_LABEL") for t in n.targets)]
+    "handle_mongodb", "_drop_left_databases", "deprovision_mongodb", "read_secret_key", "describe_orphans", "deprovision", "deletion_age_seconds", "sanitize", "reconcile")]
+consts = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("CONSUMER_STAGE_LABEL", "CONSUMER_LABEL", "DROP_ANNOTATION", "FINALIZER") for t in n.targets)]
 call, ns, labels, own, opts = sys.argv[1], sys.argv[2], json.loads(sys.argv[3]), sys.argv[4], json.loads(sys.argv[5])
 
 class _Meta:
@@ -85,6 +85,17 @@ elif call == "handle":
     except RuntimeError as e:
         print(json.dumps({"error": str(e)})); sys.exit(0)
     print(json.dumps({"databases": out["MONGODB_DATABASES"], "uri_db": out["MONGODB_URI"].split("/")[3].split("?")[0], "roles": calls[0][-1]}))
+elif call == "reconcile":
+    # The whole pass over a claim object, so the spec the handler gets is built by the provisioner's own read.
+    users.update({("sp_" + env["sanitize"](ns, "mongodb"))[:63]: opts["granted"]})
+    env.update({"HANDLERS": {"mongodb": env["handle_mongodb"]}, "add_finalizer": lambda *a: None,
+                "get_existing_password": lambda core, n, s: opts["password"], "write_secret": lambda *a: None,
+                "set_status": lambda custom, n, name, phase, *a: recorded.update(phase=phase)})
+    claim = {"metadata": {"namespace": ns, "name": "mongodb", "generation": 1, "finalizers": [env["FINALIZER"]],
+                          "annotations": opts.get("annotations", {})},
+             "spec": {"service": "mongodb", "secretName": "s", "databases": opts["databases"]}}
+    env["reconcile"](Core(), None, claim)
+    print(json.dumps({"phase": recorded.get("phase"), "dropped": [c[0] for c in calls if "dropDatabase" in c], "logs": logs}))
 elif call == "update":
     error = None
     try:
@@ -153,6 +164,22 @@ const update = (opts, ns = 'acme-prod', labels = tenant) => run('update', ns, la
 const eventsLeft = {granted: [tenantDb, eventsDb], databases: [tenantDb, workshopDb]};
 const rolesOf = roles => roles.map(({db}) => db).sort();
 
+// A full pass over a claim object: the mark comes from the claim's own annotation, read by the provisioner.
+const reconcile = (opts) => run('reconcile', 'acme-prod', tenant, 'shared', {password, ...opts});
+
+test('PLANTED: the drop annotation on the claim drops the database that left its list', () => {
+  const result = reconcile({...eventsLeft, annotations: {'platform.hostyour.cloud/drop': eventsDb}});
+  assert.equal(result.phase, 'Ready');
+  assert.deepEqual(result.dropped, [eventsDb]);
+});
+
+test('a claim without the drop annotation keeps the database that left its list and logs it as an orphan', () => {
+  const result = reconcile({...eventsLeft, annotations: {'platform.hostyour.cloud/other': eventsDb}});
+  assert.equal(result.phase, 'Ready');
+  assert.deepEqual(result.dropped, []);
+  assert.ok(result.logs.includes(`orphan database ${eventsDb} of claim acme-prod/mongodb: it left the list without the drop mark; kept`));
+});
+
 test('a database that left the list with the drop mark is dropped, and the one that joined is granted', () => {
   const result = update({...eventsLeft, drop: eventsDb});
   assert.deepEqual(result.dropped, [eventsDb]);
@@ -209,4 +236,25 @@ test('no log line names the password', () => {
   const lines = [update({...eventsLeft, drop: eventsDb}), update(eventsLeft), update({...eventsLeft, drop: eventsDb, relocating: true})].flatMap(({logs}) => logs);
   assert.ok(lines.some(line => line.includes('dropped database')));
   assert.ok(lines.every(line => !line.includes(password)));
+});
+
+const mixedDatabases = ['abcdef123456_tenant_test', 'abcdef123456_a_test', 'abcdef123456_b_test', 'abcdef123456_site_test'];
+const mixedNamespace = 'abcdef123456-test';
+const mixedTenant = {'platform/tenant': 'abcdef123456', 'platform/tenant-stage': 'test'};
+const checkMixedRoles = roles => assert.deepEqual(roles, [
+  {role: 'readWrite', db: 'abcdef123456_tenant_test'},
+  {role: 'readWrite', db: 'abcdef123456_a_test'},
+  {role: 'readWrite', db: 'abcdef123456_b_test'},
+  {role: 'readWrite', db: 'abcdef123456_site_test'},
+], '#339 mixed tenant role/db pairs');
+
+test('#339 innocent: two apps and one site request exactly four readWrite roles on create and unchanged update', () => {
+  const created = run('handle', mixedNamespace, mixedTenant, 'shared', {databases: mixedDatabases});
+  checkMixedRoles(created.roles);
+  const updated = update({databases: mixedDatabases, granted: mixedDatabases}, mixedNamespace, mixedTenant);
+  assert.equal(updated.error, null);
+  assert.equal(updated.created, false);
+  assert.equal(updated.updated.length, 1);
+  checkMixedRoles(updated.updated[0]);
+  assert.deepEqual(updated.dropped, []);
 });

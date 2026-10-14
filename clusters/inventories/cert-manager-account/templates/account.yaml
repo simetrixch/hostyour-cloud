@@ -1,0 +1,78 @@
+{{- /*
+THE ONE ACME ACCOUNT, delivered into Secret platform-acme-account for ClusterIssuer platform-acme
+(clusters/inventories/cert-manager-issuers): `tls.key`, the account key minted once in the secret store,
+and `eab-mac-key`, the MAC key of the account's External Account Binding. Both entries are seeded by
+hostyour-deploy deploy-platform-services on the books cluster, and every cluster reads them from that
+one store.
+
+ONLY UNDER platform-acme, and that is why the store and the ExternalSecret are written here and not
+through clusters/charts/secret-store and external-secret: each of those renders on its own `enabled`
+value, which no key of a cluster map can set, so on a cluster under platform-local they would stand
+failing against entries it never reads. The three objects say what those charts say.
+
+KEPT OUT OF cert-manager-issuers, because the installer dry-runs and installs that chart before the
+ExternalSecret kinds exist on a new cluster (hostyour-deploy deploy-platform-services).
+*/ -}}
+{{- $g := .Values.global | default dict }}
+{{- if eq ($g.clusterIssuer | default "") "platform-acme" }}
+{{- $stage := required "stage must be set (values-<stage>.yaml of cert-manager-account)" .Values.stage }}
+{{- $store := required "global.secretStoreName must be set (clusters/platform/values-common.yaml via the $values chain)" $g.secretStoreName }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets-sa
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: {{ $store }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  provider:
+    vault:
+      server: {{ required "global.endpoints.vault.url must be set (clusters/active/<fqdn>.yaml via the $values chain)" (dig "endpoints" "vault" "url" "" $g) | quote }}
+      path: {{ required "global.vaultKvMount must be set (clusters/platform/values-common.yaml via the $values chain)" $g.vaultKvMount | quote }}
+      version: "v2"
+      namespace: "vault"
+      auth:
+        kubernetes:
+          mountPath: {{ required "global.vaultKubernetesAuthPath must be set (clusters/active/<fqdn>.yaml via the $values chain)" $g.vaultKubernetesAuthPath | quote }}
+          role: "external-secrets"
+          serviceAccountRef:
+            name: "external-secrets-sa"
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: platform-acme-account
+  namespace: {{ .Release.Namespace }}
+spec:
+  # The delivery rule of this tree (clusters/charts/external-secret): read when deployed or changed,
+  # or when the target Secret is deleted; never on a timer.
+  refreshPolicy: OnChange
+  refreshInterval: "0"
+  secretStoreRef:
+    name: {{ $store }}
+    kind: SecretStore
+  target:
+    name: platform-acme-account
+    creationPolicy: Owner
+  data:
+  - secretKey: tls.key
+    remoteRef:
+      conversionStrategy: Default
+      decodingStrategy: None
+      metadataPolicy: None
+      nullBytePolicy: Ignore
+      key: {{ $stage }}/app/acme-account
+      property: private-key
+  - secretKey: eab-mac-key
+    remoteRef:
+      conversionStrategy: Default
+      decodingStrategy: None
+      metadataPolicy: None
+      nullBytePolicy: Ignore
+      key: {{ $stage }}/app/acme-eab
+      property: mac-key
+{{- end }}

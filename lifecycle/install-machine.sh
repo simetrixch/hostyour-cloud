@@ -22,9 +22,8 @@
 # Python. JSON would cost every operator a dependency, and it cannot carry the
 # one thing that file needs most — a sentence saying what a value is.
 #
-# THE TWIN OF install-machine.ps1, doing the same four things in the same order: refuse a
-# config anyone else can read, carry it over, open one session, keep every line
-# that comes back. The installation itself is driver.sh and it runs ON THE
+# FOUR THINGS, in this order: refuse a config anyone else can read, carry it over,
+# open one session, keep every line that comes back. The installation itself is driver.sh and it runs ON THE
 # MACHINE — nothing is fetched here and nothing is carried from this disk, so what
 # stands on the machine afterwards is what the repositories say rather than what
 # this checkout happened to hold.
@@ -44,8 +43,7 @@ fail() { printf '\n  %s\n\n' "$1" >&2; exit "${2:-65}"; }
 [ -r "$FILE" ]   || fail "there is no config at $FILE. Copy config.example.env, fill it in, and make it readable by you alone" 66
 
 # ------------------------------------------------------- the file, and its guards
-# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
-# Windows, where a mode says nothing, and the mode everywhere else.
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: mode 600 or 400.
 require_owner_only "$FILE" \
   || fail "$FILE $REACH and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: $OWNER_ONLY_COMMAND" 77
 
@@ -80,6 +78,12 @@ for named in FQDN OPERATOR_USER STAGE DEPLOY_REPO PROGRAMS_REPO PLATFORM_REPO PL
 done
 [ -n "${ELEVATION_PASSWORD:-}" ]   || fail "$FILE states no ELEVATION_PASSWORD, and every program of this sequence is run elevated" 65
 
+# BORN ON platform-local, refused before anything is mutated. ACME_CREDENTIALS_JSON is the one source
+# of acmeEabKeyId in the master's map, and an issuer bound to that account reads its key from a
+# Secret that Vault, the secret store and Argo CD deliver, none of which stands on a first master:
+# the run would wait on its own end. Its value is never shown.
+[ -z "${ACME_CREDENTIALS_JSON:-}" ] || fail "$FILE states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out, ACME_EMAIL and ACME_SERVER still stated, and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh $FQDN $FILE and the Manager's cluster-redeploy of this machine" 65
+
 # A MACHINE IS ADDRESSED BY ITS NAME, and by nothing else. The name in the config is
 # the one the certificate will carry and the one the cluster is reached by, so a
 # session opened to anything else is a session opened to a machine we cannot name.
@@ -113,8 +117,8 @@ BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 #
 # The key is tried first and the password only where the key is refused, so neither
 # case needs a flag and a re-run never asks for a password a machine does not take.
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 PROBE=$(ssh "${BASE[@]}" -n -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)

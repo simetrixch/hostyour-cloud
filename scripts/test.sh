@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Fixture suites run on the GitHub Actions runner, never on the shared workstation.
+# Fixture suites run in the ci of the master (the check step of the ci pipeline, after scripts/check.sh), never on the shared workstation.
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 fail() { echo "test: FAIL — $1"; exit 1; }
-echo 'test: lifecycle/test.sh — delivery tooling in both spellings.'
+echo 'test: lifecycle/test.sh — delivery tooling, held to its recorded bytes.'
 bash lifecycle/test.sh || fail 'lifecycle/test.sh'
 echo 'test: scripts/pipeline-release.test.sh — release pipeline decisions.'
 bash scripts/pipeline-release.test.sh || fail 'scripts/pipeline-release.test.sh'
-echo 'test: production build chart and immutable-field contracts on the public runner.'
+echo 'test: scripts/pipeline-publish.test.sh — what a release tag publishes to the registry, what a packed tarball may carry, and the push.'
+bash scripts/pipeline-publish.test.sh || fail 'scripts/pipeline-publish.test.sh'
+echo 'test: production build chart and immutable-field contracts.'
 node --test scripts/build-contract.test.mjs || fail 'scripts/build-contract.test.mjs'
 echo 'test: release queue — one release at a time on the build plane, and the queue may only start a run.'
 node --test scripts/release-queue.test.mjs || fail 'scripts/release-queue.test.mjs'
@@ -26,7 +28,7 @@ helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'
 echo 'test: ingress entrypoints — the shared ingress chart writes websecure once, whatever a consumer sets.'
 node --test scripts/ingress-entrypoints.test.mjs || fail 'scripts/ingress-entrypoints.test.mjs'
-echo 'test: installation domain planning and paired launchers.'
+echo 'test: installation domain planning and its launcher.'
 node --test scripts/installation-domain.test.mjs || fail 'scripts/installation-domain.test.mjs'
 node --test scripts/tenant-stage-label.test.mjs || fail 'scripts/tenant-stage-label.test.mjs'
 echo 'test: post stage callbacks — strict nonproduction allowlist.'

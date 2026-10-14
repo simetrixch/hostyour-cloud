@@ -2,8 +2,6 @@
 # =============================================================================
 # create-github-app.sh — create the platform's GitHub App in the customer's
 # organisation, install it there, and write its three answers into the config.
-# PowerShell twin: create-github-app.ps1 (same folder), which does the same in
-# the same order and prints the same lines. lifecycle/test.sh measures that.
 # =============================================================================
 #
 # USAGE (run from anywhere)
@@ -21,7 +19,7 @@
 #
 # WHAT GITHUB ALLOWS, AND WHY TWO CLICKS STAY. No API creates an App from
 # nothing. The App Manifest flow is the closest: a browser posts a manifest —
-# the name, the homepage, the address to send the browser back to, the eight
+# the name, the homepage, the address to send the browser back to, the nine
 # repository permissions, no webhook — to the organisation's new-App page, the
 # person clicks Create GitHub App ONCE, GitHub sends the browser back with a
 # temporary code, and one unauthenticated request turns that code into the App:
@@ -42,7 +40,7 @@
 # carrying all three refuses, so every run of this is safe to repeat.
 #
 # THE LISTENER is one perl process on 127.0.0.1 at a port the system picks,
-# and perl because it is the one interpreter Git Bash, Linux and macOS all
+# and perl because it is the one interpreter Linux and macOS both
 # carry with a socket module. It serves the manifest page, which submits itself,
 # answers GitHub's redirect with one line, records the code, and exits. After
 # ten minutes without the redirect it exits empty and this refuses.
@@ -50,14 +48,7 @@
 # THE KEY TOUCHES DISK IN TWO PLACES: the config, and — for as long as it takes
 # openssl to sign a JWT — a file in a temporary directory that nobody but the
 # owner can reach, removed on every path this can end on. openssl reads a key
-# from a file and not from a pipe, and on Git Bash process substitution hands
-# the native openssl a path it cannot open.
-#
-# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
-# spellings are held to printing the same bytes, and PowerShell writes its output
-# in whatever code page the console carries -- so a dash from outside ASCII
-# arrives there as a different byte and the pair quietly stops agreeing. The
-# comments in these files are read by people and may say what they like.
+# from a file and not from a pipe.
 # =============================================================================
 
 set -uo pipefail
@@ -111,21 +102,12 @@ write_config_value() { # KEY, value -> KEY='value' rewritten in place, appended 
   : > "$CONFIG"
   for line in "${lines[@]}"; do printf '%s\n' "$line" >> "$CONFIG"; done
 }
-make_owner_only() { # a file -> nobody but the owner reaches it, in this platform's own words
-  if [ -n "${MSYSTEM:-}" ] || [ "$(uname -o 2>/dev/null)" = 'Msys' ]; then
-    icacls "$(cygpath -aw "$1")" /inheritance:r /grant:r "${USERNAME:-$(stat -c '%U' "$1")}:(F)" >/dev/null
-  else
-    chmod 600 "$1"
-  fi
-}
 # THE BROWSER IS $BROWSER WHERE IT IS SET, the way gh reads it, and the
-# platform's own opener otherwise: start on Git Bash, open on macOS, xdg-open
-# on Linux. Each returns once the browser was asked, and the listener is
+# platform's own opener otherwise: open on macOS, xdg-open on Linux. Each returns once the browser was asked, and the listener is
 # already standing when it is.
 open_in_browser() { # a URL -> 0 when a browser was asked to open it
   if [ -n "${BROWSER:-}" ]; then "$BROWSER" "$1"; return; fi
   case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) start '' "$1" ;;
     Darwin) open "$1" ;;
     *) xdg-open "$1" ;;
   esac
@@ -177,13 +159,15 @@ require_owner_only "$CONFIG" \
 
 GITHUB='https://github.com'
 GITHUB_API='https://api.github.com'
-# The eight repository permissions the Manager creates and drives a tenant's own
+# The nine repository permissions the Manager creates and drives a tenant's own
 # apps repository with, as GitHub spells them, in byte order. `packages:read` is
 # what lets the App's own token install a unit's private npm packages, so a unit
 # of the App's organisation needs no PAT at all (hostyour-cloud#235).
 # `issues:read` is what lets the Manager mint a unit's ci check a token that
 # reads the issues of the unit's own repository and nothing else.
-PERMISSIONS='actions:write administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write'
+# `statuses:write` is what lets it mint a unit's ci run a token that posts the
+# commit status on the unit's own repository and writes nothing else.
+PERMISSIONS='actions:write administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write'
 WAIT_SECONDS=600
 POLL_SECONDS=5
 
@@ -232,7 +216,7 @@ app_jwt() { # -> the JWT; 1 when openssl does not read KEYFILE as a private key
 write_key_file() { # PEM_JSON, one line with \n for each line break -> KEYFILE holds the PEM, owner-only
   KEYFILE="$WORK/app.pem"
   : > "$KEYFILE"
-  make_owner_only "$KEYFILE"
+  chmod 600 "$KEYFILE"
   printf '%s' "${PEM_JSON//'\n'/$'\n'}" > "$KEYFILE"
 }
 # The App's id and html_url stand at the top of GitHub's answer, and so do the
@@ -347,12 +331,12 @@ PERL
   SLUG="$(field "$RE_SLUG" "$APP")" || die "GitHub's answer to the conversion carries no slug, so the App cannot be recorded. Nothing has been written" 69
   HTML_URL="$(field "$RE_HTML_URL" "$APP")" || die "GitHub's answer to the conversion carries no html_url, so the App cannot be recorded. Nothing has been written" 69
   PEM_JSON="$(field "$RE_PEM" "$BODY")" || die "GitHub's answer to the conversion carries no pem, so the App at $HTML_URL has no key this can write. Delete it there and run this again. Nothing has been written" 69
-  ANSWERED="$(field "$RE_PERMISSIONS" "$APP")" || die "GitHub's answer to the conversion names no permissions, so the App at $HTML_URL cannot be held to the eight asked. Delete it there and run this again. Nothing has been written" 69
+  ANSWERED="$(field "$RE_PERMISSIONS" "$APP")" || die "GitHub's answer to the conversion names no permissions, so the App at $HTML_URL cannot be held to the nine asked. Delete it there and run this again. Nothing has been written" 69
   GOT="$(printf '%s' "$ANSWERED" | tr ',' '\n' | tr -d '" ' | LC_ALL=C sort | tr '\n' ' ')"
   GOT="${GOT% }"
   [ "$GOT" = "$PERMISSIONS" ] \
-    || die "the App was created at $HTML_URL with the permissions $GOT and not the eight asked: $PERMISSIONS. Delete it there and run this again. Nothing has been written" 65
-  say "create-github-app: the App stands at $HTML_URL (id $APP_ID) with the eight permissions $GOT"
+    || die "the App was created at $HTML_URL with the permissions $GOT and not the nine asked: $PERMISSIONS. Delete it there and run this again. Nothing has been written" 65
+  say "create-github-app: the App stands at $HTML_URL (id $APP_ID) with the nine permissions $GOT"
 
   # ================================================================= WRITE
   write_config_value GITHUB_APP_ID "$APP_ID"

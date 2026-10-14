@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Everything this repository can be held to on one machine, before anything leaves it.
 #
-# Local chart validation and credential scanning. Fixture suites run in GitHub Actions.
-# scripts/check.ps1 is the standard Windows entry point for this file.
+# Local chart validation and credential scanning. Fixture suites run in the ci of the master (scripts/test.sh).
 
 set -uo pipefail
 
@@ -732,15 +731,57 @@ helm template consumer-build clusters/inventories/consumer-build --namespace arg
   --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[\"check\"]"}' \
   > "$work/fence-render" 2>&1 \
   || { cat "$work/fence-render"; fail "clusters/inventories/consumer-build does not render in unit mode, which is where a unit's build grants stand"; }
-# The build's .npmrc routes the unit's OWN scope — the owner of its repository — to GitHub
-# Packages with the organisation's packages reader, the `packages` property of the unit's build
-# entry, never the repository token (templates/externalsecret-npmrc.yaml, hostyour-manager#220).
-# The stand-in unit is github.com/check/check.git, so its scope is @check; a fixed scope here
-# would build no unit of another organisation.
-for line in '@check:registry=https://npm.pkg.github.com' '//npm.pkg.github.com/:_authToken={{ .packages }}' 'property: packages'; do
-  grep -qF -- "$line" "$work/fence-render" \
-    || { grep -A3 -F '.npmrc: |' "$work/fence-render"; fail "the build .npmrc of unit check does not carry '$line' — a unit's private packages would resolve against registry.npmjs.org and 404"; }
+# The build's .npmrc reads no npm package from GitHub Packages: no line names npm.pkg.github.com, and the
+# ExternalSecret reads no `packages` property of the unit's build entry, which the Manager writes no more
+# (templates/externalsecret-npmrc.yaml).
+npmrc_secret="$(yq e 'select(.kind == "ExternalSecret" and .metadata.name == "build-npmrc")' "$work/fence-render")"
+[ -n "$npmrc_secret" ] || fail "unit check renders no ExternalSecret build-npmrc"
+for gone in 'npm.pkg.github.com' '{{ .packages }}' 'secretKey: packages' 'property: packages'; do
+  if printf '%s\n' "$npmrc_secret" | grep -qF -- "$gone"; then
+    printf '%s\n' "$npmrc_secret" | grep -nF -- "$gone"
+    fail "the build .npmrc of unit check still carries '$gone' — the npm packages are read from this build plane's registry alone"
+  fi
 done
+# The same .npmrc reads the npm packages this build plane publishes (templates/pipeline-publish.yaml), which a
+# lockfile names by their tarball URL under the registry's npm prefix, with the registry's pull identity.
+grep -qE '^ +//[a-z0-9.-]+/v2/npm/:_auth=\{\{ printf "%s:%s" \.pullUser \.pullPassword \| b64enc \}\}$' "$work/fence-render" \
+  && grep -qF 'secretKey: pullUser' "$work/fence-render" && grep -qF 'secretKey: pullPassword' "$work/fence-render" \
+  || { grep -A4 -F '.npmrc: |' "$work/fence-render"; fail "the build .npmrc of unit check does not read the registry's npm prefix with its pull identity — a lockfile that names a package published here would answer 401"; }
+# A unit that builds nothing still publishes its npm packages: it renders the publish pipeline and the push identity
+# its push task mounts, and still no pull identity, which only a release reads.
+helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+  -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
+  --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[]"}' \
+  > "$work/publish-render" 2>&1 \
+  || { cat "$work/publish-render"; fail "clusters/inventories/consumer-build does not render a unit that builds nothing"; }
+publish_objects="$(objects_of "$work/publish-render")"
+for object in Pipeline/check-publish ExternalSecret/image-builder-registry-push; do
+  printf '%s\n' "$publish_objects" | grep -qxF "$object" \
+    || fail "a unit that builds nothing renders no $object — its release tag would publish no npm package"
+done
+printf '%s\n' "$publish_objects" | grep -q '^ExternalSecret/image-builder-registry-pull' \
+  && fail "a unit that builds nothing renders the registry pull identity, which only a release reads"
+
+# ── The tools of this repository's own ci run ────────────────────────────────────────────────
+# ci-tools.json names the tools the ci of the master installs before it runs this file and then scripts/test.sh
+# (clusters/inventories/consumer-build/templates/pipeline-ci.yaml). Each pair has to be a row of the table
+# that pipeline installs from, or the run ends on the build plane before the check starts, so it is refused here.
+# The promtool of the run is the one the master's Prometheus needs, as the one on this machine is above.
+tools_table=clusters/inventories/consumer-build/files/ci-tools.table
+tools_named="$(yq -p=json -o=yaml e 'to_entries | .[] | .key + " " + .value' ci-tools.json)" \
+  || fail "ci-tools.json does not parse as an object of tools and versions"
+[ -n "$tools_named" ] || fail "ci-tools.json names no tool, so the ci run of this repository would have no gitleaks and no promtool"
+tools_rows="$(awk '{ print $1, $2 }' "$tools_table")"
+while IFS= read -r pair; do
+  printf '%s\n' "$tools_rows" | grep -qxF "$pair" \
+    || fail "ci-tools.json names $pair, which $tools_table does not carry, so the ci run of this repository would end before its check"
+done <<< "$tools_named"
+printf '%s\n' "$tools_named" | grep -qxF "promtool $prometheus_version" \
+  || fail "ci-tools.json does not name promtool $prometheus_version, the version of the master's Prometheus, so the ci run would test its rules with another one"
+[ "$(yq e 'select(.kind == "Pipeline" and .metadata.name == "check-ci") | .spec.tasks[] | select(.name == "check") | .taskSpec.steps[0].env[] | select(.name == "CI_TOOLS_TABLE") | .value' "$work/publish-render")" = "$(cat "$tools_table")" ] \
+  || fail "the ci pipeline of a unit does not hand its check the table $tools_table, whole"
+echo "check: ci-tools.json names $(printf '%s\n' "$tools_named" | wc -l) tools, each a row of $tools_table, and the ci pipeline renders that table."
 objects_of "$work/fence-render" \
   | grep -E '^(Role|RoleBinding)/(eventlistener-create-pipelineruns|manager-read-pipelineruns)$' >> "$work/fences"
 fences_rendered="$(sort "$work/fences")"
@@ -752,6 +793,127 @@ if [ "$fences_rendered" != "$fences_expected" ]; then
   fail "the per-unit fences are not the objects they have to be — a unit would onboard green and stand unfenced"
 fi
 echo "check: all 9 per-unit fences render, over clusters/units/reconciler, clusters/units/admissionpolicy and clusters/inventories/consumer-build in unit mode."
+
+# ── The npm packages a release tag publishes ─────────────────────────────────────────────────
+# A push of the release tag itself starts the unit's publish pipeline through the Trigger github-release-publish of
+# clusters/inventories/image-builder, and the registry keeps every version that pipeline pushes: zot applies the
+# FIRST retention policy whose repositories match a repo, and only the first one keeps every tag, so npm/** must be
+# named there and not left to the ["**"] policy of the docker.io cache, which keeps the newest 50.
+helm template image-builder clusters/inventories/image-builder --namespace image-builder \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+  -f clusters/inventories/image-builder/values-common.yaml -f clusters/inventories/image-builder/values-dev.yaml -f "$cluster_map" -f "$registration" \
+  > "$work/builder-render" 2>&1 \
+  || { cat "$work/builder-render"; fail "clusters/inventories/image-builder does not render"; }
+for object in Trigger/github-release-publish TriggerBinding/github-release-publish-binding TriggerTemplate/release-publish; do
+  objects_of "$work/builder-render" | grep -qxF "$object" || fail "clusters/inventories/image-builder renders no $object — a release tag would publish nothing"
+done
+grep -qF -- '- triggerRef: github-release-publish' "$work/builder-render" || fail "the EventListener does not attach github-release-publish"
+grep -qF -- "body.ref.matches(r'^refs/tags/$(yq '.global.releaseTagFilter' clusters/platform/values-common.yaml)\$')" "$work/builder-render" \
+  || fail "the publish trigger does not take the release tag in the grammar of global.releaseTagFilter, anchored"
+first_retention="$(yq '.configmap.configmap.data."config.json"' clusters/inventories/registry/values-common.yaml | grep -m1 -F '"repositories": [')"
+case "$first_retention" in
+  *'["*", "npm/**", "simetrixch/**"]'*) ;;
+  *) fail "the first retention policy of the registry names $first_retention — a version under npm/** or simetrixch/** would be deleted once 50 newer tags are pushed" ;;
+esac
+echo "check: a release tag starts the publish pipeline of a unit, with builds or without, and the registry keeps every tag under npm/** and simetrixch/**."
+
+# ── The platform's own images: where they are pushed and who may read them ───────────────────
+# Every other installation, and the relocation Jobs on the app clusters, pull the platform's own images
+# from the owner's registry without a credential, so zot opens exactly the owner's prefix to anonymous
+# read and nothing else, and the ghcr.io seed stores what it fetches under that same prefix. The release
+# pipeline pushes there only the builds of global.buildRegistryUnit, and only on the installation whose
+# registry IS global.buildRegistry; every other build stays flat, because the readers of a unit's image
+# (its chart, the Manager's tenant versions, the reaper) compose the flat path.
+repository_policy() { # $1 the zot config.json, $2 a repositories key, $3 its field. A quoted regex, because yq reads a "*" in a key or in == as a glob.
+  yq -p=json -o=json -I=0 ".http.accessControl.repositories | to_entries[] | select(.key | test(\"^\\\\Q$2\\\\E\$\")) | .value.$3" "$1"
+}
+zot_fault() { # $1 the zot config.json -> the first way it differs from the access this platform needs, or nothing
+  local open
+  open="$(yq -p=json -o=json -I=0 '.http.accessControl.repositories | keys' "$1")"
+  [ "$open" = '["**","simetrixch/**"]' ] || { echo "the repositories of accessControl are $open, not ** and simetrixch/**"; return; }
+  [ "$(repository_policy "$1" '**' anonymousPolicy)" = '[]' ] \
+    || { echo "every repository is open to an anonymous read, not simetrixch/** alone"; return; }
+  [ "$(repository_policy "$1" 'simetrixch/**' anonymousPolicy)" = '["read"]' ] \
+    || { echo "simetrixch/** is not open to an anonymous read, so another installation pulls the platform's images with no credential and gets 401"; return; }
+  [ "$(repository_policy "$1" 'simetrixch/**' policies)" = "$(repository_policy "$1" '**' policies)" ] \
+    || { echo "simetrixch/** grants the push and pull users other actions than **, and zot takes the longest matching pattern alone"; return; }
+  [ "$(yq -p=json -o=json -I=0 '.extensions.sync.registries[] | select(.urls[0] == "https://ghcr.io") | .content' "$1")" = '[{"prefix":"/simetrixch/*","destination":"/simetrixch","stripPrefix":true}]' ] \
+    || echo "the ghcr.io seed does not store what it fetches under simetrixch/, the path the platform's images are pulled from"
+}
+helm template registry clusters/inventories/registry --namespace registry \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+  -f clusters/inventories/registry/values-common.yaml -f clusters/inventories/registry/values-dev.yaml -f "$cluster_map" -f "$registration" \
+  > "$work/registry-render" 2>&1 \
+  || { cat "$work/registry-render"; fail "clusters/inventories/registry does not render"; }
+yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' "$work/registry-render" > "$work/zot.json"
+fault="$(zot_fault "$work/zot.json")"
+[ -z "$fault" ] || fail "the registry's zot config: $fault"
+# The planted defects: every repository open to an anonymous read, and the seed storing flat.
+yq -p=json -o=json '(.http.accessControl.repositories[] | .anonymousPolicy) = ["read"]' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that lets anyone read every repository"
+yq -p=json -o=json '(.extensions.sync.registries[] | select(.urls[0] == "https://ghcr.io") | .content[0].destination) = "/"' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a ghcr.io seed that stores flat"
+# The planted innocent: buildRegistry naming the owner's own registry keeps the owner's prefix.
+helm template registry clusters/inventories/registry --namespace registry \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+  -f clusters/inventories/registry/values-common.yaml -f clusters/inventories/registry/values-dev.yaml -f "$cluster_map" -f "$registration" \
+  --set global.buildRegistry=zot.master.digitacloud.app/simetrixch \
+  | yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' > "$work/zot-planted.json"
+fault="$(zot_fault "$work/zot-planted.json")"
+[ -z "$fault" ] || fail "the planted innocent, buildRegistry at the owner's own registry, is refused: $fault"
+echo "check: zot opens simetrixch/** alone to an anonymous read and seeds it from ghcr.io; the check refuses both planted defects and takes the planted innocent."
+
+push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
+  helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+    -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+    -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
+    --set "global.buildRegistry=$4" --set-json "unit={\"name\":\"$1\",\"repoURL\":\"$2\",\"buildsJson\":$(printf '%s' "$3" | yq -o=json -I=0 'to_json(0)')}" \
+    > "$work/push-render" 2>&1 \
+    || { cat "$work/push-render" >&2; echo "consumer-build does not render the release of unit $1"; return; }
+  yq "select(.kind == \"Pipeline\" and .metadata.name == \"$1-release\") | .spec.tasks[] | select(.name | test(\"^(probe|build)-\")) | .name + \" \" + ([.taskSpec.steps[].env[] | select(.name == \"IMAGE\") | .value] + [.params[] | select(.name == \"image-name\") | .value] | .[0])" "$work/push-render"
+}
+master_registry="$(yq '.global.endpoints.registry.host' "$cluster_map")/simetrixch"
+trunk_registry="$(yq '.global.buildRegistry' clusters/platform/values-common.yaml)"
+push_cases=(
+  "the platform's builds on the owner's master|hostyour-manager|https://github.com/simetrixch/hostyour-manager.git|[\"manager\",\"gate-runner\",\"dbtools\"]|$master_registry|simetrixch/"
+  "a unit of the owner that is not buildRegistryUnit|hostyour-demo-consumer|https://github.com/simetrixch/hostyour-demo-consumer.git|[\"hostyour-demo-consumer\"]|$master_registry|"
+  "a unit of another owner|digita-platform|https://github.com/digitaplatform/digita-platform.git|[\"digita-platform\"]|$master_registry|"
+  "the platform's builds on another installation|hostyour-manager|https://github.com/simetrixch/hostyour-manager.git|[\"manager\",\"gate-runner\",\"dbtools\"]|$trunk_registry|"
+)
+push_fault() { # unit, repoURL, builds, buildRegistry, prefix -> the first build whose push path is not <prefix><build>, or nothing
+  local want got
+  want="$(printf '%s' "$3" | yq -p=json ".[] | ((\"probe-\" + . + \" $5\" + .), (\"build-\" + . + \" $5\" + .))" | sort)"
+  got="$(push_paths "$1" "$2" "$3" "$4" | sort)"
+  [ "$got" = "$want" ] || echo "unit $1 under buildRegistry $4 pushes ${got//$'\n'/, }, not under '${5:-flat}'"
+}
+for c in "${push_cases[@]}"; do
+  IFS='|' read -r what unit repo builds breg prefix <<< "$c"
+  fault="$(push_fault "$unit" "$repo" "$builds" "$breg" "$prefix")"
+  [ -z "$fault" ] || fail "the push path of $what: $fault"
+done
+# The planted defects: a unit of the owner moved under the prefix it must not take, and the platform's
+# builds left flat on the owner's master.
+[ -n "$(push_fault hostyour-demo-consumer https://github.com/simetrixch/hostyour-demo-consumer.git '["hostyour-demo-consumer"]' "$master_registry" simetrixch/)" ] \
+  || fail "push_fault takes a unit that is not buildRegistryUnit pushed under the owner's prefix"
+[ -n "$(push_fault hostyour-manager https://github.com/simetrixch/hostyour-manager.git '["manager"]' "$trunk_registry" simetrixch/)" ] \
+  || fail "push_fault takes the platform's builds pushed flat where they must go under the owner's prefix"
+echo "check: ${#push_cases[@]} push paths, the platform's builds under simetrixch/ on the owner's master alone and every other build flat; the check refuses both planted defects."
+
+# The binaries a release tag publishes from release/build.sh stand under <owner>/<repository>, read off the
+# repoURL, which for ansiwise-cli is the path the Manager, the lifecycle and the release script fetch.
+binaries_repository() { # $1 repoURL -> the repository the publish pipeline of unit ansiwise-cli pushes binaries to
+  helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+    -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+    -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
+    --set-json "unit={\"name\":\"ansiwise-cli\",\"repoURL\":\"$1\",\"buildsJson\":\"[]\"}" \
+    | yq 'select(.kind == "Pipeline" and .metadata.name == "ansiwise-cli-publish") | .spec.tasks[] | select(.name == "push") | .taskSpec.steps[0].env[] | select(.name == "BINARIES_REPOSITORY") | .value'
+}
+for url in https://github.com/simetrixch/ansiwise-cli.git https://github.com/simetrixch/ansiwise-cli; do
+  [ "$(binaries_repository "$url")" = simetrixch/ansiwise-cli ] || fail "the publish of $url pushes its binaries to '$(binaries_repository "$url")', not simetrixch/ansiwise-cli"
+done
+[ "$(binaries_repository https://github.com/simetrixch/ansiwise-core.git)" != simetrixch/ansiwise-cli ] \
+  || fail "the planted defect, another repository, still pushes its binaries to simetrixch/ansiwise-cli"
+echo "check: the publish of a repository with release/build.sh pushes its binaries to simetrixch/ansiwise-cli, with or without .git, and another repository elsewhere."
 
 # ── A unit that declares an SMTP entry, and a unit that does not ─────────────────────────────
 # THE STAND-IN REGISTRATION DECLARES NO ENTRY, because almost no unit does, so every render above
@@ -1041,25 +1203,31 @@ if [ -n "$drifts" ]; then
 fi
 echo "check: every yaml_value stamp site of this tree holds its pin from clusters/platform/versions.yaml, $(yq e '[.. | select(tag == "!!map" and has("stamps")) | .stamps[] | select(.kind == "yaml_value" and .tree == "platform")] | length' clusters/platform/versions.yaml) of them."
 
-echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
+echo 'check: NOT RUN locally — lifecycle/test.sh; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the ci of the master via scripts/test.sh.'
+bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
+echo 'check: NOT RUN locally — scripts/pipeline-publish.test.sh; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in the ci of the master via scripts/test.sh.'
+for module in scripts/release-queue.test.mjs scripts/ci-run-keeper.test.mjs; do
+  node --check "$module" || fail "Node syntax: $module"
+  echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
+done
 for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-appset-fixture.mjs scripts/tenant-appset.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
-echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/tenant-appset.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/unit-mongodb-exporter.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in public GitHub Actions.'
+echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/tenant-appset.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/unit-mongodb-exporter.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in the ci of the master via scripts/test.sh.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────

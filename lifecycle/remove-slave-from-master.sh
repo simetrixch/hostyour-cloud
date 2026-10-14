@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # remove-slave-from-master.sh — take ONE slave's registration off the master it
-# stands on. PowerShell twin: remove-slave-from-master.ps1 (same folder), which
-# does the same in the same order and prints the same lines. lifecycle/test.sh
-# measures that.
+# stands on.
 # =============================================================================
 #
 # USAGE (run from anywhere inside a hostyour-cloud checkout)
@@ -64,12 +62,6 @@
 # install-machine.sh uses to start driver.sh, and for the same reason: what runs
 # on a machine is fetched by that machine, and what this carries over is the
 # operator's own config and nothing else.
-#
-# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
-# spellings are held to printing the same bytes, and PowerShell writes its output
-# in whatever code page the console carries -- so a dash from outside ASCII
-# arrives there as a different byte and the pair quietly stops agreeing. The
-# comments in these files are read by people and may say what they like.
 # =============================================================================
 
 set -uo pipefail
@@ -213,7 +205,7 @@ if [ -z "$MAPTEXT" ]; then
   # name, which its map recorded when the slave was adopted; a rename moved the slave's domain and
   # left the name, so the name is stated and never worked out of the domain.
   [ -n "$NAME" ] \
-    || die "branch $MASTER keeps no $MAP, and the slave's name stood only there: state it with --name <slave-name>, which the PowerShell spelling writes -Name <slave-name> - the name every object of its registration carries" 64
+    || die "branch $MASTER keeps no $MAP, and the slave's name stood only there: state it with --name <slave-name> - the name every object of its registration carries" 64
   say "remove-slave: branch $MASTER keeps no $MAP, which is what the git side of a removal leaves behind. Nothing here confirms $SLAVE stood as a slave of $MASTER, and every row names objects after the name $NAME, so a name nothing holds removes nothing"
 else
   # WHAT THAT MAP SAYS THE CLUSTER IS. A role is one or several parts joined by a plus, and what this
@@ -252,8 +244,8 @@ fi
 # longer matches. Which account is asked with does not matter and the master's
 # own is used, because no credential of the slave's is anywhere near this act.
 PORT=22
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 ANSWER=$(ssh -n -p "$PORT" -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
              -o BatchMode=yes "$OPERATOR_USER@$SLAVE" true 2>&1)
 ANSWERED=$?
@@ -263,11 +255,8 @@ case "$ANSWER" in
 esac
 
 if [ "$ANSWERED" -eq 0 ]; then
-  # BOTH SPELLINGS OF THE ARGUMENT ARE NAMED, because this file and its twin are
-  # held to printing the same bytes and the person reading this refusal typed one
-  # of the two.
   [ -n "$RUNNING" ] \
-    || die "$SLAVE answers on port $PORT, so it is a RUNNING slave. Taking it off its master leaves every workload on it alive and unable to read a secret, its reconciler without a project and its node without a tailnet. If that is what you mean, start this again with --even-if-running, which the PowerShell spelling writes -EvenIfRunning" 69
+    || die "$SLAVE answers on port $PORT, so it is a RUNNING slave. Taking it off its master leaves every workload on it alive and unable to read a secret, its reconciler without a project and its node without a tailnet. If that is what you mean, start this again with --even-if-running" 69
   say "remove-slave: $SLAVE answers on port $PORT, and this run was told to take a running slave off its master anyway"
 else
   say "remove-slave: $SLAVE does not answer on port $PORT, so what this takes off $MASTER is the registration of a machine that is gone"
@@ -285,8 +274,7 @@ if git -C "$CONFIG_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
     || die "$CONFIG stands inside a git working tree that does not ignore it. A file of credentials belongs nowhere a commit can reach it: move it out, or name it in that tree's .gitignore" 77
 fi
 
-# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
-# Windows, where a mode says nothing, and the mode everywhere else.
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: mode 600 or 400.
 require_owner_only "$CONFIG" \
   || die "$CONFIG $REACH and carries credentials, the elevation password of the machine among them. Run: $OWNER_ONLY_COMMAND" 77
 
@@ -304,8 +292,8 @@ BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 # the case here, and the password is the exception a machine still at its birth
 # would need. The key is tried first and the password only where the key is
 # refused, so neither case needs a flag.
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 PROBE=$(ssh "${BASE[@]}" -n -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)

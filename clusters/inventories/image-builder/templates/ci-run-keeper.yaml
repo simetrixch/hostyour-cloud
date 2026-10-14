@@ -45,6 +45,8 @@ data:
 {{ .Files.Get "files/ci-run-keeper.jq" | indent 4 }}
   ci-run-keeper.sh: |
 {{ .Files.Get "files/ci-run-keeper.sh" | indent 4 }}
+  list-pipelineruns.sh: |
+{{ .Files.Get "files/list-pipelineruns.sh" | indent 4 }}
 ---
 apiVersion: v1
 kind: ServiceAccount

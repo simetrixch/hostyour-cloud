@@ -11,8 +11,9 @@ empty one must fail the render, not produce anonymous objects.
 {{/*
 consumer-build.builds — the ATTESTED builds[] of the unit, decoded from the
 JSON string the fan-out stamps (unit.buildsJson). These are the build NAMES
-from registrations/<unit>/build.yaml — under flat image naming each name IS
-the zot repo the release pushes to.
+from registrations/<unit>/build.yaml — each name IS the zot repo the release
+pushes to, under the owner's prefix for the platform's own builds alone
+(templates/pipeline-release.yaml, the push path).
 */}}
 {{- define "consumer-build.builds" -}}
 {{- required "consumer-build: unit.buildsJson is required (stamped by the fan-out ApplicationSet)" .Values.unit.buildsJson | fromJsonArray | toJson -}}
@@ -20,14 +21,15 @@ the zot repo the release pushes to.
 
 {{/*
 consumer-build.repoOwner — the organisation that owns the unit's repository, read off
-unit.repoURL (https://github.com/<owner>/<repo>.git). It is the npm scope the unit's private
-packages are published under: GitHub Packages files an organisation's packages under its login
-and no other, so the scope is a fact of the registration and never a value of this chart.
+unit.repoURL (https://github.com/<owner>/<repo>.git). It is the npm scope the unit's packages
+are published under, and the prefix the platform's own builds are pushed under: the publish
+pipeline publishes a package of this scope and no other (templates/pipeline-publish.yaml), so the
+scope is a fact of the registration and never a value of this chart.
 */}}
 {{- define "consumer-build.repoOwner" -}}
 {{- $url := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
 {{- $owner := regexReplaceAll "^https://github\\.com/([^/]+)/[^/]+$" $url "${1}" -}}
-{{- if eq $owner $url }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://github.com/<owner>/<repo>[.git], and the build's npm scope is read off its owner" $url) }}{{ end -}}
+{{- if eq $owner $url }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://github.com/<owner>/<repository>[.git], and the build's npm scope is read off its owner" $url) }}{{ end -}}
 {{- $owner -}}
 {{- end -}}
 
@@ -35,8 +37,9 @@ and no other, so the scope is a fact of the registration and never a value of th
 {{- if gt (len (include "consumer-build.builds" . | fromJsonArray)) 0 -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
-{{/* The environment of the two commit status tasks of the ci Pipeline: the repository token from
-     build-git-https, the repository as GitHub's API names it, the commit the gate proved and the run
+{{/* The environment of the two commit status tasks of the ci Pipeline: the statuses token from
+     build-git-https (key `token`, which posts commit statuses on the unit's own repository and writes
+     nothing else), the repository as GitHub's API names it, the commit the gate proved and the run
      in the Tekton Dashboard. Takes a dict of repositoryPath and runURL. */}}
 {{- define "consumer-build.ciCommitStatusEnv" -}}
 - name: GITHUB_TOKEN

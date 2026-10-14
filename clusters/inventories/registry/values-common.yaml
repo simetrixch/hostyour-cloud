@@ -146,7 +146,13 @@ ingress:
 #                 image-builder's buildah-build-push).
 #   - pull-user → read-only on every repo (consumed by imagePullSecrets), and the one
 #                 account accessControl.metrics grants /metrics to.
-#   - Anonymous access disabled (defaultPolicy + anonymousPolicy both []).
+#   - Anonymous read on <owner>/** alone, <owner> being the last segment of
+#     global.buildRegistry: the platform's own images under their owner's name, which
+#     every other installation and the relocation Jobs on the app clusters pull without
+#     a credential. Only three things write there: the release pipeline for
+#     global.buildRegistryUnit on the owner's master, the binary publish of a repository
+#     that carries release/build.sh, and the ghcr.io seed below with copies of public
+#     images. Everything else stays closed (defaultPolicy + anonymousPolicy both []).
 # Default storage: filesystem at /var/lib/registry (bound to the PVC above).
 #
 # /metrics IS GRANTED BY accessControl.metrics AND BY NOTHING ELSE — the repository policies do not
@@ -172,42 +178,33 @@ ingress:
 # upstream tags. Requires a Zot image built with the sync extension (the
 # official ghcr.io/project-zot/zot images bundle it).
 #
-# ghcr.io SEED (extensions.sync, onDemand, listed FIRST). NOT THE PATH THE
-# PLATFORM'S OWN PODS TAKE: their builds[] pins compose against
-# global.buildRegistry (ghcr.io) and reach it directly, so nothing renders a
-# ref at this registry for them. It stays for the pulls that do name this
-# host — an install branch pinned at this registry, and a rollback to such a
-# pin — and it costs nothing while no such pull happens.
+# ghcr.io SEED (extensions.sync, onDemand, listed FIRST). It answers a pull of
+# simetrixch/<image>:<tag> that this registry has never stored: zot fetches it
+# from ghcr.io/simetrixch/<image> and keeps it under simetrixch/, the prefix every
+# installation reads without a credential (accessControl above). It covers the
+# platform's own images until the release pipeline of global.buildRegistryUnit
+# pushes them here (clusters/inventories/consumer-build templates/
+# pipeline-release.yaml, the push path) and every values-<stage>.yaml pins a tag
+# that pipeline wrote; then this entry goes.
 #
-# WHAT IT DOES, WHEN IT DOES FIRE: it fetches the images of THIS platform for an
-# installation that has never built one. The
-# builds[] pins name a tag a release minted, the release pipeline pushes that
-# tag here — and the pipeline exists only once a Manager has written the
-# registration it is rendered from. So the Manager's own image, and the two
-# images that ship with it, cannot come out of this registry the first time.
-# They are published to global.buildRegistry/<build name> by the release of the
-# repository they build from, and this entry fetches them on the first pull.
-#
-# THE LOCAL REPO NAME STAYS FLAT, which is what makes the rest of the file keep
-# working: `content` maps the upstream namespace away rather than caching under
-# it. zot's on-demand path inverts the rule to find the remote name of a repo it
-# was asked for (GetRepoSource, pkg/extensions/sync/content.go): with
-# stripPrefix true and destination "/", a pull of `manager` resolves upstream to
-# `<owner>/manager` and is stored back as `manager`. Without stripPrefix the
-# repo would stay `<owner>/manager` — two segments, which is a docker.io cache
-# path to the retention policy below and a name no builds[] pin can compose.
+# THE LOCAL NAME KEEPS THE OWNER. zot's on-demand path inverts the rule to find
+# the remote name of a repo it was asked for (GetRepoSource,
+# pkg/extensions/sync/content.go): with stripPrefix true and destination
+# "/simetrixch", a pull of `simetrixch/manager` resolves upstream to
+# `simetrixch/manager` and is stored back under that same name, which is the path
+# the push rule writes and retention policy 1 keeps whole.
 #
 # The prefix MUST carry a glob. GetContentByLocalRepo matches the local name
-# against the meta-character part of the prefix, so a prefix naming one repo
-# outright matches the empty pattern and never fires on demand. The glob is also
-# what lets one entry serve every image this platform seeds instead of one entry
-# per image — and the price of that is stated plainly: any single-segment repo
-# missing locally is attempted against global.buildRegistry/<name> before the pull
-# fails.
+# against the destination joined to the meta-character part of the prefix, so a
+# prefix naming one repo outright matches the empty pattern and never fires on
+# demand. The glob is also what lets one entry serve every image this platform
+# seeds instead of one entry per image — and the price of that is stated
+# plainly: any repo under simetrixch/ missing locally is attempted against
+# ghcr.io/simetrixch/<name> before the pull fails.
 #
 # Listed BEFORE docker.io because on demand zot walks the registries in order
 # and moves to the next one when a repo is absent there (pkg/extensions/sync/
-# on_demand.go). Our flat names are not on Docker Hub, so the other order buys
+# on_demand.go). Our names are not on Docker Hub, so the other order buys
 # every seed pull a failed round trip first.
 #
 # NO CREDENTIAL, and that is a property of the packages rather than an omission:
@@ -291,18 +288,26 @@ ingress:
 # already exists.
 #
 # RETENTION POLICIES (below) — ORDER MATTERS: zot applies the FIRST policy whose
-# `repositories` glob matches a repo, so the single-segment ["*"] policy is
+# `repositories` glob matches a repo, so the policy of our own repositories is
 # listed BEFORE the ["**"] catch-all.
-#   1. ["*"] — OUR images: a build name is FLAT, one segment with no owner
-#      prefix, so after the registry wipe every single-segment repo is one of
-#      ours. Keep ALL tags (patterns [".*"], no count) and
-#      deleteUntagged false, so zot NEVER prunes one of our image tags. The
-#      registry reaper inside the manager (clusters/inventories/manager) is the SOLE cleaner here: it
-#      alone knows which tags are still pinned by a values-<stage>.yaml on any
-#      branch, so zot's blind 50-count rule must not race it and evict a
+#   1. ["*", "npm/**", "simetrixch/**"] — OUR repositories. Keep ALL tags
+#      (patterns [".*"], no count) and deleteUntagged false, so zot NEVER prunes
+#      one of our tags.
+#      ["*"]: a build name is FLAT, one segment with no owner prefix, so after the
+#      registry wipe every single-segment repo is one of our images. The registry
+#      reaper inside the manager (clusters/inventories/manager) is the SOLE cleaner
+#      here: it alone knows which tags are still pinned by a values-<stage>.yaml on
+#      any branch, so zot's blind 50-count rule must not race it and evict a
 #      referenced tag. (Blob-level GC still reclaims space after the reaper
 #      deletes a manifest — storage.gc/gcDelay is independent of these
 #      per-repo retention policies.)
+#      ["npm/**"]: npm/<owner>/<name>, the npm packages the publish pipeline pushes
+#      (clusters/inventories/consumer-build templates/pipeline-publish.yaml), one
+#      tag per version, which a lockfile names for as long as it stands; a
+#      version pushed 50 versions ago is as needed as the newest.
+#      ["simetrixch/**"]: this platform's own images under the name of their owner.
+#      The reaper skips every name with a "/", so nothing deletes a tag under
+#      these two.
 #   2. ["**"] — the docker.io pull-through cache repos (library/**, ...): every
 #      multi-segment repo is a cache path zot manages itself. Keep the 50
 #      most-recently-pushed tags, deleteUntagged true.
@@ -349,7 +354,7 @@ configmap:
               "dryRun": false,
               "policies": [
                 {
-                  "repositories": ["*"],
+                  "repositories": ["*", "npm/**", "simetrixch/**"],
                   "deleteUntagged": false,
                   "keepTags": [
                     {
@@ -401,6 +406,20 @@ configmap:
                   ],
                   "defaultPolicy": [],
                   "anonymousPolicy": []
+                },
+                "{{ splitList "/" .Values.global.buildRegistry | last }}/**": {
+                  "policies": [
+                    {
+                      "users": ["{{ .Values.global.registryPushUser }}"],
+                      "actions": ["read", "create", "update", "delete"]
+                    },
+                    {
+                      "users": ["{{ .Values.global.registryPullUser }}"],
+                      "actions": ["read"]
+                    }
+                  ],
+                  "defaultPolicy": [],
+                  "anonymousPolicy": ["read"]
                 }
               }
             }
@@ -437,7 +456,7 @@ configmap:
                   "content": [
                     {
                       "prefix": "/simetrixch/*",
-                      "destination": "/",
+                      "destination": "/simetrixch",
                       "stripPrefix": true
                     }
                   ]

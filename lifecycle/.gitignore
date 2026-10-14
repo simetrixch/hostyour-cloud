@@ -25,7 +25,7 @@ config.*.env
 # up.
 !config.example.env
 
-# Where install-machine.sh and install-machine.ps1 put the session transcript and the
+# Where install-machine.sh puts the session transcript and the
 # machine's own run records. Those carry no credential — the engine redacts a secret
 # answer before it reaches a record — but they are one machine's history and belong to
 # nobody else.
