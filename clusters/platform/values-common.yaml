@@ -57,10 +57,11 @@ global:
   # not carry leaves every GitOps-deployed Certificate Pending forever on
   # "ClusterIssuer not found".
   #
-  # IT SAYS NOTHING ABOUT WHICH AUTHORITY. That is the `letsencrypt_server`
-  # answer of that same program, and it varies per installation while this name
-  # may not: every manifest that asks for a certificate references it by this
-  # exact string.
+  # IT SAYS NOTHING ABOUT WHICH AUTHORITY. There is one: Google Trust Services,
+  # whose directory the `letsencrypt_server` answer of that same program names,
+  # with the installation's one ACME account named in the cluster's map as
+  # `acmeEabKeyId`. This name stays while the form behind it changes: every
+  # manifest that asks for a certificate references it by this exact string.
   clusterIssuer: platform-acme
 
   # WHERE A TENANT'S UPLOADS ARE KEPT — the Cloudflare account the platform makes each tenant's

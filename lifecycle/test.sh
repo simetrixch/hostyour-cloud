@@ -2350,6 +2350,89 @@ if names_the_pin "$(cat "$HERE/../clusters/platform/ansiwise.sha256"; echo "BAD 
 fi
 ok "clusters/platform/ansiwise.sha256 names both assets of the committed pin $TREE_PIN once each, and a file of another release or a second line is caught"
 
+# ── THE OWNER'S ACME BLOCK, read by both drivers' composition of the answers ──
+# ACME_SERVER and ACME_EMAIL stand over LETSENCRYPT_SERVER and LETSENCRYPT_EMAIL, and
+# ACME_CREDENTIALS_JSON, one line of JSON, gives the External Account Binding's two halves as
+# acme_eab_key_id and acme_eab_mac_key. A config without the block composes what it always did.
+# Each driver's own COMPOSE block is run out of its own text, against a stand-in config and a
+# stand-in declaration, so what is measured is what a machine runs. Every value is synthetic, and
+# the MAC key is a sentinel no refusal may print.
+ACME_WORK="$WORK/acme"
+mkdir -p "$ACME_WORK"
+composer_of() { sed -n "/<<'COMPOSE'\$/,/^COMPOSE\$/p" "$1" | sed '1d;$d'; } # <driver> -> its COMPOSE program
+cat > "$ACME_WORK/declares.yaml" <<'DECLARES'
+name: check
+answers:
+  - name: letsencrypt_email
+    kind: text
+  - name: letsencrypt_server
+    kind: text
+  - name: acme_eab_key_id
+    kind: text
+  - name: acme_eab_mac_key
+    kind: text
+steps: []
+DECLARES
+LEGACY_LINES="LETSENCRYPT_EMAIL='legacy@example.invalid'
+LETSENCRYPT_SERVER='https://acme-v02.api.letsencrypt.org/directory'"
+acme_config() { # <file> [<ACME_CREDENTIALS_JSON value>] -> a config with the legacy lines, and with the owner's four after them when a value is given
+  printf '%s\n' "$LEGACY_LINES" > "$1"
+  [ $# -lt 2 ] || printf "%s\n" "ACME_PROVIDER='gts'" "ACME_EMAIL='owner@example.invalid'" \
+    "ACME_SERVER='https://dv.acme-v02.api.pki.goog/directory'" "ACME_CREDENTIALS_JSON='$2'" >> "$1"
+}
+composed() { # <composer> <config> -> its code; the answers in $ACME_WORK/answers.json, what it printed in $ACME_WORK/composed.out
+  rm -f "$ACME_WORK/answers.json"
+  python3 "$1" "$2" "$ACME_WORK/declares.yaml" "$ACME_WORK/answers.json" > "$ACME_WORK/composed.out" 2>&1
+}
+ACME_ANSWERS='{
+  "answers": {
+    "letsencrypt_email": "owner@example.invalid",
+    "letsencrypt_server": "https://dv.acme-v02.api.pki.goog/directory",
+    "acme_eab_key_id": "synthetic-key-id",
+    "acme_eab_mac_key": "SYNTHETIC-MAC-SENTINEL"
+  }
+}'
+LEGACY_ANSWERS='{
+  "answers": {
+    "letsencrypt_email": "legacy@example.invalid",
+    "letsencrypt_server": "https://acme-v02.api.letsencrypt.org/directory"
+  }
+}'
+acme_cases() { # <composer> — every case, or the first that fails, named on standard error
+  local composer="$1" json
+  acme_config "$ACME_WORK/legacy.env"
+  composed "$composer" "$ACME_WORK/legacy.env" || { echo 'a config without the block was refused' >&2; return 1; }
+  [ "$(cat "$ACME_WORK/answers.json")" = "$LEGACY_ANSWERS" ] || { echo 'a config without the block composed other answers than before' >&2; return 1; }
+  [ "$(cat "$ACME_WORK/composed.out")" = '2 of the 4 it declares, and 2 left to its own default: acme_eab_key_id acme_eab_mac_key' ] \
+    || { echo "a config without the block printed: $(cat "$ACME_WORK/composed.out")" >&2; return 1; }
+  acme_config "$ACME_WORK/owner.env" '{"keyId":"synthetic-key-id","b64MacKey":"SYNTHETIC-MAC-SENTINEL"}'
+  composed "$composer" "$ACME_WORK/owner.env" || { echo 'the owner'"'"'s block was refused' >&2; return 1; }
+  [ "$(cat "$ACME_WORK/answers.json")" = "$ACME_ANSWERS" ] || { echo "the owner's block composed: $(cat "$ACME_WORK/answers.json")" >&2; return 1; }
+  [ "$(cat "$ACME_WORK/composed.out")" = '4 of the 4 it declares' ] || { echo "the owner's block printed: $(cat "$ACME_WORK/composed.out")" >&2; return 1; }
+  for json in '{not json SYNTHETIC-MAC-SENTINEL' '["SYNTHETIC-MAC-SENTINEL"]' '{"b64MacKey":"SYNTHETIC-MAC-SENTINEL"}' \
+      '{"keyId":"SYNTHETIC-MAC-SENTINEL"}' '{"keyId":"","b64MacKey":"SYNTHETIC-MAC-SENTINEL"}' '{"keyId":"k","b64MacKey":["SYNTHETIC-MAC-SENTINEL"]}'; do
+    acme_config "$ACME_WORK/bad.env" "$json"
+    if composed "$composer" "$ACME_WORK/bad.env"; then echo "ACME_CREDENTIALS_JSON $json was not refused" >&2; return 1; fi
+    grep -q 'ACME_CREDENTIALS_JSON' "$ACME_WORK/composed.out" || { echo "the refusal of $json does not name ACME_CREDENTIALS_JSON" >&2; return 1; }
+    if grep -q 'SENTINEL' "$ACME_WORK/composed.out"; then echo "the refusal of $json prints the value" >&2; return 1; fi
+    [ ! -e "$ACME_WORK/answers.json" ] || { echo "the refusal of $json still wrote answers" >&2; return 1; }
+  done
+}
+for driver in driver.sh regenerate-driver.sh; do
+  composer_of "$HERE/$driver" > "$ACME_WORK/$driver.py"
+  [ -s "$ACME_WORK/$driver.py" ] || fail "$driver carries no COMPOSE block to measure"
+  acme_cases "$ACME_WORK/$driver.py" 2> "$ACME_WORK/why" || fail "$driver: $(cat "$ACME_WORK/why")"
+done
+# PLANTED: a composer that lets LETSENCRYPT_SERVER stand over ACME_SERVER, and one whose refusal
+# prints the value it refuses. Each is caught, or the cases above prove nothing.
+sed "s/stated\['letsencrypt_server'\] = stated\['acme_server'\]/pass/" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-server.py"
+sed "s/; its value is not shown'/: ' + stated['acme_credentials_json']/" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-print.py"
+for planted in planted-server planted-print; do
+  ! cmp -s "$ACME_WORK/driver.sh.py" "$ACME_WORK/$planted.py" || fail "the plant $planted changed nothing in the composer"
+  if acme_cases "$ACME_WORK/$planted.py" 2>/dev/null; then fail "a composer with the plant $planted passed every ACME case"; fi
+done
+ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config without the block composes as before, and two planted composers are caught"
+
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
 echo "test:   reason for a host name it cannot resolve normalised, in the C locale."
@@ -2393,6 +2476,9 @@ echo "test:   stops its heartbeat ticker on a signal. A refusal that does not st
 echo "test:   that resumes after a TERM, a skip that asks ansiwise alone, a FETCHED left as the environment"
 echo "test:   set it, a check that takes any digest and a cleanup that leaves the ticker running are each"
 echo "test:   planted, and each is caught."
+echo "test:   Both drivers' composition of the answers, run from their own text: the owner's ACME block over"
+echo "test:   the LETSENCRYPT lines and the binding's two halves out of its JSON, six bindings refused by"
+echo "test:   name without their value, a config without the block as before, and two planted composers."
 echo "test: covered — a config of mode 644, refused in its recorded sentence by the"
 echo "test:   regeneration, the backup, the restore and install-machine, and a planted defect in"
 echo "test:   the guard beside the backup and beside the restore that proves the launcher reads it."

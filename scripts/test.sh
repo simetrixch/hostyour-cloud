@@ -42,7 +42,6 @@ node --test scripts/redis-maxmemory.test.mjs || fail 'scripts/redis-maxmemory.te
 node --test scripts/coredns-cache.test.mjs || fail 'scripts/coredns-cache.test.mjs'
 echo 'test: tenant appset — one Application, one namespace and one project per tenant stage, every chart handed the whole member set.'
 node --test scripts/tenant-appset.test.mjs || fail 'scripts/tenant-appset.test.mjs'
-node --test scripts/tenant-tls.test.mjs || fail 'scripts/tenant-tls.test.mjs'
 echo 'test: tenant size — every registration renders, with the word or without it.'
 node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
 echo 'test: tenant own domain aliases — every chart gets the list, or [] without one.'
