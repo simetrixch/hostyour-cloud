@@ -625,10 +625,15 @@ test('the release pipeline checks an apps bundle with the stage engine before th
   assert.ok(!release.spec.tasks.some((t) => t.name.startsWith('build-') && t.name !== 'build-shop-apps' && t.name !== 'build-shop-web'), 'the check is no build: the memory budget of the release counts build- tasks');
 });
 
-test('the kubelet pull secret of the release images exists for a unit that builds, composed from the pull identity of the registry', () => {
+test('the kubelet pull secret of the release images exists for a unit that builds, composed by the shared registry pull helper', () => {
   const docs = renderUnit('shop');
   const secret = docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-registry-pull');
-  assert.equal(secret.metadata.namespace, 'shop-build');
+  // The chart renders into argocd and its resources name their namespace, so a helper that drops the
+  // namespace key places the secret where no build pod reads it.
+  assert.equal(secret.metadata.namespace, 'shop-build', 'the helper places it in the namespace the caller names');
+  for (const [chart, name] of [['gate-runner', 'gate-runner-registry-pull'], ['e2e-runner', 'e2e-runner-registry-pull'], ['service-provisioner', 'registry-pull-source']]) {
+    assert.equal(renderChart(chart).find((d) => d.kind === 'ExternalSecret' && d.metadata.name === name).metadata.namespace, 'argocd', `PLANTED INNOCENT: ${chart}, which names no namespace, keeps ${name} in its release namespace`);
+  }
   assert.equal(secret.spec.target.template.type, 'kubernetes.io/dockerconfigjson');
   assert.deepEqual(secret.spec.data.map((d) => [d.remoteRef.key.endsWith('/app/registry'), d.remoteRef.property]), [[true, 'pull-user'], [true, 'pull-password']], 'the read-only pull identity, never the push one');
   assert.ok(secret.spec.target.template.data['.dockerconfigjson'].includes('"zot.check.example.invalid"'), 'for the host the images are pulled from');
