@@ -95,4 +95,7 @@ node --test scripts/platform-argo-sync.test.mjs || fail 'scripts/platform-argo-s
 echo 'test: forge — Forgejo admits the group admins alone, through the identity provider, and keeps its data in one volume.'
 helm dependency update clusters/inventories/forgejo
 node --test scripts/forgejo.test.mjs || fail 'scripts/forgejo.test.mjs'
+echo 'test: forge — Plane waits for the forward auth on every page but /api/v1, keeps its data beside it, and renders no public default.'
+helm dependency update clusters/inventories/plane
+node --test scripts/plane.test.mjs || fail 'scripts/plane.test.mjs'
 echo 'test: OK — all suites green'

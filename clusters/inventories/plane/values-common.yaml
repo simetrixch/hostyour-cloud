@@ -1,0 +1,142 @@
+# Plane on the master. Every value here holds for every installation; the address and the
+# certificate issuer stand in installation/values/plane.yaml, which deploy-branch writes on the
+# install branch, because the chart writes its host and its annotations without tpl.
+plane-ce:
+  ingress:
+    enabled: true
+    # Any class not starting with `traefik` makes the chart write a standard Ingress.
+    ingressClass: public
+    ingress_annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      # Every page waits for the identity provider first, then Plane's own sign-in.
+      traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
+  # The chart writes the TLS block with this Secret, and cert-manager fills it from the issuer
+  # annotation; Plane is told it is served over https.
+  ssl:
+    tls_secret_name: plane-tls
+
+  # Plane's own data stays beside it: each of the four runs in this namespace on its own volume.
+  # The chart writes an empty storageClass as none, so the platform's class is named.
+  postgres:
+    local_setup: true
+    storageClass: microk8s-hostpath
+  redis:
+    local_setup: true
+    storageClass: microk8s-hostpath
+  rabbitmq:
+    local_setup: true
+    storageClass: microk8s-hostpath
+  minio:
+    local_setup: true
+    storageClass: microk8s-hostpath
+
+  # The chart refuses to render its public default keys; every secret comes from the Secrets below.
+  env:
+    requireExplicitSecrets: true
+  external_secrets:
+    app_keys_existingSecret: plane-app-keys
+    app_env_existingSecret: plane-app-env
+    pgdb_existingSecret: plane-pgdb
+    rabbitmq_existingSecret: plane-rabbitmq
+    doc_store_existingSecret: plane-doc-store
+
+secret-store:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+
+# EVERY SECRET BELOW READS <stage>/app/plane, whose six fields deploy-platform-services mints. The
+# addresses in them name the release `plane` in the namespace `plane` (app.yaml), which is where the
+# chart puts its Services.
+externalsecret-app-keys:
+  externalSecret:
+    enabled: true
+    annotations:
+      argocd.argoproj.io/sync-wave: "-1"
+    name: plane-app-keys
+    namespace: plane
+    targetSecretName: plane-app-keys
+    data:
+      - secretKey: SECRET_KEY
+        property: secret-key
+      - secretKey: LIVE_SERVER_SECRET_KEY
+        property: live-server-secret-key
+
+externalsecret-app-env:
+  externalSecret:
+    enabled: true
+    annotations:
+      argocd.argoproj.io/sync-wave: "-1"
+    name: plane-app-env
+    namespace: plane
+    targetSecretName: plane-app-env
+    template:
+      engineVersion: v2
+      data:
+        REDIS_URL: redis://plane-redis.plane.svc.cluster.local:6379/
+        DATABASE_URL: 'postgresql://plane:{{ .pgdbPassword }}@plane-pgdb.plane.svc.cluster.local/plane'
+        AMQP_URL: 'amqp://plane:{{ .rabbitmqPassword }}@plane-rabbitmq.plane.svc.cluster.local/'
+    data:
+      - secretKey: pgdbPassword
+        property: pgdb-password
+      - secretKey: rabbitmqPassword
+        property: rabbitmq-password
+
+externalsecret-pgdb:
+  externalSecret:
+    enabled: true
+    annotations:
+      argocd.argoproj.io/sync-wave: "-1"
+    name: plane-pgdb
+    namespace: plane
+    targetSecretName: plane-pgdb
+    template:
+      engineVersion: v2
+      data:
+        POSTGRES_USER: plane
+        POSTGRES_DB: plane
+        POSTGRES_PASSWORD: '{{ .pgdbPassword }}'
+    data:
+      - secretKey: pgdbPassword
+        property: pgdb-password
+
+externalsecret-rabbitmq:
+  externalSecret:
+    enabled: true
+    annotations:
+      argocd.argoproj.io/sync-wave: "-1"
+    name: plane-rabbitmq
+    namespace: plane
+    targetSecretName: plane-rabbitmq
+    template:
+      engineVersion: v2
+      data:
+        RABBITMQ_DEFAULT_USER: plane
+        RABBITMQ_DEFAULT_PASS: '{{ .rabbitmqPassword }}'
+    data:
+      - secretKey: rabbitmqPassword
+        property: rabbitmq-password
+
+externalsecret-doc-store:
+  externalSecret:
+    enabled: true
+    annotations:
+      argocd.argoproj.io/sync-wave: "-1"
+    name: plane-doc-store
+    namespace: plane
+    targetSecretName: plane-doc-store
+    template:
+      engineVersion: v2
+      data:
+        USE_MINIO: "1"
+        FILE_SIZE_LIMIT: "5242880"
+        AWS_S3_BUCKET_NAME: uploads
+        AWS_S3_ENDPOINT_URL: http://plane-minio:9000
+        MINIO_ROOT_USER: '{{ .minioAccessKey }}'
+        MINIO_ROOT_PASSWORD: '{{ .minioSecretKey }}'
+        AWS_ACCESS_KEY_ID: '{{ .minioAccessKey }}'
+        AWS_SECRET_ACCESS_KEY: '{{ .minioSecretKey }}'
+    data:
+      - secretKey: minioAccessKey
+        property: minio-access-key
+      - secretKey: minioSecretKey
+        property: minio-secret-key

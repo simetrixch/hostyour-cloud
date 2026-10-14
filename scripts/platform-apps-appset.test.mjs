@@ -56,7 +56,7 @@ test('runsOn may name the cluster itself, and a name of another cluster selects 
 // before it is Healthy. The forge apps wait for Vault entries a later act writes, so they stand after
 // every other app: while one of them waits, no app of the platform waits behind it.
 const waveCount = Number(/\$waveCount := (\d+)/.exec(readFileSync('clusters/argocd/templates/apps.yaml', 'utf8'))[1]);
-const FORGE_APPS = ['forgejo'];
+const FORGE_APPS = ['forgejo', 'plane'];
 
 /** Every app outside the steps, and every forge app not after all the others, named. */
 function waveFindings(params) {

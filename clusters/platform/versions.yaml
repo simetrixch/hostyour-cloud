@@ -271,6 +271,15 @@ charts:
         tree: platform
         file: clusters/inventories/forgejo/Chart.yaml
         dependency: forgejo
+  plane-ce:
+    version: "1.8.5"
+    upstream:
+      kind: chart_repository
+    stamps:
+      - kind: chart_dependency
+        tree: platform
+        file: clusters/inventories/plane/Chart.yaml
+        dependency: plane-ce
   kube-prometheus-stack:
     version: "87.21.0"
     upstream:

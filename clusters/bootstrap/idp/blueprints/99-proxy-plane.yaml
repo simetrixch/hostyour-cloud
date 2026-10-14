@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — Forward-Auth ProxyProvider + Application for Plane.
+# Mirrors 99-proxy-tekton.yaml: the embedded Outpost gates Plane's Ingress
+# through Traefik's forwardAuth Middleware (clusters/bootstrap/idp/
+# middleware-forwardauth.yaml), and Plane's own sign-in follows. Plane's
+# API-key API, /api/v1, has an Ingress of its own outside the gate
+# (clusters/inventories/plane/templates/ingress-api-v1.yaml).
+#
+# mode: forward_domain → the session cookie is scoped to the env apex
+# (.<DOMAIN>) so one Authentik login carries to every gated subdomain
+# without re-prompting.
+version: 1
+metadata:
+  name: Plane Forward Auth
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - id: plane-proxy-provider
+    model: authentik_providers_proxy.proxyprovider
+    identifiers:
+      name: Plane
+    attrs:
+      name: Plane
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      external_host: !Format ["https://plane.%s", !Env IDP_DOMAIN]
+      mode: forward_domain
+      cookie_domain: !Format [".%s", !Env IDP_DOMAIN]
+      access_token_validity: hours=24
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+  - id: plane-app
+    model: authentik_core.application
+    identifiers:
+      slug: plane
+    attrs:
+      name: Plane
+      slug: plane
+      provider: !Find [authentik_providers_proxy.proxyprovider, [name, Plane]]
+      meta_launch_url: !Format ["https://plane.%s/", !Env IDP_DOMAIN]
+      open_in_new_tab: true
+      group: Build

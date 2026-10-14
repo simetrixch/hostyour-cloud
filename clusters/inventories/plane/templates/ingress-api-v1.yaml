@@ -1,0 +1,35 @@
+{{- /*
+THE ONE PATH OUTSIDE THE FORWARD AUTH. /api/v1 is Plane's API-key API: every request carries
+X-API-Key and Plane refuses one without it, so a program outside the cluster can call it with
+nothing but a Plane token. /api without v1 is the web app's session API and stays behind the
+identity provider on the chart's Ingress.
+
+Traefik ranks a router by the length of its rule, so this path outranks the chart's /api. No issuer
+annotation: the chart's Ingress already asks cert-manager for the same Secret, and a second
+request for one Secret is refused.
+*/ -}}
+{{- $plane := index .Values "plane-ce" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: plane-api-v1
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: {{ $plane.ingress.ingressClass | quote }}
+  tls:
+    - hosts:
+        - {{ $plane.ingress.appHost | quote }}
+      secretName: {{ $plane.ssl.tls_secret_name }}
+  rules:
+    - host: {{ $plane.ingress.appHost | quote }}
+      http:
+        paths:
+          - path: /api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-api
+                port:
+                  number: 8000

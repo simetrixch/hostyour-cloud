@@ -1,0 +1,21 @@
+# The Vault entry Plane reads its keys and its own services' passwords from on the test stage.
+# deploy-platform-services mints it.
+externalsecret-app-keys:
+  externalSecret:
+    vaultPath: test/app/plane
+
+externalsecret-app-env:
+  externalSecret:
+    vaultPath: test/app/plane
+
+externalsecret-pgdb:
+  externalSecret:
+    vaultPath: test/app/plane
+
+externalsecret-rabbitmq:
+  externalSecret:
+    vaultPath: test/app/plane
+
+externalsecret-doc-store:
+  externalSecret:
+    vaultPath: test/app/plane

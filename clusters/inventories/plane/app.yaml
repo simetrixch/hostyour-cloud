@@ -1,0 +1,10 @@
+name: plane
+project: plane
+syncWave: "41"
+namespace: plane
+prune: "true"
+createNamespace: "true"
+runsOn: master
+# The chart names every object after the release, and the build plane calls the API Service
+# as plane-api.plane.svc, so the release is named plane on every stage.
+releaseName: plane

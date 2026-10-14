@@ -218,6 +218,30 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
+  name: plane
+  namespace: __ARGOCD_NAMESPACE__
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Plane, the platform's own project tracker, on the master. Namespaced only.
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+    - https://helm.plane.so/
+  destinations:
+    - name: __CLUSTER_NAME__
+      namespace: plane
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
   name: observability
   namespace: __ARGOCD_NAMESPACE__
   annotations:
