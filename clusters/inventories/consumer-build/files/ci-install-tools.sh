@@ -1,6 +1,7 @@
 # Puts the tools a repository's ci-tools.json names first on PATH. The ci pipeline inlines this file in
-# its check step after the fixed tools (helm, yq, jq) and before the repository's own install and check;
-# scripts/build-contract.test.mjs runs it against a stand-in table and stand-in archives.
+# its check step, and the publish pipeline in build-binaries, after files/ci-fixed-tools.sh and before the
+# repository's own install and check or release build; scripts/build-contract.test.mjs runs it against a
+# stand-in table and stand-in archives.
 #
 # CI_TOOLS is what the fetch task's list-tools step validated, one "<tool> <version>" per line, and empty
 # for a repository without ci-tools.json. CI_TOOLS_TABLE is files/ci-tools.table, one
