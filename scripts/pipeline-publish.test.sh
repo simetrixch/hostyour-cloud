@@ -8,7 +8,9 @@
 # version, pushes nothing once one tarball is refused, reads every tarball back, and logs one line per
 # tarball. The functions are read out of the template
 # (clusters/inventories/consumer-build/templates/pipeline-publish.yaml), as the Pipeline carries
-# them, and run against fixture repositories, tarballs and a registry served on 127.0.0.1.
+# them, and run against fixture repositories, tarballs and a registry served on 127.0.0.1. Then the
+# Pipeline as helm renders it runs end to end, every step in Tekton's order, on fixture repositories
+# and the same registry, so each step is held to calling its functions.
 #
 #   bash scripts/pipeline-publish.test.sh
 set -uo pipefail
@@ -16,12 +18,17 @@ root="$(git rev-parse --show-toplevel)" || exit 1
 template="$root/clusters/inventories/consumer-build/templates/pipeline-publish.yaml"
 fail() { echo "pipeline-publish.test: RED — $*" >&2; exit 1; }
 ok() { echo "pipeline-publish.test: ok — $*"; }
-for tool in git jq node pnpm tar gzip sha256sum gitleaks curl; do
+for tool in git jq node pnpm tar gzip sha256sum gitleaks curl helm yq; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on this path, and the functions under test run it"
 done
 work="$(mktemp -d)" || fail "no temporary directory could be made"
 registry_pid=""
 trap '[ -z "$registry_pid" ] || kill "$registry_pid" 2>/dev/null; rm -rf "$work"' EXIT
+# Stand-ins for what the cluster has and this machine must not change: curl that reaches the fixture
+# registry, and corepack, whose enable would write into this machine's Node.
+mkdir -p "$work/standin-bin"
+real_curl="$(command -v curl)"
+PATH="$work/standin-bin:$PATH"
 
 # A function from its first line to the brace that closes it at the same indent.
 extract() { # function name -> its text out of the template
@@ -202,6 +209,10 @@ seed() { # $1 folder: a seed repository with minimal and theme, and pins.tsv nam
   rm -rf "$1"; mkdir -p "$1/npm-seed"
   tgz "$1/npm-seed/digitaplatform-minimal-0.4.13.tgz" "$(json '{"name":"@digitaplatform/minimal","version":"0.4.13"}')" "dist/index.js=export const x = 1;"
   tgz "$1/npm-seed/digitaplatform-theme-0.3.13.tgz" "$(json '{"name":"@digitaplatform/theme","version":"0.3.13"}')" "dist/index.css=a{}"
+  pins "$1"
+}
+pins() { # $1 seed folder: npm-seed/pins.tsv names every .tgz in it with its sha256
+  local f name
   for f in "$1"/npm-seed/*.tgz; do
     name="$(tar -xzOf "$f" package/package.json | jq -r '.name + "@" + .version')"
     printf '%s\tsha512-fixture\t%s\tdigita-platform:pnpm-lock.yaml@%s\n' "$name" "$(sha256sum "$f" | cut -d' ' -f1)" "$(printf 'a%.0s' {1..40})"
@@ -315,12 +326,17 @@ node "$work/registry.mjs" "$work/registry" & registry_pid=$!
 for _ in $(seq 50); do [ -s "$work/registry/port" ] && break; sleep 0.1; done
 [ -s "$work/registry/port" ] || fail 'the fixture registry did not start'
 PORT="$(cat "$work/registry/port")"
-# The pipeline names https://<REGISTRY>; the fixture serves plain http on its own port.
-curl() {
-  local args=() a
-  for a in "$@"; do args+=("${a//https:\/\/registry.test/http://127.0.0.1:$PORT}"); done
-  command curl "${args[@]}"
-}
+# The pipeline names https://<REGISTRY>/v2/; the fixture serves plain http on its own port.
+cat > "$work/standin-bin/curl" <<EOF
+#!/usr/bin/env bash
+args=()
+for a in "\$@"; do
+  [[ "\$a" =~ ^https://[^/]+(/v2/.*)\$ ]] && a="http://127.0.0.1:${PORT}\${BASH_REMATCH[1]}"
+  args+=("\$a")
+done
+exec "${real_curl}" "\${args[@]}"
+EOF
+chmod +x "$work/standin-bin/curl"
 export REGISTRY=registry.test OWNER=digitaplatform REPO_URL=https://github.com/digitaplatform/digita-deploy.git
 COMMIT="$(printf 'c%.0s' {1..40})"
 export COMMIT REGISTRY_USERNAME=fixture-push REGISTRY_PASSWORD=fixture-password
@@ -373,5 +389,200 @@ REGISTRY_PASSWORD=wrong push "$work/p6" && fail 'PLANTED DEFECT: a push the regi
 grep -qF 'answered 401' "$work/push.out" || fail "a refused login does not name the answer: $(cat "$work/push.out")"
 ok 'a blob that reads back other bytes and a refused login fail the push'
 
-grep -q 'npm_push /workspace/packed' "$template" || fail 'the push task does not call npm_push on the packed tarballs'
+# ── the rendered Pipeline, end to end ──────────────────────────────────────────────────────
+# Every step of <unit>-publish as helm renders it, run on fixture repositories in Tekton's order, so
+# a call dropped from a step, a step that runs another function, or a task out of its order goes red
+# here although every function above stays green.
+helm template consumer-build "$root/clusters/inventories/consumer-build" --namespace argocd \
+  -f "$root/clusters/platform/values-common.yaml" -f "$root/clusters/platform/values-prod.yaml" \
+  -f "$root/clusters/inventories/consumer-build/values-common.yaml" \
+  -f "$root/scripts/standin/cluster-map.yaml" -f "$root/scripts/standin/registration.yaml" \
+  --set-json "unit={\"name\":\"deploy\",\"repoURL\":\"${REPO_URL}\",\"buildsJson\":\"[]\"}" \
+  | yq -o=json 'select(.kind == "Pipeline" and .metadata.name == "deploy-publish")' > "$work/pipeline.json" \
+  && [ -s "$work/pipeline.json" ] || fail 'the chart renders no deploy-publish Pipeline for a unit without builds'
+rendered_registry="$(jq -r '.spec.tasks[] | select(.name == "push") | .taskSpec.steps[0].env[] | select(.name == "REGISTRY") | .value' "$work/pipeline.json")"
+rendered_npm="https://${rendered_registry}/v2/npm/"
+# Tekton's part, as much of it as this Pipeline uses: the tasks in the order runAfter gives them, one at a
+# time, as each works on what the one before left (a runAfter that lets two run at once fails the run), a
+# task whose when does not hold skipped, the steps of a task in order, each script a file that runs by its
+# own shebang with its env and envFrom, and the run failed at the first step that fails. A path the pod
+# mounts (a workspace by its subPath, a volume, a step's own /tmp) is a folder of the run, written into
+# the script and the environment of the step. The clone task, resolved from the cluster, is a git clone
+# of the fixture origin at the revision it names, and only of the pinned repoURL.
+cat > "$work/run-pipeline.mjs" <<'EOF'
+import {spawnSync} from 'node:child_process';
+import {chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+const [pipelineFile, run, origin, repoURL, paramsJson, secretsJson] = process.argv.slice(2);
+const tasks = JSON.parse(readFileSync(pipelineFile, 'utf8')).spec.tasks, secrets = JSON.parse(secretsJson);
+const scope = Object.fromEntries(Object.entries(JSON.parse(paramsJson)).map(([k, v]) => [`params.${k}`, v]));
+const fill = (text, values) => String(text).replace(/\$\(([a-z.-]+)\)/g, (ref, key) => {
+  if (!(key in values)) throw new Error(`nothing fills ${ref}`);
+  return values[key];
+});
+const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const mount = (text, mounts) => Object.keys(mounts).sort((a, b) => b.length - a.length).reduce((t, path) =>
+  t.replace(new RegExp(`(^|[\\s"'=:(])${escape(path)}(?=/|$|[\\s"';)])`, 'gm'), (_, before) => before + mounts[path]), text);
+const git = (...args) => spawnSync('git', args, {encoding: 'utf8'});
+const done = new Set();
+while (done.size < tasks.length) {
+  const ready = tasks.filter((t) => !done.has(t.name) && (t.runAfter ?? []).every((n) => done.has(n)));
+  if (ready.length !== 1) { console.log(`run: FAILED, runAfter lets ${ready.map((t) => t.name).join(' and ') || 'no task'} run next`); process.exit(1); }
+  const [task] = ready;
+  done.add(task.name);
+  if (!(task.when ?? []).every((w) => (w.operator === 'in') === w.values.includes(fill(w.input, scope)))) {
+    console.log(`run: ${task.name} skipped`);
+    continue;
+  }
+  const params = Object.fromEntries((task.params ?? []).map((p) => [`params.${p.name}`, fill(p.value, scope)]));
+  const workspace = (name) => join(run, 'workspace', (task.workspaces ?? []).find((w) => w.name === name).subPath ?? '');
+  if (task.taskRef) {
+    const dir = workspace('source');
+    if (task.taskRef.params.find((p) => p.name === 'name').value !== 'git-clone' || params['params.url'] !== repoURL) {
+      console.log(`run: ${task.name} failed, it is no clone of ${repoURL}`); process.exit(1);
+    }
+    const clone = git('clone', '-q', origin, dir), checkout = git('-C', dir, 'checkout', '-q', '--detach', params['params.revision']);
+    if (clone.status || checkout.status) { console.log(`run: ${task.name} failed: ${clone.stderr}${checkout.stderr}`); process.exit(1); }
+    scope[`tasks.${task.name}.results.commit`] = git('-C', dir, 'rev-parse', 'HEAD').stdout.trim();
+    console.log(`run: ${task.name} ran`);
+    continue;
+  }
+  const spec = task.taskSpec, base = join(run, task.name);
+  const volumes = Object.fromEntries((spec.volumes ?? []).map((v) => {
+    const dir = join(base, 'volumes', v.name);
+    mkdirSync(dir, {recursive: true});
+    for (const [key, value] of Object.entries(v.secret ? secrets[v.secret.secretName] ?? {} : {})) writeFileSync(join(dir, key), value);
+    return [v.name, dir];
+  }));
+  const results = Object.fromEntries((spec.results ?? []).map((r) => [r.name, join(base, 'results', r.name)]));
+  mkdirSync(join(base, 'results'), {recursive: true});
+  const values = {...params, ...Object.fromEntries(Object.entries(results).map(([name, file]) => [`results.${name}.path`, file]))};
+  for (const step of spec.steps) {
+    const home = join(base, step.name);
+    const mounts = {'/tmp': join(home, 'tmp'),
+      ...Object.fromEntries((spec.workspaces ?? []).map((w) => [`/workspace/${w.name}`, workspace(w.name)])),
+      ...Object.fromEntries((step.volumeMounts ?? []).map((m) => [m.mountPath, volumes[m.name]]))};
+    Object.values(mounts).forEach((dir) => mkdirSync(dir, {recursive: true}));
+    const env = {PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1',
+      ...Object.assign({}, ...(step.envFrom ?? []).map((e) => secrets[e.secretRef.name] ?? {})),
+      ...Object.fromEntries((step.env ?? []).map((e) => [e.name, mount(fill(e.value, values), mounts)]))};
+    const script = join(home, 'script');
+    writeFileSync(script, mount(fill(step.script, values), mounts));
+    chmodSync(script, 0o755);
+    const ran = spawnSync(script, [], {cwd: step.workingDir ? mount(step.workingDir, mounts) : home, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
+    process.stdout.write(ran.stdout + ran.stderr);
+    if (ran.status !== 0) { console.log(`run: ${task.name} failed at ${step.name}`); process.exit(1); }
+  }
+  for (const [name, file] of Object.entries(results)) scope[`tasks.${task.name}.results.${name}`] = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  console.log(`run: ${task.name} ran`);
+}
+console.log('run: SUCCEEDED');
+EOF
+cat > "$work/standin-bin/corepack" <<EOF
+#!/bin/sh
+echo "corepack \$*" >> "$work/corepack.log"
+EOF
+chmod +x "$work/standin-bin/corepack"
+secrets="$(jq -nc --arg user "$REGISTRY_USERNAME" --arg password "$REGISTRY_PASSWORD" '{"build-git-https": {GITCREDENTIALS: "https://github.invalid"},
+  "image-builder-registry-push": {REGISTRY_USERNAME: $user, REGISTRY_PASSWORD: $password}}')"
+pipeline_run() { # $1 the fixture origin, $2 the release tag, [$3 the webhook's git-url] -> the run's status, its log in $work/run.out
+  rm -rf "${work:?}/run" "${work:?}/corepack.log"; mkdir -p "$work/run"
+  node "$work/run-pipeline.mjs" "$work/pipeline.json" "$work/run" "$1" "$REPO_URL" \
+    "$(jq -nc --arg tag "$2" --arg url "${3:-$REPO_URL}" '{"release-tag": $tag, "git-url": $url}')" "$secrets" > "$work/run.out" 2>&1
+}
+tasks_ran() { grep '^run: ' "$work/run.out" | tr '\n' '|'; }
+published() { # $1 name@version -> the published tarball's sha256, once its log line names the rendered registry
+  local name="$1" pkg hex
+  pkg="${name#@digitaplatform/}"; pkg="${pkg%@*}"
+  hex="$(command curl -sS -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+    "http://127.0.0.1:$PORT/v2/npm/digitaplatform/${pkg}/manifests/${name##*@}" | jq -r '.layers[0].digest | ltrimstr("sha256:")')" || return 1
+  grep -qxF "publish: ${name} https://${rendered_registry}/v2/npm/digitaplatform/${pkg}/blobs/sha256:${hex} sha256:${hex} published" "$work/run.out" || return 1
+  printf '%s' "$hex"
+}
+blob() { command curl -sS -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" "http://127.0.0.1:$PORT/v2/npm/digitaplatform/$1/blobs/sha256:$2"; }
+ALL='run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack ran|run: push ran|run: SUCCEEDED|'
+STAMP=20261014000000
+origin() { repo "$1" "README.md=fixture"; } # $1 folder -> a fixture origin whose default branch master holds one commit
+commit_tag() { git -C "$1" add -A && git -C "$1" commit -q -m "$2" && git -C "$1" tag "$2"; } # $1 origin, $2 the tag
+e2e_seed() { # $1 origin, then name@version[=path=content] per tarball: npm-seed/ holding them, pinned
+  local dir="$1" spec name version file manifest; shift
+  mkdir -p "$dir/npm-seed"
+  for spec in "$@"; do
+    name="${spec%%=*}"; version="${name##*@}"; name="${name%@*}"
+    file="$dir/npm-seed/digitaplatform-${name#@digitaplatform/}-${version}.tgz"
+    manifest="$(json "{\"name\":\"${name}\",\"version\":\"${version}\"}")"
+    if [ "$spec" = "${spec#*=}" ]; then
+      tgz "$file" "$manifest" "dist/index.js=export {};"
+    else
+      tgz "$file" "$manifest" "dist/index.js=export {};" "${spec#*=}"
+    fi
+  done
+  pins "$dir"
+}
+
+origin "$work/e1"; e2e_seed "$work/e1" @digitaplatform/seed-a@1.0.0 @digitaplatform/seed-b@2.0.0; commit_tag "$work/e1" "0.1.000-stable-$STAMP"
+pipeline_run "$work/e1" "0.1.000-stable-$STAMP" || fail "PLANTED INNOCENT: a clean seed on the default branch did not publish: $(cat "$work/run.out")"
+[ "$(tasks_ran)" = "$ALL" ] || fail "the seed run took another course: $(tasks_ran)"
+for name in @digitaplatform/seed-a@1.0.0 @digitaplatform/seed-b@2.0.0; do
+  file="digitaplatform-$(tr '@/' '--' <<<"${name#@digitaplatform/}").tgz"
+  [ "$(published "$name")" = "$(sha256sum "$work/e1/npm-seed/$file" | cut -d' ' -f1)" ] || fail "the seed did not publish ${name} as it is, with its log line: $(cat "$work/run.out")"
+done
+grep -q 'no leaks found' "$work/run.out" || fail "gitleaks did not scan the unpacked seed: $(cat "$work/run.out")"
+[ ! -e "$work/corepack.log" ] || fail 'a seed run set up pnpm, which only a source run builds with'
+ok 'end to end: a clean seed on the default branch is gated, cloned, scanned, reviewed, checked, scanned by gitleaks, and published as it is'
+
+origin "$work/e2"; e2e_seed "$work/e2" @digitaplatform/seed-c@1.0.0 "@digitaplatform/seed-d@1.0.0=.npmrc=//registry.example/:_authToken=x"; commit_tag "$work/e2" "0.1.000-stable-$STAMP"
+pipeline_run "$work/e2" "0.1.000-stable-$STAMP" && fail 'PLANTED DEFECT: a seed tarball holding .npmrc was published end to end'
+grep -q 'holds package/.npmrc' "$work/run.out" && grep -qx 'run: pack failed at prepare' "$work/run.out" && ! grep -q '^publish:' "$work/run.out" \
+  || fail "a seed tarball holding .npmrc was not refused at the pack before any push: $(cat "$work/run.out")"
+origin "$work/e3"; e2e_seed "$work/e3" "@digitaplatform/seed-e@1.0.0=dist/leak.js=const token = \"ghp_$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 36)\";"
+commit_tag "$work/e3" "0.1.000-stable-$STAMP"
+pipeline_run "$work/e3" "0.1.000-stable-$STAMP" && fail 'PLANTED DEFECT: a seed tarball holding a token was published end to end'
+grep -qx 'run: pack failed at leaks' "$work/run.out" && ! grep -q '^publish:' "$work/run.out" \
+  || fail "a token in a seed tarball did not fail the leaks step before any push: $(cat "$work/run.out")"
+origin "$work/e4"; e2e_seed "$work/e4" @digitaplatform/seed-f@1.0.0
+tgz "$work/e4/npm-seed/digitaplatform-seed-f-1.0.0.tgz" "$(json '{"name":"@digitaplatform/seed-f","version":"1.0.0"}')" "dist/index.js=export const changed = 1;"
+commit_tag "$work/e4" "0.1.000-stable-$STAMP"
+pipeline_run "$work/e4" "0.1.000-stable-$STAMP" && fail 'PLANTED DEFECT: a seed tarball whose sha256 its line does not name was published end to end'
+grep -q 'digitaplatform-seed-f-1.0.0.tgz has the sha256' "$work/run.out" && grep -qx 'run: pack failed at prepare' "$work/run.out" \
+  || fail "a seed tarball with another sha256 was not refused at the pack: $(cat "$work/run.out")"
+origin "$work/e5"; git -C "$work/e5" checkout -q --detach
+e2e_seed "$work/e5" @digitaplatform/seed-g@1.0.0; commit_tag "$work/e5" "0.1.000-stable-$STAMP"; git -C "$work/e5" checkout -q master
+pipeline_run "$work/e5" "0.1.000-stable-$STAMP" && fail 'PLANTED DEFECT: a seed commit off the default branch was published end to end'
+grep -q 'is not on the default branch of origin' "$work/run.out" && grep -qx 'run: reviewed failed at decide' "$work/run.out" \
+  || fail "a seed commit off the default branch was not refused at reviewed: $(cat "$work/run.out")"
+ok 'end to end: a seed tarball holding .npmrc, a token or another sha256, and a seed off the default branch, publish nothing'
+
+# A source release: e2e-a builds dist/built.js and depends on e2e-b in the workspace; both declare 0.0.1,
+# and the tag names 0.3.1.
+manifest() { jq -n --arg name "$1" --arg npm "$rendered_npm" --argjson extra "${2:-"{}"}" '{name: $name, version: "0.0.1", publishConfig: {registry: $npm}} + $extra'; }
+origin "$work/e6"; mkdir -p "$work/e6/a" "$work/e6/b"
+json '{"name":"root","private":true,"version":"0.0.1"}' > "$work/e6/package.json"
+printf 'packages: [a, b]\n' > "$work/e6/pnpm-workspace.yaml"; printf 'node_modules\ndist\n' > "$work/e6/.gitignore"
+manifest @digitaplatform/e2e-a '{"files":["dist"],"dependencies":{"@digitaplatform/e2e-b":"workspace:*"},"scripts":{"build":"node build.js"}}' > "$work/e6/a/package.json"
+printf '%s\n' "require('fs').mkdirSync('dist', {recursive: true}); require('fs').writeFileSync('dist/built.js', 'built');" > "$work/e6/a/build.js"
+manifest @digitaplatform/e2e-b > "$work/e6/b/package.json"
+(cd "$work/e6" && pnpm install --offline >/dev/null 2>&1) || fail 'the fixture source workspace could not be installed offline'
+commit_tag "$work/e6" "0.3.001-stable-$STAMP"
+pipeline_run "$work/e6" "0.3.001-stable-$STAMP" || fail "PLANTED INNOCENT: a source release on the default branch did not publish: $(cat "$work/run.out")"
+[ "$(tasks_ran)" = "$ALL" ] || fail "the source run took another course: $(tasks_ran)"
+hex="$(published @digitaplatform/e2e-a@0.3.1)" || fail "e2e-a was not published at the version of the tag, with its log line: $(cat "$work/run.out")"
+published @digitaplatform/e2e-b@0.3.1 >/dev/null || fail "e2e-b was not published at the version of the tag, with its log line: $(cat "$work/run.out")"
+blob e2e-a "$hex" > "$work/e2e-a.tgz"
+[ "$(tar -xzOf "$work/e2e-a.tgz" package/dist/built.js 2>/dev/null)" = built ] || fail 'e2e-a was published without the dist/built.js its build writes'
+[ "$(tar -xzOf "$work/e2e-a.tgz" package/package.json | jq -r '.dependencies["@digitaplatform/e2e-b"]')" = 0.3.1 ] || fail 'the workspace range of e2e-a was not published as the version of the tag'
+[ "$(cat "$work/corepack.log")" = $'corepack enable\ncorepack prepare pnpm@11.7.0 --activate' ] || fail "the pack did not set up pnpm 11.7.0: $(cat "$work/corepack.log" 2>/dev/null)"
+ok 'end to end: a source release builds, stamps the version of the tag over 0.0.1, packs and publishes every package'
+
+origin "$work/e7"; mkdir -p "$work/e7/p"; manifest @digitaplatform/e2e-old '{"publishConfig":{"registry":"https://npm.pkg.github.com"}}' > "$work/e7/p/package.json"
+commit_tag "$work/e7" "0.1.000-stable-$STAMP"
+pipeline_run "$work/e7" "0.1.000-stable-$STAMP" && fail 'PLANTED DEFECT: a package that names npm.pkg.github.com passed the scan end to end'
+[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan failed at scan|' ] || fail "a package that names another registry did not stop the run at its scan: $(tasks_ran)"
+origin "$work/e8"; printf 'x\n' > "$work/e8/main.go"; commit_tag "$work/e8" "0.1.000-stable-$STAMP"
+pipeline_run "$work/e8" "0.1.000-stable-$STAMP" || fail "PLANTED INNOCENT: a repository with nothing to publish failed: $(cat "$work/run.out")"
+[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed skipped|run: pack skipped|run: push skipped|run: SUCCEEDED|' ] \
+  || fail "a repository with nothing to publish took another course: $(tasks_ran)"
+pipeline_run "$work/e8" "0.1.000-stable-$STAMP" https://github.com/digitaplatform/other.git && fail 'PLANTED DEFECT: a webhook that names another repository passed the gate'
+[ "$(tasks_ran)" = 'run: gate failed at gate|' ] || fail "another repository was not stopped at the gate before the clone: $(tasks_ran)"
+ok 'end to end: another registry stops the run at its scan, nothing to publish skips the rest, and another repository stops it at the gate'
 echo "pipeline-publish.test: OK"
