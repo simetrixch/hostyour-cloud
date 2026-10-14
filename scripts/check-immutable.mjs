@@ -54,7 +54,7 @@ export function ignoredFields(app = {}) {
     return {...rule, paths: paths.map(([, steps]) => steps)};
   });
 }
-function withoutIgnored(object, namespace, ignored) {
+export function withoutIgnored(object, namespace, ignored) {
   const rules = ignored.filter(rule => (rule.group ?? '') === groupOf(object.apiVersion) && rule.kind === object.kind &&
     (!rule.name || rule.name === object.metadata.name) && (!rule.namespace || rule.namespace === (object.metadata.namespace ?? namespace)));
   if (!rules.length) return object;
