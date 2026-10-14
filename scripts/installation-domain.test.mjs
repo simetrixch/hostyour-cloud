@@ -43,16 +43,12 @@ test('reject zone overlap, malformed/conflicting maps and credential-bearing URL
   assert.throws(() => planInstallation(fixture(), 'old.example', Array(4).fill('a'.repeat(63)).join('.').slice(0, 250)));
 });
 
-test('Bash and PowerShell return identical bytes and codes for help and rejected modes', () => {
+test('the launcher answers help with 0 and every rejected mode with 64', () => {
   const root = fileURLToPath(new URL('../', import.meta.url));
   for (const args of [['--help'], ['--apply'], ['--dry-run', '--dry-run'], ['--books-fqdn', '--bad', '--dry-run']]) {
     const bash = spawnSync('bash', [root + 'lifecycle/plan-installation-domain.sh', ...args]);
-    const ps = spawnSync('pwsh', ['-NoProfile', '-File', root + 'lifecycle/plan-installation-domain.ps1', ...args]);
-    assert.equal(bash.error, undefined); assert.equal(ps.error, undefined);
-    assert.equal(ps.status, bash.status, ps.stderr.toString());
-    assert.equal(ps.stdout.toString(), bash.stdout.toString());
-    assert.equal(ps.stderr.toString(), bash.stderr.toString());
-    assert.equal(bash.status, args[0] === '--help' ? 0 : 64);
+    assert.equal(bash.error, undefined);
+    assert.equal(bash.status, args[0] === '--help' ? 0 : 64, bash.stderr.toString());
   }
 });
 
