@@ -897,6 +897,22 @@ done
   || fail "push_fault takes the platform's builds pushed flat where they must go under the owner's prefix"
 echo "check: ${#push_cases[@]} push paths, the platform's builds under simetrixch/ on the owner's master alone and every other build flat; the check refuses both planted defects."
 
+# The binaries a release tag publishes from release/build.sh stand under <owner>/<repository>, read off the
+# repoURL, which for ansiwise-cli is the path the Manager, the lifecycle and the release script fetch.
+binaries_repository() { # $1 repoURL -> the repository the publish pipeline of unit ansiwise-cli pushes binaries to
+  helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+    -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+    -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
+    --set-json "unit={\"name\":\"ansiwise-cli\",\"repoURL\":\"$1\",\"buildsJson\":\"[]\"}" \
+    | yq 'select(.kind == "Pipeline" and .metadata.name == "ansiwise-cli-publish") | .spec.tasks[] | select(.name == "push") | .taskSpec.steps[0].env[] | select(.name == "BINARIES_REPOSITORY") | .value'
+}
+for url in https://github.com/simetrixch/ansiwise-cli.git https://github.com/simetrixch/ansiwise-cli; do
+  [ "$(binaries_repository "$url")" = simetrixch/ansiwise-cli ] || fail "the publish of $url pushes its binaries to '$(binaries_repository "$url")', not simetrixch/ansiwise-cli"
+done
+[ "$(binaries_repository https://github.com/simetrixch/ansiwise-core.git)" != simetrixch/ansiwise-cli ] \
+  || fail "the planted defect, another repository, still pushes its binaries to simetrixch/ansiwise-cli"
+echo "check: the publish of a repository with release/build.sh pushes its binaries to simetrixch/ansiwise-cli, with or without .git, and another repository elsewhere."
+
 # ── A unit that declares an SMTP entry, and a unit that does not ─────────────────────────────
 # THE STAND-IN REGISTRATION DECLARES NO ENTRY, because almost no unit does, so every render above
 # takes the branch without one. A unit that declares one gets three lines more: an ingress rule in

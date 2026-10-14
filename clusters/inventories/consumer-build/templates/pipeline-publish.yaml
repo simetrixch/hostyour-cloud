@@ -4,7 +4,7 @@ per unit from this template beside `<unit>-ci`, also for a unit that builds
 nothing. A push of a release tag runs it at that tag and publishes the
 repository's npm packages to this build plane's registry:
 
-  gate → clone@tag → scan → reviewed → pack → push.
+  gate → clone@tag → scan → reviewed → pack | build-binaries → push.
 
 The run is created by the github-release-publish Trigger
 (clusters/inventories/image-builder), waiting, and the release queue starts it
@@ -24,6 +24,17 @@ WHAT IS PUBLISHED, read at the tag by `scan`:
     no .npmrc, no .env* file, no link and no gitleaks finding. The proof of each
     file against the pnpm store is made where the store is, by the seed's own
     script beside it; here the bytes are proven to be the bytes its review read.
+  - a tag whose tree tracks release/build.sh publishes the binaries that script
+    builds, and nothing else: `build-binaries` runs it with the tools of the
+    repository's ci-tools.json (files/ci-install-tools.sh), as
+    `bash release/build.sh <tag> <folder>`, and every file it leaves in that
+    folder is one layer of ONE manifest <owner>/<repository>:<tag> — an empty
+    config, each layer application/octet-stream annotated
+    org.opencontainers.image.title with its file name, and the same three
+    annotations as a package. A binary is fetched at
+    https://<registry>/v2/<owner>/<repository>/blobs/sha256:<hex>, which the
+    owner's prefix serves without a credential on the owner's master
+    (clusters/inventories/registry values-common.yaml, accessControl).
   - otherwise every tracked package.json that is not private and names
     publishConfig.registry; that registry must be https://<registry>/v2/npm/, so
     a package that still names another registry fails the run. A repository with
@@ -64,12 +75,13 @@ The trust split:
   grammar, before anything is cloned.
 
 THE REPOSITORY'S OWN CODE RUNS IN `pack` (pnpm install, build, pack), which holds
-the packages reader build-npmrc and nothing else. build-git-https is held by the
+the packages reader build-npmrc and nothing else, and in `build-binaries`
+(release/build.sh), which holds no credential at all. build-git-https is held by the
 clone and by the one step of `reviewed` that fetches the default branch, which
 runs git alone; the push identity image-builder-registry-push is held by `push`
-alone, which runs no code of the repository and reads the packed tarballs and
-never the clone. The run's one volume holds the clone in its subPath repository
-and the tarballs in its subPath packed.
+alone, which runs no code of the repository and reads the packed tarballs or the
+built binaries and never the clone. The run's one volume holds the clone in its
+subPath repository and the tarballs and binaries in its subPath packed.
 */ -}}
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
@@ -84,7 +96,12 @@ and the tarballs in its subPath packed.
 {{- $toolsImage := "alpine/k8s:1.35.6@sha256:b7a12c5ddf261994c33d2eaaa06fd69a0803ff6b38683bfa3d30a76dcdf92807" -}}
 {{- $nodeImage := "ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3" -}}
 {{- $gitleaksImage := "zricethezav/gitleaks:v8.21.2@sha256:0e99e8821643ea5b235718642b93bb32486af9c8162c8b8731f7cbdc951a7f46" -}}
-{{- $published := "[\"seed\", \"source\"]" -}}
+{{- $published := "[\"seed\", \"source\", \"binaries\"]" -}}
+{{- $packed := "[\"seed\", \"source\"]" -}}
+{{- /* The repository the binaries of a release are pushed to: <owner>/<repository name>, read off the repoURL like the owner. */ -}}
+{{- $binariesRepository := printf "%s/%s" $owner (regexReplaceAll "^https://github\\.com/[^/]+/([^/]+?)(\\.git)?$" $repoURL "${1}" | lower) -}}
+{{- /* The tools table the build of the binaries installs the repository's ci-tools.json from, as the ci pipeline does. */ -}}
+{{- $toolsTable := .Files.Get "files/ci-tools.table" -}}
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
@@ -180,7 +197,9 @@ spec:
           - name: packed
         results:
           - name: mode
-            description: seed (npm-seed/ stands at the tag), source (packages to pack) or none.
+            description: seed (npm-seed/ stands at the tag), binaries (release/build.sh stands at the tag), source (packages to pack) or none.
+          - name: tools
+            description: The tools and versions of ci-tools.json at the tag, one "<tool> <version>" per line, for the binaries alone; empty otherwise.
         steps:
           - name: scan
             image: {{ $toolsImage }}
@@ -191,12 +210,17 @@ spec:
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
-              scan_packages() { # <list it writes, "<folder>\t<name>" per package> — sets MODE to seed, source or none
+              scan_packages() { # <list it writes, "<folder>\t<name>" per package> — sets MODE to seed, binaries, source or none
                 local file name registry
                 : > "$1"
                 if [ -e npm-seed ]; then
                   MODE=seed
                   echo "scan: npm-seed/ stands at this tag - its tarballs are published as they are, and nothing else"
+                  return 0
+                fi
+                if git ls-files --error-unmatch release/build.sh >/dev/null 2>&1; then
+                  MODE=binaries
+                  echo "scan: release/build.sh stands at this tag - the binaries it builds are published, and nothing else"
                   return 0
                 fi
                 while IFS= read -r file; do
@@ -217,9 +241,20 @@ spec:
                   echo "scan: no package.json here is publishable (not private, with publishConfig.registry) - nothing to publish"
                 fi
               }
+              scan_tools() { # <the file it writes, "<tool> <version>" per line> — what ci-tools.json names, or nothing without the file
+                : > "$1"
+                [ -f ci-tools.json ] || { echo "scan: no ci-tools.json, so release/build.sh runs with the tools of its image"; return 0; }
+                jq -rs 'if length != 1 or (.[0] | type) != "object" then error("ci-tools.json: must hold one object of tool and version")
+                  else .[0] | to_entries[] | "\(.key) \(.value)" end' ci-tools.json > "$1"
+              }
               MODE=none
               scan_packages /workspace/packed/publishable.tsv
               printf '%s' "${MODE}" > "$(results.mode.path)"
+              if [ "${MODE}" = binaries ]; then
+                scan_tools "$(results.tools.path)"
+              else
+                : > "$(results.tools.path)"
+              fi
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
@@ -306,7 +341,7 @@ spec:
       when:
         - input: "$(tasks.scan.results.mode)"
           operator: in
-          values: {{ $published }}
+          values: {{ $packed }}
       params:
         - { name: mode, value: "$(tasks.scan.results.mode)" }
         - { name: release-tag, value: "$(params.release-tag)" }
@@ -524,20 +559,96 @@ spec:
               requests: { cpu: 100m, memory: 128Mi }
               limits: { cpu: 500m, memory: 512Mi }
 
-    # ── 6. push — the tarballs, by the push identity, and read back ─────────
-    - name: push
+    # ── 5b. build-binaries — release/build.sh at the tag, with no credential ─
+    # The repository's own code runs here, as it does in pack, and holds no
+    # credential at all: its git dependencies are fetched the way a person's
+    # machine fetches them. The tools of ci-tools.json go first on PATH, as in the
+    # ci pipeline, so release/build.sh refuses or accepts the same Dart there and
+    # here.
+    - name: build-binaries
       runAfter: [pack]
+      when:
+        - input: "$(tasks.scan.results.mode)"
+          operator: in
+          values: ["binaries"]
+      params:
+        - { name: release-tag, value: "$(params.release-tag)" }
+        - { name: tools, value: "$(tasks.scan.results.tools)" }
+      workspaces:
+        - { name: source, workspace: source, subPath: repository }
+        - { name: packed, workspace: source, subPath: packed }
+      taskSpec:
+        params:
+          - name: release-tag
+            type: string
+          - name: tools
+            type: string
+        workspaces:
+          - name: source
+          - name: packed
+        steps:
+          - name: build
+            image: {{ $nodeImage }}
+            workingDir: /workspace/source
+            securityContext:
+              runAsUser: 0
+              allowPrivilegeEscalation: false
+            env:
+              - name: RELEASE_TAG
+                value: "$(params.release-tag)"
+              - name: CI_TOOLS
+                value: "$(params.tools)"
+              - name: CI_TOOLS_TABLE
+                value: |
+{{ $toolsTable | indent 18 }}
+            computeResources:
+              requests: { cpu: "1", memory: 2Gi }
+              limits: { cpu: "4", memory: 3Gi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+{{ .Files.Get "files/ci-install-tools.sh" | indent 14 }}
+              build_binaries() { # <folder the binaries go to>: release/build.sh leaves one regular file per binary there, and nothing else
+                local dest="$1" entry count=0
+                rm -rf "${dest}"
+                mkdir -p "${dest}"
+                bash release/build.sh "${RELEASE_TAG}" "${dest}" || { echo "build: FAIL — release/build.sh refused the tag ${RELEASE_TAG}" >&2; return 1; }
+                for entry in "${dest}"/* "${dest}"/.[!.]*; do
+                  [ -e "${entry}" ] || [ -L "${entry}" ] || continue
+                  if [ -L "${entry}" ] || [ ! -f "${entry}" ] || ! [[ "${entry##*/}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+                    echo "build: REFUSE — release/build.sh left ${entry##*/}, which is no regular file of a plain name" >&2
+                    return 1
+                  fi
+                  count=$((count + 1))
+                done
+                if [ "${count}" = 0 ]; then
+                  echo "build: FAIL — release/build.sh left no binary" >&2
+                  return 1
+                fi
+                echo "build: ${count} binaries of ${RELEASE_TAG}"
+              }
+              build_binaries /workspace/packed/binaries
+
+    # ── 6. push — the tarballs or the binaries, by the push identity, and read back
+    - name: push
+      runAfter: [build-binaries]
       when:
         - input: "$(tasks.scan.results.mode)"
           operator: in
           values: {{ $published }}
       params:
         - { name: commit, value: "$(tasks.clone.results.commit)" }
+        - { name: mode, value: "$(tasks.scan.results.mode)" }
+        - { name: release-tag, value: "$(params.release-tag)" }
       workspaces:
         - { name: packed, workspace: source, subPath: packed }
       taskSpec:
         params:
           - name: commit
+            type: string
+          - name: mode
+            type: string
+          - name: release-tag
             type: string
         workspaces:
           - name: packed
@@ -557,6 +668,12 @@ spec:
                 value: {{ $repoURL | quote }}
               - name: COMMIT
                 value: "$(params.commit)"
+              - name: MODE
+                value: "$(params.mode)"
+              - name: RELEASE_TAG
+                value: "$(params.release-tag)"
+              - name: BINARIES_REPOSITORY
+                value: {{ $binariesRepository | quote }}
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
@@ -679,7 +796,85 @@ spec:
                   echo "publish: ${name}@${version} ${base}/blobs/sha256:${hex} sha256:${hex} ${state}"
                 done
               }
-              npm_push /workspace/packed /tmp/publish
+              binaries_push() { # <folder of the built binaries> <scratch folder>: one manifest <owner>/<repository>:<tag>, a layer per binary
+                local dir="$1" tmp="$2" file hex want held code state
+                local accept='application/vnd.oci.image.manifest.v1+json'
+                local empty_digest='sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'
+                local base="https://${REGISTRY}/v2/${BINARIES_REPOSITORY}" files=()
+                mkdir -p "${tmp}" || return 1
+                for file in "${dir}"/*; do
+                  [ ! -f "${file}" ] || files+=("${file}")
+                done
+                if [ "${#files[@]}" = 0 ]; then
+                  echo "publish: FAIL — ${dir} holds no binary, though release/build.sh stands at this tag" >&2
+                  return 1
+                fi
+                if ! [[ "${RELEASE_TAG}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]]; then
+                  echo "publish: REFUSE — ${RELEASE_TAG} is no tag of the registry" >&2
+                  return 1
+                fi
+                printf '[]' > "${tmp}/layers.json"
+                for file in "${files[@]}"; do
+                  hex="$(sha256sum "${file}" | cut -d' ' -f1)"
+                  jq --arg digest "sha256:${hex}" --argjson size "$(wc -c < "${file}")" --arg title "${file##*/}" \
+                    '. + [{mediaType: "application/octet-stream", digest: $digest, size: $size, annotations: {"org.opencontainers.image.title": $title}}]' \
+                    "${tmp}/layers.json" > "${tmp}/layers.next" && mv "${tmp}/layers.next" "${tmp}/layers.json" || return 1
+                done
+                want="$(jq -c '[.[] | .digest + " " + .annotations["org.opencontainers.image.title"]] | sort' "${tmp}/layers.json")" || return 1
+                code="$(registry_call "${tmp}/manifest.json" -H "Accept: ${accept}" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                case "${code}" in
+                  404) state=published ;;
+                  200)
+                    held="$(jq -c '[.layers[] | .digest + " " + (.annotations["org.opencontainers.image.title"] // "")] | sort' "${tmp}/manifest.json" 2>/dev/null)" || held=""
+                    if [ "${held}" != "${want}" ]; then
+                      echo "publish: REFUSE — ${BINARIES_REPOSITORY}:${RELEASE_TAG} stands in ${REGISTRY} with other binaries (${held:-no layers}), and this build is ${want}. A published release is never replaced: release another version." >&2
+                      return 1
+                    fi
+                    state=reused ;;
+                  *)
+                    echo "publish: FAIL — ${base}/manifests/${RELEASE_TAG} answered ${code}; whether ${RELEASE_TAG} is published is unknown" >&2
+                    return 1 ;;
+                esac
+                if [ "${state}" = published ]; then
+                  for file in "${files[@]}"; do
+                    push_blob "${base}" "${file}" "sha256:$(sha256sum "${file}" | cut -d' ' -f1)" "${tmp}" || return 1
+                  done
+                  printf '{}' > "${tmp}/empty.json"
+                  push_blob "${base}" "${tmp}/empty.json" "${empty_digest}" "${tmp}" || return 1
+                  jq -n --slurpfile layers "${tmp}/layers.json" --arg empty "${empty_digest}" --arg revision "${COMMIT}" \
+                    --arg source "${REPO_URL}" --arg version "${RELEASE_TAG}" \
+                    '{schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json", artifactType: "application/vnd.simetrixch.binaries.v1",
+                      config: {mediaType: "application/vnd.oci.empty.v1+json", digest: $empty, size: 2},
+                      layers: $layers[0],
+                      annotations: {"org.opencontainers.image.revision": $revision, "org.opencontainers.image.source": $source,
+                        "org.opencontainers.image.version": $version}}' > "${tmp}/manifest.json" || return 1
+                  code="$(registry_call /dev/null -X PUT -H "Content-Type: ${accept}" --data-binary "@${tmp}/manifest.json" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                  if [ "${code}" != 201 ]; then
+                    echo "publish: FAIL — the manifest ${BINARIES_REPOSITORY}:${RELEASE_TAG} was answered ${code}" >&2
+                    return 1
+                  fi
+                fi
+                code="$(registry_call "${tmp}/manifest.json" -H "Accept: ${accept}" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                held="$(jq -c '[.layers[] | .digest + " " + (.annotations["org.opencontainers.image.title"] // "")] | sort' "${tmp}/manifest.json" 2>/dev/null)" || held=""
+                if [ "${code}" != 200 ] || [ "${held}" != "${want}" ]; then
+                  echo "publish: FAIL — ${BINARIES_REPOSITORY}:${RELEASE_TAG} reads back as ${code} with ${held:-no layers}, not ${want}" >&2
+                  return 1
+                fi
+                for file in "${files[@]}"; do
+                  hex="$(sha256sum "${file}" | cut -d' ' -f1)"
+                  code="$(registry_call "${tmp}/blob" "${base}/blobs/sha256:${hex}")" || return 1
+                  if [ "${code}" != 200 ] || [ "$(sha256sum "${tmp}/blob" | cut -d' ' -f1)" != "${hex}" ]; then
+                    echo "publish: FAIL — the blob of ${file##*/} reads back as ${code} with other bytes than sha256:${hex}" >&2
+                    return 1
+                  fi
+                  echo "publish: ${file##*/} ${base}/blobs/sha256:${hex} sha256:${hex} ${state}"
+                done
+              }
+              if [ "${MODE}" = binaries ]; then
+                binaries_push /workspace/packed/binaries /tmp/publish
+              else
+                npm_push /workspace/packed /tmp/publish
+              fi
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 500m, memory: 256Mi }
