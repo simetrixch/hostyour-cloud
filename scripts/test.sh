@@ -12,7 +12,7 @@ echo 'test: scripts/pipeline-publish.test.sh — what a release tag publishes to
 bash scripts/pipeline-publish.test.sh || fail 'scripts/pipeline-publish.test.sh'
 echo 'test: production build chart and immutable-field contracts.'
 node --test scripts/build-contract.test.mjs || fail 'scripts/build-contract.test.mjs'
-echo 'test: release queue — one release at a time on the build plane, and the queue may only start a run.'
+echo 'test: release queue — two releases at a time on the build plane, never two of one unit, and the queue may only start a run.'
 node --test scripts/release-queue.test.mjs || fail 'scripts/release-queue.test.mjs'
 echo 'test: ci run keeper — at most 6 ci runs run at once, a newer push replaces the older run of its branch, and the newest 20 finished ci runs of a build namespace stay.'
 node --test scripts/ci-run-keeper.test.mjs || fail 'scripts/ci-run-keeper.test.mjs'
