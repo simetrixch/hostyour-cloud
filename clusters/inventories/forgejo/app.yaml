@@ -1,0 +1,7 @@
+name: forgejo
+project: forgejo
+syncWave: "41"
+namespace: forgejo
+prune: "true"
+createNamespace: "true"
+runsOn: master

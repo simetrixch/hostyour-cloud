@@ -1,0 +1,60 @@
+{{- /*
+forgejo-create-release — creates the Forgejo release of a pushed tag with the commits since the tag
+before it as its changelog (files/forgejo-create-release.sh), and hands the commit of that tag on as
+its result previous-commit. The Pipeline forgejo-release of clusters/inventories/forgejo-build runs
+it on a tag push, after the image is pushed.
+
+THE TOKEN REACHES THIS STEP ALONE, from the run namespace's Secret named by tokens-secret, key
+forgejo-api-token. Forgejo is called inside the cluster, never through Traefik.
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: forgejo-create-release
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: task
+spec:
+  description: >-
+    Create the Forgejo release of a tag, with the commits since the tag before it as its changelog.
+  workspaces:
+    - name: source
+      description: The cloned history of the tag.
+  params:
+    - name: repository
+      description: The repository as Forgejo names it, <owner>/<name>.
+      type: string
+    - name: tag
+      description: The pushed tag.
+      type: string
+    - name: tokens-secret
+      description: The Secret of the run namespace holding the key forgejo-api-token.
+      type: string
+  results:
+    - name: previous-commit
+      description: The commit of the tag before this one, empty for the first tag.
+  steps:
+    - name: create-release
+      image: {{ .Values.forgejoRelease.image }}
+      env:
+        - name: FORGEJO_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.tokens-secret)
+              key: forgejo-api-token
+        - name: FORGEJO_API
+          value: {{ .Values.forgejoRelease.forgejoApi | quote }}
+        - name: REPOSITORY
+          value: $(params.repository)
+        - name: TAG
+          value: $(params.tag)
+        - name: SOURCE
+          value: $(workspaces.source.path)
+        - name: PREVIOUS_COMMIT_RESULT
+          value: $(results.previous-commit.path)
+      script: |
+{{ .Files.Get "files/forgejo-create-release.sh" | indent 8 }}
+      computeResources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { cpu: 200m, memory: 256Mi }

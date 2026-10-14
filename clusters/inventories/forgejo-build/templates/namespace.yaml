@@ -1,0 +1,23 @@
+{{- /*
+The run namespace, rendered here so its labels stand before the first run.
+
+hostyour.cloud/workload: the label every platform namespace carries, which the secret store's Vault
+role admits. PodSecurity enforce `privileged`: the build step of buildah-build-push runs privileged,
+as it does in every <unit>-build namespace; warn and audit stay `baseline`, so whatever else runs
+beyond that is recorded.
+
+NO hostyour.cloud/build. That label is admitted only on a namespace the build fan-out writes, and
+the release queue and the ci run keeper select on it. The PipelineRun guard binds this namespace by
+its name instead (clusters/inventories/image-builder/templates/vap-pipelinerun-guard.yaml).
+*/ -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: forgejo-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    hostyour.cloud/workload: "true"
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline

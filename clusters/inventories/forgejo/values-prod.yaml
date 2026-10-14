@@ -1,0 +1,6 @@
+# The Vault entry Forgejo reads its sign-in client secret from on the prod
+# stage. deploy-platform-services writes it from the client secret it minted.
+externalsecret-oauth:
+  externalSecret:
+    vaultPath: prod/app/forgejo
+

@@ -1,0 +1,7 @@
+name: forgejo-build
+project: cicd
+syncWave: "42"
+namespace: forgejo-build
+prune: "true"
+createNamespace: "true"
+runsOn: master

@@ -1315,6 +1315,10 @@ echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; 
 echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in the ci of the master via scripts/test.sh.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
+for module in scripts/forgejo.test.mjs scripts/plane.test.mjs scripts/forgejo-release.test.mjs; do
+  node --check "$module" || fail "Node syntax: $module"
+  echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
+done
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
 # SCANNED OVER WHAT GIT WOULD LET YOU COMMIT, and that is not the same as this directory. A
