@@ -28,7 +28,8 @@ test('no Tekton test resources are rendered and production readers remain', () =
       const docs = renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: record.name,
         repoURL: record.repositoryURL, buildsJson: JSON.stringify(builds)})]);
       assert.ok(!docs.some(d => d.kind === 'PipelineRun' || (d.kind === 'Pipeline' && d.metadata.name.endsWith('-tests'))));
-      assert.ok(!docs.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa').imagePullSecrets);
+      assert.deepEqual(docs.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa').imagePullSecrets,
+        builds.length === 0 ? undefined : [{name: 'build-registry-pull'}], record.name + ' lists the kubelet pull secret of its release images only where it builds');
       const readers = docs.filter(d => d.kind === 'ExternalSecret');
       if (builds.length === 0) assert.deepEqual(readers.map(d => d.metadata.name).sort(), ['build-git-https', 'build-issues-read', 'build-npmrc', 'image-builder-registry-push'],
         record.name + ' holds the credentials of its ci check and of its publish push, and no pull or bump credential');
@@ -591,7 +592,7 @@ test('list-sources passes only plain repository names with full commits, and a r
 // push, and gets no release pipeline and no credential that writes: the namespace runs repository code.
 const CI_PARTS = [['Pipeline', 'shop-ci'], ['ResourceQuota', 'ci-pods'], ['ExternalSecret', 'build-git-https'], ['ExternalSecret', 'build-issues-read'], ['ExternalSecret', 'build-npmrc'],
   ['Role', 'ci-report-read'], ['Role', 'ci-run-keeper-pipelineruns'], ['Pipeline', 'shop-publish'], ['ExternalSecret', 'image-builder-registry-push']];
-const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['Pipeline', 'shop-image'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'bump-git-https']];
+const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['Pipeline', 'shop-image'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'build-registry-pull'], ['ExternalSecret', 'bump-git-https']];
 const holds = (docs, parts) => parts.map(([kind, name]) => docs.some((d) => d.kind === kind && d.metadata.name === name));
 const isCiOnly = (docs) => holds(docs, CI_PARTS).every(Boolean) && !holds(docs, RELEASE_PARTS).some(Boolean);
 
@@ -606,6 +607,63 @@ test('a unit that builds nothing renders the ci check and the publish pipeline, 
   assert.ok(!isCiOnly(oldCondition), 'PLANTED DEFECT: a render that keeps the ci parts behind the builds condition is caught');
   const leaky = [...ciOnly, withBuilds.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https')];
   assert.ok(!isCiOnly(leaky), 'PLANTED DEFECT: a ci-only render that carries the bump credential is caught');
+});
+
+// The engine's own check of a tenant bundle: a refused member stops the start of every app of its
+// tenant, so the release run opens the bundle with the stage's engine before the bump writes a pin. The check's shell is
+// run by scripts/pipeline-release.test.sh; what it is wired to is asserted here on the rendered Pipeline.
+test('the release pipeline checks an apps bundle with the stage engine before the bump, and the check holds no credential', () => {
+  const attested = ['shop-apps', 'shop-web'];
+  const release = renderUnit('shop', attested).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
+  const task = (name, pipeline = release) => pipeline.spec.tasks.find((t) => t.name === name);
+  const onBundle = [{input: '$(tasks.builds.results.apps-bundle)', operator: 'in', values: attested}];
+  assert.deepEqual(task('engine-pin').when, onBundle, 'engine-pin runs only where the manifest names an attested build as appsBundle');
+  assert.deepEqual(task('check-definitions').when, onBundle, 'so does check-definitions');
+  assert.ok(!attested.includes(''), 'a manifest without appsBundle writes an empty result, which no attested build equals');
+  assert.ok(task('builds').taskSpec.results.some((r) => r.name === 'apps-bundle'), 'the builds task hands on the manifest\'s appsBundle');
+  assert.deepEqual(task('engine-pin').runAfter, ['builds', 'scan', ...attested.map((b) => `build-${b}`)], 'engine-pin starts after the bundle build, as the bump does');
+  assert.deepEqual(task('check-definitions').runAfter, ['engine-pin']);
+  assert.ok(task('bump').runAfter.includes('check-definitions'), 'a refused bundle ends the run before the bump writes a pin');
+  // The bump pins as a tenant bundle only its APPS_BUNDLE, so that is the value the `when` above reads, taken from the
+  // same result and not read again off the manifest.
+  const bumpBundle = (t) => [t.params.find((p) => p.name === 'apps-bundle')?.value, t.taskSpec.steps[0].env.find((e) => e.name === 'APPS_BUNDLE')?.value];
+  assert.deepEqual(bumpBundle(task('bump')), [onBundle[0].input, '$(params.apps-bundle)'], 'the bump pins as a bundle the one build the check opened');
+  const rewired = structuredClone(task('bump'));
+  rewired.params.find((p) => p.name === 'apps-bundle').value = '$(tasks.verify.results.image-tag)';
+  assert.notDeepEqual(bumpBundle(rewired), [onBundle[0].input, '$(params.apps-bundle)'], 'PLANTED DEFECT: a bump whose bundle comes from elsewhere than the check\'s is caught');
+  const check = task('check-definitions');
+  assert.deepEqual(check.params.map((p) => [p.name, p.value]), [
+    ['bundle-image', 'zot.check.example.invalid/$(tasks.builds.results.apps-bundle):$(tasks.verify.results.image-tag)'],
+    ['engine-image', '$(tasks.engine-pin.results.engine-image)']]);
+  assert.deepEqual(check.taskSpec.steps.map((s) => [s.name, s.image]), [['copy-bundle', '$(params.bundle-image)'], ['members', 'alpine/k8s:1.35.6'], ['check', '$(params.engine-image)']]);
+  // The step that opens the bundle holds no credential, and neither does a volume of its pod; the one platform credential
+  // of the check is the pin read, in a task that runs no code of the unit.
+  const holdsNoCredential = (t) => t.taskSpec.steps.every((s) => s.envFrom === undefined && s.env === undefined) && t.taskSpec.volumes.every((v) => v.emptyDir) && !JSON.stringify(t).includes('bump-git-https');
+  assert.ok(holdsNoCredential(check), 'check-definitions holds no environment, secret or credential');
+  const planted = structuredClone(check);
+  planted.taskSpec.steps[2].envFrom = [{secretRef: {name: 'bump-git-https'}}];
+  assert.ok(!holdsNoCredential(planted), 'PLANTED DEFECT: a check step that takes the bump credential is caught');
+  assert.deepEqual(release.spec.tasks.filter((t) => JSON.stringify(t).includes('bump-git-https')).map((t) => t.name), ['engine-pin', 'bump']);
+  assert.ok(task('engine-pin').taskSpec.steps.every((s) => s.image === 'alpine/k8s:1.35.6'), 'the task that holds the credential runs no image the unit or the pin names');
+  for (const t of [task('engine-pin'), check]) {
+    for (const step of t.taskSpec.steps) assert.ok(step.computeResources?.requests?.cpu && step.computeResources?.limits?.memory, `${t.name}/${step.name} bounds its resources`);
+  }
+  assert.ok(!release.spec.tasks.some((t) => t.name.startsWith('build-') && t.name !== 'build-shop-apps' && t.name !== 'build-shop-web'), 'the check is no build: the memory budget of the release counts build- tasks');
+});
+
+test('the kubelet pull secret of the release images exists for a unit that builds, composed by the shared registry pull helper', () => {
+  const docs = renderUnit('shop');
+  const secret = docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-registry-pull');
+  // The chart renders into argocd and its resources name their namespace, so a helper that drops the
+  // namespace key places the secret where no build pod reads it.
+  assert.equal(secret.metadata.namespace, 'shop-build', 'the helper places it in the namespace the caller names');
+  for (const [chart, name] of [['gate-runner', 'gate-runner-registry-pull'], ['e2e-runner', 'e2e-runner-registry-pull'], ['service-provisioner', 'registry-pull-source']]) {
+    assert.equal(renderChart(chart).find((d) => d.kind === 'ExternalSecret' && d.metadata.name === name).metadata.namespace, 'argocd', `PLANTED INNOCENT: ${chart}, which names no namespace, keeps ${name} in its release namespace`);
+  }
+  assert.equal(secret.spec.target.template.type, 'kubernetes.io/dockerconfigjson');
+  assert.deepEqual(secret.spec.data.map((d) => [d.remoteRef.key.endsWith('/app/registry'), d.remoteRef.property]), [[true, 'pull-user'], [true, 'pull-password']], 'the read-only pull identity, never the push one');
+  assert.ok(secret.spec.target.template.data['.dockerconfigjson'].includes('"zot.check.example.invalid"'), 'for the host the images are pulled from');
+  assert.ok(!renderUnit('shop', []).some((d) => d.metadata?.name === 'build-registry-pull'), 'PLANTED INNOCENT: a unit that builds nothing renders no pull secret');
 });
 
 // The two platform bump credentials stand on build-platform/, a tier of their own, and never at
