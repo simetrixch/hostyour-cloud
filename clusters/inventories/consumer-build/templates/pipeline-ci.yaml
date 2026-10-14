@@ -112,7 +112,9 @@ each linked to the run in the Tekton Dashboard. Both run files/ci-commit-status.
 in a pod of their own that holds the key token of build-git-https, the unit's
 statuses token, which posts commit statuses on its own repository and writes
 nothing else, and runs no code of the repository. A run the gate refused
-sets no status, because it names a commit it did not prove.
+sets no status, because it names a commit it did not prove. A 5xx or no answer
+of GitHub is tried 3 times; a pending that still fails lets the run go on to
+the check with a warning, so one blip of GitHub skips no ci run.
 */ -}}
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
