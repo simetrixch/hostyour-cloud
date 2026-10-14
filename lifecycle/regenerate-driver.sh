@@ -199,11 +199,12 @@ fi
   || die "there is no engine at $ENGINE, and it is what runs a program. A machine is given it by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
 
 # THE ENGINE, AT THE VERSION THE PLATFORM REPOSITORY PINS. Read off the public
-# platform repository by this machine, fetched from the public release, placed
+# platform repository by this machine, fetched from the owner's registry at the
+# address of each binary's SHA-256 (driver.sh says why), placed
 # elevated and read back off the machine - the shape driver.sh gives it, so a
 # regeneration and an installation put the same engine in front of the same
 # programs checkout. Nothing is fetched where the machine already answers the pin.
-readonly RELEASES=https://github.com/simetrixch/ansiwise-cli/releases/download
+readonly RELEASES=https://zot.master.digitacloud.app/v2/simetrixch/ansiwise-cli/blobs
 readonly PIN_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/versions.yaml"
 readonly DIGESTS_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/ansiwise.sha256"
 say "reading the engine pin from $PIN_URL"
@@ -227,13 +228,21 @@ else
   say "$ENGINE answers ${ENGINE_ANSWERS:-nothing}, /usr/local/bin/ansiwise-rest answers ${SERVING_ANSWERS:-nothing}, and the pin is $PIN"
   say "reading the digests from $DIGESTS_URL"
   DIGESTS=$(curl -fsSL "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine; nothing has been changed" 69
+  # EVERY ADDRESS BEFORE ANY DOWNLOAD. A blob is addressed by the digest its line states, so an
+  # asset with no line, or with two, has no address at all and is refused before anything is fetched.
+  for tool in ansiwise ansiwise-rest; do
+    hex=$(printf '%s\n' "$DIGESTS" | awk -v asset="$tool-$PIN-linux-x64" '$2 == asset { print $1 }')
+    [[ "$hex" =~ ^[0-9a-f]{64}$ ]] \
+      || die "$DIGESTS_URL states no single SHA-256 for $tool-$PIN-linux-x64, and the registry serves a binary only at the address of its digest; nothing has been changed" 65
+    printf -v "URL_${tool//-/_}" '%s' "$RELEASES/sha256:$hex"
+  done
   # A DIRECTORY OF ITS OWN, readable by this account alone, and not a fixed name under /tmp: the
   # bytes that are hashed are the bytes that are placed, and nobody else can write between the two.
   FETCHED=$(mktemp -d) || die "no directory could be made to fetch the engine into; nothing has been changed" 73
   for tool in ansiwise ansiwise-rest; do
-    url="$RELEASES/$PIN/$tool-$PIN-linux-x64"
+    url_name="URL_${tool//-/_}"; url="${!url_name}"
     say "fetching $tool from $url"
-    curl -fsSL -o "$FETCHED/$tool-$PIN-linux-x64" "$url" || die "$url served nothing - check the release carries an asset under that name; nothing has been changed" 69
+    curl -fsSL -o "$FETCHED/$tool-$PIN-linux-x64" "$url" || die "$url served nothing - the registry holds no blob of that digest; nothing has been changed" 69
     [ -s "$FETCHED/$tool-$PIN-linux-x64" ] || die "$url served an empty file, and an empty executable answers every command with a shell error; nothing has been changed" 69
   done
   if ! hold_engine_against_digests "$FETCHED" "$DIGESTS" "$PIN"; then

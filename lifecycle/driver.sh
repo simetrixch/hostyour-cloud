@@ -183,11 +183,18 @@ for named in STAGE DEPLOY_REPO PROGRAMS_REPO PLATFORM_REPO OPERATOR FQDN ROLE; d
   [ -n "${!named}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
 
-# WHERE A RELEASED EXECUTABLE IS FETCHED FROM. Public, so this machine reaches it
-# with nothing but a certificate store — which is the whole reason a first master can
-# arm itself rather than be armed from somebody's laptop. The pin says WHICH release;
-# this says where releases are.
-readonly RELEASES=https://github.com/simetrixch/ansiwise-cli/releases/download
+# WHERE A RELEASED EXECUTABLE IS FETCHED FROM: the owner's registry, which serves every
+# binary of a release as a raw blob at the address of its SHA-256 and answers an anonymous
+# read under simetrixch/ — so this machine reaches it with nothing but a certificate store,
+# which is the whole reason a first master can arm itself rather than be armed from
+# somebody's laptop. The pin says WHICH release, ansiwise.sha256 which bytes, and the
+# address is made of those bytes.
+#
+# ONE MACHINE CANNOT FETCH FROM IT: the owner's master itself, whose registry is this
+# host and does not exist yet while it is installed. install-machine.sh builds the engine
+# from its tag for that one machine and carries it in the same session, under CARRIED.
+readonly RELEASES=https://zot.master.digitacloud.app/v2/simetrixch/ansiwise-cli/blobs
+readonly CARRIED="$HOME/.aw-engine"
 
 readonly PROGRAMS_CHECKOUT=/srv/ansiwise-programs
 readonly ENGINE=/usr/local/bin/ansiwise
@@ -582,20 +589,44 @@ good "the pin is $PIN"
 # again rather than passed over until the pin moves.
 ENGINE_ANSWERS=$("$ENGINE" --version 2>/dev/null || true)
 SERVING_ANSWERS=$(/usr/local/bin/ansiwise-rest --version 2>/dev/null || true)
-if [ "$ENGINE_ANSWERS" = "$PIN" ] && [ "$SERVING_ANSWERS" = "$PIN" ]; then
+if [ -d "$CARRIED" ]; then
+  # BUILT FROM THE TAG BY install-machine.sh, for the owner's master alone, and carried in this
+  # session. Both have to answer the pin; they are NOT held against ansiwise.sha256, because a local
+  # build is not the published bytes and has no digest line of its own.
+  for tool in ansiwise ansiwise-rest; do
+    said=$("$CARRIED/$tool" --version 2>/dev/null || true)
+    [ "$said" = "$PIN" ] || die "the $tool carried from install-machine answers ${said:-nothing}, and the pin is $PIN; nothing was placed" 65
+  done
+  for tool in ansiwise ansiwise-rest; do
+    root install -m 755 "$CARRIED/$tool" "/usr/local/bin/$tool" || die "could not place $tool in /usr/local/bin" 73
+  done
+  rm -rf "$CARRIED"
+  good "ansiwise and ansiwise-rest built from $PIN by install-machine are placed, not held against ansiwise.sha256 (a local build is not the published bytes)"
+elif [ "$ENGINE_ANSWERS" = "$PIN" ] && [ "$SERVING_ANSWERS" = "$PIN" ]; then
   good "$ENGINE and /usr/local/bin/ansiwise-rest already answer $PIN — nothing fetched"
 else
+  releases_host="${RELEASES#https://}"; releases_host="${releases_host%%/*}"
+  [ "$releases_host" != "zot.$FQDN" ] \
+    || die "$releases_host is the registry of this very machine, which does not stand yet, and install-machine.sh carried no engine built from $PIN" 65
   [ "$ENGINE_ANSWERS" = "$PIN" ] || say "$ENGINE answers ${ENGINE_ANSWERS:-nothing}, which is not the pin"
   [ "$SERVING_ANSWERS" = "$PIN" ] || say "/usr/local/bin/ansiwise-rest answers ${SERVING_ANSWERS:-nothing}, which is not the pin"
   say "reading the digests from $DIGESTS_URL"
   DIGESTS=$(curl -fsSL "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine" 69
+  # EVERY ADDRESS BEFORE ANY DOWNLOAD. A blob is addressed by the digest its line states, so an
+  # asset with no line, or with two, has no address at all and is refused before anything is fetched.
+  for tool in ansiwise ansiwise-rest; do
+    hex=$(printf '%s\n' "$DIGESTS" | awk -v asset="$tool-$PIN-linux-x64" '$2 == asset { print $1 }')
+    [[ "$hex" =~ ^[0-9a-f]{64}$ ]] \
+      || die "$DIGESTS_URL states no single SHA-256 for $tool-$PIN-linux-x64, and the registry serves a binary only at the address of its digest" 65
+    printf -v "URL_${tool//-/_}" '%s' "$RELEASES/sha256:$hex"
+  done
   # A DIRECTORY OF ITS OWN, readable by this account alone, and not a fixed name under /tmp: the
   # bytes that are hashed are the bytes that are placed, and nobody else can write between the two.
   FETCHED=$(mktemp -d) || die "no directory could be made to fetch the engine into" 73
   for tool in ansiwise ansiwise-rest; do
-    url="$RELEASES/$PIN/$tool-$PIN-linux-x64"
+    url_name="URL_${tool//-/_}"; url="${!url_name}"
     say "fetching $tool from $url"
-    curl -fsSL -o "$FETCHED/$tool-$PIN-linux-x64" "$url" || die "$url served nothing — check the release carries an asset under that name" 69
+    curl -fsSL -o "$FETCHED/$tool-$PIN-linux-x64" "$url" || die "$url served nothing — the registry holds no blob of that digest" 69
     [ -s "$FETCHED/$tool-$PIN-linux-x64" ] || die "$url served an empty file, and an empty executable answers every command with a shell error" 69
   done
   if ! hold_engine_against_digests "$FETCHED" "$DIGESTS" "$PIN"; then
