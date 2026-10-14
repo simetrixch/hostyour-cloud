@@ -8,3 +8,18 @@ runsOn: master
 # The chart names every object after the release, and the build plane calls the API Service
 # as plane-api.plane.svc, so the release is named plane on every stage.
 releaseName: plane
+# plane-ce 1.8.5 stamps `timestamp: {{ now }}` into the pod template of its seven Deployments and of
+# its migration Job, and no value of the chart turns it off, so no two renders are the same. Compared
+# without it, a new render of the install branch leaves plane Synced; kept at its live value by every
+# sync, it leaves the Job's pod template, which Kubernetes refuses to change, as it stands, and
+# restarts no Deployment.
+ignoreDifferences: |
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+      - /spec/template/metadata/annotations/timestamp
+  - group: batch
+    kind: Job
+    jsonPointers:
+      - /spec/template/metadata/annotations/timestamp
+respectIgnoreDifferences: "true"

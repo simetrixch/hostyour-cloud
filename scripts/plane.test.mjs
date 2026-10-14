@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
-import {renderChart} from './render-chart.mjs';
+import {applicationOf, driftFindings, renderChart, renderTwice} from './render-chart.mjs';
 
 // Plane on the master. Every page waits for the identity provider's forward auth, and only /api/v1,
 // Plane's API-key API, is reached without it. Its PostgreSQL, Redis, RabbitMQ and MinIO run beside
@@ -111,4 +111,26 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
 
 test('PLANTED INNOCENT: more replicas of the web app and a larger upload limit change nothing the rules hold', () => {
   assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.web.replicas=2', '--set', 'plane-ce.env.doc_upload_size_limit=10485760'])), []);
+});
+
+// plane-ce stamps the render time into the pod template of its seven Deployments and of its migration
+// Job. A render of a later revision may change nothing a sync writes: the Job's pod template is
+// immutable, so one changed field fails every sync of plane, and the RollingSync waits behind it.
+const [first, second] = renderTwice('plane');
+const STAMPED = ['admin', 'api', 'beat-worker', 'live', 'space', 'web', 'worker'].map(name => `Deployment/plane-${name}-wl`)
+  .concat('Job/plane-api-migrate-1').map(object => `${object} /spec/template/metadata/annotations/timestamp`);
+
+test('a render a second later changes nothing a sync of plane writes', () => {
+  assert.deepEqual(driftFindings(first, second, applicationOf(app)), []);
+});
+
+test('PLANTED DEFECT: the plain chart, and the timestamp ignored without RespectIgnoreDifferences, change the migration Job and the seven Deployments', () => {
+  const {ignoreDifferences, respectIgnoreDifferences, ...plain} = app;
+  assert.deepEqual(driftFindings(first, second, applicationOf(plain)), STAMPED);
+  const {respectIgnoreDifferences: dropped, ...unrespected} = app;
+  assert.deepEqual(driftFindings(first, second, applicationOf(unrespected)), STAMPED);
+});
+
+test('PLANTED INNOCENT: more replicas of the web app, rendered twice, change nothing a sync writes', () => {
+  assert.deepEqual(driftFindings(...renderTwice('plane', ['--set', 'plane-ce.web.replicas=2']), applicationOf(app)), []);
 });
