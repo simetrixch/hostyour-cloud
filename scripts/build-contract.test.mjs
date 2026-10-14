@@ -879,10 +879,51 @@ test('the check step installs the tools after the fixed ones and before the repo
   const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
   assert.ok(check.script.includes(installer), 'the pipeline carries the file that these tests run');
   const at = (text) => check.script.indexOf(text);
-  assert.ok(at('corepack enable') < at('helm-v4.3.0') && at('helm-v4.3.0') < at('yq_linux_amd64') && at('yq_linux_amd64') < at('/jq-linux-amd64') && at('/jq-linux-amd64') < at(installer) && at(installer) < at('pnpm install'),
-    'corepack, helm, yq and jq come first, then the tools of the repository, then its install');
-  const jq = check.script.split('\n').filter((line) => line.includes('jq')).join('\n');
-  assert.match(jq, /sha256sum -c -/, 'jq is held to its sha256 like helm and yq');
+  const fixed = readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd();
+  assert.ok(at(fixed) >= 0 && at(fixed) < at('corepack enable') && at('corepack enable') < at(installer) && at(installer) < at('pnpm install'),
+    'helm, yq and jq come first, then corepack, then the tools of the repository, then its install');
+});
+
+// helm, yq and jq are the tools every repository's check may use whatever its ci-tools.json names, so they stand in
+// files/ci-fixed-tools.sh, and every step that runs a repository's own scripts carries that file and the one that installs
+// ci-tools.json before it runs them: the check of the ci before scripts/check.sh, and build-binaries of the publish pipeline
+// before release/build.sh, whose suites read JSON with jq (test/checks/release_digests_test.dart of ansiwise-cli).
+const toolsProblems = (script, runs) => {
+  const fixed = readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd();
+  const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
+  const problems = [], runAt = script.indexOf(runs), fixedAt = script.indexOf(fixed), installerAt = script.indexOf(installer);
+  if (runAt < 0) problems.push(`the script never runs ${runs}`);
+  if (fixedAt < 0) problems.push(`${runs} runs without helm, yq and jq: the script carries no files/ci-fixed-tools.sh`);
+  if (installerAt < 0) problems.push(`${runs} runs without the tools of ci-tools.json: the script carries no files/ci-install-tools.sh`);
+  if (fixedAt >= 0 && installerAt >= 0 && fixedAt > installerAt) problems.push('files/ci-fixed-tools.sh stands after files/ci-install-tools.sh');
+  if (runAt >= 0 && [fixedAt, installerAt].some((at) => at > runAt)) problems.push(`a tools file stands after ${runs}`);
+  if (/helm-v\d|yq_linux|jq-linux/.test(script.replace(fixed, ''))) problems.push('the script installs helm, yq or jq by a copy of its own beside files/ci-fixed-tools.sh');
+  return problems;
+};
+
+test('build-binaries installs the fixed tools and the tools of ci-tools.json before release/build.sh, by the files the ci check uses', () => {
+  const fixed = readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd();
+  for (const tool of [/helm-v4\.3\.0-linux-amd64\.tar\.gz/, /yq_linux_amd64/, /jq-linux-amd64/]) assert.match(fixed, tool, `${tool} is installed by the fixed tools`);
+  assert.equal(fixed.match(/sha256sum -c -/g)?.length, 3, 'helm, yq and jq are each held to their sha256');
+  const check = ciTask('check').steps[0].script;
+  const build = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish')
+    .spec.tasks.find((t) => t.name === 'build-binaries').taskSpec.steps.find((s) => s.name === 'build').script;
+  assert.deepEqual(toolsProblems(check, 'bash scripts/check.sh'), [], 'PLANTED INNOCENT: the check step as rendered');
+  assert.deepEqual(toolsProblems(build, 'bash release/build.sh'), [], 'PLANTED INNOCENT: build-binaries as rendered');
+  const without = (script, text) => { assert.ok(script.includes(text), 'the planted defect finds its text'); return script.replace(text, ''); };
+  const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
+  const jqLine = fixed.split('\n').find((line) => line.includes('jq-linux-amd64'));
+  const defects = {
+    'the install of the fixed tools removed': (script) => without(script, fixed),
+    'the install of the tools of ci-tools.json removed': (script) => without(script, installer),
+    'only jq installed, by a copy of its own': (script) => script.replace(fixed, jqLine),
+    'the fixed tools installed after the repository\'s own script': (script) => `${without(script, fixed)}\n${fixed}`,
+  };
+  for (const [defect, plant] of Object.entries(defects)) {
+    assert.notDeepEqual(toolsProblems(plant(build), 'bash release/build.sh'), [], `PLANTED DEFECT: build-binaries with ${defect}`);
+    assert.notDeepEqual(toolsProblems(plant(check), 'bash scripts/check.sh'), [], `PLANTED DEFECT: the check step with ${defect}`);
+  }
+  assert.match(toolsProblems(without(build, fixed), 'bash release/build.sh')[0], /without helm, yq and jq/, 'the report names the tools that are missing');
 });
 
 // A step that runs a repository's own code runs as the user of its image, pptruser, uid 10042, and not as root: root keeps
