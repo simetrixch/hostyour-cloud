@@ -39,7 +39,9 @@ should stand on and carries none of it, because every source of every Applicatio
 generates targets the install branch. `regenerate-install-branch` is what brings the branch to the
 pin, by merging the tag into it. It reads the ref off that same line rather than being told it
 again, so the pin and the regeneration are one statement instead of two that can disagree. Between
-the two acts somebody can read what the pin now says and stop.
+the two acts somebody can read what the pin now says and stop. A slave is the exception: its map
+carries the master's GTS values, which its own config does not hold, so the regeneration refuses it
+and the release names the Manager's cluster-redeploy of the slave instead.
 
 # Creating the platform's GitHub App
 

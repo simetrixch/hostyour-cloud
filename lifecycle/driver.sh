@@ -761,11 +761,14 @@ for line in open(config_path, encoding='utf-8'):
     if named and named.group(2) != '':
         stated[named.group(1).lower()] = named.group(2)
 
-# THE OWNER'S ACME BLOCK. Where the config states them, ACME_SERVER and ACME_EMAIL stand over
-# LETSENCRYPT_SERVER and LETSENCRYPT_EMAIL, and ACME_CREDENTIALS_JSON, the External Account
-# Binding Google Trust Services issued as one line of JSON, gives acme_eab_key_id its keyId and
-# acme_eab_mac_key its b64MacKey. A binding that cannot be read is refused by the key's name, and
+# THE OWNER'S ACME BLOCK. ACME_SERVER and ACME_EMAIL alone answer letsencrypt_server and
+# letsencrypt_email; the LETSENCRYPT lines older configs carry are read by nothing, because GTS is the
+# one directory and a slave is regenerated from the master's map by the Manager.
+# ACME_CREDENTIALS_JSON, the External Account Binding Google Trust Services issued as one line of
+# JSON, gives acme_eab_key_id its keyId and acme_eab_mac_key its b64MacKey. A binding that cannot be read is refused by the key's name, and
 # never with its value: the MAC key is a credential.
+stated.pop('letsencrypt_server', None)
+stated.pop('letsencrypt_email', None)
 if 'acme_server' in stated:
     stated['letsencrypt_server'] = stated['acme_server']
 if 'acme_email' in stated:

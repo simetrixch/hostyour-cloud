@@ -145,6 +145,11 @@ if [ "$ROLE" = 'master+slave' ]; then
   say "regenerate: $FQDN carries role master+slave in $MAP, a word retired by hostyour-cloud#232: a master carries the slave part as well, so it is regenerated as role master"
   ROLE=master
 fi
+# A SLAVE IS NOT REGENERATED FROM A CONFIG. Its map carries the master's GTS values, which the
+# Manager's mark-slave copies from the master's map, and a slave's own config holds none of them, so
+# a branch regenerated from it would lose the account its issuer is bound to.
+[ "$ROLE" != 'slave' ] \
+  || die "$FQDN carries role slave in $MAP. A slave's map carries the master's GTS values, which the Manager copies from the master's map and its own config does not hold, so it is not regenerated from a config: bring it onto $PIN with the Manager's cluster-redeploy of $FQDN" 65
 say "regenerate: $FQDN carries role $ROLE in $MAP, and the branch is regenerated as that; the config's ROLE seeds a first installation only"
 
 # ------------------------------------------------------- the config, and its guards

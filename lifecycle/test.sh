@@ -803,6 +803,80 @@ expect 'a launcher standing without its driver' 66 <<'RECORDED'
 regenerate: regenerate-driver.sh is not beside this file. It IS the regeneration on the machine, and this only starts it. Nothing has been changed
 RECORDED
 
+# ── a slave is brought onto a release by the Manager, never from a config ───
+# A SLAVE'S MAP CARRIES THE MASTER'S GTS VALUES, which the Manager copies from the master's map and a
+# slave's own config does not hold. A release that names no installation pins a
+# slave whose config stands beside the tree and names the Manager's cluster-redeploy; the regeneration
+# refuses a slave before its config. A recording ssh stands first on PATH and stays uncalled. On a
+# copy of the fixture, so nothing this pins is read by another case.
+SLAVEREL="$WORK/slave-release"
+mkdir -p "$SLAVEREL/ssh" "$SLAVEREL/beside"
+cat > "$SLAVEREL/ssh/ssh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$(dirname "$0")/called"
+echo 'ssh: connect to host stub port 22: Connection refused' >&2
+exit 255
+STUB
+chmod +x "$SLAVEREL/ssh/ssh"
+cp -a "$ORIGIN_A" "$SLAVEREL/origin.git"
+git clone --quiet "$SLAVEREL/origin.git" "$SLAVEREL/checkout"
+SLAVEMAP='clusters/active/apps6.example.invalid.yaml'
+git -C "$SLAVEREL/checkout" checkout --quiet -b apps6.example.invalid
+mkdir -p "$SLAVEREL/checkout/clusters/active"
+printf 'stage: dev\nrole: slave\n\nglobal:\n  domain: apps6.example.invalid\n  acmeEabKeyId: the-masters-key-id\n' > "$SLAVEREL/checkout/$SLAVEMAP"
+git -C "$SLAVEREL/checkout" add -- "$SLAVEMAP"
+git -C "$SLAVEREL/checkout" commit --quiet -m 'Mark the slave apps6.example.invalid'
+git -C "$SLAVEREL/checkout" push --quiet origin apps6.example.invalid
+git -C "$SLAVEREL/checkout" checkout --quiet master
+mkdir -p "$SLAVEREL/checkout/lifecycle"
+SLAVECFG="$SLAVEREL/config.apps6.env"
+printf "%s\n" "FQDN='apps6.example.invalid'" "OPERATOR_USER='operator'" "STAGE='dev'" "ELEVATION_PASSWORD='elevation-test'" "PLATFORM_REF=''" > "$SLAVECFG"
+chmod 600 "$SLAVECFG"
+cp "$SLAVECFG" "$SLAVEREL/checkout/lifecycle/config.apps6.env"
+run_slave() { # the script, then its arguments, in the copy's checkout with the recording ssh
+  A_CODE=0
+  ( cd "$SLAVEREL/checkout" && PATH="$SLAVEREL/ssh:$PATH" bash "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+run_slave "$HERE/release-platform.sh" 0.20.0 alpha
+[ "$A_CODE" = '0' ] || fail "a release over a slave whose config stands beside the tree must end with 0, got $A_CODE: $(cat "$OUT/a.err")"
+must 'release: pinned apps6.example.invalid to 0.20.0-alpha-' 'the slave is pinned like every installation'
+must "release: apps6.example.invalid is a slave, so it is pinned and not regenerated from a config: its map carries the master's GTS values, which its own config does not hold. Bring it onto 0.20.0-alpha-" \
+  'the release names the slave as not regenerated'
+must "with the Manager's cluster-redeploy of apps6.example.invalid" 'and names the way that carries it'
+must_not 'regenerating apps6.example.invalid' 'a slave is never regenerated from its config'
+[ ! -e "$SLAVEREL/ssh/called" ] || fail "the release over a slave opened a session: $(cat "$SLAVEREL/ssh/called")"
+git --git-dir="$SLAVEREL/origin.git" show "apps6.example.invalid:$SLAVEMAP" | grep -qx '  acmeEabKeyId: the-masters-key-id' \
+  || fail "the slave's map lost the master's GTS values"
+ok "a release that names no installation pins a slave, regenerates nothing from its config and names the Manager's cluster-redeploy"
+
+run_slave "$HERE/regenerate-install-branch.sh" apps6.example.invalid "$SLAVECFG"
+[ "$A_CODE" = '65' ] || fail "a regeneration of a slave must end with 65, got $A_CODE"
+must "regenerate: apps6.example.invalid carries role slave in $SLAVEMAP. A slave's map carries the master's GTS values, which the Manager copies from the master's map and its own config does not hold, so it is not regenerated from a config: bring it onto 0.20.0-alpha-" \
+  'a regeneration of a slave is refused'
+must "with the Manager's cluster-redeploy of apps6.example.invalid. Nothing has been changed" 'and names the way that carries it'
+[ ! -e "$SLAVEREL/ssh/called" ] || fail "the regeneration of a slave opened a session: $(cat "$SLAVEREL/ssh/called")"
+ok 'a regeneration of a slave is refused before its config, and no session is opened'
+
+# The planted defects: a regeneration without the refusal reaches the session, and a release
+# without the slave's line regenerates it and ends there, without naming the Manager.
+cp "$HERE/regenerate-driver.sh" "$HERE/require-owner-only.sh" "$SLAVEREL/beside/"
+grep -vF "[ \"\$ROLE\" != 'slave' ] \\" "$HERE/regenerate-install-branch.sh" | grep -vF "|| die \"\$FQDN carries role slave" > "$SLAVEREL/beside/regenerate-install-branch.sh"
+[ "$(($(wc -l < "$HERE/regenerate-install-branch.sh") - $(wc -l < "$SLAVEREL/beside/regenerate-install-branch.sh")))" = '2' ] \
+  || fail 'the refusal of a slave was not taken out of the planted regeneration — the probe proves nothing'
+run_slave "$SLAVEREL/beside/regenerate-install-branch.sh" apps6.example.invalid "$SLAVECFG"
+[ -e "$SLAVEREL/ssh/called" ] || fail 'a regeneration without the refusal of a slave opened no session either — the case cannot go red'
+rm -f "$SLAVEREL/ssh/called"
+sed -e "/SLAVES\[\*\]:-/,/cluster-redeploy of \$FQDN_PINNED\"\$/d" -e 's/^  elif \[ -f "\$CONFIG" \]; then$/  if [ -f "$CONFIG" ]; then/' \
+  "$HERE/release-platform.sh" > "$SLAVEREL/beside/release-platform.sh"
+grep -q 'is a slave, so it is pinned' "$SLAVEREL/beside/release-platform.sh" \
+  && fail 'the slave line was not taken out of the planted release — the probe proves nothing'
+cp "$HERE/regenerate-install-branch.sh" "$SLAVEREL/beside/regenerate-install-branch.sh"
+run_slave "$SLAVEREL/beside/release-platform.sh" 0.21.0 alpha
+must 'release: regenerating apps6.example.invalid with config.apps6.env' 'a release without the slave line regenerates the slave'
+[ "$A_CODE" = '70' ] || fail "a release without the slave line must end on the refused regeneration with 70, got $A_CODE"
+rm -f "$SLAVEREL/ssh/called"
+ok 'the planted defects were caught — a regeneration without the refusal opens a session, and a release without the slave line regenerates the slave'
+
 # ===========================================================================
 # THREE — remove-slave-from-master, against a fixture of its own
 #
@@ -2441,9 +2515,10 @@ fi
 ok "clusters/platform/ansiwise.sha256 names both assets of the committed pin $TREE_PIN once each, and a file of another release or a second line is caught"
 
 # ── THE OWNER'S ACME BLOCK, read by both drivers' composition of the answers ──
-# ACME_SERVER and ACME_EMAIL stand over LETSENCRYPT_SERVER and LETSENCRYPT_EMAIL, and
+# ACME_SERVER and ACME_EMAIL alone answer letsencrypt_server and letsencrypt_email, and
 # ACME_CREDENTIALS_JSON, one line of JSON, gives the External Account Binding's two halves as
-# acme_eab_key_id and acme_eab_mac_key. A config without the block composes what it always did.
+# acme_eab_key_id and acme_eab_mac_key. The LETSENCRYPT lines older configs carry are read by nothing
+# so a config with them alone composes none of the four.
 # Each driver's own COMPOSE block is run out of its own text, against a stand-in config and a
 # stand-in declaration, so what is measured is what a machine runs. Every value is synthetic, and
 # the MAC key is a sentinel no refusal may print.
@@ -2483,17 +2558,14 @@ ACME_ANSWERS='{
   }
 }'
 LEGACY_ANSWERS='{
-  "answers": {
-    "letsencrypt_email": "legacy@example.invalid",
-    "letsencrypt_server": "https://acme-v02.api.letsencrypt.org/directory"
-  }
+  "answers": {}
 }'
 acme_cases() { # <composer> — every case, or the first that fails, named on standard error
   local composer="$1" json
   acme_config "$ACME_WORK/legacy.env"
   composed "$composer" "$ACME_WORK/legacy.env" || { echo 'a config without the block was refused' >&2; return 1; }
-  [ "$(cat "$ACME_WORK/answers.json")" = "$LEGACY_ANSWERS" ] || { echo 'a config without the block composed other answers than before' >&2; return 1; }
-  [ "$(cat "$ACME_WORK/composed.out")" = '2 of the 4 it declares, and 2 left to its own default: acme_eab_key_id acme_eab_mac_key' ] \
+  [ "$(cat "$ACME_WORK/answers.json")" = "$LEGACY_ANSWERS" ] || { echo "a config without the block composed out of the LETSENCRYPT lines: $(cat "$ACME_WORK/answers.json")" >&2; return 1; }
+  [ "$(cat "$ACME_WORK/composed.out")" = '0 of the 4 it declares, and 4 left to its own default: letsencrypt_email letsencrypt_server acme_eab_key_id acme_eab_mac_key' ] \
     || { echo "a config without the block printed: $(cat "$ACME_WORK/composed.out")" >&2; return 1; }
   acme_config "$ACME_WORK/owner.env" '{"keyId":"synthetic-key-id","b64MacKey":"SYNTHETIC-MAC-SENTINEL"}'
   composed "$composer" "$ACME_WORK/owner.env" || { echo 'the owner'"'"'s block was refused' >&2; return 1; }
@@ -2513,15 +2585,17 @@ for driver in driver.sh regenerate-driver.sh; do
   [ -s "$ACME_WORK/$driver.py" ] || fail "$driver carries no COMPOSE block to measure"
   acme_cases "$ACME_WORK/$driver.py" 2> "$ACME_WORK/why" || fail "$driver: $(cat "$ACME_WORK/why")"
 done
-# PLANTED: a composer that lets LETSENCRYPT_SERVER stand over ACME_SERVER, and one whose refusal
-# prints the value it refuses. Each is caught, or the cases above prove nothing.
+# PLANTED: a composer that lets LETSENCRYPT_SERVER stand over ACME_SERVER, one that still reads
+# LETSENCRYPT_SERVER where ACME_SERVER is not stated, and one whose refusal prints the value it
+# refuses. Each is caught, or the cases above prove nothing.
 sed "s/stated\['letsencrypt_server'\] = stated\['acme_server'\]/pass/" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-server.py"
+sed "/stated.pop('letsencrypt_server', None)/d" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-fallback.py"
 sed "s/; its value is not shown'/: ' + stated['acme_credentials_json']/" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-print.py"
-for planted in planted-server planted-print; do
+for planted in planted-server planted-fallback planted-print; do
   ! cmp -s "$ACME_WORK/driver.sh.py" "$ACME_WORK/$planted.py" || fail "the plant $planted changed nothing in the composer"
   if acme_cases "$ACME_WORK/$planted.py" 2>/dev/null; then fail "a composer with the plant $planted passed every ACME case"; fi
 done
-ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config without the block composes as before, and two planted composers are caught"
+ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config with only the LETSENCRYPT lines composes none of the four, and three planted composers are caught"
 
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
@@ -2537,8 +2611,9 @@ echo "test:   says the channel ceiling went unmeasured — beside the two counte
 echo "test:   one argument and no more became optional, the config beside the tree that a"
 echo "test:   release rewrites in place and that still passes the owner-only guard afterwards,"
 echo "test:   the four states a report can be in and a name that is no installation; the"
-echo "test:   six refusals a regeneration makes before it touches a machine, the pin it reads"
-echo "test:   off the branch, and a launcher without its driver; the eight refusals a removal"
+echo "test:   seven refusals a regeneration makes before it touches a machine, a slave among them,"
+echo "test:   the pin it reads off the branch, a launcher without its driver, and a release that pins"
+echo "test:   a slave and names the Manager's cluster-redeploy; the eight refusals a removal"
 echo "test:   makes before it touches a master, the registration it reads off the master's"
 echo "test:   branch and the verdict on a slave that is gone; the owner-only guard against a"
 echo "test:   stubbed stat, and the sentence each of the three launchers"
@@ -2570,9 +2645,9 @@ echo "test:   stops its heartbeat ticker on a signal. A refusal that does not st
 echo "test:   that resumes after a TERM, a skip that asks ansiwise alone, a FETCHED left as the environment"
 echo "test:   set it, a check that takes any digest and a cleanup that leaves the ticker running are each"
 echo "test:   planted, and each is caught."
-echo "test:   Both drivers' composition of the answers, run from their own text: the owner's ACME block over"
-echo "test:   the LETSENCRYPT lines and the binding's two halves out of its JSON, six bindings refused by"
-echo "test:   name without their value, a config without the block as before, and two planted composers."
+echo "test:   Both drivers' composition of the answers, run from their own text: the owner's ACME block"
+echo "test:   alone and the binding's two halves out of its JSON, six bindings refused by"
+echo "test:   name without their value, the LETSENCRYPT lines read by nothing, and three planted composers."
 echo "test: covered — a config of mode 644, refused in its recorded sentence by the"
 echo "test:   regeneration, the backup, the restore and install-machine, and a planted defect in"
 echo "test:   the guard beside the backup and beside the restore that proves the launcher reads it."
