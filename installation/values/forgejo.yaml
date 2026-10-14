@@ -1,0 +1,25 @@
+# What Forgejo is told about this installation.
+#
+# WRITTEN PER INSTALLATION BECAUSE HELM CANNOT WRITE IT. The chart puts gitea.config and gitea.oauth
+# into app.ini and into its start script as they stand, without tpl, so an address spelled there as
+# a Helm expression would reach Forgejo as its own text.
+#
+# THE SIGN-IN LIST STANDS HERE WHOLE. Helm replaces a list instead of merging it, and the source's
+# discovery address names this installation's identity provider. Its client secret comes from the
+# Secret forgejo-oauth, and the group admins makes a site administrator.
+forgejo:
+  gitea:
+    config:
+      server:
+        DOMAIN: forgejo.master.digitacloud.app
+        SSH_DOMAIN: forgejo.master.digitacloud.app
+        ROOT_URL: https://forgejo.master.digitacloud.app/
+        SSH_PORT: 23
+    oauth:
+      - name: authentik
+        provider: openidConnect
+        existingSecret: forgejo-oauth
+        autoDiscoverUrl: https://idp.master.digitacloud.app/application/o/forgejo/.well-known/openid-configuration
+        scopes: openid email profile groups
+        groupClaimName: groups
+        adminGroup: admins
