@@ -777,30 +777,33 @@ cliTools:
   ansiwise:
     version: "0.8.314-stable-20261014233514"
     upstream:
-      kind: github_release
-      project: simetrixch/ansiwise-cli
+      # THE TAGS OF THE MANIFESTS THE OWNER'S REGISTRY HOLDS, read without a credential:
+      # every release of ansiwise-cli is published there by the master's Tekton as one
+      # manifest simetrixch/ansiwise-cli:<tag> (hostyour-cloud clusters/inventories/
+      # consumer-build templates/pipeline-publish.yaml), and GitHub carries no release
+      # of it. The image IS the repository, <owner>/<repository>, which is what
+      # hostyour-manager reads for the release line (inventory/ansiwise-pin.ts).
+      kind: oci_tags
+      host: zot.master.digitacloud.app
+      image: simetrixch/ansiwise-cli
       # ALL THREE CHANNELS, and that is the decision this pin carries.
       # Every release of this project is cut under one grammar,
       # <major>.<minor>.<patch>-<channel>-<ts14> with channel one of alpha, beta
-      # and stable (hostyour-manager shared/release.ts, and the three tag
-      # filters of ansiwise-cli .github/workflows/release.yml that admit only
-      # tags of that shape).
+      # and stable (hostyour-manager shared/release.ts, and ansiwise-cli
+      # release/build.sh, which refuses any tag of another shape).
       #
       # An `alpha`-only pattern would match one channel exactly and be wrong for
       # the pin: on the day a stable is cut, it would go on reporting alphas
       # and never say a riper release exists. Admitting all three lets the highest
-      # version win whatever channel it stands on, and the reading says "the
-      # project marks this release a pre-release" when the winner carries the
-      # marking, so a pre-release is never passed off as a plain newer version.
-      # Ordering across channels is by number, and the ts14 is the last number, so
-      # a stable cut after an alpha of the same version sorts above it.
+      # version win whatever channel it stands on. Ordering across channels is by
+      # number, and the ts14 is the last number, so a stable cut after an alpha of
+      # the same version sorts above it.
       #
       # WHERE THIS IS WIDER THAN THE GRAMMAR: a leading zero. 01.2.3-alpha-<ts14>
       # matches here and release.ts refuses it. Nothing can reach the gap —
-      # ansiwise-cli's own release program refuses to compose such a tag, and the
-      # workflow builds only pushed tags — so this stays the pattern a reader can
-      # read rather than a third copy of the grammar literal that nothing holds
-      # against the other two.
+      # ansiwise-cli's release/build.sh refuses to build such a tag — so this stays
+      # the pattern a reader can read rather than a third copy of the grammar literal
+      # that nothing holds against the other two.
       matching: '^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|stable)-[0-9]{14}$'
     # ONE SITE, AND IT IS AN ASSERTION RATHER THAN AN INSTALL. deploy-cluster names this
     # version in its assert row and fetches the binary nowhere: /usr/local/bin/ansiwise has a

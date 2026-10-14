@@ -211,20 +211,21 @@ master:
 # exists. So the single-line deletion is caught at BOOT and not at render, and
 # nothing in this repository's gate reads these two lines at all.
 ansiwise:
-  # WHERE a machine's executables are fetched from. The two markers are filled in
-  # by the placement, never here: `<version>` from cliTools.ansiwise.version in
-  # clusters/platform/versions.yaml — the ONE pin, read off this repository's trunk by
-  # hostyour-manager server/domains/inventory/ansiwise-pin.ts with no default —
-  # and `<name>` from the binary being fetched, `ansiwise` or `ansiwise-rest`.
+  # WHERE a machine's executables are fetched from: the owner's registry, which
+  # holds every binary of a release as a raw blob at the address of its SHA-256 and
+  # serves simetrixch/ without a credential. The marker is filled in by the
+  # placement, never here: `<digest>` is the line of clusters/platform/ansiwise.sha256
+  # for the asset being fetched, ansiwise-<pin>-linux-x64 or
+  # ansiwise-rest-<pin>-linux-x64, <pin> being cliTools.ansiwise.version in
+  # clusters/platform/versions.yaml — both read off this repository's trunk by
+  # hostyour-manager server/domains/inventory/ansiwise-pin.ts with no default.
   #
-  # ONE ADDRESS REACHES BOTH FILES, which is why the binary is a marker and not a
-  # second setting. The release carries ansiwise-<tag>-linux-x64 and
-  # ansiwise-rest-<tag>-linux-x64; two settings could name two releases, and a
-  # machine would then carry a pair that no pin describes and nothing could name
-  # afterwards. A pin that stands in this address instead of a marker would be the
-  # same defect one step earlier — config.ts refuses an address without
-  # `<version>` for exactly that reason.
-  downloadUrl: "https://github.com/simetrixch/ansiwise-cli/releases/download/<version>/<name>-<version>-linux-x64"
+  # ONE ADDRESS REACHES BOTH FILES, which is why the digest is a marker and not a
+  # second setting: two settings could name two releases, and a machine would then
+  # carry a pair that no pin describes. A digest that stands in this address instead
+  # of a marker would be the same defect one step earlier — config.ts refuses an
+  # address without `<digest>` for exactly that reason.
+  downloadUrl: "https://zot.master.digitacloud.app/v2/simetrixch/ansiwise-cli/blobs/sha256:<digest>"
   # The command that serves a machine's programs over the run's own SSH session,
   # started on the session's stdio and speaking HTTP over it.
   #
