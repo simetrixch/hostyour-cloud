@@ -338,7 +338,7 @@ test('the publish pipeline of every unit holds the push credential in its push t
     const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish');
     assert.ok(pipeline, `a unit with ${builds.length} builds renders its publish pipeline`);
     const task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
-    assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'scan', 'reviewed', 'pack', 'push']);
+    assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'scan', 'reviewed', 'pack', 'build-binaries', 'push']);
     // Tekton copies a Pipeline's labels onto its runs: a consumer label would make the Manager watch it as a release.
     assert.deepEqual(pipeline.metadata.labels['image-builder.io/publish'], 'shop');
     assert.equal(pipeline.metadata.labels['image-builder.io/consumer'], undefined);
@@ -352,11 +352,13 @@ test('the publish pipeline of every unit holds the push credential in its push t
       ['fetch-default'], 'only the step that fetches the default branch holds the clone credential, and it runs only git');
     assert.ok(task('pack').taskSpec.steps.every((s) => s.envFrom === undefined), 'the steps that run the repository\'s code hold no secret as environment');
     assert.deepEqual(task('pack').taskSpec.volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
+    assert.ok(task('build-binaries').taskSpec.steps.every((s) => s.envFrom === undefined) && task('build-binaries').taskSpec.volumes === undefined,
+      'release/build.sh runs the repository\'s code and holds no secret at all');
     assert.deepEqual(task('push').taskSpec.steps.map((s) => s.envFrom), [[{secretRef: {name: 'image-builder-registry-push'}}]]);
     assert.deepEqual(task('push').workspaces, [{name: 'packed', workspace: 'source', subPath: 'packed'}], 'the push reads the packed tarballs and never the repository');
     assert.equal(task('push').taskSpec.workspaces[0].readOnly, true);
-    for (const name of ['reviewed', 'pack', 'push']) {
-      assert.deepEqual(task(name).when, [{input: '$(tasks.scan.results.mode)', operator: 'in', values: ['seed', 'source']}], `${name} runs only where the scan found something to publish`);
+    for (const [name, modes] of [['reviewed', ['seed', 'source', 'binaries']], ['pack', ['seed', 'source']], ['build-binaries', ['binaries']], ['push', ['seed', 'source', 'binaries']]]) {
+      assert.deepEqual(task(name).when, [{input: '$(tasks.scan.results.mode)', operator: 'in', values: modes}], `${name} runs only where the scan found what it publishes`);
     }
     assert.equal(task('clone').params.find((p) => p.name === 'revision').value, 'refs/tags/$(params.release-tag)', 'the clone is the pushed release tag');
     const env = (name, key) => task(name).taskSpec.steps.flatMap((s) => s.env ?? []).find((e) => e.name === key)?.value;
