@@ -464,7 +464,7 @@ test('the fetch task fetches the pinned sources with the credential, and the che
   const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
   const task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
   const fetch = task('fetch').taskSpec;
-  assert.deepEqual(fetch.steps.map((s) => s.name), ['branches', 'list-sources', 'list-tools', 'sources', 'hand-over-clone']);
+  assert.deepEqual(fetch.steps.map((s) => s.name), ['branches', 'list-sources', 'list-tools', 'sources', 'hand-over']);
   assert.deepEqual(fetch.results.map((r) => r.name), ['tools'], 'the tools of ci-tools.json travel to the check as a result of the fetch');
   const holdsCredential = (spec) => spec.steps.filter((s) => JSON.stringify(s.envFrom ?? []).includes('build-git-https')).map((s) => s.name);
   assert.deepEqual(holdsCredential(fetch), ['branches', 'sources'], 'the step that reads the branch\'s ci-sources.json holds no credential');
@@ -806,20 +806,27 @@ test('the check step installs the tools after the fixed ones and before the repo
   assert.match(jq, /sha256sum -c -/, 'jq is held to its sha256 like helm and yq');
 });
 
-// The check runs as the user of its image, pptruser, uid 10042, and not as root: root keeps CAP_DAC_OVERRIDE and reads and
-// writes through any mode, so a test that expects a directory to refuse a write (ansiwise-core run_removal_test.dart) goes red.
-// What root did for the step is done otherwise: the clone is made by pods that run as root, so the fetch task hands it to that
-// user as its last step, and the check script installs and writes only below places that user owns.
+// A step that runs a repository's own code runs as the user of its image, pptruser, uid 10042, and not as root: root keeps
+// CAP_DAC_OVERRIDE and reads and writes through any mode, so a test that expects a directory to refuse a write (ansiwise-core
+// run_removal_test.dart, ansiwise-cli record_not_removed_test.dart) goes red. Two steps run those suites: the check of the ci,
+// and build-binaries of the publish pipeline, whose release/build.sh gates every part and the repository before it builds.
+// What root did for them is done otherwise: the folders pods of root made are handed to that user by a step of root before
+// it, and the check script installs and writes only below places that user owns.
 const CHECK_USER = 10042;
 const OWNED_BY_CHECK_USER = ['/tmp', '/workspace', '/dev/shm', '/pnpm-store', '/npmrc', '/home/pptruser'];
+// What is wrong with the user `step` runs as, and with `handOver`, the step of root that hands it `folders` first.
+const userProblems = (step, handOver, folders) => {
+  const user = step.securityContext?.runAsUser;
+  const problems = [];
+  if (!(user > 0 && step.securityContext?.runAsNonRoot === true)) problems.push(`the ${step.name} step may run as root`);
+  if (user !== CHECK_USER) problems.push(`the ${step.name} step runs as ${user}, not as the user of its image, ${CHECK_USER}`);
+  if (!new RegExp(`^chown -R -h ${user} ${folders}$`, 'm').test(handOver?.script ?? '')) problems.push(`${folders} is not handed to ${user} before the ${step.name} step`);
+  return problems;
+};
 const checkUserProblems = (pipeline) => {
   const task = (name) => pipeline.spec.tasks.find((t) => t.name === name).taskSpec;
   const check = task('check').steps.find((s) => s.name === 'check');
-  const user = check.securityContext?.runAsUser;
-  const problems = [];
-  if (!(user > 0 && check.securityContext?.runAsNonRoot === true)) problems.push('the check step may run as root');
-  if (user !== CHECK_USER) problems.push(`the check step runs as ${user}, not as the user of its image, ${CHECK_USER}`);
-  if (!new RegExp(`^chown -R -h ${user} /workspace/source$`, 'm').test(task('fetch').steps.at(-1).script)) problems.push(`the clone is not handed to ${user} by the last step of the fetch task`);
+  const problems = userProblems(check, task('fetch').steps.at(-1), '/workspace/source');
   // The commands of the script, without comments and urls, and every absolute path they name.
   const code = check.script.split('\n').filter((line) => !/^\s*#(?!!)/.test(line)).join('\n').replace(/https?:\/\/\S+/g, '');
   for (const path of new Set(code.match(/(?<![\w.$}/:-])\/[\w.*-]+(?:\/[\w.${}*-]+)*/g))) {
@@ -837,11 +844,33 @@ test('the check step runs as the user of its image, takes the clone from the fet
   assert.ok(asRoot.includes('the check step may run as root'), 'PLANTED DEFECT: the check step as it ran before, uid 0');
   const unset = planted((check) => { delete check.steps.find((s) => s.name === 'check').securityContext; });
   assert.ok(unset.includes('the check step may run as root'), 'PLANTED DEFECT: a check step that leaves the user to the image is not held to a user');
-  assert.ok(planted((check, fetch) => { fetch.steps.at(-1).script = fetch.steps.at(-1).script.replace(`${CHECK_USER}`, '1000'); }).some((p) => p.includes('the clone is not handed')), 'PLANTED DEFECT: a clone handed to another user than the check runs as');
-  assert.ok(planted((check, fetch) => { fetch.steps.pop(); }).some((p) => p.includes('the clone is not handed')), 'PLANTED DEFECT: a clone nobody hands over stays root\'s, and the check cannot write into it');
+  assert.ok(planted((check, fetch) => { fetch.steps.at(-1).script = fetch.steps.at(-1).script.replace(`${CHECK_USER}`, '1000'); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone handed to another user than the check runs as');
+  assert.ok(planted((check, fetch) => { fetch.steps.pop(); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone nobody hands over stays root\'s, and the check cannot write into it');
   const script = (find, replace) => planted((check) => { const step = check.steps.find((s) => s.name === 'check'); assert.ok(step.script.includes(find)); step.script = step.script.replaceAll(find, replace); });
   assert.ok(script('ci_bin=/tmp/ci-bin', 'ci_bin=/usr/local/bin').some((p) => p.includes('/usr/local/bin')), 'PLANTED DEFECT: tools installed into a directory of root');
   assert.ok(script('corepack enable --install-directory "${ci_bin}"', 'corepack enable').some((p) => p.includes('corepack enable')), 'PLANTED DEFECT: shims written beside node');
+});
+
+test('build-binaries runs release/build.sh as the user the ci check runs as, after a step of root hands it the clone and the output', () => {
+  const pipeline = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish');
+  const problems = (p) => {
+    const steps = p.spec.tasks.find((t) => t.name === 'build-binaries').taskSpec.steps;
+    return userProblems(steps.find((s) => s.name === 'build'), steps[0], '/workspace/source /workspace/packed');
+  };
+  assert.deepEqual(problems(pipeline), [], 'PLANTED INNOCENT: the pipeline as rendered');
+  const steps = (p) => p.spec.tasks.find((t) => t.name === 'build-binaries').taskSpec.steps;
+  const fetch = ciTask('fetch');
+  assert.deepEqual([steps(pipeline)[0], steps(pipeline).find((s) => s.name === 'build').securityContext],
+    [{...fetch.steps.at(-1), script: fetch.steps.at(-1).script.replace('/workspace/source', '/workspace/source /workspace/packed')}, ciTask('check').steps.find((s) => s.name === 'check').securityContext],
+    'one shape: the hand-over and the user of the build are the ci\'s, apart from the folder the binaries are left in');
+  const planted = (change) => { const copy = structuredClone(pipeline); change(steps(copy), steps(copy).find((s) => s.name === 'build')); return problems(copy); };
+  assert.ok(planted((all, build) => { build.securityContext = {runAsUser: 0, allowPrivilegeEscalation: false}; }).includes('the build step may run as root'),
+    'PLANTED DEFECT: build-binaries as it ran before, uid 0, where record_not_removed_test.dart is red');
+  assert.ok(planted((all, build) => { delete build.securityContext; }).includes('the build step may run as root'), 'PLANTED DEFECT: a build that leaves the user to the image');
+  assert.ok(planted((all) => { all[0].script = all[0].script.replace(' /workspace/packed', ''); }).some((p) => p.includes('is not handed')),
+    'PLANTED DEFECT: an output folder left to root, where release/build.sh cannot write the binaries');
+  assert.ok(planted((all) => { all.reverse(); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: the hand-over after the build');
+  assert.ok(planted((all) => { all.shift(); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone nobody hands over');
 });
 
 // The lines of the check step from the install on, with stand-ins that record in which order the install, the check
