@@ -34,7 +34,8 @@ global:
   unitApex: check.example.invalid
   platformDomain: check.example.invalid
   letsencryptEmail: check@check.example.invalid
-  letsencryptServer: https://acme-staging-v02.api.letsencrypt.org/directory
+  letsencryptServer: https://dv.acme-v02.api.pki.goog/directory
+  acmeEabKeyId: check-eab-key-id
   alertRecipients: ['check@check.example.invalid']
   deployUrl: https://github.com/check/check.git
   deployRepo: check/check
