@@ -23,13 +23,15 @@ The namespace's ESO login needs Vault's `external-secrets` role to admit the nam
 admits every namespace labelled hostyour.cloud/workload: "true".
 
 Call: include "common.registryPullExternalSecret" (dict "root" $ "name" "gate-runner-registry-pull")
+A chart whose resources name a namespace other than its release's passes it as "namespace":
+include "common.registryPullExternalSecret" (dict "root" $ "name" "build-registry-pull" "namespace" "shop-build")
 */}}
 {{- define "common.registryPullExternalSecret" -}}
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: {{ .name }}
-  namespace: {{ .root.Release.Namespace }}
+  namespace: {{ .namespace | default .root.Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ .root.Chart.Name }}
     app.kubernetes.io/managed-by: {{ .root.Release.Service }}
