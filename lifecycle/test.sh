@@ -101,6 +101,14 @@ export GIT_COMMITTER_DATE='2026-01-01T00:00:00+0000'
 # localised machine would translate.
 export LC_ALL=C
 
+# No git call of a fixture leaves a process behind it, which a case removing its repository would
+# race: scripts/standin/git-quiet.sh sets the template that prevents it and measures that it does.
+# shellcheck disable=SC1091
+. "$HERE/../scripts/standin/git-quiet.sh"
+PLANTED="$(git_quiet_proof "$WORK")" || fail 'a fixture git starts a background maintenance'
+ok 'a fixture commits and pushes without starting a background maintenance, and the push reaches its origin'
+ok "the planted defect was caught — without the template the same commit and push start $PLANTED background maintenance(s)"
+
 OUT="$WORK/out"
 mkdir -p "$OUT"
 
@@ -247,6 +255,35 @@ git -C "$SEED" checkout --quiet master
 
 git clone --quiet "$ORIGIN_A" "$WORK_A"
 ok "fixture built — one origin, one trunk, four installations and one ref that is none"
+
+# ── the clone a pin is written in leaves no maintenance behind it ──────────
+# The template above keeps the fixtures quiet. The clone release-platform makes for the pin is the
+# script's own, and is removed straight after its commit and push, so it is measured with the
+# template taken away: one run of the script on a copy of the fixture, traced.
+pin_maintenance_starts() { # the release script to run; prints how many background maintenances its pin of apps3 started
+  local d
+  d="$(mktemp -d "$WORK/pin.XXXXXX")" || return 1
+  cp -a "$ORIGIN_A" "$d/origin.git"
+  git clone --quiet "$d/origin.git" "$d/checkout"
+  ( cd "$d/checkout" && unset GIT_TEMPLATE_DIR && GIT_TRACE="$d/trace" bash "$1" 0.4.0 alpha apps3.example.invalid ) > /dev/null 2>&1 || {
+    echo "the traced release of $1 did not end clean" >&2
+    return 1
+  }
+  git --git-dir="$d/origin.git" show 'apps3.example.invalid:clusters/active/apps3.example.invalid.yaml' | grep -q '^release: 0.4.0-alpha-' || {
+    echo "the traced release of $1 pinned nothing on origin, so a count of nothing would prove nothing" >&2
+    return 1
+  }
+  grep -cE 'built-in: git (maintenance run|gc) --auto' "$d/trace" || true
+}
+STARTED="$(pin_maintenance_starts "$HERE/release-platform.sh")" || fail 'the traced release did not pin'
+[ "$STARTED" = '0' ] || fail "release-platform's clone for a pin started $STARTED background maintenance(s), which can still be writing when the clone is removed"
+ok "release-platform pins an installation in a clone that starts no background maintenance, with the template taken away"
+PLANTED_P="$WORK/planted-pin.sh"
+sed 's/ -c maintenance.auto=false//' "$HERE/release-platform.sh" > "$PLANTED_P"
+! cmp -s "$HERE/release-platform.sh" "$PLANTED_P" || fail 'the planted clone was not planted — the probe proves nothing'
+PLANTED_N="$(pin_maintenance_starts "$PLANTED_P")" || fail 'the traced planted release did not pin'
+[ "$PLANTED_N" -gt 0 ] || fail 'a copy of release-platform.sh whose clone does not carry the setting started no background maintenance, so the count above proves nothing'
+ok "the planted defect was caught — a copy of release-platform.sh whose clone does not carry the setting starts $PLANTED_N background maintenance(s)"
 
 # ── the refusals, which cost nothing and must leave nothing behind ──────────
 run_bash release-platform 1.2 stable apps3.example.invalid
@@ -2436,7 +2473,10 @@ ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERV
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
 echo "test:   reason for a host name it cannot resolve normalised, in the C locale."
-echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
+echo "test: covered — a fixture's commit and push start no background maintenance, at either end,"
+echo "test:   that could still be writing when a case removes its repository, and a planted run"
+echo "test:   without the template that prevents it is caught, and so is a copy of release-platform whose"
+echo "test:   clone for a pin does not carry the setting; the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
 echo "test:   the mint that names no installation — which pins nothing, moves no branch and"

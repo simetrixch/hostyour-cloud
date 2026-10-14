@@ -19,6 +19,12 @@ ok() { echo "pipeline-release.test: ok — $*"; }
 command -v yq >/dev/null 2>&1 || fail "yq is not on this path, and the functions under test run it"
 work="$(mktemp -d)" || fail "no temporary directory could be made"
 trap 'rm -rf "$work"' EXIT
+# No git call of a fixture leaves a process behind it, which a case removing its repository would
+# race: scripts/standin/git-quiet.sh sets the template that prevents it and measures that it does.
+# shellcheck disable=SC1091
+. "$root/scripts/standin/git-quiet.sh"
+planted="$(git_quiet_proof "$work")" || fail 'a fixture git starts a background maintenance'
+ok "a fixture commits and pushes without starting a background maintenance; the planted defect, repositories made without the template, starts $planted"
 
 # A function from its first line to the brace that closes it at the same indent.
 extract() { # function name -> its text out of the template

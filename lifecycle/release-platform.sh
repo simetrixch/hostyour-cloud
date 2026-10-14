@@ -312,7 +312,11 @@ say 'release: the tag stands on the remote, so a machine that fetches origin can
 pin_installation() { # fqdn -> the map on its branch records the tag; PINNED gains the name
   local fqdn="$1" work map held
   work="$(mktemp -d)"
-  git clone --quiet --single-branch --branch "$fqdn" "$URL" "$work" \
+  # THE CLONE IS REMOVED BELOW, straight after the commit and the push, and a commit starts
+  # `git maintenance run --auto --detach`, which forks away and takes objects/maintenance.lock in the
+  # clone after this function has gone on. `rm -rf` loses that race now and then and ends "Directory not
+  # empty" on the standard error. `clone -c` writes the setting into the clone's own config.
+  git clone --quiet -c maintenance.auto=false --single-branch --branch "$fqdn" "$URL" "$work" \
     || die "origin has no branch $fqdn. An installation is pinned on its own install branch, and there is none of that name" 66
   map="clusters/active/${fqdn}.yaml"
   [ -f "$work/$map" ] \
