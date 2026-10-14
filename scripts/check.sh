@@ -846,7 +846,8 @@ echo "check: a release tag starts the publish pipeline of a unit, with builds or
 # ── The platform's own images: where they are pushed and who may read them ───────────────────
 # Every other installation, and the relocation Jobs on the app clusters, pull the platform's own images
 # from the owner's registry without a credential, so zot opens exactly the owner's prefix to anonymous
-# read and nothing else, and the ghcr.io seed stores what it fetches under that same prefix. The release
+# read and nothing else, and fetches nothing from ghcr.io: a tag missing there fails, it is never pulled
+# through from GitHub. The release
 # pipeline pushes there only the builds of global.buildRegistryUnit, and only on the installation whose
 # registry IS global.buildRegistry; every other build stays flat, because the readers of a unit's image
 # (its chart, the Manager's tenant versions, the reaper) compose the flat path.
@@ -863,8 +864,8 @@ zot_fault() { # $1 the zot config.json -> the first way it differs from the acce
     || { echo "simetrixch/** is not open to an anonymous read, so another installation pulls the platform's images with no credential and gets 401"; return; }
   [ "$(repository_policy "$1" 'simetrixch/**' policies)" = "$(repository_policy "$1" '**' policies)" ] \
     || { echo "simetrixch/** grants the push and pull users other actions than **, and zot takes the longest matching pattern alone"; return; }
-  [ "$(yq -p=json -o=json -I=0 '.extensions.sync.registries[] | select(.urls[0] == "https://ghcr.io") | .content' "$1")" = '[{"prefix":"/simetrixch/*","destination":"/simetrixch","stripPrefix":true}]' ] \
-    || echo "the ghcr.io seed does not store what it fetches under simetrixch/, the path the platform's images are pulled from"
+  [ "$(yq -p=json -o=json -I=0 '[.extensions.sync.registries[].urls[]] | map(select(test("ghcr\\.io"))) | length' "$1")" = 0 ] \
+    || echo "zot still fetches from ghcr.io on a miss, so a platform image it lacks is pulled through from GitHub instead of failing"
 }
 helm template registry clusters/inventories/registry --namespace registry \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -877,8 +878,8 @@ fault="$(zot_fault "$work/zot.json")"
 # The planted defects: every repository open to an anonymous read, and the seed storing flat.
 yq -p=json -o=json '(.http.accessControl.repositories[] | .anonymousPolicy) = ["read"]' "$work/zot.json" > "$work/zot-planted.json"
 [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that lets anyone read every repository"
-yq -p=json -o=json '(.extensions.sync.registries[] | select(.urls[0] == "https://ghcr.io") | .content[0].destination) = "/"' "$work/zot.json" > "$work/zot-planted.json"
-[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a ghcr.io seed that stores flat"
+yq -p=json -o=json '.extensions.sync.registries = [{"urls": ["https://ghcr.io"], "onDemand": true, "content": [{"prefix": "/simetrixch/*", "destination": "/simetrixch", "stripPrefix": true}]}] + .extensions.sync.registries' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that still fetches from ghcr.io"
 # The planted innocent: buildRegistry naming the owner's own registry keeps the owner's prefix.
 helm template registry clusters/inventories/registry --namespace registry \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -887,7 +888,7 @@ helm template registry clusters/inventories/registry --namespace registry \
   | yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' > "$work/zot-planted.json"
 fault="$(zot_fault "$work/zot-planted.json")"
 [ -z "$fault" ] || fail "the planted innocent, buildRegistry at the owner's own registry, is refused: $fault"
-echo "check: zot opens simetrixch/** alone to an anonymous read and seeds it from ghcr.io; the check refuses both planted defects and takes the planted innocent."
+echo "check: zot opens simetrixch/** alone to an anonymous read and fetches nothing from ghcr.io; the check refuses both planted defects and takes the planted innocent."
 
 # ── The pod of zot rolls when the config.json it was started with is not the one the ConfigMap holds ─
 # zot loads its config at start and never again, and a ConfigMap mount that follows an edit does not
