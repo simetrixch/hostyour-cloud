@@ -10,12 +10,9 @@
 # drive `noacl` (`mount` prints it), so `stat -c '%a'` answers 644 for every
 # writable file and `chmod 600` changes nothing: a launcher judging the mode
 # there refuses every config and prints a command that cannot be obeyed. The
-# file's real guard is its access list, which is what the PowerShell twins read
-# with Get-Acl: the owner, `NT AUTHORITY\SYSTEM` and `BUILTIN\Administrators`
-# are admitted, and any other principal holding a right refuses the file. This
-# reads the same list with icacls and applies the same rule, so the two
-# spellings refuse the same files for the same reason. A principal admitted in
-# one is admitted in the other in the same change.
+# file's real guard is its access list, which this reads with icacls: the owner,
+# `NT AUTHORITY\SYSTEM` and `BUILTIN\Administrators` are admitted, and any other
+# principal holding a right refuses the file.
 #
 # EVERYWHERE ELSE THE ANSWER IS THE MODE, 600 or 400. `stat` spells its
 # arguments differently on Linux and on macOS, and both are asked rather than

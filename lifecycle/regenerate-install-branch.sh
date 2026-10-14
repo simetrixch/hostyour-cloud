@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # regenerate-install-branch.sh — bring ONE installation onto the release its map
-# is pinned to. PowerShell twin: regenerate-install-branch.ps1 (same folder),
-# which does the same in the same order and prints the same lines.
-# lifecycle/test.sh measures that.
+# is pinned to.
 # =============================================================================
 #
 # USAGE (run from anywhere inside a hostyour-cloud checkout)
@@ -44,12 +42,6 @@
 # install-machine.sh uses to start driver.sh, and for the same
 # reason: what runs on a machine is fetched by that machine, and what this
 # carries over is the operator's own config and nothing else.
-#
-# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
-# spellings are held to printing the same bytes, and PowerShell writes its output
-# in whatever code page the console carries -- so a dash from outside ASCII
-# arrives there as a different byte and the pair quietly stops agreeing. The
-# comments in these files are read by people and may say what they like.
 # =============================================================================
 
 set -uo pipefail
@@ -130,7 +122,7 @@ MAPTEXT="$(git show "FETCH_HEAD:$MAP" 2>/dev/null)" \
 
 PIN="$(printf '%s\n' "$MAPTEXT" | value_in_text release)"
 [ -n "$PIN" ] \
-  || die "$MAP on branch $FQDN carries no release line, so nothing records which state this installation is to stand on. release-platform.sh / release-platform.ps1 beside this file writes that line" 65
+  || die "$MAP on branch $FQDN carries no release line, so nothing records which state this installation is to stand on. release-platform.sh beside this file writes that line" 65
 
 # THE TAG IS ASKED OF THE REMOTE, because the remote is what the machine fetches
 # from. A pin naming a tag this workstation happens to carry and origin does not

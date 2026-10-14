@@ -284,7 +284,6 @@ release: pinned apps3.example.invalid to 0.1.0-alpha-TS14 in clusters/active/app
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps3.example.invalid beside this tree (lifecycle/config.apps3.env), so it is pinned and not regenerated. Bring it onto 0.1.0-alpha-TS14 with:
 release:     bash lifecycle/regenerate-install-branch.sh apps3.example.invalid <config>
-release:     pwsh ./lifecycle/regenerate-install-branch.ps1 apps3.example.invalid <config>
 ~~~ standard error ~~~
 RECORDED
 
@@ -315,7 +314,6 @@ release: clusters/active/apps3.example.invalid.yaml already records 0.1.0-alpha-
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps3.example.invalid beside this tree (lifecycle/config.apps3.env), so it is pinned and not regenerated. Bring it onto 0.1.0-alpha-TS14 with:
 release:     bash lifecycle/regenerate-install-branch.sh apps3.example.invalid <config>
-release:     pwsh ./lifecycle/regenerate-install-branch.ps1 apps3.example.invalid <config>
 ~~~ standard error ~~~
 RECORDED
 [ "$(git --git-dir="$ORIGIN_A" tag -l | wc -l)" = '1' ] || fail 'the second run minted a second tag'
@@ -336,7 +334,7 @@ apps3.example.invalid
 
 apps4.example.invalid
   release: none
-  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh / release-platform.ps1 beside this file writes that line.
+  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh beside this file writes that line.
 
 apps5.example.invalid
   release: 9.9.9-stable-TS14
@@ -344,7 +342,7 @@ apps5.example.invalid
 
 apps9.example.invalid
   release: none
-  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh / release-platform.ps1 beside this file writes that line.
+  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh beside this file writes that line.
 ~~~ standard error ~~~
 RECORDED
 
@@ -381,7 +379,7 @@ apps3.example.invalid
 
 apps4.example.invalid
   release: none
-  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh / release-platform.ps1 beside this file writes that line.
+  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh beside this file writes that line.
 
 apps5.example.invalid
   release: 9.9.9-stable-TS14
@@ -389,7 +387,7 @@ apps5.example.invalid
 
 apps9.example.invalid
   release: none
-  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh / release-platform.ps1 beside this file writes that line.
+  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh beside this file writes that line.
 ~~~ standard error ~~~
 RECORDED
 
@@ -452,7 +450,6 @@ release: pinned apps4.example.invalid to 0.2.0-alpha-TS14 in clusters/active/app
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.2.0-alpha-TS14 with:
 release:     bash lifecycle/regenerate-install-branch.sh apps4.example.invalid <config>
-release:     pwsh ./lifecycle/regenerate-install-branch.ps1 apps4.example.invalid <config>
 ~~~ standard error ~~~
 RECORDED
 [ -z "$(git -C "$WORK_A" tag -l "$STALE")" ] || fail 'the leftover tag still stands in the checkout'
@@ -479,7 +476,6 @@ release: pinned apps4.example.invalid to 0.3.0-alpha-TS14 in clusters/active/app
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.3.0-alpha-TS14 with:
 release:     bash lifecycle/regenerate-install-branch.sh apps4.example.invalid <config>
-release:     pwsh ./lifecycle/regenerate-install-branch.ps1 apps4.example.invalid <config>
 ~~~ standard error ~~~
 RECORDED
 [ -n "$(git --git-dir="$ORIGIN_A" tag -l "$RESUMABLE")" ] \
@@ -521,10 +517,8 @@ release: apps9.example.invalid is stage prod and channel alpha admits only: dev 
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps3.example.invalid beside this tree (lifecycle/config.apps3.env), so it is pinned and not regenerated. Bring it onto 0.4.0-alpha-TS14 with:
 release:     bash lifecycle/regenerate-install-branch.sh apps3.example.invalid <config>
-release:     pwsh ./lifecycle/regenerate-install-branch.ps1 apps3.example.invalid <config>
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.4.0-alpha-TS14 with:
 release:     bash lifecycle/regenerate-install-branch.sh apps4.example.invalid <config>
-release:     pwsh ./lifecycle/regenerate-install-branch.ps1 apps4.example.invalid <config>
 ~~~ standard error ~~~
 RECORDED
 [ -n "$(git --git-dir="$ORIGIN_A" tag -l '0.4.0-alpha-*')" ] || fail 'the mint that names no installation put no tag on origin'
@@ -596,7 +590,6 @@ release: pinned apps4.example.invalid to 0.6.0-alpha-TS14 in clusters/active/app
 release: PLATFORM_REF=0.6.0-alpha-TS14 written into 1 config(s) under lifecycle/
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.6.0-alpha-TS14 with:
 release:     bash lifecycle/regenerate-install-branch.sh apps4.example.invalid <config>
-release:     pwsh ./lifecycle/regenerate-install-branch.ps1 apps4.example.invalid <config>
 ~~~ standard error ~~~
 RECORDED
 grep -q "^PLATFORM_REF='0.6.0-alpha-" "$WORK_A/lifecycle/config.other.env" \
@@ -628,7 +621,6 @@ release: pinned apps4.example.invalid to 0.7.0-alpha-TS14 in clusters/active/app
 release: PLATFORM_REF=0.7.0-alpha-TS14 written into 1 config(s) under lifecycle/
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.7.0-alpha-TS14 with:
 release:     bash lifecycle/regenerate-install-branch.sh apps4.example.invalid <config>
-release:     pwsh ./lifecycle/regenerate-install-branch.ps1 apps4.example.invalid <config>
 ~~~ standard error ~~~
 RECORDED
 [ "$(git -C "$WORK_A" rev-parse HEAD)" = "$(git -C "$WORK_A" rev-parse origin/master)" ] \
@@ -685,7 +677,7 @@ must "release-platform" 'the refusal names the act that writes that line'
 [ "$A_CODE" = '65' ] || fail "a map with no release line must end with 65, got $A_CODE"
 expect 'an installation whose map carries no release line' 65 <<'RECORDED'
 ~~~ standard error ~~~
-regenerate: clusters/active/apps9.example.invalid.yaml on branch apps9.example.invalid carries no release line, so nothing records which state this installation is to stand on. release-platform.sh / release-platform.ps1 beside this file writes that line. Nothing has been changed
+regenerate: clusters/active/apps9.example.invalid.yaml on branch apps9.example.invalid carries no release line, so nothing records which state this installation is to stand on. release-platform.sh beside this file writes that line. Nothing has been changed
 RECORDED
 
 run_bash regenerate-install-branch apps5.example.invalid "$NOCONFIG"
@@ -899,7 +891,7 @@ must "keeps no clusters/active/nosuch.example.invalid.yaml, and the slave's name
 [ "$A_CODE" = '64' ] || fail "a missing map with no name stated must end with 64, got $A_CODE"
 expect 'a slave the master keeps no map for, and no name stated' 64 <<'RECORDED'
 ~~~ standard error ~~~
-remove-slave: branch apps6.example.invalid keeps no clusters/active/nosuch.example.invalid.yaml, and the slave's name stood only there: state it with --name <slave-name>, which the PowerShell spelling writes -Name <slave-name> - the name every object of its registration carries. Nothing has been changed
+remove-slave: branch apps6.example.invalid keeps no clusters/active/nosuch.example.invalid.yaml, and the slave's name stood only there: state it with --name <slave-name> - the name every object of its registration carries. Nothing has been changed
 RECORDED
 
 run_remove_bash nosuch.example.invalid "$MASTERCFG" --name nosuch

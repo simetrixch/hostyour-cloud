@@ -26,8 +26,6 @@
 # The Manager is one of them, so a run in flight when this starts is a run this interrupts — start
 # this at a quiet hour. The units on the master keep running; what they read from a stopped store
 # they read again once it is back.
-#
-# Written twice, in bash and in PowerShell, held to the same bytes by lifecycle/test.sh.
 # ===========================================================================
 set -uo pipefail
 die() { printf 'backup: %s. Nothing has been changed\n' "$1" >&2; exit "${2:-65}"; }

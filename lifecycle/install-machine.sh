@@ -22,9 +22,8 @@
 # Python. JSON would cost every operator a dependency, and it cannot carry the
 # one thing that file needs most — a sentence saying what a value is.
 #
-# THE TWIN OF install-machine.ps1, doing the same four things in the same order: refuse a
-# config anyone else can read, carry it over, open one session, keep every line
-# that comes back. The installation itself is driver.sh and it runs ON THE
+# FOUR THINGS, in this order: refuse a config anyone else can read, carry it over,
+# open one session, keep every line that comes back. The installation itself is driver.sh and it runs ON THE
 # MACHINE — nothing is fetched here and nothing is carried from this disk, so what
 # stands on the machine afterwards is what the repositories say rather than what
 # this checkout happened to hold.

@@ -21,8 +21,6 @@
 # ONE SESSION, THE CONFIG AHEAD OF THE DRIVER, like install-machine. The machine is bare, so the
 # door may be the password door: the key is tried first, and where it is refused ssh asks for the
 # login password ONCE, on this terminal. It is not read from the config and it is not kept.
-#
-# Written twice, in bash and in PowerShell, held to the same bytes by lifecycle/test.sh.
 # ===========================================================================
 set -uo pipefail
 die() { printf 'restore: %s. Nothing has been changed\n' "$1" >&2; exit "${2:-65}"; }

@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # release-platform.sh — cut a release of the platform tree, and put every
-# installation the channel admits on it, or the one that is named. PowerShell
-# twin: release-platform.ps1
-# (same folder), which does the same in the same order and prints the same lines.
-# lifecycle/test.sh measures that.
+# installation the channel admits on it, or the one that is named.
 # =============================================================================
 #
 # USAGE (run from anywhere inside a hostyour-cloud checkout)
@@ -87,11 +84,6 @@
 
 set -uo pipefail
 
-# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
-# spellings are held to printing the same bytes, and PowerShell writes its output
-# in whatever code page the console carries -- so a dash from outside ASCII
-# arrives there as a different byte and the pair quietly stops agreeing. The
-# comments in these files are read by people and may say what they like.
 die() { printf 'release: %s\n' "$1" >&2; exit "${2:-65}"; }
 say() { printf '%s\n' "$1"; }
 
@@ -399,6 +391,5 @@ for FQDN_PINNED in "${PINNED[@]}"; do
   else
     say "release: no config for $FQDN_PINNED beside this tree (lifecycle/config.${FQDN_PINNED%%.*}.env), so it is pinned and not regenerated. Bring it onto $TAG with:"
     say "release:     bash lifecycle/regenerate-install-branch.sh $FQDN_PINNED <config>"
-    say "release:     pwsh ./lifecycle/regenerate-install-branch.ps1 $FQDN_PINNED <config>"
   fi
 done

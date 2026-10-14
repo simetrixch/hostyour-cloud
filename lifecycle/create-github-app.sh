@@ -2,8 +2,6 @@
 # =============================================================================
 # create-github-app.sh — create the platform's GitHub App in the customer's
 # organisation, install it there, and write its three answers into the config.
-# PowerShell twin: create-github-app.ps1 (same folder), which does the same in
-# the same order and prints the same lines. lifecycle/test.sh measures that.
 # =============================================================================
 #
 # USAGE (run from anywhere)
@@ -52,12 +50,6 @@
 # owner can reach, removed on every path this can end on. openssl reads a key
 # from a file and not from a pipe, and on Git Bash process substitution hands
 # the native openssl a path it cannot open.
-#
-# WHAT IS PRINTED IS ASCII, and that is not a typographic preference. The two
-# spellings are held to printing the same bytes, and PowerShell writes its output
-# in whatever code page the console carries -- so a dash from outside ASCII
-# arrives there as a different byte and the pair quietly stops agreeing. The
-# comments in these files are read by people and may say what they like.
 # =============================================================================
 
 set -uo pipefail

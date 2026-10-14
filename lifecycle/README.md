@@ -12,19 +12,18 @@ acts below share a subject rather than a purpose, which is why they stand in one
 
 | act | what it does |
 |---|---|
-| `create-github-app.sh` / `.ps1` | creates the platform's GitHub App in the customer's organisation, installs it there, and writes `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PRIVATE_KEY` into the config; two clicks in the browser stay |
-| `install-machine.sh` / `.ps1` | installs a first master from zero: a machine, a branch, a cluster and the platform services on it |
-| `release-platform.sh` / `.ps1` | with an fqdn, cuts a release of the platform tree and pins ONE installation to it; without one, cuts the release and pins nothing, which is what a first machine names as `PLATFORM_REF` |
-| `regenerate-install-branch.sh` / `.ps1` | brings an installation onto the release its own map is pinned to |
-| `remove-slave-from-master.sh` / `.ps1` | takes ONE slave's registration off the master it stands on |
-| `abandon-installation.sh` / `.ps1` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
-| `master-backup.sh` / `.ps1` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
-| `master-restore.sh` / `.ps1` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
-| `status.sh` / `.ps1` | answers which release each installation stands on, and what the trunk carries since |
-| `plan-installation-domain.sh` / `.ps1` | plans and dry-runs proposed hostname changes across domain zones: reads every cluster map on a freshly fetched books branch, optionally probes machine names and Ingress/IngressRoute over ssh, and prints proposed hostname changes and coverage without altering remote state |
+| `create-github-app.sh` | creates the platform's GitHub App in the customer's organisation, installs it there, and writes `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PRIVATE_KEY` into the config; two clicks in the browser stay |
+| `install-machine.sh` | installs a first master from zero: a machine, a branch, a cluster and the platform services on it |
+| `release-platform.sh` | with an fqdn, cuts a release of the platform tree and pins ONE installation to it; without one, cuts the release and pins nothing, which is what a first machine names as `PLATFORM_REF` |
+| `regenerate-install-branch.sh` | brings an installation onto the release its own map is pinned to |
+| `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
+| `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
+| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
+| `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
+| `status.sh` | answers which release each installation stands on, and what the trunk carries since |
+| `plan-installation-domain.sh` | plans and dry-runs proposed hostname changes across domain zones: reads every cluster map on a freshly fetched books branch, optionally probes machine names and Ingress/IngressRoute over ssh, and prints proposed hostname changes and coverage without altering remote state |
 
-Every one of them is written twice, and the two spellings are held to doing the same in the same
-order and printing the same bytes. `scripts/test.sh` runs their remote fixture checks.
+`scripts/test.sh` runs their remote fixture checks.
 
 **Five files here are not a person's entry point.** `driver.sh` is the installation itself,
 `regenerate-driver.sh` the regeneration, `remove-slave-driver.sh` the removal, `master-backup-driver.sh`
@@ -45,7 +44,7 @@ the two acts somebody can read what the pin now says and stop.
 # Creating the platform's GitHub App
 
 ```
-bash lifecycle/create-github-app.sh lifecycle/config.apps4.env           # or:  pwsh ./lifecycle/create-github-app.ps1 ...
+bash lifecycle/create-github-app.sh lifecycle/config.apps4.env
 bash lifecycle/create-github-app.sh lifecycle/config.apps4.env acme      # the organisation named, not read off DEPLOY_REPO
 ```
 
@@ -125,15 +124,12 @@ by a script.
 | file | where it runs | what it does |
 |---|---|---|
 | `driver.sh` | **on the machine** | the whole installation: preconditions, engine, programs checkout, the six programs |
-| `install-machine.ps1` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
-| `install-machine.sh` | the operator's machine | the same, for Linux and macOS |
+| `install-machine.sh` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
 
-`install-machine.ps1` is for **Windows** and `install-machine.sh` for **Linux and macOS**. They are
-held to answering identically, and the one real difference is how each asks whether the config is
-protected: Windows says that with an access list and reads it with `icacls`, Linux and macOS say it
-with a mode and read it with `stat`.
+`install-machine.sh` asks whether the config is protected the way the system it runs on says it:
+Windows with an access list, read with `icacls`, Linux and macOS with a mode, read with `stat`.
 
-The two launchers are thin on purpose. **Everything is fetched by the machine itself, and all three
+The launcher is thin on purpose. **Everything is fetched by the machine itself, and all three
 are public**: the pin out of the platform repository, the two executables out of the release, the
 programs checkout out of `hostyour-deploy`, the repository the deployment programs stand in. Nothing is
 carried from the operator's disk, so what stands on the machine afterwards is what the repositories
@@ -146,7 +142,7 @@ cp config.example.env ~/apps4.env     # NOT inside a git working tree
 $EDITOR ~/apps4.env                   # one line per value; the credentials are marked
 chmod 600 ~/apps4.env                 # Windows: icacls, and the launcher says the line
 
-./install-machine.sh ~/apps4.env      # or:  pwsh ./install-machine.ps1 ~/apps4.env
+./install-machine.sh ~/apps4.env
 ```
 
 **No options.** An installation is a great many statements, and a command line long enough to carry
@@ -213,7 +209,7 @@ because at a machine's birth there is nothing to compare it against. A **changed
   becomes unparseable far from the cause (`ansiwise-plugins#161`).
 - **A carriage return anywhere in the config.** Notepad writes CRLF, and a `bash` on Linux reads
   that CR as part of the value — so the FQDN a certificate is issued for would end in a control
-  character and nothing downstream would say why. Both launchers strip it on the way over and
+  character and nothing downstream would say why. `install-machine.sh` strips it on the way over and
   `driver.sh` refuses it on arrival.
 
 ## The one thing it does that no program does
@@ -384,12 +380,12 @@ is installed from it.
 
 ```
 bash lifecycle/plan-installation-domain.sh --books-fqdn master.old.example.invalid --from-domain old.example.invalid --to-domain new.example.invalid --dry-run # set-domain:keep
-bash lifecycle/plan-installation-domain.sh --books-fqdn master.old.example.invalid --from-domain old.example.invalid --to-domain new.example.invalid --dry-run --fqdn master.old.example.invalid --ssh-user operator   # or: pwsh ./lifecycle/plan-installation-domain.ps1 ... # set-domain:keep
+bash lifecycle/plan-installation-domain.sh --books-fqdn master.old.example.invalid --from-domain old.example.invalid --to-domain new.example.invalid --dry-run --fqdn master.old.example.invalid --ssh-user operator # set-domain:keep
 ```
 
-Both spellings accept `--books-fqdn HOST --from-domain DOMAIN --to-domain DOMAIN --dry-run`,
-optionally `--fqdn HOST --ssh-user USER` together. They require Node, git, yq and for machine probes
-ssh. They read every cluster map on a freshly fetched books branch; a selected machine probes both
+It accepts `--books-fqdn HOST --from-domain DOMAIN --to-domain DOMAIN --dry-run`,
+optionally `--fqdn HOST --ssh-user USER` together. It requires Node, git, yq and for machine probes
+ssh. It reads every cluster map on a freshly fetched books branch; a selected machine probes both
 SSH names with the existing old-name host-key trust and inventories Ingress plus IngressRoute. The
 report lists proposed hostname changes and coverage; current configuration and remote state remain unchanged.
 Exit 0 means a dry-run report, never cutover approval; JSON `cutoverReady=false`, full
