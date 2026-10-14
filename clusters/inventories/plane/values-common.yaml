@@ -77,6 +77,12 @@ externalsecret-app-env:
         REDIS_URL: redis://plane-redis.plane.svc.cluster.local:6379/
         DATABASE_URL: 'postgresql://plane:{{ .pgdbPassword }}@plane-pgdb.plane.svc.cluster.local/plane'
         AMQP_URL: 'amqp://plane:{{ .rabbitmqPassword }}@plane-rabbitmq.plane.svc.cluster.local/'
+        # The worker runs `celery -A plane worker` with no --concurrency, so Celery forks one process
+        # per core of the node and passes the chart's 1000Mi at every start. Neither the chart nor
+        # Plane has a value for it; Celery 5 reads each worker option from CELERY_WORKER_<OPTION>
+        # (celery/bin/celery.py, auto_envvar_prefix="CELERY"). Two processes do this instance's
+        # background work; this Secret is the worker's only environment this chart lets us write.
+        CELERY_WORKER_CONCURRENCY: "2"
     data:
       - secretKey: pgdbPassword
         property: pgdb-password

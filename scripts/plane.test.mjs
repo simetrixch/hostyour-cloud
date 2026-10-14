@@ -73,10 +73,23 @@ function renderFindings(objects) {
   const missing = [...referenced].filter(name => !delivered.has(name));
   if (missing.length > 0) found.push(`the workloads read Secrets nothing delivers: ${missing.join(', ')}`);
 
+  // The worker runs `celery -A plane worker` with no --concurrency, so Celery forks one process per core
+  // of the node (32 on the master) unless CELERY_WORKER_CONCURRENCY names a number. Each process holds
+  // Plane's Django app (the beat worker, the same app, holds 147Mi on the master), so the limit carries
+  // the main process and every child at 200Mi each.
+  const worker = workloads.find(o => o.metadata.name === 'plane-worker-wl')?.spec.template.spec.containers[0];
+  const workerEnv = Object.assign({}, ...(worker?.envFrom ?? []).map(source => source.configMapRef ?
+    objects.find(o => o.kind === 'ConfigMap' && o.metadata.name === source.configMapRef.name)?.data :
+    external.find(o => o.spec.target.name === source.secretRef?.name)?.spec.target.template?.data));
+  const concurrency = workerEnv.CELERY_WORKER_CONCURRENCY;
+  const memory = Number(/^(\d+)Mi$/.exec(worker?.resources.limits.memory ?? '')?.[1]);
+  if (!/^[1-4]$/.test(concurrency ?? '')) found.push(`the worker forks ${concurrency ?? 'one process per core of the node'}, not a fixed few`);
+  else if (!(memory >= (Number(concurrency) + 1) * 200)) found.push(`the worker's ${worker?.resources.limits.memory} does not hold ${concurrency} children and their parent`);
+
   // The addresses the app is handed name the chart's own Services in the app's own namespace.
   const services = new Set(objects.filter(o => o.kind === 'Service').map(o => o.metadata.name));
   const env = external.find(o => o.metadata.name === 'plane-app-env')?.spec.target.template?.data ?? {};
-  for (const [key, url] of Object.entries(env)) {
+  for (const [key, url] of Object.entries(env).filter(([key]) => key.endsWith('_URL'))) {
     const host = /^[a-z]+:\/\/(?:[^@/]*@)?([^:/]+)/.exec(url)?.[1] ?? '';
     const [service, namespace] = host.split('.');
     if (!services.has(service) || namespace !== app.namespace) found.push(`${key} names ${host}, not a Service of the chart in ${app.namespace}`);
@@ -109,7 +122,7 @@ test('the embedded outpost gates plane.<domain>', () => {
   assert.deepEqual(blueprintFindings(proxyText, bindingsText), []);
 });
 
-test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class, a missing outpost binding, the chart\'s own /god-mode and a redirect to a port are found', () => {
+test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class, a missing outpost binding, the chart\'s own /god-mode, a redirect to a port, a worker forking per core and a limit too small for it are found', () => {
   const planted = {
     'the pages without the gate': ['--set-string', 'plane-ce.ingress.ingress_annotations.traefik\\.ingress\\.kubernetes\\.io/router\\.middlewares='],
     'the public default keys': ['--set', 'plane-ce.external_secrets.app_keys_existingSecret=', '--set', 'plane-ce.env.requireExplicitSecrets=false'],
@@ -126,6 +139,13 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
     .filter(o => o.kind !== 'Middleware');
   assert.deepEqual(renderFindings(plain), [`/god-mode passes ${FORWARD_AUTH}, not the forward auth and then the trailing-slash redirect`,
     'https://plane.example.com/god-mode is sent to https://plane.example.com/god-mode', 'https://plane.example.com/god-mode?next=1 is sent to https://plane.example.com/god-mode?next=1']);
+  const forking = renderChart('plane');
+  delete forking.find(o => o.metadata.name === 'plane-app-env').spec.target.template.data.CELERY_WORKER_CONCURRENCY;
+  assert.deepEqual(renderFindings(forking), ['the worker forks one process per core of the node, not a fixed few']);
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set-string', 'externalsecret-app-env.externalSecret.template.data.CELERY_WORKER_CONCURRENCY=32'])),
+    ['the worker forks 32, not a fixed few']);
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.worker.memoryLimit=500Mi'])),
+    ["the worker's 500Mi does not hold 2 children and their parent"]);
   const ported = renderChart('plane');
   ported.find(o => o.kind === 'Middleware').spec.redirectRegex.replacement = 'https://${1}:3000/god-mode/${2}';
   assert.deepEqual(renderFindings(ported), ['https://plane.example.com/god-mode is sent to https://plane.example.com:3000/god-mode/',
