@@ -25,31 +25,43 @@ function fields(object) {
 const groupOf = apiVersion => apiVersion.includes('/') ? apiVersion.split('/')[0] : '';
 // Argo CD keeps a field its Application ignores at the live value only under RespectIgnoreDifferences;
 // without it a sync applies the rendered field and the API server refuses the change, so only then is
-// the field left out of the comparison.
+// the field left out of the comparison. A rule may take out one annotation or one label and nothing
+// else, so no rule can take out a field the check compares; a rule the check cannot read the way Argo
+// CD does is refused, never skipped.
+const IGNORABLE = [['spec', 'template', 'metadata', 'annotations'], ['spec', 'template', 'metadata', 'labels'],
+  ['metadata', 'annotations'], ['metadata', 'labels']];
+const pointerSteps = pointer => pointer.startsWith('/') ? pointer.split('/').slice(1).map(step => step.replaceAll('~1', '/').replaceAll('~0', '~')) : null;
+const jqSteps = expression => /^(\.[A-Za-z_]\w*)+$/.test(expression) ? expression.slice(1).split('.') : null;
 export function ignoredFields(app = {}) {
-  return app.respectIgnoreDifferences === 'true' ? app.ignoreDifferences ?? [] : [];
-}
-const each = Symbol('each');
-const pointerPath = pointer => pointer.split('/').slice(1).map(step => step.replaceAll('~1', '/').replaceAll('~0', '~'));
-// Argo evaluates these with gojq; only .key and []/[]? steps ending in a key are walked here, and any
-// other expression is refused rather than ignoring too little or too much.
-function jqPath(expression) {
-  if (!/^(\.[A-Za-z_]\w*|\[\]\??)*\.[A-Za-z_]\w*$/.test(expression)) throw new Error(`unsupported jqPathExpression ${expression}`);
-  return expression.match(/\.[A-Za-z_]\w*|\[\]/g).map(step => step === '[]' ? each : step.slice(1));
-}
-function unset(node, [step, ...rest]) {
-  if (node === null || typeof node !== 'object') return;
-  if (step === each) return Array.isArray(node) && node.forEach(item => unset(item, rest));
-  if (rest.length) return unset(node[step], rest);
-  if (Array.isArray(node)) node.splice(Number(step), 1); else delete node[step];
+  if (app.respectIgnoreDifferences !== 'true' || app.ignoreDifferences === undefined) return [];
+  const where = `the app.yaml named ${app.name}`;
+  if (!Array.isArray(app.ignoreDifferences)) throw new Error(`${where}: ignoreDifferences is not a list`);
+  return app.ignoreDifferences.map(rule => {
+    const refuse = why => { throw new Error(`${where}: ignoreDifferences rule ${JSON.stringify(rule)} ${why}`); };
+    if (rule?.managedFieldsManagers !== undefined) refuse('names managedFieldsManagers, which no render shows');
+    if (!rule?.kind) refuse('names no kind');
+    if (/[*?[]/.test(`${rule.group ?? ''}${rule.kind}`)) refuse('matches its group or kind by a glob');
+    if (![rule.jsonPointers ?? [], rule.jqPathExpressions ?? []].every(Array.isArray)) refuse('lists its paths not as a list');
+    const paths = [...(rule.jsonPointers ?? []).map(path => [path, pointerSteps(path)]),
+      ...(rule.jqPathExpressions ?? []).map(path => [path, jqSteps(path)])];
+    for (const [path, steps] of paths) {
+      if (!steps) refuse(`has ${path}, which the check cannot read (a jsonPointer from /, a jq path of .key steps)`);
+      if (steps.at(-1) === '-') refuse(`has ${path}, which ends in an array position`);
+      if (!IGNORABLE.some(prefix => steps.length > prefix.length && prefix.every((step, i) => steps[i] === step))) {
+        refuse(`has ${path}, which is not one annotation or label, the only fields the immutable check lets a rule take out`);
+      }
+    }
+    return {...rule, paths: paths.map(([, steps]) => steps)};
+  });
 }
 function withoutIgnored(object, namespace, ignored) {
   const rules = ignored.filter(rule => (rule.group ?? '') === groupOf(object.apiVersion) && rule.kind === object.kind &&
     (!rule.name || rule.name === object.metadata.name) && (!rule.namespace || rule.namespace === (object.metadata.namespace ?? namespace)));
   if (!rules.length) return object;
   const copy = structuredClone(object);
-  for (const rule of rules) {
-    for (const path of [...(rule.jsonPointers ?? []).map(pointerPath), ...(rule.jqPathExpressions ?? []).map(jqPath)]) unset(copy, path);
+  for (const steps of rules.flatMap(rule => rule.paths)) {
+    const parent = steps.slice(0, -1).reduce((node, step) => node?.[step], copy);
+    if (parent && typeof parent === 'object') delete parent[steps.at(-1)];
   }
   return copy;
 }
@@ -110,7 +122,7 @@ export function probeImmutableChanges() {
   assert.equal(immutableChanges([hook], [changedJob]).length, 1);
   // plane-ce stamps a new timestamp into its migration Job's pod template on every render, and plane's
   // app.yaml has Argo CD keep the live one.
-  const plane = {respectIgnoreDifferences: 'true', ignoreDifferences: [
+  const plane = {name: 'plane', respectIgnoreDifferences: 'true', ignoreDifferences: [
     {group: 'apps', kind: 'Deployment', jsonPointers: ['/spec/template/metadata/annotations/timestamp']},
     {group: 'batch', kind: 'Job', jsonPointers: ['/spec/template/metadata/annotations/timestamp']}]};
   const stamped = structuredClone(job); stamped.spec.template.metadata = {annotations: {timestamp: 'before'}};
@@ -122,18 +134,36 @@ export function probeImmutableChanges() {
   assert.equal(immutableChanges([stamped], [restamped], 'default', ignoredFields({...plane, respectIgnoreDifferences: undefined})).length, 1);
   const otherJob = {...plane, ignoreDifferences: plane.ignoreDifferences.map(rule => ({...rule, name: 'other'}))};
   assert.equal(immutableChanges([stamped], [restamped], 'default', ignoredFields(otherJob)).length, 1);
-  const images = {respectIgnoreDifferences: 'true', ignoreDifferences: [{group: 'batch', kind: 'Job', jqPathExpressions: ['.spec.template.spec.containers[]?.image']}]};
-  assert.deepEqual(immutableChanges([job], [changedJob], 'default', ignoredFields(images)), []);
-  const piped = {...images, ignoreDifferences: [{...images.ignoreDifferences[0], jqPathExpressions: ['.spec.template | .spec']}]};
-  assert.throws(() => immutableChanges([job], [changedJob], 'default', ignoredFields(piped)), /unsupported jqPathExpression/);
+  const refused = (rule, why) => assert.throws(() => ignoredFields({...plane, ignoreDifferences: [rule]}), why);
+  const jobs = {group: 'batch', kind: 'Job'}, timestamp = ['/spec/template/metadata/annotations/timestamp'];
+  const outside = /not one annotation or label/;
+  for (const jsonPointers of [['/spec/template'], ['/spec'], ['/kind'], ['/apiVersion'], ['/metadata'], ['/spec/template/metadata'],
+    ['/spec/template/metadata/annotations'], ['/spec/template/spec/containers/image'], ['/spec/template/spec/containers/0/image']]) refused({...jobs, jsonPointers}, outside);
+  refused({group: 'apps', kind: 'Deployment', jsonPointers: ['/spec/selector']}, outside);
+  refused({...jobs, jqPathExpressions: ['.spec.template']}, outside);
+  refused({...jobs, jqPathExpressions: ['.spec.template.spec.containers[]?.image']}, /cannot read/);
+  refused({...jobs, jqPathExpressions: ['.spec.template | .metadata.annotations.timestamp']}, /cannot read/);
+  refused({...jobs, jsonPointers: ['spec/template/metadata/annotations/timestamp']}, /cannot read/);
+  refused({...jobs, jsonPointers: ['/metadata/annotations/-']}, /array position/);
+  refused({...jobs, managedFieldsManagers: ['kube-controller-manager']}, /managedFieldsManagers/);
+  refused({group: 'batch', jsonPointers: timestamp}, /no kind/);
+  refused({group: 'batch', kind: '*', jsonPointers: timestamp}, /glob/);
+  refused({group: '*', kind: 'Job', jsonPointers: timestamp}, /glob/);
+  refused({...jobs, jsonPointers: timestamp[0]}, /not as a list/);
+  assert.throws(() => ignoredFields({...plane, ignoreDifferences: plane.ignoreDifferences[1]}), /ignoreDifferences is not a list/);
+  const byJq = {...plane, ignoreDifferences: [{...jobs, jqPathExpressions: ['.spec.template.metadata.annotations.timestamp']}]};
+  assert.deepEqual(immutableChanges([stamped], [restamped], 'default', ignoredFields(byJq)), []);
+  assert.equal(immutableChanges([stamped], [restampedImage], 'default', ignoredFields(byJq)).length, 1);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv[2] === '--probe') {
     probeImmutableChanges();
     console.log('check: immutable-field planted defects caught; forward renames, mutable changes and fields Argo CD keeps live accepted');
   } else {
-    const changes = immutableChanges(JSON.parse(readFileSync(process.argv[2])), JSON.parse(readFileSync(process.argv[3])), process.argv[4],
-      ignoredFields(JSON.parse(readFileSync(process.argv[5]))));
-    if (changes.length) {console.error(changes.join('\n')); process.exitCode = 1;}
+    try {
+      const changes = immutableChanges(JSON.parse(readFileSync(process.argv[2])), JSON.parse(readFileSync(process.argv[3])), process.argv[4],
+        ignoredFields(JSON.parse(readFileSync(process.argv[5]))));
+      if (changes.length) {console.error(changes.join('\n')); process.exitCode = 1;}
+    } catch (error) {console.error(error.message); process.exitCode = 1;}
   }
 }
