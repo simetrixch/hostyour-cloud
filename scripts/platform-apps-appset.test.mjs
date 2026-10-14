@@ -56,7 +56,9 @@ test('runsOn may name the cluster itself, and a name of another cluster selects 
 // before it is Healthy. The forge apps wait for Vault entries a later act writes, so they stand after
 // every other app: while one of them waits, no app of the platform waits behind it.
 const waveCount = Number(/\$waveCount := (\d+)/.exec(readFileSync('clusters/argocd/templates/apps.yaml', 'utf8'))[1]);
-const FORGE_APPS = ['forgejo', 'plane'];
+const FORGE_APPS = ['forgejo', 'plane', 'forgejo-build'];
+// forgejo-build waits for an entry a person writes once Forgejo and Plane run, so it stands after them.
+const RUNS_AFTER = {'forgejo-build': ['forgejo', 'plane']};
 
 /** Every app outside the steps, and every forge app not after all the others, named. */
 function waveFindings(params) {
@@ -67,6 +69,10 @@ function waveFindings(params) {
   const last = Math.max(...params.filter(app => !FORGE_APPS.includes(app.name)).map(app => Number(app.syncWave)));
   for (const app of params.filter(app => FORGE_APPS.includes(app.name))) {
     if (Number(app.syncWave) <= last) found.push(`${app.name}: wave ${app.syncWave} does not stand after ${last}`);
+  }
+  const waveOf = name => Number(params.find(app => app.name === name)?.syncWave);
+  for (const [name, before] of Object.entries(RUNS_AFTER)) {
+    for (const other of before) if (!(waveOf(name) > waveOf(other))) found.push(`${name}: wave ${waveOf(name)} does not stand after ${other}'s ${waveOf(other)}`);
   }
   return found;
 }
@@ -82,7 +88,9 @@ test('PLANTED DEFECT: a forge app in an existing wave, a wave past the steps and
   const forge = params.find(app => app.name === FORGE_APPS[0]);
   const last = Math.max(...params.filter(app => !FORGE_APPS.includes(app.name)).map(app => Number(app.syncWave)));
   assert.deepEqual(waveFindings(params.map(app => (app === forge ? {...app, syncWave: '25'} : app))), [`${forge.name}: wave 25 does not stand after ${last}`]);
-  assert.equal(waveFindings(params.map(app => (app === forge ? {...app, syncWave: String(waveCount)} : app))).length, 1);
+  assert.ok(waveFindings(params.map(app => (app === forge ? {...app, syncWave: String(waveCount)} : app))).includes(`${forge.name}: wave ${waveCount} is no step of 0 to ${waveCount - 1}`));
+  assert.deepEqual(waveFindings(params.map(app => (app.name === 'forgejo-build' ? {...app, syncWave: '41'} : app))),
+    ["forgejo-build: wave 41 does not stand after forgejo's 41", "forgejo-build: wave 41 does not stand after plane's 41"]);
   const {syncWave, ...waveless} = forge;
   assert.match(render(template, [waveless])[0].error, /map has no entry for key "syncWave"/);
 });

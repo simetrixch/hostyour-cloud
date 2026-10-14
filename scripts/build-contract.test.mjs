@@ -14,7 +14,8 @@ test('no Tekton test resources are rendered and production readers remain', () =
     d.metadata.name.includes('test-reporter') || d.metadata.name.includes('test-pruner') ||
     (d.kind === 'Task' && d.metadata.name.startsWith('test-')) || d.metadata.name.endsWith('-test-push')));
   assert.deepEqual(builder.find(d => d.kind === 'EventListener').spec.triggers,
-    [{triggerRef: 'github-deploy-request'}, {triggerRef: 'github-ci-push'}, {triggerRef: 'github-release-publish'}]);
+    [{triggerRef: 'github-deploy-request'}, {triggerRef: 'github-ci-push'}, {triggerRef: 'github-release-publish'},
+      {triggerRef: 'forgejo-tag-push'}, {triggerRef: 'forgejo-pull-request'}]);
   const guard = builder.find(d => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
   assert.ok(!JSON.stringify(guard).includes('op3-input'));
   const fanout = renderChart('consumer-build').find(d => d.kind === 'ApplicationSet');

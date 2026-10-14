@@ -98,4 +98,8 @@ node --test scripts/forgejo.test.mjs || fail 'scripts/forgejo.test.mjs'
 echo 'test: forge — Plane waits for the forward auth on every page but /api/v1, keeps its data beside it, and renders no public default.'
 helm dependency update clusters/inventories/plane
 node --test scripts/plane.test.mjs || fail 'scripts/plane.test.mjs'
+echo 'test: forge — a Forgejo delivery runs forgejo-release in forgejo-build past the guard, its tokens reach the three API Tasks alone, and GitHub and Forgejo deliveries never cross.'
+helm dependency update clusters/inventories/forgejo-build
+helm dependency update clusters/inventories/image-builder
+node --test scripts/forgejo-release.test.mjs || fail 'scripts/forgejo-release.test.mjs'
 echo 'test: OK — all suites green'

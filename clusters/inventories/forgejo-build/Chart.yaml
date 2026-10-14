@@ -1,0 +1,17 @@
+apiVersion: v2
+name: forgejo-build
+version: 1.0.0
+description: |
+  The run namespace of the Forgejo release flow. A Forgejo repository's webhook lands at the build
+  plane's EventListener (clusters/inventories/image-builder), whose Forgejo Triggers start the
+  Pipeline forgejo-release here: the commit status in Forgejo, the clone, the image pushed to Zot,
+  and on a tag also the Forgejo release and the Plane update. The Tasks it runs are the build
+  plane's shared ones; the credentials they read stand here.
+type: application
+dependencies:
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

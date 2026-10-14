@@ -311,6 +311,9 @@ spec:
       namespace: gate-runner
     - name: __CLUSTER_NAME__
       namespace: e2e-runner
+    # The run namespace of the Forgejo release flow (clusters/inventories/forgejo-build).
+    - name: __CLUSTER_NAME__
+      namespace: forgejo-build
     - name: __CLUSTER_NAME__
       namespace: __ARGOCD_NAMESPACE__
   clusterResourceWhitelist:

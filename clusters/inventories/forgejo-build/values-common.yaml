@@ -1,0 +1,18 @@
+secret-store:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+
+# The identity of the build plane's EventListener, which creates the runs here. Named rather than
+# composed, because it is another release's (clusters/inventories/image-builder).
+eventListener:
+  serviceAccountName: eventlistener-sa
+  namespace: image-builder
+
+# Forgejo's http Service (clusters/inventories/forgejo, fullnameOverride forgejo), which the clone
+# reads from inside the cluster, never through Traefik.
+forgejo:
+  url: http://forgejo-http.forgejo.svc:3000
+
+# The image of the check before the build: bash, grep and date, the image the build plane's own
+# kubectl steps run.
+checkImage: alpine/k8s:1.35.6
