@@ -1176,7 +1176,7 @@ must_not 'shown-nowhere' 'install-machine: the refusal does not show the binding
 expect 'install-machine: a first master stated on the ACME account' 65 <<'RECORDED'
 ~~~ standard error ~~~
 
-  <WORK>/install-machine-acme.env states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh and the Manager's cluster-redeploy of this machine
+  <WORK>/install-machine-acme.env states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out, ACME_EMAIL and ACME_SERVER still stated, and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh master.example.invalid <WORK>/install-machine-acme.env and the Manager's cluster-redeploy of this machine
 
 RECORDED
 # The planted defect: a copy without the refusal, beside the driver and the guard, reaches the session.

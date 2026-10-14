@@ -82,7 +82,7 @@ done
 # of acmeEabKeyId in the master's map, and an issuer bound to that account reads its key from a
 # Secret that Vault, the secret store and Argo CD deliver, none of which stands on a first master:
 # the run would wait on its own end. Its value is never shown.
-[ -z "${ACME_CREDENTIALS_JSON:-}" ] || fail "$FILE states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh and the Manager's cluster-redeploy of this machine" 65
+[ -z "${ACME_CREDENTIALS_JSON:-}" ] || fail "$FILE states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out, ACME_EMAIL and ACME_SERVER still stated, and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh $FQDN $FILE and the Manager's cluster-redeploy of this machine" 65
 
 # A MACHINE IS ADDRESSED BY ITS NAME, and by nothing else. The name in the config is
 # the one the certificate will carry and the one the cluster is reached by, so a
