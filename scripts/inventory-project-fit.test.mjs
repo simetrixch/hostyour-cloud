@@ -42,6 +42,7 @@ test('PLANTED DEFECT: a project without the namespace of an inventory that names
   core.spec.destinations = core.spec.destinations.filter(d => d.namespace !== 'cert-manager');
   assert.deepEqual(findings(planted, inventories).filter(f => f.includes('namespace cert-manager')), [
     'cert-manager: project core admits no namespace cert-manager',
+    'cert-manager-account: project core admits no namespace cert-manager',
     'cert-manager-issuers: project core admits no namespace cert-manager',
     'trust-manager: project core admits no namespace cert-manager',
     'trust-manager-bundles: project core admits no namespace cert-manager',

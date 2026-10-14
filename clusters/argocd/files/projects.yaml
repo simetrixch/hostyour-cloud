@@ -81,7 +81,7 @@ spec:
     - name: __CLUSTER_NAME__
       namespace: ingress
     # cert-manager, trust-manager and the cluster's issuers (clusters/inventories/cert-manager,
-    # trust-manager, cert-manager-issuers), adopted from the addon where an inventory's runsOn admits
+    # trust-manager, cert-manager-issuers, cert-manager-account), adopted from the addon where an inventory's runsOn admits
     # the cluster.
     - name: __CLUSTER_NAME__
       namespace: cert-manager

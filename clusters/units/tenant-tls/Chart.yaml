@@ -1,5 +1,0 @@
-apiVersion: v2
-name: tenant-tls
-version: 1.0.0
-description: Named tenant TLS Secret access for the Manager before product sync.
-type: application
