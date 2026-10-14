@@ -15,7 +15,8 @@ const COMMIT = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 const RUN_URL = 'https://tekton.example.test/#/namespaces/shop-build/pipelineruns/shop-ci-abc12';
 
 // The stand-in logs its arguments, copies the header file it is given and the body, writes $ANSWER to -o and
-// prints $CODE as the HTTP code.
+// prints the HTTP code of its call: the Nth word of $CODES, the last word for every call after them (000 is
+// what curl prints when GitHub gave no answer at all). The stand-in sleep only logs how long it was asked to wait.
 const STAND_IN_CURL = `#!/usr/bin/env bash
 echo "$*" >> "$CALLS"
 out=
@@ -28,23 +29,31 @@ while [ $# -gt 0 ]; do
   esac
 done
 printf '%s' "\${ANSWER:-{}}" > "$out"
-printf '%s' "\${CODE:-201}"
+codes=(\${CODES:-201})
+n=$(wc -l < "$CALLS")
+printf '%s' "\${codes[$((n > \${#codes[@]} ? \${#codes[@]} - 1 : n - 1))]}"
+`;
+const STAND_IN_SLEEP = `#!/usr/bin/env bash
+echo "$1" >> "$SLEEPS"
 `;
 
-const execute = (env, {code, answer} = {}) => {
+const execute = (env, {codes, answer} = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'ci-commit-status-'));
   try {
-    const bin = join(dir, 'bin'), seen = join(dir, 'seen'), calls = join(dir, 'calls');
+    const bin = join(dir, 'bin'), seen = join(dir, 'seen'), calls = join(dir, 'calls'), sleeps = join(dir, 'sleeps');
     mkdirSync(bin);
     mkdirSync(seen);
-    writeFileSync(join(bin, 'curl'), STAND_IN_CURL);
-    chmodSync(join(bin, 'curl'), 0o755);
-    const result = spawnSync('bash', [SCRIPT], {encoding: 'utf8', env: {PATH: `${bin}:${process.env.PATH}`, CALLS: calls, SEEN: seen,
-      ...(code ? {CODE: String(code)} : {}), ...(answer ? {ANSWER: answer} : {}),
+    for (const [name, text] of [['curl', STAND_IN_CURL], ['sleep', STAND_IN_SLEEP]]) {
+      writeFileSync(join(bin, name), text);
+      chmodSync(join(bin, name), 0o755);
+    }
+    const result = spawnSync('bash', [SCRIPT], {encoding: 'utf8', env: {PATH: `${bin}:${process.env.PATH}`, CALLS: calls, SEEN: seen, SLEEPS: sleeps,
+      ...(codes ? {CODES: codes} : {}), ...(answer ? {ANSWER: answer} : {}),
       GITHUB_TOKEN: TOKEN, REPOSITORY_PATH: 'digitaplatform/shop', COMMIT, RUN_URL, ...env}});
     const read = (path) => (existsSync(path) ? readFileSync(path, 'utf8') : undefined);
     const body = read(join(seen, 'body.json'));
-    return {...result, calls: (read(calls) ?? '').split('\n').filter(Boolean), auth: read(join(seen, 'auth')),
+    return {...result, calls: (read(calls) ?? '').split('\n').filter(Boolean), sleeps: (read(sleeps) ?? '').split('\n').filter(Boolean),
+      auth: read(join(seen, 'auth')),
       status: result.status, posted: body === undefined ? undefined : JSON.parse(body)};
   } finally {
     rmSync(dir, {recursive: true, force: true});
@@ -91,10 +100,53 @@ test('a state that is no state of a run posts nothing and fails the task', () =>
 });
 
 test('an answer other than 201 fails the task and names the code and the message, never the token', () => {
-  const result = execute({RUN_STATE: 'Succeeded'}, {code: 403, answer: '{"message":"Resource not accessible by integration"}'});
+  const result = execute({RUN_STATE: 'Succeeded'}, {codes: '403', answer: '{"message":"Resource not accessible by integration"}'});
   assert.equal(result.status, 1);
   assert.match(result.stderr, /GitHub answered HTTP 403 to success for digitaplatform\/shop@a1b2c3d\S*: Resource not accessible by integration/);
   assert.ok(!result.stderr.includes(TOKEN));
+  assert.equal(result.calls.length, 1, 'PLANTED DEFECT: a wrong token or permission is not retried');
+});
+
+// A blip of GitHub on the pending status must not skip a ci run: the status is only a signal, the check is the
+// run. The retry is 3 tries with a short wait between them, the same count as the download retry of the Manager.
+const warningsOf = (result) => result.stderr.split('\n').filter((line) => /commit-status: warning/.test(line));
+
+test('a 5xx on the pending status that recovers on the next try sets pending, with one warning', () => {
+  const result = execute({RUN_STATE: 'running'}, {codes: '500 201', answer: '{"message":"Server Error"}'});
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.calls.length, 2, 'PLANTED DEFECT: a 5xx is no retry');
+  assert.equal(result.sleeps.length, 1, 'one wait between two tries');
+  assert.equal(warningsOf(result).length, 1);
+  assert.match(warningsOf(result)[0], /attempt 1 of 3: GitHub answered HTTP 500 to pending for digitaplatform\/shop@a1b2c3d\S*: Server Error/);
+  assert.match(result.stdout, /tekton\/ci is pending on digitaplatform\/shop@a1b2c3d/);
+  assert.ok(!result.stderr.includes(TOKEN));
+});
+
+test('no answer at all from GitHub is retried like a 5xx', () => {
+  const result = execute({RUN_STATE: 'running'}, {codes: '000 000 201'});
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.calls.length, 3, 'PLANTED DEFECT: a connection failure is no retry');
+  assert.equal(warningsOf(result).length, 2);
+});
+
+test('a 5xx on every try of the pending status lets the run go on to the check, with a warning that names the three tries', () => {
+  const result = execute({RUN_STATE: 'running'}, {codes: '500', answer: '{"message":"Server Error"}'});
+  assert.equal(result.status, 0, 'PLANTED DEFECT: one blip of GitHub skips the whole ci run: ' + result.stderr);
+  assert.equal(result.calls.length, 3, 'three tries, no more');
+  assert.equal(result.sleeps.length, 2, 'a wait between the tries, none after the last');
+  assert.ok(result.sleeps.every((seconds) => Number(seconds) <= 5), 'the wait is short: the task has 2 minutes');
+  assert.match(warningsOf(result).at(-1), /GitHub answered HTTP 500 to pending .*after 3 attempts.*the run goes on to the check/);
+  assert.ok(!result.stderr.includes(TOKEN));
+});
+
+test('the outcome is retried the same way, but a result that GitHub never got fails the task', () => {
+  const recovered = execute({RUN_STATE: 'Succeeded'}, {codes: '502 201'});
+  assert.equal(recovered.status, 0, recovered.stderr);
+  assert.equal(recovered.posted.state, 'success');
+  const lost = execute({RUN_STATE: 'Succeeded'}, {codes: '503'});
+  assert.equal(lost.status, 1, 'PLANTED DEFECT: a run whose result GitHub never got looks green');
+  assert.equal(lost.calls.length, 3);
+  assert.match(lost.stderr, /GitHub answered HTTP 503 to success .*after 3 attempts/);
 });
 
 test('a missing input fails the task before anything is posted', () => {

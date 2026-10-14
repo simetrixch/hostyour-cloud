@@ -43,12 +43,35 @@ printf 'Authorization: Bearer %s\n' "${GITHUB_TOKEN}" > "${work}/auth"
 jq -n -c --arg state "${state}" --arg url "${RUN_URL}" --arg description "${description}" \
   '{state: $state, target_url: $url, description: $description, context: "tekton/ci"}' > "${work}/status.json"
 
-code="$(curl -sS --max-time 20 -X POST -H "@${work}/auth" -H 'Accept: application/vnd.github+json' \
-  -H 'X-GitHub-Api-Version: 2022-11-28' --data-binary "@${work}/status.json" -o "${work}/answer.json" \
-  -w '%{http_code}' "https://api.github.com/repos/${REPOSITORY_PATH}/statuses/${COMMIT}" 2>"${work}/curl.err" || true)"
-if [ "${code}" != 201 ]; then
+# GitHub answering 5xx, or not at all (curl prints 000), is a blip that passes: the post is tried 3 times with a
+# wait of 2 and 4 seconds between them, which fits the 2 minutes of the task with the 20 of each try. Any other
+# answer is the answer to a request that is wrong (a 4xx is a wrong token or permission), so it fails at once. When
+# the pending still fails, the run goes on to the check with a warning, because a status is a signal and the check
+# is the run; the outcome that never reached GitHub fails the task, because it would leave the commit pending.
+tries=3
+attempt=0
+while :; do
+  attempt=$((attempt + 1))
+  rm -f "${work}/answer.json"
+  code="$(curl -sS --max-time 20 -X POST -H "@${work}/auth" -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2022-11-28' --data-binary "@${work}/status.json" -o "${work}/answer.json" \
+    -w '%{http_code}' "https://api.github.com/repos/${REPOSITORY_PATH}/statuses/${COMMIT}" 2>"${work}/curl.err" || true)"
+  [ "${code}" = 201 ] && break
   message="$(jq -r '.message // empty' "${work}/answer.json" 2>/dev/null | head -c 300 || true)"
-  echo "commit-status: GitHub answered HTTP ${code} to ${state} for ${REPOSITORY_PATH}@${COMMIT}: ${message:-$(tr '\n' ' ' < "${work}/curl.err" | head -c 300)}" >&2
-  exit 1
-fi
+  answer="GitHub answered HTTP ${code} to ${state} for ${REPOSITORY_PATH}@${COMMIT}: ${message:-$(tr '\n' ' ' < "${work}/curl.err" | head -c 300)}"
+  case "${code}" in
+    5?? | 000) ;;
+    *) echo "commit-status: ${answer}" >&2; exit 1 ;;
+  esac
+  if [ "${attempt}" -lt "${tries}" ]; then
+    echo "commit-status: warning: attempt ${attempt} of ${tries}: ${answer}" >&2
+    sleep $((attempt * 2))
+  elif [ "${state}" = pending ]; then
+    echo "commit-status: warning: ${answer}, after ${tries} attempts: the run goes on to the check without a pending status" >&2
+    exit 0
+  else
+    echo "commit-status: ${answer}, after ${tries} attempts" >&2
+    exit 1
+  fi
+done
 echo "commit-status: tekton/ci is ${state} on ${REPOSITORY_PATH}@${COMMIT}"
