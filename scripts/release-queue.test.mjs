@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync, spawnSync} from 'node:child_process';
-import {chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {execFileSync, spawn} from 'node:child_process';
+import {existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {createServer} from 'node:http';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -12,8 +13,12 @@ import {join} from 'node:path';
 const QUEUE = 'clusters/inventories/image-builder/files/release-queue.jq';
 
 let clock = 0;
-const run = (ns, tag, {pending = false, succeeded, pipeline = ns.replace(/-build$/, '-release'), behind} = {}) => ({
-  metadata: {namespace: ns, name: `${tag}-${++clock}`, creationTimestamp: `2026-10-08T05:${String(clock).padStart(2, '0')}:00Z`,
+// A release run carries image-builder.io/consumer and a publish run image-builder.io/publish, as their
+// TriggerTemplates and Pipelines give them; a run of any other pipeline carries neither.
+const labelOf = (pipeline) => (pipeline.endsWith('-release') ? {'image-builder.io/consumer': 'x'}
+  : pipeline.endsWith('-publish') ? {'image-builder.io/publish': 'x'} : {});
+const run = (ns, tag, {pending = false, succeeded, pipeline = ns.replace(/-build$/, '-release'), behind, labels = labelOf(pipeline)} = {}) => ({
+  metadata: {namespace: ns, name: `${tag}-${++clock}`, creationTimestamp: new Date(Date.UTC(2026, 9, 8, 5) + clock * 60000).toISOString().replace('.000Z', 'Z'), labels,
     ...(behind ? {annotations: {'image-builder.io/queued-behind': behind}} : {})},
   spec: {pipelineRef: {name: pipeline}, params: [{name: 'release-tag', value: tag}], ...(pending ? {status: 'PipelineRunPending'} : {})},
   status: succeeded === undefined ? {} : {conditions: [{type: 'Succeeded', status: succeeded}]},
@@ -125,7 +130,7 @@ test('planted defect: a queue that deletes by age alone, finished or not, is cau
   const dir = mkdtempSync(join(tmpdir(), 'release-queue-'));
   try {
     const byAge = join(dir, 'release-queue.jq');
-    writeFileSync(byAge, readFileSync(QUEUE, 'utf8').replace('| ([.items[] | select(isRelease) | select(isDone)]', '| ([.items[] | select(isRelease)]'));
+    writeFileSync(byAge, readFileSync(QUEUE, 'utf8').replace('| ([.items[] | select(isQueued) | select(isDone)]', '| ([.items[] | select(isQueued)]'));
     const waitingRun = run('shop-build', 'next', {pending: true});
     const items = [...finished('shop-build', 20), waitingRun];
     const changes = execFileSync('jq', ['-c', '-f', byAge], {input: JSON.stringify({items}), encoding: 'utf8'}).split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -141,46 +146,284 @@ test('ci runs are not the queue\'s to delete, and a namespace\'s ci runs do not 
   assert.deepEqual(deleted(changes), []);
 });
 
+// A publish run (clusters/inventories/consumer-build pipeline-publish.yaml) packs and pushes a release's npm
+// packages. It waits in the same queue under a key of its own, so it never builds beside a release: the memory
+// budget of the build node holds one release or one publish run at a time (ciCapacity in consumer-build).
+const publish = (ns, tag, options = {}) => run(ns, tag, {...options, pipeline: ns.replace(/-build$/, '-publish')});
+const decideWith = (program, items) => execFileSync('jq', ['-c', '-f', program], {input: JSON.stringify({items}), encoding: 'utf8'})
+  .split('\n').filter(Boolean).map((line) => JSON.parse(line));
+const planted = (from, to, items) => {
+  const dir = mkdtempSync(join(tmpdir(), 'release-queue-'));
+  try {
+    const program = join(dir, 'release-queue.jq'), text = readFileSync(QUEUE, 'utf8');
+    assert.ok(text.includes(from), `the queue carries ${from}`);
+    writeFileSync(program, text.replace(from, to));
+    return decideWith(program, items);
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+};
+
+test('a publish run waits behind a running release, its own release included, and starts alone', () => {
+  const release = run('shop-build', 'a'), own = publish('shop-build', 'a', {pending: true});
+  let changes = decide([release, own]);
+  assert.deepEqual(started(changes), [], 'the publish run of a running release does not start beside it');
+  assert.deepEqual(waiting(changes), [[own.metadata.name, 'shop-build/a']]);
+  const first = publish('post-build', 'b', {pending: true}), second = run('post-build', 'b', {pending: true});
+  changes = decide([second, first]);
+  assert.deepEqual(started(changes), [first.metadata.name], 'the older publish run starts alone');
+  assert.deepEqual(waiting(changes), [[second.metadata.name, 'post-build/b publish']], 'the release of the same tag waits for it');
+  assert.deepEqual(waiting(decide([publish('auth-build', 'c'), run('shop-build', 'd', {pending: true})])).map(([, behind]) => behind),
+    ['auth-build/c publish'], 'a running publish run holds every release back');
+});
+
+test('planted defect: a queue that keys a publish run like its release starts both at once', () => {
+  const items = [publish('post-build', 'b', {pending: true}), run('post-build', 'b', {pending: true})];
+  assert.equal(started(planted(' + (if isPublish then " publish" else "" end)', '', items)).length, 2, 'the planted queue starts both');
+  assert.equal(started(decide(items)).length, 1, 'PLANTED INNOCENT: the real queue starts one');
+});
+
+test('a namespace keeps its newest 20 finished publish runs beside its 20 releases, and a waiting or running publish run is never deleted', () => {
+  const old = finished('shop-build', 21, 'shop-publish');
+  const changes = decide([...old, ...finished('shop-build', 20), publish('shop-build', 'now'), publish('shop-build', 'next', {pending: true})]);
+  assert.deepEqual(deleted(changes), [old[0].metadata.name], 'only the oldest of 21 finished publish runs goes');
+  assert.deepEqual(deleted(decide([...finished('shop-build', 20, 'shop-publish'), publish('shop-build', 'now')])), [],
+    'PLANTED INNOCENT: 20 finished publish runs and a running one: nothing is deleted');
+});
+
+test('planted defect: a queue that counts publish and release runs together deletes releases the real one keeps', () => {
+  const items = [...finished('shop-build', 20), ...finished('shop-build', 1, 'shop-publish')];
+  assert.equal(deleted(planted('group_by([.metadata.namespace, .spec.pipelineRef.name])', 'group_by(.metadata.namespace)', items)).length, 1);
+  assert.deepEqual(deleted(decide(items)), []);
+});
+
 test('starts come before notes, so a note that cannot be written never holds a start back', () => {
   const a = run('shop-build', 'a'), b = run('post-build', 'b', {pending: true}), a2 = run('shop-build', 'a', {pending: true});
   assert.deepEqual(decide([a, b, a2]).map((c) => c.type), ['json', 'merge']);
 });
 
-test('planted defect: a patch that fails is reported, the next one still runs, and the tick fails', () => {
-  const bin = mkdtempSync(join(tmpdir(), 'release-queue-'));
+// The tick runs the kubectl on the PATH against a stand-in API server, so the requests it makes and the
+// memory it takes are kubectl's own. The server answers discovery, lists runs by label key and by page as
+// the API server does, with a continue token that holds a "+", and takes patches and deletes, refusing
+// those to a run named in refuse, as a unit whose grant has not synced yet would. The memory is the summed
+// resident size of the tick's processes, sampled while it runs; it counts a shared page once per process,
+// so it is more than the container's cgroup is charged. A tick past limitKiB is killed.
+const TICK = 'clusters/inventories/image-builder/files/release-queue.sh';
+const DISCOVERY = {
+  '/api': {kind: 'APIVersions', versions: ['v1']},
+  '/api/v1': {kind: 'APIResourceList', groupVersion: 'v1', resources: []},
+  '/apis': {kind: 'APIGroupList', apiVersion: 'v1', groups: [{name: 'tekton.dev',
+    versions: [{groupVersion: 'tekton.dev/v1', version: 'v1'}], preferredVersion: {groupVersion: 'tekton.dev/v1', version: 'v1'}}]},
+  '/apis/tekton.dev/v1': {kind: 'APIResourceList', apiVersion: 'v1', groupVersion: 'tekton.dev/v1',
+    resources: [{name: 'pipelineruns', singularName: 'pipelinerun', namespaced: true, kind: 'PipelineRun', verbs: ['get', 'list', 'patch', 'delete']}]},
+};
+const answer = (items, refuse, url, method) => {
+  if (method === 'GET' && DISCOVERY[url.pathname]) return [200, DISCOVERY[url.pathname]];
+  if (method === 'GET' && url.pathname === '/apis/tekton.dev/v1/pipelineruns') {
+    const selector = url.searchParams.get('labelSelector'), token = url.searchParams.get('continue');
+    if (token !== null && !/^page\+\d+=$/.test(token)) return [400, {kind: 'Status', code: 400, message: `bad continue token ${token}`}];
+    const listed = items.filter((r) => selector === null || Object.hasOwn(r.metadata.labels, selector));
+    const from = token === null ? 0 : Number(token.slice(5, -1)), to = from + (Number(url.searchParams.get('limit')) || listed.length);
+    return [200, {apiVersion: 'tekton.dev/v1', kind: 'PipelineRunList', metadata: to < listed.length ? {continue: `page+${to}=`} : {},
+      items: listed.slice(from, to).map((r) => ({apiVersion: 'tekton.dev/v1', kind: 'PipelineRun', ...r}))}];
+  }
+  const [, namespace, name] = /^\/apis\/tekton\.dev\/v1\/namespaces\/([^/]+)\/pipelineruns\/([^/]+)$/.exec(url.pathname) ?? [];
+  const target = items.find((r) => r.metadata.namespace === namespace && r.metadata.name === name);
+  if (!target || !['GET', 'PATCH', 'DELETE'].includes(method)) return [404, {kind: 'Status', apiVersion: 'v1', status: 'Failure', reason: 'NotFound', code: 404}];
+  if (method !== 'GET' && refuse.includes(name)) return [403, {kind: 'Status', apiVersion: 'v1', status: 'Failure', reason: 'Forbidden', code: 403, message: 'forbidden'}];
+  return [200, {apiVersion: 'tekton.dev/v1', kind: 'PipelineRun', ...target}];
+};
+const residentKiB = (pid) => {
   try {
-    const runs = join(bin, 'runs.json'), log = join(bin, 'log');
-    writeFileSync(runs, JSON.stringify({items: [run('shop-build', 'a', {pending: true}), run('post-build', 'b', {pending: true})]}));
-    // The first patch is refused, as a unit whose grant has not synced yet would be.
-    writeFileSync(join(bin, 'kubectl'), '#!/usr/bin/env bash\nif [ "$1" = get ]; then cat "$RUNS"; exit 0; fi\n'
-      + 'echo "$*" >> "$LOG"\n[ "$(wc -l < "$LOG")" -gt 1 ]\n');
-    chmodSync(join(bin, 'kubectl'), 0o755);
-    const result = spawnSync('bash', ['clusters/inventories/image-builder/files/release-queue.sh'], {encoding: 'utf8',
-      env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, QUEUE_DIR: 'clusters/inventories/image-builder/files'}});
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /could not patch shop-build\//);
-    assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 2);
-    assert.match(result.stdout, /post-build\/.* waits for release shop-build\/a/);
+    return Number(/VmRSS:\s+(\d+)/.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1] ?? 0);
+  } catch {
+    // The process ended between two reads.
+    return 0;
+  }
+};
+const processTree = (pid) => {
+  let children = [];
+  try {
+    children = readdirSync(`/proc/${pid}/task`).flatMap((task) => readFileSync(`/proc/${pid}/task/${task}/children`, 'utf8').split(' ').filter(Boolean).map(Number));
+  } catch {
+    // The process ended between two reads.
+  }
+  return [pid, ...children.flatMap(processTree)];
+};
+async function tick(items, {script = TICK, refuse = [], failLabel, limitKiB = Infinity} = {}) {
+  const requests = [];
+  const server = createServer((request, response) => {
+    let body = '';
+    request.on('data', (chunk) => { body += chunk; });
+    request.on('end', () => {
+      const url = new URL(request.url, 'http://api.invalid');
+      if (!DISCOVERY[url.pathname]) requests.push({method: request.method, url, type: request.headers['content-type'], body});
+      const [code, reply] = url.searchParams.get('labelSelector') === failLabel ? [500, {kind: 'Status', code: 500, message: 'the server timed out'}]
+        : answer(items, refuse, url, request.method);
+      response.writeHead(code, {'content-type': 'application/json'});
+      response.end(JSON.stringify(reply));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const home = mkdtempSync(join(tmpdir(), 'release-queue-'));
+  try {
+    writeFileSync(join(home, 'kubeconfig'), JSON.stringify({apiVersion: 'v1', kind: 'Config', 'current-context': 'standin',
+      clusters: [{name: 'standin', cluster: {server: `http://127.0.0.1:${server.address().port}`}}],
+      contexts: [{name: 'standin', context: {cluster: 'standin', user: 'standin'}}], users: [{name: 'standin', user: {}}]}));
+    const child = spawn('bash', [script], {detached: true,
+      env: {...process.env, KUBECONFIG: join(home, 'kubeconfig'), HOME: home, QUEUE_DIR: 'clusters/inventories/image-builder/files'}});
+    let stdout = '', stderr = '', peakKiB = 0, killed = false;
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const sampler = setInterval(() => {
+      peakKiB = Math.max(peakKiB, processTree(child.pid).reduce((sum, pid) => sum + residentKiB(pid), 0));
+      if (peakKiB > limitKiB && !killed) {
+        killed = true;
+        process.kill(-child.pid, 'SIGKILL');
+      }
+    }, 2);
+    const status = await new Promise((resolve) => child.on('close', resolve));
+    clearInterval(sampler);
+    const lines = (text) => text.split('\n').filter(Boolean);
+    return {status, stdout: lines(stdout), stderr, peakKiB, requests,
+      lists: requests.filter((r) => r.method === 'GET' && r.url.pathname.endsWith('/pipelineruns'))
+        .map((r) => ({path: r.url.pathname, ...Object.fromEntries(r.url.searchParams)})),
+      writes: requests.filter((r) => r.method !== 'GET')};
   } finally {
-    rmSync(bin, {recursive: true, force: true});
+    server.close();
+    rmSync(home, {recursive: true, force: true});
+  }
+}
+const planTick = (from, to) => {
+  const text = readFileSync(TICK, 'utf8');
+  assert.ok(text.includes(from), `the tick carries ${from}`);
+  const dir = mkdtempSync(join(tmpdir(), 'release-queue-'));
+  writeFileSync(join(dir, 'release-queue.sh'), text.replace(from, to));
+  return {script: join(dir, 'release-queue.sh'), done: () => rmSync(dir, {recursive: true, force: true})};
+};
+// The listing as the tick had it before it paged: every PipelineRun of the cluster, decoded by kubectl at once.
+const unboundedTick = () => planTick(
+  `{ list_pipelineruns image-builder.io/consumer "$queue_run" && list_pipelineruns image-builder.io/publish "$queue_run"; } \\\n  | jq -cs '{items: .}' | jq -c -f "\${QUEUE_DIR}/release-queue.jq"`,
+  'kubectl get pipelineruns -A -o json | jq -c -f "${QUEUE_DIR}/release-queue.jq"');
+
+// A run as the API server returns it: the resolved pipeline in status.pipelineSpec (about 31 KB of a 35 KB
+// run on the master), the pipeline label Tekton sets and conditions the decision never reads.
+const pipelineSpec = {tasks: Array.from({length: 40}, (_, i) => ({name: `task-${i}`, taskSpec: {steps: [{name: 'run', image: 'alpine/k8s:1.35.6', script: 'x'.repeat(700)}]}}))};
+const asServed = (r) => ({...r,
+  metadata: {...r.metadata, uid: `uid-${r.metadata.name}`, labels: {...r.metadata.labels, 'tekton.dev/pipeline': r.spec.pipelineRef.name}},
+  spec: {...r.spec, params: [...r.spec.params, {name: 'revision', value: 'a'.repeat(40)}]},
+  status: {...r.status, pipelineSpec, conditions: [...(r.status.conditions ?? []).map((c) => ({...c, reason: 'Done'})), {type: 'Ready', status: 'True'}]}});
+// 17 build namespaces, each keeping 20 finished release, publish and ci runs, with one release run past
+// the twenty, one release that runs, its publish run and another release waiting, and a waiting run
+// elsewhere whose pipeline ends in -release: 1025 runs, 684 of them the queue's.
+const steadyState = () => {
+  const units = Array.from({length: 17}, (_, i) => `unit${i}-build`);
+  return [
+    ...units.flatMap((ns) => [...finished(ns, 20), ...finished(ns, 20, ns.replace(/-build$/, '-publish')), ...finished(ns, 20, ns.replace(/-build$/, '-ci'))]),
+    ...finished(units[0], 1), run(units[1], 'a'), publish(units[1], 'a', {pending: true}), run(units[2], 'b', {pending: true}),
+    run('tools', 'x', {pending: true, pipeline: 'tools-release', labels: {}}),
+  ].map(asServed);
+};
+const queuesRun = (r) => Object.hasOwn(r.metadata.labels, 'image-builder.io/consumer') || Object.hasOwn(r.metadata.labels, 'image-builder.io/publish');
+const cronLimitKiB = () => {
+  const cron = renderChart('image-builder').find((d) => d.kind === 'CronJob' && d.metadata.name === 'release-queue');
+  const [, amount, unit] = /^(\d+)(Ki|Mi|Gi)$/.exec(cron.spec.jobTemplate.spec.template.spec.containers[0].resources.limits.memory);
+  return Number(amount) * {Ki: 1, Mi: 1024, Gi: 1024 * 1024}[unit];
+};
+
+test('the tick lists the queue\'s runs by their two labels, 50 a page, within its memory limit, and decides as the full runs decide', async () => {
+  const items = steadyState(), limitKiB = cronLimitKiB();
+  assert.equal(limitKiB, 128 * 1024);
+  assert.deepEqual([items.length, items.filter(queuesRun).length], [1025, 684]);
+  const expected = decide(items.filter(queuesRun));
+  assert.deepEqual([...new Set(expected.map((c) => c.verb ?? c.type))].sort(), ['delete', 'merge']);
+  const result = await tick(items, {limitKiB});
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.peakKiB > 0 && result.peakKiB <= limitKiB, `the tick took ${result.peakKiB} KiB of ${limitKiB}`);
+  // The cut runs drop nothing the decision reads: the same changes come out, in the same order, and the
+  // run elsewhere is neither started nor noted.
+  assert.deepEqual(result.stdout, expected.map((c) => c.say));
+  assert.equal(result.writes.length, expected.length);
+  assert.ok(result.writes.every((w) => w.url.pathname.includes('/namespaces/unit')), 'the run elsewhere is not touched');
+  const pages = (label) => Math.ceil(items.filter((r) => Object.hasOwn(r.metadata.labels, label)).length / 50);
+  assert.deepEqual(result.lists, ['image-builder.io/consumer', 'image-builder.io/publish'].flatMap((label) =>
+    Array.from({length: pages(label)}, (_, page) => ({path: '/apis/tekton.dev/v1/pipelineruns', labelSelector: label, limit: '50',
+      ...(page ? {continue: `page+${page * 50}=`} : {})}))));
+});
+
+test('planted defect: a tick that lists every run unbounded goes past the memory limit and lists runs that are not the queue\'s', async () => {
+  const items = steadyState(), limitKiB = cronLimitKiB(), planted = unboundedTick();
+  try {
+    const result = await tick(items, {script: planted.script, limitKiB});
+    assert.ok(result.peakKiB > limitKiB, `the unbounded tick took ${result.peakKiB} KiB, within ${limitKiB}`);
+    assert.notEqual(result.status, 0, 'the unbounded tick is killed at the limit');
+    assert.ok(result.lists.some((list) => !['image-builder.io/consumer', 'image-builder.io/publish'].includes(list.labelSelector) || list.limit !== '50'),
+      'the unbounded tick lists without a label selector and a page of 50');
+  } finally {
+    planted.done();
   }
 });
 
-test('the tick deletes the run the decision names, in its namespace, without waiting for its pods', () => {
-  const bin = mkdtempSync(join(tmpdir(), 'release-queue-'));
+test('planted defect: a tick that lists every run starts a waiting run elsewhere whose pipeline ends in -release', async () => {
+  const items = [run('tools', 'x', {pending: true, pipeline: 'tools-release', labels: {}}), run('shop-build', 'a', {pending: true})];
+  const planted = unboundedTick();
   try {
-    const runs = join(bin, 'runs.json'), log = join(bin, 'log'), old = finished('shop-build', 21);
-    writeFileSync(runs, JSON.stringify({items: old}));
-    writeFileSync(join(bin, 'kubectl'), '#!/usr/bin/env bash\nif [ "$1" = get ]; then cat "$RUNS"; exit 0; fi\necho "$*" >> "$LOG"\n');
-    chmodSync(join(bin, 'kubectl'), 0o755);
-    const result = spawnSync('bash', ['clusters/inventories/image-builder/files/release-queue.sh'], {encoding: 'utf8',
-      env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, QUEUE_DIR: 'clusters/inventories/image-builder/files'}});
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(readFileSync(log, 'utf8').trim(), `delete pipelinerun -n shop-build ${old[0].metadata.name} --ignore-not-found --wait=false`);
-    assert.match(result.stdout, new RegExp(`deleted shop-build/${old[0].metadata.name}`));
+    const wrong = await tick(items, {script: planted.script});
+    assert.equal(wrong.status, 0, wrong.stderr);
+    assert.match(wrong.stdout[0], /^started tools\/x-\d+ /, 'the unbounded tick starts the run elsewhere');
+    const right = await tick(items);
+    assert.deepEqual(right.stdout.map((line) => line.replace(/-\d+ /, ' ')), ['started shop-build/a (release shop-build/a)'],
+      'PLANTED INNOCENT: the real tick starts the release and leaves the run elsewhere alone');
   } finally {
-    rmSync(bin, {recursive: true, force: true});
+    planted.done();
   }
+});
+
+test('planted defect: a tick that lists only the release label never starts a publish run', async () => {
+  const items = [publish('shop-build', 'a', {pending: true})];
+  const planted = planTick(' && list_pipelineruns image-builder.io/publish "$queue_run"', '');
+  try {
+    const wrong = await tick(items, {script: planted.script});
+    assert.deepEqual([wrong.status, wrong.stdout], [0, []]);
+    const right = await tick(items);
+    assert.equal(right.status, 0, right.stderr);
+    assert.deepEqual(right.writes.map((w) => [w.method, w.url.pathname, w.type, JSON.parse(w.body)]),
+      [['PATCH', `/apis/tekton.dev/v1/namespaces/shop-build/pipelineruns/${items[0].metadata.name}`, 'application/json-patch+json', [{op: 'remove', path: '/spec/status'}]]]);
+  } finally {
+    planted.done();
+  }
+});
+
+test('planted defect: a patch that fails is reported, the next one still runs, and the tick fails', async () => {
+  const a = run('shop-build', 'a', {pending: true}), b = run('post-build', 'b', {pending: true});
+  const result = await tick([a, b], {refuse: [a.metadata.name]});
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /could not patch shop-build\//);
+  assert.deepEqual(result.writes.map((w) => w.url.pathname.split('/').at(-1)), [a.metadata.name, b.metadata.name]);
+  assert.match(result.stdout.join('\n'), /post-build\/.* waits for release shop-build\/a/);
+});
+
+test('a list that fails fails the tick, and nothing is changed on part of the runs', async () => {
+  const items = [run('shop-build', 'a'), publish('post-build', 'b', {pending: true})];
+  const result = await tick(items, {failLabel: 'image-builder.io/consumer'});
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /InternalError/);
+  assert.deepEqual(result.writes, [], 'the publish run is not started beside a release the tick did not see');
+  const planted = planTick('"$queue_run" && list_pipelineruns image-builder.io/publish', '"$queue_run" || true; list_pipelineruns image-builder.io/publish');
+  try {
+    const wrong = await tick(items, {script: planted.script, failLabel: 'image-builder.io/consumer'});
+    assert.match(wrong.stdout.join('\n'), /^started post-build\//, 'the planted tick starts the publish run on part of the runs');
+  } finally {
+    planted.done();
+  }
+});
+
+test('the tick deletes the run the decision names, in its namespace, without waiting for its pods', async () => {
+  const old = finished('shop-build', 21);
+  const result = await tick(old);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.writes.map((w) => [w.method, w.url.pathname]), [['DELETE', `/apis/tekton.dev/v1/namespaces/shop-build/pipelineruns/${old[0].metadata.name}`]]);
+  assert.match(result.stdout.join('\n'), new RegExp(`deleted shop-build/${old[0].metadata.name}`));
 });
 
 // The admission policy's clause for the queue, evaluated on planted requests by scripts/vap-eval,
@@ -203,12 +446,14 @@ const asks = (operation, username, object, oldObject) => ({object, oldObject, re
 const startedRun = changed((r) => delete r.spec.status);
 const asCi = (r) => { r.spec.pipelineRef.name = 'shop-ci'; r.spec.taskRunTemplate.podTemplate.priorityClassName = 'image-builder-ci'; };
 const waitingCiRun = changed(asCi);
+const asPublish = (r) => { r.spec.pipelineRef.name = 'shop-publish'; r.metadata.labels = {'image-builder.io/publish': 'shop'}; };
 const startedCiRun = changed((r) => { asCi(r); delete r.spec.status; });
 const ADMITTED = {
   'the EventListener creates a waiting run': asks('CREATE', 'system:serviceaccount:image-builder:eventlistener-sa', waitingRun(), null),
   'the queue starts a waiting run': asks('UPDATE', QUEUE_SA, startedRun, waitingRun()),
   'the queue notes what a run waits for, beside other annotations': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; }), waitingRun()),
   'the queue starts a run and drops its note': asks('UPDATE', QUEUE_SA, startedRun, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; })),
+  'the queue starts a waiting publish run': asks('UPDATE', QUEUE_SA, changed((r) => { asPublish(r); delete r.spec.status; }), changed(asPublish)),
   'the Tekton controller updates a started run': asks('UPDATE', 'system:serviceaccount:tekton:tekton-controller', changed((r) => { delete r.spec.status; r.metadata.labels['tekton.dev/pipeline'] = 'shop-release'; }), startedRun),
 };
 const DENIED = {
@@ -225,7 +470,7 @@ const DENIED = {
   'the queue removes another annotation': asks('UPDATE', QUEUE_SA, changed((r) => { delete r.metadata.annotations; }), waitingRun()),
   'the queue changes the finalizers': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.finalizers = []; }), waitingRun()),
 };
-const QUEUE_MESSAGE = 'the release queue may only start a waiting release run or note what it waits for.';
+const QUEUE_MESSAGE = 'the release queue may only start a waiting release or publish run or note what it waits for.';
 
 test('the admission policy lets the queue start a waiting run or note what it waits for, and nothing else', () => {
   const policy = guard();
@@ -246,16 +491,19 @@ const DASHBOARD = 'system:serviceaccount:tekton-pipelines:tekton-dashboard';
 const withStatus = (status, edit = () => {}) => changed((r) => { delete r.spec.status; r.status = status; edit(r); });
 const succeeded = (status, edit) => withStatus({conditions: [{type: 'Succeeded', status}]}, edit);
 const deletes = (username, oldObject) => asks('DELETE', username, null, oldObject);
-const QUEUE_DELETE_MESSAGE = 'the release queue may only delete a finished release run of its own namespace.';
+const QUEUE_DELETE_MESSAGE = 'the release queue may only delete a finished release or publish run of its own namespace.';
 const DELETE_ADMITTED = {
   'the queue deletes a release run that succeeded': deletes(QUEUE_SA, succeeded('True')),
   'the queue deletes a release run that failed': deletes(QUEUE_SA, succeeded('False')),
+  'the queue deletes a publish run that succeeded': deletes(QUEUE_SA, succeeded('True', asPublish)),
   'the Tekton Dashboard deletes a running release run': deletes(DASHBOARD, succeeded('Unknown')),
   'a user deletes a waiting release run': deletes('owner@example.com', waitingRun()),
   'a user deletes a run that breaks every other clause': deletes('owner@example.com', {metadata: {name: 'x', namespace: 'shop-build'}, spec: {}}),
 };
 const DELETE_DENIED = {
   'the queue deletes a running release run': deletes(QUEUE_SA, succeeded('Unknown')),
+  'the queue deletes a running publish run': deletes(QUEUE_SA, succeeded('Unknown', asPublish)),
+  'the queue deletes a finished run of another unit\'s publish pipeline': deletes(QUEUE_SA, succeeded('True', (r) => { asPublish(r); r.spec.pipelineRef.name = 'post-publish'; })),
   'the queue deletes a pending release run': deletes(QUEUE_SA, waitingRun()),
   'the queue deletes a release run with an empty status': deletes(QUEUE_SA, withStatus({})),
   'the queue deletes a release run with another condition only': deletes(QUEUE_SA, withStatus({conditions: [{type: 'Ready', status: 'True'}]})),
@@ -264,7 +512,7 @@ const DELETE_DENIED = {
   'the queue deletes a finished run without a pipeline': deletes(QUEUE_SA, succeeded('True', (r) => { delete r.spec.pipelineRef; })),
 };
 
-test('the admission policy sees a delete, and lets the queue delete a finished release run of its own namespace and no other run', () => {
+test('the admission policy sees a delete, and lets the queue delete a finished release or publish run of its own namespace and no other run', () => {
   const policy = guard();
   assert.ok(policy.spec.matchConstraints.resourceRules.every((rule) => rule.operations.includes('DELETE')));
   const verdicts = evaluate(policy, [...Object.values(DELETE_ADMITTED), ...Object.values(DELETE_DENIED)]);

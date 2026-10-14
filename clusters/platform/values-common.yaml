@@ -274,7 +274,10 @@ global:
   # needs it reads the SAME literal through the shared $values chain:
   #   - clusters/inventories/image-builder github-deploy-request Trigger CEL
   #     (^refs/tags/deploy/(dev|test|prod)/<filter>$),
-  #   - clusters/inventories/consumer-build pipeline-release gate-stage re-verify.
+  #   - clusters/inventories/image-builder github-release-publish Trigger CEL
+  #     (^refs/tags/<filter>$),
+  #   - clusters/inventories/consumer-build pipeline-release gate-stage re-verify,
+  #   - clusters/inventories/consumer-build pipeline-publish gate.
   # It is the INNER pattern only (no ^/$ anchors) so it composes as above (CEL)
   # and as `^<filter>$` (shell / release.ts source).
   # The major and the minor reject leading zeros (a lone 0 excepted); the third

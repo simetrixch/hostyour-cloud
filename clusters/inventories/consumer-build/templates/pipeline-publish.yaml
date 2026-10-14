@@ -1,0 +1,686 @@
+{{- /*
+The unit's publish pipeline `<unit>-publish` — ONE generic pipeline, rendered
+per unit from this template beside `<unit>-ci`, also for a unit that builds
+nothing. A push of a release tag runs it at that tag and publishes the
+repository's npm packages to this build plane's registry:
+
+  gate → clone@tag → scan → reviewed → pack → push.
+
+The run is created by the github-release-publish Trigger
+(clusters/inventories/image-builder), waiting, and the release queue starts it
+under a key of its own, `<unit>-build/<release-tag> publish`: it never runs
+beside a release, because the memory of the build node holds the build pods of
+one release or the pack pod of one publish run (ciCapacity in values-common.yaml).
+Neither this Pipeline nor its runs carry image-builder.io/consumer, the label the
+Manager's release watch selects, because Tekton copies a Pipeline's labels onto
+its runs.
+
+WHAT IS PUBLISHED, read at the tag by `scan`:
+  - a tag whose tree holds npm-seed/ is the one-time seed: the .tgz files in it
+    are published as they are, and nothing else. Every one needs its line in
+    npm-seed/pins.tsv (`<name>@<version>`, the lockfile integrity, the sha256 of
+    the .tgz and the lockfiles that pin it, tab separated), its sha256 must be
+    that line's, its package.json must be that name and version, and it may hold
+    no .npmrc, no .env* file, no link and no gitleaks finding. The proof of each
+    file against the pnpm store is made where the store is, by the seed's own
+    script beside it; here the bytes are proven to be the bytes its review read.
+  - otherwise every tracked package.json that is not private and names
+    publishConfig.registry; that registry must be https://<registry>/v2/npm/, so
+    a package that still names another registry fails the run. A repository with
+    neither publishes nothing, and the run ends after the scan.
+
+ONLY THE DEFAULT BRANCH IS PUBLISHED: `reviewed` fetches the default branch of
+origin and passes a release commit that is on it, or one that differs from the
+last commit it shares with it in nothing but the stamped version fields of
+manifests (the stamp of a release minted with --from, which stands on no branch).
+
+THE VERSION IS THE TAG'S: `pack` writes, in its workspace only, the version of
+the release tag over the first "version" of every tracked package.json, in the
+form the release kit's release.sh stamps (0.3.001 is 0.3.1, a channel other than
+stable is the prerelease part), before `pnpm pack` writes the workspace: ranges
+from those versions. Nothing is committed, and on a tag the kit stamped it
+changes nothing. A tarball that declares another version fails the run.
+
+THE PUSH. Each tarball is one manifest in npm/<owner>/<name>:<version>: an empty
+config, one layer that is the .tgz, and the annotations
+org.opencontainers.image.revision (the tag's commit), .source (the repoURL) and
+.version. The tarball URL a lockfile names is
+https://<registry>/v2/npm/<owner>/<name>/blobs/sha256:<hex>. Every tarball is
+held against the registry before anything is pushed: a version that stands with
+the same layer is reused, one that stands with another layer refuses the run and
+nothing of it is pushed, and a scope other than the repository's owner is
+refused. Every tarball is read back by its tag and by its digest, and logged as
+one line: `publish: <name>@<version> <blob URL> sha256:<hex> published|reused`.
+The registry keeps every tag under npm/** (clusters/inventories/registry
+values-common.yaml, retention).
+
+The trust split:
+
+  PINNED LITERALS: repoURL, the registry host, the owner, the images, the tag
+  grammar.
+
+  RUN INPUTS (from the push webhook, proven in-pipeline): git-url is compared
+  fail-closed against the pinned repoURL, and release-tag must match the tag
+  grammar, before anything is cloned.
+
+THE REPOSITORY'S OWN CODE RUNS IN `pack` (pnpm install, build, pack), which holds
+the packages reader build-npmrc and nothing else. build-git-https is held by the
+clone and by the one step of `reviewed` that fetches the default branch, which
+runs git alone; the push identity image-builder-registry-push is held by `push`
+alone, which runs no code of the repository and reads the packed tarballs and
+never the clone. The run's one volume holds the clone in its subPath repository
+and the tarballs in its subPath packed.
+*/ -}}
+{{- if .Values.unit }}
+{{- $unit := include "consumer-build.unitName" . -}}
+{{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
+{{- $registry := include "common.registryHost" . -}}
+{{- /* The npm scope is the owner of the repository; a scope is written in lower case. */ -}}
+{{- $owner := include "consumer-build.repoOwner" . | lower -}}
+{{- $releaseTagRe := printf "^%s$" (required "consumer-build: global.releaseTagFilter is required (platform values chain)" .Values.global.releaseTagFilter) -}}
+{{- /* The images of the ci pipeline: git for the gate and the fetch, bash, jq and git for the scan, the decision
+       and the push, Node 24 with pnpm for the pack, and the gitleaks of the shared credential-scan Task. */ -}}
+{{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
+{{- $toolsImage := "alpine/k8s:1.35.6@sha256:b7a12c5ddf261994c33d2eaaa06fd69a0803ff6b38683bfa3d30a76dcdf92807" -}}
+{{- $nodeImage := "ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3" -}}
+{{- $gitleaksImage := "zricethezav/gitleaks:v8.21.2@sha256:0e99e8821643ea5b235718642b93bb32486af9c8162c8b8731f7cbdc951a7f46" -}}
+{{- $published := "[\"seed\", \"source\"]" -}}
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: {{ printf "%s-publish" $unit }}
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/component: publish-pipeline
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    image-builder.io/publish: {{ $unit | quote }}
+spec:
+  description: >-
+    Publishes the npm packages of one release tag, or the one-time seed in
+    npm-seed/, to npm/<owner>/<name>:<version> in this build plane's registry.
+  params:
+    - name: release-tag
+      type: string
+      description: The pushed release tag, matched against the tag grammar.
+    - name: git-url
+      type: string
+      description: The webhook's claim of the repository, compared against the registered repoURL.
+  workspaces:
+    - name: source
+      description: The clone of the repository in subPath repository, and the packed tarballs in subPath packed.
+  tasks:
+    # ── 1. gate — the repo claim and the tag, BEFORE any clone ───────────────
+    - name: gate
+      params:
+        - { name: release-tag, value: "$(params.release-tag)" }
+        - { name: git-url, value: "$(params.git-url)" }
+      taskSpec:
+        params:
+          - name: release-tag
+            type: string
+          - name: git-url
+            type: string
+        steps:
+          - name: gate
+            image: {{ $gitImage }}
+            env:
+              - name: REPO_URL
+                value: {{ $repoURL | quote }}
+              - name: RELEASE_TAG_RE
+                value: {{ $releaseTagRe | quote }}
+              # Run inputs travel as environment variables, never as text of the script.
+              - name: GIT_URL
+                value: "$(params.git-url)"
+              - name: RELEASE_TAG
+                value: "$(params.release-tag)"
+            script: |
+              #!/usr/bin/env sh
+              set -eu
+              if [ "${GIT_URL}" != "${REPO_URL}" ]; then
+                echo "gate: REJECT — webhook repo '${GIT_URL}' is not the registered repoURL '${REPO_URL}'" >&2
+                exit 1
+              fi
+              if ! printf '%s' "${RELEASE_TAG}" | grep -Eq "${RELEASE_TAG_RE}"; then
+                echo "gate: REJECT — release-tag '${RELEASE_TAG}' does not match ${RELEASE_TAG_RE}" >&2
+                exit 1
+              fi
+              echo "gate: ok — ${REPO_URL} at ${RELEASE_TAG}"
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
+
+    # ── 2. clone — the release tag, from the PINNED repoURL ─────────────────
+    - name: clone
+      runAfter: [gate]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: git-clone }
+          - { name: namespace, value: image-builder }
+      params:
+        - { name: url, value: {{ $repoURL | quote }} }
+        - { name: revision, value: "refs/tags/$(params.release-tag)" }
+        # Full history: reviewed asks whether the commit is on the default branch.
+        - { name: depth, value: "0" }
+        - { name: credentials-secret, value: build-git-https }
+      workspaces:
+        - { name: source, workspace: source, subPath: repository }
+
+    # ── 3. scan — what this tag publishes, before any tool is set up ────────
+    - name: scan
+      runAfter: [clone]
+      workspaces:
+        - { name: source, workspace: source, subPath: repository }
+        - { name: packed, workspace: source, subPath: packed }
+      taskSpec:
+        workspaces:
+          - name: source
+          - name: packed
+        results:
+          - name: mode
+            description: seed (npm-seed/ stands at the tag), source (packages to pack) or none.
+        steps:
+          - name: scan
+            image: {{ $toolsImage }}
+            workingDir: /workspace/source
+            env:
+              - name: NPM_REGISTRY
+                value: {{ printf "https://%s/v2/npm/" $registry | quote }}
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              scan_packages() { # <list it writes, "<folder>\t<name>" per package> — sets MODE to seed, source or none
+                local file name registry
+                : > "$1"
+                if [ -e npm-seed ]; then
+                  MODE=seed
+                  echo "scan: npm-seed/ stands at this tag - its tarballs are published as they are, and nothing else"
+                  return 0
+                fi
+                while IFS= read -r file; do
+                  jq -e '(.private // false) == false and (.publishConfig.registry // "") != ""' "${file}" >/dev/null 2>&1 || continue
+                  name="$(jq -r .name "${file}")"
+                  registry="$(jq -r .publishConfig.registry "${file}")"
+                  if [ "${registry}" != "${NPM_REGISTRY}" ]; then
+                    echo "scan: ${name} (${file}) names publishConfig.registry ${registry}, and packages are published to ${NPM_REGISTRY} only" >&2
+                    return 1
+                  fi
+                  printf '%s\t%s\n' "$(dirname "${file}")" "${name}" >> "$1"
+                  echo "scan: publishable ${name} (${file})"
+                done < <(git -c core.quotePath=false ls-files -- package.json '*/package.json')
+                if [ -s "$1" ]; then
+                  MODE=source
+                else
+                  MODE=none
+                  echo "scan: no package.json here is publishable (not private, with publishConfig.registry) - nothing to publish"
+                fi
+              }
+              MODE=none
+              scan_packages /workspace/packed/publishable.tsv
+              printf '%s' "${MODE}" > "$(results.mode.path)"
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
+
+    # ── 4. reviewed — only a commit of the default branch is published ──────
+    - name: reviewed
+      runAfter: [scan]
+      when:
+        - input: "$(tasks.scan.results.mode)"
+          operator: in
+          values: {{ $published }}
+      workspaces:
+        - { name: source, workspace: source, subPath: repository }
+      taskSpec:
+        workspaces:
+          - name: source
+        steps:
+          # git alone, with the clone credential, in a store of its own /tmp.
+          - name: fetch-default
+            image: {{ $gitImage }}
+            workingDir: /workspace/source
+            envFrom:
+              - secretRef:
+                  name: build-git-https
+            script: |
+              #!/usr/bin/env sh
+              set -eu
+              printf '%s\n' "${GITCREDENTIALS}" > /tmp/git-credentials
+              chmod 600 /tmp/git-credentials
+              export HOME=/tmp
+              git config --global credential.helper "store --file=/tmp/git-credentials"
+              git fetch -q origin '+HEAD:refs/publish/default'
+              echo "reviewed: the default branch of origin is at $(git rev-parse --short=7 refs/publish/default)"
+            computeResources:
+              requests: { cpu: 50m, memory: 128Mi }
+              limits: { cpu: 500m, memory: 256Mi }
+          - name: decide
+            image: {{ $toolsImage }}
+            workingDir: /workspace/source
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              # True when every change from the last commit HEAD shares with the default branch is a stamped
+              # version: a manifest that stands on both sides and equals its base as JSON once the fields the
+              # release kit's stamp writes are deleted (the top-level version of a package.json, the version of
+              # the root and of the workspace members of a package-lock.json).
+              stamp_only() { # <the default branch>
+                local base changed status path unstamped before after
+                base="$(git merge-base HEAD "$1")" || return 1
+                changed="$(git -c core.quotePath=false diff --no-renames --name-status "${base}" HEAD)" || return 1
+                [ -n "${changed}" ] || return 0
+                while IFS=$'\t' read -r status path; do
+                  [ "${status}" = M ] || return 1
+                  case "${path}" in
+                    package.json|*/package.json) unstamped='del(.version)' ;;
+                    package-lock.json|*/package-lock.json) unstamped='del(.version) | if .packages then .packages |= with_entries(if (.key | test("(^|/)node_modules/")) then . else .value |= del(.version) end) else . end' ;;
+                    *) return 1 ;;
+                  esac
+                  before="$(git show "${base}:${path}" | jq -S "${unstamped}")" || return 1
+                  after="$(git show "HEAD:${path}" | jq -S "${unstamped}")" || return 1
+                  [ "${before}" = "${after}" ] || return 1
+                done <<< "${changed}"
+              }
+              reviewed_commit() { # <the default branch, fetched>
+                local commit
+                commit="$(git rev-parse --short=7 HEAD)"
+                if git merge-base --is-ancestor HEAD "$1"; then
+                  echo "reviewed: the release commit ${commit} is on the default branch"
+                elif stamp_only "$1"; then
+                  echo "reviewed: the release commit ${commit} differs from the default branch in stamped versions only"
+                else
+                  echo "reviewed: REFUSE — the release commit ${commit} is not on the default branch of origin and changes more than stamped versions, so nothing of it is published" >&2
+                  return 1
+                fi
+              }
+              reviewed_commit refs/publish/default
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
+
+    # ── 5. pack — the seed checked, or the packages built and packed ────────
+    - name: pack
+      runAfter: [reviewed]
+      when:
+        - input: "$(tasks.scan.results.mode)"
+          operator: in
+          values: {{ $published }}
+      params:
+        - { name: mode, value: "$(tasks.scan.results.mode)" }
+        - { name: release-tag, value: "$(params.release-tag)" }
+      workspaces:
+        - { name: source, workspace: source, subPath: repository }
+        - { name: packed, workspace: source, subPath: packed }
+      taskSpec:
+        params:
+          - name: mode
+            type: string
+          - name: release-tag
+            type: string
+        workspaces:
+          - name: source
+          - name: packed
+        volumes:
+          # The unit's authenticated .npmrc, mounted as the ci check mounts it.
+          - name: npmrc
+            secret:
+              secretName: build-npmrc
+              optional: true
+          - name: pnpm-store
+            emptyDir: {}
+          # The seed tarballs, unpacked for gitleaks.
+          - name: scratch
+            emptyDir: {}
+        steps:
+          - name: prepare
+            image: {{ $nodeImage }}
+            workingDir: /workspace/source
+            securityContext:
+              runAsUser: 0
+              allowPrivilegeEscalation: false
+            env:
+              - name: MODE
+                value: "$(params.mode)"
+              - name: RELEASE_TAG
+                value: "$(params.release-tag)"
+              - name: NPM_CONFIG_USERCONFIG
+                value: /npmrc/.npmrc
+              - name: pnpm_config_store_dir
+                value: /pnpm-store
+              - name: COREPACK_ENABLE_DOWNLOAD_PROMPT
+                value: "0"
+            volumeMounts:
+              - name: npmrc
+                mountPath: /npmrc
+                readOnly: true
+              - name: pnpm-store
+                mountPath: /pnpm-store
+              - name: scratch
+                mountPath: /scratch
+            # The install and build of the ci check, without its test suites: its limits.
+            computeResources:
+              requests: { cpu: "1", memory: 2Gi }
+              limits: { cpu: "4", memory: 3Gi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              # Every .tgz of npm-seed/ against its line of pins.tsv; the checked ones go to the push as they are.
+              seed_check() { # <folder the checked tarballs go to> <folder each is unpacked into for gitleaks>
+                local dest="$1" unpacked="$2" line name_at integrity hex pinned base file got entry meta count=0 listed=" "
+                if [ ! -f npm-seed/pins.tsv ]; then
+                  echo "seed: REFUSE — npm-seed/ holds no pins.tsv, so no tarball in it is proven" >&2
+                  return 1
+                fi
+                while IFS= read -r line || [ -n "${line}" ]; do
+                  [ -n "${line}" ] || continue
+                  IFS=$'\t' read -r name_at integrity hex pinned <<< "${line}"
+                  base=""
+                  if [[ "${name_at}" =~ ^@([a-z0-9][a-z0-9._-]*)/([a-z0-9][a-z0-9._-]*)@([0-9A-Za-z.+-]+)$ ]]; then
+                    base="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}.tgz"
+                  fi
+                  if [ -z "${base}" ] || [[ "${integrity}" != sha512-* ]] || ! [[ "${hex}" =~ ^[0-9a-f]{64}$ ]] || [ -z "${pinned}" ]; then
+                    echo "seed: REFUSE — '${line}' is no line of pins.tsv: <name>@<version>, the lockfile integrity, the sha256 of the .tgz and the lockfiles that pin it, tab separated" >&2
+                    return 1
+                  fi
+                  case "${listed}" in *" ${base} "*) echo "seed: REFUSE — pins.tsv lists ${name_at} twice" >&2; return 1 ;; esac
+                  file="npm-seed/${base}"
+                  if [ ! -f "${file}" ]; then
+                    echo "seed: REFUSE — pins.tsv lists ${name_at}, and npm-seed/ holds no ${base}" >&2
+                    return 1
+                  fi
+                  got="$(sha256sum "${file}" | cut -d' ' -f1)"
+                  if [ "${got}" != "${hex}" ]; then
+                    echo "seed: REFUSE — ${base} has the sha256 ${got}, and its line in pins.tsv names ${hex}" >&2
+                    return 1
+                  fi
+                  entry="$(tar -tvzf "${file}" | cut -c1 | grep -v '^[-d]$' | head -n 1)" || true
+                  if [ -n "${entry}" ]; then
+                    echo "seed: REFUSE — ${base} holds an entry that is neither a file nor a folder" >&2
+                    return 1
+                  fi
+                  entry="$(tar -tzf "${file}" | grep -E '(^|/)(\.npmrc|\.env[^/]*)$' | head -n 1)" || true
+                  if [ -n "${entry}" ]; then
+                    echo "seed: REFUSE — ${base} holds ${entry}, and a published package carries no .npmrc or .env file" >&2
+                    return 1
+                  fi
+                  entry="$(tar -tzf "${file}" | grep -Ev '^package(/|$)' | head -n 1)" || true
+                  [ -n "${entry}" ] || entry="$(tar -tzf "${file}" | grep -E '(^|/)\.\.(/|$)' | head -n 1)" || true
+                  if [ -n "${entry}" ]; then
+                    echo "seed: REFUSE — ${base} holds ${entry}, outside package/" >&2
+                    return 1
+                  fi
+                  meta="$(tar -xzOf "${file}" package/package.json | node -e 'const m = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(m.name + "@" + m.version)')" || meta=""
+                  if [ "${meta}" != "${name_at}" ]; then
+                    echo "seed: REFUSE — ${base} is ${meta:-no package}, and its line in pins.tsv names ${name_at}" >&2
+                    return 1
+                  fi
+                  mkdir -p "${unpacked}/${base}" && tar -xzf "${file}" -C "${unpacked}/${base}" && cp "${file}" "${dest}/${base}" || return 1
+                  listed="${listed}${base} "
+                  count=$((count + 1))
+                done < npm-seed/pins.tsv
+                for file in npm-seed/*; do
+                  base="${file##*/}"
+                  [ "${base}" != pins.tsv ] || continue
+                  case "${listed}" in *" ${base} "*) ;; *) echo "seed: REFUSE — npm-seed/${base} has no line in npm-seed/pins.tsv" >&2; return 1 ;; esac
+                done
+                if [ "${count}" = 0 ]; then
+                  echo "seed: REFUSE — npm-seed/pins.tsv lists no tarball" >&2
+                  return 1
+                fi
+                echo "seed: ${count} tarballs match their lines in npm-seed/pins.tsv"
+              }
+              # The version the release kit's release.sh stamps for a tag x.y.z-<channel>-<stamp>.
+              release_version() { # <release tag>
+                local core="${1%%-*}" channel="${1#*-}" version
+                channel="${channel%%-*}"
+                version="${core%.*}.$((10#${core##*.}))"
+                [ "${channel}" = stable ] || version="${version}-${channel}"
+                printf '%s' "${version}"
+              }
+              # The first "version" line of every tracked package.json, as the kit's stamp writes it.
+              stamp_versions() { # <version>
+                git -c core.quotePath=false ls-files -z -- package.json '*/package.json' | VERSION="$1" node -e '
+                  const fs = require("fs");
+                  for (const file of fs.readFileSync(0, "utf8").split("\0").filter(Boolean)) {
+                    const text = fs.readFileSync(file, "utf8");
+                    const stamped = text.replace(/^([ \t]*)"version":[ \t]*"[^"]*"/m, (_, indent) => indent + "\"version\": \"" + process.env.VERSION + "\"");
+                    if (stamped !== text) { fs.writeFileSync(file, stamped); console.log("pack: " + file + " declares " + process.env.VERSION); }
+                  }'
+              }
+              # A package outside the pnpm workspace is one no filter selects, so it would be published unbuilt.
+              build_packages() { # <list of the packages to publish>
+                local members dir name filters=()
+                pnpm install --frozen-lockfile || return 1
+                members="$(pnpm ls -r --depth -1 --json | node -e 'for (const p of JSON.parse(require("fs").readFileSync(0, "utf8"))) console.log(p.path)')" || return 1
+                while IFS=$'\t' read -r dir name; do
+                  if ! printf '%s\n' "${members}" | grep -qxF "$(cd "${dir}" && pwd)"; then
+                    echo "pack: ${name} (${dir}) is no package of this pnpm workspace, so nothing here builds it - list its folder in pnpm-workspace.yaml" >&2
+                    return 1
+                  fi
+                  filters+=(--filter "${name}...")
+                done < "$1"
+                pnpm "${filters[@]}" run --if-present build
+              }
+              pack_packages() { # <list> <folder the tarballs go to> <the version each package declares>
+                local dir name out packed tarballs
+                while IFS=$'\t' read -r dir name; do
+                  out="$(mktemp -d)" || return 1
+                  if ! (cd "${dir}" && pnpm pack --pack-destination "${out}" >/dev/null); then
+                    echo "pack: ${name} (${dir}) could not be packed" >&2
+                    return 1
+                  fi
+                  tarballs=("${out}"/*.tgz)
+                  if [ "${#tarballs[@]}" != 1 ] || [ ! -f "${tarballs[0]}" ]; then
+                    echo "pack: ${name} (${dir}) packed into no single tarball" >&2
+                    return 1
+                  fi
+                  packed="$(tar -xzOf "${tarballs[0]}" package/package.json | node -e 'const m = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(m.name + "@" + m.version)')" || packed=""
+                  if [ "${packed}" != "${name}@$3" ]; then
+                    echo "pack: REFUSE — ${dir} packed as ${packed:-nothing readable}, and this release publishes ${name}@$3" >&2
+                    return 1
+                  fi
+                  mv "${tarballs[0]}" "$2/" && rmdir "${out}" || return 1
+                  echo "pack: ${packed} -> ${tarballs[0]##*/}"
+                done < "$1"
+              }
+              case "${MODE}" in
+                seed)
+                  mkdir -p /scratch/unpacked
+                  seed_check /workspace/packed /scratch/unpacked ;;
+                source)
+                  VERSION="$(release_version "${RELEASE_TAG}")"
+                  # pnpm 11.7.0, as the ci check; a package.json that names packageManager overrides it.
+                  corepack enable
+                  corepack prepare pnpm@11.7.0 --activate
+                  stamp_versions "${VERSION}"
+                  build_packages /workspace/packed/publishable.tsv
+                  pack_packages /workspace/packed/publishable.tsv /workspace/packed "${VERSION}" ;;
+                *)
+                  echo "pack: the scan named '${MODE}', which is neither seed nor source" >&2
+                  exit 1 ;;
+              esac
+          - name: leaks
+            image: {{ $gitleaksImage }}
+            env:
+              - name: MODE
+                value: "$(params.mode)"
+            volumeMounts:
+              - name: scratch
+                mountPath: /scratch
+            script: |
+              #!/bin/sh
+              set -eu
+              seed_leaks() { # <folder the seed tarballs are unpacked in>
+                gitleaks detect --source "$1" --no-git --no-banner --redact --exit-code 1
+              }
+              if [ "${MODE}" = seed ]; then
+                seed_leaks /scratch/unpacked
+              else
+                echo "leaks: no seed at this tag, nothing unpacked to scan"
+              fi
+            computeResources:
+              requests: { cpu: 100m, memory: 128Mi }
+              limits: { cpu: 500m, memory: 512Mi }
+
+    # ── 6. push — the tarballs, by the push identity, and read back ─────────
+    - name: push
+      runAfter: [pack]
+      when:
+        - input: "$(tasks.scan.results.mode)"
+          operator: in
+          values: {{ $published }}
+      params:
+        - { name: commit, value: "$(tasks.clone.results.commit)" }
+      workspaces:
+        - { name: packed, workspace: source, subPath: packed }
+      taskSpec:
+        params:
+          - name: commit
+            type: string
+        workspaces:
+          - name: packed
+            readOnly: true
+        steps:
+          - name: push
+            image: {{ $toolsImage }}
+            envFrom:
+              - secretRef:
+                  name: image-builder-registry-push
+            env:
+              - name: REGISTRY
+                value: {{ $registry | quote }}
+              - name: OWNER
+                value: {{ $owner | quote }}
+              - name: REPO_URL
+                value: {{ $repoURL | quote }}
+              - name: COMMIT
+                value: "$(params.commit)"
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              # One bounded call to the registry, the URL last: the HTTP status, or a failure that names curl's exit.
+              registry_call() { # <body file> <curl arguments...>
+                local out="$1" code rc=0
+                shift
+                code="$(curl -sS --connect-timeout 10 --max-time 600 -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" -o "${out}" -w '%{http_code}' "$@")" || rc=$?
+                if [ "${rc}" != 0 ]; then
+                  echo "publish: FAIL — curl exited ${rc} on ${*: -1} (28 is the 600s ceiling, reached when the registry is still fetching from an upstream)" >&2
+                  return 1
+                fi
+                printf '%s' "${code}"
+              }
+              push_blob() { # <repository URL> <file> <digest> <scratch folder>: the blob stands in the repository afterwards
+                local base="$1" file="$2" digest="$3" tmp="$4" code location
+                code="$(registry_call /dev/null -I "${base}/blobs/${digest}")" || return 1
+                [ "${code}" != 200 ] || return 0
+                code="$(registry_call /dev/null -D "${tmp}/headers" -X POST "${base}/blobs/uploads/")" || return 1
+                if [ "${code}" != 202 ]; then
+                  echo "publish: FAIL — ${base}/blobs/uploads/ answered ${code} to the start of an upload" >&2
+                  return 1
+                fi
+                location="$(tr -d '\r' < "${tmp}/headers" | awk 'tolower($1) == "location:" { print $2 }' | tail -n 1)"
+                case "${location}" in
+                  /*) location="https://${REGISTRY}${location}" ;;
+                  https://*) ;;
+                  *) echo "publish: FAIL — the upload to ${base} named no location to put ${digest}" >&2; return 1 ;;
+                esac
+                case "${location}" in *\?*) location="${location}&digest=${digest}" ;; *) location="${location}?digest=${digest}" ;; esac
+                code="$(registry_call /dev/null -X PUT -H 'Content-Type: application/octet-stream' --data-binary "@${file}" "${location}")" || return 1
+                if [ "${code}" != 201 ]; then
+                  echo "publish: FAIL — the blob ${digest} was answered ${code} at ${base}" >&2
+                  return 1
+                fi
+              }
+              npm_push() { # <folder of the packed tarballs> <scratch folder>
+                local dir="$1" tmp="$2" tgz name version pkg hex repo base code held state entry seen=" "
+                local accept='application/vnd.oci.image.manifest.v1+json'
+                local empty_digest='sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'
+                local tarballs=() plan=()
+                mkdir -p "${tmp}" || return 1
+                for tgz in "${dir}"/*.tgz; do
+                  [ ! -f "${tgz}" ] || tarballs+=("${tgz}")
+                done
+                if [ "${#tarballs[@]}" = 0 ]; then
+                  echo "publish: FAIL — ${dir} holds no tarball, though the scan found something to publish" >&2
+                  return 1
+                fi
+                # 1. Every tarball is named, scoped and held against the registry before anything is pushed, so a
+                #    refused one leaves the registry as it was.
+                for tgz in "${tarballs[@]}"; do
+                  name="$(tar -xzOf "${tgz}" package/package.json | jq -r '.name // ""')" || name=""
+                  version="$(tar -xzOf "${tgz}" package/package.json | jq -r '.version // ""')" || version=""
+                  case "${name}" in
+                    "@${OWNER}/"*) pkg="${name#"@${OWNER}/"}" ;;
+                    *) echo "publish: REFUSE — ${name:-${tgz##*/}} is not of the scope @${OWNER}, the owner of ${REPO_URL}" >&2; return 1 ;;
+                  esac
+                  if ! [[ "${pkg}" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]]; then
+                    echo "publish: REFUSE — ${name} is no name a registry repository can carry" >&2
+                    return 1
+                  fi
+                  if ! [[ "${version}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]]; then
+                    echo "publish: REFUSE — the version ${version} of ${name} is no tag of the registry" >&2
+                    return 1
+                  fi
+                  case "${seen}" in *" ${name}@${version} "*) echo "publish: REFUSE — ${name}@${version} was packed twice" >&2; return 1 ;; esac
+                  seen="${seen}${name}@${version} "
+                  hex="$(sha256sum "${tgz}" | cut -d' ' -f1)"
+                  repo="npm/${OWNER}/${pkg}"
+                  code="$(registry_call "${tmp}/manifest.json" -H "Accept: ${accept}" "https://${REGISTRY}/v2/${repo}/manifests/${version}")" || return 1
+                  case "${code}" in
+                    404) state=published ;;
+                    200)
+                      held="$(jq -r 'if (.layers | length) == 1 then .layers[0].digest else "" end' "${tmp}/manifest.json" 2>/dev/null)" || held=""
+                      if [ "${held}" != "sha256:${hex}" ]; then
+                        echo "publish: REFUSE — ${name}@${version} stands in ${REGISTRY}/${repo} with other content (${held:-not one layer}), and this tarball is sha256:${hex}. A published version is never replaced: release another version." >&2
+                        return 1
+                      fi
+                      state=reused ;;
+                    *)
+                      echo "publish: FAIL — https://${REGISTRY}/v2/${repo}/manifests/${version} answered ${code}; whether ${name}@${version} is published is unknown" >&2
+                      return 1 ;;
+                  esac
+                  plan+=("${tgz}"$'\t'"${name}"$'\t'"${version}"$'\t'"${repo}"$'\t'"${hex}"$'\t'"${state}")
+                done
+                # 2. What is absent is pushed, then every tarball is read back by its tag and by its digest.
+                printf '{}' > "${tmp}/empty.json"
+                for entry in "${plan[@]}"; do
+                  IFS=$'\t' read -r tgz name version repo hex state <<< "${entry}"
+                  base="https://${REGISTRY}/v2/${repo}"
+                  if [ "${state}" = published ]; then
+                    push_blob "${base}" "${tgz}" "sha256:${hex}" "${tmp}" || return 1
+                    push_blob "${base}" "${tmp}/empty.json" "${empty_digest}" "${tmp}" || return 1
+                    jq -n --arg digest "sha256:${hex}" --argjson size "$(wc -c < "${tgz}")" --arg title "${tgz##*/}" \
+                      --arg empty "${empty_digest}" --arg revision "${COMMIT}" --arg source "${REPO_URL}" --arg version "${version}" \
+                      '{schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json", artifactType: "application/vnd.npm.package.v1.tar+gzip",
+                        config: {mediaType: "application/vnd.oci.empty.v1+json", digest: $empty, size: 2},
+                        layers: [{mediaType: "application/vnd.oci.image.layer.v1.tar+gzip", digest: $digest, size: $size,
+                          annotations: {"org.opencontainers.image.title": $title}}],
+                        annotations: {"org.opencontainers.image.revision": $revision, "org.opencontainers.image.source": $source,
+                          "org.opencontainers.image.version": $version}}' > "${tmp}/manifest.json" || return 1
+                    code="$(registry_call /dev/null -X PUT -H "Content-Type: ${accept}" --data-binary "@${tmp}/manifest.json" "${base}/manifests/${version}")" || return 1
+                    if [ "${code}" != 201 ]; then
+                      echo "publish: FAIL — the manifest of ${name}@${version} was answered ${code}" >&2
+                      return 1
+                    fi
+                  fi
+                  code="$(registry_call "${tmp}/manifest.json" -H "Accept: ${accept}" "${base}/manifests/${version}")" || return 1
+                  held="$(jq -r 'if (.layers | length) == 1 then .layers[0].digest else "" end' "${tmp}/manifest.json" 2>/dev/null)" || held=""
+                  if [ "${code}" != 200 ] || [ "${held}" != "sha256:${hex}" ]; then
+                    echo "publish: FAIL — ${name}@${version} reads back as ${code} with ${held:-not one layer}, not sha256:${hex}" >&2
+                    return 1
+                  fi
+                  code="$(registry_call "${tmp}/blob" "${base}/blobs/sha256:${hex}")" || return 1
+                  if [ "${code}" != 200 ] || [ "$(sha256sum "${tmp}/blob" | cut -d' ' -f1)" != "${hex}" ]; then
+                    echo "publish: FAIL — the blob of ${name}@${version} reads back as ${code} with other bytes than sha256:${hex}" >&2
+                    return 1
+                  fi
+                  echo "publish: ${name}@${version} ${base}/blobs/sha256:${hex} sha256:${hex} ${state}"
+                done
+              }
+              npm_push /workspace/packed /tmp/publish
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 500m, memory: 256Mi }
+{{- end }}

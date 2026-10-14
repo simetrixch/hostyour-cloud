@@ -13,7 +13,7 @@ test('no Tekton test resources are rendered and production readers remain', () =
     d.metadata.name.includes('test-reporter') || d.metadata.name.includes('test-pruner') ||
     (d.kind === 'Task' && d.metadata.name.startsWith('test-')) || d.metadata.name.endsWith('-test-push')));
   assert.deepEqual(builder.find(d => d.kind === 'EventListener').spec.triggers,
-    [{triggerRef: 'github-deploy-request'}, {triggerRef: 'github-ci-push'}]);
+    [{triggerRef: 'github-deploy-request'}, {triggerRef: 'github-ci-push'}, {triggerRef: 'github-release-publish'}]);
   const guard = builder.find(d => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
   assert.ok(!JSON.stringify(guard).includes('op3-input'));
   const fanout = renderChart('consumer-build').find(d => d.kind === 'ApplicationSet');
@@ -29,7 +29,8 @@ test('no Tekton test resources are rendered and production readers remain', () =
       assert.ok(!docs.some(d => d.kind === 'PipelineRun' || (d.kind === 'Pipeline' && d.metadata.name.endsWith('-tests'))));
       assert.ok(!docs.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa').imagePullSecrets);
       const readers = docs.filter(d => d.kind === 'ExternalSecret');
-      if (builds.length === 0) assert.deepEqual(readers.map(d => d.metadata.name).sort(), ['build-git-https', 'build-issues-read', 'build-npmrc'], record.name + ' holds the credentials of its ci check and no push or bump credential');
+      if (builds.length === 0) assert.deepEqual(readers.map(d => d.metadata.name).sort(), ['build-git-https', 'build-issues-read', 'build-npmrc', 'image-builder-registry-push'],
+        record.name + ' holds the credentials of its ci check and of its publish push, and no pull or bump credential');
       else {
         const pull = readers.find(d => d.metadata.name === 'image-builder-registry-pull-opaque');
         assert.equal(pull.spec.target.name, pull.metadata.name);
@@ -108,12 +109,13 @@ const evaluate = (policy, requests) => execFileSync('go', ['run', '.'], {cwd: 's
 const renderUnit = (name, builds = ['app']) => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name,
   repoURL: `https://github.com/check/${name}.git`, buildsJson: JSON.stringify(builds)})]);
 const imageBuilder = () => renderChart('image-builder');
-// What the ci-push TriggerTemplate creates, with the trigger's parameters filled in.
-const createdCiRun = (docs) => JSON.parse(JSON.stringify(docs.find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push').spec.resourcetemplates[0])
+// What a TriggerTemplate creates, with the trigger's parameters filled in.
+const createdRun = (docs, template) => JSON.parse(JSON.stringify(docs.find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === template).spec.resourcetemplates[0])
   .replaceAll('$(tt.params.unit)', 'shop').replace(/\$\(tt\.params\.[a-z-]+\)/g, 'x'));
+const createdCiRun = (docs) => createdRun(docs, 'ci-push');
 const guardOf = (docs) => docs.find((d) => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
 
-const OWNERSHIP = 'a build namespace runs only its own release, ci and image Pipelines.';
+const OWNERSHIP = 'a build namespace runs only its own release, ci, image and publish Pipelines.';
 const EVENT_LISTENER = 'system:serviceaccount:image-builder:eventlistener-sa';
 const RELEASE_CLASS = 'image-builder-release', CI_CLASS = 'image-builder-ci', REPORT_CLASS = 'image-builder-ci-report';
 const classOf = (pipeline) => (pipeline.endsWith('-ci') ? CI_CLASS : RELEASE_CLASS);
@@ -123,10 +125,10 @@ const createsRun = (namespace, pipeline, podTemplate = {priorityClassName: class
     workspaces: [{name: 'source', volumeClaimTemplate: {spec: {accessModes: ['ReadWriteOnce']}}}]}},
   oldObject: null, request: {operation: 'CREATE', namespace, userInfo: {username: EVENT_LISTENER}}});
 
-test('the admission policy admits the release, the ci and the image pipeline of a unit in its own build namespace, and nothing else', () => {
+test('the admission policy admits the release, the ci, the image and the publish pipeline of a unit in its own build namespace, and nothing else', () => {
   const policy = guardOf(imageBuilder());
-  const ADMITTED = ['shop-release', 'shop-ci', 'shop-image'];
-  const DENIED = ['post-ci', 'post-release', 'post-image', 'shop-image-extra', 'shop-ci-extra', 'shop-tests', 'shop', 'ci', 'release', 'image'];
+  const ADMITTED = ['shop-release', 'shop-ci', 'shop-image', 'shop-publish'];
+  const DENIED = ['post-ci', 'post-release', 'post-image', 'post-publish', 'shop-image-extra', 'shop-ci-extra', 'shop-publish-extra', 'shop-tests', 'shop', 'ci', 'release', 'image', 'publish'];
   const verdicts = evaluate(policy, [...ADMITTED, ...DENIED].map((name) => createsRun('shop-build', name))).map((v) => v.denied);
   ADMITTED.forEach((name, i) => assert.deepEqual(verdicts[i], [], `PLANTED INNOCENT: ${name} in shop-build`));
   DENIED.forEach((name, i) => assert.deepEqual(verdicts[ADMITTED.length + i], [OWNERSHIP], `PLANTED DEFECT: ${name} in shop-build`));
@@ -194,18 +196,42 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a branch push of an owner that is not listed': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: demo},
     'a deploy tag push of a customer repository': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: customer},
     'a deploy tag push of an owner that is not listed': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: demo},
+    'a release tag push': {ref: `refs/tags/${tag}`, after: SHA, deleted: false, repository},
+    'a release tag push of a customer repository': {ref: `refs/tags/${tag}`, after: SHA, deleted: false, repository: customer},
+    'a release tag deletion': {ref: `refs/tags/${tag}`, after: '0'.repeat(40), deleted: true, repository},
+    'a release tag with a suffix': {ref: `refs/tags/${tag}-x`, after: SHA, deleted: false, repository},
+    'a branch named like a release tag': {ref: `refs/heads/${tag}`, after: SHA, deleted: false, repository},
   };
   // GitHub sends `before` with every push; a deletion carries the deleted commit there.
   const BEFORE = 'b'.repeat(40);
   for (const push of Object.values(pushes)) push.before = BEFORE;
   const bodies = Object.values(pushes);
-  const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies);
-  const verdicts = {ci: [true, true, false, false, false, false, true, false, false, false, false, false, false, false, false],
-    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true]};
+  const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies), publish = matches('github-release-publish', bodies);
+  const verdicts = {ci: [true, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, true],
+    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false],
+    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false]};
   Object.keys(pushes).forEach((name, i) => {
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
+    assert.equal(publish[i].matched, verdicts.publish[i], `${name} on the publish trigger`);
   });
+  assert.deepEqual(publish[15].overlays, {unit: 'shop', 'release-tag': tag, 'git-url': repository.clone_url});
+  // PLANTED DEFECT: a publish filter without the deletion guard, and one without its end anchor.
+  assert.ok(matches('github-release-publish', [pushes['a release tag deletion']], (filter) => filter.replace(/ &&\s+!\(has\(body\.deleted\).*$/s, ''))[0].matched);
+  assert.ok(matches('github-release-publish', [pushes['a release tag with a suffix']], (filter) => filter.replace("$')", "')"))[0].matched);
+  // The publish run waits in the release queue under a key of its own, and carries no consumer label: the
+  // Manager's release watch selects release runs by it.
+  const publishRun = byKind('TriggerTemplate', 'release-publish').spec.resourcetemplates[0];
+  assert.equal(publishRun.metadata.generateName, '$(tt.params.unit)-publish-');
+  assert.equal(publishRun.metadata.namespace, '$(tt.params.unit)-build');
+  assert.equal(publishRun.spec.pipelineRef.name, '$(tt.params.unit)-publish');
+  assert.equal(publishRun.spec.status, 'PipelineRunPending', 'a publish run waits for the release queue');
+  assert.deepEqual(publishRun.metadata.labels, {'image-builder.io/publish': '$(tt.params.unit)'});
+  assert.equal(publishRun.spec.taskRunTemplate.podTemplate.priorityClassName, RELEASE_CLASS);
+  assert.equal(publishRun.spec.taskRunSpecs, undefined, 'a publish run carries no per-task override');
+  assert.deepEqual(byKind('TriggerBinding', 'github-release-publish-binding').spec.params.map((p) => p.name), ['unit', 'release-tag', 'git-url']);
+  assert.deepEqual(evaluate(guardOf(builder), [{object: createdRun(builder, 'release-publish'), oldObject: null,
+    request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: EVENT_LISTENER}}}])[0].denied, [], 'PLANTED INNOCENT: the publish run is admitted');
   assert.deepEqual(ci[0].overlays, {unit: 'shop', branch: 'feature/x', commit: SHA, before: BEFORE, 'git-url': repository.clone_url});
   // The commit before the push travels from the webhook to the run's parameter, and the check reads that parameter.
   assert.equal(byKind('TriggerBinding', 'github-ci-push-binding').spec.params.find((p) => p.name === 'before')?.value, '$(extensions.before)');
@@ -289,6 +315,56 @@ test('the ci check holds a GITHUB_TOKEN that reads the issues of its own reposit
   const holdsIssuesToken = (tasks) => tasks.filter((t) => JSON.stringify(t).includes('build-issues-read')).map((t) => t.name);
   assert.deepEqual([holdsIssuesToken(pipeline.spec.tasks), holdsIssuesToken(pipeline.spec.finally)], [['check'], []]);
   assert.equal(reader(docs).spec.refreshPolicy, 'OnChange', 'the Manager rewrites the token in Vault and asks for the Secret again, as for build-git-https');
+});
+
+// The publish pipeline packs the npm packages of a release tag and pushes them to the registry. It runs the repository's
+// own code (install, build, pack), so the push credential is in the one task that runs none, and that task never
+// sees the repository: it reads the packed tarballs alone.
+test('the publish pipeline of every unit holds the push credential in its push task only, and is no release', () => {
+  for (const builds of [[], ['app']]) {
+    const docs = renderUnit('shop', builds);
+    const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish');
+    assert.ok(pipeline, `a unit with ${builds.length} builds renders its publish pipeline`);
+    const task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
+    assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'clone', 'scan', 'reviewed', 'pack', 'push']);
+    // Tekton copies a Pipeline's labels onto its runs: a consumer label would make the Manager watch it as a release.
+    assert.deepEqual(pipeline.metadata.labels['image-builder.io/publish'], 'shop');
+    assert.equal(pipeline.metadata.labels['image-builder.io/consumer'], undefined);
+    assert.equal(pipeline.metadata.labels['image-builder.io/ci'], undefined);
+    const holding = (p, needle) => p.spec.tasks.filter((t) => JSON.stringify(t).includes(needle)).map((t) => t.name);
+    assert.deepEqual(holding(pipeline, 'image-builder-registry-push'), ['push']);
+    assert.deepEqual(holding(pipeline, 'build-git-https'), ['clone', 'reviewed']);
+    assert.deepEqual(holding(pipeline, 'build-npmrc'), ['pack']);
+    assert.ok(!JSON.stringify(pipeline).includes('bump') && !JSON.stringify(pipeline).includes('registry-pull'), 'no bump and no pull credential');
+    assert.deepEqual(task('reviewed').taskSpec.steps.filter((s) => JSON.stringify(s.envFrom ?? []).includes('build-git-https')).map((s) => s.name),
+      ['fetch-default'], 'only the step that fetches the default branch holds the clone credential, and it runs only git');
+    assert.ok(task('pack').taskSpec.steps.every((s) => s.envFrom === undefined), 'the steps that run the repository\'s code hold no secret as environment');
+    assert.deepEqual(task('pack').taskSpec.volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
+    assert.deepEqual(task('push').taskSpec.steps.map((s) => s.envFrom), [[{secretRef: {name: 'image-builder-registry-push'}}]]);
+    assert.deepEqual(task('push').workspaces, [{name: 'packed', workspace: 'source', subPath: 'packed'}], 'the push reads the packed tarballs and never the repository');
+    assert.equal(task('push').taskSpec.workspaces[0].readOnly, true);
+    for (const name of ['reviewed', 'pack', 'push']) {
+      assert.deepEqual(task(name).when, [{input: '$(tasks.scan.results.mode)', operator: 'in', values: ['seed', 'source']}], `${name} runs only where the scan found something to publish`);
+    }
+    assert.equal(task('clone').params.find((p) => p.name === 'revision').value, 'refs/tags/$(params.release-tag)', 'the clone is the pushed release tag');
+    const env = (name, key) => task(name).taskSpec.steps.flatMap((s) => s.env ?? []).find((e) => e.name === key)?.value;
+    assert.equal(env('scan', 'NPM_REGISTRY'), `https://${env('push', 'REGISTRY')}/v2/npm/`, 'a package names this registry\'s npm prefix');
+    assert.equal(env('push', 'OWNER'), 'check', 'the scope a unit publishes is the owner of its repository');
+    assert.equal(env('push', 'REPO_URL'), 'https://github.com/check/shop.git');
+    assert.equal(env('gate', 'REPO_URL'), 'https://github.com/check/shop.git');
+    const cloneTask = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'git-clone');
+    for (const t of pipeline.spec.tasks) {
+      for (const step of (t.taskSpec ?? cloneTask.spec).steps) {
+        for (const side of ['requests', 'limits']) assert.ok(step.computeResources?.[side]?.cpu && step.computeResources?.[side]?.memory, `${t.name}/${step.name} has ${side}`);
+      }
+    }
+    // PLANTED DEFECT: the push credential beside the repository's code.
+    const planted = structuredClone(pipeline);
+    planted.spec.tasks.find((t) => t.name === 'pack').taskSpec.steps[0].envFrom = [{secretRef: {name: 'image-builder-registry-push'}}];
+    assert.notDeepEqual(holding(planted, 'image-builder-registry-push'), ['push']);
+  }
+  const push = renderUnit('shop', []).find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'image-builder-registry-push');
+  assert.deepEqual(push.spec.data.map((d) => d.remoteRef.property), ['push-user', 'push-password']);
 });
 
 // The by-hand image pipeline builds what an operator names in the run. What keeps that from overwriting
@@ -436,14 +512,14 @@ test('list-sources passes only plain repository names with full commits, and a r
 // A unit that builds nothing ("CI only", `builds: []` in its registration) still gets a ci check on every
 // push, and gets no release pipeline and no credential that writes: the namespace runs repository code.
 const CI_PARTS = [['Pipeline', 'shop-ci'], ['ResourceQuota', 'ci-pods'], ['ExternalSecret', 'build-git-https'], ['ExternalSecret', 'build-issues-read'], ['ExternalSecret', 'build-npmrc'],
-  ['Role', 'ci-report-read'], ['Role', 'ci-run-keeper-pipelineruns']];
+  ['Role', 'ci-report-read'], ['Role', 'ci-run-keeper-pipelineruns'], ['Pipeline', 'shop-publish'], ['ExternalSecret', 'image-builder-registry-push']];
 const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['Pipeline', 'shop-image'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'bump-git-https']];
 const holds = (docs, parts) => parts.map(([kind, name]) => docs.some((d) => d.kind === kind && d.metadata.name === name));
 const isCiOnly = (docs) => holds(docs, CI_PARTS).every(Boolean) && !holds(docs, RELEASE_PARTS).some(Boolean);
 
-test('a unit that builds nothing renders the ci check and no release, registry or bump part', () => {
+test('a unit that builds nothing renders the ci check and the publish pipeline, and no release, registry pull or bump part', () => {
   const ciOnly = renderUnit('shop', []);
-  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, packages reader, issues reader and the ci grants render; release pipeline, registry secret and bump secret do not');
+  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, packages reader, issues reader, the ci grants, the publish pipeline and its push credential render; release pipeline, pull secret and bump secret do not');
   const withBuilds = renderUnit('shop');
   assert.deepEqual(holds(withBuilds, [...CI_PARTS, ...RELEASE_PARTS]), Array(CI_PARTS.length + RELEASE_PARTS.length).fill(true), 'PLANTED INNOCENT: a unit with builds renders both pipelines and every credential as before');
   assert.ok(!isCiOnly(withBuilds), 'a unit with builds is not a ci-only unit');
@@ -526,18 +602,20 @@ const podLimit = (task, cloneTask) => (task.taskSpec ?? cloneTask.spec).steps
   .reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0);
 // The limits of the ci pods of the runs that run at once (one at a time per run, because the tasks form a chain,
 // and the finally task commit-status runs after them in the same class), the report pod of each of those runs (its
-// class is the one the quota does not count, so it comes on top), plus the build pods of the one release that runs.
-// The ci run keeper holds the number of running runs at maxRunning.
-const fitsFreeMemory = (capacity, pipeline, cloneTask, release, buildahTask) => {
+// class is the one the quota does not count, so it comes on top), plus the build pods of the one release that runs,
+// or the one pod of the one publish run, whichever is more: the release queue runs one or the other (its tasks form a
+// chain). The ci run keeper holds the number of running runs at maxRunning.
+const fitsFreeMemory = (capacity, pipeline, cloneTask, release, buildahTask, publish) => {
   const largest = (tasks) => Math.max(0, ...tasks.map((task) => podLimit(task, cloneTask)));
   const isReport = (task) => task.name === 'report-failure';
   const ciPods = capacity.maxRunning * largest([...pipeline.spec.tasks, ...pipeline.spec.finally.filter((t) => !isReport(t))]);
   const reportPods = capacity.maxRunning * largest(pipeline.spec.finally.filter(isReport));
   const buildPods = release.spec.tasks.filter((task) => task.name.startsWith('build-') && task.runAfter?.includes('scan')).length;
-  return ciPods + reportPods + buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask) <= quantity(capacity.limitsMemoryBudget);
+  const queued = Math.max(buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask), largest(publish.spec.tasks));
+  return ciPods + reportPods + queued <= quantity(capacity.limitsMemoryBudget);
 };
 
-test('the memory limits of all ci pods and one release together fit the free memory of the build node', () => {
+test('the memory limits of all ci pods and one release or publish run together fit the free memory of the build node', () => {
   const capacity = {...JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'})),
     maxRunning: Number(execFileSync('yq', ['.ciRunKeeper.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}))};
   const images = (count) => Array.from({length: count}, (_, i) => `image-${i + 1}`);
@@ -546,6 +624,8 @@ test('the memory limits of all ci pods and one release together fit the free mem
   const release = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
   const cloneTask = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'git-clone');
   const buildah = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'buildah-build-push');
+  const publish = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish');
+  assert.ok(publish.spec.tasks.every((t, i) => i === 0 || t.runAfter?.length === 1 && t.runAfter[0] === publish.spec.tasks[i - 1].name), 'the budget counts one publish pod, so its tasks run one after the other');
   assert.equal(String(capacity.podsPerUnit), docs.find((d) => d.kind === 'ResourceQuota').spec.hard.pods, 'the quota renders the declared pods per unit');
   assert.ok(pipeline.spec.tasks.every((t, i) => i === 0 || t.runAfter?.length === 1 && t.runAfter[0] === pipeline.spec.tasks[i - 1].name), 'the budget counts one ci pod per running run, so the tasks run one after the other');
   assert.equal(release.spec.tasks.filter((t) => t.name.startsWith('build-') && t.runAfter?.includes('scan')).length, capacity.releaseBuildPods, 'every image of the release builds in parallel after the scan');
@@ -553,19 +633,22 @@ test('the memory limits of all ci pods and one release together fit the free mem
   assert.ok(admitsNextTask(capacity.podsPerUnit), 'the quota admits the pod of the next task while the finished pod before it still counts, and no more');
   assert.ok(!admitsNextTask(1), 'PLANTED DEFECT: one pod per unit refuses the next task until the finished pod is gone, and Tekton tries it again a minute later');
   assert.ok(!admitsNextTask(3), 'PLANTED DEFECT: a third pod has no task of a chain to run, and the memory budget counts one live ci pod per run');
-  assert.ok(fitsFreeMemory(capacity, pipeline, cloneTask, release, buildah), 'PLANTED INNOCENT: the limits as they stand fit');
+  assert.ok(fitsFreeMemory(capacity, pipeline, cloneTask, release, buildah, publish), 'PLANTED INNOCENT: the limits as they stand fit');
   const planted = structuredClone(pipeline);
   planted.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].computeResources.limits.memory = '4Gi';
-  assert.ok(!fitsFreeMemory(capacity, planted, cloneTask, release, buildah), 'PLANTED DEFECT: a 4Gi limit on the check step is caught');
-  assert.ok(!fitsFreeMemory({...capacity, maxRunning: 14}, pipeline, cloneTask, release, buildah), 'PLANTED DEFECT: 14 runs at once, one per unit of 14 units and so no cap, is caught');
+  assert.ok(!fitsFreeMemory(capacity, planted, cloneTask, release, buildah, publish), 'PLANTED DEFECT: a 4Gi limit on the check step is caught');
+  assert.ok(!fitsFreeMemory({...capacity, maxRunning: 14}, pipeline, cloneTask, release, buildah, publish), 'PLANTED DEFECT: 14 runs at once, one per unit of 14 units and so no cap, is caught');
   const fourImages = renderUnit('shop', images(capacity.releaseBuildPods + 1)).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
-  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, fourImages, buildah), 'PLANTED DEFECT: a fourth image built in parallel is caught');
+  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, fourImages, buildah, publish), 'PLANTED DEFECT: a fourth image built in parallel is caught');
   const heavyReport = structuredClone(pipeline);
   heavyReport.spec.finally[0].taskSpec.steps[0].computeResources.limits.memory = '2Gi';
-  assert.ok(!fitsFreeMemory(capacity, heavyReport, cloneTask, release, buildah), 'PLANTED DEFECT: a 2Gi limit on the report step, one report pod per running run outside the quota, is caught');
+  assert.ok(!fitsFreeMemory(capacity, heavyReport, cloneTask, release, buildah, publish), 'PLANTED DEFECT: a 2Gi limit on the report step, one report pod per running run outside the quota, is caught');
   const heavy = structuredClone(buildah);
   heavy.spec.steps.find((step) => step.name === 'build').computeResources.limits.memory = '8Gi';
-  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, release, heavy), 'PLANTED DEFECT: a raised limit of the buildah build step is caught');
+  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, release, heavy, publish), 'PLANTED DEFECT: a raised limit of the buildah build step is caught');
+  const heavyPublish = structuredClone(publish);
+  heavyPublish.spec.tasks.find((t) => t.name === 'pack').taskSpec.steps[0].computeResources.limits.memory = '19Gi';
+  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, release, buildah, heavyPublish), 'PLANTED DEFECT: a publish pod above the build pods of a release is caught');
 });
 
 // The engine suite of a repository keeps its MongoDB files in /dev/shm where that exists, and mongod refuses to run with
@@ -777,6 +860,9 @@ test('a run carries the priority class of its pipeline and no other pod template
   // An image run is started by hand, outside the ci quota, so it takes the release class.
   assert.deepEqual(verdict('shop-image', {priorityClassName: RELEASE_CLASS}), [], 'PLANTED INNOCENT: an image run with the release class');
   assert.deepEqual(verdict('shop-image', {priorityClassName: CI_CLASS}), [PRIORITY_MESSAGE], 'PLANTED DEFECT: an image run takes the ci class');
+  // A publish run waits in the release queue, outside the ci quota, so it takes the release class.
+  assert.deepEqual(verdict('shop-publish', {priorityClassName: RELEASE_CLASS}), [], 'PLANTED INNOCENT: a publish run with the release class');
+  assert.deepEqual(verdict('shop-publish', {priorityClassName: CI_CLASS}), [PRIORITY_MESSAGE], 'PLANTED DEFECT: a publish run takes the ci class');
   // Every other field Tekton's CRD knows for a pod template is refused beside a right class. The CRD
   // is the one the repository renders, so a Tekton upgrade that adds a field turns this red until the
   // policy lists it.
@@ -784,7 +870,7 @@ test('a run carries the priority class of its pipeline and no other pod template
   const fields = Object.keys(crd.spec.versions.find((v) => v.name === 'v1').schema.openAPIV3Schema.properties.spec.properties
     .taskRunTemplate.properties.podTemplate.properties).filter((field) => field !== 'priorityClassName');
   assert.ok(fields.includes('volumes') && fields.includes('automountServiceAccountToken') && fields.length > 10);
-  for (const pipeline of ['shop-release', 'shop-ci', 'shop-image']) {
+  for (const pipeline of ['shop-release', 'shop-ci', 'shop-image', 'shop-publish']) {
     for (const field of fields) {
       const value = {volumes: [], automountServiceAccountToken: true}[field] ?? 'x';
       assert.deepEqual(verdict(pipeline, {priorityClassName: classOf(pipeline), [field]: value}), [PRIORITY_MESSAGE],

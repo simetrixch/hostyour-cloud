@@ -300,7 +300,7 @@ const items = JSON.parse(fs.readFileSync(process.env.RUNS, 'utf8')).items;
 const to = from + Number(url.searchParams.get('limit'));
 process.stdout.write(JSON.stringify({kind: 'PipelineRunList', metadata: to < items.length ? {continue: 'page+' + to + '='} : {}, items: items.slice(from, to)}));
 `;
-const runPaged = (script, items, env = {}) => {
+const runPaged = (script, items, env = {}, lister = LISTER) => {
   const bin = mkdtempSync(join(tmpdir(), 'ci-run-keeper-paged-'));
   try {
     const runs = join(bin, 'runs.json'), log = join(bin, 'log'), file = join(bin, 'ci-run-keeper.sh');
@@ -309,8 +309,10 @@ const runPaged = (script, items, env = {}) => {
     writeFileSync(join(bin, 'kubectl'), PAGED_KUBECTL);
     chmodSync(join(bin, 'kubectl'), 0o755);
     writeFileSync(file, script);
+    writeFileSync(join(bin, 'list-pipelineruns.sh'), lister);
+    writeFileSync(join(bin, 'ci-run-keeper.jq'), PROGRAM);
     const result = spawnSync('bash', [file], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
-      env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, KEEPER_DIR: FILES, CI_MAX_RUNNING: String(MAX), ...env}});
+      env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, KEEPER_DIR: bin, CI_MAX_RUNNING: String(MAX), ...env}});
     const lines = (path) => readFileSync(path, 'utf8').split('\n').filter(Boolean);
     return {...result, calls: lines(log), gets: lines(`${log}.get`)};
   } finally {
@@ -318,6 +320,7 @@ const runPaged = (script, items, env = {}) => {
   }
 };
 const SCRIPT = readFileSync(`${FILES}/ci-run-keeper.sh`, 'utf8');
+const LISTER = readFileSync(`${FILES}/list-pipelineruns.sh`, 'utf8');
 // A run as the API server returns it: the resolved pipeline in status.pipelineSpec (about 23 KB a run on
 // master, nearly all of its size), task references, labels, annotations and conditions the decision never reads.
 const pipelineSpec = {tasks: Array.from({length: 30}, (_, i) => ({name: `task-${i}`, taskSpec: {steps: [{name: 'run', image: 'alpine/k8s:1.35.6', script: 'x'.repeat(700)}]}}))};
@@ -359,13 +362,13 @@ test('planted defects: a keeper that reads one page, drops spec.status or sends 
   const items = steadyState();
   const expected = decide(items).map((c) => c.say);
   const variants = {
-    'one page': SCRIPT.replace('[ -n "$continue_token" ] || return 0', 'return 0'),
-    'no spec.status': SCRIPT.replace('spec: {status: .spec.status},', 'spec: {},'),
-    'unencoded token': SCRIPT.replace(' | @uri', ''),
+    'one page': [SCRIPT, LISTER.replace('[ -n "$continue_token" ] || return 0', 'return 0')],
+    'no spec.status': [SCRIPT.replace('spec: {status: .spec.status},', 'spec: {},'), LISTER],
+    'unencoded token': [SCRIPT, LISTER.replace('.metadata.continue // "" | @uri', '.metadata.continue // ""')],
   };
-  for (const [name, script] of Object.entries(variants)) {
-    assert.notEqual(script, SCRIPT, `${name}: the planted defect no longer applies to the script`);
-    const result = runPaged(script, items);
+  for (const [name, [script, lister]] of Object.entries(variants)) {
+    assert.ok(script !== SCRIPT || lister !== LISTER, `${name}: the planted defect no longer applies to the keeper`);
+    const result = runPaged(script, items, {}, lister);
     assert.ok(result.status !== 0 || result.stdout.split('\n').filter(Boolean).join('\n') !== expected.join('\n'), `${name} went unnoticed`);
   }
 });
