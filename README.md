@@ -96,7 +96,8 @@ refused, and what an operator sees is an `ImagePullBackOff` naming no cause.
 `bash scripts/check.sh` runs local chart validation and
 credential scanning. It names the suites that did not run locally.
 
-GitHub Actions runs those checks and `bash scripts/test.sh` on every push and pull request.
+The master's ci runs those checks and `bash scripts/test.sh` on every push of a branch: the check step of the ci pipeline
+installs the tools `ci-tools.json` names, then runs `scripts/check.sh` and `scripts/test.sh`.
 The test entry point runs `lifecycle/test.sh` and `scripts/pipeline-release.test.sh`.
 Run tests only on a remote runner.
 

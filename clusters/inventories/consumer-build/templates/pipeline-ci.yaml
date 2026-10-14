@@ -23,7 +23,8 @@ may be added to it that a release selector reads.
 
 The trust split:
 
-  PINNED LITERALS: repoURL, the images, the pnpm, helm and yq versions.
+  PINNED LITERALS: repoURL, the images, the pnpm, helm, yq and jq versions, and the table of
+  files/ci-tools.table (see THE TOOLS OF A REPOSITORY).
 
   RUN INPUTS (from the push webhook, proven in-pipeline): git-url is the
   webhook's own claim of the repo and is compared fail-closed against the
@@ -60,12 +61,25 @@ already.
 
 WHAT THE CHECK NEEDS, read from the check.sh of every unit: Node 24, pnpm,
 git and bash; a mongod, which mongodb-memory-server downloads on first use; a
-Chrome for the tests of a unit that prints PDFs; and helm and yq for the units
-whose check renders charts. One public image carries all but the last two, so
-their releases are pinned here by their sha256 and installed by the check step.
-No image is built by us. A repository without pnpm-lock.yaml has nothing for
-pnpm to install: some carry no package.json, one keeps an npm lockfile its
-check never reads.
+Chrome for the tests of a unit that prints PDFs; and helm, yq and jq for the
+units whose check renders charts or reads JSON. One public image carries all but
+the last three, so their releases are pinned here by their sha256 and installed
+by the check step. No image is built by us. A repository without pnpm-lock.yaml
+has nothing for pnpm to install: some carry no package.json, one keeps an npm
+lockfile its check never reads.
+
+THE TOOLS OF A REPOSITORY. A repository that needs other versions than the
+image's names them in ci-tools.json at its root, {"<tool>": "<x.y.z>"}, with a
+tool of node, npm, go, dart, gitleaks and promtool. The fetch task's list-tools
+step validates the file with jq and hands "<tool> <version>" lines to the check
+as a result; the check step installs each from files/ci-tools.table, which holds
+a sha256 and an https url per tool and version, unpacks it only after the sha256
+matched and puts it before the image's own tools on PATH. A version the table
+lacks fails the run; the table is the only place a version is allowed from, so a
+repository cannot make the check download whatever it names. A repository that
+names npm is installed with `npm ci`, one with pnpm-lock.yaml with pnpm, and one
+with ci-tools.json runs its scripts/test.sh after scripts/check.sh. A repository
+without ci-tools.json runs as it always did, with the tools of the image.
 
 THE FAILURE MAIL. When a task fails, report-failure reads the last 60 lines of
 the step that failed from the Kubernetes API, as pods/log of the pod that the
@@ -309,6 +323,9 @@ spec:
         workspaces:
           - name: source
           - name: sources
+        results:
+          - name: tools
+            description: The tools and versions of the branch's ci-tools.json, one "<tool> <version>" per line; empty without the file.
         volumes:
           - name: source-list
             emptyDir: {}
@@ -364,6 +381,33 @@ spec:
             volumeMounts:
               - name: source-list
                 mountPath: /source-list
+          # Reads the branch's ci-tools.json into "<tool> <version>" lines, the result the
+          # check installs from. A tool outside the contract or a version that is not
+          # x.y.z ends the run here, in a step that holds no credential.
+          - name: list-tools
+            image: {{ $reportImage }}
+            workingDir: /workspace/source
+            env:
+              - name: TOOLS_RESULT
+                value: $(results.tools.path)
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              if [ ! -f ci-tools.json ]; then
+                : > "${TOOLS_RESULT}"
+                echo "fetch: no ci-tools.json, so the check runs with the tools of its image"
+                exit 0
+              fi
+              jq -rs 'if length != 1 or (.[0] | type) != "object" then error("ci-tools.json: must hold one object of tool and version")
+                else .[0] | to_entries[]
+                  | if (.key | IN("node", "npm", "go", "dart", "gitleaks", "promtool")) and (.value | type == "string" and test("^[0-9]+[.][0-9]+[.][0-9]+$"))
+                    then "\(.key) \(.value)"
+                    else error("ci-tools.json: \(.key | tojson) must be one of node, npm, go, dart, gitleaks, promtool at a version x.y.z, not \(.value | tojson)") end
+                end' ci-tools.json > "${TOOLS_RESULT}"
+              echo "fetch: $(wc -l < "${TOOLS_RESULT}") tools named in ci-tools.json"
+            computeResources:
+              requests: { cpu: 50m, memory: 32Mi }
+              limits: { cpu: 200m, memory: 64Mi }
           - name: sources
             image: {{ $gitImage }}
             envFrom:
@@ -402,12 +446,15 @@ spec:
       timeout: 20m0s
       params:
         - { name: before, value: "$(params.before)" }
+        - { name: tools, value: "$(tasks.fetch.results.tools)" }
       workspaces:
         - { name: source, workspace: source, subPath: repository }
         - { name: sources, workspace: source, subPath: sources }
       taskSpec:
         params:
           - name: before
+            type: string
+          - name: tools
             type: string
         workspaces:
           - name: source
@@ -461,6 +508,13 @@ spec:
               # base with origin/master is the pushed commit itself.
               - name: CI_BEFORE_COMMIT
                 value: "$(params.before)"
+              # The tools of the repository's ci-tools.json, validated by the fetch task, and
+              # the table they are installed from. Variables and not text of the script.
+              - name: CI_TOOLS
+                value: "$(params.tools)"
+              - name: CI_TOOLS_TABLE
+                value: |
+{{ .Files.Get "files/ci-tools.table" | indent 18 }}
               # Reads the issues of the unit's own repository and nothing else
               # (templates/externalsecret-issues-read.yaml). Optional: until
               # the Manager has written the property, there is no Secret and
@@ -527,6 +581,11 @@ spec:
               echo "c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385  /usr/local/bin/yq" | sha256sum -c -
               chmod +x /usr/local/bin/yq
 
+              # jq 1.8.2, for a check whose suites read JSON (scripts/pipeline-publish.test.sh of hostyour-cloud).
+              curl -fsSL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
+              echo "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f  /usr/local/bin/jq" | sha256sum -c -
+              chmod +x /usr/local/bin/jq
+
               # The Chrome of the image, for the units whose tests print PDFs.
               # A unit that has no use for the variables ignores them.
               REPORT_CHROMIUM_PATH="$(ls /home/pptruser/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome | head -n 1)"
@@ -536,8 +595,12 @@ spec:
               # shared memory in /tmp.
               export REPORT_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage
 
+{{ .Files.Get "files/ci-install-tools.sh" | indent 14 }}
+
               if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; fi
+              if grep -q '^npm ' <<< "${CI_TOOLS}"; then npm ci; fi
               bash scripts/check.sh
+              if [ -f ci-tools.json ] && [ -f scripts/test.sh ]; then bash scripts/test.sh; fi
 
   finally:
     # ── report-failure — one mail for a failed run, with the error in it ──────
