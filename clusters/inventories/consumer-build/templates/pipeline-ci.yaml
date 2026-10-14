@@ -37,8 +37,8 @@ no ServiceAccount token (pipeline-sa mounts none), no clone credential
 (build-git-https belongs to the clone, fetch and commit-status
 tasks, whose containers run before or after the check, never beside it), and never the GitOps write tokens of
 the release bump, which this Pipeline does not reference at all. Two secrets are
-in reach. build-npmrc, the packages reader, is mounted read-only as the user npmrc
-because `pnpm install` cannot read the private @<owner> packages without it.
+in reach. build-npmrc, the registry's pull identity, is mounted read-only as the user npmrc
+because `pnpm install` cannot read the npm packages this build plane publishes without it.
 build-issues-read is GITHUB_TOKEN, a token that reads the issues of the unit's
 own repository and nothing else, because a check reads the labels of the issues
 a change names.
