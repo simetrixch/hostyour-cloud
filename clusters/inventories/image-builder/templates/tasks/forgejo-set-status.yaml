@@ -1,0 +1,59 @@
+{{- /*
+forgejo-set-status — sets the commit status tekton/forgejo-release of a Forgejo commit, linked to
+the run in the Tekton Dashboard (files/forgejo-set-status.sh). The Pipeline forgejo-release of
+clusters/inventories/forgejo-build resolves it through the cluster resolver, before its clone and
+in its finally task.
+
+THE TOKEN REACHES THIS STEP ALONE. It comes from the run namespace's Secret named by tokens-secret,
+key forgejo-api-token, and no build step holds it. Forgejo is called inside the cluster, never
+through Traefik.
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: forgejo-set-status
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: task
+spec:
+  description: >-
+    Set the commit status tekton/forgejo-release of a Forgejo commit to pending, or to the outcome
+    of the run, linked to the run in the Tekton Dashboard.
+  params:
+    - name: repository
+      description: The repository as Forgejo names it, <owner>/<name>.
+      type: string
+    - name: commit
+      description: The commit the status is set on.
+      type: string
+    - name: state
+      description: pending, or the $(tasks.status) of the run.
+      type: string
+    - name: tokens-secret
+      description: The Secret of the run namespace holding the key forgejo-api-token.
+      type: string
+  steps:
+    - name: set-status
+      image: {{ .Values.forgejoRelease.image }}
+      env:
+        - name: FORGEJO_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.tokens-secret)
+              key: forgejo-api-token
+        - name: FORGEJO_API
+          value: {{ .Values.forgejoRelease.forgejoApi | quote }}
+        - name: REPOSITORY
+          value: $(params.repository)
+        - name: COMMIT
+          value: $(params.commit)
+        - name: RUN_STATE
+          value: $(params.state)
+        - name: RUN_URL
+          value: https://tekton.{{ .Values.global.domain }}/#/namespaces/$(context.pipelineRun.namespace)/pipelineruns/$(context.pipelineRun.name)
+      script: |
+{{ .Files.Get "files/forgejo-set-status.sh" | indent 8 }}
+      computeResources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { cpu: 200m, memory: 128Mi }

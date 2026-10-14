@@ -1,0 +1,41 @@
+apiVersion: v2
+name: plane
+version: 1.0.0
+description: |
+  Plane, the platform's own project tracker, on the master in its own namespace.
+
+  Its PostgreSQL, Redis, RabbitMQ and MinIO run beside it in the same namespace, so nothing beside
+  it holds its data. Every page sits behind the identity provider's forward auth, and Plane's own
+  sign-in follows; only /api/v1, Plane's API-key API, is reached without it. The installation's own
+  address and certificate issuer stand in installation/values/plane.yaml on the install branch.
+type: application
+dependencies:
+  - name: plane-ce
+    version: 1.8.5
+    repository: https://helm.plane.so/
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-app-keys
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-app-env
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-pgdb
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-rabbitmq
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-doc-store
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

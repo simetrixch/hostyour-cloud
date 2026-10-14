@@ -194,6 +194,54 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
+  name: forgejo
+  namespace: __ARGOCD_NAMESPACE__
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Forgejo, the platform's own Git server, on the master. Namespaced only.
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+    - oci://code.forgejo.org/forgejo-helm
+  destinations:
+    - name: __CLUSTER_NAME__
+      namespace: forgejo
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: plane
+  namespace: __ARGOCD_NAMESPACE__
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Plane, the platform's own project tracker, on the master. Namespaced only.
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+    - https://helm.plane.so/
+  destinations:
+    - name: __CLUSTER_NAME__
+      namespace: plane
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
   name: observability
   namespace: __ARGOCD_NAMESPACE__
   annotations:
@@ -263,6 +311,9 @@ spec:
       namespace: gate-runner
     - name: __CLUSTER_NAME__
       namespace: e2e-runner
+    # The run namespace of the Forgejo release flow (clusters/inventories/forgejo-build).
+    - name: __CLUSTER_NAME__
+      namespace: forgejo-build
     - name: __CLUSTER_NAME__
       namespace: __ARGOCD_NAMESPACE__
   clusterResourceWhitelist:

@@ -119,7 +119,10 @@ mkdir -p "$OUT"
 # So is the reason ssh passes on from the resolver for a host name it cannot
 # resolve: glibc answers "Name or service not known" with a network and
 # "Temporary failure in name resolution" without one, and another libc words
-# both its own way. The host name before it stays. Nothing else is normalised.
+# both its own way. The host name before it stays. So is the warning git 2.39 prints
+# before the "fatal: Remote branch ... not found" of a clone of a branch that does not
+# exist, which a newer git does not print: what the case records is the refusal and
+# the exit, and git's own warning is no part of either. Nothing else is normalised.
 #
 # WRITTEN HERE RATHER THAN SHELLED OUT TO, because the filter that normalises is
 # as much part of the measurement as the comparison is. A normaliser that
@@ -128,6 +131,7 @@ mkdir -p "$OUT"
 normalise() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" == "warning: Could not find remote branch "*" to clone." ]] && continue
     line="${line//"$WORK"/<WORK>}"; line="${line//"$HERE"/<HERE>}"; line="${line//"$HOME"/<HOME>}"
     while [[ "$line" =~ ([0-9]{14}) ]]; do line="${line//${BASH_REMATCH[1]}/TS14}"; done
     if [[ "$line" =~ (Could not resolve hostname [^:]+: )[^.]+ ]]; then
@@ -150,6 +154,15 @@ printf '%s\n' \
 [ "$(normalise < "$OUT/probe.in" | sort -u)" = 'ssh: Could not resolve hostname door.example.invalid: <RESOLVER>. Nothing' ] \
   || fail 'the normaliser does not read the resolver'"'"'s reason with a network and without one alike, or hides the host name'
 ok 'the normaliser reads a resolver'"'"'s reason alike online and offline, and keeps the host name before it'
+printf '%s\n' \
+  'warning: Could not find remote branch nosuch.example.invalid to clone.' \
+  'fatal: Remote branch nosuch.example.invalid not found in upstream origin' \
+  'warning: Could not find remote branch is a line git does not print' \
+  > "$OUT/probe.in"
+[ "$(normalise < "$OUT/probe.in")" = "fatal: Remote branch nosuch.example.invalid not found in upstream origin
+warning: Could not find remote branch is a line git does not print" ] \
+  || fail 'the normaliser does not drop the warning git 2.39 prints before a refused clone of a missing branch, or drops a line that is not that warning'
+ok 'the normaliser drops the warning git 2.39 prints before a refused clone of a missing branch, and nothing else'
 
 A_CODE=0
 # THE BLOCK A CASE IS HELD TO: the normalised standard output, a line no script
@@ -1656,8 +1669,8 @@ openssl genrsa 2048 > "$GHAPP/key.pem" 2>/dev/null || fail 'openssl could not mi
 openssl rsa -in "$GHAPP/key.pem" -pubout > "$GHAPP/pub.pem" 2>/dev/null || fail 'openssl could not derive the public half of the fixture key'
 # The key as GitHub's JSON spells it: one line, \n for each line break.
 awk '{ printf "%s\\n", $0 }' "$GHAPP/key.pem" > "$GHAPP/pem.json"
-EIGHT_PERMISSIONS='"actions":"write","administration":"write","contents":"write","issues":"read","metadata":"read","packages":"read","webhooks":"write","workflows":"write"'
-SEVEN_PERMISSIONS='"actions":"write","administration":"write","contents":"write","metadata":"read","packages":"read","webhooks":"write","workflows":"write"'
+EIGHT_PERMISSIONS='"administration":"write","contents":"write","issues":"read","metadata":"read","packages":"read","statuses":"write","webhooks":"write","workflows":"write"'
+SEVEN_PERMISSIONS='"administration":"write","contents":"write","issues":"read","metadata":"read","packages":"read","webhooks":"write","workflows":"write"'
 
 # THE STAND-IN FOR curl against api.github.com. Every call is logged as its
 # method and path, and a call carrying a JWT logs the verdict on it: the
@@ -1888,7 +1901,7 @@ ok 'the manifest page carries the eight permissions, no webhook, private, the li
 seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" all
 run_app_bash config.apps6.env
 must "create-github-app: GitHub sent the browser back with a code, and the state is this run's" 'the code and the state are taken off the redirect'
-must 'create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions actions:write administration:write contents:write metadata:read packages:read webhooks:write workflows:write and not the eight asked: actions:write administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write. Delete it there and run this again. Nothing has been written' \
+must 'create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write and not the eight asked: administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write. Delete it there and run this again. Nothing has been written' \
   'an App answered with seven permissions is refused, both lists named'
 [ "$A_CODE" = '65' ] || fail "seven permissions must refuse with 65, got $A_CODE"
 expect 'an App answered with seven permissions' 65 <<'RECORDED'
@@ -1897,7 +1910,7 @@ create-github-app: listening on 127.0.0.1 for GitHub to send the browser back, f
 create-github-app: opened the manifest page in the browser; it posts to https://github.com/organizations/acme/settings/apps/new. In the browser: click Create GitHub App
 create-github-app: GitHub sent the browser back with a code, and the state is this run's
 ~~~ standard error ~~~
-create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions actions:write administration:write contents:write metadata:read packages:read webhooks:write workflows:write and not the eight asked: actions:write administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write. Delete it there and run this again. Nothing has been written
+create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write and not the eight asked: administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write. Delete it there and run this again. Nothing has been written
 RECORDED
 [ "$(cat "$GHAPP/state-a/log")" = 'POST /app-manifests/c0de0fthefixture/conversions' ] || fail "the conversion was not the one call, or not with the fixture's code: $(tr '\n' ' ' < "$GHAPP/state-a/log")"
 nothing_written 'an App answered with seven permissions'
@@ -1906,7 +1919,7 @@ ok 'the conversion is asked with the code off the redirect, and an App answered 
 # ── the act itself, both clicks in one run ──────────────────────────────────
 seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
 run_app_bash config.apps6.env
-must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the eight permissions actions:write administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write' 'the App is named with its id and its permissions'
+must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the eight permissions administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write' 'the App is named with its id and its permissions'
 must 'create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into config.apps6.env in place' 'the id and the key are written before the installation is asked for'
 must 'create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install' 'the person is told the second click'
 must 'create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes' 'the poll is announced'
@@ -1920,7 +1933,7 @@ create-github-app: the App acme-platform-manager is created in the organisation 
 create-github-app: listening on 127.0.0.1 for GitHub to send the browser back, for up to 10 minutes
 create-github-app: opened the manifest page in the browser; it posts to https://github.com/organizations/acme/settings/apps/new. In the browser: click Create GitHub App
 create-github-app: GitHub sent the browser back with a code, and the state is this run's
-create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the eight permissions actions:write administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write
+create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the eight permissions administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write
 create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into config.apps6.env in place
 create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install
 create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes
@@ -1966,7 +1979,7 @@ create-github-app: the App acme-platform-manager is created in the organisation 
 create-github-app: listening on 127.0.0.1 for GitHub to send the browser back, for up to 10 minutes
 create-github-app: opened the manifest page in the browser; it posts to https://github.com/organizations/acme/settings/apps/new. In the browser: click Create GitHub App
 create-github-app: GitHub sent the browser back with a code, and the state is this run's
-create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the eight permissions actions:write administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write
+create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the eight permissions administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write
 create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into config.apps6.env in place
 create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install
 create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes

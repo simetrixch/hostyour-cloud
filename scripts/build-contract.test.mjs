@@ -14,7 +14,8 @@ test('no Tekton test resources are rendered and production readers remain', () =
     d.metadata.name.includes('test-reporter') || d.metadata.name.includes('test-pruner') ||
     (d.kind === 'Task' && d.metadata.name.startsWith('test-')) || d.metadata.name.endsWith('-test-push')));
   assert.deepEqual(builder.find(d => d.kind === 'EventListener').spec.triggers,
-    [{triggerRef: 'github-deploy-request'}, {triggerRef: 'github-ci-push'}, {triggerRef: 'github-release-publish'}]);
+    [{triggerRef: 'github-deploy-request'}, {triggerRef: 'github-ci-push'}, {triggerRef: 'github-release-publish'},
+      {triggerRef: 'forgejo-tag-push'}, {triggerRef: 'forgejo-pull-request'}]);
   const guard = builder.find(d => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
   assert.ok(!JSON.stringify(guard).includes('op3-input'));
   const fanout = renderChart('consumer-build').find(d => d.kind === 'ApplicationSet');
@@ -28,7 +29,8 @@ test('no Tekton test resources are rendered and production readers remain', () =
       const docs = renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: record.name,
         repoURL: record.repositoryURL, buildsJson: JSON.stringify(builds)})]);
       assert.ok(!docs.some(d => d.kind === 'PipelineRun' || (d.kind === 'Pipeline' && d.metadata.name.endsWith('-tests'))));
-      assert.ok(!docs.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa').imagePullSecrets);
+      assert.deepEqual(docs.find(d => d.kind === 'ServiceAccount' && d.metadata.name === 'pipeline-sa').imagePullSecrets,
+        builds.length === 0 ? undefined : [{name: 'build-registry-pull'}], record.name + ' lists the kubelet pull secret of its release images only where it builds');
       const readers = docs.filter(d => d.kind === 'ExternalSecret');
       if (builds.length === 0) assert.deepEqual(readers.map(d => d.metadata.name).sort(), ['build-git-https', 'build-issues-read', 'build-npmrc', 'image-builder-registry-push'],
         record.name + ' holds the credentials of its ci check and of its publish push, and no pull or bump credential');
@@ -101,10 +103,10 @@ test('admission guard selects typed Tekton fields and keeps native inline refusa
   assert.ok(webhook.webhooks.every(h => h.failurePolicy === 'Fail'));
 });
 
-// The ci pipeline runs a repository's own check on every branch push. What keeps it from being a
-// release, from holding a credential it must not, and from running anywhere else is asserted here
-// on the rendered charts; the admission policy and the trigger filters are evaluated by
-// scripts/vap-eval, which runs the CEL library the build plane runs.
+// The ci pipeline runs a repository's own check on every push of its default branch or of a `ci/`
+// branch. What keeps it from being a release, from holding a credential it must not, and from
+// running anywhere else is asserted here on the rendered charts; the admission policy and the
+// trigger filters are evaluated by scripts/vap-eval, which runs the CEL library the build plane runs.
 const evaluate = (policy, requests) => execFileSync('go', ['run', '.'], {cwd: 'scripts/vap-eval', encoding: 'utf8',
   input: JSON.stringify({policy, requests})}).split('\n').filter(Boolean).map((line) => JSON.parse(line));
 const renderUnit = (name, builds = ['app']) => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name,
@@ -144,7 +146,7 @@ test('the admission policy admits the release, the ci, the image and the publish
   assert.deepEqual(evaluate(policy, [update])[0].denied, []);
 });
 
-test('the run the ci trigger creates is admitted, is no release, and the trigger takes a branch push only', () => {
+test('the run the ci trigger creates is admitted, is no release, and the trigger takes a push of the default branch or a ci/ branch only', () => {
   const builder = imageBuilder();
   const byKind = (kind, name) => builder.find((d) => d.kind === kind && d.metadata.name === name);
   const template = byKind('TriggerTemplate', 'ci-push').spec.resourcetemplates[0];
@@ -176,23 +178,28 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
       validations: [{expression: edit(filter), message: 'ignored'}]}};
     return evaluate(policy, bodies.map((body) => ({body}))).map((v) => ({matched: v.denied.length === 0, overlays: v.variables}));
   };
-  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}};
-  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}};
-  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}};
-  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}};
+  // GitHub sends the repository's default branch with every push (repository.default_branch); `main` here, so a
+  // filter that names `master` instead of reading it is seen.
+  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main'};
+  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}, default_branch: 'main'};
+  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}, default_branch: 'main'};
+  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
   const SHA = 'a'.repeat(40);
   const tag = '0.8.446-stable-20261009014252';
   const pushes = {
-    'a branch push': {ref: 'refs/heads/feature/x', after: SHA, deleted: false, repository},
-    'a branch push without the deleted field': {ref: 'refs/heads/main', after: SHA, repository},
+    'a push of an issue branch': {ref: 'refs/heads/issue-1-fix', after: SHA, deleted: false, repository},
+    'a push of the default branch without the deleted field': {ref: 'refs/heads/main', after: SHA, repository},
     'a deploy tag push': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository},
     'a push of a delivery branch': {ref: 'refs/heads/deploy/prod', after: SHA, deleted: false, repository},
     'a branch named like a deploy tag': {ref: `refs/heads/deploy/prod/${tag}`, after: SHA, deleted: false, repository},
-    'a push of the books branch': {ref: 'refs/heads/check.example.invalid', after: SHA, deleted: false, repository},
-    'a branch whose name begins with the books branch': {ref: 'refs/heads/check.example.invalid-fix', after: SHA, deleted: false, repository},
+    // A repository whose default branch is the books branch, or a sibling of it.
+    'a push of the books branch': {ref: 'refs/heads/check.example.invalid', after: SHA, deleted: false,
+      repository: {...repository, default_branch: 'check.example.invalid'}},
+    'a branch whose name begins with the books branch': {ref: 'refs/heads/check.example.invalid-fix', after: SHA, deleted: false,
+      repository: {...repository, default_branch: 'check.example.invalid-fix'}},
     'another tag push': {ref: 'refs/tags/v1.0.0', after: SHA, deleted: false, repository},
-    'a branch deletion': {ref: 'refs/heads/feature/x', after: '0'.repeat(40), deleted: true, repository},
-    'a branch deletion without the deleted field': {ref: 'refs/heads/feature/x', after: '0'.repeat(40), repository},
+    'a branch deletion': {ref: 'refs/heads/ci/issue-1-planted-1', after: '0'.repeat(40), deleted: true, repository},
+    'a branch deletion without the deleted field': {ref: 'refs/heads/ci/issue-1-planted-1', after: '0'.repeat(40), repository},
     'a deploy tag deletion': {ref: `refs/tags/deploy/prod/${tag}`, after: '0'.repeat(40), deleted: true, repository},
     'a branch push of a customer repository': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: customer},
     'a branch push of an owner that is not listed': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: outsider},
@@ -203,17 +210,20 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a release tag deletion': {ref: `refs/tags/${tag}`, after: '0'.repeat(40), deleted: true, repository},
     'a release tag with a suffix': {ref: `refs/tags/${tag}-x`, after: SHA, deleted: false, repository},
     'a branch named like a release tag': {ref: `refs/heads/${tag}`, after: SHA, deleted: false, repository},
-    'a branch push of the owner of this platform': {ref: 'refs/heads/feature/x', after: SHA, deleted: false, repository: platform},
+    'a branch push of the owner of this platform': {ref: 'refs/heads/master', after: SHA, deleted: false, repository: platform},
     'a deploy tag push of the owner of this platform': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: platform},
+    'a push of master where the default branch is main': {ref: 'refs/heads/master', after: SHA, deleted: false, repository},
+    'a push of a ci/ branch': {ref: 'refs/heads/ci/issue-1-planted-1', after: SHA, deleted: false, repository},
+    'a branch with ci/ inside its name': {ref: 'refs/heads/feature/ci/x', after: SHA, deleted: false, repository},
   };
   // GitHub sends `before` with every push; a deletion carries the deleted commit there.
   const BEFORE = 'b'.repeat(40);
   for (const push of Object.values(pushes)) push.before = BEFORE;
   const bodies = Object.values(pushes);
   const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies), publish = matches('github-release-publish', bodies);
-  const verdicts = {ci: [true, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false],
-    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true],
-    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false]};
+  const verdicts = {ci: [false, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false],
+    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, false],
+    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false]};
   Object.keys(pushes).forEach((name, i) => {
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
@@ -236,7 +246,7 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   assert.deepEqual(byKind('TriggerBinding', 'github-release-publish-binding').spec.params.map((p) => p.name), ['unit', 'release-tag', 'git-url']);
   assert.deepEqual(evaluate(guardOf(builder), [{object: createdRun(builder, 'release-publish'), oldObject: null,
     request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: EVENT_LISTENER}}}])[0].denied, [], 'PLANTED INNOCENT: the publish run is admitted');
-  assert.deepEqual(ci[0].overlays, {unit: 'shop', branch: 'feature/x', commit: SHA, before: BEFORE, 'git-url': repository.clone_url});
+  assert.deepEqual(ci[23].overlays, {unit: 'shop', branch: 'ci/issue-1-planted-1', commit: SHA, before: BEFORE, 'git-url': repository.clone_url});
   // The commit before the push travels from the webhook to the run's parameter, and the check reads that parameter.
   assert.equal(byKind('TriggerBinding', 'github-ci-push-binding').spec.params.find((p) => p.name === 'before')?.value, '$(extensions.before)');
   assert.ok(byKind('TriggerTemplate', 'ci-push').spec.params.some((p) => p.name === 'before'));
@@ -258,8 +268,19 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const withBooksBranch = (filter) => filter.replace(/ &&\s+body\.ref != 'refs\/heads\/[^']*'/, '');
   assert.ok(matches('github-ci-push', [pushes['a push of the books branch']], withBooksBranch)[0].matched,
     'PLANTED DEFECT: a filter without the books branch exclusion runs the check on every commit of the Manager');
-  const everyRef = (filter) => filter.replace("body.ref.startsWith('refs/heads/')", "body.ref.startsWith('refs/')");
-  assert.ok(matches('github-ci-push', [pushes['another tag push']], everyRef)[0].matched);
+  // PLANTED DEFECTS of the refs the ci runs for: the filter as it stood before (every branch), a default branch named
+  // instead of read from the push, and a ci/ that is not anchored at the start of the branch name. Each edit must
+  // change the filter, and each edited filter matches a push the trigger refuses.
+  const takenRefs = "(body.ref == 'refs/heads/' + body.repository.default_branch || body.ref.startsWith('refs/heads/ci/'))";
+  const planted = {
+    'the old filter runs the ci for every issue branch': [(filter) => filter.replace(takenRefs, "body.ref.startsWith('refs/heads/')"), 'a push of an issue branch'],
+    'a filter that names master runs the ci for a branch that is not the default': [(filter) => filter.replace("'refs/heads/' + body.repository.default_branch", "'refs/heads/master'"), 'a push of master where the default branch is main'],
+    'a ci/ that is not anchored runs the ci for a branch that only contains it': [(filter) => filter.replace("body.ref.startsWith('refs/heads/ci/')", "body.ref.contains('/ci/')"), 'a branch with ci/ inside its name'],
+  };
+  for (const [defect, [edit, push]] of Object.entries(planted)) {
+    assert.notEqual(edit(trigger('github-ci-push').filter), trigger('github-ci-push').filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
+    assert.ok(matches('github-ci-push', [pushes[push]], edit)[0].matched, `PLANTED DEFECT: ${defect}`);
+  }
 });
 
 test('the ci trigger needs a list of owners, and an empty or missing list fails the render naming the key', () => {
@@ -572,7 +593,7 @@ test('list-sources passes only plain repository names with full commits, and a r
 // push, and gets no release pipeline and no credential that writes: the namespace runs repository code.
 const CI_PARTS = [['Pipeline', 'shop-ci'], ['ResourceQuota', 'ci-pods'], ['ExternalSecret', 'build-git-https'], ['ExternalSecret', 'build-issues-read'], ['ExternalSecret', 'build-npmrc'],
   ['Role', 'ci-report-read'], ['Role', 'ci-run-keeper-pipelineruns'], ['Pipeline', 'shop-publish'], ['ExternalSecret', 'image-builder-registry-push']];
-const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['Pipeline', 'shop-image'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'bump-git-https']];
+const RELEASE_PARTS = [['Pipeline', 'shop-release'], ['Pipeline', 'shop-image'], ['ExternalSecret', 'image-builder-registry-pull-opaque'], ['ExternalSecret', 'build-registry-pull'], ['ExternalSecret', 'bump-git-https']];
 const holds = (docs, parts) => parts.map(([kind, name]) => docs.some((d) => d.kind === kind && d.metadata.name === name));
 const isCiOnly = (docs) => holds(docs, CI_PARTS).every(Boolean) && !holds(docs, RELEASE_PARTS).some(Boolean);
 
@@ -589,14 +610,72 @@ test('a unit that builds nothing renders the ci check and the publish pipeline, 
   assert.ok(!isCiOnly(leaky), 'PLANTED DEFECT: a ci-only render that carries the bump credential is caught');
 });
 
+// The engine's own check of a tenant bundle: a refused member stops the start of every app of its
+// tenant, so the release run opens the bundle with the stage's engine before the bump writes a pin. The check's shell is
+// run by scripts/pipeline-release.test.sh; what it is wired to is asserted here on the rendered Pipeline.
+test('the release pipeline checks an apps bundle with the stage engine before the bump, and the check holds no credential', () => {
+  const attested = ['shop-apps', 'shop-web'];
+  const release = renderUnit('shop', attested).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
+  const task = (name, pipeline = release) => pipeline.spec.tasks.find((t) => t.name === name);
+  const onBundle = [{input: '$(tasks.builds.results.apps-bundle)', operator: 'in', values: attested}];
+  assert.deepEqual(task('engine-pin').when, onBundle, 'engine-pin runs only where the manifest names an attested build as appsBundle');
+  assert.deepEqual(task('check-definitions').when, onBundle, 'so does check-definitions');
+  assert.ok(!attested.includes(''), 'a manifest without appsBundle writes an empty result, which no attested build equals');
+  assert.ok(task('builds').taskSpec.results.some((r) => r.name === 'apps-bundle'), 'the builds task hands on the manifest\'s appsBundle');
+  assert.deepEqual(task('engine-pin').runAfter, ['builds', 'scan', ...attested.map((b) => `build-${b}`)], 'engine-pin starts after the bundle build, as the bump does');
+  assert.deepEqual(task('check-definitions').runAfter, ['engine-pin']);
+  assert.ok(task('bump').runAfter.includes('check-definitions'), 'a refused bundle ends the run before the bump writes a pin');
+  // The bump pins as a tenant bundle only its APPS_BUNDLE, so that is the value the `when` above reads, taken from the
+  // same result and not read again off the manifest.
+  const bumpBundle = (t) => [t.params.find((p) => p.name === 'apps-bundle')?.value, t.taskSpec.steps[0].env.find((e) => e.name === 'APPS_BUNDLE')?.value];
+  assert.deepEqual(bumpBundle(task('bump')), [onBundle[0].input, '$(params.apps-bundle)'], 'the bump pins as a bundle the one build the check opened');
+  const rewired = structuredClone(task('bump'));
+  rewired.params.find((p) => p.name === 'apps-bundle').value = '$(tasks.verify.results.image-tag)';
+  assert.notDeepEqual(bumpBundle(rewired), [onBundle[0].input, '$(params.apps-bundle)'], 'PLANTED DEFECT: a bump whose bundle comes from elsewhere than the check\'s is caught');
+  const check = task('check-definitions');
+  assert.deepEqual(check.params.map((p) => [p.name, p.value]), [
+    ['bundle-image', 'zot.check.example.invalid/$(tasks.builds.results.apps-bundle):$(tasks.verify.results.image-tag)'],
+    ['engine-image', '$(tasks.engine-pin.results.engine-image)']]);
+  assert.deepEqual(check.taskSpec.steps.map((s) => [s.name, s.image]), [['copy-bundle', '$(params.bundle-image)'], ['members', 'alpine/k8s:1.35.6'], ['check', '$(params.engine-image)']]);
+  // The step that opens the bundle holds no credential, and neither does a volume of its pod; the one platform credential
+  // of the check is the pin read, in a task that runs no code of the unit.
+  const holdsNoCredential = (t) => t.taskSpec.steps.every((s) => s.envFrom === undefined && s.env === undefined) && t.taskSpec.volumes.every((v) => v.emptyDir) && !JSON.stringify(t).includes('bump-git-https');
+  assert.ok(holdsNoCredential(check), 'check-definitions holds no environment, secret or credential');
+  const planted = structuredClone(check);
+  planted.taskSpec.steps[2].envFrom = [{secretRef: {name: 'bump-git-https'}}];
+  assert.ok(!holdsNoCredential(planted), 'PLANTED DEFECT: a check step that takes the bump credential is caught');
+  assert.deepEqual(release.spec.tasks.filter((t) => JSON.stringify(t).includes('bump-git-https')).map((t) => t.name), ['engine-pin', 'bump']);
+  assert.ok(task('engine-pin').taskSpec.steps.every((s) => s.image === 'alpine/k8s:1.35.6'), 'the task that holds the credential runs no image the unit or the pin names');
+  for (const t of [task('engine-pin'), check]) {
+    for (const step of t.taskSpec.steps) assert.ok(step.computeResources?.requests?.cpu && step.computeResources?.limits?.memory, `${t.name}/${step.name} bounds its resources`);
+  }
+  assert.ok(!release.spec.tasks.some((t) => t.name.startsWith('build-') && t.name !== 'build-shop-apps' && t.name !== 'build-shop-web'), 'the check is no build: the memory budget of the release counts build- tasks');
+});
+
+test('the kubelet pull secret of the release images exists for a unit that builds, composed by the shared registry pull helper', () => {
+  const docs = renderUnit('shop');
+  const secret = docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-registry-pull');
+  // The chart renders into argocd and its resources name their namespace, so a helper that drops the
+  // namespace key places the secret where no build pod reads it.
+  assert.equal(secret.metadata.namespace, 'shop-build', 'the helper places it in the namespace the caller names');
+  for (const [chart, name] of [['gate-runner', 'gate-runner-registry-pull'], ['e2e-runner', 'e2e-runner-registry-pull'], ['service-provisioner', 'registry-pull-source']]) {
+    assert.equal(renderChart(chart).find((d) => d.kind === 'ExternalSecret' && d.metadata.name === name).metadata.namespace, 'argocd', `PLANTED INNOCENT: ${chart}, which names no namespace, keeps ${name} in its release namespace`);
+  }
+  assert.equal(secret.spec.target.template.type, 'kubernetes.io/dockerconfigjson');
+  assert.deepEqual(secret.spec.data.map((d) => [d.remoteRef.key.endsWith('/app/registry'), d.remoteRef.property]), [[true, 'pull-user'], [true, 'pull-password']], 'the read-only pull identity, never the push one');
+  assert.ok(secret.spec.target.template.data['.dockerconfigjson'].includes('"zot.check.example.invalid"'), 'for the host the images are pulled from');
+  assert.ok(!renderUnit('shop', []).some((d) => d.metadata?.name === 'build-registry-pull'), 'PLANTED INNOCENT: a unit that builds nothing renders no pull secret');
+});
+
 // The two platform bump credentials stand on build-platform/, a tier of their own, and never at
 // build/<unit>/repo-pat: that leaf is a unit's own entry, and a unit named hostyour-cloud or deploy owns
-// it whole. What the bump of a unit reads, by key of its credential
+// it whole. The unit's own record is its `push` token, which writes that one repository and no other,
+// never its `pat`. What the bump of a unit reads, by key of its credential
 // set, as `<vault key>#<property>`, and every way that departs from it.
 const bumpReads = (docs) => Object.fromEntries(docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https')
   .spec.data.map(({secretKey, remoteRef}) => [secretKey, `${remoteRef.key}#${remoteRef.property}`]));
 const bumpReadFindings = (reads, unit) => {
-  const expected = {'unit-pat': `build/${unit}/repo-pat#pat`, 'deploy-pat': 'build-platform/deploy/repo-pat#pat', 'cloud-pat': 'build-platform/hostyour-cloud/repo-pat#pat'};
+  const expected = {'unit-pat': `build/${unit}/repo-pat#push`, 'deploy-pat': 'build-platform/deploy/repo-pat#pat', 'cloud-pat': 'build-platform/hostyour-cloud/repo-pat#pat'};
   const found = Object.entries(expected).filter(([key, read]) => reads[key] !== read).map(([key]) => `${unit}: ${key} reads ${reads[key]}`);
   if (new Set(Object.values(reads)).size !== Object.keys(reads).length) found.push(`${unit}: two keys read one entry`);
   return found;
@@ -608,6 +687,8 @@ test('the bump reads the platform credentials from build-platform/, and units na
   assert.notDeepEqual(bumpReadFindings({...deploy, 'deploy-pat': 'build/deploy/repo-pat#pat'}, 'deploy'), [], 'PLANTED DEFECT: the old deploy leaf, the entry a unit named deploy owns, is caught');
   const cloud = bumpReads(renderUnit('hostyour-cloud'));
   assert.notDeepEqual(bumpReadFindings({...cloud, 'cloud-pat': 'build/hostyour-cloud/repo-pat#pat'}, 'hostyour-cloud'), [], 'PLANTED DEFECT: the old hostyour-cloud leaf, the entry a unit named hostyour-cloud owns, is caught');
+  const shop = bumpReads(renderUnit('shop'));
+  assert.notDeepEqual(bumpReadFindings({...shop, 'unit-pat': 'build/shop/repo-pat#pat'}, 'shop'), [], 'PLANTED DEFECT: the unit\'s record back on its pat, the token that reaches more than its own repository, is caught');
 });
 
 // The lines of the check step from the install on, run in a repository directory with pnpm replaced by a stub
@@ -659,7 +740,7 @@ test('list-tools passes only a known tool at a plain version, and a repository w
       rmSync(dir, {recursive: true, force: true});
     }
   };
-  const all = {node: '26.11.1', npm: '12.2.0', go: '1.24.13', dart: '3.13.4', gitleaks: '8.30.1', promtool: '3.13.1'};
+  const all = {node: '26.11.1', npm: '12.2.0', go: '1.24.13', dart: '3.13.4', gitleaks: '8.30.1', promtool: '3.13.1', kubectl: '1.35.6'};
   assert.deepEqual(list(all), {status: 0, lines: Object.entries(all).map(([tool, version]) => `${tool} ${version}`)}, 'PLANTED INNOCENT: every tool of the contract at a plain version passes');
   assert.deepEqual(list({dart: '3.13.4'}), {status: 0, lines: ['dart 3.13.4']});
   assert.deepEqual(list({}), {status: 0, lines: []}, 'a file that names no tool lists none');
@@ -674,7 +755,7 @@ test('list-tools passes only a known tool at a plain version, and a repository w
 });
 
 const TOOLS_TABLE = readFileSync(`${CI_FILES}/ci-tools.table`, 'utf8');
-const TABLE_HOSTS = ['nodejs.org', 'registry.npmjs.org', 'go.dev', 'storage.googleapis.com', 'github.com'];
+const TABLE_HOSTS = ['nodejs.org', 'registry.npmjs.org', 'go.dev', 'storage.googleapis.com', 'github.com', 'dl.k8s.io'];
 const tableErrors = (table, tools) => {
   const errors = [], seen = new Set();
   for (const line of table.split('\n').filter(Boolean)) {
@@ -736,13 +817,14 @@ const buildToolFixtures = (root) => {
   program(join(src, 'dart/dart-sdk/bin/dart'), 'dart-fixture');
   program(join(src, 'gitleaks/gitleaks'), 'gitleaks-fixture');
   program(join(src, 'promtool/prometheus-3.13.1.linux-amd64/promtool'), 'promtool-fixture');
+  program(join(out, 'kubectl'), 'kubectl-fixture');
   const tgz = (name, dir, entry) => execFileSync('tar', ['-czf', join(out, name), '-C', join(src, dir), entry]);
   tgz('node.tgz', 'node', 'node-v'); tgz('npm.tgz', 'npm', 'package'); tgz('go.tgz', 'go', 'go');
   tgz('gitleaks.tgz', 'gitleaks', 'gitleaks'); tgz('promtool.tgz', 'promtool', 'prometheus-3.13.1.linux-amd64');
   execFileSync('python3', ['-I', '-m', 'zipfile', '-c', join(out, 'dart.zip'), 'dart-sdk'], {cwd: join(src, 'dart')});
   const row = (tool, version, archive) => `${tool} ${version} ${createHash('sha256').update(readFileSync(join(out, archive))).digest('hex')} file://${join(out, archive)}`;
   return Object.fromEntries([['node', '26.11.1', 'node.tgz'], ['npm', '12.2.0', 'npm.tgz'], ['go', '1.24.13', 'go.tgz'], ['dart', '3.13.4', 'dart.zip'],
-    ['gitleaks', '8.30.1', 'gitleaks.tgz'], ['promtool', '3.13.1', 'promtool.tgz']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
+    ['gitleaks', '8.30.1', 'gitleaks.tgz'], ['promtool', '3.13.1', 'promtool.tgz'], ['kubectl', '1.35.6', 'kubectl']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
 };
 
 const runInstallTools = (wanted, rows) => {
@@ -750,25 +832,25 @@ const runInstallTools = (wanted, rows) => {
   try {
     const table = rows(buildToolFixtures(root));
     const script = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').replaceAll('/tmp/ci-tools', dir);
-    const probe = 'for t in node npm npx go dart gitleaks promtool; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
+    const probe = 'for t in node npm npx go dart gitleaks promtool kubectl; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
     const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\n${probe}`], {encoding: 'utf8', env: {...process.env, CI_TOOLS: wanted, CI_TOOLS_TABLE: table}});
-    const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|gitleaks|promtool)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
-    return {status: result.status, stderr: result.stderr, resolved, unpacked: [...['node', 'npm', 'go', 'dart'].filter((tool) => existsSync(join(dir, tool))), ...['gitleaks', 'promtool'].filter((tool) => existsSync(join(dir, 'bin', tool)))], downloaded: existsSync(join(dir, 'node.download'))};
+    const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|gitleaks|promtool|kubectl)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
+    return {status: result.status, stderr: result.stderr, resolved, unpacked: [...['node', 'npm', 'go', 'dart'].filter((tool) => existsSync(join(dir, tool))), ...['gitleaks', 'promtool', 'kubectl'].filter((tool) => existsSync(join(dir, 'bin', tool)))], downloaded: existsSync(join(dir, 'node.download'))};
   } finally {
     rmSync(root, {recursive: true, force: true});
   }
 };
 const allRows = (rows) => Object.values(rows).join('\n');
-const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\ngitleaks 8.30.1\npromtool 3.13.1\n';
+const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\ngitleaks 8.30.1\npromtool 3.13.1\nkubectl 1.35.6\n';
 
 test('the tools step installs each tool of ci-tools.json from the table before the image\'s own, and refuses what the table cannot vouch for', () => {
   const all = runInstallTools(WANTED_ALL, allRows);
   assert.equal(all.status, 0, all.stderr);
   assert.deepEqual(Object.entries(all.resolved).map(([tool, r]) => [tool, r.inside, r.output]), [['node', true, 'node-fixture'], ['npm', true, 'npm-fixture'], ['npx', true, 'npx-fixture'],
-    ['go', true, 'go-fixture'], ['dart', true, 'dart-fixture'], ['gitleaks', true, 'gitleaks-fixture'], ['promtool', true, 'promtool-fixture']], 'PLANTED INNOCENT: all six are installed, and the npm named beats the npm that ships with node');
+    ['go', true, 'go-fixture'], ['dart', true, 'dart-fixture'], ['gitleaks', true, 'gitleaks-fixture'], ['promtool', true, 'promtool-fixture'], ['kubectl', true, 'kubectl-fixture']], 'PLANTED INNOCENT: all seven are installed, and the npm named beats the npm that ships with node');
   const reversed = runInstallTools('promtool 3.13.1\nnpm 12.2.0\nnode 26.11.1\n', allRows);
   assert.equal(reversed.resolved.npm.output, 'npm-fixture', 'the order of ci-tools.json does not decide which npm runs');
-  const nodeLast = runInstallTools(WANTED_ALL, (rows) => [rows.npm, rows.node, rows.go, rows.dart, rows.gitleaks, rows.promtool].join('\n'));
+  const nodeLast = runInstallTools(WANTED_ALL, (rows) => [rows.npm, rows.node, rows.go, rows.dart, rows.gitleaks, rows.promtool, rows.kubectl].join('\n'));
   assert.equal(nodeLast.resolved.npm.output, 'npm-bundled-with-node', 'PLANTED DEFECT: a table that lists node after npm puts the npm of node first, and the probe sees it');
   const only = runInstallTools('gitleaks 8.30.1\n', allRows);
   assert.equal(only.status, 0, only.stderr);
@@ -1341,7 +1423,21 @@ test('the report pod of a red run is admitted by the ci quota while the check of
   assert.equal(quotaAdmits(counting, held, podClassOf(run, 'report-failure')), false, 'PLANTED DEFECT: a quota that counts the report class holds the report pod back');
 });
 
-test('tekton/ci is set to pending after the gate and to the outcome in a finally task, with the repository token and the run link', () => {
+// What build-git-https gives its two readers, and every way that departs from it: the clone's
+// GITCREDENTIALS from property `pat`, and the commit status tasks' key `token` from property `statuses`,
+// a token that posts commit statuses on the unit's own repository and writes nothing else.
+const gitHttpsFindings = (secret, unit) => {
+  const reads = Object.fromEntries(secret.spec.data.map(({secretKey, remoteRef}) => [secretKey, `${remoteRef.key}#${remoteRef.property}`]));
+  const {GITCREDENTIALS, token} = secret.spec.target.template.data;
+  const found = [];
+  if (GITCREDENTIALS !== 'https://x-access-token:{{ .pat }}@github.com') found.push(`GITCREDENTIALS is ${GITCREDENTIALS}`);
+  if (token !== '{{ .statuses }}') found.push(`token is ${token}`);
+  if (reads.pat !== `build/${unit}/repo-pat#pat`) found.push(`pat reads ${reads.pat}`);
+  if (reads.statuses !== `build/${unit}/repo-pat#statuses`) found.push(`statuses reads ${reads.statuses}`);
+  return found;
+};
+
+test('tekton/ci is set to pending after the gate and to the outcome in a finally task, with the statuses token and the run link', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
   const pending = pipeline.spec.tasks.find((t) => t.name === 'commit-status-pending');
@@ -1367,7 +1463,13 @@ test('tekton/ci is set to pending after the gate and to the outcome in a finally
   assert.deepEqual(params['task-reasons'].split(' '), pipeline.spec.tasks.map((t) => `$(tasks.${t.name}.reason)`),
     'the outcome reads the reason of every task, so a cancelled one is told from a failed one');
   const secret = docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-git-https');
-  assert.ok('token' in secret.spec.target.template.data, 'build-git-https carries the key the status tasks read');
+  assert.deepEqual(gitHttpsFindings(secret, 'shop'), [], 'PLANTED INNOCENT: the render of shop');
+  const tokenOnPat = structuredClone(secret);
+  tokenOnPat.spec.target.template.data.token = '{{ .pat }}';
+  assert.notDeepEqual(gitHttpsFindings(tokenOnPat, 'shop'), [], 'PLANTED DEFECT: the status token back on the clone\'s pat is caught');
+  const statusesOnPat = structuredClone(secret);
+  statusesOnPat.spec.data.find((d) => d.secretKey === 'statuses').remoteRef.property = 'pat';
+  assert.notDeepEqual(gitHttpsFindings(statusesOnPat, 'shop'), [], 'PLANTED DEFECT: the statuses data item reading property pat is caught');
   assert.throws(() => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop',
     repoURL: 'https://gitlab.com/check/shop.git', buildsJson: '["app"]'})]), /not https:\/\/github\.com\/<owner>\/<repository>/);
 });
