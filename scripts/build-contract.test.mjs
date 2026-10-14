@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import {immutableChanges, probeImmutableChanges} from './check-immutable.mjs';
 import {renderChart} from './render-chart.mjs';
 
@@ -177,7 +178,8 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   };
   const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}};
   const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}};
-  const demo = {name: 'hostyour-demo-consumer', clone_url: 'https://github.com/simetrixch/hostyour-demo-consumer.git', owner: {login: 'simetrixch'}};
+  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}};
+  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}};
   const SHA = 'a'.repeat(40);
   const tag = '0.8.446-stable-20261009014252';
   const pushes = {
@@ -193,23 +195,25 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a branch deletion without the deleted field': {ref: 'refs/heads/feature/x', after: '0'.repeat(40), repository},
     'a deploy tag deletion': {ref: `refs/tags/deploy/prod/${tag}`, after: '0'.repeat(40), deleted: true, repository},
     'a branch push of a customer repository': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: customer},
-    'a branch push of an owner that is not listed': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: demo},
+    'a branch push of an owner that is not listed': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: outsider},
     'a deploy tag push of a customer repository': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: customer},
-    'a deploy tag push of an owner that is not listed': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: demo},
+    'a deploy tag push of an owner that is not listed': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: outsider},
     'a release tag push': {ref: `refs/tags/${tag}`, after: SHA, deleted: false, repository},
     'a release tag push of a customer repository': {ref: `refs/tags/${tag}`, after: SHA, deleted: false, repository: customer},
     'a release tag deletion': {ref: `refs/tags/${tag}`, after: '0'.repeat(40), deleted: true, repository},
     'a release tag with a suffix': {ref: `refs/tags/${tag}-x`, after: SHA, deleted: false, repository},
     'a branch named like a release tag': {ref: `refs/heads/${tag}`, after: SHA, deleted: false, repository},
+    'a branch push of the owner of this platform': {ref: 'refs/heads/feature/x', after: SHA, deleted: false, repository: platform},
+    'a deploy tag push of the owner of this platform': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: platform},
   };
   // GitHub sends `before` with every push; a deletion carries the deleted commit there.
   const BEFORE = 'b'.repeat(40);
   for (const push of Object.values(pushes)) push.before = BEFORE;
   const bodies = Object.values(pushes);
   const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies), publish = matches('github-release-publish', bodies);
-  const verdicts = {ci: [true, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, true],
-    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false],
-    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false]};
+  const verdicts = {ci: [true, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false],
+    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true],
+    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false]};
   Object.keys(pushes).forEach((name, i) => {
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
@@ -243,6 +247,14 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const anyOwner = (filter) => filter.replace(/ && body\.repository\.owner\.login in \[[^\]]*\]$/, '');
   assert.ok(matches('github-ci-push', [pushes['a branch push of a customer repository']], anyOwner)[0].matched);
   assert.ok(matches('github-ci-push', [pushes['a branch push of an owner that is not listed']], anyOwner)[0].matched);
+  // The owner of this platform asks for its repositories' checks to run here (ansiwise-*, hostyour-*), so its pushes are listed,
+  // and only its pushes: the trigger takes the GitHub event `push` and no other, so a pull request from a fork starts nothing.
+  const withoutPlatformOwner = (filter) => filter.replace("in ['digitaplatform', 'simetrixch']", "in ['digitaplatform']");
+  assert.notEqual(withoutPlatformOwner(trigger('github-ci-push').filter), trigger('github-ci-push').filter);
+  assert.equal(matches('github-ci-push', [pushes['a branch push of the owner of this platform']], withoutPlatformOwner)[0].matched, false,
+    'PLANTED DEFECT: the list as it stood before runs no check of a repository of this platform');
+  const github = byKind('Trigger', 'github-ci-push').spec.interceptors.find((i) => i.ref.name === 'github').params;
+  assert.deepEqual(github.find((p) => p.name === 'eventTypes').value, ['push'], 'the ci trigger takes push events only');
   const withBooksBranch = (filter) => filter.replace(/ &&\s+body\.ref != 'refs\/heads\/[^']*'/, '');
   assert.ok(matches('github-ci-push', [pushes['a push of the books branch']], withBooksBranch)[0].matched,
     'PLANTED DEFECT: a filter without the books branch exclusion runs the check on every commit of the Manager');
@@ -276,7 +288,7 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only the pack
   assert.equal(check.steps[0].envFrom, undefined, 'the check step holds no secret as environment');
   assert.equal(check.steps[0].env.find((e) => e.name === 'CI')?.value, 'true', 'a check sees the variable GitHub Actions also sets');
   assert.equal(check.steps[0].env.find((e) => e.name === 'CI_BEFORE_COMMIT')?.value, '$(params.before)', 'a check sees the commit the branch stood at before the push');
-  assert.deepEqual(pipeline.spec.tasks.find((t) => t.name === 'check').params, [{name: 'before', value: '$(params.before)'}]);
+  assert.deepEqual(pipeline.spec.tasks.find((t) => t.name === 'check').params, [{name: 'before', value: '$(params.before)'}, {name: 'tools', value: '$(tasks.fetch.results.tools)'}]);
   assert.ok(pipeline.spec.params.some((p) => p.name === 'before'));
   assert.deepEqual(check.volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
   assert.deepEqual(check.steps[0].volumeMounts.filter((m) => m.name === 'npmrc').map((m) => m.readOnly), [true]);
@@ -450,13 +462,14 @@ test('the fetch task fetches the pinned sources with the credential, and the che
   const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
   const task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
   const fetch = task('fetch').taskSpec;
-  assert.deepEqual(fetch.steps.map((s) => s.name), ['branches', 'list-sources', 'sources']);
+  assert.deepEqual(fetch.steps.map((s) => s.name), ['branches', 'list-sources', 'list-tools', 'sources', 'hand-over-clone']);
+  assert.deepEqual(fetch.results.map((r) => r.name), ['tools'], 'the tools of ci-tools.json travel to the check as a result of the fetch');
   const holdsCredential = (spec) => spec.steps.filter((s) => JSON.stringify(s.envFrom ?? []).includes('build-git-https')).map((s) => s.name);
   assert.deepEqual(holdsCredential(fetch), ['branches', 'sources'], 'the step that reads the branch\'s ci-sources.json holds no credential');
   const planted = structuredClone(fetch);
   planted.steps[1].envFrom = [{secretRef: {name: 'build-git-https'}}];
   assert.notDeepEqual(holdsCredential(planted), ['branches', 'sources'], 'PLANTED DEFECT: a credential on the reading step is caught');
-  assert.equal(fetch.steps[2].env.find((e) => e.name === 'SOURCES_OWNER_URL').value, 'https://github.com/check', 'sources come from the unit\'s own owner');
+  assert.equal(fetch.steps.find((s) => s.name === 'sources').env.find((e) => e.name === 'SOURCES_OWNER_URL').value, 'https://github.com/check', 'sources come from the unit\'s own owner');
   for (const name of ['clone', 'describe-commit', 'fetch', 'check']) {
     assert.equal(task(name).workspaces.find((w) => w.name === 'source').subPath, 'repository', `${name} reads the clone from subPath repository`);
   }
@@ -466,6 +479,50 @@ test('the fetch task fetches the pinned sources with the credential, and the che
   assert.equal(check.steps[0].env.find((e) => e.name === 'CI_SOURCES_DIR').value, '/workspace/sources');
   assert.throws(() => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop', repoURL: 'https://gitlab.com/check/shop.git', buildsJson: '[]'})]),
     /unit\.repoURL .* is not https:\/\/github\.com\/<owner>\/<repository>/);
+});
+
+// The clone of the ci is `git init`, `git remote add origin` and a fetch of the one commit. Of the gits the pods run
+// (2.45 and 2.39), none names the default branch of such a clone, and only one from 2.48 on does it by itself on a
+// later fetch; scripts/check.sh reads it from refs/remotes/origin/HEAD and refuses to judge a release without it.
+// followRemoteHEAD=never makes any git behave as the older ones do, and an older git ignores the key.
+const runBranches = (script, defaultBranch) => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-branches-')), remote = join(root, 'remote.git'), seed = join(root, 'seed'), clone = join(root, 'clone'), home = join(root, 'home');
+  const identity = {GIT_AUTHOR_NAME: 'ci', GIT_AUTHOR_EMAIL: 'ci@example.test', GIT_COMMITTER_NAME: 'ci', GIT_COMMITTER_EMAIL: 'ci@example.test'};
+  const git = (cwd, ...args) => execFileSync('git', args, {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: {...process.env, ...identity}}).trim();
+  try {
+    for (const dir of [seed, clone, home]) mkdirSync(dir);
+    git(root, 'init', '-q', '--bare', '-b', defaultBranch, remote);
+    git(seed, 'init', '-q', '-b', defaultBranch);
+    git(seed, 'commit', '-q', '--allow-empty', '-m', 'default');
+    git(seed, 'checkout', '-q', '-b', 'feature');
+    git(seed, 'commit', '-q', '--allow-empty', '-m', 'pushed');
+    git(seed, 'push', '-q', remote, defaultBranch, 'feature');
+    git(clone, 'init', '-q', '-b', 'main');
+    git(clone, 'remote', 'add', 'origin', remote);
+    git(clone, 'fetch', '-q', 'origin', git(seed, 'rev-parse', 'HEAD'));
+    git(clone, 'checkout', '-q', 'FETCH_HEAD');
+    const result = spawnSync('sh', ['-c', script.replaceAll('/tmp', home)], {cwd: clone, encoding: 'utf8',
+      env: {...process.env, GITCREDENTIALS: 'https://ci:token@example.test', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'remote.origin.followRemoteHEAD', GIT_CONFIG_VALUE_0: 'never'}});
+    const originHead = spawnSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], {cwd: clone, encoding: 'utf8'});
+    return {status: result.status, stderr: result.stderr, originHead: originHead.status === 0 ? originHead.stdout.trim() : null};
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+};
+
+test('the fetch task names the default branch of the clone, whichever branch was pushed and whatever the default branch is called', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const script = pipeline.spec.tasks.find((t) => t.name === 'fetch').taskSpec.steps.find((s) => s.name === 'branches').script;
+  for (const defaultBranch of ['master', 'trunk']) {
+    assert.deepEqual(runBranches(script, defaultBranch), {status: 0, stderr: '', originHead: `refs/remotes/origin/${defaultBranch}`},
+      `PLANTED INNOCENT: a push of feature to a repository whose default branch is ${defaultBranch} leaves origin/HEAD at ${defaultBranch}, not at feature`);
+  }
+  const withoutSetHead = script.replace(/^.*set-head.*\n/m, '');
+  assert.notEqual(withoutSetHead, script);
+  assert.equal(runBranches(withoutSetHead, 'master').originHead, null, 'PLANTED DEFECT: the clone as the ci made it before has no origin/HEAD, so scripts/check.sh stops at the merge probe');
+  const guessed = script.replace('--auto', 'master');
+  assert.notEqual(guessed, script);
+  assert.notEqual(runBranches(guessed, 'trunk').status, 0, 'PLANTED DEFECT: a default branch written into the pipeline fails the repository that calls it something else');
 });
 
 test('the ci gate takes a full SHA-1 as commit and as before, all zeros for a new branch, and refuses anything else', () => {
@@ -540,7 +597,7 @@ const runInstallAndCheck = (installAndCheck, files) => {
   writeFileSync(join(bin, 'pnpm'), `#!/usr/bin/env bash\ntouch "${join(root, 'pnpm-called')}"\n[ -f pnpm-lock.yaml ]\n`);
   chmodSync(join(bin, 'pnpm'), 0o755);
   try {
-    execFileSync('bash', ['-euo', 'pipefail', '-c', installAndCheck], {cwd: repo, env: {...process.env, PATH: `${bin}:${process.env.PATH}`}});
+    execFileSync('bash', ['-euo', 'pipefail', '-c', installAndCheck], {cwd: repo, env: {...process.env, CI_TOOLS: '', PATH: `${bin}:${process.env.PATH}`}});
   } catch { /* a failed install is read from the missing marker below */ }
   return {checked: existsSync(join(repo, 'checked')), pnpm: existsSync(join(root, 'pnpm-called'))};
 };
@@ -556,6 +613,246 @@ test('the ci check installs with pnpm only a repository that carries pnpm-lock.y
   assert.deepEqual(runInstallAndCheck(installAndCheck, ['package.json', 'package-lock.json']), {checked: true, pnpm: false}, 'a repository with an npm lockfile is checked without a pnpm install');
   const unconditional = 'pnpm install --frozen-lockfile\nbash scripts/check.sh\n';
   assert.deepEqual(runInstallAndCheck(unconditional, []), {checked: false, pnpm: true}, 'PLANTED DEFECT: an install that runs in every repository fails the repository without package.json before its check');
+});
+
+// ci-tools.json at a repository's root names the tools its check runs with, {"<tool>": "<x.y.z>"}: the fetch task
+// validates it with jq and hands the lines to the check as a result; the check installs each from the table of
+// files/ci-tools.table, with its sha256, and puts it before the image's own tools on PATH.
+const CI_FILES = 'clusters/inventories/consumer-build/files';
+const ciPipeline = (builds = []) => renderUnit('shop', builds).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+const ciTask = (name, builds) => ciPipeline(builds).spec.tasks.find((t) => t.name === name).taskSpec;
+
+test('list-tools passes only a known tool at a plain version, and a repository without ci-tools.json lists none', () => {
+  const step = ciTask('fetch').steps.find((s) => s.name === 'list-tools');
+  assert.equal(step.envFrom, undefined, 'the step that reads the repository\'s file holds no credential');
+  assert.equal(step.env.find((e) => e.name === 'TOOLS_RESULT').value, '$(results.tools.path)');
+  const list = (contents) => {
+    const dir = mkdtempSync(join(tmpdir(), 'list-tools-'));
+    try {
+      if (contents !== undefined) writeFileSync(join(dir, 'ci-tools.json'), typeof contents === 'string' ? contents : JSON.stringify(contents));
+      const result = spawnSync('bash', ['-c', step.script], {cwd: dir, encoding: 'utf8', env: {...process.env, TOOLS_RESULT: join(dir, 'tools')}});
+      return {status: result.status, lines: result.status === 0 ? readFileSync(join(dir, 'tools'), 'utf8').split('\n').filter(Boolean) : null};
+    } finally {
+      rmSync(dir, {recursive: true, force: true});
+    }
+  };
+  const all = {node: '26.11.1', npm: '12.2.0', go: '1.24.13', dart: '3.13.4', gitleaks: '8.30.1', promtool: '3.13.1'};
+  assert.deepEqual(list(all), {status: 0, lines: Object.entries(all).map(([tool, version]) => `${tool} ${version}`)}, 'PLANTED INNOCENT: every tool of the contract at a plain version passes');
+  assert.deepEqual(list({dart: '3.13.4'}), {status: 0, lines: ['dart 3.13.4']});
+  assert.deepEqual(list({}), {status: 0, lines: []}, 'a file that names no tool lists none');
+  assert.deepEqual(list(undefined), {status: 0, lines: []}, 'a repository without ci-tools.json lists none and keeps the tools of its image');
+  for (const [tool, version] of [['ruby', '3.4.0'], ['NODE', '26.11.1'], ['node', 'latest'], ['node', '26'], ['node', '26.11'], ['node', 'v26.11.1'], ['node', '26.11.1-rc.1'], ['node', '26.11.1; id'], ['node', '$(id)'], ['node', 26.11], ['node', null]]) {
+    assert.notEqual(list({[tool]: version}).status, 0, `PLANTED DEFECT: ${tool} at ${JSON.stringify(version)} is refused`);
+  }
+  assert.notEqual(list({node: '26.11.1', ruby: '3.4.0'}).status, 0, 'one unknown tool among known ones refuses the file');
+  for (const contents of [[['node', '26.11.1']], '"node"', '{"node": "26.11.1"', '']) {
+    assert.notEqual(list(contents).status, 0, `PLANTED DEFECT: ${JSON.stringify(contents)} is no object of tools and versions`);
+  }
+});
+
+const TOOLS_TABLE = readFileSync(`${CI_FILES}/ci-tools.table`, 'utf8');
+const TABLE_HOSTS = ['nodejs.org', 'registry.npmjs.org', 'go.dev', 'storage.googleapis.com', 'github.com'];
+const tableErrors = (table, tools) => {
+  const errors = [], seen = new Set();
+  for (const line of table.split('\n').filter(Boolean)) {
+    const [tool, version, sha256, url, ...rest] = line.split(' ');
+    if (rest.length || !url) errors.push(`${line}: not four fields`);
+    if (!tools.includes(tool)) errors.push(`${tool}: not a tool of the contract`);
+    if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) errors.push(`${tool}: version ${version} is not x.y.z`);
+    if (!/^[0-9a-f]{64}$/.test(sha256 ?? '')) errors.push(`${tool} ${version}: sha256 is not 64 hex digits`);
+    if (!TABLE_HOSTS.some((host) => url?.startsWith(`https://${host}/`))) errors.push(`${tool} ${version}: ${url} is not https on a known host`);
+    if (!url?.includes(version ?? '\0')) errors.push(`${tool} ${version}: ${url} does not name the version`);
+    if (seen.has(`${tool} ${version}`)) errors.push(`${tool} ${version}: twice`);
+    seen.add(`${tool} ${version}`);
+  }
+  return errors;
+};
+
+test('the tools table carries one sha256 and one https url per tool and version, for exactly the tools list-tools accepts', () => {
+  const listTools = ciTask('fetch').steps.find((s) => s.name === 'list-tools').script;
+  const tools = listTools.match(/IN\(([^)]*)\)/)[1].match(/[a-z]+/g);
+  assert.deepEqual(tableErrors(TOOLS_TABLE, tools), [], 'PLANTED INNOCENT: the table as it stands');
+  assert.deepEqual([...new Set(TOOLS_TABLE.split('\n').filter(Boolean).map((line) => line.split(' ')[0]))].sort(), [...tools].sort(), 'every accepted tool has a row and no row names another');
+  const first = TOOLS_TABLE.split('\n')[0], [tool, version, sha256, url] = first.split(' ');
+  for (const [defect, row] of [
+    ['a short sha256', [tool, version, sha256.slice(1), url]],
+    ['an upper-case sha256', [tool, version, sha256.toUpperCase(), url]],
+    ['plain http', [tool, version, sha256, url.replace('https:', 'http:')]],
+    ['a host that is not known', [tool, version, sha256, url.replace('https://nodejs.org', 'https://example.org')]],
+    ['a url that does not name the version', [tool, version, sha256, url.replaceAll(version, '1.0.0')]],
+    ['a tool of no contract', ['ruby', version, sha256, url]],
+    ['a version that is no x.y.z', [tool, 'latest', sha256, url.replaceAll(version, 'latest')]],
+    ['a fifth field', [tool, version, sha256, url, 'extra']],
+  ]) {
+    assert.notDeepEqual(tableErrors(`${row.join(' ')}\n`, tools), [], `PLANTED DEFECT: ${defect} is caught`);
+  }
+  assert.notDeepEqual(tableErrors(`${first}\n${first}\n`, tools), [], 'PLANTED DEFECT: a tool and version twice is caught');
+  const envTable = ciTask('check').steps[0].env.find((e) => e.name === 'CI_TOOLS_TABLE');
+  assert.equal(envTable.value, TOOLS_TABLE, 'the check step is handed the table file, whole');
+});
+
+test('this repository\'s ci-tools.json names only rows of the tools table', () => {
+  const named = Object.entries(JSON.parse(readFileSync('ci-tools.json', 'utf8'))).map(([tool, version]) => `${tool} ${version}`);
+  assert.ok(named.length > 0);
+  const rows = TOOLS_TABLE.split('\n').filter(Boolean).map((line) => line.split(' ').slice(0, 2).join(' '));
+  assert.deepEqual(named.filter((pair) => !rows.includes(pair)), [], 'PLANTED INNOCENT: every pair of the file is a row');
+  assert.notDeepEqual(['go 1.0.0'].filter((pair) => !rows.includes(pair)), [], 'PLANTED DEFECT: a version the table lacks is seen');
+});
+
+// The tools step against stand-in archives. Each stand-in program prints its own name, so what PATH resolves to is
+// what ran. node's archive also carries the npm that node ships with, which the npm of ci-tools.json has to beat.
+const buildToolFixtures = (root) => {
+  const src = join(root, 'src'), out = join(root, 'archives');
+  mkdirSync(out, {recursive: true});
+  const program = (path, name) => { mkdirSync(dirname(path), {recursive: true}); writeFileSync(path, `#!/bin/sh\necho ${name}\n`); chmodSync(path, 0o755); };
+  program(join(src, 'node/node-v/bin/node'), 'node-fixture');
+  program(join(src, 'node/node-v/bin/npm'), 'npm-bundled-with-node');
+  program(join(src, 'npm/package/bin/npm-cli.js'), 'npm-fixture');
+  program(join(src, 'npm/package/bin/npx-cli.js'), 'npx-fixture');
+  program(join(src, 'go/go/bin/go'), 'go-fixture');
+  program(join(src, 'dart/dart-sdk/bin/dart'), 'dart-fixture');
+  program(join(src, 'gitleaks/gitleaks'), 'gitleaks-fixture');
+  program(join(src, 'promtool/prometheus-3.13.1.linux-amd64/promtool'), 'promtool-fixture');
+  const tgz = (name, dir, entry) => execFileSync('tar', ['-czf', join(out, name), '-C', join(src, dir), entry]);
+  tgz('node.tgz', 'node', 'node-v'); tgz('npm.tgz', 'npm', 'package'); tgz('go.tgz', 'go', 'go');
+  tgz('gitleaks.tgz', 'gitleaks', 'gitleaks'); tgz('promtool.tgz', 'promtool', 'prometheus-3.13.1.linux-amd64');
+  execFileSync('python3', ['-I', '-m', 'zipfile', '-c', join(out, 'dart.zip'), 'dart-sdk'], {cwd: join(src, 'dart')});
+  const row = (tool, version, archive) => `${tool} ${version} ${createHash('sha256').update(readFileSync(join(out, archive))).digest('hex')} file://${join(out, archive)}`;
+  return Object.fromEntries([['node', '26.11.1', 'node.tgz'], ['npm', '12.2.0', 'npm.tgz'], ['go', '1.24.13', 'go.tgz'], ['dart', '3.13.4', 'dart.zip'],
+    ['gitleaks', '8.30.1', 'gitleaks.tgz'], ['promtool', '3.13.1', 'promtool.tgz']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
+};
+
+const runInstallTools = (wanted, rows) => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-tools-')), dir = join(root, 'installed');
+  try {
+    const table = rows(buildToolFixtures(root));
+    const script = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').replaceAll('/tmp/ci-tools', dir);
+    const probe = 'for t in node npm npx go dart gitleaks promtool; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\n${probe}`], {encoding: 'utf8', env: {...process.env, CI_TOOLS: wanted, CI_TOOLS_TABLE: table}});
+    const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|gitleaks|promtool)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
+    return {status: result.status, stderr: result.stderr, resolved, unpacked: [...['node', 'npm', 'go', 'dart'].filter((tool) => existsSync(join(dir, tool))), ...['gitleaks', 'promtool'].filter((tool) => existsSync(join(dir, 'bin', tool)))], downloaded: existsSync(join(dir, 'node.download'))};
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+};
+const allRows = (rows) => Object.values(rows).join('\n');
+const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\ngitleaks 8.30.1\npromtool 3.13.1\n';
+
+test('the tools step installs each tool of ci-tools.json from the table before the image\'s own, and refuses what the table cannot vouch for', () => {
+  const all = runInstallTools(WANTED_ALL, allRows);
+  assert.equal(all.status, 0, all.stderr);
+  assert.deepEqual(Object.entries(all.resolved).map(([tool, r]) => [tool, r.inside, r.output]), [['node', true, 'node-fixture'], ['npm', true, 'npm-fixture'], ['npx', true, 'npx-fixture'],
+    ['go', true, 'go-fixture'], ['dart', true, 'dart-fixture'], ['gitleaks', true, 'gitleaks-fixture'], ['promtool', true, 'promtool-fixture']], 'PLANTED INNOCENT: all six are installed, and the npm named beats the npm that ships with node');
+  const reversed = runInstallTools('promtool 3.13.1\nnpm 12.2.0\nnode 26.11.1\n', allRows);
+  assert.equal(reversed.resolved.npm.output, 'npm-fixture', 'the order of ci-tools.json does not decide which npm runs');
+  const nodeLast = runInstallTools(WANTED_ALL, (rows) => [rows.npm, rows.node, rows.go, rows.dart, rows.gitleaks, rows.promtool].join('\n'));
+  assert.equal(nodeLast.resolved.npm.output, 'npm-bundled-with-node', 'PLANTED DEFECT: a table that lists node after npm puts the npm of node first, and the probe sees it');
+  const only = runInstallTools('gitleaks 8.30.1\n', allRows);
+  assert.equal(only.status, 0, only.stderr);
+  assert.deepEqual([only.resolved.gitleaks.inside, only.resolved.node.inside, only.resolved.dart.inside, only.unpacked], [true, false, false, ['gitleaks']], 'only the tool named is installed');
+  const none = runInstallTools('', (rows) => Object.values(rows).map((row) => row.replace(/file:\/\/\S+/, 'file:///nowhere')).join('\n'));
+  assert.deepEqual([none.status, none.downloaded, none.unpacked], [0, false, []], 'a repository without ci-tools.json downloads nothing');
+  const absent = runInstallTools('node 26.11.2\n', allRows);
+  assert.notEqual(absent.status, 0, 'PLANTED DEFECT: a version the table lacks ends the run');
+  assert.match(absent.stderr, /names node 26\.11\.2, which the tools table of this pipeline does not carry/);
+  assert.deepEqual([absent.downloaded, absent.unpacked], [false, []], 'and ends it before anything is downloaded');
+  const half = runInstallTools('gitleaks 8.30.1\nnode 26.11.2\n', allRows);
+  assert.notEqual(half.status, 0, 'one missing version among present ones ends the run');
+  assert.deepEqual([half.downloaded, half.unpacked], [false, []], 'and installs none of them');
+  assert.notEqual(runInstallTools('ruby 3.4.0\n', allRows).status, 0, 'PLANTED DEFECT: a tool the table does not carry ends the run');
+  const forged = runInstallTools('node 26.11.1\n', (rows) => rows.node.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `));
+  assert.notEqual(forged.status, 0, 'PLANTED DEFECT: an archive whose sha256 differs ends the run');
+  assert.deepEqual([forged.downloaded, forged.unpacked], [true, []], 'after the download and before anything is unpacked');
+  const unknown = runInstallTools('ruby 3.4.0\n', (rows) => `ruby 3.4.0 ${rows.node.split(' ')[2]} ${rows.node.split(' ')[3]}`);
+  assert.notEqual(unknown.status, 0, 'a row for a tool this step cannot install ends the run');
+  assert.match(unknown.stderr, /ruby, which this step cannot install/);
+});
+
+test('the check step installs the tools after the fixed ones and before the repository\'s own install, from the file the tests run', () => {
+  const check = ciTask('check').steps[0];
+  assert.equal(check.env.find((e) => e.name === 'CI_TOOLS').value, '$(params.tools)', 'the validated lines reach the step as a variable, never as text of the script');
+  const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
+  assert.ok(check.script.includes(installer), 'the pipeline carries the file that these tests run');
+  const at = (text) => check.script.indexOf(text);
+  assert.ok(at('corepack enable') < at('helm-v4.3.0') && at('helm-v4.3.0') < at('yq_linux_amd64') && at('yq_linux_amd64') < at('/jq-linux-amd64') && at('/jq-linux-amd64') < at(installer) && at(installer) < at('pnpm install'),
+    'corepack, helm, yq and jq come first, then the tools of the repository, then its install');
+  const jq = check.script.split('\n').filter((line) => line.includes('jq')).join('\n');
+  assert.match(jq, /sha256sum -c -/, 'jq is held to its sha256 like helm and yq');
+});
+
+// The check runs as the user of its image, pptruser, uid 10042, and not as root: root keeps CAP_DAC_OVERRIDE and reads and
+// writes through any mode, so a test that expects a directory to refuse a write (ansiwise-core run_removal_test.dart) goes red.
+// What root did for the step is done otherwise: the clone is made by pods that run as root, so the fetch task hands it to that
+// user as its last step, and the check script installs and writes only below places that user owns.
+const CHECK_USER = 10042;
+const OWNED_BY_CHECK_USER = ['/tmp', '/workspace', '/dev/shm', '/pnpm-store', '/npmrc', '/home/pptruser'];
+const checkUserProblems = (pipeline) => {
+  const task = (name) => pipeline.spec.tasks.find((t) => t.name === name).taskSpec;
+  const check = task('check').steps.find((s) => s.name === 'check');
+  const user = check.securityContext?.runAsUser;
+  const problems = [];
+  if (!(user > 0 && check.securityContext?.runAsNonRoot === true)) problems.push('the check step may run as root');
+  if (user !== CHECK_USER) problems.push(`the check step runs as ${user}, not as the user of its image, ${CHECK_USER}`);
+  if (!new RegExp(`^chown -R -h ${user} /workspace/source$`, 'm').test(task('fetch').steps.at(-1).script)) problems.push(`the clone is not handed to ${user} by the last step of the fetch task`);
+  // The commands of the script, without comments and urls, and every absolute path they name.
+  const code = check.script.split('\n').filter((line) => !/^\s*#(?!!)/.test(line)).join('\n').replace(/https?:\/\/\S+/g, '');
+  for (const path of new Set(code.match(/(?<![\w.$}/:-])\/[\w.*-]+(?:\/[\w.${}*-]+)*/g))) {
+    if (path !== '/usr/bin/env' && !OWNED_BY_CHECK_USER.some((place) => path === place || path.startsWith(`${place}/`))) problems.push(`the check script names ${path}, which its user does not own`);
+  }
+  if (/corepack enable(?! --install-directory)/.test(code)) problems.push('corepack enable puts its shims beside node, where its user cannot write');
+  return problems;
+};
+
+test('the check step runs as the user of its image, takes the clone from the fetch task, and writes only where that user can', () => {
+  const pipeline = ciPipeline();
+  assert.deepEqual(checkUserProblems(pipeline), [], 'PLANTED INNOCENT: the pipeline as rendered');
+  const planted = (change) => { const copy = structuredClone(pipeline); change(copy.spec.tasks.find((t) => t.name === 'check').taskSpec, copy.spec.tasks.find((t) => t.name === 'fetch').taskSpec); return checkUserProblems(copy); };
+  const asRoot = planted((check) => { check.steps.find((s) => s.name === 'check').securityContext = {runAsUser: 0, allowPrivilegeEscalation: false}; });
+  assert.ok(asRoot.includes('the check step may run as root'), 'PLANTED DEFECT: the check step as it ran before, uid 0');
+  const unset = planted((check) => { delete check.steps.find((s) => s.name === 'check').securityContext; });
+  assert.ok(unset.includes('the check step may run as root'), 'PLANTED DEFECT: a check step that leaves the user to the image is not held to a user');
+  assert.ok(planted((check, fetch) => { fetch.steps.at(-1).script = fetch.steps.at(-1).script.replace(`${CHECK_USER}`, '1000'); }).some((p) => p.includes('the clone is not handed')), 'PLANTED DEFECT: a clone handed to another user than the check runs as');
+  assert.ok(planted((check, fetch) => { fetch.steps.pop(); }).some((p) => p.includes('the clone is not handed')), 'PLANTED DEFECT: a clone nobody hands over stays root\'s, and the check cannot write into it');
+  const script = (find, replace) => planted((check) => { const step = check.steps.find((s) => s.name === 'check'); assert.ok(step.script.includes(find)); step.script = step.script.replaceAll(find, replace); });
+  assert.ok(script('ci_bin=/tmp/ci-bin', 'ci_bin=/usr/local/bin').some((p) => p.includes('/usr/local/bin')), 'PLANTED DEFECT: tools installed into a directory of root');
+  assert.ok(script('corepack enable --install-directory "${ci_bin}"', 'corepack enable').some((p) => p.includes('corepack enable')), 'PLANTED DEFECT: shims written beside node');
+});
+
+// The lines of the check step from the install on, with stand-ins that record in which order the install, the check
+// and the fixture suites ran: the events, and whether the step ended green.
+const runInstallSteps = (script, {files = [], tools = '', checkExit = 0}) => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-steps-')), repo = join(root, 'repo'), bin = join(root, 'bin'), log = join(root, 'events');
+  mkdirSync(join(repo, 'scripts'), {recursive: true}); mkdirSync(bin);
+  const stub = (path, body) => { writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`); chmodSync(path, 0o755); };
+  for (const file of files) writeFileSync(join(repo, file), '');
+  stub(join(bin, 'pnpm'), `echo pnpm >> "${log}"`);
+  stub(join(bin, 'npm'), `echo "npm $*" >> "${log}"`);
+  stub(join(repo, 'scripts/check.sh'), `echo check >> "${log}"\nexit ${checkExit}`);
+  if (files.includes('scripts/test.sh')) stub(join(repo, 'scripts/test.sh'), `echo test >> "${log}"`);
+  try {
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', script], {cwd: repo, encoding: 'utf8', env: {...process.env, CI_TOOLS: tools, PATH: `${bin}:${process.env.PATH}`}});
+    return {green: result.status === 0, events: existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []};
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+};
+
+test('the ci check runs the install the repository declares, then scripts/check.sh, then scripts/test.sh where ci-tools.json stands', () => {
+  const lines = ciTask('check').steps[0].script.split('\n');
+  const steps = lines.slice(lines.findIndex((line) => line.includes('pnpm install'))).join('\n');
+  const NPM = 'npm 12.2.0\n', LOCKS = ['package.json', 'package-lock.json'];
+  assert.deepEqual(runInstallSteps(steps, {files: [...LOCKS, 'ci-tools.json', 'scripts/test.sh'], tools: NPM}), {green: true, events: ['npm ci', 'check', 'test']},
+    'PLANTED INNOCENT: a repository that names npm is installed with npm ci, then checked, then its suites run');
+  assert.deepEqual(runInstallSteps(steps, {files: [...LOCKS, 'pnpm-lock.yaml', 'ci-tools.json'], tools: NPM}), {green: true, events: ['pnpm', 'npm ci', 'check']}, 'pnpm first where it has a lockfile, no suites where it has no scripts/test.sh');
+  assert.deepEqual(runInstallSteps(steps, {files: LOCKS}), {green: true, events: ['check']}, 'PLANTED INNOCENT: an npm lockfile of a repository that names no npm is left alone, as before');
+  assert.deepEqual(runInstallSteps(steps, {files: ['scripts/test.sh']}), {green: true, events: ['check']}, 'PLANTED INNOCENT: a repository without ci-tools.json runs as before, its scripts/test.sh stays unrun');
+  assert.deepEqual(runInstallSteps(steps, {files: ['ci-tools.json'], tools: ''}), {green: true, events: ['check']}, 'a ci-tools.json without a suite file is checked only');
+  assert.deepEqual(runInstallSteps(steps, {files: ['ci-tools.json', 'scripts/test.sh'], checkExit: 1}), {green: false, events: ['check']}, 'a red check ends the step before the suites');
+  const withoutCondition = (pattern, replacement) => { const changed = steps.split('\n').map((line) => (pattern.test(line) ? replacement : line)).join('\n'); assert.notEqual(changed, steps); return changed; };
+  assert.deepEqual(runInstallSteps(withoutCondition(/npm ci/, '            npm ci'), {files: LOCKS}).events, ['npm ci', 'check'], 'PLANTED DEFECT: an npm ci that runs for every repository is seen');
+  assert.deepEqual(runInstallSteps(withoutCondition(/bash scripts\/test\.sh/, 'if [ -f scripts/test.sh ]; then bash scripts/test.sh; fi'), {files: ['scripts/test.sh']}).events, ['check', 'test'], 'PLANTED DEFECT: suites that run in a repository without ci-tools.json are seen');
+  const swapped = steps.replace('bash scripts/check.sh', '').replace(/(\s*)(if \[ -f ci-tools\.json \][^\n]*)/, '$1$2\nbash scripts/check.sh');
+  assert.deepEqual(runInstallSteps(swapped, {files: ['ci-tools.json', 'scripts/test.sh']}).events, ['test', 'check'], 'PLANTED DEFECT: suites before the check are seen');
 });
 
 const seconds = (duration) => ['h', 'm', 's'].reduce((sum, unit, i) => sum + Number(new RegExp(`(\\d+)${unit}`).exec(duration)?.[1] ?? 0) * [3600, 60, 1][i], 0);
