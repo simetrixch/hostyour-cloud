@@ -55,9 +55,11 @@ as a bare repository <repository>.git in the run's volume beside the clone,
 which the check mounts read-only and finds through CI_SOURCES_DIR. The run's
 one volume holds the clone in its subPath repository and the sources in its
 subPath sources, so the sources are never part of the checked tree. The file
-is the branch's own, so a branch can have any repository of that owner
-fetched that the unit's PAT reads; whoever pushes a branch can read those
-already.
+is the branch's own, and the fetch reads with the unit's token: for a unit of
+the platform's GitHub App, the Manager mints it to read the unit's own
+repository and the sources the ci-sources.json of its DEFAULT branch names,
+and nothing else, so a source a branch adds is fetched once the default branch
+names it; for a PAT unit, whatever the owner's PAT reads.
 
 WHAT THE CHECK NEEDS, read from the check.sh of every unit: Node 24, pnpm,
 git and bash; a mongod, which mongodb-memory-server downloads on first use; a
@@ -435,7 +437,7 @@ spec:
                 into="/workspace/sources/${repository}.git"
                 git init -q --bare "${into}"
                 if ! git --git-dir "${into}" fetch -q --depth=1 "${SOURCES_OWNER_URL}/${repository}.git" "${commit}"; then
-                  echo "fetch: ${repository} at ${commit} could not be fetched from ${SOURCES_OWNER_URL}" >&2
+                  echo "fetch: ${repository} at ${commit} could not be fetched from ${SOURCES_OWNER_URL} — the unit's token reads the sources its ci-sources.json names on the default branch, so a source only this branch names is fetched once the default branch names it and the Manager has rewritten the token (every 45 minutes)" >&2
                   exit 1
                 fi
                 echo "fetch: ${repository} at ${commit}"
