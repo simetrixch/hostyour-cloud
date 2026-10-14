@@ -1139,6 +1139,59 @@ expect 'install-machine: a config of mode 644 named by a relative path' 77 <<'RE
 
 RECORDED
 
+# ── install-machine refuses a first master stated on the ACME account ────────
+# AN INSTALLATION IS BORN ON platform-local: a config that states ACME_CREDENTIALS_JSON is refused
+# in its sentence, with 65, before the first session, and never with its value. A recording ssh
+# stands first on PATH; the refusal must leave it uncalled, and a copy without the refusal calls it.
+ACMESSH="$WORK/acme-ssh"
+mkdir -p "$ACMESSH"
+cat > "$ACMESSH/ssh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$(dirname "$0")/called"
+echo 'ssh: connect to host stub port 22: Connection refused' >&2
+exit 255
+STUB
+chmod +x "$ACMESSH/ssh"
+IMACME="$WORK/install-machine-acme.env"
+cat > "$IMACME" <<'CONFIG'
+FQDN='master.example.invalid'
+OPERATOR_USER='operator'
+STAGE='prod'
+DEPLOY_REPO='https://example.invalid/deploy.git'
+PROGRAMS_REPO='https://example.invalid/programs.git'
+PLATFORM_REPO='https://example.invalid/platform.git'
+PLATFORM_REF='master'
+ELEVATION_PASSWORD='elevation-test'
+CLUSTER_ISSUER='platform-acme'
+ACME_CREDENTIALS_JSON='{"keyId":"kid-shown-nowhere","b64MacKey":"mac-shown-nowhere"}'
+CONFIG
+chmod 600 "$IMACME"
+run_acme() { # the script, then its config
+  A_CODE=0
+  ( cd "$WORK_A" && PATH="$ACMESSH:$PATH" bash "$1" "$2" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+run_acme "$HERE/install-machine.sh" "$IMACME"
+[ ! -e "$ACMESSH/called" ] || fail "install-machine: a config stating ACME_CREDENTIALS_JSON opened a session: $(cat "$ACMESSH/called")"
+must_not 'shown-nowhere' 'install-machine: the refusal does not show the binding'
+expect 'install-machine: a first master stated on the ACME account' 65 <<'RECORDED'
+~~~ standard error ~~~
+
+  <WORK>/install-machine-acme.env states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh and the Manager's cluster-redeploy of this machine
+
+RECORDED
+# The planted defect: a copy without the refusal, beside the driver and the guard, reaches the session.
+PLANTED_ACME="$WORK/planted-install-machine-acme"
+mkdir -p "$PLANTED_ACME"
+cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$PLANTED_ACME/"
+grep -vF '[ -z "${ACME_CREDENTIALS_JSON:-}" ] ||' "$HERE/install-machine.sh" > "$PLANTED_ACME/install-machine.sh"
+cmp -s "$HERE/install-machine.sh" "$PLANTED_ACME/install-machine.sh" \
+  && fail 'the refusal was not taken out of the planted install-machine.sh — the probe proves nothing'
+run_acme "$PLANTED_ACME/install-machine.sh" "$IMACME"
+[ -e "$ACMESSH/called" ] || fail 'the planted install-machine without the refusal opened no session either — the case cannot go red'
+[ "$A_CODE" = '69' ] || fail "the planted install-machine must end at the recording ssh with 69, got $A_CODE"
+rm -f "$ACMESSH/called"
+ok 'the planted defect was caught — a copy without the refusal opens a session with the ACME config'
+
 # ===========================================================================
 # FIVE — abandon-installation, against a fixture of an installation that is gone
 #
@@ -2505,7 +2558,8 @@ echo "test:   run after it that installs alone; the refusals a master backup and
 echo "test:   make before they open a session, the door each composes from MACHINE_HOST and not"
 echo "test:   from the identity, the id a restore refuses, and the one list of stores both drivers"
 echo "test:   carry; install-machine's refusal of a missing config, with no exit code in its"
-echo "test:   sentence. Eight planted defects, a copy of each act with one printed line changed,"
+echo "test:   sentence, and of a first master stated on the ACME account before any session,"
+echo "test:   where a copy without that refusal opens one. Eight planted defects, a copy of each act with one printed line changed,"
 echo "test:   prove the comparison can go red."
 echo "test:   Both drivers' placement, run from their own text in a sandbox, gives a clean machine the"
 echo "test:   engine at its pinned digests, refuses a swapped asset with nothing placed, places a"
