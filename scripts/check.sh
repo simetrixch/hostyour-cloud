@@ -945,6 +945,27 @@ done
   || fail "push_fault takes the platform's builds pushed flat where they must go under the owner's prefix"
 echo "check: ${#push_cases[@]} push paths, the platform's builds under simetrixch/ on the owner's master alone and every other build flat; the check refuses both planted defects."
 
+# And the pods pull them from there: every builds[] pin of the manager and the gate-runner composes against
+# the owner's Zot under simetrixch/, so no cluster asks ghcr.io for an image of this platform.
+own_images() { # $1 global.buildRegistry -> the refs of the platform's own images the manager and gate-runner render at prod
+  local app
+  for app in manager gate-runner; do
+    helm template "$app" "clusters/inventories/$app" --namespace "$app" --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+      -f clusters/platform/values-common.yaml -f clusters/platform/values-prod.yaml \
+      -f "clusters/inventories/$app/values-common.yaml" -f "clusters/inventories/$app/values-prod.yaml" \
+      -f "$installation_values" -f "$cluster_map" -f "$registration" --set "global.buildRegistry=$1" \
+      | grep -oE '[a-z0-9.-]+/simetrixch/(manager|gate-runner|dbtools):[^" ]+'
+  done | sort -u
+}
+own_image_fault() { # $1 the refs -> what is wrong with them, or nothing
+  [ "$(printf '%s\n' "$1" | sed 's|:.*||' | sort -u | wc -l)" = 3 ] || { echo "the renders name ${1//$'\n'/, }, not manager, gate-runner and dbtools once each"; return; }
+  printf '%s\n' "$1" | grep -v '^zot\.master\.digitacloud\.app/simetrixch/' | sed 's/^/not on the owner'"'"'s Zot: /' | head -1
+}
+fault="$(own_image_fault "$(own_images "$trunk_registry")")"
+[ -z "$fault" ] || fail "the platform's own images: $fault"
+[ -n "$(own_image_fault "$(own_images ghcr.io/simetrixch)")" ] || fail "own_image_fault takes the planted defect, the platform's images pulled from ghcr.io"
+echo "check: the manager, gate-runner and dbtools pods pull from zot.master.digitacloud.app/simetrixch/, and the check refuses the planted pull from ghcr.io."
+
 # The binaries a release tag publishes from release/build.sh stand under <owner>/<repository>, read off the
 # repoURL, which for ansiwise-cli is the path the Manager, the lifecycle and the release script fetch.
 binaries_repository() { # $1 repoURL -> the repository the publish pipeline of unit ansiwise-cli pushes binaries to
