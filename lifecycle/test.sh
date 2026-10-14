@@ -101,6 +101,46 @@ export GIT_COMMITTER_DATE='2026-01-01T00:00:00+0000'
 # localised machine would translate.
 export LC_ALL=C
 
+# NO GIT CALL OF A FIXTURE LEAVES A PROCESS BEHIND IT. A commit, a fetch and the
+# receiving end of a push each start `git maintenance run --auto --detach`, which
+# forks away, takes objects/maintenance.lock in the repository and works there
+# after the caller has gone on. A case that removes its repository then races it
+# — release-platform's throwaway clone does, straight after the pin it pushed —
+# and `rm` ends "Directory not empty" with a line in the standard error that the
+# case records. The setting stands in the repository's own config, put there by a
+# template every `git init` and `git clone` copies — the scripts under test make
+# their clones under it too. The environment's own `-c` is no use: git leaves it out
+# of the environment of the other end of a local push, which is the one that matters.
+mkdir "$WORK/git-template"
+printf '[maintenance]\n\tauto = false\n' > "$WORK/git-template/config"
+export GIT_TEMPLATE_DIR="$WORK/git-template"
+
+# WHAT IS MEASURED IS THE START, not the race it loses: whether the removal lost
+# depends on the disk, so a test of the race goes red on one runner and not on
+# another. A fixture commits and pushes with the trace on, which names every
+# process git starts, the one at the far end of the push included.
+detached() { # prints how many background maintenances a fixture's commit and push started
+  local d
+  d="$(mktemp -d "$WORK/detached.XXXXXX")"
+  git init --quiet --bare --initial-branch=master "$d/origin.git"
+  git init --quiet --initial-branch=master "$d/work"
+  git -C "$d/work" remote add origin "$d/origin.git"
+  echo x > "$d/work/f"
+  git -C "$d/work" add f
+  GIT_TRACE="$d/trace" git -C "$d/work" commit --quiet -m x
+  GIT_TRACE="$d/trace" git -C "$d/work" push --quiet origin master
+  [ "$(git --git-dir="$d/origin.git" rev-parse master)" = "$(git -C "$d/work" rev-parse master)" ] \
+    || fail 'the traced fixture push did not reach its origin, so a count of nothing would prove nothing'
+  grep -cE 'built-in: git (maintenance run|gc) --auto' "$d/trace" || true
+}
+STARTED="$(detached)"
+[ "$STARTED" = '0' ] || fail "a fixture's commit and push started $STARTED background maintenance(s), which can still be writing when the case removes its repository"
+ok 'a fixture commits and pushes without starting a background maintenance, and the push reaches its origin'
+# A PLANTED DEFECT: the same commit and push in repositories made without the template.
+PLANTED="$(unset GIT_TEMPLATE_DIR; detached)"
+[ "$PLANTED" -gt 0 ] || fail 'a commit and push without the setting started no background maintenance, so the count above proves nothing'
+ok "the planted defect was caught — without the setting the same commit and push start $PLANTED background maintenance(s)"
+
 OUT="$WORK/out"
 mkdir -p "$OUT"
 
@@ -2436,7 +2476,9 @@ ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERV
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
 echo "test:   reason for a host name it cannot resolve normalised, in the C locale."
-echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
+echo "test: covered — a fixture's commit and push start no background maintenance, at either end,"
+echo "test:   that could still be writing when a case removes its repository, and a planted run"
+echo "test:   without the template that prevents it is caught; the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
 echo "test:   the mint that names no installation — which pins nothing, moves no branch and"
