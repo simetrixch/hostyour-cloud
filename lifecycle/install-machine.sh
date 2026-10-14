@@ -83,6 +83,12 @@ for named in FQDN OPERATOR_USER STAGE DEPLOY_REPO PROGRAMS_REPO PLATFORM_REPO PL
 done
 [ -n "${ELEVATION_PASSWORD:-}" ]   || fail "$FILE states no ELEVATION_PASSWORD, and every program of this sequence is run elevated" 65
 
+# BORN ON platform-local, refused before anything is mutated. ACME_CREDENTIALS_JSON is the one source
+# of acmeEabKeyId in the master's map, and an issuer bound to that account reads its key from a
+# Secret that Vault, the secret store and Argo CD deliver, none of which stands on a first master:
+# the run would wait on its own end. Its value is never shown.
+[ -z "${ACME_CREDENTIALS_JSON:-}" ] || fail "$FILE states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out, ACME_EMAIL and ACME_SERVER still stated, and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh $FQDN $FILE and the Manager's cluster-redeploy of this machine" 65
+
 # ------------------------------------------------- the engine of the owner's master
 # BUILT HERE ONLY WHERE THE MACHINE IS THE REGISTRY ITS ENGINE COMES FROM: the host of
 # RELEASES in driver.sh, read there and never restated, is zot.<FQDN>. The pin is the

@@ -589,6 +589,27 @@ test('a unit that builds nothing renders the ci check and the publish pipeline, 
   assert.ok(!isCiOnly(leaky), 'PLANTED DEFECT: a ci-only render that carries the bump credential is caught');
 });
 
+// The two platform bump credentials stand on build-platform/, a tier of their own, and never at
+// build/<unit>/repo-pat: that leaf is a unit's own entry, and a unit named hostyour-cloud or deploy owns
+// it whole. What the bump of a unit reads, by key of its credential
+// set, as `<vault key>#<property>`, and every way that departs from it.
+const bumpReads = (docs) => Object.fromEntries(docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https')
+  .spec.data.map(({secretKey, remoteRef}) => [secretKey, `${remoteRef.key}#${remoteRef.property}`]));
+const bumpReadFindings = (reads, unit) => {
+  const expected = {'unit-pat': `build/${unit}/repo-pat#pat`, 'deploy-pat': 'build-platform/deploy/repo-pat#pat', 'cloud-pat': 'build-platform/hostyour-cloud/repo-pat#pat'};
+  const found = Object.entries(expected).filter(([key, read]) => reads[key] !== read).map(([key]) => `${unit}: ${key} reads ${reads[key]}`);
+  if (new Set(Object.values(reads)).size !== Object.keys(reads).length) found.push(`${unit}: two keys read one entry`);
+  return found;
+};
+
+test('the bump reads the platform credentials from build-platform/, and units named hostyour-cloud and deploy read their own entries apart from them', () => {
+  for (const unit of ['shop', 'hostyour-cloud', 'deploy']) assert.deepEqual(bumpReadFindings(bumpReads(renderUnit(unit)), unit), [], `PLANTED INNOCENT: the render of ${unit}`);
+  const deploy = bumpReads(renderUnit('deploy'));
+  assert.notDeepEqual(bumpReadFindings({...deploy, 'deploy-pat': 'build/deploy/repo-pat#pat'}, 'deploy'), [], 'PLANTED DEFECT: the old deploy leaf, the entry a unit named deploy owns, is caught');
+  const cloud = bumpReads(renderUnit('hostyour-cloud'));
+  assert.notDeepEqual(bumpReadFindings({...cloud, 'cloud-pat': 'build/hostyour-cloud/repo-pat#pat'}, 'hostyour-cloud'), [], 'PLANTED DEFECT: the old hostyour-cloud leaf, the entry a unit named hostyour-cloud owns, is caught');
+});
+
 // The lines of the check step from the install on, run in a repository directory with pnpm replaced by a stub
 // that records each call: true when the repository's check ran, and whether pnpm was called.
 const runInstallAndCheck = (installAndCheck, files) => {
