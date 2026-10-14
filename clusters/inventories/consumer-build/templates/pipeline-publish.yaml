@@ -15,19 +15,12 @@ Neither this Pipeline nor its runs carry image-builder.io/consumer, the label th
 Manager's release watch selects, because Tekton copies a Pipeline's labels onto
 its runs.
 
-WHAT IS PUBLISHED, read at the tag by `scan`:
-  - a tag whose tree holds npm-seed/ is the one-time seed: the .tgz files in it
-    are published as they are, and nothing else. Every one needs its line in
-    npm-seed/pins.tsv (`<name>@<version>`, the lockfile integrity, the sha256 of
-    the .tgz and the lockfiles that pin it, tab separated), its sha256 must be
-    that line's, its package.json must be that name and version, and it may hold
-    no .npmrc, no .env* file, no link and no gitleaks finding. The proof of each
-    file against the pnpm store is made where the store is, by the seed's own
-    script beside it; here the bytes are proven to be the bytes its review read.
-  - otherwise every tracked package.json that is not private and names
-    publishConfig.registry; that registry must be https://<registry>/v2/npm/, so
-    a package that still names another registry fails the run. A repository with
-    neither publishes nothing, and the run ends after the scan.
+WHAT IS PUBLISHED, read at the tag by `scan`: every tracked package.json that
+is not private and names publishConfig.registry; that registry must be
+https://<registry>/v2/npm/, so a package that still names another registry fails
+the run. A repository with none publishes nothing, and the run ends after the
+scan. Nothing else is published: the one-time seed of npm-seed/ is over, and a
+tree that holds npm-seed/ is read like any other.
 
 ONLY THE DEFAULT BRANCH IS PUBLISHED: `reviewed` fetches the default branch of
 origin and passes a release commit that is on it, or one that differs from the
@@ -40,6 +33,11 @@ form the release kit's release.sh stamps (0.3.001 is 0.3.1, a channel other than
 stable is the prerelease part), before `pnpm pack` writes the workspace: ranges
 from those versions. Nothing is committed, and on a tag the kit stamped it
 changes nothing. A tarball that declares another version fails the run.
+
+WHAT A TARBALL MAY HOLD: every packed tarball holds files and folders under
+package/ only, no .npmrc and no .env* file, or the run fails before its push;
+then the step `leaks` runs gitleaks over every tarball unpacked, and a finding fails the
+run before its push.
 
 THE PUSH. Each tarball is one manifest in npm/<owner>/<name>:<version>: an empty
 config, one layer that is the .tgz, and the annotations
@@ -84,7 +82,7 @@ and the tarballs in its subPath packed.
 {{- $toolsImage := "alpine/k8s:1.35.6@sha256:b7a12c5ddf261994c33d2eaaa06fd69a0803ff6b38683bfa3d30a76dcdf92807" -}}
 {{- $nodeImage := "ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3" -}}
 {{- $gitleaksImage := "zricethezav/gitleaks:v8.21.2@sha256:0e99e8821643ea5b235718642b93bb32486af9c8162c8b8731f7cbdc951a7f46" -}}
-{{- $published := "[\"seed\", \"source\"]" -}}
+{{- $published := "[\"source\"]" -}}
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
@@ -97,8 +95,8 @@ metadata:
     image-builder.io/publish: {{ $unit | quote }}
 spec:
   description: >-
-    Publishes the npm packages of one release tag, or the one-time seed in
-    npm-seed/, to npm/<owner>/<name>:<version> in this build plane's registry.
+    Publishes the npm packages of one release tag to
+    npm/<owner>/<name>:<version> in this build plane's registry.
   params:
     - name: release-tag
       type: string
@@ -180,7 +178,7 @@ spec:
           - name: packed
         results:
           - name: mode
-            description: seed (npm-seed/ stands at the tag), source (packages to pack) or none.
+            description: source (packages to pack) or none.
         steps:
           - name: scan
             image: {{ $toolsImage }}
@@ -191,14 +189,9 @@ spec:
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
-              scan_packages() { # <list it writes, "<folder>\t<name>" per package> — sets MODE to seed, source or none
+              scan_packages() { # <list it writes, "<folder>\t<name>" per package> — sets MODE to source or none
                 local file name registry
                 : > "$1"
-                if [ -e npm-seed ]; then
-                  MODE=seed
-                  echo "scan: npm-seed/ stands at this tag - its tarballs are published as they are, and nothing else"
-                  return 0
-                fi
                 while IFS= read -r file; do
                   jq -e '(.private // false) == false and (.publishConfig.registry // "") != ""' "${file}" >/dev/null 2>&1 || continue
                   name="$(jq -r .name "${file}")"
@@ -300,7 +293,7 @@ spec:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
 
-    # ── 5. pack — the seed checked, or the packages built and packed ────────
+    # ── 5. pack — the packages built, packed, checked and scanned ───────────
     - name: pack
       runAfter: [reviewed]
       when:
@@ -308,15 +301,12 @@ spec:
           operator: in
           values: {{ $published }}
       params:
-        - { name: mode, value: "$(tasks.scan.results.mode)" }
         - { name: release-tag, value: "$(params.release-tag)" }
       workspaces:
         - { name: source, workspace: source, subPath: repository }
         - { name: packed, workspace: source, subPath: packed }
       taskSpec:
         params:
-          - name: mode
-            type: string
           - name: release-tag
             type: string
         workspaces:
@@ -330,7 +320,7 @@ spec:
               optional: true
           - name: pnpm-store
             emptyDir: {}
-          # The seed tarballs, unpacked for gitleaks.
+          # The packed tarballs, unpacked for gitleaks.
           - name: scratch
             emptyDir: {}
         steps:
@@ -341,8 +331,6 @@ spec:
               runAsUser: 0
               allowPrivilegeEscalation: false
             env:
-              - name: MODE
-                value: "$(params.mode)"
               - name: RELEASE_TAG
                 value: "$(params.release-tag)"
               - name: NPM_CONFIG_USERCONFIG
@@ -366,71 +354,6 @@ spec:
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
-              # Every .tgz of npm-seed/ against its line of pins.tsv; the checked ones go to the push as they are.
-              seed_check() { # <folder the checked tarballs go to> <folder each is unpacked into for gitleaks>
-                local dest="$1" unpacked="$2" line name_at integrity hex pinned base file got entry meta count=0 listed=" "
-                if [ ! -f npm-seed/pins.tsv ]; then
-                  echo "seed: REFUSE — npm-seed/ holds no pins.tsv, so no tarball in it is proven" >&2
-                  return 1
-                fi
-                while IFS= read -r line || [ -n "${line}" ]; do
-                  [ -n "${line}" ] || continue
-                  IFS=$'\t' read -r name_at integrity hex pinned <<< "${line}"
-                  base=""
-                  if [[ "${name_at}" =~ ^@([a-z0-9][a-z0-9._-]*)/([a-z0-9][a-z0-9._-]*)@([0-9A-Za-z.+-]+)$ ]]; then
-                    base="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}.tgz"
-                  fi
-                  if [ -z "${base}" ] || [[ "${integrity}" != sha512-* ]] || ! [[ "${hex}" =~ ^[0-9a-f]{64}$ ]] || [ -z "${pinned}" ]; then
-                    echo "seed: REFUSE — '${line}' is no line of pins.tsv: <name>@<version>, the lockfile integrity, the sha256 of the .tgz and the lockfiles that pin it, tab separated" >&2
-                    return 1
-                  fi
-                  case "${listed}" in *" ${base} "*) echo "seed: REFUSE — pins.tsv lists ${name_at} twice" >&2; return 1 ;; esac
-                  file="npm-seed/${base}"
-                  if [ ! -f "${file}" ]; then
-                    echo "seed: REFUSE — pins.tsv lists ${name_at}, and npm-seed/ holds no ${base}" >&2
-                    return 1
-                  fi
-                  got="$(sha256sum "${file}" | cut -d' ' -f1)"
-                  if [ "${got}" != "${hex}" ]; then
-                    echo "seed: REFUSE — ${base} has the sha256 ${got}, and its line in pins.tsv names ${hex}" >&2
-                    return 1
-                  fi
-                  entry="$(tar -tvzf "${file}" | cut -c1 | grep -v '^[-d]$' | head -n 1)" || true
-                  if [ -n "${entry}" ]; then
-                    echo "seed: REFUSE — ${base} holds an entry that is neither a file nor a folder" >&2
-                    return 1
-                  fi
-                  entry="$(tar -tzf "${file}" | grep -E '(^|/)(\.npmrc|\.env[^/]*)$' | head -n 1)" || true
-                  if [ -n "${entry}" ]; then
-                    echo "seed: REFUSE — ${base} holds ${entry}, and a published package carries no .npmrc or .env file" >&2
-                    return 1
-                  fi
-                  entry="$(tar -tzf "${file}" | grep -Ev '^package(/|$)' | head -n 1)" || true
-                  [ -n "${entry}" ] || entry="$(tar -tzf "${file}" | grep -E '(^|/)\.\.(/|$)' | head -n 1)" || true
-                  if [ -n "${entry}" ]; then
-                    echo "seed: REFUSE — ${base} holds ${entry}, outside package/" >&2
-                    return 1
-                  fi
-                  meta="$(tar -xzOf "${file}" package/package.json | node -e 'const m = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(m.name + "@" + m.version)')" || meta=""
-                  if [ "${meta}" != "${name_at}" ]; then
-                    echo "seed: REFUSE — ${base} is ${meta:-no package}, and its line in pins.tsv names ${name_at}" >&2
-                    return 1
-                  fi
-                  mkdir -p "${unpacked}/${base}" && tar -xzf "${file}" -C "${unpacked}/${base}" && cp "${file}" "${dest}/${base}" || return 1
-                  listed="${listed}${base} "
-                  count=$((count + 1))
-                done < npm-seed/pins.tsv
-                for file in npm-seed/*; do
-                  base="${file##*/}"
-                  [ "${base}" != pins.tsv ] || continue
-                  case "${listed}" in *" ${base} "*) ;; *) echo "seed: REFUSE — npm-seed/${base} has no line in npm-seed/pins.tsv" >&2; return 1 ;; esac
-                done
-                if [ "${count}" = 0 ]; then
-                  echo "seed: REFUSE — npm-seed/pins.tsv lists no tarball" >&2
-                  return 1
-                fi
-                echo "seed: ${count} tarballs match their lines in npm-seed/pins.tsv"
-              }
               # The version the release kit's release.sh stamps for a tag x.y.z-<channel>-<stamp>.
               release_version() { # <release tag>
                 local core="${1%%-*}" channel="${1#*-}" version
@@ -485,41 +408,54 @@ spec:
                   echo "pack: ${packed} -> ${tarballs[0]##*/}"
                 done < "$1"
               }
-              case "${MODE}" in
-                seed)
-                  mkdir -p /scratch/unpacked
-                  seed_check /workspace/packed /scratch/unpacked ;;
-                source)
-                  VERSION="$(release_version "${RELEASE_TAG}")"
-                  # pnpm 11.7.0, as the ci check; a package.json that names packageManager overrides it.
-                  corepack enable
-                  corepack prepare pnpm@11.7.0 --activate
-                  stamp_versions "${VERSION}"
-                  build_packages /workspace/packed/publishable.tsv
-                  pack_packages /workspace/packed/publishable.tsv /workspace/packed "${VERSION}" ;;
-                *)
-                  echo "pack: the scan named '${MODE}', which is neither seed nor source" >&2
-                  exit 1 ;;
-              esac
+              # Every packed tarball: files and folders under package/ only, no .npmrc and no .env* file; each is
+              # unpacked for the gitleaks of the next step.
+              check_tarballs() { # <folder of the packed tarballs> <folder each is unpacked into for gitleaks>
+                local tgz base entry
+                for tgz in "$1"/*.tgz; do
+                  [ -f "${tgz}" ] || continue
+                  base="${tgz##*/}"
+                  entry="$(tar -tvzf "${tgz}" | cut -c1 | grep -v '^[-d]$' | head -n 1)" || true
+                  if [ -n "${entry}" ]; then
+                    echo "pack: REFUSE — ${base} holds an entry that is neither a file nor a folder" >&2
+                    return 1
+                  fi
+                  entry="$(tar -tzf "${tgz}" | grep -E '(^|/)(\.npmrc|\.env[^/]*)$' | head -n 1)" || true
+                  if [ -n "${entry}" ]; then
+                    echo "pack: REFUSE — ${base} holds ${entry}, and a published package carries no .npmrc or .env file" >&2
+                    return 1
+                  fi
+                  entry="$(tar -tzf "${tgz}" | grep -Ev '^package(/|$)' | head -n 1)" || true
+                  [ -n "${entry}" ] || entry="$(tar -tzf "${tgz}" | grep -E '(^|/)\.\.(/|$)' | head -n 1)" || true
+                  if [ -n "${entry}" ]; then
+                    echo "pack: REFUSE — ${base} holds ${entry}, outside package/" >&2
+                    return 1
+                  fi
+                  mkdir -p "$2/${base}" && tar -xzf "${tgz}" -C "$2/${base}" || return 1
+                done
+                echo "pack: every tarball holds files under package/ only, and no .npmrc or .env file"
+              }
+              VERSION="$(release_version "${RELEASE_TAG}")"
+              # pnpm 11.7.0, as the ci check; a package.json that names packageManager overrides it.
+              corepack enable
+              corepack prepare pnpm@11.7.0 --activate
+              stamp_versions "${VERSION}"
+              build_packages /workspace/packed/publishable.tsv
+              pack_packages /workspace/packed/publishable.tsv /workspace/packed "${VERSION}"
+              mkdir -p /scratch/unpacked
+              check_tarballs /workspace/packed /scratch/unpacked
           - name: leaks
             image: {{ $gitleaksImage }}
-            env:
-              - name: MODE
-                value: "$(params.mode)"
             volumeMounts:
               - name: scratch
                 mountPath: /scratch
             script: |
               #!/bin/sh
               set -eu
-              seed_leaks() { # <folder the seed tarballs are unpacked in>
+              scan_leaks() { # <folder the packed tarballs are unpacked in>
                 gitleaks detect --source "$1" --no-git --no-banner --redact --exit-code 1
               }
-              if [ "${MODE}" = seed ]; then
-                seed_leaks /scratch/unpacked
-              else
-                echo "leaks: no seed at this tag, nothing unpacked to scan"
-              fi
+              scan_leaks /scratch/unpacked
             computeResources:
               requests: { cpu: 100m, memory: 128Mi }
               limits: { cpu: 500m, memory: 512Mi }

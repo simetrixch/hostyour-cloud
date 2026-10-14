@@ -20,9 +20,10 @@ the zot repo the release pushes to.
 
 {{/*
 consumer-build.repoOwner — the organisation that owns the unit's repository, read off
-unit.repoURL (https://github.com/<owner>/<repo>.git). It is the npm scope the unit's private
-packages are published under: GitHub Packages files an organisation's packages under its login
-and no other, so the scope is a fact of the registration and never a value of this chart.
+unit.repoURL (https://github.com/<owner>/<repo>.git). It is the npm scope the unit's packages
+are published under: the publish pipeline publishes a package of this scope and no other
+(templates/pipeline-publish.yaml), so the scope is a fact of the registration and never a value
+of this chart.
 */}}
 {{- define "consumer-build.repoOwner" -}}
 {{- $url := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
