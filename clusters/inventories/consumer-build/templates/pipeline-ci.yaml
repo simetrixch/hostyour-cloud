@@ -114,6 +114,8 @@ sets no status, because it names a commit it did not prove.
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
 {{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
+{{- /* The user the check runs as: pptruser, the user of the check image (ghcr.io/puppeteer/puppeteer, UID 10042 in its Dockerfile). The fetch task hands the clone to it. */ -}}
+{{- $checkUser := 10042 -}}
 {{- /* The image the shared git-clone Task runs (image-builder/templates/tasks/git-clone.yaml). */ -}}
 {{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
 {{- /* The image report-failure runs: bash, curl, jq and the shell tools its script uses. The release pipeline runs the same tag, unpinned, and the ci run keeper runs it for kubectl and jq. */ -}}
@@ -443,6 +445,18 @@ spec:
             volumeMounts:
               - name: source-list
                 mountPath: /source-list
+          # The pods above run as root and leave the clone to root; the check runs as a user
+          # without root and has to write into it (node_modules, build output, the test databases).
+          - name: hand-over-clone
+            image: {{ $gitImage }}
+            workingDir: /workspace/source
+            script: |
+              #!/usr/bin/env sh
+              set -eu
+              chown -R -h {{ $checkUser }} /workspace/source
+            computeResources:
+              requests: { cpu: 50m, memory: 32Mi }
+              limits: { cpu: 500m, memory: 64Mi }
 
     # ── 5. check — the repository's own scripts/check.sh ─────────────────────
     - name: check
@@ -494,9 +508,12 @@ spec:
             image: ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
             workingDir: /workspace/source
             securityContext:
-              # The clone leaves the workspace to root, and the image's own
-              # user is 10042. Root without the ability to gain more.
-              runAsUser: 0
+              # Not root: root keeps CAP_DAC_OVERRIDE and reads and writes through
+              # any mode, so a test that expects a directory to refuse a write
+              # (a record this account cannot remove) is red in a pod and green
+              # on a workstation. The fetch task hands the clone to this user.
+              runAsUser: {{ $checkUser }}
+              runAsNonRoot: true
               allowPrivilegeEscalation: false
             env:
               # What GitHub Actions also sets: a check that cannot run on a
@@ -570,33 +587,40 @@ spec:
                 fi
               done
 
+              # The user of this step owns /tmp and not /usr/local/bin, so the
+              # shims of corepack and the fixed tools below go to a directory of
+              # its own, first on PATH.
+              ci_bin=/tmp/ci-bin
+              mkdir -p "${ci_bin}"
+              PATH="${ci_bin}:${PATH}"
+
               # pnpm 11.7.0 is what the units' Dockerfiles activate. A unit
               # whose package.json names packageManager overrides it.
-              corepack enable
+              corepack enable --install-directory "${ci_bin}"
               corepack prepare pnpm@11.7.0 --activate
 
               # helm 4.3.0, for a check that renders charts.
               curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
               echo "86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb  /tmp/helm.tar.gz" | sha256sum -c -
-              tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm
+              tar -xzf /tmp/helm.tar.gz -C "${ci_bin}" --strip-components=1 linux-amd64/helm
 
               # yq 4.53.6, for a check that reads rendered charts.
-              curl -fsSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64
-              echo "c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385  /usr/local/bin/yq" | sha256sum -c -
-              chmod +x /usr/local/bin/yq
+              curl -fsSL -o "${ci_bin}/yq" https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64
+              echo "c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385  ${ci_bin}/yq" | sha256sum -c -
+              chmod +x "${ci_bin}/yq"
 
               # jq 1.8.2, for a check whose suites read JSON (scripts/pipeline-publish.test.sh of hostyour-cloud).
-              curl -fsSL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
-              echo "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f  /usr/local/bin/jq" | sha256sum -c -
-              chmod +x /usr/local/bin/jq
+              curl -fsSL -o "${ci_bin}/jq" https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
+              echo "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f  ${ci_bin}/jq" | sha256sum -c -
+              chmod +x "${ci_bin}/jq"
 
               # The Chrome of the image, for the units whose tests print PDFs.
               # A unit that has no use for the variables ignores them.
               REPORT_CHROMIUM_PATH="$(ls /home/pptruser/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome | head -n 1)"
               export REPORT_CHROMIUM_PATH
-              # Root in a container cannot use Chrome's sandbox, and /dev/shm
-              # holds the databases of the engine suite, so Chrome keeps its
-              # shared memory in /tmp.
+              # A container gives Chrome no user namespace for its sandbox, and
+              # /dev/shm holds the databases of the engine suite, so Chrome
+              # keeps its shared memory in /tmp.
               export REPORT_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage
 
 {{ .Files.Get "files/ci-install-tools.sh" | indent 14 }}
