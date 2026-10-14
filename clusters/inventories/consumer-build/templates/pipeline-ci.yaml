@@ -24,8 +24,8 @@ may be added to it that a release selector reads.
 
 The trust split:
 
-  PINNED LITERALS: repoURL, the images, the pnpm, helm, yq and jq versions, and the table of
-  files/ci-tools.table (see THE TOOLS OF A REPOSITORY).
+  PINNED LITERALS: repoURL, the images, the pnpm version, the helm, yq and jq versions of
+  files/ci-fixed-tools.sh, and the table of files/ci-tools.table (see THE TOOLS OF A REPOSITORY).
 
   RUN INPUTS (from the push webhook, proven in-pipeline): git-url is the
   webhook's own claim of the repo and is compared fail-closed against the
@@ -66,8 +66,9 @@ WHAT THE CHECK NEEDS, read from the check.sh of every unit: Node 24, pnpm,
 git and bash; a mongod, which mongodb-memory-server downloads on first use; a
 Chrome for the tests of a unit that prints PDFs; and helm, yq and jq for the
 units whose check renders charts or reads JSON. One public image carries all but
-the last three, so their releases are pinned here by their sha256 and installed
-by the check step. No image is built by us. A repository without pnpm-lock.yaml
+the last three, so their releases are pinned by their sha256 in files/ci-fixed-tools.sh
+and installed by the check step, and by build-binaries of the publish pipeline, whose
+release/build.sh runs the same suites. No image is built by us. A repository without pnpm-lock.yaml
 has nothing for pnpm to install: some carry no package.json, one keeps an npm
 lockfile its check never reads.
 
@@ -578,32 +579,14 @@ spec:
                 fi
               done
 
-              # The user of this step owns /tmp and not /usr/local/bin, so the
-              # shims of corepack and the fixed tools below go to a directory of
-              # its own, first on PATH.
-              ci_bin=/tmp/ci-bin
-              mkdir -p "${ci_bin}"
-              PATH="${ci_bin}:${PATH}"
+{{ .Files.Get "files/ci-fixed-tools.sh" | indent 14 }}
 
+              # The shims of corepack go to the directory of the fixed tools,
+              # whose user owns it, and not beside node.
               # pnpm 11.7.0 is what the units' Dockerfiles activate. A unit
               # whose package.json names packageManager overrides it.
               corepack enable --install-directory "${ci_bin}"
               corepack prepare pnpm@11.7.0 --activate
-
-              # helm 4.3.0, for a check that renders charts.
-              curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
-              echo "86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb  /tmp/helm.tar.gz" | sha256sum -c -
-              tar -xzf /tmp/helm.tar.gz -C "${ci_bin}" --strip-components=1 linux-amd64/helm
-
-              # yq 4.53.6, for a check that reads rendered charts.
-              curl -fsSL -o "${ci_bin}/yq" https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64
-              echo "c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385  ${ci_bin}/yq" | sha256sum -c -
-              chmod +x "${ci_bin}/yq"
-
-              # jq 1.8.2, for a check whose suites read JSON (scripts/pipeline-publish.test.sh of hostyour-cloud).
-              curl -fsSL -o "${ci_bin}/jq" https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
-              echo "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f  ${ci_bin}/jq" | sha256sum -c -
-              chmod +x "${ci_bin}/jq"
 
               # The Chrome of the image, for the units whose tests print PDFs.
               # A unit that has no use for the variables ignores them.

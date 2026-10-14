@@ -18,6 +18,7 @@ its runs.
 WHAT IS PUBLISHED, read at the tag by `scan`:
   - a tag whose tree tracks release/build.sh publishes the binaries that script
     builds, and nothing else: `build-binaries` runs it with the tools of the
+    ci check, helm, yq and jq (files/ci-fixed-tools.sh) and those of the
     repository's ci-tools.json (files/ci-install-tools.sh), as
     `bash release/build.sh <tag> <folder>`, and every file it leaves in that
     folder is one layer of ONE manifest <owner>/<repository>:<tag> — an empty
@@ -547,7 +548,11 @@ spec:
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
+
+{{ .Files.Get "files/ci-fixed-tools.sh" | indent 14 }}
+
 {{ .Files.Get "files/ci-install-tools.sh" | indent 14 }}
+
               build_binaries() { # <folder the binaries go to>: release/build.sh leaves one regular file per binary there, and nothing else
                 local dest="$1" entry count=0
                 rm -rf "${dest}"
