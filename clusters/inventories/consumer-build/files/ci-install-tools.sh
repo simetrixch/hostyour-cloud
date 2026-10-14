@@ -54,6 +54,10 @@ while read -r tool version sha256 url; do
     promtool)
       tar -xzf "${archive}" -C "${ci_tools_dir}/bin" --strip-components=1 "prometheus-${version}.linux-amd64/promtool"
       ;;
+    kubectl)
+      # The download is the program itself, not an archive.
+      install -m 0755 "${archive}" "${ci_tools_dir}/bin/kubectl"
+      ;;
     *)
       echo "check: the tools table of this pipeline names ${tool}, which this step cannot install" >&2
       exit 1

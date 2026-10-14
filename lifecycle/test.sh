@@ -119,7 +119,10 @@ mkdir -p "$OUT"
 # So is the reason ssh passes on from the resolver for a host name it cannot
 # resolve: glibc answers "Name or service not known" with a network and
 # "Temporary failure in name resolution" without one, and another libc words
-# both its own way. The host name before it stays. Nothing else is normalised.
+# both its own way. The host name before it stays. So is the warning git 2.39 prints
+# before the "fatal: Remote branch ... not found" of a clone of a branch that does not
+# exist, which a newer git does not print: what the case records is the refusal and
+# the exit, and git's own warning is no part of either. Nothing else is normalised.
 #
 # WRITTEN HERE RATHER THAN SHELLED OUT TO, because the filter that normalises is
 # as much part of the measurement as the comparison is. A normaliser that
@@ -128,6 +131,7 @@ mkdir -p "$OUT"
 normalise() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" == "warning: Could not find remote branch "*" to clone." ]] && continue
     line="${line//"$WORK"/<WORK>}"; line="${line//"$HERE"/<HERE>}"; line="${line//"$HOME"/<HOME>}"
     while [[ "$line" =~ ([0-9]{14}) ]]; do line="${line//${BASH_REMATCH[1]}/TS14}"; done
     if [[ "$line" =~ (Could not resolve hostname [^:]+: )[^.]+ ]]; then
@@ -150,6 +154,15 @@ printf '%s\n' \
 [ "$(normalise < "$OUT/probe.in" | sort -u)" = 'ssh: Could not resolve hostname door.example.invalid: <RESOLVER>. Nothing' ] \
   || fail 'the normaliser does not read the resolver'"'"'s reason with a network and without one alike, or hides the host name'
 ok 'the normaliser reads a resolver'"'"'s reason alike online and offline, and keeps the host name before it'
+printf '%s\n' \
+  'warning: Could not find remote branch nosuch.example.invalid to clone.' \
+  'fatal: Remote branch nosuch.example.invalid not found in upstream origin' \
+  'warning: Could not find remote branch is a line git does not print' \
+  > "$OUT/probe.in"
+[ "$(normalise < "$OUT/probe.in")" = "fatal: Remote branch nosuch.example.invalid not found in upstream origin
+warning: Could not find remote branch is a line git does not print" ] \
+  || fail 'the normaliser does not drop the warning git 2.39 prints before a refused clone of a missing branch, or drops a line that is not that warning'
+ok 'the normaliser drops the warning git 2.39 prints before a refused clone of a missing branch, and nothing else'
 
 A_CODE=0
 # THE BLOCK A CASE IS HELD TO: the normalised standard output, a line no script

@@ -1,2 +1,4 @@
 [maintenance]
 	auto = false
+[receive]
+	autogc = false

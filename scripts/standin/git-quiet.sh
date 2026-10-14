@@ -2,7 +2,9 @@
 #
 # NO GIT CALL OF A FIXTURE LEAVES A PROCESS BEHIND IT. A commit, a fetch and the receiving end of a
 # push each start `git maintenance run --auto --detach`, which forks away, takes
-# objects/maintenance.lock in the repository and works there after the caller has gone on. A case that
+# objects/maintenance.lock in the repository and works there after the caller has gone on (the receiving end
+# of git 2.39, the ci image's, starts `git gc --auto` instead, which `receive.autogc` and not
+# `maintenance.auto` turns off, so the template sets both). A case that
 # removes its repository then races it, and `rm` ends "Directory not empty" with a line in the standard
 # error that the case records. The setting stands in the repository's own config, put there by the
 # template every `git init` and `git clone` copies — the scripts under test make their clones under it

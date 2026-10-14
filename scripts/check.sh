@@ -128,11 +128,13 @@ function helm_expression(s,   m) {
   if (keyname != "") { key = keyname }
   found = helm_expression($0)
   if (found != "") { print "expression\t" source "\t" key "\t" found; next }
-  if (src == "" && match($0, /^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?[A-Za-z0-9+\/]{40,}={0,2}"?[ \t]*$/)) {
+  if (src == "" && match($0, /^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?[A-Za-z0-9+\/]+=?=?"?[ \t]*$/)) {
     payload = $0
     sub(/^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?/, "", payload)
     sub(/"?[ \t]*$/, "", payload)
-    print "base64\t" source "\t" key "\t" payload
+    bare = payload
+    sub(/=+$/, "", bare)
+    if (length(bare) >= 40) print "base64\t" source "\t" key "\t" payload
   }
 }
 '
@@ -339,6 +341,23 @@ collect_off_revision() {
   off_revision="$off_revision
 $found"
 }
+
+# ── The awk programs of the scans read no regex interval ────────────────────────────────────
+# THE CI IMAGE'S AWK IS mawk 1.3.4 20200120, AND IT READS A BRACE EXPRESSION IN A REGEX AS TEXT. A
+# regex ending in an interval (a class and a count in braces) matches nothing there and nothing
+# complains: the base64 field of the scan stayed unmatched, no value was decoded, and the
+# counter-probe below went red in the ci run and green on every workstation, whose awk reads it.
+# The fence reads the programs, so it is red on every machine the day one is written again. A
+# count is written as a `length()` test or as repeated classes.
+has_interval() { grep -Eq '[{][0-9]+(,[0-9]*)?[}]' <<< "$1"; }
+interval_planted='match($0, /^[A-Za-z0-9+\/]{40,}={0,2}$/)'
+interval_innocent='match(s, /\{\{[^{}]*\}\}/) && length(s) >= 40 && s ~ /=?=?$/'
+has_interval "$interval_planted" || fail "the fence for a regex interval does not see one planted in an awk program"
+has_interval "$interval_innocent" && fail "the fence for a regex interval reports an awk program that writes none"
+for program in scan_awk source_fields_awk revisions_awk off_revision_awk; do
+  has_interval "${!program}" && fail "the awk program $program writes a regex interval, which the ci image's mawk 1.3.4 20200120 reads as text, so its match is silently empty there"
+done
+echo "check: no awk program of the scans writes a regex interval, and the fence reports one planted."
 
 # ── The counter-probe of that scan ──────────────────────────────────────────────────────────
 # THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
