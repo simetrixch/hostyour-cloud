@@ -102,10 +102,10 @@ test('admission guard selects typed Tekton fields and keeps native inline refusa
   assert.ok(webhook.webhooks.every(h => h.failurePolicy === 'Fail'));
 });
 
-// The ci pipeline runs a repository's own check on every branch push. What keeps it from being a
-// release, from holding a credential it must not, and from running anywhere else is asserted here
-// on the rendered charts; the admission policy and the trigger filters are evaluated by
-// scripts/vap-eval, which runs the CEL library the build plane runs.
+// The ci pipeline runs a repository's own check on every push of its default branch or of a `ci/`
+// branch. What keeps it from being a release, from holding a credential it must not, and from
+// running anywhere else is asserted here on the rendered charts; the admission policy and the
+// trigger filters are evaluated by scripts/vap-eval, which runs the CEL library the build plane runs.
 const evaluate = (policy, requests) => execFileSync('go', ['run', '.'], {cwd: 'scripts/vap-eval', encoding: 'utf8',
   input: JSON.stringify({policy, requests})}).split('\n').filter(Boolean).map((line) => JSON.parse(line));
 const renderUnit = (name, builds = ['app']) => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name,
@@ -145,7 +145,7 @@ test('the admission policy admits the release, the ci, the image and the publish
   assert.deepEqual(evaluate(policy, [update])[0].denied, []);
 });
 
-test('the run the ci trigger creates is admitted, is no release, and the trigger takes a branch push only', () => {
+test('the run the ci trigger creates is admitted, is no release, and the trigger takes a push of the default branch or a ci/ branch only', () => {
   const builder = imageBuilder();
   const byKind = (kind, name) => builder.find((d) => d.kind === kind && d.metadata.name === name);
   const template = byKind('TriggerTemplate', 'ci-push').spec.resourcetemplates[0];
@@ -177,23 +177,28 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
       validations: [{expression: edit(filter), message: 'ignored'}]}};
     return evaluate(policy, bodies.map((body) => ({body}))).map((v) => ({matched: v.denied.length === 0, overlays: v.variables}));
   };
-  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}};
-  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}};
-  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}};
-  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}};
+  // GitHub sends the repository's default branch with every push (repository.default_branch); `main` here, so a
+  // filter that names `master` instead of reading it is seen.
+  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main'};
+  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}, default_branch: 'main'};
+  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}, default_branch: 'main'};
+  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
   const SHA = 'a'.repeat(40);
   const tag = '0.8.446-stable-20261009014252';
   const pushes = {
-    'a branch push': {ref: 'refs/heads/feature/x', after: SHA, deleted: false, repository},
-    'a branch push without the deleted field': {ref: 'refs/heads/main', after: SHA, repository},
+    'a push of an issue branch': {ref: 'refs/heads/issue-1-fix', after: SHA, deleted: false, repository},
+    'a push of the default branch without the deleted field': {ref: 'refs/heads/main', after: SHA, repository},
     'a deploy tag push': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository},
     'a push of a delivery branch': {ref: 'refs/heads/deploy/prod', after: SHA, deleted: false, repository},
     'a branch named like a deploy tag': {ref: `refs/heads/deploy/prod/${tag}`, after: SHA, deleted: false, repository},
-    'a push of the books branch': {ref: 'refs/heads/check.example.invalid', after: SHA, deleted: false, repository},
-    'a branch whose name begins with the books branch': {ref: 'refs/heads/check.example.invalid-fix', after: SHA, deleted: false, repository},
+    // A repository whose default branch is the books branch, or a sibling of it.
+    'a push of the books branch': {ref: 'refs/heads/check.example.invalid', after: SHA, deleted: false,
+      repository: {...repository, default_branch: 'check.example.invalid'}},
+    'a branch whose name begins with the books branch': {ref: 'refs/heads/check.example.invalid-fix', after: SHA, deleted: false,
+      repository: {...repository, default_branch: 'check.example.invalid-fix'}},
     'another tag push': {ref: 'refs/tags/v1.0.0', after: SHA, deleted: false, repository},
-    'a branch deletion': {ref: 'refs/heads/feature/x', after: '0'.repeat(40), deleted: true, repository},
-    'a branch deletion without the deleted field': {ref: 'refs/heads/feature/x', after: '0'.repeat(40), repository},
+    'a branch deletion': {ref: 'refs/heads/ci/issue-1-planted-1', after: '0'.repeat(40), deleted: true, repository},
+    'a branch deletion without the deleted field': {ref: 'refs/heads/ci/issue-1-planted-1', after: '0'.repeat(40), repository},
     'a deploy tag deletion': {ref: `refs/tags/deploy/prod/${tag}`, after: '0'.repeat(40), deleted: true, repository},
     'a branch push of a customer repository': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: customer},
     'a branch push of an owner that is not listed': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: outsider},
@@ -204,17 +209,20 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a release tag deletion': {ref: `refs/tags/${tag}`, after: '0'.repeat(40), deleted: true, repository},
     'a release tag with a suffix': {ref: `refs/tags/${tag}-x`, after: SHA, deleted: false, repository},
     'a branch named like a release tag': {ref: `refs/heads/${tag}`, after: SHA, deleted: false, repository},
-    'a branch push of the owner of this platform': {ref: 'refs/heads/feature/x', after: SHA, deleted: false, repository: platform},
+    'a branch push of the owner of this platform': {ref: 'refs/heads/master', after: SHA, deleted: false, repository: platform},
     'a deploy tag push of the owner of this platform': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: platform},
+    'a push of master where the default branch is main': {ref: 'refs/heads/master', after: SHA, deleted: false, repository},
+    'a push of a ci/ branch': {ref: 'refs/heads/ci/issue-1-planted-1', after: SHA, deleted: false, repository},
+    'a branch with ci/ inside its name': {ref: 'refs/heads/feature/ci/x', after: SHA, deleted: false, repository},
   };
   // GitHub sends `before` with every push; a deletion carries the deleted commit there.
   const BEFORE = 'b'.repeat(40);
   for (const push of Object.values(pushes)) push.before = BEFORE;
   const bodies = Object.values(pushes);
   const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies), publish = matches('github-release-publish', bodies);
-  const verdicts = {ci: [true, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false],
-    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true],
-    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false]};
+  const verdicts = {ci: [false, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false],
+    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, false],
+    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false]};
   Object.keys(pushes).forEach((name, i) => {
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
@@ -237,7 +245,7 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   assert.deepEqual(byKind('TriggerBinding', 'github-release-publish-binding').spec.params.map((p) => p.name), ['unit', 'release-tag', 'git-url']);
   assert.deepEqual(evaluate(guardOf(builder), [{object: createdRun(builder, 'release-publish'), oldObject: null,
     request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: EVENT_LISTENER}}}])[0].denied, [], 'PLANTED INNOCENT: the publish run is admitted');
-  assert.deepEqual(ci[0].overlays, {unit: 'shop', branch: 'feature/x', commit: SHA, before: BEFORE, 'git-url': repository.clone_url});
+  assert.deepEqual(ci[23].overlays, {unit: 'shop', branch: 'ci/issue-1-planted-1', commit: SHA, before: BEFORE, 'git-url': repository.clone_url});
   // The commit before the push travels from the webhook to the run's parameter, and the check reads that parameter.
   assert.equal(byKind('TriggerBinding', 'github-ci-push-binding').spec.params.find((p) => p.name === 'before')?.value, '$(extensions.before)');
   assert.ok(byKind('TriggerTemplate', 'ci-push').spec.params.some((p) => p.name === 'before'));
@@ -259,8 +267,19 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const withBooksBranch = (filter) => filter.replace(/ &&\s+body\.ref != 'refs\/heads\/[^']*'/, '');
   assert.ok(matches('github-ci-push', [pushes['a push of the books branch']], withBooksBranch)[0].matched,
     'PLANTED DEFECT: a filter without the books branch exclusion runs the check on every commit of the Manager');
-  const everyRef = (filter) => filter.replace("body.ref.startsWith('refs/heads/')", "body.ref.startsWith('refs/')");
-  assert.ok(matches('github-ci-push', [pushes['another tag push']], everyRef)[0].matched);
+  // PLANTED DEFECTS of the refs the ci runs for: the filter as it stood before (every branch), a default branch named
+  // instead of read from the push, and a ci/ that is not anchored at the start of the branch name. Each edit must
+  // change the filter, and each edited filter matches a push the trigger refuses.
+  const takenRefs = "(body.ref == 'refs/heads/' + body.repository.default_branch || body.ref.startsWith('refs/heads/ci/'))";
+  const planted = {
+    'the old filter runs the ci for every issue branch': [(filter) => filter.replace(takenRefs, "body.ref.startsWith('refs/heads/')"), 'a push of an issue branch'],
+    'a filter that names master runs the ci for a branch that is not the default': [(filter) => filter.replace("'refs/heads/' + body.repository.default_branch", "'refs/heads/master'"), 'a push of master where the default branch is main'],
+    'a ci/ that is not anchored runs the ci for a branch that only contains it': [(filter) => filter.replace("body.ref.startsWith('refs/heads/ci/')", "body.ref.contains('/ci/')"), 'a branch with ci/ inside its name'],
+  };
+  for (const [defect, [edit, push]] of Object.entries(planted)) {
+    assert.notEqual(edit(trigger('github-ci-push').filter), trigger('github-ci-push').filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
+    assert.ok(matches('github-ci-push', [pushes[push]], edit)[0].matched, `PLANTED DEFECT: ${defect}`);
+  }
 });
 
 test('the ci trigger needs a list of owners, and an empty or missing list fails the render naming the key', () => {
@@ -465,7 +484,7 @@ test('the fetch task fetches the pinned sources with the credential, and the che
   const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
   const task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
   const fetch = task('fetch').taskSpec;
-  assert.deepEqual(fetch.steps.map((s) => s.name), ['branches', 'list-sources', 'list-tools', 'sources', 'hand-over-clone']);
+  assert.deepEqual(fetch.steps.map((s) => s.name), ['branches', 'list-sources', 'list-tools', 'sources', 'hand-over']);
   assert.deepEqual(fetch.results.map((r) => r.name), ['tools'], 'the tools of ci-tools.json travel to the check as a result of the fetch');
   const holdsCredential = (spec) => spec.steps.filter((s) => JSON.stringify(s.envFrom ?? []).includes('build-git-https')).map((s) => s.name);
   assert.deepEqual(holdsCredential(fetch), ['branches', 'sources'], 'the step that reads the branch\'s ci-sources.json holds no credential');
@@ -807,20 +826,27 @@ test('the check step installs the tools after the fixed ones and before the repo
   assert.match(jq, /sha256sum -c -/, 'jq is held to its sha256 like helm and yq');
 });
 
-// The check runs as the user of its image, pptruser, uid 10042, and not as root: root keeps CAP_DAC_OVERRIDE and reads and
-// writes through any mode, so a test that expects a directory to refuse a write (ansiwise-core run_removal_test.dart) goes red.
-// What root did for the step is done otherwise: the clone is made by pods that run as root, so the fetch task hands it to that
-// user as its last step, and the check script installs and writes only below places that user owns.
+// A step that runs a repository's own code runs as the user of its image, pptruser, uid 10042, and not as root: root keeps
+// CAP_DAC_OVERRIDE and reads and writes through any mode, so a test that expects a directory to refuse a write (ansiwise-core
+// run_removal_test.dart, ansiwise-cli record_not_removed_test.dart) goes red. Two steps run those suites: the check of the ci,
+// and build-binaries of the publish pipeline, whose release/build.sh gates every part and the repository before it builds.
+// What root did for them is done otherwise: the folders pods of root made are handed to that user by a step of root before
+// it, and the check script installs and writes only below places that user owns.
 const CHECK_USER = 10042;
 const OWNED_BY_CHECK_USER = ['/tmp', '/workspace', '/dev/shm', '/pnpm-store', '/npmrc', '/home/pptruser'];
+// What is wrong with the user `step` runs as, and with `handOver`, the step of root that hands it `folders` first.
+const userProblems = (step, handOver, folders) => {
+  const user = step.securityContext?.runAsUser;
+  const problems = [];
+  if (!(user > 0 && step.securityContext?.runAsNonRoot === true)) problems.push(`the ${step.name} step may run as root`);
+  if (user !== CHECK_USER) problems.push(`the ${step.name} step runs as ${user}, not as the user of its image, ${CHECK_USER}`);
+  if (!new RegExp(`^chown -R -h ${user} ${folders}$`, 'm').test(handOver?.script ?? '')) problems.push(`${folders} is not handed to ${user} before the ${step.name} step`);
+  return problems;
+};
 const checkUserProblems = (pipeline) => {
   const task = (name) => pipeline.spec.tasks.find((t) => t.name === name).taskSpec;
   const check = task('check').steps.find((s) => s.name === 'check');
-  const user = check.securityContext?.runAsUser;
-  const problems = [];
-  if (!(user > 0 && check.securityContext?.runAsNonRoot === true)) problems.push('the check step may run as root');
-  if (user !== CHECK_USER) problems.push(`the check step runs as ${user}, not as the user of its image, ${CHECK_USER}`);
-  if (!new RegExp(`^chown -R -h ${user} /workspace/source$`, 'm').test(task('fetch').steps.at(-1).script)) problems.push(`the clone is not handed to ${user} by the last step of the fetch task`);
+  const problems = userProblems(check, task('fetch').steps.at(-1), '/workspace/source');
   // The commands of the script, without comments and urls, and every absolute path they name.
   const code = check.script.split('\n').filter((line) => !/^\s*#(?!!)/.test(line)).join('\n').replace(/https?:\/\/\S+/g, '');
   for (const path of new Set(code.match(/(?<![\w.$}/:-])\/[\w.*-]+(?:\/[\w.${}*-]+)*/g))) {
@@ -838,11 +864,33 @@ test('the check step runs as the user of its image, takes the clone from the fet
   assert.ok(asRoot.includes('the check step may run as root'), 'PLANTED DEFECT: the check step as it ran before, uid 0');
   const unset = planted((check) => { delete check.steps.find((s) => s.name === 'check').securityContext; });
   assert.ok(unset.includes('the check step may run as root'), 'PLANTED DEFECT: a check step that leaves the user to the image is not held to a user');
-  assert.ok(planted((check, fetch) => { fetch.steps.at(-1).script = fetch.steps.at(-1).script.replace(`${CHECK_USER}`, '1000'); }).some((p) => p.includes('the clone is not handed')), 'PLANTED DEFECT: a clone handed to another user than the check runs as');
-  assert.ok(planted((check, fetch) => { fetch.steps.pop(); }).some((p) => p.includes('the clone is not handed')), 'PLANTED DEFECT: a clone nobody hands over stays root\'s, and the check cannot write into it');
+  assert.ok(planted((check, fetch) => { fetch.steps.at(-1).script = fetch.steps.at(-1).script.replace(`${CHECK_USER}`, '1000'); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone handed to another user than the check runs as');
+  assert.ok(planted((check, fetch) => { fetch.steps.pop(); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone nobody hands over stays root\'s, and the check cannot write into it');
   const script = (find, replace) => planted((check) => { const step = check.steps.find((s) => s.name === 'check'); assert.ok(step.script.includes(find)); step.script = step.script.replaceAll(find, replace); });
   assert.ok(script('ci_bin=/tmp/ci-bin', 'ci_bin=/usr/local/bin').some((p) => p.includes('/usr/local/bin')), 'PLANTED DEFECT: tools installed into a directory of root');
   assert.ok(script('corepack enable --install-directory "${ci_bin}"', 'corepack enable').some((p) => p.includes('corepack enable')), 'PLANTED DEFECT: shims written beside node');
+});
+
+test('build-binaries runs release/build.sh as the user the ci check runs as, after a step of root hands it the clone and the output', () => {
+  const pipeline = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish');
+  const problems = (p) => {
+    const steps = p.spec.tasks.find((t) => t.name === 'build-binaries').taskSpec.steps;
+    return userProblems(steps.find((s) => s.name === 'build'), steps[0], '/workspace/source /workspace/packed');
+  };
+  assert.deepEqual(problems(pipeline), [], 'PLANTED INNOCENT: the pipeline as rendered');
+  const steps = (p) => p.spec.tasks.find((t) => t.name === 'build-binaries').taskSpec.steps;
+  const fetch = ciTask('fetch');
+  assert.deepEqual([steps(pipeline)[0], steps(pipeline).find((s) => s.name === 'build').securityContext],
+    [{...fetch.steps.at(-1), script: fetch.steps.at(-1).script.replace('/workspace/source', '/workspace/source /workspace/packed')}, ciTask('check').steps.find((s) => s.name === 'check').securityContext],
+    'one shape: the hand-over and the user of the build are the ci\'s, apart from the folder the binaries are left in');
+  const planted = (change) => { const copy = structuredClone(pipeline); change(steps(copy), steps(copy).find((s) => s.name === 'build')); return problems(copy); };
+  assert.ok(planted((all, build) => { build.securityContext = {runAsUser: 0, allowPrivilegeEscalation: false}; }).includes('the build step may run as root'),
+    'PLANTED DEFECT: build-binaries as it ran before, uid 0, where record_not_removed_test.dart is red');
+  assert.ok(planted((all, build) => { delete build.securityContext; }).includes('the build step may run as root'), 'PLANTED DEFECT: a build that leaves the user to the image');
+  assert.ok(planted((all) => { all[0].script = all[0].script.replace(' /workspace/packed', ''); }).some((p) => p.includes('is not handed')),
+    'PLANTED DEFECT: an output folder left to root, where release/build.sh cannot write the binaries');
+  assert.ok(planted((all) => { all.reverse(); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: the hand-over after the build');
+  assert.ok(planted((all) => { all.shift(); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone nobody hands over');
 });
 
 // The lines of the check step from the install on, with stand-ins that record in which order the install, the check

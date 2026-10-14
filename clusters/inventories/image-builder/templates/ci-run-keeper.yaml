@@ -1,5 +1,5 @@
 {{- /*
-THE CI RUN KEEPER. Every branch push creates one ci run, and each run holds a PersistentVolumeClaim
+THE CI RUN KEEPER. Every push of a default or `ci/` branch creates one ci run, and each run holds a PersistentVolumeClaim
 of workspaces.sourceSize on the one build node until the run is deleted. This CronJob does these
 things each minute, to the ci runs only (the runs that carry image-builder.io/ci):
 

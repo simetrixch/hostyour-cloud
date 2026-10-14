@@ -863,6 +863,52 @@ fault="$(zot_fault "$work/zot-planted.json")"
 [ -z "$fault" ] || fail "the planted innocent, buildRegistry at the owner's own registry, is refused: $fault"
 echo "check: zot opens simetrixch/** alone to an anonymous read and seeds it from ghcr.io; the check refuses both planted defects and takes the planted innocent."
 
+# ── The pod of zot rolls when the config.json it was started with is not the one the ConfigMap holds ─
+# zot loads its config at start and never again, and a ConfigMap mount that follows an edit does not
+# restart it: a new accessControl or sync stays unread, and every request is answered by the old rules,
+# until the pod template changes. The pod template carries hostyour.cloud/config-revision for that, and
+# only this check ties it to the config, so the revision is not a string somebody remembers to bump: it
+# is "config-" and the first 12 hex digits of the git hash of the config.json that every stage renders,
+# and a render whose revision is any other value is refused with the value to set. A checksum written by
+# the chart would need no check, but the pod and the ConfigMap come from two library charts, and a chart
+# reads its own values and `global` alone, so the deployment cannot see what its sibling renders.
+render_registry_stages() { # extra helm arguments -> $work/registry-<stage>-render for every stage
+  local stage
+  for stage in $stages; do
+    helm template registry clusters/inventories/registry --namespace registry \
+      -f clusters/platform/values-common.yaml -f "clusters/platform/values-$stage.yaml" \
+      -f clusters/inventories/registry/values-common.yaml -f "clusters/inventories/registry/values-$stage.yaml" -f "$cluster_map" -f "$registration" "$@" \
+      > "$work/registry-$stage-render" 2>&1 \
+      || { cat "$work/registry-$stage-render"; fail "clusters/inventories/registry does not render at stage $stage"; }
+  done
+}
+zot_revision_fault() { # -> the first way the revision of the zot pod does not name the config.json of $work/registry-<stage>-render, or nothing
+  local stage render named="" wanted carried
+  for stage in $stages; do
+    named="$named$(yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' "$work/registry-$stage-render")"
+  done
+  wanted="config-$(printf '%s' "$named" | git hash-object --stdin | cut -c1-12)"
+  for stage in $stages; do
+    render="$work/registry-$stage-render"
+    carried="$(yq 'select(.kind == "Deployment") | .spec.template.metadata.annotations."hostyour.cloud/config-revision"' "$render")"
+    [ "$carried" = "$wanted" ] \
+      || { echo "the zot pod of stage $stage carries config-revision $carried, and the config.json of the registry is named $wanted — zot reads that file at start only, so the pod keeps the old access rules until hostyour.cloud/config-revision in clusters/inventories/registry/values-common.yaml is set to $wanted"; return; }
+  done
+}
+render_registry_stages
+fault="$(zot_revision_fault)"
+[ -z "$fault" ] || fail "$fault"
+# The planted defects: a config.json that changed under the revision it had, and a revision written by hand.
+render_registry_stages --set-string global.registryPullUser=planted-pull
+[ -n "$(zot_revision_fault)" ] || fail "zot_revision_fault takes a config.json that changed while the revision stayed"
+render_registry_stages --set-string 'app.podAnnotations.hostyour\.cloud/config-revision=metrics-acl-grants-the-pull-user'
+[ -n "$(zot_revision_fault)" ] || fail "zot_revision_fault takes a revision that no config.json names"
+# The planted innocent: a change that does not reach config.json leaves the pod where it is.
+render_registry_stages --set app.replicas=2 --set-string pvc.pvc.storageSize=60Gi
+fault="$(zot_revision_fault)"
+[ -z "$fault" ] || fail "the planted innocent, a replica count and a volume size outside config.json, is refused: $fault"
+echo "check: the zot pod rolls with the config.json of every stage; the check refuses a changed config under an old revision and a revision no config names, and takes a change outside config.json."
+
 push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
   helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
     -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -898,6 +944,27 @@ done
 [ -n "$(push_fault hostyour-manager https://github.com/simetrixch/hostyour-manager.git '["manager"]' "$trunk_registry" simetrixch/)" ] \
   || fail "push_fault takes the platform's builds pushed flat where they must go under the owner's prefix"
 echo "check: ${#push_cases[@]} push paths, the platform's builds under simetrixch/ on the owner's master alone and every other build flat; the check refuses both planted defects."
+
+# And the pods pull them from there: every builds[] pin of the manager and the gate-runner composes against
+# the owner's Zot under simetrixch/, so no cluster asks ghcr.io for an image of this platform.
+own_images() { # $1 global.buildRegistry -> the refs of the platform's own images the manager and gate-runner render at prod
+  local app
+  for app in manager gate-runner; do
+    helm template "$app" "clusters/inventories/$app" --namespace "$app" --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+      -f clusters/platform/values-common.yaml -f clusters/platform/values-prod.yaml \
+      -f "clusters/inventories/$app/values-common.yaml" -f "clusters/inventories/$app/values-prod.yaml" \
+      -f "$installation_values" -f "$cluster_map" -f "$registration" --set "global.buildRegistry=$1" \
+      | grep -oE '[a-z0-9.-]+/simetrixch/(manager|gate-runner|dbtools):[^" ]+'
+  done | sort -u
+}
+own_image_fault() { # $1 the refs -> what is wrong with them, or nothing
+  [ "$(printf '%s\n' "$1" | sed 's|:.*||' | sort -u | wc -l)" = 3 ] || { echo "the renders name ${1//$'\n'/, }, not manager, gate-runner and dbtools once each"; return; }
+  printf '%s\n' "$1" | grep -v '^zot\.master\.digitacloud\.app/simetrixch/' | sed 's/^/not on the owner'"'"'s Zot: /' | head -1
+}
+fault="$(own_image_fault "$(own_images "$trunk_registry")")"
+[ -z "$fault" ] || fail "the platform's own images: $fault"
+[ -n "$(own_image_fault "$(own_images ghcr.io/simetrixch)")" ] || fail "own_image_fault takes the planted defect, the platform's images pulled from ghcr.io"
+echo "check: the manager, gate-runner and dbtools pods pull from zot.master.digitacloud.app/simetrixch/, and the check refuses the planted pull from ghcr.io."
 
 # The binaries a release tag publishes from release/build.sh stand under <owner>/<repository>, read off the
 # repoURL, which for ansiwise-cli is the path the Manager, the lifecycle and the release script fetch.
