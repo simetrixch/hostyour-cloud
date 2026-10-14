@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
-import {renderChart} from './render-chart.mjs';
+import {applicationOf, driftFindings, renderChart, renderTwice} from './render-chart.mjs';
 
 // Forgejo on the master. A person signs in through the identity provider alone, and only as a member
 // of `admins`: no password form, no local administrator, an account made at the first sign-in. It
@@ -117,4 +117,9 @@ test('PLANTED DEFECT: a blueprint without the admins binding, or with a second b
 
 test('PLANTED INNOCENT: another application name or another image tag changes nothing the rules hold', () => {
   assert.deepEqual(renderFindings(renderChart('forgejo', ['--set', 'forgejo.gitea.config.APP_NAME=planted', '--set', 'forgejo.image.tag=15.0.10'])), []);
+});
+
+test('a render a second later changes nothing a sync of forgejo writes', () => {
+  const app = JSON.parse(execFileSync('yq', ['-o=json', '.', 'clusters/inventories/forgejo/app.yaml'], {encoding: 'utf8'}));
+  assert.deepEqual(driftFindings(...renderTwice('forgejo'), applicationOf(app)), []);
 });
