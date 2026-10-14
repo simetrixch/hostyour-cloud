@@ -1,5 +1,5 @@
 {{- /*
-The cap on the ci pods of THIS unit. Every branch push starts a ci run whose pods carry the ci priority
+The cap on the ci pods of THIS unit. Every default or `ci/` branch push starts a ci run whose pods carry the ci priority
 class (the ci-push TriggerTemplate of clusters/inventories/image-builder sets it, and the admission policy
 requires it), so a flood of pushes would start as many checks as there are branches. This quota counts the
 non-finished pods of that class in the build namespace and refuses the ones over the cap; Tekton keeps the
