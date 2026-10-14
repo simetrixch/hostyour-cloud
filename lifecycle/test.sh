@@ -28,9 +28,11 @@
 # release refusals, the four states a report can be in, and the six refusals a
 # regeneration makes before it touches a machine. What differs between two runs
 # of one tree is normalised before the comparison, and nothing else: the fixture
-# root, the folder this file stands in, the home folder and the fourteen digits
-# of a mint stamp. So a run in another folder, on another machine or at another
-# time is held to the same bytes.
+# root, the folder this file stands in, the home folder, the fourteen digits of a
+# mint stamp and the reason a resolver gives for a host name it cannot resolve.
+# The locale is C, so a tool's own text is its English one. So a run in another
+# folder, on another machine, without a network or at another time is held to
+# the same bytes.
 #
 # WHY THE BLOCKS STAND IN THIS FILE and not in a file of their own: an install
 # branch stamps its domain over the fixtures' example.invalid in every tracked
@@ -95,6 +97,9 @@ export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.invalid
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.invalid
 export GIT_AUTHOR_DATE='2026-01-01T00:00:00+0000'
 export GIT_COMMITTER_DATE='2026-01-01T00:00:00+0000'
+# What git, ssh and the other tools print is recorded in their C wording, which a
+# localised machine would translate.
+export LC_ALL=C
 
 OUT="$WORK/out"
 mkdir -p "$OUT"
@@ -102,8 +107,11 @@ mkdir -p "$OUT"
 # ── running one script, and holding it to the block recorded for its case ──
 # WHAT DIFFERS BETWEEN TWO RUNS OF ONE TREE is the fixture root, the folder this
 # file stands in, the home folder and the fourteen digits of a mint stamp. Those
-# are normalised, in that order, because the first two can lie under the third,
-# and nothing else is.
+# are normalised, in that order, because the first two can lie under the third.
+# So is the reason ssh passes on from the resolver for a host name it cannot
+# resolve: glibc answers "Name or service not known" with a network and
+# "Temporary failure in name resolution" without one, and another libc words
+# both its own way. The host name before it stays. Nothing else is normalised.
 #
 # WRITTEN HERE RATHER THAN SHELLED OUT TO, because the filter that normalises is
 # as much part of the measurement as the comparison is. A normaliser that
@@ -114,6 +122,9 @@ normalise() {
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line//"$WORK"/<WORK>}"; line="${line//"$HERE"/<HERE>}"; line="${line//"$HOME"/<HOME>}"
     while [[ "$line" =~ ([0-9]{14}) ]]; do line="${line//${BASH_REMATCH[1]}/TS14}"; done
+    if [[ "$line" =~ (Could not resolve hostname [^:]+: )[^.]+ ]]; then
+      line="${line/"${BASH_REMATCH[0]}"/"${BASH_REMATCH[1]}<RESOLVER>"}"
+    fi
     printf '%s\n' "$line"
   done
 }
@@ -124,6 +135,13 @@ normalise < "$OUT/probe.in" > "$OUT/probe.out"
 [ "$(cat "$OUT/probe.out" | tr -d '\r')" = 'x' ] \
   || fail 'the normaliser changed a line it had no stamp to replace in'
 ok 'the normaliser keeps a carriage return, so a line ending is something the comparison can see'
+printf '%s\n' \
+  'ssh: Could not resolve hostname door.example.invalid: Name or service not known. Nothing' \
+  'ssh: Could not resolve hostname door.example.invalid: Temporary failure in name resolution. Nothing' \
+  > "$OUT/probe.in"
+[ "$(normalise < "$OUT/probe.in" | sort -u)" = 'ssh: Could not resolve hostname door.example.invalid: <RESOLVER>. Nothing' ] \
+  || fail 'the normaliser does not read the resolver'"'"'s reason with a network and without one alike, or hides the host name'
+ok 'the normaliser reads a resolver'"'"'s reason alike online and offline, and keeps the host name before it'
 
 A_CODE=0
 # THE BLOCK A CASE IS HELD TO: the normalised standard output, a line no script
@@ -2054,11 +2072,11 @@ RECORDED
   case "$act" in
     master-backup) expect "$act: the door composed from MACHINE_HOST, refused by name" 69 <<'RECORDED' ;;
 ~~~ standard error ~~~
-backup: op@door.example.invalid could not be reached: ssh: Could not resolve hostname door.example.invalid: Name or service not known. Nothing has been changed
+backup: op@door.example.invalid could not be reached: ssh: Could not resolve hostname door.example.invalid: <RESOLVER>. Nothing has been changed
 RECORDED
     master-restore) expect "$act: the door composed from MACHINE_HOST, refused by name" 69 <<'RECORDED' ;;
 ~~~ standard error ~~~
-restore: op@door.example.invalid could not be reached: ssh: Could not resolve hostname door.example.invalid: Name or service not known. Nothing has been changed
+restore: op@door.example.invalid could not be reached: ssh: Could not resolve hostname door.example.invalid: <RESOLVER>. Nothing has been changed
 RECORDED
   esac
 
@@ -2333,7 +2351,8 @@ fi
 ok "clusters/platform/ansiwise.sha256 names both assets of the committed pin $TREE_PIN once each, and a file of another release or a second line is caught"
 
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
-echo "test:   with the fixture root, this folder, the home folder and a mint stamp normalised."
+echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
+echo "test:   reason for a host name it cannot resolve normalised, in the C locale."
 echo "test: covered — the four release refusals, the mint, the pin, the reuse of a standing"
 echo "test:   tag, a tag a refused push left behind — dropped and cut again — beside one that"
 echo "test:   never reached origin but names the released commit and is reused as it stands,"
