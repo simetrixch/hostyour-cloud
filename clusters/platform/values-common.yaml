@@ -315,20 +315,20 @@ global:
   # the trunk rather than in endpoints below, which holds the addresses at which
   # ONE cluster reaches a service of THIS installation.
   #
-  # THE PODS PULL IT DIRECTLY, and not through the cluster's own registry.
-  # The images of the open-source repositories this platform is built from are
-  # published to ghcr.io/<owner>/<build name> by release-images, the workflow that
-  # runs on the release tag (hostyour-manager .github/workflows/release-images.yml),
-  # and they are public — measured anonymously: manager,
-  # gate-runner and dbtools each answer 200 to an unauthenticated manifest GET.
-  # So a pull needs no credential and no cluster of ours in the path.
+  # IT IS THE OWNER'S OWN REGISTRY, under the owner's name. The master's release
+  # pipeline builds the images of global.buildRegistryUnit and pushes them to
+  # <this registry>/<build name> (clusters/inventories/consumer-build
+  # templates/pipeline-release.yaml, the push path), and the prefix is open to an
+  # anonymous read (clusters/inventories/registry values-common.yaml,
+  # accessControl). So every cluster of every installation pulls them with no
+  # credential, and no request reaches GitHub.
   #
-  # WHAT STAYS ON zot IS WHAT IS BUILT IN A CLUSTER: every consumer and tenant
-  # image the release pipeline builds, which is customer code and belongs on no
-  # public registry. Those compose their ref from endpoints.registry.host
-  # through `common.registryHost`, a different helper reached by a different
-  # path, so nothing here touches them.
-  buildRegistry: "ghcr.io/simetrixch"
+  # WHAT STAYS FLAT IS WHAT IS BUILT FOR A UNIT: every consumer and tenant image
+  # the release pipeline builds, which is customer code and is read with the pull
+  # credential. Those compose their ref from endpoints.registry.host through
+  # `common.registryHost`, a different helper reached by a different path, so
+  # nothing here touches them.
+  buildRegistry: "zot.master.digitacloud.app/simetrixch"
 
   # The unit whose builds ARE this platform's own images, the ones every builds[] pin above
   # composes through common.buildImage. Its release pipeline pushes them to

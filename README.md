@@ -78,18 +78,13 @@ Every unit of the platform is built inside the installation that runs it, by a p
 from a registration that `hostyour-manager` writes. Its own three images cannot come from there: on
 a machine where nothing is installed yet, there is no manager to write that registration.
 
-They come from the platform's build registry, under the flat names `manager`, `gate-runner` and
-`dbtools` (`global.buildRegistry` in `clusters/platform/values-common.yaml`), pushed by the
-`release-images` workflow of `hostyour-manager` when a release tag is pushed, under the same
-`<release-tag>-<sha7>` image tag the in-cluster pipeline composes. The registry in
-`clusters/inventories/registry/values-common.yaml` fetches them on the first pull and stores them under their flat
-build name, so nothing downstream can tell where a given tag came from — and from the installation's
-own first build onwards it never asks again, because a tag it already holds is a local hit.
-
-**Those three packages have to be public, and nothing makes them so.** GHCR sets visibility per
-package, a package pushed for the first time is private, and no workflow token changes that — a
-person turns each of the three public once. Until that is done, a fresh installation's pull is
-refused, and what an operator sees is an `ImagePullBackOff` naming no cause.
+They come from the owner's registry under the owner's name: `simetrixch/manager`,
+`simetrixch/gate-runner` and `simetrixch/dbtools` at `zot.master.digitacloud.app`
+(`global.buildRegistry` in `clusters/platform/values-common.yaml`). The owner's master builds them
+with its own release pipeline, because `hostyour-manager` is a unit there (`global.buildRegistryUnit`),
+and the registry answers an anonymous pull under `simetrixch/**` and nowhere else. So a fresh
+installation fetches them with no credential and no request to GitHub. The owner's master itself,
+rebuilt from nothing, gets them back with the backup of its registry (`lifecycle/master-restore-driver.sh`).
 
 ## Checks
 

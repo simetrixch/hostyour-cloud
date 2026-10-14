@@ -19,10 +19,12 @@ app:
     pullPolicy: IfNotPresent
   replicas: 1
   podAnnotations:
-    # Bump when config.json below changes so ArgoCD rolls the zot pod and it
-    # re-reads the file — zot loads config ONLY at startup, and a ConfigMap mount
-    # update alone does not restart it. Value is arbitrary; changing it = a roll.
-    hostyour.cloud/config-revision: "metrics-acl-grants-the-pull-user"
+    # Names the config.json below, so ArgoCD rolls the zot pod when that file changes:
+    # zot loads config ONLY at startup, and a ConfigMap mount update alone does not
+    # restart it. The value is "config-" and 12 hex digits of the git hash of the
+    # config.json every stage renders. scripts/check.sh refuses any other value and
+    # prints the one to set.
+    hostyour.cloud/config-revision: "config-815478355391"
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
   # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
   # With RollingUpdate, the new pod fails to start until the old pod
