@@ -64,8 +64,11 @@ global:
   # nothing, the answer falls to its default of platform-local, and every certificate is reissued
   # from the cluster's own root while the run reports itself green.
   clusterIssuer: platform-acme
-  letsencryptEmail: info@simetrix.ch
-  letsencryptServer: https://acme-v02.api.letsencrypt.org/directory
+  letsencryptEmail: kartalbas@gmail.com
+  letsencryptServer: https://dv.acme-v02.api.pki.goog/directory
+  # The key id of the one ACME account's External Account Binding. Where it stands, the issuer binds
+  # that account; a map without the line keeps the form that binds none.
+  acmeEabKeyId: 27c643ece5d8e9aead63775dc15caf9d
   # The time servers the machines of this installation ask the time of, and the only ones they ask.
   # A slave added later is told them from here rather than being asked again. A flow sequence of
   # plain scalars, one per source, kept apart by the comma the join writes: a hostname or an
