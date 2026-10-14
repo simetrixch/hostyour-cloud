@@ -815,6 +815,88 @@ case "$first_retention" in
 esac
 echo "check: a release tag starts the publish pipeline of a unit, with builds or without, and the registry keeps every tag under npm/** and simetrixch/**."
 
+# ── The platform's own images: where they are pushed and who may read them ───────────────────
+# Every other installation, and the relocation Jobs on the app clusters, pull the platform's own images
+# from the owner's registry without a credential, so zot opens exactly the owner's prefix to anonymous
+# read and nothing else, and the ghcr.io seed stores what it fetches under that same prefix. The release
+# pipeline pushes there only the builds of global.buildRegistryUnit, and only on the installation whose
+# registry IS global.buildRegistry; every other build stays flat, because the readers of a unit's image
+# (its chart, the Manager's tenant versions, the reaper) compose the flat path.
+repository_policy() { # $1 the zot config.json, $2 a repositories key, $3 its field. A quoted regex, because yq reads a "*" in a key or in == as a glob.
+  yq -p=json -o=json -I=0 ".http.accessControl.repositories | to_entries[] | select(.key | test(\"^\\\\Q$2\\\\E\$\")) | .value.$3" "$1"
+}
+zot_fault() { # $1 the zot config.json -> the first way it differs from the access this platform needs, or nothing
+  local open
+  open="$(yq -p=json -o=json -I=0 '.http.accessControl.repositories | keys' "$1")"
+  [ "$open" = '["**","simetrixch/**"]' ] || { echo "the repositories of accessControl are $open, not ** and simetrixch/**"; return; }
+  [ "$(repository_policy "$1" '**' anonymousPolicy)" = '[]' ] \
+    || { echo "every repository is open to an anonymous read, not simetrixch/** alone"; return; }
+  [ "$(repository_policy "$1" 'simetrixch/**' anonymousPolicy)" = '["read"]' ] \
+    || { echo "simetrixch/** is not open to an anonymous read, so another installation pulls the platform's images with no credential and gets 401"; return; }
+  [ "$(repository_policy "$1" 'simetrixch/**' policies)" = "$(repository_policy "$1" '**' policies)" ] \
+    || { echo "simetrixch/** grants the push and pull users other actions than **, and zot takes the longest matching pattern alone"; return; }
+  [ "$(yq -p=json -o=json -I=0 '.extensions.sync.registries[] | select(.urls[0] == "https://ghcr.io") | .content' "$1")" = '[{"prefix":"/simetrixch/*","destination":"/simetrixch","stripPrefix":true}]' ] \
+    || echo "the ghcr.io seed does not store what it fetches under simetrixch/, the path the platform's images are pulled from"
+}
+helm template registry clusters/inventories/registry --namespace registry \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+  -f clusters/inventories/registry/values-common.yaml -f clusters/inventories/registry/values-dev.yaml -f "$cluster_map" -f "$registration" \
+  > "$work/registry-render" 2>&1 \
+  || { cat "$work/registry-render"; fail "clusters/inventories/registry does not render"; }
+yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' "$work/registry-render" > "$work/zot.json"
+fault="$(zot_fault "$work/zot.json")"
+[ -z "$fault" ] || fail "the registry's zot config: $fault"
+# The planted defects: every repository open to an anonymous read, and the seed storing flat.
+yq -p=json -o=json '(.http.accessControl.repositories[] | .anonymousPolicy) = ["read"]' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that lets anyone read every repository"
+yq -p=json -o=json '(.extensions.sync.registries[] | select(.urls[0] == "https://ghcr.io") | .content[0].destination) = "/"' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a ghcr.io seed that stores flat"
+# The planted innocent: buildRegistry naming the owner's own registry keeps the owner's prefix.
+helm template registry clusters/inventories/registry --namespace registry \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+  -f clusters/inventories/registry/values-common.yaml -f clusters/inventories/registry/values-dev.yaml -f "$cluster_map" -f "$registration" \
+  --set global.buildRegistry=zot.master.digitacloud.app/simetrixch \
+  | yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' > "$work/zot-planted.json"
+fault="$(zot_fault "$work/zot-planted.json")"
+[ -z "$fault" ] || fail "the planted innocent, buildRegistry at the owner's own registry, is refused: $fault"
+echo "check: zot opens simetrixch/** alone to an anonymous read and seeds it from ghcr.io; the check refuses both planted defects and takes the planted innocent."
+
+push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
+  helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+    -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+    -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
+    --set "global.buildRegistry=$4" --set-json "unit={\"name\":\"$1\",\"repoURL\":\"$2\",\"buildsJson\":$(printf '%s' "$3" | yq -o=json -I=0 'to_json(0)')}" \
+    > "$work/push-render" 2>&1 \
+    || { cat "$work/push-render" >&2; echo "consumer-build does not render the release of unit $1"; return; }
+  yq "select(.kind == \"Pipeline\" and .metadata.name == \"$1-release\") | .spec.tasks[] | select(.name | test(\"^(probe|build)-\")) | .name + \" \" + ([.taskSpec.steps[].env[] | select(.name == \"IMAGE\") | .value] + [.params[] | select(.name == \"image-name\") | .value] | .[0])" "$work/push-render"
+}
+master_registry="$(yq '.global.endpoints.registry.host' "$cluster_map")/simetrixch"
+trunk_registry="$(yq '.global.buildRegistry' clusters/platform/values-common.yaml)"
+push_cases=(
+  "the platform's builds on the owner's master|hostyour-manager|https://github.com/simetrixch/hostyour-manager.git|[\"manager\",\"gate-runner\",\"dbtools\"]|$master_registry|simetrixch/"
+  "a unit of the owner that is not buildRegistryUnit|hostyour-demo-consumer|https://github.com/simetrixch/hostyour-demo-consumer.git|[\"hostyour-demo-consumer\"]|$master_registry|"
+  "a unit of another owner|digita-platform|https://github.com/digitaplatform/digita-platform.git|[\"digita-platform\"]|$master_registry|"
+  "the platform's builds on another installation|hostyour-manager|https://github.com/simetrixch/hostyour-manager.git|[\"manager\",\"gate-runner\",\"dbtools\"]|$trunk_registry|"
+)
+push_fault() { # unit, repoURL, builds, buildRegistry, prefix -> the first build whose push path is not <prefix><build>, or nothing
+  local want got
+  want="$(printf '%s' "$3" | yq -p=json ".[] | ((\"probe-\" + . + \" $5\" + .), (\"build-\" + . + \" $5\" + .))" | sort)"
+  got="$(push_paths "$1" "$2" "$3" "$4" | sort)"
+  [ "$got" = "$want" ] || echo "unit $1 under buildRegistry $4 pushes ${got//$'\n'/, }, not under '${5:-flat}'"
+}
+for c in "${push_cases[@]}"; do
+  IFS='|' read -r what unit repo builds breg prefix <<< "$c"
+  fault="$(push_fault "$unit" "$repo" "$builds" "$breg" "$prefix")"
+  [ -z "$fault" ] || fail "the push path of $what: $fault"
+done
+# The planted defects: a unit of the owner moved under the prefix it must not take, and the platform's
+# builds left flat on the owner's master.
+[ -n "$(push_fault hostyour-demo-consumer https://github.com/simetrixch/hostyour-demo-consumer.git '["hostyour-demo-consumer"]' "$master_registry" simetrixch/)" ] \
+  || fail "push_fault takes a unit that is not buildRegistryUnit pushed under the owner's prefix"
+[ -n "$(push_fault hostyour-manager https://github.com/simetrixch/hostyour-manager.git '["manager"]' "$trunk_registry" simetrixch/)" ] \
+  || fail "push_fault takes the platform's builds pushed flat where they must go under the owner's prefix"
+echo "check: ${#push_cases[@]} push paths, the platform's builds under simetrixch/ on the owner's master alone and every other build flat; the check refuses both planted defects."
+
 # ── A unit that declares an SMTP entry, and a unit that does not ─────────────────────────────
 # THE STAND-IN REGISTRATION DECLARES NO ENTRY, because almost no unit does, so every render above
 # takes the branch without one. A unit that declares one gets three lines more: an ingress rule in

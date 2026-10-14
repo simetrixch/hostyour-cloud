@@ -330,6 +330,13 @@ global:
   # path, so nothing here touches them.
   buildRegistry: "ghcr.io/simetrixch"
 
+  # The unit whose builds ARE this platform's own images, the ones every builds[] pin above
+  # composes through common.buildImage. Its release pipeline pushes them to
+  # <registry>/<owner>/<build> where <registry>/<owner> is buildRegistry, which happens on the
+  # owner's master alone; every other unit, and every unit of another installation, pushes flat
+  # (clusters/inventories/consumer-build templates/pipeline-release.yaml, the push path).
+  buildRegistryUnit: hostyour-manager
+
   # ── Channel ceiling — the ONE literal table ────────────────────────────────
   # Which stages a release channel may reach. The channel is read FROM THE TAG
   # (the tag is the truth, not a parameter), and the rule is enforced at three
