@@ -53,10 +53,12 @@ config are what the Manager creates a tenant's own apps repository under, and no
 App from nothing or installs one on an organisation. This act does what an API can do and leaves the
 two clicks GitHub keeps for a person. It starts a listener on `127.0.0.1`, opens the browser on a page
 that posts the App's manifest to the organisation's new-App page — the name `<organisation>-platform-manager`,
-the homepage `https://manager.<UNIT_APEX>`, the eight repository permissions `actions`, `administration`,
-`contents`, `webhooks` and `workflows` at write and `issues`, `metadata` and `packages` at read, no webhook,
-private — and waits. `issues` at read lets the Manager mint each unit's ci check a token that reads the
-issues of the unit's own repository and nothing else. `packages` at read does NOT let the App's token install a private npm package: GitHub
+the homepage `https://manager.<UNIT_APEX>`, the eight repository permissions `administration`,
+`contents`, `statuses`, `webhooks` and `workflows` at write and `issues`, `metadata` and `packages` at read,
+no webhook, private — and waits. No `actions`: the Manager starts no workflow, it writes a release's tag and
+deploy ref itself. `issues` at read lets the Manager mint each unit's ci check a token that
+reads the issues of the unit's own repository and nothing else; `statuses` at write lets it mint each
+unit's ci run a token that posts the commit status on the unit's own repository and writes nothing else. `packages` at read does NOT let the App's token install a private npm package: GitHub
 grants an installation token no access to a private package whatever the App's permissions say, and
 a build reads its npm packages from the build plane's registry with the registry's pull identity,
 while the App stays the identity of every repository.

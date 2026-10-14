@@ -160,12 +160,17 @@ require_owner_only "$CONFIG" \
 GITHUB='https://github.com'
 GITHUB_API='https://api.github.com'
 # The eight repository permissions the Manager creates and drives a tenant's own
-# apps repository with, as GitHub spells them, in byte order. `packages:read` is
+# apps repository with, as GitHub spells them, in byte order. No `actions`: the
+# Manager starts no workflow, it writes a release's tag and deploy ref itself.
+# `workflows:write` is what lets it take the retired
+# release kit's .github/workflows/release.yml out of a repository. `packages:read` is
 # what lets the App's own token install a unit's private npm packages, so a unit
 # of the App's organisation needs no PAT at all (hostyour-cloud#235).
 # `issues:read` is what lets the Manager mint a unit's ci check a token that
 # reads the issues of the unit's own repository and nothing else.
-PERMISSIONS='actions:write administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write'
+# `statuses:write` is what lets it mint a unit's ci run a token that posts the
+# commit status on the unit's own repository and writes nothing else.
+PERMISSIONS='administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write'
 WAIT_SECONDS=600
 POLL_SECONDS=5
 

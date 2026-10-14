@@ -50,7 +50,7 @@ global:
   # list of OIDC clients changes with every client added, which changes these values, and the
   # release then rolls both deployments.
   podAnnotations:
-    platform/oidc-clients: "argocd manager grafana headlamp vault post"
+    platform/oidc-clients: "argocd manager grafana headlamp vault post forgejo"
 
 authentik:
   error_reporting:
@@ -96,7 +96,7 @@ server:
   replicas: 1
   # The chart auto-creates an internal Secret from the `authentik.*` values above and envFroms it
   # into the pod. These two are ours, and they carry what the blueprints read with !Env:
-  #   - idp-bootstrap-secrets: IDP_{ARGOCD,MANAGER,GRAFANA,HEADLAMP,VAULT,POST}_CLIENT_SECRET
+  #   - idp-bootstrap-secrets: IDP_{ARGOCD,MANAGER,GRAFANA,HEADLAMP,VAULT,POST,FORGEJO}_CLIENT_SECRET
   #   - idp-bootstrap-env: IDP_DOMAIN, which every blueprint builds its addresses on with !Format,
   #     and IDP_UNIT_APEX, which post's addresses stand below.
   envFrom:

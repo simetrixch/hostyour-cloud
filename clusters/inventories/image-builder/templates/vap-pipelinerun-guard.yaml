@@ -14,6 +14,13 @@ namespace the build fan-out writes (clusters/inventories/consumer-build/template
 vap-namespace-build-label.yaml) — so the set of guarded namespaces cannot be
 altered by whoever the guard is aimed at.
 
+A SECOND BINDING guards forgejo-build, the namespace of the Forgejo release flow
+(clusters/inventories/forgejo-build), by its name, which the API server sets and
+nobody can change. That namespace carries no hostyour.cloud/build, because the
+release queue and the ci run keeper select on it; its runs pass the same clauses
+as a unit's: its one Pipeline is forgejo-release, which clause 5 reads as the
+namespace's own, under pipeline-sa, with one new source claim.
+
 WHAT IT BINDS (CEL, fail-closed logic):
   1. only a referenced Pipeline runs: this policy requires pipelineRef;
      Tekton's fail-closed validating webhook rejects pipelineRef + pipelineSpec
@@ -278,3 +285,20 @@ spec:
     namespaceSelector:
       matchLabels:
         hostyour.cloud/build: "true"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: image-builder-pipelinerun-guard-forgejo-build
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  policyName: image-builder-pipelinerun-guard
+  validationActions:
+    - Deny
+    - Audit
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: forgejo-build

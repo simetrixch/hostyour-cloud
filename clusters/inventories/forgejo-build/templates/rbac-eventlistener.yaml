@@ -1,0 +1,33 @@
+{{- /*
+The one grant that lets a Forgejo webhook land here: the build plane's EventListener may create
+PipelineRuns in this namespace, and nothing else.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eventlistener-create-pipelineruns
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: forgejo-build
+    app.kubernetes.io/component: eventlistener-grant
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: eventlistener-create-pipelineruns
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: forgejo-build
+    app.kubernetes.io/component: eventlistener-grant
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.eventListener.serviceAccountName }}
+    namespace: {{ .Values.eventListener.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: eventlistener-create-pipelineruns

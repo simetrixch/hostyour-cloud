@@ -37,8 +37,9 @@ scope is a fact of the registration and never a value of this chart.
 {{- if gt (len (include "consumer-build.builds" . | fromJsonArray)) 0 -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
-{{/* The environment of the two commit status tasks of the ci Pipeline: the repository token from
-     build-git-https, the repository as GitHub's API names it, the commit the gate proved and the run
+{{/* The environment of the two commit status tasks of the ci Pipeline: the statuses token from
+     build-git-https (key `token`, which posts commit statuses on the unit's own repository and writes
+     nothing else), the repository as GitHub's API names it, the commit the gate proved and the run
      in the Tekton Dashboard. Takes a dict of repositoryPath and runURL. */}}
 {{- define "consumer-build.ciCommitStatusEnv" -}}
 - name: GITHUB_TOKEN
@@ -51,3 +52,35 @@ scope is a fact of the registration and never a value of this chart.
 - name: RUN_URL
   value: {{ .runURL | quote }}
 {{- end }}
+
+{{/* The user a repository's own code runs as wherever its test suites run: the check step of the
+     ci and the build step of build-binaries, whose release/build.sh gates every part and the
+     repository before it builds. It is pptruser, the user of the check image
+     (ghcr.io/puppeteer/puppeteer, UID 10042 in its Dockerfile), and never root: root keeps
+     CAP_DAC_OVERRIDE and reads and writes through any mode, so a test that expects a directory to
+     refuse a write (a record this account cannot remove) is red in a pod and green on a
+     workstation. */}}
+{{- define "consumer-build.checkUser" -}}
+10042
+{{- end -}}
+
+{{- define "consumer-build.checkUserContext" -}}
+runAsUser: {{ include "consumer-build.checkUser" . }}
+runAsNonRoot: true
+allowPrivilegeEscalation: false
+{{- end -}}
+
+{{/* The step that hands the folders pods of root made to that user, before a step of it writes
+     into them (node_modules, build output, the test databases, the binaries). It runs as the root
+     of its image. Takes a dict of image and folders. */}}
+{{- define "consumer-build.handOverStep" -}}
+- name: hand-over
+  image: {{ .image }}
+  script: |
+    #!/usr/bin/env sh
+    set -eu
+    chown -R -h {{ include "consumer-build.checkUser" . }} {{ .folders }}
+  computeResources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { cpu: 500m, memory: 64Mi }
+{{- end -}}

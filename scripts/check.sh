@@ -128,11 +128,13 @@ function helm_expression(s,   m) {
   if (keyname != "") { key = keyname }
   found = helm_expression($0)
   if (found != "") { print "expression\t" source "\t" key "\t" found; next }
-  if (src == "" && match($0, /^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?[A-Za-z0-9+\/]{40,}={0,2}"?[ \t]*$/)) {
+  if (src == "" && match($0, /^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?[A-Za-z0-9+\/]+=?=?"?[ \t]*$/)) {
     payload = $0
     sub(/^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?/, "", payload)
     sub(/"?[ \t]*$/, "", payload)
-    print "base64\t" source "\t" key "\t" payload
+    bare = payload
+    sub(/=+$/, "", bare)
+    if (length(bare) >= 40) print "base64\t" source "\t" key "\t" payload
   }
 }
 '
@@ -339,6 +341,23 @@ collect_off_revision() {
   off_revision="$off_revision
 $found"
 }
+
+# ── The awk programs of the scans read no regex interval ────────────────────────────────────
+# THE CI IMAGE'S AWK IS mawk 1.3.4 20200120, AND IT READS A BRACE EXPRESSION IN A REGEX AS TEXT. A
+# regex ending in an interval (a class and a count in braces) matches nothing there and nothing
+# complains: the base64 field of the scan stayed unmatched, no value was decoded, and the
+# counter-probe below went red in the ci run and green on every workstation, whose awk reads it.
+# The fence reads the programs, so it is red on every machine the day one is written again. A
+# count is written as a `length()` test or as repeated classes.
+has_interval() { grep -Eq '[{][0-9]+(,[0-9]*)?[}]' <<< "$1"; }
+interval_planted='match($0, /^[A-Za-z0-9+\/]{40,}={0,2}$/)'
+interval_innocent='match(s, /\{\{[^{}]*\}\}/) && length(s) >= 40 && s ~ /=?=?$/'
+has_interval "$interval_planted" || fail "the fence for a regex interval does not see one planted in an awk program"
+has_interval "$interval_innocent" && fail "the fence for a regex interval reports an awk program that writes none"
+for program in scan_awk source_fields_awk revisions_awk off_revision_awk; do
+  has_interval "${!program}" && fail "the awk program $program writes a regex interval, which the ci image's mawk 1.3.4 20200120 reads as text, so its match is silently empty there"
+done
+echo "check: no awk program of the scans writes a regex interval, and the fence reports one planted."
 
 # ── The counter-probe of that scan ──────────────────────────────────────────────────────────
 # THE SCAN IS RUN OVER A PLANTED RENDER BEFORE IT IS RUN OVER A REAL ONE. scripts/counter-probe.yaml
@@ -864,6 +883,52 @@ fault="$(zot_fault "$work/zot-planted.json")"
 [ -z "$fault" ] || fail "the planted innocent, buildRegistry at the owner's own registry, is refused: $fault"
 echo "check: zot opens simetrixch/** alone to an anonymous read and fetches nothing from ghcr.io; the check refuses both planted defects and takes the planted innocent."
 
+# ── The pod of zot rolls when the config.json it was started with is not the one the ConfigMap holds ─
+# zot loads its config at start and never again, and a ConfigMap mount that follows an edit does not
+# restart it: a new accessControl or sync stays unread, and every request is answered by the old rules,
+# until the pod template changes. The pod template carries hostyour.cloud/config-revision for that, and
+# only this check ties it to the config, so the revision is not a string somebody remembers to bump: it
+# is "config-" and the first 12 hex digits of the git hash of the config.json that every stage renders,
+# and a render whose revision is any other value is refused with the value to set. A checksum written by
+# the chart would need no check, but the pod and the ConfigMap come from two library charts, and a chart
+# reads its own values and `global` alone, so the deployment cannot see what its sibling renders.
+render_registry_stages() { # extra helm arguments -> $work/registry-<stage>-render for every stage
+  local stage
+  for stage in $stages; do
+    helm template registry clusters/inventories/registry --namespace registry \
+      -f clusters/platform/values-common.yaml -f "clusters/platform/values-$stage.yaml" \
+      -f clusters/inventories/registry/values-common.yaml -f "clusters/inventories/registry/values-$stage.yaml" -f "$cluster_map" -f "$registration" "$@" \
+      > "$work/registry-$stage-render" 2>&1 \
+      || { cat "$work/registry-$stage-render"; fail "clusters/inventories/registry does not render at stage $stage"; }
+  done
+}
+zot_revision_fault() { # -> the first way the revision of the zot pod does not name the config.json of $work/registry-<stage>-render, or nothing
+  local stage render named="" wanted carried
+  for stage in $stages; do
+    named="$named$(yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' "$work/registry-$stage-render")"
+  done
+  wanted="config-$(printf '%s' "$named" | git hash-object --stdin | cut -c1-12)"
+  for stage in $stages; do
+    render="$work/registry-$stage-render"
+    carried="$(yq 'select(.kind == "Deployment") | .spec.template.metadata.annotations."hostyour.cloud/config-revision"' "$render")"
+    [ "$carried" = "$wanted" ] \
+      || { echo "the zot pod of stage $stage carries config-revision $carried, and the config.json of the registry is named $wanted — zot reads that file at start only, so the pod keeps the old access rules until hostyour.cloud/config-revision in clusters/inventories/registry/values-common.yaml is set to $wanted"; return; }
+  done
+}
+render_registry_stages
+fault="$(zot_revision_fault)"
+[ -z "$fault" ] || fail "$fault"
+# The planted defects: a config.json that changed under the revision it had, and a revision written by hand.
+render_registry_stages --set-string global.registryPullUser=planted-pull
+[ -n "$(zot_revision_fault)" ] || fail "zot_revision_fault takes a config.json that changed while the revision stayed"
+render_registry_stages --set-string 'app.podAnnotations.hostyour\.cloud/config-revision=metrics-acl-grants-the-pull-user'
+[ -n "$(zot_revision_fault)" ] || fail "zot_revision_fault takes a revision that no config.json names"
+# The planted innocent: a change that does not reach config.json leaves the pod where it is.
+render_registry_stages --set app.replicas=2 --set-string pvc.pvc.storageSize=60Gi
+fault="$(zot_revision_fault)"
+[ -z "$fault" ] || fail "the planted innocent, a replica count and a volume size outside config.json, is refused: $fault"
+echo "check: the zot pod rolls with the config.json of every stage; the check refuses a changed config under an old revision and a revision no config names, and takes a change outside config.json."
+
 push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
   helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
     -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -1251,6 +1316,10 @@ echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; 
 echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in the ci of the master via scripts/test.sh.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
+for module in scripts/forgejo.test.mjs scripts/plane.test.mjs scripts/forgejo-release.test.mjs; do
+  node --check "$module" || fail "Node syntax: $module"
+  echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
+done
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
 # SCANNED OVER WHAT GIT WOULD LET YOU COMMIT, and that is not the same as this directory. A

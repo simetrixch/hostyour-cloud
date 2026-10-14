@@ -1,8 +1,9 @@
 {{- /*
 The unit's ci pipeline `<unit>-ci` — ONE generic pipeline, rendered per unit
-from this template beside `<unit>-release`. Every push of a branch runs the
-repository's own scripts/check.sh at the pushed commit, so red is seen on the
-build plane and not only on the machine of whoever pushed:
+from this template beside `<unit>-release`. Every push of the default branch
+or of a `ci/` branch runs the repository's own scripts/check.sh at the pushed
+commit, so red is seen on the build plane and not only on the machine of
+whoever pushed:
 
   gate → commit-status-pending → clone@commit → describe-commit → fetch → check,
 
@@ -55,9 +56,11 @@ as a bare repository <repository>.git in the run's volume beside the clone,
 which the check mounts read-only and finds through CI_SOURCES_DIR. The run's
 one volume holds the clone in its subPath repository and the sources in its
 subPath sources, so the sources are never part of the checked tree. The file
-is the branch's own, so a branch can have any repository of that owner
-fetched that the unit's PAT reads; whoever pushes a branch can read those
-already.
+is the branch's own, and the fetch reads with the unit's token: for a unit of
+the platform's GitHub App, the Manager mints it to read the unit's own
+repository and the sources the ci-sources.json of its DEFAULT branch names,
+and nothing else, so a source a branch adds is fetched once the default branch
+names it; for a PAT unit, whatever the owner's PAT reads.
 
 WHAT THE CHECK NEEDS, read from the check.sh of every unit: Node 24, pnpm,
 git and bash; a mongod, which mongodb-memory-server downloads on first use; a
@@ -70,7 +73,7 @@ lockfile its check never reads.
 
 THE TOOLS OF A REPOSITORY. A repository that needs other versions than the
 image's names them in ci-tools.json at its root, {"<tool>": "<x.y.z>"}, with a
-tool of node, npm, go, dart, gitleaks and promtool. The fetch task's list-tools
+tool of node, npm, go, dart, gitleaks, promtool and kubectl. The fetch task's list-tools
 step validates the file with jq and hands "<tool> <version>" lines to the check
 as a result; the check step installs each from files/ci-tools.table, which holds
 a sha256 and an https url per tool and version, unpacks it only after the sha256
@@ -108,14 +111,15 @@ THE COMMIT STATUS. commit-status-pending sets tekton/ci to pending once the
 gate has proven the commit, and commit-status sets success, failure or error,
 each linked to the run in the Tekton Dashboard. Both run files/ci-commit-status.sh
 in a pod of their own that holds the key token of build-git-https, the unit's
-repository token, and runs no code of the repository. A run the gate refused
-sets no status, because it names a commit it did not prove.
+statuses token, which posts commit statuses on its own repository and writes
+nothing else, and runs no code of the repository. A run the gate refused
+sets no status, because it names a commit it did not prove. A 5xx or no answer
+of GitHub is tried 3 times; a pending that still fails lets the run go on to
+the check with a warning, so one blip of GitHub skips no ci run.
 */ -}}
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
 {{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
-{{- /* The user the check runs as: pptruser, the user of the check image (ghcr.io/puppeteer/puppeteer, UID 10042 in its Dockerfile). The fetch task hands the clone to it. */ -}}
-{{- $checkUser := 10042 -}}
 {{- /* The image the shared git-clone Task runs (image-builder/templates/tasks/git-clone.yaml). */ -}}
 {{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
 {{- /* The image report-failure runs: bash, curl, jq and the shell tools its script uses. The release pipeline runs the same tag, unpinned, and the ci run keeper runs it for kubectl and jq. */ -}}
@@ -406,9 +410,9 @@ spec:
               fi
               jq -rs 'if length != 1 or (.[0] | type) != "object" then error("ci-tools.json: must hold one object of tool and version")
                 else .[0] | to_entries[]
-                  | if (.key | IN("node", "npm", "go", "dart", "gitleaks", "promtool")) and (.value | type == "string" and test("^[0-9]+[.][0-9]+[.][0-9]+$"))
+                  | if (.key | IN("node", "npm", "go", "dart", "gitleaks", "promtool", "kubectl")) and (.value | type == "string" and test("^[0-9]+[.][0-9]+[.][0-9]+$"))
                     then "\(.key) \(.value)"
-                    else error("ci-tools.json: \(.key | tojson) must be one of node, npm, go, dart, gitleaks, promtool at a version x.y.z, not \(.value | tojson)") end
+                    else error("ci-tools.json: \(.key | tojson) must be one of node, npm, go, dart, gitleaks, promtool, kubectl at a version x.y.z, not \(.value | tojson)") end
                 end' ci-tools.json > "${TOOLS_RESULT}"
               echo "fetch: $(wc -l < "${TOOLS_RESULT}") tools named in ci-tools.json"
             computeResources:
@@ -434,7 +438,7 @@ spec:
                 into="/workspace/sources/${repository}.git"
                 git init -q --bare "${into}"
                 if ! git --git-dir "${into}" fetch -q --depth=1 "${SOURCES_OWNER_URL}/${repository}.git" "${commit}"; then
-                  echo "fetch: ${repository} at ${commit} could not be fetched from ${SOURCES_OWNER_URL}" >&2
+                  echo "fetch: ${repository} at ${commit} could not be fetched from ${SOURCES_OWNER_URL} — the unit's token reads the sources its ci-sources.json names on the default branch, so a source only this branch names is fetched once the default branch names it and the Manager has rewritten the token (every 45 minutes)" >&2
                   exit 1
                 fi
                 echo "fetch: ${repository} at ${commit}"
@@ -447,16 +451,7 @@ spec:
                 mountPath: /source-list
           # The pods above run as root and leave the clone to root; the check runs as a user
           # without root and has to write into it (node_modules, build output, the test databases).
-          - name: hand-over-clone
-            image: {{ $gitImage }}
-            workingDir: /workspace/source
-            script: |
-              #!/usr/bin/env sh
-              set -eu
-              chown -R -h {{ $checkUser }} /workspace/source
-            computeResources:
-              requests: { cpu: 50m, memory: 32Mi }
-              limits: { cpu: 500m, memory: 64Mi }
+{{ include "consumer-build.handOverStep" (dict "image" $gitImage "folders" "/workspace/source") | indent 10 }}
 
     # ── 5. check — the repository's own scripts/check.sh ─────────────────────
     - name: check
@@ -507,14 +502,10 @@ spec:
             # (manifest of 25.13.0, linux/amd64).
             image: ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
             workingDir: /workspace/source
+            # Not root (consumer-build.checkUser); the fetch task hands the clone
+            # to this user.
             securityContext:
-              # Not root: root keeps CAP_DAC_OVERRIDE and reads and writes through
-              # any mode, so a test that expects a directory to refuse a write
-              # (a record this account cannot remove) is red in a pod and green
-              # on a workstation. The fetch task hands the clone to this user.
-              runAsUser: {{ $checkUser }}
-              runAsNonRoot: true
-              allowPrivilegeEscalation: false
+{{ include "consumer-build.checkUserContext" . | indent 14 }}
             env:
               # What GitHub Actions also sets: a check that cannot run on a
               # build plane (a missing sibling checkout) reads it to say so.

@@ -4,8 +4,10 @@ per unit from this template. Every unit runs the same chain, consumer and
 build-only alike:
 
   gate-stage → clone@tag (+verify: tag → commit, sha7) → builds (manifest vs
-  attestation) → probe per build → build/push per missing build → bump (the
-  reach search) → argo-sync.
+  attestation) → probe per build → build/push per missing build → engine-pin →
+  check-definitions (only where the manifest names an appsBundle) → bump (the
+  reach search, which pins that appsBundle and no other build as a tenant
+  bundle) → argo-sync.
 
 The trust split:
 
@@ -41,7 +43,8 @@ place after, (c) hostyour-cloud clusters/inventories/<app>/values-<S>.yaml on TH
 INSTALLATION'S books branch, which every cluster renders its platform apps from, and on
 master, (d) a tenant's own apps bundle, pinned in bundles/<image>/pins-<S>.yaml on THAT
 SAME books branch of the deploy repository wherever a tenant registration
-registrations/<guid>/<S>.yaml names the image as its appsImage — and bumps every hit. An image with NO hit
+registrations/<guid>/<S>.yaml names the image as its appsImage, which only the
+manifest's appsBundle, the build the engine's check opened, may be — and bumps every hit. An image with NO hit
 anywhere fails the run loudly: a release nothing pins deploys nowhere, and
 silently succeeding would hide exactly the rot the derived reach exists to
 prevent. The ONE exception is the bundle's first release: the manifest names
@@ -289,6 +292,8 @@ spec:
         workspaces:
           - name: source
         results:
+          - name: apps-bundle
+            description: The build the manifest names as appsBundle, or nothing.
           {{- range $b := $builds }}
           - name: {{ printf "%s-declared" $b }}
           - name: {{ printf "%s-containerfile" $b }}
@@ -332,6 +337,12 @@ spec:
                 echo "builds: FAIL — manifest name '${NAME}' != unit '${UNIT}' (the name invariant: name == basename(repoURL))" >&2
                 exit 1
               fi
+
+              # The tenant's apps bundle, or nothing. engine-pin and
+              # check-definitions run only when it is one of the attested
+              # builds (their `when`), and the bump holds it to the manifest's
+              # builds[] again.
+              printf '%s' "$(yq eval '.appsBundle // ""' "${MANIFEST}")" > /tekton/results/apps-bundle
 
               # Every manifest build must be attested — checked BEFORE any
               # probe, build or push.
@@ -544,6 +555,250 @@ spec:
       workspaces:
         - { name: source, workspace: source }
 {{ end }}
+    # ── engine-pin — the engine the stage runs, for the bundle's check ───────
+    # Runs only where the manifest names an appsBundle (a build of this unit).
+    # The bundle's manifest names the engine it is written for, `engine.build`
+    # and `engine.line`; the engine image is the stage's pin of that build on the
+    # deploy repository's books branch (charts/<build>/pins-<stage>.yaml), which
+    # holds the image the stage's tenants run. A pin on another line than the
+    # bundle's fails the run: the check would judge the bundle by an engine it
+    # is not written for.
+    #
+    # This is the one place the check's inputs need a platform credential, and
+    # it is its own task so that check-definitions, which opens the bundle's
+    # content, holds none: this one reads a pin and runs no code of the unit.
+    # The image reference leaves it as a result.
+    - name: engine-pin
+      runAfter:
+        - builds
+        - scan
+        {{- range $b := $builds }}
+        - {{ printf "build-%s" $b }}
+        {{- end }}
+      when:
+        - input: "$(tasks.builds.results.apps-bundle)"
+          operator: in
+          values: {{ $builds | toJson }}
+      params:
+        - { name: stage, value: "$(params.stage)" }
+      workspaces:
+        - { name: source, workspace: source }
+      taskSpec:
+        params:
+          - name: stage
+            type: string
+        workspaces:
+          - name: source
+        results:
+          - name: engine-image
+            description: The registry reference of the engine image the stage runs on the bundle's line.
+        steps:
+          - name: pin
+            image: alpine/k8s:1.35.6
+            env:
+              - name: DEPLOY_URL
+                value: {{ required "consumer-build: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map's deploy-repo)" .Values.global.deployUrl | quote }}
+              - name: BOOKS_BRANCH
+                value: {{ required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.booksCluster | quote }}
+              - name: REGISTRY
+                value: {{ $registry | quote }}
+              - name: STAGE
+                value: $(params.stage)
+              - name: SRC
+                value: $(workspaces.source.path)
+              - name: HOME
+                value: /tmp
+            envFrom:
+              - secretRef:
+                  name: bump-git-https
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              # engine_image <tree> <books clone> — ENGINE_IMAGE, the
+              # registry reference of this stage's pin of the engine build the
+              # bundle's manifest names; 1, with the reason, where there is
+              # none to run. The manifest is the one the engine reads at the
+              # root of the bundle (digita-platform app-version.ts): tenant.yaml,
+              # then catalog.yaml; apps.yaml stands for the older layout.
+              engine_image() {
+                local tree="$1" books="$2" apps="" name build line pins image tag version
+                for name in tenant.yaml catalog.yaml apps.yaml; do
+                  [ -f "${tree}/${name}" ] && { apps="${tree}/${name}"; break; }
+                done
+                [ -n "${apps}" ] || { echo "engine-pin: FAIL — ${tree} holds no tenant.yaml, catalog.yaml or apps.yaml, so the engine of the bundle is not named" >&2; return 1; }
+                build="$(yq eval '.engine.build // ""' "${apps}")"
+                line="$(yq eval '.engine.line // ""' "${apps}")"
+                if [ "$(yq eval '.engine.build | tag' "${apps}")" != '!!str' ] || [ "$(yq eval '.engine.line | tag' "${apps}")" != '!!str' ] \
+                  || ! [[ "${build}" =~ ^[a-z0-9-]+$ ]] || ! [[ "${line}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+                  echo "engine-pin: FAIL — ${apps} names no engine the check could run: engine needs build, a name of lowercase letters, digits and dashes, and line, a quoted x.y such as \"0.6\"" >&2
+                  return 1
+                fi
+                pins="${books}/charts/${build}/pins-${STAGE}.yaml"
+                if [ ! -f "${pins}" ]; then
+                  echo "engine-pin: FAIL — ${build} has no pin for ${STAGE} (charts/${build}/pins-${STAGE}.yaml on ${BOOKS_BRANCH}), so no engine of this stage can run the check" >&2
+                  return 1
+                fi
+                image="$(B="${build}" yq eval '.builds[] | select(.name == strenv(B)) | .image' "${pins}")"
+                tag="$(B="${build}" yq eval '.builds[] | select(.name == strenv(B)) | .tag' "${pins}")"
+                if ! [[ "${image}" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || ! [[ "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]]; then
+                  echo "engine-pin: FAIL — ${pins} holds no single row named ${build} with an image and a tag" >&2
+                  return 1
+                fi
+                version="${tag%%-*}"
+                if [ "${version%.*}" != "${line}" ]; then
+                  echo "engine-pin: FAIL — ${apps} is written for ${build} ${line}, and ${STAGE} pins ${build} ${tag}, of another line. The check would judge the bundle by an engine it is not written for" >&2
+                  return 1
+                fi
+                ENGINE_IMAGE="${REGISTRY}/${image}:${tag}"
+                echo "engine-pin: ${build} ${tag} is the pin of ${STAGE} on the bundle's line ${line}; the check runs ${ENGINE_IMAGE}"
+              }
+
+              # The deploy repository is private. The path-qualified record of
+              # bump-git-https selects its credential, as in the bump.
+              git config --global credential.useHttpPath true
+              printf '%s\n' "${GITCREDENTIALS:?engine-pin: FAIL — bump-git-https holds no GITCREDENTIALS}" > /tmp/git-credentials
+              chmod 600 /tmp/git-credentials
+              git config --global credential.helper "store --file=/tmp/git-credentials"
+
+              git clone -q --depth 1 --branch "${BOOKS_BRANCH}" "${DEPLOY_URL}" /tmp/books \
+                || { echo "engine-pin: FAIL — cannot read ${DEPLOY_URL}@${BOOKS_BRANCH}, which holds the pins of the stage's engine" >&2; exit 1; }
+              engine_image "${SRC}" /tmp/books
+              printf '%s' "${ENGINE_IMAGE}" > "$(results.engine-image.path)"
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
+
+    # ── check-definitions — the engine's own check of the bundle ─────────────
+    # A refused member stops the start of every app and website of its tenant, and
+    # the bundle's release run builds the image and moves the pin without
+    # asking the engine. So the bundle is opened here, before the bump: the
+    # engine of the stage runs `node dist/server.js --check-definitions` on a
+    # copy of the bundle's /apps. It prints one line per
+    # member, its name and `servable`, or its name, the refusal's code and its
+    # text, and exits 1 when a member is refused; the exit fails this run, so
+    # no pin moves and PipelineRunFailed mails it.
+    #
+    # The members are the entries of the bundle's manifest that name an app
+    # folder (an entry of apps: without `sites`), settings as the chart hands them to the engine
+    # (digita-deploy charts/digita-engine: TENANT_MEMBERS, and a key set per
+    # member in PASSWORD_FIELD_KEYS as a provisioned tenant has one). The key
+    # sets are made in this pod, are the engine's alone and are never printed.
+    # A website member is not passed: its definitions come from the engine
+    # image's website model, and the log names it as not checked. The engine
+    # names on stderr what else it does not check.
+    #
+    # The two images are pulled by the kubelet from the registry, with the
+    # pull secret pipeline-sa lists (templates/serviceaccount.yaml). No step
+    # here holds a credential, none reads the cluster API, and the pod needs no
+    # network.
+    - name: check-definitions
+      runAfter: [engine-pin]
+      when:
+        - input: "$(tasks.builds.results.apps-bundle)"
+          operator: in
+          values: {{ $builds | toJson }}
+      params:
+        - { name: bundle-image, value: "{{ $registry }}/$(tasks.builds.results.apps-bundle):$(tasks.verify.results.image-tag)" }
+        - { name: engine-image, value: "$(tasks.engine-pin.results.engine-image)" }
+      taskSpec:
+        params:
+          - name: bundle-image
+            type: string
+          - name: engine-image
+            type: string
+        volumes:
+          - name: bundle
+            emptyDir: {}
+          - name: settings
+            emptyDir: {}
+        steps:
+          # The bundle image is busybox: sh and cp, the two things the chart's
+          # app-fetch needs of it.
+          - name: copy-bundle
+            image: $(params.bundle-image)
+            volumeMounts:
+              - { name: bundle, mountPath: /bundle }
+            script: |
+              #!/bin/sh
+              set -eu
+              cp -a /apps/. /bundle/
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 500m, memory: 256Mi }
+          - name: members
+            image: alpine/k8s:1.35.6
+            volumeMounts:
+              - { name: bundle, mountPath: /bundle, readOnly: true }
+              - { name: settings, mountPath: /settings }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              # bundle_members <bundle dir> <settings dir> — members.json, the
+              # TENANT_MEMBERS of the entries of apps: that name an app folder,
+              # and keys.json, a key set for each: `1=<32 bytes in base64>`.
+              # The manifest is the one the engine reads: tenant.yaml, then
+              # catalog.yaml; apps.yaml stands for the older layout. 1, with the
+              # reason, where the bundle has none. The websites are the entries
+              # of apps: with `sites` and the names under webs:. map(), not a
+              # stream into an object: yq builds one object out of an empty
+              # stream, a member with no name.
+              bundle_members() {
+                local bundle="$1" out="$2" name manifest="" websites
+                for name in tenant.yaml catalog.yaml apps.yaml; do
+                  [ -f "${bundle}/${name}" ] && { manifest="${bundle}/${name}"; break; }
+                done
+                [ -n "${manifest}" ] || { echo "check-definitions: FAIL — the bundle holds no tenant.yaml, catalog.yaml or apps.yaml, so its members are not named" >&2; return 1; }
+                BUNDLE="${bundle}" yq eval -o=json -I=0 '[(.apps // [])[] | select(has("sites") | not)] | map({"name": .name, "dir": (strenv(BUNDLE) + "/" + .name), "seedReference": false, "seedDemo": false})' "${manifest}" > "${out}/members.json"
+                printf '{}' > "${out}/keys.json"
+                while read -r name; do
+                  N="${name}" K="1=$(head -c 32 /dev/urandom | base64 | tr -d '\n')" yq eval -o=json -I=0 -i '.[strenv(N)] = strenv(K)' "${out}/keys.json"
+                done < <(yq eval -p=json -o=y '.[].name' "${out}/members.json")
+                websites="$(yq eval '[(.apps // [])[] | select(has("sites")) | .name] + [(.webs // [])[] | .name] | join(", ")' "${manifest}")"
+                [ -z "${websites}" ] || echo "check-definitions: not checked: the website member ${websites}. Its definitions come from the engine image, not from the bundle"
+                [ "$(yq eval 'length' "${out}/members.json")" != 0 ] || echo "check-definitions: the bundle held no app folder to check"
+              }
+
+              bundle_members /bundle /settings
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 200m, memory: 128Mi }
+          # The image's own working directory, the one its CMD runs
+          # `node dist/server.js` in (digita-platform docker/engine.Dockerfile).
+          - name: check
+            image: $(params.engine-image)
+            workingDir: /app/packages/engine
+            volumeMounts:
+              - { name: bundle, mountPath: /bundle, readOnly: true }
+              - { name: settings, mountPath: /settings, readOnly: true }
+            script: |
+              #!/bin/sh
+              set -eu
+
+              # check_members <settings dir> — the engine's check of the
+              # members in members.json: its line per member on stdout, and its
+              # exit code, 0 where every member is servable and 1 where one is
+              # refused. No member, no engine start. LOG_LEVEL=error keeps the
+              # engine's own log out of the verdicts.
+              check_members() {
+                local out="$1" code=0
+                [ "$(cat "${out}/members.json")" != '[]' ] || return 0
+                TENANT_MEMBERS="$(cat "${out}/members.json")" PASSWORD_FIELD_KEYS="$(cat "${out}/keys.json")" PASSWORD_FIELD_ACTIVE_KEY_ID=1 \
+                  LOG_LEVEL=error LOG_PRETTY=false node dist/server.js --check-definitions || code=$?
+                if [ "${code}" = 0 ]; then
+                  echo "check-definitions: every app member of the bundle is servable"
+                else
+                  echo "check-definitions: FAIL — the engine refuses a member of the bundle (exit ${code}); no pin is written" >&2
+                fi
+                return "${code}"
+              }
+
+              check_members /settings
+            computeResources:
+              requests: { cpu: 100m, memory: 256Mi }
+              limits: { cpu: "1", memory: 1Gi }
+
     # ── bump — the reach search, then the sync ───────────────────────────────
     # Step 1 searches the three carrier classes for every declared image,
     # writes the pins and derives the Applications each hit reaches; step 2
@@ -568,10 +823,16 @@ spec:
         {{- range $b := $builds }}
         - {{ printf "build-%s" $b }}
         {{- end }}
+        # Where the manifest names an appsBundle, the engine's check of it ends
+        # before a pin is written. A skipped check does not hold the bump back,
+        # and the bump pins no tenant bundle but apps-bundle, the build the
+        # check's `when` read (pin_bundles).
+        - check-definitions
       params:
         - { name: release-tag, value: "$(params.release-tag)" }
         - { name: stage, value: "$(params.stage)" }
         - { name: image-tag, value: "$(tasks.verify.results.image-tag)" }
+        - { name: apps-bundle, value: "$(tasks.builds.results.apps-bundle)" }
       workspaces:
         - { name: source, workspace: source }
       taskSpec:
@@ -581,6 +842,8 @@ spec:
           - name: stage
             type: string
           - name: image-tag
+            type: string
+          - name: apps-bundle
             type: string
         workspaces:
           - name: source
@@ -667,6 +930,10 @@ spec:
                 value: $(params.release-tag)
               - name: IMAGE_TAG
                 value: $(params.image-tag)
+              # The build the builds task handed on as the manifest's
+              # appsBundle, the one the engine's check opened, or nothing.
+              - name: APPS_BUNDLE
+                value: $(params.apps-bundle)
               # The tag a pin carries before its first release. The seed of a
               # chart's first pins-<stage>.yaml writes it for every image this
               # release did not build, and clusters/charts/common
@@ -770,15 +1037,16 @@ spec:
               # The declared images of this release — the manifest in the
               # tagged workspace, already attested by the builds task.
               IMAGES="$(yq eval '.builds[].name' "${SRC}/deploy/platform.yaml")"
-              # The build this manifest declares as a tenant's apps bundle, or
-              # nothing. A bundle is pinned by class (d) below and by no chart's
+              # APPS_BUNDLE, the build this manifest declares as a tenant's apps
+              # bundle, or nothing: the builds task's result, which the check's
+              # `when` read, so the bump never pins a bundle the engine did not
+              # open. A bundle is pinned by class (d) below and by no chart's
               # builds[]; the Manager writes the declaration into the tenant
               # repository's manifest (hostyour-manager tenant-apps-tree.ts
               # tenantAppsManifest) and its schema holds it to one of
               # builds[].name. Held again here, because the manifest at the tag
               # is what this run releases: a bundle naming no build of this
               # release is a pin nothing could ever write.
-              APPS_BUNDLE="$(yq eval '.appsBundle // ""' "${SRC}/deploy/platform.yaml")"
               if [ -n "${APPS_BUNDLE}" ] && ! printf '%s\n' "${IMAGES}" | grep -qxF "${APPS_BUNDLE}"; then
                 echo "bump: FAIL — ${SRC}/deploy/platform.yaml declares appsBundle '${APPS_BUNDLE}', which is not one of its builds[].name ($(printf '%s' "${IMAGES:-<none>}" | tr '\n' ',')); a tenant's apps bundle is one of the builds this release ships" >&2
                 exit 1
@@ -786,7 +1054,7 @@ spec:
 
               # ── this unit's OWN delivery branch, placed only now ───────────
               # deploy/<stage> is the branch the unit's Application renders its
-              # chart off. The release kit does not move it (hostyour-manager#293):
+              # chart off. The release does not move it:
               # it is placed HERE, once every image of this release exists, on
               # the release commit plus the pin commit, in one push. ArgoCD
               # therefore never renders the release tree with its placeholder
@@ -1040,14 +1308,15 @@ spec:
                 fi
               }
 
-              # carrier_credential <unit> <repoURL> — put THAT unit's own PAT,
-              # path-qualified to THAT repository, in front of git for the clone
+              # carrier_credential <unit> <repoURL> — put THAT unit's own push
+              # token (property `push`, which writes that one repository and no
+              # other), path-qualified to THAT repository, in front of git for the clone
               # and the push below. Fail-closed at every arm: a registration
               # states this unit deploys at this stage, so a credential that
               # cannot be read is a search that cannot be made, never one that
               # found nothing.
               carrier_credential() {
-                local cname="$1" crepo="$2" body code rc pat
+                local cname="$1" crepo="$2" body code rc push
                 vault_login
                 body="$(mktemp)"
                 set +e
@@ -1064,13 +1333,13 @@ spec:
                   echo "bump: FAIL — Vault answered ${code} for ${VAULT_KV_MOUNT}/build/${cname}/repo-pat. The registration of ${cname} names a repo credential, so that entry is what onboarding seeded for it; 404 means it is gone and 403 means role ${VAULT_ROLE} may not read it." >&2
                   return 1
                 fi
-                pat="$(yq -p=json -o=y '.data.data.pat // ""' "${body}")"
+                push="$(yq -p=json -o=y '.data.data.push // ""' "${body}")"
                 rm -f "${body}"
-                if [ -z "${pat}" ]; then
-                  echo "bump: FAIL — ${VAULT_KV_MOUNT}/build/${cname}/repo-pat carries no property 'pat'; that is the one property every reader of this entry takes" >&2
+                if [ -z "${push}" ]; then
+                  echo "bump: FAIL — ${VAULT_KV_MOUNT}/build/${cname}/repo-pat carries no property 'push'; the Manager writes it for every unit that releases, and a carrier deploys from a stage file, so it releases" >&2
                   return 1
                 fi
-                printf 'https://x-access-token:%s@%s\n' "${pat}" "${crepo#https://}" >> "${CREDENTIALS_FILE}"
+                printf 'https://x-access-token:%s@%s\n' "${push}" "${crepo#https://}" >> "${CREDENTIALS_FILE}"
               }
 
               # ── class (a): every registration with a chartPath ─────────────
@@ -1232,7 +1501,10 @@ spec:
                 # tenant onto it with both of its database lists, refuses a bundle
                 # written for another engine line, and restores all of it on an
                 # abort. The file holds the one build, so each release writes it
-                # whole.
+                # whole. Only APPS_BUNDLE is pinned here: it is the one build the
+                # engine's check opened, and a registration naming another build
+                # of this release as its appsImage fails the run before any of
+                # these pins is pushed.
                 # pin_bundles <books clone>
                 pin_bundles() {
                   local books="$1" P reg pins
@@ -1240,6 +1512,10 @@ spec:
                     for reg in "${books}"/registrations/*/"${STAGE}.yaml"; do
                       [ -f "${reg}" ] || continue
                       [ "$(yq eval '.appsImage // ""' "${reg}")" = "${P}" ] || continue
+                      if [ "${P}" != "${APPS_BUNDLE}" ]; then
+                        echo "bump: FAIL — ${reg#"${books}/"} names ${P} as its appsImage, and deploy/platform.yaml declares appsBundle '${APPS_BUNDLE}': the engine checked no other build of this release, so ${P} is not pinned as a tenant bundle. Declare it as appsBundle" >&2
+                        exit 1
+                      fi
                       pins="${books}/bundles/${P}/pins-${STAGE}.yaml"
                       mkdir -p "$(dirname "${pins}")"
                       BUNDLE="${P}" yq eval -n '{"builds": [{"name": strenv(BUNDLE), "image": strenv(BUNDLE), "tag": strenv(IMAGE_TAG)}]}' > "${pins}"

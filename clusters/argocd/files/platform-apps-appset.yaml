@@ -158,7 +158,8 @@ spec:
   # So the two kinds of parameter are read differently, and the difference is the contract:
   #   MANDATORY — `prune` and `createNamespace` are read bare. Every app.yaml carries them, and an
   #     app.yaml that does not is meant to be refused.
-  #   OPTIONAL — `serverSideApply` and `ignoreDifferences` describe an app that needs an exception.
+  #   OPTIONAL — `serverSideApply`, `ignoreDifferences` and `respectIgnoreDifferences` describe an app
+  #     that needs an exception; the last keeps an ignored field at its live value in every sync.
   #     Most do not, so they are looked up with a default and the line is written only for an app
   #     that declared one. `with` rebinds the dot to the looked-up value, which keeps a second bare
   #     lookup from creeping back inside the block.
@@ -187,6 +188,9 @@ spec:
           - CreateNamespace={{ .createNamespace }}
           {{- with dig "serverSideApply" "" . }}
           - ServerSideApply={{ . }}
+          {{- end }}
+          {{- with dig "respectIgnoreDifferences" "" . }}
+          - RespectIgnoreDifferences={{ . }}
           {{- end }}
       {{- with dig "ignoreDifferences" "" . }}
       ignoreDifferences:

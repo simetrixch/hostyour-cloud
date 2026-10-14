@@ -262,6 +262,24 @@ charts:
         tree: platform
         file: clusters/inventories/external-secrets/Chart.yaml
         dependency: external-secrets
+  forgejo:
+    version: "17.3.0"
+    upstream:
+      kind: chart_repository
+    stamps:
+      - kind: chart_dependency
+        tree: platform
+        file: clusters/inventories/forgejo/Chart.yaml
+        dependency: forgejo
+  plane-ce:
+    version: "1.8.5"
+    upstream:
+      kind: chart_repository
+    stamps:
+      - kind: chart_dependency
+        tree: platform
+        file: clusters/inventories/plane/Chart.yaml
+        dependency: plane-ce
   kube-prometheus-stack:
     version: "87.21.0"
     upstream:
@@ -757,7 +775,7 @@ cliTools:
   # a version out of — a machine carrying it can never be reported as at the pin or
   # off it, only as absent.
   ansiwise:
-    version: "0.8.311-stable-20261012090928"
+    version: "0.8.312-stable-20261014190944"
     upstream:
       kind: github_release
       project: simetrixch/ansiwise-cli

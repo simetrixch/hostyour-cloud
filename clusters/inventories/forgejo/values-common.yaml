@@ -1,0 +1,93 @@
+# Forgejo on the master. Every value here holds for every installation; what names one installation
+# (its address, the announced SSH port, the sign-in source with the identity provider's address)
+# stands in installation/values/forgejo.yaml, which deploy-branch writes on the install branch.
+forgejo:
+  # THE OBJECTS ARE NAMED forgejo, NOT AFTER THE RELEASE (forgejo-<stage>). The build plane calls
+  # Forgejo's API at forgejo-http.forgejo.svc, and the Ingress below routes to the same Service.
+  fullnameOverride: forgejo
+
+  image:
+    rootless: true
+
+  # SQLite and the repositories share this one volume, on global.storageClass, which the chart
+  # falls back to. The chart carries no database and no cache of its own.
+  persistence:
+    enabled: true
+
+  service:
+    ssh:
+      # The port the master listens on for Git over SSH. The router forwards the announced port
+      # (gitea.config.server.SSH_PORT on the install branch) to it.
+      hostPort: 2222
+
+  # THE CHART'S OWN INGRESS STAYS OFF. It writes its annotations without tpl, so the issuer could
+  # not follow global.clusterIssuer; the Ingress comes from clusters/charts/ingress below instead.
+  ingress:
+    enabled: false
+
+  # The chart's `helm test` Pod pulls busybox:latest; Argo CD never runs it.
+  test:
+    enabled: false
+
+  gitea:
+    # NO LOCAL ADMINISTRATOR. With an empty name the chart creates none, and a site administrator
+    # is whoever the sign-in source puts in the group `admins` (its adminGroup).
+    admin:
+      username: ""
+
+    config:
+      server:
+        SSH_LISTEN_PORT: 2222
+      database:
+        DB_TYPE: sqlite3
+      # Sign-in through the identity provider alone: no password form, and an account is made only
+      # by a first sign-in there.
+      service:
+        ALLOW_ONLY_EXTERNAL_REGISTRATION: true
+        ENABLE_INTERNAL_SIGNIN: false
+      oauth2_client:
+        ENABLE_AUTO_REGISTRATION: true
+      # Images and packages go to the platform's registry, never to Forgejo.
+      packages:
+        ENABLED: false
+      # A webhook may call the build plane's EventListener and nothing else. Forgejo's default,
+      # `external`, refuses every address inside the cluster.
+      webhook:
+        ALLOWED_HOST_LIST: el-image-builder.image-builder.svc
+
+ingress:
+  ingress:
+    enabled: true
+    className: public
+    host: 'forgejo.{{ .Values.global.domain }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        serviceName: forgejo-http
+        servicePort: 3000
+    tls:
+      enabled: true
+      secretName: forgejo-tls
+
+secret-store:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+
+# The sign-in source's client: `key` is the client id the identity provider's blueprint
+# 99-forgejo.yaml declares, `secret` its client secret. The chart reads both keys of this Secret.
+externalsecret-oauth:
+  externalSecret:
+    enabled: true
+    annotations:
+      argocd.argoproj.io/sync-wave: "-1"
+    name: forgejo-oauth
+    namespace: forgejo
+    targetSecretName: forgejo-oauth
+    template:
+      engineVersion: v2
+      data:
+        key: forgejo
+        secret: '{{ .secret }}'
+    data:
+      - secretKey: secret
+        property: oidc-client-secret

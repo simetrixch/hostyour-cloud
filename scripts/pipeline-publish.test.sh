@@ -533,10 +533,17 @@ cat > "$work/standin-bin/corepack" <<EOF
 echo "corepack \$*" >> "$work/corepack.log"
 EOF
 chmod +x "$work/standin-bin/corepack"
+# A pod hands what root made to the user of the build with chown; whoever runs this test may give no file
+# away, so the stand-in records what would be handed over.
+cat > "$work/standin-bin/chown" <<EOF
+#!/bin/sh
+echo "chown \$*" >> "$work/chown.log"
+EOF
+chmod +x "$work/standin-bin/chown"
 secrets="$(jq -nc --arg user "$REGISTRY_USERNAME" --arg password "$REGISTRY_PASSWORD" '{"build-git-https": {GITCREDENTIALS: "https://github.invalid"},
   "image-builder-registry-push": {REGISTRY_USERNAME: $user, REGISTRY_PASSWORD: $password}}')"
 pipeline_run() { # $1 the fixture origin, $2 the release tag, [$3 the webhook's git-url] -> the run's status, its log in $work/run.out
-  rm -rf "${work:?}/run" "${work:?}/corepack.log"; mkdir -p "$work/run"
+  rm -rf "${work:?}/run" "${work:?}/corepack.log" "${work:?}/chown.log"; mkdir -p "$work/run"
   node "$work/run-pipeline.mjs" "$work/pipeline.json" "$work/run" "$1" "$REPO_URL" \
     "$(jq -nc --arg tag "$2" --arg url "${3:-$REPO_URL}" '{"release-tag": $tag, "git-url": $url}')" "$secrets" > "$work/run.out" 2>&1
 }
@@ -630,6 +637,8 @@ commit_tag "$work/e9" "0.2.000-stable-$STAMP"
 pipeline_run "$work/e9" "0.2.000-stable-$STAMP" || fail "PLANTED INNOCENT: a binaries release on the default branch did not publish: $(cat "$work/run.out")"
 [ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack skipped|run: build-binaries ran|run: push ran|run: SUCCEEDED|' ] \
   || fail "the binaries run took another course: $(tasks_ran)"
+[ "$(cat "$work/chown.log")" = "chown -R -h 10042 $work/run/workspace/repository $work/run/workspace/packed" ] \
+  || fail "the clone and the output were not handed to the user of the build: $(cat "$work/chown.log" 2>/dev/null)"
 for pair in tool=a tool-rest=b; do
   name="${pair%=*}"; hex="$(printf '%s' "${pair#*=}-0.2.000-stable-$STAMP" | sha256sum | cut -d' ' -f1)"
   grep -qxF "publish: $name-0.2.000-stable-$STAMP-linux-x64 https://${rendered_registry}/v2/digitaplatform/digita-deploy/blobs/sha256:${hex} sha256:${hex} published" "$work/run.out" \
