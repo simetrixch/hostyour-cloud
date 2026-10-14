@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fixture suites run on the GitHub Actions runner, never on the shared workstation.
+# Fixture suites run in the ci of the master (the check step of the ci pipeline, after scripts/check.sh), never on the shared workstation.
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
@@ -10,7 +10,7 @@ echo 'test: scripts/pipeline-release.test.sh — release pipeline decisions.'
 bash scripts/pipeline-release.test.sh || fail 'scripts/pipeline-release.test.sh'
 echo 'test: scripts/pipeline-publish.test.sh — what a release tag publishes to the registry, the one-time npm seed, and the push.'
 bash scripts/pipeline-publish.test.sh || fail 'scripts/pipeline-publish.test.sh'
-echo 'test: production build chart and immutable-field contracts on the public runner.'
+echo 'test: production build chart and immutable-field contracts.'
 node --test scripts/build-contract.test.mjs || fail 'scripts/build-contract.test.mjs'
 echo 'test: release queue — one release at a time on the build plane, and the queue may only start a run.'
 node --test scripts/release-queue.test.mjs || fail 'scripts/release-queue.test.mjs'

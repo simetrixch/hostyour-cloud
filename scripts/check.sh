@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Everything this repository can be held to on one machine, before anything leaves it.
 #
-# Local chart validation and credential scanning. Fixture suites run in GitHub Actions.
+# Local chart validation and credential scanning. Fixture suites run in the ci of the master (scripts/test.sh).
 
 set -uo pipefail
 
@@ -760,6 +760,26 @@ for object in Pipeline/check-publish ExternalSecret/image-builder-registry-push;
 done
 printf '%s\n' "$publish_objects" | grep -q '^ExternalSecret/image-builder-registry-pull' \
   && fail "a unit that builds nothing renders the registry pull identity, which only a release reads"
+
+# ── The tools of this repository's own ci run ────────────────────────────────────────────────
+# ci-tools.json names the tools the ci of the master installs before it runs this file and then scripts/test.sh
+# (clusters/inventories/consumer-build/templates/pipeline-ci.yaml). Each pair has to be a row of the table
+# that pipeline installs from, or the run ends on the build plane before the check starts, so it is refused here.
+# The promtool of the run is the one the master's Prometheus needs, as the one on this machine is above.
+tools_table=clusters/inventories/consumer-build/files/ci-tools.table
+tools_named="$(yq -p=json -o=yaml e 'to_entries | .[] | .key + " " + .value' ci-tools.json)" \
+  || fail "ci-tools.json does not parse as an object of tools and versions"
+[ -n "$tools_named" ] || fail "ci-tools.json names no tool, so the ci run of this repository would have no gitleaks and no promtool"
+tools_rows="$(awk '{ print $1, $2 }' "$tools_table")"
+while IFS= read -r pair; do
+  printf '%s\n' "$tools_rows" | grep -qxF "$pair" \
+    || fail "ci-tools.json names $pair, which $tools_table does not carry, so the ci run of this repository would end before its check"
+done <<< "$tools_named"
+printf '%s\n' "$tools_named" | grep -qxF "promtool $prometheus_version" \
+  || fail "ci-tools.json does not name promtool $prometheus_version, the version of the master's Prometheus, so the ci run would test its rules with another one"
+[ "$(yq e 'select(.kind == "Pipeline" and .metadata.name == "check-ci") | .spec.tasks[] | select(.name == "check") | .taskSpec.steps[0].env[] | select(.name == "CI_TOOLS_TABLE") | .value' "$work/publish-render")" = "$(cat "$tools_table")" ] \
+  || fail "the ci pipeline of a unit does not hand its check the table $tools_table, whole"
+echo "check: ci-tools.json names $(printf '%s\n' "$tools_named" | wc -l) tools, each a row of $tools_table, and the ci pipeline renders that table."
 objects_of "$work/fence-render" \
   | grep -E '^(Role|RoleBinding)/(eventlistener-create-pipelineruns|manager-read-pipelineruns)$' >> "$work/fences"
 fences_rendered="$(sort "$work/fences")"
@@ -1083,31 +1103,31 @@ if [ -n "$drifts" ]; then
 fi
 echo "check: every yaml_value stamp site of this tree holds its pin from clusters/platform/versions.yaml, $(yq e '[.. | select(tag == "!!map" and has("stamps")) | .stamps[] | select(.kind == "yaml_value" and .tree == "platform")] | length' clusters/platform/versions.yaml) of them."
 
-echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
+echo 'check: NOT RUN locally — lifecycle/test.sh; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the ci of the master via scripts/test.sh.'
 bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
-echo 'check: NOT RUN locally — scripts/pipeline-publish.test.sh; runs in GitHub Actions via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/pipeline-publish.test.sh; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in the ci of the master via scripts/test.sh.'
 for module in scripts/release-queue.test.mjs scripts/ci-run-keeper.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
-  echo "check: NOT RUN locally — $module; runs in public GitHub Actions via scripts/test.sh."
+  echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
 done
 for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-appset-fixture.mjs scripts/tenant-appset.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
-echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/tenant-appset.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/unit-mongodb-exporter.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in public GitHub Actions.'
-echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in public GitHub Actions.'
+echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/tenant-appset.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/unit-mongodb-exporter.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in the ci of the master via scripts/test.sh.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
