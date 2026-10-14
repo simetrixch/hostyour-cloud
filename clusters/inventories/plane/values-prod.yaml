@@ -1,0 +1,21 @@
+# The Vault entry Plane reads its keys and its own services' passwords from on the prod stage.
+# deploy-platform-services mints it.
+externalsecret-app-keys:
+  externalSecret:
+    vaultPath: prod/app/plane
+
+externalsecret-app-env:
+  externalSecret:
+    vaultPath: prod/app/plane
+
+externalsecret-pgdb:
+  externalSecret:
+    vaultPath: prod/app/plane
+
+externalsecret-rabbitmq:
+  externalSecret:
+    vaultPath: prod/app/plane
+
+externalsecret-doc-store:
+  externalSecret:
+    vaultPath: prod/app/plane

@@ -1,0 +1,29 @@
+apiVersion: v2
+name: forgejo
+version: 1.0.0
+description: |
+  Forgejo, the platform's own Git server, on the master in its own namespace.
+
+  Its database is SQLite in the same volume as the repositories, so nothing beside the pod holds its
+  data. Sign-in goes through the identity provider alone: the password form is off, an account is
+  created at its first sign-in, and the group `admins` makes a site administrator. The installation's
+  own address, the announced SSH port and the sign-in source stand in installation/values/forgejo.yaml
+  on the install branch.
+type: application
+dependencies:
+  - name: forgejo
+    version: 17.3.0
+    repository: oci://code.forgejo.org/forgejo-helm
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-oauth
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

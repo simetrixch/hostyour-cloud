@@ -1,0 +1,183 @@
+{{- /*
+forgejo-release — what a Forgejo webhook starts here (the Triggers of
+clusters/inventories/image-builder/templates/triggers/forgejo-release.yaml):
+
+  status-pending  the commit status tekton/forgejo-release is pending, linked to this run
+  clone           the commit, from Forgejo's http Service, with the credential of forgejo-build-git
+  check           the image name and tag the build writes into its script source are checked first
+  build           the image forgejo/<owner>/<repo> pushed to Zot, tagged with the tag on a tag push
+                  and with the commit on a pull request
+  release         on a tag only: the Forgejo release with the commits since the tag before it
+  plane           on a tag only, after the release: the work items named in those commits are
+                  Released and the module named after the tag is completed
+  status (finally) the commit status is the outcome of the run
+
+The shared Tasks are the build plane's, resolved from image-builder. The API tokens reach the three
+API Tasks by key and no other task, and the run lands under pipeline-sa with one new source claim,
+the shape the PipelineRun guard admits.
+*/ -}}
+{{- $shared := "image-builder" }}
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: forgejo-release
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: forgejo-build
+    app.kubernetes.io/component: pipeline
+spec:
+  params:
+    - name: event
+      description: tag, or pull-request.
+      type: string
+    - name: repository
+      description: The repository as Forgejo names it, <owner>/<name>.
+      type: string
+    - name: image-name
+      description: forgejo/<owner>/<name>, lowercase.
+      type: string
+    - name: commit
+      description: The commit the status is set on.
+      type: string
+    - name: revision
+      description: The ref the clone fetches, refs/tags/<tag> or refs/pull/<n>/head.
+      type: string
+    - name: tag
+      description: The pushed tag, empty on a pull request.
+      type: string
+      default: ""
+    - name: image-tag
+      description: The tag the image is pushed under.
+      type: string
+  workspaces:
+    - name: source
+  tasks:
+    - name: status-pending
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: forgejo-set-status }
+          - { name: namespace, value: {{ $shared }} }
+      params:
+        - { name: repository, value: "$(params.repository)" }
+        - { name: commit, value: "$(params.commit)" }
+        - { name: state, value: pending }
+        - { name: tokens-secret, value: forgejo-build-tokens }
+
+    - name: clone
+      runAfter: [status-pending]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: git-clone }
+          - { name: namespace, value: {{ $shared }} }
+      params:
+        - { name: url, value: "{{ .Values.forgejo.url }}/$(params.repository).git" }
+        - { name: revision, value: "$(params.revision)" }
+        # The whole history, so the release finds the tag before this one.
+        - { name: depth, value: "0" }
+        - { name: credentials-secret, value: forgejo-build-git }
+      workspaces:
+        - { name: source, workspace: source }
+
+    # The inputs come from a webhook, and buildah-build-push writes image-name and image-tag into its
+    # script source, so they reach the shell here as values and are checked before the build.
+    - name: check
+      runAfter: [clone]
+      params:
+        - { name: image-name, value: "$(params.image-name)" }
+        - { name: image-tag, value: "$(params.image-tag)" }
+      taskSpec:
+        params:
+          - { name: image-name, type: string }
+          - { name: image-tag, type: string }
+        results:
+          - name: build-timestamp
+            description: ISO-8601 UTC build time (OCI .created label).
+        steps:
+          - name: check
+            image: {{ .Values.checkImage }}
+            env:
+              - { name: IMAGE_NAME, value: "$(params.image-name)" }
+              - { name: IMAGE_TAG, value: "$(params.image-tag)" }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              fail() { echo "check: FAIL — $*" >&2; exit 1; }
+              segment='[a-z0-9]+([._-][a-z0-9]+)*'
+              printf '%s' "${IMAGE_NAME}" | grep -Eq "^forgejo/${segment}/${segment}$" \
+                || fail "image '${IMAGE_NAME}' is not forgejo/<owner>/<repo> in lowercase"
+              printf '%s' "${IMAGE_TAG}" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$' \
+                || fail "tag '${IMAGE_TAG}' is not an image tag"
+              date -u +%Y-%m-%dT%H:%M:%SZ | tr -d '\n' > "$(results.build-timestamp.path)"
+            computeResources:
+              requests: { cpu: 50m, memory: 32Mi }
+              limits: { cpu: 100m, memory: 64Mi }
+
+    - name: build
+      runAfter: [check]
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: buildah-build-push }
+          - { name: namespace, value: {{ $shared }} }
+      params:
+        - { name: image-name, value: "$(params.image-name)" }
+        - { name: image-tag, value: "$(params.image-tag)" }
+        - { name: git-url, value: "https://forgejo.{{ .Values.global.domain }}/$(params.repository)" }
+        - { name: git-revision, value: "$(tasks.clone.results.commit)" }
+        - { name: build-timestamp, value: "$(tasks.check.results.build-timestamp)" }
+        - { name: version, value: "$(params.image-tag)" }
+      workspaces:
+        - { name: source, workspace: source }
+
+    - name: release
+      runAfter: [build]
+      when:
+        - { input: "$(params.event)", operator: in, values: [tag] }
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: forgejo-create-release }
+          - { name: namespace, value: {{ $shared }} }
+      params:
+        - { name: repository, value: "$(params.repository)" }
+        - { name: tag, value: "$(params.tag)" }
+        - { name: tokens-secret, value: forgejo-build-tokens }
+      workspaces:
+        - { name: source, workspace: source }
+
+    - name: plane
+      runAfter: [release]
+      when:
+        - { input: "$(params.event)", operator: in, values: [tag] }
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: plane-update-status }
+          - { name: namespace, value: {{ $shared }} }
+      params:
+        - { name: tag, value: "$(params.tag)" }
+        - { name: previous-commit, value: "$(tasks.release.results.previous-commit)" }
+        - { name: tokens-secret, value: forgejo-build-tokens }
+      workspaces:
+        - { name: source, workspace: source }
+
+  finally:
+    - name: status
+      taskRef:
+        resolver: cluster
+        params:
+          - { name: kind, value: task }
+          - { name: name, value: forgejo-set-status }
+          - { name: namespace, value: {{ $shared }} }
+      params:
+        - { name: repository, value: "$(params.repository)" }
+        - { name: commit, value: "$(params.commit)" }
+        - { name: state, value: "$(tasks.status)" }
+        - { name: tokens-secret, value: forgejo-build-tokens }

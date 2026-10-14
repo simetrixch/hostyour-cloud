@@ -53,16 +53,17 @@ config are what the Manager creates a tenant's own apps repository under, and no
 App from nothing or installs one on an organisation. This act does what an API can do and leaves the
 two clicks GitHub keeps for a person. It starts a listener on `127.0.0.1`, opens the browser on a page
 that posts the App's manifest to the organisation's new-App page — the name `<organisation>-platform-manager`,
-the homepage `https://manager.<UNIT_APEX>`, the nine repository permissions `actions`, `administration`,
+the homepage `https://manager.<UNIT_APEX>`, the eight repository permissions `administration`,
 `contents`, `statuses`, `webhooks` and `workflows` at write and `issues`, `metadata` and `packages` at read,
-no webhook, private — and waits. `issues` at read lets the Manager mint each unit's ci check a token that
+no webhook, private — and waits. No `actions`: the Manager starts no workflow, it writes a release's tag and
+deploy ref itself. `issues` at read lets the Manager mint each unit's ci check a token that
 reads the issues of the unit's own repository and nothing else; `statuses` at write lets it mint each
 unit's ci run a token that posts the commit status on the unit's own repository and writes nothing else. `packages` at read does NOT let the App's token install a private npm package: GitHub
 grants an installation token no access to a private package whatever the App's permissions say, and
 a build reads its npm packages from the build plane's registry with the registry's pull identity,
 while the App stays the identity of every repository.
 The first click is GitHub's own **Create GitHub App**. GitHub sends the browser back with a code, the
-act turns the code into the App, refuses when the answered permissions are not the nine asked, and
+act turns the code into the App, refuses when the answered permissions are not the eight asked, and
 writes `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` into the config at once, in place, the key as one
 line with `\n` for each line break. It then opens the App's installation page for the second click,
 **Install** with **All repositories**, asks GitHub every five seconds with a JWT signed by the key

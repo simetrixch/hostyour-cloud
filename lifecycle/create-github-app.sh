@@ -19,7 +19,7 @@
 #
 # WHAT GITHUB ALLOWS, AND WHY TWO CLICKS STAY. No API creates an App from
 # nothing. The App Manifest flow is the closest: a browser posts a manifest —
-# the name, the homepage, the address to send the browser back to, the nine
+# the name, the homepage, the address to send the browser back to, the eight
 # repository permissions, no webhook — to the organisation's new-App page, the
 # person clicks Create GitHub App ONCE, GitHub sends the browser back with a
 # temporary code, and one unauthenticated request turns that code into the App:
@@ -159,15 +159,18 @@ require_owner_only "$CONFIG" \
 
 GITHUB='https://github.com'
 GITHUB_API='https://api.github.com'
-# The nine repository permissions the Manager creates and drives a tenant's own
-# apps repository with, as GitHub spells them, in byte order. `packages:read` is
+# The eight repository permissions the Manager creates and drives a tenant's own
+# apps repository with, as GitHub spells them, in byte order. No `actions`: the
+# Manager starts no workflow, it writes a release's tag and deploy ref itself.
+# `workflows:write` is what lets it take the retired
+# release kit's .github/workflows/release.yml out of a repository. `packages:read` is
 # what lets the App's own token install a unit's private npm packages, so a unit
 # of the App's organisation needs no PAT at all (hostyour-cloud#235).
 # `issues:read` is what lets the Manager mint a unit's ci check a token that
 # reads the issues of the unit's own repository and nothing else.
 # `statuses:write` is what lets it mint a unit's ci run a token that posts the
 # commit status on the unit's own repository and writes nothing else.
-PERMISSIONS='actions:write administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write'
+PERMISSIONS='administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write'
 WAIT_SECONDS=600
 POLL_SECONDS=5
 
@@ -331,12 +334,12 @@ PERL
   SLUG="$(field "$RE_SLUG" "$APP")" || die "GitHub's answer to the conversion carries no slug, so the App cannot be recorded. Nothing has been written" 69
   HTML_URL="$(field "$RE_HTML_URL" "$APP")" || die "GitHub's answer to the conversion carries no html_url, so the App cannot be recorded. Nothing has been written" 69
   PEM_JSON="$(field "$RE_PEM" "$BODY")" || die "GitHub's answer to the conversion carries no pem, so the App at $HTML_URL has no key this can write. Delete it there and run this again. Nothing has been written" 69
-  ANSWERED="$(field "$RE_PERMISSIONS" "$APP")" || die "GitHub's answer to the conversion names no permissions, so the App at $HTML_URL cannot be held to the nine asked. Delete it there and run this again. Nothing has been written" 69
+  ANSWERED="$(field "$RE_PERMISSIONS" "$APP")" || die "GitHub's answer to the conversion names no permissions, so the App at $HTML_URL cannot be held to the eight asked. Delete it there and run this again. Nothing has been written" 69
   GOT="$(printf '%s' "$ANSWERED" | tr ',' '\n' | tr -d '" ' | LC_ALL=C sort | tr '\n' ' ')"
   GOT="${GOT% }"
   [ "$GOT" = "$PERMISSIONS" ] \
-    || die "the App was created at $HTML_URL with the permissions $GOT and not the nine asked: $PERMISSIONS. Delete it there and run this again. Nothing has been written" 65
-  say "create-github-app: the App stands at $HTML_URL (id $APP_ID) with the nine permissions $GOT"
+    || die "the App was created at $HTML_URL with the permissions $GOT and not the eight asked: $PERMISSIONS. Delete it there and run this again. Nothing has been written" 65
+  say "create-github-app: the App stands at $HTML_URL (id $APP_ID) with the eight permissions $GOT"
 
   # ================================================================= WRITE
   write_config_value GITHUB_APP_ID "$APP_ID"

@@ -1,7 +1,9 @@
 {{- if .Values.eventListener.enabled }}
 {{- /*
-The ONE webhook of the build plane. Three Triggers attach (templates/triggers/),
-and no push matches two of them:
+The ONE webhook of the build plane. Three GitHub Triggers attach (templates/triggers/),
+and no push matches two of them; the two Forgejo Triggers of
+templates/triggers/forgejo-release.yaml check another key, so no delivery matches
+a Trigger of both:
 github-deploy-request — a push of the ref deploy/<stage>/<release-tag> routes
 into the unit's own <unit>-release Pipeline in namespace <unit>-build, the
 release cycle. github-ci-push — a push of the default branch or of a `ci/`
@@ -29,6 +31,8 @@ spec:
     - triggerRef: github-deploy-request # deploy/<stage>/<release-tag> push → <unit>-release in <unit>-build
     - triggerRef: github-ci-push # default or ci/ branch push → <unit>-ci in <unit>-build
     - triggerRef: github-release-publish # <release-tag> push → <unit>-publish in <unit>-build
+    - triggerRef: forgejo-tag-push # a Forgejo tag push → forgejo-release in forgejo-build
+    - triggerRef: forgejo-pull-request # a Forgejo pull request → forgejo-release in forgejo-build
   resources:
     kubernetesResource:
       spec:

@@ -1,0 +1,214 @@
+{{- if .Values.eventListener.enabled }}
+{{- /*
+THE FORGEJO RELEASE FLOW'S ENTRY. A Forgejo repository's own webhook, a per-repository webhook to
+http://el-image-builder.image-builder.svc:8080 that Forgejo's webhook ALLOWED_HOST_LIST admits, lands
+here. Two Triggers, and no delivery matches both:
+forgejo-tag-push — a push of a tag runs the Pipeline forgejo-release with the release and the Plane
+update. forgejo-pull-request — an opened, reopened or updated pull request runs the same Pipeline
+for its status and its image alone.
+
+THE KEY IS FORGEJO'S OWN. Forgejo signs a delivery the way GitHub does (X-Hub-Signature-256 and
+X-GitHub-Event), so the github interceptor checks it, against the Secret
+image-builder-forgejo-webhook-secret. The GitHub Triggers check against another key, so a GitHub
+delivery fails here and a Forgejo delivery fails there. Without the Secret, which stands only once
+deploy-platform-services has minted <stage>/app/forgejo-webhook, every Forgejo delivery is refused.
+
+THE RUN LANDS IN forgejo-build, where the guard of templates/vap-pipelinerun-guard.yaml binds it
+like a unit's run, and carries none of the labels image-builder.io/consumer, image-builder.io/publish
+or image-builder.io/ci, so the release queue and the ci run keeper never touch it.
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: forgejo-tag-push
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: forgejo
+spec:
+  interceptors:
+    - ref:
+        name: github
+      params:
+        - name: secretRef
+          value:
+            secretName: image-builder-forgejo-webhook-secret
+            secretKey: forgejo
+        - name: eventTypes
+          value: ["push"]
+    - ref:
+        name: cel
+      params:
+        - name: overlays
+          value:
+            - key: repository
+              expression: body.repository.full_name
+            - key: image-name
+              expression: "'forgejo/' + body.repository.full_name.lowerAscii()"
+            - key: commit
+              expression: body.after
+            - key: revision
+              expression: body.ref
+            - key: tag
+              expression: body.ref.substring(10)
+        # A tag that is also a valid image tag, and not its deletion.
+        - name: filter
+          value: >-
+            body.ref.matches(r'^refs/tags/[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$') &&
+            !body.after.matches(r'^0+$')
+  bindings:
+    - ref: forgejo-tag-push-binding
+  template:
+    ref: forgejo-release
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: forgejo-tag-push-binding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: forgejo
+spec:
+  params:
+    - name: event
+      value: tag
+    - name: repository
+      value: $(extensions.repository)
+    - name: image-name
+      value: $(extensions.image-name)
+    - name: commit
+      value: $(extensions.commit)
+    - name: revision
+      value: $(extensions.revision)
+    - name: tag
+      value: $(extensions.tag)
+    - name: image-tag
+      value: $(extensions.tag)
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: forgejo-pull-request
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: forgejo
+spec:
+  interceptors:
+    - ref:
+        name: github
+      params:
+        - name: secretRef
+          value:
+            secretName: image-builder-forgejo-webhook-secret
+            secretKey: forgejo
+        - name: eventTypes
+          value: ["pull_request"]
+    - ref:
+        name: cel
+      params:
+        - name: overlays
+          value:
+            - key: repository
+              expression: body.repository.full_name
+            - key: image-name
+              expression: "'forgejo/' + body.repository.full_name.lowerAscii()"
+            - key: commit
+              expression: body.pull_request.head.sha
+            # Forgejo keeps every pull request's head under this ref of the base repository, a fork's
+            # included.
+            - key: revision
+              expression: "'refs/pull/' + string(body.number) + '/head'"
+        - name: filter
+          value: >-
+            body.action in ['opened', 'reopened', 'synchronized']
+  bindings:
+    - ref: forgejo-pull-request-binding
+  template:
+    ref: forgejo-release
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: forgejo-pull-request-binding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: forgejo
+spec:
+  params:
+    - name: event
+      value: pull-request
+    - name: repository
+      value: $(extensions.repository)
+    - name: image-name
+      value: $(extensions.image-name)
+    - name: commit
+      value: $(extensions.commit)
+    - name: revision
+      value: $(extensions.revision)
+    - name: image-tag
+      value: $(extensions.commit)
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: forgejo-release
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: forgejo
+spec:
+  params:
+    - name: event
+    - name: repository
+    - name: image-name
+    - name: commit
+    - name: revision
+    # Empty on a pull request, which is released by no tag.
+    - name: tag
+      default: ""
+    - name: image-tag
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: forgejo-release-
+        namespace: forgejo-build
+      spec:
+        pipelineRef:
+          name: forgejo-release
+        taskRunTemplate:
+          serviceAccountName: pipeline-sa
+        timeouts:
+          pipeline: 1h0m0s
+        params:
+          - name: event
+            value: $(tt.params.event)
+          - name: repository
+            value: $(tt.params.repository)
+          - name: image-name
+            value: $(tt.params.image-name)
+          - name: commit
+            value: $(tt.params.commit)
+          - name: revision
+            value: $(tt.params.revision)
+          - name: tag
+            value: $(tt.params.tag)
+          - name: image-tag
+            value: $(tt.params.image-tag)
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                resources:
+                  requests:
+                    storage: {{ .Values.workspaces.sourceSize }}
+{{- end }}

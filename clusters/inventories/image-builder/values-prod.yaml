@@ -4,3 +4,8 @@
 externalsecret-webhooks:
   externalSecret:
     vaultPath: prod/app/image-builder
+
+# The Vault entry the key Forgejo signs its deliveries with is read from on the prod stage.
+externalsecret-forgejo-webhook:
+  externalSecret:
+    vaultPath: prod/app/forgejo-webhook
