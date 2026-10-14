@@ -92,4 +92,7 @@ node --test scripts/e2e-runner.test.mjs || fail 'scripts/e2e-runner.test.mjs'
 echo 'test: platform argo-sync — every inventory a release pins lets that release read its Application, and nothing else.'
 helm dependency build clusters/inventories/gate-runner
 node --test scripts/platform-argo-sync.test.mjs || fail 'scripts/platform-argo-sync.test.mjs'
+echo 'test: forge — Forgejo admits the group admins alone, through the identity provider, and keeps its data in one volume.'
+helm dependency update clusters/inventories/forgejo
+node --test scripts/forgejo.test.mjs || fail 'scripts/forgejo.test.mjs'
 echo 'test: OK — all suites green'

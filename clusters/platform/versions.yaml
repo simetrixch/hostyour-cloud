@@ -262,6 +262,15 @@ charts:
         tree: platform
         file: clusters/inventories/external-secrets/Chart.yaml
         dependency: external-secrets
+  forgejo:
+    version: "17.3.0"
+    upstream:
+      kind: chart_repository
+    stamps:
+      - kind: chart_dependency
+        tree: platform
+        file: clusters/inventories/forgejo/Chart.yaml
+        dependency: forgejo
   kube-prometheus-stack:
     version: "87.21.0"
     upstream:
