@@ -13,8 +13,9 @@
 # no task of this pipeline has a when, so a skipped task is always a stopped run, and `Completed` is
 # `error` too, never a passed check.
 #
-# The token is the unit's repository token from build-git-https. It travels in a header file, so it is
-# in no argument list, and nothing here prints it.
+# The token is the unit's statuses token from build-git-https (key `token`): it posts commit statuses on
+# the unit's own repository and writes nothing else. It travels in a header file, so it is in no
+# argument list, and nothing here prints it.
 set -euo pipefail
 
 : "${GITHUB_TOKEN:?}" "${REPOSITORY_PATH:?}" "${COMMIT:?}" "${RUN_URL:?}" "${RUN_STATE:?}"

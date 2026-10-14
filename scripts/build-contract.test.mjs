@@ -589,12 +589,13 @@ test('a unit that builds nothing renders the ci check and the publish pipeline, 
 
 // The two platform bump credentials stand on build-platform/, a tier of their own, and never at
 // build/<unit>/repo-pat: that leaf is a unit's own entry, and a unit named hostyour-cloud or deploy owns
-// it whole. What the bump of a unit reads, by key of its credential
+// it whole. The unit's own record is its `push` token, which writes that one repository and no other,
+// never its `pat`. What the bump of a unit reads, by key of its credential
 // set, as `<vault key>#<property>`, and every way that departs from it.
 const bumpReads = (docs) => Object.fromEntries(docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https')
   .spec.data.map(({secretKey, remoteRef}) => [secretKey, `${remoteRef.key}#${remoteRef.property}`]));
 const bumpReadFindings = (reads, unit) => {
-  const expected = {'unit-pat': `build/${unit}/repo-pat#pat`, 'deploy-pat': 'build-platform/deploy/repo-pat#pat', 'cloud-pat': 'build-platform/hostyour-cloud/repo-pat#pat'};
+  const expected = {'unit-pat': `build/${unit}/repo-pat#push`, 'deploy-pat': 'build-platform/deploy/repo-pat#pat', 'cloud-pat': 'build-platform/hostyour-cloud/repo-pat#pat'};
   const found = Object.entries(expected).filter(([key, read]) => reads[key] !== read).map(([key]) => `${unit}: ${key} reads ${reads[key]}`);
   if (new Set(Object.values(reads)).size !== Object.keys(reads).length) found.push(`${unit}: two keys read one entry`);
   return found;
@@ -606,6 +607,8 @@ test('the bump reads the platform credentials from build-platform/, and units na
   assert.notDeepEqual(bumpReadFindings({...deploy, 'deploy-pat': 'build/deploy/repo-pat#pat'}, 'deploy'), [], 'PLANTED DEFECT: the old deploy leaf, the entry a unit named deploy owns, is caught');
   const cloud = bumpReads(renderUnit('hostyour-cloud'));
   assert.notDeepEqual(bumpReadFindings({...cloud, 'cloud-pat': 'build/hostyour-cloud/repo-pat#pat'}, 'hostyour-cloud'), [], 'PLANTED DEFECT: the old hostyour-cloud leaf, the entry a unit named hostyour-cloud owns, is caught');
+  const shop = bumpReads(renderUnit('shop'));
+  assert.notDeepEqual(bumpReadFindings({...shop, 'unit-pat': 'build/shop/repo-pat#pat'}, 'shop'), [], 'PLANTED DEFECT: the unit\'s record back on its pat, the token that reaches more than its own repository, is caught');
 });
 
 // The lines of the check step from the install on, run in a repository directory with pnpm replaced by a stub
@@ -1310,7 +1313,21 @@ test('the report pod of a red run is admitted by the ci quota while the check of
   assert.equal(quotaAdmits(counting, held, podClassOf(run, 'report-failure')), false, 'PLANTED DEFECT: a quota that counts the report class holds the report pod back');
 });
 
-test('tekton/ci is set to pending after the gate and to the outcome in a finally task, with the repository token and the run link', () => {
+// What build-git-https gives its two readers, and every way that departs from it: the clone's
+// GITCREDENTIALS from property `pat`, and the commit status tasks' key `token` from property `statuses`,
+// a token that posts commit statuses on the unit's own repository and writes nothing else.
+const gitHttpsFindings = (secret, unit) => {
+  const reads = Object.fromEntries(secret.spec.data.map(({secretKey, remoteRef}) => [secretKey, `${remoteRef.key}#${remoteRef.property}`]));
+  const {GITCREDENTIALS, token} = secret.spec.target.template.data;
+  const found = [];
+  if (GITCREDENTIALS !== 'https://x-access-token:{{ .pat }}@github.com') found.push(`GITCREDENTIALS is ${GITCREDENTIALS}`);
+  if (token !== '{{ .statuses }}') found.push(`token is ${token}`);
+  if (reads.pat !== `build/${unit}/repo-pat#pat`) found.push(`pat reads ${reads.pat}`);
+  if (reads.statuses !== `build/${unit}/repo-pat#statuses`) found.push(`statuses reads ${reads.statuses}`);
+  return found;
+};
+
+test('tekton/ci is set to pending after the gate and to the outcome in a finally task, with the statuses token and the run link', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
   const pending = pipeline.spec.tasks.find((t) => t.name === 'commit-status-pending');
@@ -1336,7 +1353,13 @@ test('tekton/ci is set to pending after the gate and to the outcome in a finally
   assert.deepEqual(params['task-reasons'].split(' '), pipeline.spec.tasks.map((t) => `$(tasks.${t.name}.reason)`),
     'the outcome reads the reason of every task, so a cancelled one is told from a failed one');
   const secret = docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-git-https');
-  assert.ok('token' in secret.spec.target.template.data, 'build-git-https carries the key the status tasks read');
+  assert.deepEqual(gitHttpsFindings(secret, 'shop'), [], 'PLANTED INNOCENT: the render of shop');
+  const tokenOnPat = structuredClone(secret);
+  tokenOnPat.spec.target.template.data.token = '{{ .pat }}';
+  assert.notDeepEqual(gitHttpsFindings(tokenOnPat, 'shop'), [], 'PLANTED DEFECT: the status token back on the clone\'s pat is caught');
+  const statusesOnPat = structuredClone(secret);
+  statusesOnPat.spec.data.find((d) => d.secretKey === 'statuses').remoteRef.property = 'pat';
+  assert.notDeepEqual(gitHttpsFindings(statusesOnPat, 'shop'), [], 'PLANTED DEFECT: the statuses data item reading property pat is caught');
   assert.throws(() => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop',
     repoURL: 'https://gitlab.com/check/shop.git', buildsJson: '["app"]'})]), /not https:\/\/github\.com\/<owner>\/<repository>/);
 });

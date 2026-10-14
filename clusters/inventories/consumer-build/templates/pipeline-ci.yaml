@@ -108,7 +108,8 @@ THE COMMIT STATUS. commit-status-pending sets tekton/ci to pending once the
 gate has proven the commit, and commit-status sets success, failure or error,
 each linked to the run in the Tekton Dashboard. Both run files/ci-commit-status.sh
 in a pod of their own that holds the key token of build-git-https, the unit's
-repository token, and runs no code of the repository. A run the gate refused
+statuses token, which posts commit statuses on its own repository and writes
+nothing else, and runs no code of the repository. A run the gate refused
 sets no status, because it names a commit it did not prove.
 */ -}}
 {{- if .Values.unit }}
