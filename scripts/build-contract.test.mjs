@@ -272,7 +272,7 @@ test('the ci trigger needs a list of owners, and an empty or missing list fails 
   assert.throws(() => renderChart('image-builder', ['--set', 'global.booksCluster=']), /global\.booksCluster is required/);
 });
 
-test('the ci pipeline of a unit holds no GitOps credential, mounts only the packages reader, and is no release', () => {
+test('the ci pipeline of a unit holds no GitOps credential, mounts only build-npmrc, and is no release', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
   assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'commit-status-pending', 'clone', 'describe-commit', 'fetch', 'check']);
@@ -357,7 +357,7 @@ test('the publish pipeline of every unit holds the push credential in its push t
     assert.deepEqual(task('push').taskSpec.steps.map((s) => s.envFrom), [[{secretRef: {name: 'image-builder-registry-push'}}]]);
     assert.deepEqual(task('push').workspaces, [{name: 'packed', workspace: 'source', subPath: 'packed'}], 'the push reads the packed tarballs and never the repository');
     assert.equal(task('push').taskSpec.workspaces[0].readOnly, true);
-    for (const [name, modes] of [['reviewed', ['seed', 'source', 'binaries']], ['pack', ['seed', 'source']], ['build-binaries', ['binaries']], ['push', ['seed', 'source', 'binaries']]]) {
+    for (const [name, modes] of [['reviewed', ['source', 'binaries']], ['pack', ['source']], ['build-binaries', ['binaries']], ['push', ['source', 'binaries']]]) {
       assert.deepEqual(task(name).when, [{input: '$(tasks.scan.results.mode)', operator: 'in', values: modes}], `${name} runs only where the scan found what it publishes`);
     }
     assert.equal(task('clone').params.find((p) => p.name === 'revision').value, 'refs/tags/$(params.release-tag)', 'the clone is the pushed release tag');
@@ -578,7 +578,7 @@ const isCiOnly = (docs) => holds(docs, CI_PARTS).every(Boolean) && !holds(docs, 
 
 test('a unit that builds nothing renders the ci check and the publish pipeline, and no release, registry pull or bump part', () => {
   const ciOnly = renderUnit('shop', []);
-  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, packages reader, issues reader, the ci grants, the publish pipeline and its push credential render; release pipeline, pull secret and bump secret do not');
+  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, build-npmrc, issues reader, the ci grants, the publish pipeline and its push credential render; release pipeline, pull secret and bump secret do not');
   const withBuilds = renderUnit('shop');
   assert.deepEqual(holds(withBuilds, [...CI_PARTS, ...RELEASE_PARTS]), Array(CI_PARTS.length + RELEASE_PARTS.length).fill(true), 'PLANTED INNOCENT: a unit with builds renders both pipelines and every credential as before');
   assert.ok(!isCiOnly(withBuilds), 'a unit with builds is not a ci-only unit');
@@ -587,6 +587,27 @@ test('a unit that builds nothing renders the ci check and the publish pipeline, 
   assert.ok(!isCiOnly(oldCondition), 'PLANTED DEFECT: a render that keeps the ci parts behind the builds condition is caught');
   const leaky = [...ciOnly, withBuilds.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https')];
   assert.ok(!isCiOnly(leaky), 'PLANTED DEFECT: a ci-only render that carries the bump credential is caught');
+});
+
+// The two platform bump credentials stand on build-platform/, a tier of their own, and never at
+// build/<unit>/repo-pat: that leaf is a unit's own entry, and a unit named hostyour-cloud or deploy owns
+// it whole. What the bump of a unit reads, by key of its credential
+// set, as `<vault key>#<property>`, and every way that departs from it.
+const bumpReads = (docs) => Object.fromEntries(docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https')
+  .spec.data.map(({secretKey, remoteRef}) => [secretKey, `${remoteRef.key}#${remoteRef.property}`]));
+const bumpReadFindings = (reads, unit) => {
+  const expected = {'unit-pat': `build/${unit}/repo-pat#pat`, 'deploy-pat': 'build-platform/deploy/repo-pat#pat', 'cloud-pat': 'build-platform/hostyour-cloud/repo-pat#pat'};
+  const found = Object.entries(expected).filter(([key, read]) => reads[key] !== read).map(([key]) => `${unit}: ${key} reads ${reads[key]}`);
+  if (new Set(Object.values(reads)).size !== Object.keys(reads).length) found.push(`${unit}: two keys read one entry`);
+  return found;
+};
+
+test('the bump reads the platform credentials from build-platform/, and units named hostyour-cloud and deploy read their own entries apart from them', () => {
+  for (const unit of ['shop', 'hostyour-cloud', 'deploy']) assert.deepEqual(bumpReadFindings(bumpReads(renderUnit(unit)), unit), [], `PLANTED INNOCENT: the render of ${unit}`);
+  const deploy = bumpReads(renderUnit('deploy'));
+  assert.notDeepEqual(bumpReadFindings({...deploy, 'deploy-pat': 'build/deploy/repo-pat#pat'}, 'deploy'), [], 'PLANTED DEFECT: the old deploy leaf, the entry a unit named deploy owns, is caught');
+  const cloud = bumpReads(renderUnit('hostyour-cloud'));
+  assert.notDeepEqual(bumpReadFindings({...cloud, 'cloud-pat': 'build/hostyour-cloud/repo-pat#pat'}, 'hostyour-cloud'), [], 'PLANTED DEFECT: the old hostyour-cloud leaf, the entry a unit named hostyour-cloud owns, is caught');
 });
 
 // The lines of the check step from the install on, run in a repository directory with pnpm replaced by a stub
