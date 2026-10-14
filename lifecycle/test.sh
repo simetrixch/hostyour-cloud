@@ -1139,6 +1139,59 @@ expect 'install-machine: a config of mode 644 named by a relative path' 77 <<'RE
 
 RECORDED
 
+# ── install-machine refuses a first master stated on the ACME account ────────
+# AN INSTALLATION IS BORN ON platform-local: a config that states ACME_CREDENTIALS_JSON is refused
+# in its sentence, with 65, before the first session, and never with its value. A recording ssh
+# stands first on PATH; the refusal must leave it uncalled, and a copy without the refusal calls it.
+ACMESSH="$WORK/acme-ssh"
+mkdir -p "$ACMESSH"
+cat > "$ACMESSH/ssh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$(dirname "$0")/called"
+echo 'ssh: connect to host stub port 22: Connection refused' >&2
+exit 255
+STUB
+chmod +x "$ACMESSH/ssh"
+IMACME="$WORK/install-machine-acme.env"
+cat > "$IMACME" <<'CONFIG'
+FQDN='master.example.invalid'
+OPERATOR_USER='operator'
+STAGE='prod'
+DEPLOY_REPO='https://example.invalid/deploy.git'
+PROGRAMS_REPO='https://example.invalid/programs.git'
+PLATFORM_REPO='https://example.invalid/platform.git'
+PLATFORM_REF='master'
+ELEVATION_PASSWORD='elevation-test'
+CLUSTER_ISSUER='platform-acme'
+ACME_CREDENTIALS_JSON='{"keyId":"kid-shown-nowhere","b64MacKey":"mac-shown-nowhere"}'
+CONFIG
+chmod 600 "$IMACME"
+run_acme() { # the script, then its config
+  A_CODE=0
+  ( cd "$WORK_A" && PATH="$ACMESSH:$PATH" bash "$1" "$2" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+run_acme "$HERE/install-machine.sh" "$IMACME"
+[ ! -e "$ACMESSH/called" ] || fail "install-machine: a config stating ACME_CREDENTIALS_JSON opened a session: $(cat "$ACMESSH/called")"
+must_not 'shown-nowhere' 'install-machine: the refusal does not show the binding'
+expect 'install-machine: a first master stated on the ACME account' 65 <<'RECORDED'
+~~~ standard error ~~~
+
+  <WORK>/install-machine-acme.env states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out, ACME_EMAIL and ACME_SERVER still stated, and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh master.example.invalid <WORK>/install-machine-acme.env and the Manager's cluster-redeploy of this machine
+
+RECORDED
+# The planted defect: a copy without the refusal, beside the driver and the guard, reaches the session.
+PLANTED_ACME="$WORK/planted-install-machine-acme"
+mkdir -p "$PLANTED_ACME"
+cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$PLANTED_ACME/"
+grep -vF '[ -z "${ACME_CREDENTIALS_JSON:-}" ] ||' "$HERE/install-machine.sh" > "$PLANTED_ACME/install-machine.sh"
+cmp -s "$HERE/install-machine.sh" "$PLANTED_ACME/install-machine.sh" \
+  && fail 'the refusal was not taken out of the planted install-machine.sh — the probe proves nothing'
+run_acme "$PLANTED_ACME/install-machine.sh" "$IMACME"
+[ -e "$ACMESSH/called" ] || fail 'the planted install-machine without the refusal opened no session either — the case cannot go red'
+[ "$A_CODE" = '69' ] || fail "the planted install-machine must end at the recording ssh with 69, got $A_CODE"
+rm -f "$ACMESSH/called"
+ok 'the planted defect was caught — a copy without the refusal opens a session with the ACME config'
+
 # ===========================================================================
 # FIVE — abandon-installation, against a fixture of an installation that is gone
 #
@@ -1603,8 +1656,8 @@ openssl genrsa 2048 > "$GHAPP/key.pem" 2>/dev/null || fail 'openssl could not mi
 openssl rsa -in "$GHAPP/key.pem" -pubout > "$GHAPP/pub.pem" 2>/dev/null || fail 'openssl could not derive the public half of the fixture key'
 # The key as GitHub's JSON spells it: one line, \n for each line break.
 awk '{ printf "%s\\n", $0 }' "$GHAPP/key.pem" > "$GHAPP/pem.json"
+EIGHT_PERMISSIONS='"administration":"write","contents":"write","issues":"read","metadata":"read","packages":"read","statuses":"write","webhooks":"write","workflows":"write"'
 SEVEN_PERMISSIONS='"administration":"write","contents":"write","issues":"read","metadata":"read","packages":"read","webhooks":"write","workflows":"write"'
-SIX_PERMISSIONS='"administration":"write","contents":"write","metadata":"read","packages":"read","webhooks":"write","workflows":"write"'
 
 # THE STAND-IN FOR curl against api.github.com. Every call is logged as its
 # method and path, and a call carrying a JWT logs the verdict on it: the
@@ -1740,7 +1793,7 @@ page_holds() { # what was being checked -> the act served a page carrying the ma
   [ -s "$page" ] || fail "$1 — the stand-in browser fetched no page from the listener"
   grep -qF '<form method="post" action="https://github.com/organizations/acme/settings/apps/new?state=' "$page" || fail "$1 — the page does not post to the organisation's new-App page with a state"
   if grep -qF '&quot;' "$page"; then fail "$1 — the page escaped the manifest's quotes, which a single-quoted attribute does not need"; fi
-  grep -qF "\"default_permissions\":{$SEVEN_PERMISSIONS}" "$page" || fail "$1 — the manifest does not carry exactly the seven permissions"
+  grep -qF "\"default_permissions\":{$EIGHT_PERMISSIONS}" "$page" || fail "$1 — the manifest does not carry exactly the eight permissions"
   grep -qF '"hook_attributes":{"active":false}' "$page" || fail "$1 — the manifest does not switch the webhook off"
   grep -qF '"public":false' "$page" || fail "$1 — the manifest does not make the App private"
   grep -qF '"name":"acme-platform-manager","url":"https://manager.example.invalid","redirect_url":"http://127.0.0.1:' "$page" || fail "$1 — the manifest does not name the App, its homepage and the listener"
@@ -1748,7 +1801,7 @@ page_holds() { # what was being checked -> the act served a page carrying the ma
   [ "$(cat "$GHAPP/state-a/answer")" = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>done</title></head><body>done, back to the terminal</body></html>' ] \
     || fail "$1 — the listener did not answer the redirect with the one line"
 }
-seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" all
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
 seed_config "$GHAPP/a"
 ok 'fixture built — a key, a stand-in GitHub that verifies every JWT against it, a stand-in browser, and an owner-only config'
 
@@ -1829,13 +1882,13 @@ page_holds 'a redirect carrying another state'
 [ ! -s "$GHAPP/state-a/log" ] || fail 'a wrong state was refused and the code was still sent to GitHub'
 nothing_written 'a redirect carrying another state'
 rm -f "$GHAPP/state-a/wrong-state"
-ok 'the manifest page carries the seven permissions, no webhook, private, the listener, and submits itself; the listener answers the redirect with one line; a redirect with another state is refused before the code reaches GitHub'
+ok 'the manifest page carries the eight permissions, no webhook, private, the listener, and submits itself; the listener answers the redirect with one line; a redirect with another state is refused before the code reaches GitHub'
 
 # ── an App answered with seven permissions is refused, and named ───────────
-seed_github "$GHAPP/state-a" "$SIX_PERMISSIONS" all
+seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" all
 run_app_bash config.apps6.env
 must "create-github-app: GitHub sent the browser back with a code, and the state is this run's" 'the code and the state are taken off the redirect'
-must 'create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions administration:write contents:write metadata:read packages:read webhooks:write workflows:write and not the seven asked: administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write. Delete it there and run this again. Nothing has been written' \
+must 'create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write and not the eight asked: administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write. Delete it there and run this again. Nothing has been written' \
   'an App answered with seven permissions is refused, both lists named'
 [ "$A_CODE" = '65' ] || fail "seven permissions must refuse with 65, got $A_CODE"
 expect 'an App answered with seven permissions' 65 <<'RECORDED'
@@ -1844,16 +1897,16 @@ create-github-app: listening on 127.0.0.1 for GitHub to send the browser back, f
 create-github-app: opened the manifest page in the browser; it posts to https://github.com/organizations/acme/settings/apps/new. In the browser: click Create GitHub App
 create-github-app: GitHub sent the browser back with a code, and the state is this run's
 ~~~ standard error ~~~
-create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions administration:write contents:write metadata:read packages:read webhooks:write workflows:write and not the seven asked: administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write. Delete it there and run this again. Nothing has been written
+create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write and not the eight asked: administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write. Delete it there and run this again. Nothing has been written
 RECORDED
 [ "$(cat "$GHAPP/state-a/log")" = 'POST /app-manifests/c0de0fthefixture/conversions' ] || fail "the conversion was not the one call, or not with the fixture's code: $(tr '\n' ' ' < "$GHAPP/state-a/log")"
 nothing_written 'an App answered with seven permissions'
 ok 'the conversion is asked with the code off the redirect, and an App answered with seven permissions is refused by both lists with nothing written'
 
 # ── the act itself, both clicks in one run ──────────────────────────────────
-seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" all
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
 run_app_bash config.apps6.env
-must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the seven permissions administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write' 'the App is named with its id and its permissions'
+must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the eight permissions administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write' 'the App is named with its id and its permissions'
 must 'create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into config.apps6.env in place' 'the id and the key are written before the installation is asked for'
 must 'create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install' 'the person is told the second click'
 must 'create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes' 'the poll is announced'
@@ -1867,7 +1920,7 @@ create-github-app: the App acme-platform-manager is created in the organisation 
 create-github-app: listening on 127.0.0.1 for GitHub to send the browser back, for up to 10 minutes
 create-github-app: opened the manifest page in the browser; it posts to https://github.com/organizations/acme/settings/apps/new. In the browser: click Create GitHub App
 create-github-app: GitHub sent the browser back with a code, and the state is this run's
-create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the seven permissions administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write
+create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the eight permissions administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write
 create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into config.apps6.env in place
 create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install
 create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes
@@ -1902,7 +1955,7 @@ create-github-app: config.apps6.env already carries GITHUB_APP_ID, GITHUB_APP_IN
 RECORDED
 
 # ── an installation on selected repositories refuses, and the next run fills what is missing ─
-seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" selected
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" selected
 seed_config "$GHAPP/a"
 run_app_bash config.apps6.env
 must 'create-github-app: the App is installed in acme with repository_selection selected, and the Manager needs all. Choose All repositories at https://github.com/organizations/acme/settings/installations/815, then run this again: The App stands, and config.apps6.env carries GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, and the next run writes GITHUB_APP_INSTALLATION_ID' \
@@ -1913,7 +1966,7 @@ create-github-app: the App acme-platform-manager is created in the organisation 
 create-github-app: listening on 127.0.0.1 for GitHub to send the browser back, for up to 10 minutes
 create-github-app: opened the manifest page in the browser; it posts to https://github.com/organizations/acme/settings/apps/new. In the browser: click Create GitHub App
 create-github-app: GitHub sent the browser back with a code, and the state is this run's
-create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the seven permissions administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write
+create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711) with the eight permissions administration:write contents:write issues:read metadata:read packages:read statuses:write webhooks:write workflows:write
 create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into config.apps6.env in place
 create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install
 create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes
@@ -1925,7 +1978,7 @@ RECORDED
 [ "$(config_line GITHUB_APP_INSTALLATION_ID)" = '' ] || fail "the config carries an installation id the refusal should not have written"
 # THE NEXT RUN finds the App in the config, asks GitHub for it with the key,
 # and installs — polling once through a 404 before the installation appears.
-seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" absent-then-all
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" absent-then-all
 run_app_bash config.apps6.env
 must 'create-github-app: config.apps6.env carries GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY and no GITHUB_APP_INSTALLATION_ID, so the App stands and this run installs it' 'a config carrying the App and no installation skips the creation'
 must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711)' 'the App is asked of GitHub with the key and named'
@@ -1957,7 +2010,7 @@ PLANTED_G="$WORK/planted-create-github-app.sh"
 cp "$HERE/require-owner-only.sh" "$WORK/"
 sed 's/so the App stands and this run installs it/so the App stands and this run will install it/' "$HERE/create-github-app.sh" > "$PLANTED_G"
 grep -q 'this run will install it' "$PLANTED_G" || fail 'the planted line was not planted — the probe proves nothing'
-seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" absent-then-all
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" absent-then-all
 sed -i.bak "s/^GITHUB_APP_INSTALLATION_ID=.*/GITHUB_APP_INSTALLATION_ID=''/" "$GHAPP/a/config.apps6.env" && rm -f "$GHAPP/a/config.apps6.env.bak"
 chmod 600 "$GHAPP/a/config.apps6.env"
 A_CODE=0
@@ -2388,9 +2441,10 @@ fi
 ok "clusters/platform/ansiwise.sha256 names both assets of the committed pin $TREE_PIN once each, and a file of another release or a second line is caught"
 
 # ── THE OWNER'S ACME BLOCK, read by both drivers' composition of the answers ──
-# ACME_SERVER and ACME_EMAIL stand over LETSENCRYPT_SERVER and LETSENCRYPT_EMAIL, and
+# ACME_SERVER and ACME_EMAIL alone answer letsencrypt_server and letsencrypt_email, and
 # ACME_CREDENTIALS_JSON, one line of JSON, gives the External Account Binding's two halves as
-# acme_eab_key_id and acme_eab_mac_key. A config without the block composes what it always did.
+# acme_eab_key_id and acme_eab_mac_key. The LETSENCRYPT lines older configs carry are read by nothing
+# so a config with them alone composes none of the four.
 # Each driver's own COMPOSE block is run out of its own text, against a stand-in config and a
 # stand-in declaration, so what is measured is what a machine runs. Every value is synthetic, and
 # the MAC key is a sentinel no refusal may print.
@@ -2430,17 +2484,14 @@ ACME_ANSWERS='{
   }
 }'
 LEGACY_ANSWERS='{
-  "answers": {
-    "letsencrypt_email": "legacy@example.invalid",
-    "letsencrypt_server": "https://acme-v02.api.letsencrypt.org/directory"
-  }
+  "answers": {}
 }'
 acme_cases() { # <composer> — every case, or the first that fails, named on standard error
   local composer="$1" json
   acme_config "$ACME_WORK/legacy.env"
   composed "$composer" "$ACME_WORK/legacy.env" || { echo 'a config without the block was refused' >&2; return 1; }
-  [ "$(cat "$ACME_WORK/answers.json")" = "$LEGACY_ANSWERS" ] || { echo 'a config without the block composed other answers than before' >&2; return 1; }
-  [ "$(cat "$ACME_WORK/composed.out")" = '2 of the 4 it declares, and 2 left to its own default: acme_eab_key_id acme_eab_mac_key' ] \
+  [ "$(cat "$ACME_WORK/answers.json")" = "$LEGACY_ANSWERS" ] || { echo "a config without the block composed out of the LETSENCRYPT lines: $(cat "$ACME_WORK/answers.json")" >&2; return 1; }
+  [ "$(cat "$ACME_WORK/composed.out")" = '0 of the 4 it declares, and 4 left to its own default: letsencrypt_email letsencrypt_server acme_eab_key_id acme_eab_mac_key' ] \
     || { echo "a config without the block printed: $(cat "$ACME_WORK/composed.out")" >&2; return 1; }
   acme_config "$ACME_WORK/owner.env" '{"keyId":"synthetic-key-id","b64MacKey":"SYNTHETIC-MAC-SENTINEL"}'
   composed "$composer" "$ACME_WORK/owner.env" || { echo 'the owner'"'"'s block was refused' >&2; return 1; }
@@ -2460,15 +2511,17 @@ for driver in driver.sh regenerate-driver.sh; do
   [ -s "$ACME_WORK/$driver.py" ] || fail "$driver carries no COMPOSE block to measure"
   acme_cases "$ACME_WORK/$driver.py" 2> "$ACME_WORK/why" || fail "$driver: $(cat "$ACME_WORK/why")"
 done
-# PLANTED: a composer that lets LETSENCRYPT_SERVER stand over ACME_SERVER, and one whose refusal
-# prints the value it refuses. Each is caught, or the cases above prove nothing.
+# PLANTED: a composer that lets LETSENCRYPT_SERVER stand over ACME_SERVER, one that still reads
+# LETSENCRYPT_SERVER where ACME_SERVER is not stated, and one whose refusal prints the value it
+# refuses. Each is caught, or the cases above prove nothing.
 sed "s/stated\['letsencrypt_server'\] = stated\['acme_server'\]/pass/" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-server.py"
+sed "/stated.pop('letsencrypt_server', None)/d" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-fallback.py"
 sed "s/; its value is not shown'/: ' + stated['acme_credentials_json']/" "$ACME_WORK/driver.sh.py" > "$ACME_WORK/planted-print.py"
-for planted in planted-server planted-print; do
+for planted in planted-server planted-fallback planted-print; do
   ! cmp -s "$ACME_WORK/driver.sh.py" "$ACME_WORK/$planted.py" || fail "the plant $planted changed nothing in the composer"
   if acme_cases "$ACME_WORK/$planted.py" 2>/dev/null; then fail "a composer with the plant $planted passed every ACME case"; fi
 done
-ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config without the block composes as before, and two planted composers are caught"
+ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config with only the LETSENCRYPT lines composes none of the four, and three planted composers are caught"
 
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
@@ -2496,7 +2549,7 @@ echo "test:   records it deletes against a stand-in provider and the six it list
 echo "test:   the three branches it deletes in order, the config it names as staying, and a"
 echo "test:   second run that finds nothing to do; the five refusals the GitHub App act makes"
 echo "test:   before it opens a browser and its guard on a readable config, the manifest page"
-echo "test:   it serves with the seven permissions and no webhook, the redirect it holds to its"
+echo "test:   it serves with the eight permissions and no webhook, the redirect it holds to its"
 echo "test:   own state, an App answered with seven permissions, the App created and installed"
 echo "test:   in one run with every JWT verified against the key's public half and the three"
 echo "test:   answers written in place under a kept access list, a second run refused, an"
@@ -2505,7 +2558,8 @@ echo "test:   run after it that installs alone; the refusals a master backup and
 echo "test:   make before they open a session, the door each composes from MACHINE_HOST and not"
 echo "test:   from the identity, the id a restore refuses, and the one list of stores both drivers"
 echo "test:   carry; install-machine's refusal of a missing config, with no exit code in its"
-echo "test:   sentence. Eight planted defects, a copy of each act with one printed line changed,"
+echo "test:   sentence, and of a first master stated on the ACME account before any session,"
+echo "test:   where a copy without that refusal opens one. Eight planted defects, a copy of each act with one printed line changed,"
 echo "test:   prove the comparison can go red."
 echo "test:   Both drivers' placement, run from their own text in a sandbox, gives a clean machine the"
 echo "test:   engine at its pinned digests, refuses a swapped asset with nothing placed, places a"
@@ -2516,9 +2570,9 @@ echo "test:   stops its heartbeat ticker on a signal. A refusal that does not st
 echo "test:   that resumes after a TERM, a skip that asks ansiwise alone, a FETCHED left as the environment"
 echo "test:   set it, a check that takes any digest and a cleanup that leaves the ticker running are each"
 echo "test:   planted, and each is caught."
-echo "test:   Both drivers' composition of the answers, run from their own text: the owner's ACME block over"
-echo "test:   the LETSENCRYPT lines and the binding's two halves out of its JSON, six bindings refused by"
-echo "test:   name without their value, a config without the block as before, and two planted composers."
+echo "test:   Both drivers' composition of the answers, run from their own text: the owner's ACME block"
+echo "test:   alone and the binding's two halves out of its JSON, six bindings refused by"
+echo "test:   name without their value, the LETSENCRYPT lines read by nothing, and three planted composers."
 echo "test: covered — a config of mode 644, refused in its recorded sentence by the"
 echo "test:   regeneration, the backup, the restore and install-machine, and a planted defect in"
 echo "test:   the guard beside the backup and beside the restore that proves the launcher reads it."

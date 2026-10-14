@@ -4,7 +4,7 @@ per unit from this template beside `<unit>-ci`, also for a unit that builds
 nothing. A push of a release tag runs it at that tag and publishes the
 repository's npm packages to this build plane's registry:
 
-  gate → clone@tag → scan → reviewed → pack → push.
+  gate → clone@tag → scan → reviewed → pack | build-binaries → push.
 
 The run is created by the github-release-publish Trigger
 (clusters/inventories/image-builder), waiting, and the release queue starts it
@@ -16,18 +16,23 @@ Manager's release watch selects, because Tekton copies a Pipeline's labels onto
 its runs.
 
 WHAT IS PUBLISHED, read at the tag by `scan`:
-  - a tag whose tree holds npm-seed/ is the one-time seed: the .tgz files in it
-    are published as they are, and nothing else. Every one needs its line in
-    npm-seed/pins.tsv (`<name>@<version>`, the lockfile integrity, the sha256 of
-    the .tgz and the lockfiles that pin it, tab separated), its sha256 must be
-    that line's, its package.json must be that name and version, and it may hold
-    no .npmrc, no .env* file, no link and no gitleaks finding. The proof of each
-    file against the pnpm store is made where the store is, by the seed's own
-    script beside it; here the bytes are proven to be the bytes its review read.
+  - a tag whose tree tracks release/build.sh publishes the binaries that script
+    builds, and nothing else: `build-binaries` runs it with the tools of the
+    repository's ci-tools.json (files/ci-install-tools.sh), as
+    `bash release/build.sh <tag> <folder>`, and every file it leaves in that
+    folder is one layer of ONE manifest <owner>/<repository>:<tag> — an empty
+    config, each layer application/octet-stream annotated
+    org.opencontainers.image.title with its file name, and the same three
+    annotations as a package. A binary is fetched at
+    https://<registry>/v2/<owner>/<repository>/blobs/sha256:<hex>, which the
+    owner's prefix serves without a credential on the owner's master
+    (clusters/inventories/registry values-common.yaml, accessControl).
   - otherwise every tracked package.json that is not private and names
     publishConfig.registry; that registry must be https://<registry>/v2/npm/, so
     a package that still names another registry fails the run. A repository with
     neither publishes nothing, and the run ends after the scan.
+Nothing else is published: the one-time seed of npm-seed/ is over, and a tree
+that holds npm-seed/ is read like any other.
 
 ONLY THE DEFAULT BRANCH IS PUBLISHED: `reviewed` fetches the default branch of
 origin and passes a release commit that is on it, or one that differs from the
@@ -41,6 +46,11 @@ strict form npm takes (0.3.001 is 0.3.1, a channel other than stable is the
 prerelease part), before `pnpm pack` writes the workspace: ranges from those
 versions. Nothing is committed: the Manager tags the commit chosen as it stands,
 and on a tag of the retired kit's stamp commit this changes nothing. A tarball that declares another version fails the run.
+
+WHAT A TARBALL MAY HOLD: every packed tarball holds files and folders under
+package/ only, no .npmrc and no .env* file, or the run fails before its push;
+then the step `leaks` runs gitleaks over every tarball unpacked, and a finding fails the
+run before its push.
 
 THE PUSH. Each tarball is one manifest in npm/<owner>/<name>:<version>: an empty
 config, one layer that is the .tgz, and the annotations
@@ -65,12 +75,13 @@ The trust split:
   grammar, before anything is cloned.
 
 THE REPOSITORY'S OWN CODE RUNS IN `pack` (pnpm install, build, pack), which holds
-the packages reader build-npmrc and nothing else. build-git-https is held by the
+the packages reader build-npmrc and nothing else, and in `build-binaries`
+(release/build.sh), which holds no credential at all. build-git-https is held by the
 clone and by the one step of `reviewed` that fetches the default branch, which
 runs git alone; the push identity image-builder-registry-push is held by `push`
-alone, which runs no code of the repository and reads the packed tarballs and
-never the clone. The run's one volume holds the clone in its subPath repository
-and the tarballs in its subPath packed.
+alone, which runs no code of the repository and reads the packed tarballs or the
+built binaries and never the clone. The run's one volume holds the clone in its
+subPath repository and the tarballs and binaries in its subPath packed.
 */ -}}
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
@@ -85,7 +96,12 @@ and the tarballs in its subPath packed.
 {{- $toolsImage := "alpine/k8s:1.35.6@sha256:b7a12c5ddf261994c33d2eaaa06fd69a0803ff6b38683bfa3d30a76dcdf92807" -}}
 {{- $nodeImage := "ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3" -}}
 {{- $gitleaksImage := "zricethezav/gitleaks:v8.21.2@sha256:0e99e8821643ea5b235718642b93bb32486af9c8162c8b8731f7cbdc951a7f46" -}}
-{{- $published := "[\"seed\", \"source\"]" -}}
+{{- $published := "[\"source\", \"binaries\"]" -}}
+{{- $packed := "[\"source\"]" -}}
+{{- /* The repository the binaries of a release are pushed to: <owner>/<repository name>, read off the repoURL like the owner. */ -}}
+{{- $binariesRepository := printf "%s/%s" $owner (regexReplaceAll "^https://github\\.com/[^/]+/([^/]+?)(\\.git)?$" $repoURL "${1}" | lower) -}}
+{{- /* The tools table the build of the binaries installs the repository's ci-tools.json from, as the ci pipeline does. */ -}}
+{{- $toolsTable := .Files.Get "files/ci-tools.table" -}}
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
@@ -98,8 +114,8 @@ metadata:
     image-builder.io/publish: {{ $unit | quote }}
 spec:
   description: >-
-    Publishes the npm packages of one release tag, or the one-time seed in
-    npm-seed/, to npm/<owner>/<name>:<version> in this build plane's registry.
+    Publishes the npm packages of one release tag to
+    npm/<owner>/<name>:<version> in this build plane's registry.
   params:
     - name: release-tag
       type: string
@@ -181,7 +197,9 @@ spec:
           - name: packed
         results:
           - name: mode
-            description: seed (npm-seed/ stands at the tag), source (packages to pack) or none.
+            description: binaries (release/build.sh stands at the tag), source (packages to pack) or none.
+          - name: tools
+            description: The tools and versions of ci-tools.json at the tag, one "<tool> <version>" per line, for the binaries alone; empty otherwise.
         steps:
           - name: scan
             image: {{ $toolsImage }}
@@ -192,12 +210,12 @@ spec:
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
-              scan_packages() { # <list it writes, "<folder>\t<name>" per package> — sets MODE to seed, source or none
+              scan_packages() { # <list it writes, "<folder>\t<name>" per package> — sets MODE to binaries, source or none
                 local file name registry
                 : > "$1"
-                if [ -e npm-seed ]; then
-                  MODE=seed
-                  echo "scan: npm-seed/ stands at this tag - its tarballs are published as they are, and nothing else"
+                if git ls-files --error-unmatch release/build.sh >/dev/null 2>&1; then
+                  MODE=binaries
+                  echo "scan: release/build.sh stands at this tag - the binaries it builds are published, and nothing else"
                   return 0
                 fi
                 while IFS= read -r file; do
@@ -218,9 +236,20 @@ spec:
                   echo "scan: no package.json here is publishable (not private, with publishConfig.registry) - nothing to publish"
                 fi
               }
+              scan_tools() { # <the file it writes, "<tool> <version>" per line> — what ci-tools.json names, or nothing without the file
+                : > "$1"
+                [ -f ci-tools.json ] || { echo "scan: no ci-tools.json, so release/build.sh runs with the tools of its image"; return 0; }
+                jq -rs 'if length != 1 or (.[0] | type) != "object" then error("ci-tools.json: must hold one object of tool and version")
+                  else .[0] | to_entries[] | "\(.key) \(.value)" end' ci-tools.json > "$1"
+              }
               MODE=none
               scan_packages /workspace/packed/publishable.tsv
               printf '%s' "${MODE}" > "$(results.mode.path)"
+              if [ "${MODE}" = binaries ]; then
+                scan_tools "$(results.tools.path)"
+              else
+                : > "$(results.tools.path)"
+              fi
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
@@ -301,23 +330,20 @@ spec:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
 
-    # ── 5. pack — the seed checked, or the packages built and packed ────────
+    # ── 5. pack — the packages built, packed, checked and scanned ───────────
     - name: pack
       runAfter: [reviewed]
       when:
         - input: "$(tasks.scan.results.mode)"
           operator: in
-          values: {{ $published }}
+          values: {{ $packed }}
       params:
-        - { name: mode, value: "$(tasks.scan.results.mode)" }
         - { name: release-tag, value: "$(params.release-tag)" }
       workspaces:
         - { name: source, workspace: source, subPath: repository }
         - { name: packed, workspace: source, subPath: packed }
       taskSpec:
         params:
-          - name: mode
-            type: string
           - name: release-tag
             type: string
         workspaces:
@@ -331,7 +357,7 @@ spec:
               optional: true
           - name: pnpm-store
             emptyDir: {}
-          # The seed tarballs, unpacked for gitleaks.
+          # The packed tarballs, unpacked for gitleaks.
           - name: scratch
             emptyDir: {}
         steps:
@@ -342,8 +368,6 @@ spec:
               runAsUser: 0
               allowPrivilegeEscalation: false
             env:
-              - name: MODE
-                value: "$(params.mode)"
               - name: RELEASE_TAG
                 value: "$(params.release-tag)"
               - name: NPM_CONFIG_USERCONFIG
@@ -367,71 +391,6 @@ spec:
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
-              # Every .tgz of npm-seed/ against its line of pins.tsv; the checked ones go to the push as they are.
-              seed_check() { # <folder the checked tarballs go to> <folder each is unpacked into for gitleaks>
-                local dest="$1" unpacked="$2" line name_at integrity hex pinned base file got entry meta count=0 listed=" "
-                if [ ! -f npm-seed/pins.tsv ]; then
-                  echo "seed: REFUSE — npm-seed/ holds no pins.tsv, so no tarball in it is proven" >&2
-                  return 1
-                fi
-                while IFS= read -r line || [ -n "${line}" ]; do
-                  [ -n "${line}" ] || continue
-                  IFS=$'\t' read -r name_at integrity hex pinned <<< "${line}"
-                  base=""
-                  if [[ "${name_at}" =~ ^@([a-z0-9][a-z0-9._-]*)/([a-z0-9][a-z0-9._-]*)@([0-9A-Za-z.+-]+)$ ]]; then
-                    base="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}.tgz"
-                  fi
-                  if [ -z "${base}" ] || [[ "${integrity}" != sha512-* ]] || ! [[ "${hex}" =~ ^[0-9a-f]{64}$ ]] || [ -z "${pinned}" ]; then
-                    echo "seed: REFUSE — '${line}' is no line of pins.tsv: <name>@<version>, the lockfile integrity, the sha256 of the .tgz and the lockfiles that pin it, tab separated" >&2
-                    return 1
-                  fi
-                  case "${listed}" in *" ${base} "*) echo "seed: REFUSE — pins.tsv lists ${name_at} twice" >&2; return 1 ;; esac
-                  file="npm-seed/${base}"
-                  if [ ! -f "${file}" ]; then
-                    echo "seed: REFUSE — pins.tsv lists ${name_at}, and npm-seed/ holds no ${base}" >&2
-                    return 1
-                  fi
-                  got="$(sha256sum "${file}" | cut -d' ' -f1)"
-                  if [ "${got}" != "${hex}" ]; then
-                    echo "seed: REFUSE — ${base} has the sha256 ${got}, and its line in pins.tsv names ${hex}" >&2
-                    return 1
-                  fi
-                  entry="$(tar -tvzf "${file}" | cut -c1 | grep -v '^[-d]$' | head -n 1)" || true
-                  if [ -n "${entry}" ]; then
-                    echo "seed: REFUSE — ${base} holds an entry that is neither a file nor a folder" >&2
-                    return 1
-                  fi
-                  entry="$(tar -tzf "${file}" | grep -E '(^|/)(\.npmrc|\.env[^/]*)$' | head -n 1)" || true
-                  if [ -n "${entry}" ]; then
-                    echo "seed: REFUSE — ${base} holds ${entry}, and a published package carries no .npmrc or .env file" >&2
-                    return 1
-                  fi
-                  entry="$(tar -tzf "${file}" | grep -Ev '^package(/|$)' | head -n 1)" || true
-                  [ -n "${entry}" ] || entry="$(tar -tzf "${file}" | grep -E '(^|/)\.\.(/|$)' | head -n 1)" || true
-                  if [ -n "${entry}" ]; then
-                    echo "seed: REFUSE — ${base} holds ${entry}, outside package/" >&2
-                    return 1
-                  fi
-                  meta="$(tar -xzOf "${file}" package/package.json | node -e 'const m = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(m.name + "@" + m.version)')" || meta=""
-                  if [ "${meta}" != "${name_at}" ]; then
-                    echo "seed: REFUSE — ${base} is ${meta:-no package}, and its line in pins.tsv names ${name_at}" >&2
-                    return 1
-                  fi
-                  mkdir -p "${unpacked}/${base}" && tar -xzf "${file}" -C "${unpacked}/${base}" && cp "${file}" "${dest}/${base}" || return 1
-                  listed="${listed}${base} "
-                  count=$((count + 1))
-                done < npm-seed/pins.tsv
-                for file in npm-seed/*; do
-                  base="${file##*/}"
-                  [ "${base}" != pins.tsv ] || continue
-                  case "${listed}" in *" ${base} "*) ;; *) echo "seed: REFUSE — npm-seed/${base} has no line in npm-seed/pins.tsv" >&2; return 1 ;; esac
-                done
-                if [ "${count}" = 0 ]; then
-                  echo "seed: REFUSE — npm-seed/pins.tsv lists no tarball" >&2
-                  return 1
-                fi
-                echo "seed: ${count} tarballs match their lines in npm-seed/pins.tsv"
-              }
               # The version a tag x.y.z-<channel>-<stamp> names, in the strict form npm takes.
               release_version() { # <release tag>
                 local core="${1%%-*}" channel="${1#*-}" version
@@ -486,59 +445,148 @@ spec:
                   echo "pack: ${packed} -> ${tarballs[0]##*/}"
                 done < "$1"
               }
-              case "${MODE}" in
-                seed)
-                  mkdir -p /scratch/unpacked
-                  seed_check /workspace/packed /scratch/unpacked ;;
-                source)
-                  VERSION="$(release_version "${RELEASE_TAG}")"
-                  # pnpm 11.7.0, as the ci check; a package.json that names packageManager overrides it.
-                  corepack enable
-                  corepack prepare pnpm@11.7.0 --activate
-                  stamp_versions "${VERSION}"
-                  build_packages /workspace/packed/publishable.tsv
-                  pack_packages /workspace/packed/publishable.tsv /workspace/packed "${VERSION}" ;;
-                *)
-                  echo "pack: the scan named '${MODE}', which is neither seed nor source" >&2
-                  exit 1 ;;
-              esac
+              # Every packed tarball: files and folders under package/ only, no .npmrc and no .env* file; each is
+              # unpacked for the gitleaks of the next step.
+              check_tarballs() { # <folder of the packed tarballs> <folder each is unpacked into for gitleaks>
+                local tgz base entry
+                for tgz in "$1"/*.tgz; do
+                  [ -f "${tgz}" ] || continue
+                  base="${tgz##*/}"
+                  entry="$(tar -tvzf "${tgz}" | cut -c1 | grep -v '^[-d]$' | head -n 1)" || true
+                  if [ -n "${entry}" ]; then
+                    echo "pack: REFUSE — ${base} holds an entry that is neither a file nor a folder" >&2
+                    return 1
+                  fi
+                  entry="$(tar -tzf "${tgz}" | grep -E '(^|/)(\.npmrc|\.env[^/]*)$' | head -n 1)" || true
+                  if [ -n "${entry}" ]; then
+                    echo "pack: REFUSE — ${base} holds ${entry}, and a published package carries no .npmrc or .env file" >&2
+                    return 1
+                  fi
+                  entry="$(tar -tzf "${tgz}" | grep -Ev '^package(/|$)' | head -n 1)" || true
+                  [ -n "${entry}" ] || entry="$(tar -tzf "${tgz}" | grep -E '(^|/)\.\.(/|$)' | head -n 1)" || true
+                  if [ -n "${entry}" ]; then
+                    echo "pack: REFUSE — ${base} holds ${entry}, outside package/" >&2
+                    return 1
+                  fi
+                  mkdir -p "$2/${base}" && tar -xzf "${tgz}" -C "$2/${base}" || return 1
+                done
+                echo "pack: every tarball holds files under package/ only, and no .npmrc or .env file"
+              }
+              VERSION="$(release_version "${RELEASE_TAG}")"
+              # pnpm 11.7.0, as the ci check; a package.json that names packageManager overrides it.
+              corepack enable
+              corepack prepare pnpm@11.7.0 --activate
+              stamp_versions "${VERSION}"
+              build_packages /workspace/packed/publishable.tsv
+              pack_packages /workspace/packed/publishable.tsv /workspace/packed "${VERSION}"
+              mkdir -p /scratch/unpacked
+              check_tarballs /workspace/packed /scratch/unpacked
           - name: leaks
             image: {{ $gitleaksImage }}
-            env:
-              - name: MODE
-                value: "$(params.mode)"
             volumeMounts:
               - name: scratch
                 mountPath: /scratch
             script: |
               #!/bin/sh
               set -eu
-              seed_leaks() { # <folder the seed tarballs are unpacked in>
+              scan_leaks() { # <folder the packed tarballs are unpacked in>
                 gitleaks detect --source "$1" --no-git --no-banner --redact --exit-code 1
               }
-              if [ "${MODE}" = seed ]; then
-                seed_leaks /scratch/unpacked
-              else
-                echo "leaks: no seed at this tag, nothing unpacked to scan"
-              fi
+              scan_leaks /scratch/unpacked
             computeResources:
               requests: { cpu: 100m, memory: 128Mi }
               limits: { cpu: 500m, memory: 512Mi }
 
-    # ── 6. push — the tarballs, by the push identity, and read back ─────────
-    - name: push
+    # ── 5b. build-binaries — release/build.sh at the tag, with no credential ─
+    # The repository's own code runs here, as it does in pack, and holds no
+    # credential at all: its git dependencies are fetched the way a person's
+    # machine fetches them. The tools of ci-tools.json go first on PATH, as in the
+    # ci pipeline, so release/build.sh refuses or accepts the same Dart there and
+    # here.
+    - name: build-binaries
       runAfter: [pack]
+      when:
+        - input: "$(tasks.scan.results.mode)"
+          operator: in
+          values: ["binaries"]
+      params:
+        - { name: release-tag, value: "$(params.release-tag)" }
+        - { name: tools, value: "$(tasks.scan.results.tools)" }
+      workspaces:
+        - { name: source, workspace: source, subPath: repository }
+        - { name: packed, workspace: source, subPath: packed }
+      taskSpec:
+        params:
+          - name: release-tag
+            type: string
+          - name: tools
+            type: string
+        workspaces:
+          - name: source
+          - name: packed
+        steps:
+          - name: build
+            image: {{ $nodeImage }}
+            workingDir: /workspace/source
+            securityContext:
+              runAsUser: 0
+              allowPrivilegeEscalation: false
+            env:
+              - name: RELEASE_TAG
+                value: "$(params.release-tag)"
+              - name: CI_TOOLS
+                value: "$(params.tools)"
+              - name: CI_TOOLS_TABLE
+                value: |
+{{ $toolsTable | indent 18 }}
+            computeResources:
+              requests: { cpu: "1", memory: 2Gi }
+              limits: { cpu: "4", memory: 3Gi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+{{ .Files.Get "files/ci-install-tools.sh" | indent 14 }}
+              build_binaries() { # <folder the binaries go to>: release/build.sh leaves one regular file per binary there, and nothing else
+                local dest="$1" entry count=0
+                rm -rf "${dest}"
+                mkdir -p "${dest}"
+                bash release/build.sh "${RELEASE_TAG}" "${dest}" || { echo "build: FAIL — release/build.sh refused the tag ${RELEASE_TAG}" >&2; return 1; }
+                for entry in "${dest}"/* "${dest}"/.[!.]*; do
+                  [ -e "${entry}" ] || [ -L "${entry}" ] || continue
+                  if [ -L "${entry}" ] || [ ! -f "${entry}" ] || ! [[ "${entry##*/}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+                    echo "build: REFUSE — release/build.sh left ${entry##*/}, which is no regular file of a plain name" >&2
+                    return 1
+                  fi
+                  count=$((count + 1))
+                done
+                if [ "${count}" = 0 ]; then
+                  echo "build: FAIL — release/build.sh left no binary" >&2
+                  return 1
+                fi
+                echo "build: ${count} binaries of ${RELEASE_TAG}"
+              }
+              build_binaries /workspace/packed/binaries
+
+    # ── 6. push — the tarballs or the binaries, by the push identity, and read back
+    - name: push
+      runAfter: [build-binaries]
       when:
         - input: "$(tasks.scan.results.mode)"
           operator: in
           values: {{ $published }}
       params:
         - { name: commit, value: "$(tasks.clone.results.commit)" }
+        - { name: mode, value: "$(tasks.scan.results.mode)" }
+        - { name: release-tag, value: "$(params.release-tag)" }
       workspaces:
         - { name: packed, workspace: source, subPath: packed }
       taskSpec:
         params:
           - name: commit
+            type: string
+          - name: mode
+            type: string
+          - name: release-tag
             type: string
         workspaces:
           - name: packed
@@ -558,6 +606,12 @@ spec:
                 value: {{ $repoURL | quote }}
               - name: COMMIT
                 value: "$(params.commit)"
+              - name: MODE
+                value: "$(params.mode)"
+              - name: RELEASE_TAG
+                value: "$(params.release-tag)"
+              - name: BINARIES_REPOSITORY
+                value: {{ $binariesRepository | quote }}
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
@@ -680,7 +734,85 @@ spec:
                   echo "publish: ${name}@${version} ${base}/blobs/sha256:${hex} sha256:${hex} ${state}"
                 done
               }
-              npm_push /workspace/packed /tmp/publish
+              binaries_push() { # <folder of the built binaries> <scratch folder>: one manifest <owner>/<repository>:<tag>, a layer per binary
+                local dir="$1" tmp="$2" file hex want held code state
+                local accept='application/vnd.oci.image.manifest.v1+json'
+                local empty_digest='sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'
+                local base="https://${REGISTRY}/v2/${BINARIES_REPOSITORY}" files=()
+                mkdir -p "${tmp}" || return 1
+                for file in "${dir}"/*; do
+                  [ ! -f "${file}" ] || files+=("${file}")
+                done
+                if [ "${#files[@]}" = 0 ]; then
+                  echo "publish: FAIL — ${dir} holds no binary, though release/build.sh stands at this tag" >&2
+                  return 1
+                fi
+                if ! [[ "${RELEASE_TAG}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]]; then
+                  echo "publish: REFUSE — ${RELEASE_TAG} is no tag of the registry" >&2
+                  return 1
+                fi
+                printf '[]' > "${tmp}/layers.json"
+                for file in "${files[@]}"; do
+                  hex="$(sha256sum "${file}" | cut -d' ' -f1)"
+                  jq --arg digest "sha256:${hex}" --argjson size "$(wc -c < "${file}")" --arg title "${file##*/}" \
+                    '. + [{mediaType: "application/octet-stream", digest: $digest, size: $size, annotations: {"org.opencontainers.image.title": $title}}]' \
+                    "${tmp}/layers.json" > "${tmp}/layers.next" && mv "${tmp}/layers.next" "${tmp}/layers.json" || return 1
+                done
+                want="$(jq -c '[.[] | .digest + " " + .annotations["org.opencontainers.image.title"]] | sort' "${tmp}/layers.json")" || return 1
+                code="$(registry_call "${tmp}/manifest.json" -H "Accept: ${accept}" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                case "${code}" in
+                  404) state=published ;;
+                  200)
+                    held="$(jq -c '[.layers[] | .digest + " " + (.annotations["org.opencontainers.image.title"] // "")] | sort' "${tmp}/manifest.json" 2>/dev/null)" || held=""
+                    if [ "${held}" != "${want}" ]; then
+                      echo "publish: REFUSE — ${BINARIES_REPOSITORY}:${RELEASE_TAG} stands in ${REGISTRY} with other binaries (${held:-no layers}), and this build is ${want}. A published release is never replaced: release another version." >&2
+                      return 1
+                    fi
+                    state=reused ;;
+                  *)
+                    echo "publish: FAIL — ${base}/manifests/${RELEASE_TAG} answered ${code}; whether ${RELEASE_TAG} is published is unknown" >&2
+                    return 1 ;;
+                esac
+                if [ "${state}" = published ]; then
+                  for file in "${files[@]}"; do
+                    push_blob "${base}" "${file}" "sha256:$(sha256sum "${file}" | cut -d' ' -f1)" "${tmp}" || return 1
+                  done
+                  printf '{}' > "${tmp}/empty.json"
+                  push_blob "${base}" "${tmp}/empty.json" "${empty_digest}" "${tmp}" || return 1
+                  jq -n --slurpfile layers "${tmp}/layers.json" --arg empty "${empty_digest}" --arg revision "${COMMIT}" \
+                    --arg source "${REPO_URL}" --arg version "${RELEASE_TAG}" \
+                    '{schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json", artifactType: "application/vnd.simetrixch.binaries.v1",
+                      config: {mediaType: "application/vnd.oci.empty.v1+json", digest: $empty, size: 2},
+                      layers: $layers[0],
+                      annotations: {"org.opencontainers.image.revision": $revision, "org.opencontainers.image.source": $source,
+                        "org.opencontainers.image.version": $version}}' > "${tmp}/manifest.json" || return 1
+                  code="$(registry_call /dev/null -X PUT -H "Content-Type: ${accept}" --data-binary "@${tmp}/manifest.json" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                  if [ "${code}" != 201 ]; then
+                    echo "publish: FAIL — the manifest ${BINARIES_REPOSITORY}:${RELEASE_TAG} was answered ${code}" >&2
+                    return 1
+                  fi
+                fi
+                code="$(registry_call "${tmp}/manifest.json" -H "Accept: ${accept}" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                held="$(jq -c '[.layers[] | .digest + " " + (.annotations["org.opencontainers.image.title"] // "")] | sort' "${tmp}/manifest.json" 2>/dev/null)" || held=""
+                if [ "${code}" != 200 ] || [ "${held}" != "${want}" ]; then
+                  echo "publish: FAIL — ${BINARIES_REPOSITORY}:${RELEASE_TAG} reads back as ${code} with ${held:-no layers}, not ${want}" >&2
+                  return 1
+                fi
+                for file in "${files[@]}"; do
+                  hex="$(sha256sum "${file}" | cut -d' ' -f1)"
+                  code="$(registry_call "${tmp}/blob" "${base}/blobs/sha256:${hex}")" || return 1
+                  if [ "${code}" != 200 ] || [ "$(sha256sum "${tmp}/blob" | cut -d' ' -f1)" != "${hex}" ]; then
+                    echo "publish: FAIL — the blob of ${file##*/} reads back as ${code} with other bytes than sha256:${hex}" >&2
+                    return 1
+                  fi
+                  echo "publish: ${file##*/} ${base}/blobs/sha256:${hex} sha256:${hex} ${state}"
+                done
+              }
+              if [ "${MODE}" = binaries ]; then
+                binaries_push /workspace/packed/binaries /tmp/publish
+              else
+                npm_push /workspace/packed /tmp/publish
+              fi
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 500m, memory: 256Mi }

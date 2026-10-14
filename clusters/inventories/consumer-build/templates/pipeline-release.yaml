@@ -75,6 +75,19 @@ namespace, so the credential Secrets they envFrom by name are rendered here
 {{- $unit := include "consumer-build.unitName" . -}}
 {{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
 {{- $registry := include "common.registryHost" . -}}
+{{- /* THE PUSH PATH, decided once here: a build goes to <registry>/<build>, flat, except the
+       platform's own. The builds of global.buildRegistryUnit go to <registry>/<owner>/<build> on
+       the one installation whose registry IS global.buildRegistry (the owner's master), because
+       that prefix is what every other installation and the relocation Jobs read without a
+       credential (clusters/inventories/registry/values-common.yaml, accessControl). Every other
+       unit's image is pulled inside its own installation, with the pull credential, from the flat
+       path that its chart, the Manager's tenant versions and the reaper compose, so nothing else
+       moves. The pins keep the flat build name either way. */ -}}
+{{- $owner := include "consumer-build.repoOwner" . -}}
+{{- $pushPrefix := "" -}}
+{{- if and (eq $unit (required "consumer-build: global.buildRegistryUnit is required (platform values chain)" .Values.global.buildRegistryUnit)) (eq (printf "%s/%s" $registry $owner) (include "common.buildRegistry" .)) -}}
+{{- $pushPrefix = printf "%s/" $owner -}}
+{{- end -}}
 {{- $releaseTagRe := printf "^%s$" (required "consumer-build: global.releaseTagFilter is required (platform values chain)" .Values.global.releaseTagFilter) -}}
 {{- $builds := include "consumer-build.builds" . | fromJsonArray -}}
 {{- $cloudURL := "https://github.com/simetrixch/hostyour-cloud.git" -}}
@@ -371,7 +384,7 @@ spec:
     # A 200 IS NOT PROOF THE PLATFORM BUILT THE IMAGE. The registry answers a
     # local miss by fetching from its sync upstreams on demand
     # (clusters/inventories/registry/values-common.yaml, extensions.sync: ghcr.io
-    # with the seed content prefix stripped to /, then registry-1.docker.io
+    # for the seed's simetrixch/ prefix, then registry-1.docker.io
     # unfiltered), so a repo this installation has never pushed to still answers
     # 200 with whatever an upstream publishes under that name and tag. Taking
     # that for "already built" would skip the build and pin an image nobody
@@ -385,7 +398,7 @@ spec:
     # of what the pin needs: the tag names an image built from this commit of
     # this repository. It is NOT a claim about bytes — two builds of one commit
     # differ — so an image reused across stages is the same image, and an image
-    # the seed workflow published for the same commit is the same source.
+    # the seed fetched from ghcr.io for the same commit is the same source.
     #
     # A tag that exists but cannot be proven is neither present nor absent: the
     # run fails rather than build over bytes another installation may already be
@@ -416,7 +429,7 @@ spec:
               - name: REGISTRY
                 value: {{ $registry | quote }}
               - name: IMAGE
-                value: {{ $b | quote }}
+                value: {{ printf "%s%s" $pushPrefix $b | quote }}
               - name: REPO_URL
                 value: {{ $repoURL | quote }}
               # Read-only pull identity — enough for a manifest and a config
@@ -504,7 +517,7 @@ spec:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
 
-    # ── build: {{ $b }} — the flat build name IS the push target ─────────────
+    # ── build: {{ $b }} — pushed to the path decided at the top ──────────────
     - name: {{ printf "build-%s" $b }}
       runAfter: [scan]
       when:
@@ -521,7 +534,7 @@ spec:
           - { name: name, value: buildah-build-push }
           - { name: namespace, value: image-builder }
       params:
-        - { name: image-name, value: {{ $b | quote }} }
+        - { name: image-name, value: {{ printf "%s%s" $pushPrefix $b | quote }} }
         - { name: image-tag, value: "$(tasks.verify.results.image-tag)" }
         - { name: registry, value: {{ $registry | quote }} }
         - { name: containerfile, value: "$(tasks.builds.results.{{ $b }}-containerfile)" }
@@ -1029,14 +1042,15 @@ spec:
                 fi
               }
 
-              # carrier_credential <unit> <repoURL> — put THAT unit's own PAT,
-              # path-qualified to THAT repository, in front of git for the clone
+              # carrier_credential <unit> <repoURL> — put THAT unit's own push
+              # token (property `push`, which writes that one repository and no
+              # other), path-qualified to THAT repository, in front of git for the clone
               # and the push below. Fail-closed at every arm: a registration
               # states this unit deploys at this stage, so a credential that
               # cannot be read is a search that cannot be made, never one that
               # found nothing.
               carrier_credential() {
-                local cname="$1" crepo="$2" body code rc pat
+                local cname="$1" crepo="$2" body code rc push
                 vault_login
                 body="$(mktemp)"
                 set +e
@@ -1053,13 +1067,13 @@ spec:
                   echo "bump: FAIL — Vault answered ${code} for ${VAULT_KV_MOUNT}/build/${cname}/repo-pat. The registration of ${cname} names a repo credential, so that entry is what onboarding seeded for it; 404 means it is gone and 403 means role ${VAULT_ROLE} may not read it." >&2
                   return 1
                 fi
-                pat="$(yq -p=json -o=y '.data.data.pat // ""' "${body}")"
+                push="$(yq -p=json -o=y '.data.data.push // ""' "${body}")"
                 rm -f "${body}"
-                if [ -z "${pat}" ]; then
-                  echo "bump: FAIL — ${VAULT_KV_MOUNT}/build/${cname}/repo-pat carries no property 'pat'; that is the one property every reader of this entry takes" >&2
+                if [ -z "${push}" ]; then
+                  echo "bump: FAIL — ${VAULT_KV_MOUNT}/build/${cname}/repo-pat carries no property 'push'; the Manager writes it for every unit that releases, and a carrier deploys from a stage file, so it releases" >&2
                   return 1
                 fi
-                printf 'https://x-access-token:%s@%s\n' "${pat}" "${crepo#https://}" >> "${CREDENTIALS_FILE}"
+                printf 'https://x-access-token:%s@%s\n' "${push}" "${crepo#https://}" >> "${CREDENTIALS_FILE}"
               }
 
               # ── class (a): every registration with a chartPath ─────────────
