@@ -22,15 +22,47 @@ function fields(object) {
     default: return {};
   }
 }
-function identities(documents, namespace) {
+const groupOf = apiVersion => apiVersion.includes('/') ? apiVersion.split('/')[0] : '';
+// Argo CD keeps a field its Application ignores at the live value only under RespectIgnoreDifferences;
+// without it a sync applies the rendered field and the API server refuses the change, so only then is
+// the field left out of the comparison.
+export function ignoredFields(app = {}) {
+  return app.respectIgnoreDifferences === 'true' ? app.ignoreDifferences ?? [] : [];
+}
+const each = Symbol('each');
+const pointerPath = pointer => pointer.split('/').slice(1).map(step => step.replaceAll('~1', '/').replaceAll('~0', '~'));
+// Argo evaluates these with gojq; only .key and []/[]? steps ending in a key are walked here, and any
+// other expression is refused rather than ignoring too little or too much.
+function jqPath(expression) {
+  if (!/^(\.[A-Za-z_]\w*|\[\]\??)*\.[A-Za-z_]\w*$/.test(expression)) throw new Error(`unsupported jqPathExpression ${expression}`);
+  return expression.match(/\.[A-Za-z_]\w*|\[\]/g).map(step => step === '[]' ? each : step.slice(1));
+}
+function unset(node, [step, ...rest]) {
+  if (node === null || typeof node !== 'object') return;
+  if (step === each) return Array.isArray(node) && node.forEach(item => unset(item, rest));
+  if (rest.length) return unset(node[step], rest);
+  if (Array.isArray(node)) node.splice(Number(step), 1); else delete node[step];
+}
+function withoutIgnored(object, namespace, ignored) {
+  const rules = ignored.filter(rule => (rule.group ?? '') === groupOf(object.apiVersion) && rule.kind === object.kind &&
+    (!rule.name || rule.name === object.metadata.name) && (!rule.namespace || rule.namespace === (object.metadata.namespace ?? namespace)));
+  if (!rules.length) return object;
+  const copy = structuredClone(object);
+  for (const rule of rules) {
+    for (const path of [...(rule.jsonPointers ?? []).map(pointerPath), ...(rule.jqPathExpressions ?? []).map(jqPath)]) unset(copy, path);
+  }
+  return copy;
+}
+function identities(documents, namespace, ignored) {
   const result = new Map();
-  for (const object of documents.filter(Boolean)) {
+  for (const rendered of documents.filter(Boolean)) {
+    const object = withoutIgnored(rendered, namespace, ignored);
     const objects = [object];
     if (object.kind === 'ExternalSecret') objects.push({apiVersion: 'v1', kind: 'Secret',
       metadata: {namespace: object.metadata.namespace, name: object.spec.target?.name ?? object.metadata.name},
       type: object.spec.target?.template?.type ?? 'Opaque'});
     for (const item of objects) {
-      const group = item.apiVersion.includes('/') ? item.apiVersion.split('/')[0] : '';
+      const group = groupOf(item.apiVersion);
       const scope = ['ClusterRoleBinding'].includes(item.kind) ? '' : (item.metadata.namespace ?? namespace);
       const key = [group, item.kind, scope, item.metadata.name].join('/');
       const value = fields(item);
@@ -42,9 +74,9 @@ function identities(documents, namespace) {
   }
   return result;
 }
-export function immutableChanges(before, after, namespace = 'default') {
-  const old = identities(before, namespace), findings = [];
-  for (const [identity, candidate] of identities(after, namespace)) {
+export function immutableChanges(before, after, namespace = 'default', ignored = []) {
+  const old = identities(before, namespace, ignored), findings = [];
+  for (const [identity, candidate] of identities(after, namespace, ignored)) {
     if (!old.has(identity)) continue;
     const previous = old.get(identity);
     if (previous.recreated && candidate.recreated) continue;
@@ -76,14 +108,32 @@ export function probeImmutableChanges() {
   const changedHook = {...changedJob, metadata: {...changedJob.metadata, annotations}};
   assert.deepEqual(immutableChanges([hook], [changedHook]), []);
   assert.equal(immutableChanges([hook], [changedJob]).length, 1);
-
+  // plane-ce stamps a new timestamp into its migration Job's pod template on every render, and plane's
+  // app.yaml has Argo CD keep the live one.
+  const plane = {respectIgnoreDifferences: 'true', ignoreDifferences: [
+    {group: 'apps', kind: 'Deployment', jsonPointers: ['/spec/template/metadata/annotations/timestamp']},
+    {group: 'batch', kind: 'Job', jsonPointers: ['/spec/template/metadata/annotations/timestamp']}]};
+  const stamped = structuredClone(job); stamped.spec.template.metadata = {annotations: {timestamp: 'before'}};
+  const restamped = structuredClone(stamped); restamped.spec.template.metadata.annotations.timestamp = 'after';
+  const restampedImage = structuredClone(restamped); restampedImage.spec.template.spec.containers[0].image = 'after';
+  assert.deepEqual(immutableChanges([stamped], [restamped], 'default', ignoredFields(plane)), []);
+  assert.equal(immutableChanges([stamped], [restampedImage], 'default', ignoredFields(plane)).length, 1);
+  assert.equal(immutableChanges([stamped], [restamped]).length, 1);
+  assert.equal(immutableChanges([stamped], [restamped], 'default', ignoredFields({...plane, respectIgnoreDifferences: undefined})).length, 1);
+  const otherJob = {...plane, ignoreDifferences: plane.ignoreDifferences.map(rule => ({...rule, name: 'other'}))};
+  assert.equal(immutableChanges([stamped], [restamped], 'default', ignoredFields(otherJob)).length, 1);
+  const images = {respectIgnoreDifferences: 'true', ignoreDifferences: [{group: 'batch', kind: 'Job', jqPathExpressions: ['.spec.template.spec.containers[]?.image']}]};
+  assert.deepEqual(immutableChanges([job], [changedJob], 'default', ignoredFields(images)), []);
+  const piped = {...images, ignoreDifferences: [{...images.ignoreDifferences[0], jqPathExpressions: ['.spec.template | .spec']}]};
+  assert.throws(() => immutableChanges([job], [changedJob], 'default', ignoredFields(piped)), /unsupported jqPathExpression/);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv[2] === '--probe') {
     probeImmutableChanges();
-    console.log('check: immutable-field planted defects caught; forward renames and mutable changes accepted');
+    console.log('check: immutable-field planted defects caught; forward renames, mutable changes and fields Argo CD keeps live accepted');
   } else {
-    const changes = immutableChanges(JSON.parse(readFileSync(process.argv[2])), JSON.parse(readFileSync(process.argv[3])), process.argv[4]);
+    const changes = immutableChanges(JSON.parse(readFileSync(process.argv[2])), JSON.parse(readFileSync(process.argv[3])), process.argv[4],
+      ignoredFields(JSON.parse(readFileSync(process.argv[5]))));
     if (changes.length) {console.error(changes.join('\n')); process.exitCode = 1;}
   }
 }
