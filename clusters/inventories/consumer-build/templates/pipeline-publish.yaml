@@ -564,7 +564,10 @@ spec:
     # credential at all: its git dependencies are fetched the way a person's
     # machine fetches them. The tools of ci-tools.json go first on PATH, as in the
     # ci pipeline, so release/build.sh refuses or accepts the same Dart there and
-    # here.
+    # here. release/build.sh runs the test suites of every part and of the
+    # repository, so it runs as the user the ci check runs them as
+    # (consumer-build.checkUser), and the clone and the folder the binaries go
+    # to, which pods of root made, are handed to that user first.
     - name: build-binaries
       runAfter: [pack]
       when:
@@ -587,12 +590,12 @@ spec:
           - name: source
           - name: packed
         steps:
+{{ include "consumer-build.handOverStep" (dict "image" $gitImage "folders" "/workspace/source /workspace/packed") | indent 10 }}
           - name: build
             image: {{ $nodeImage }}
             workingDir: /workspace/source
             securityContext:
-              runAsUser: 0
-              allowPrivilegeEscalation: false
+{{ include "consumer-build.checkUserContext" . | indent 14 }}
             env:
               - name: RELEASE_TAG
                 value: "$(params.release-tag)"

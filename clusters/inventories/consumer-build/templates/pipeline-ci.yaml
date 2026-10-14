@@ -114,8 +114,6 @@ sets no status, because it names a commit it did not prove.
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
 {{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
-{{- /* The user the check runs as: pptruser, the user of the check image (ghcr.io/puppeteer/puppeteer, UID 10042 in its Dockerfile). The fetch task hands the clone to it. */ -}}
-{{- $checkUser := 10042 -}}
 {{- /* The image the shared git-clone Task runs (image-builder/templates/tasks/git-clone.yaml). */ -}}
 {{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
 {{- /* The image report-failure runs: bash, curl, jq and the shell tools its script uses. The release pipeline runs the same tag, unpinned, and the ci run keeper runs it for kubectl and jq. */ -}}
@@ -447,16 +445,7 @@ spec:
                 mountPath: /source-list
           # The pods above run as root and leave the clone to root; the check runs as a user
           # without root and has to write into it (node_modules, build output, the test databases).
-          - name: hand-over-clone
-            image: {{ $gitImage }}
-            workingDir: /workspace/source
-            script: |
-              #!/usr/bin/env sh
-              set -eu
-              chown -R -h {{ $checkUser }} /workspace/source
-            computeResources:
-              requests: { cpu: 50m, memory: 32Mi }
-              limits: { cpu: 500m, memory: 64Mi }
+{{ include "consumer-build.handOverStep" (dict "image" $gitImage "folders" "/workspace/source") | indent 10 }}
 
     # ── 5. check — the repository's own scripts/check.sh ─────────────────────
     - name: check
@@ -507,14 +496,10 @@ spec:
             # (manifest of 25.13.0, linux/amd64).
             image: ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
             workingDir: /workspace/source
+            # Not root (consumer-build.checkUser); the fetch task hands the clone
+            # to this user.
             securityContext:
-              # Not root: root keeps CAP_DAC_OVERRIDE and reads and writes through
-              # any mode, so a test that expects a directory to refuse a write
-              # (a record this account cannot remove) is red in a pod and green
-              # on a workstation. The fetch task hands the clone to this user.
-              runAsUser: {{ $checkUser }}
-              runAsNonRoot: true
-              allowPrivilegeEscalation: false
+{{ include "consumer-build.checkUserContext" . | indent 14 }}
             env:
               # What GitHub Actions also sets: a check that cannot run on a
               # build plane (a missing sibling checkout) reads it to say so.
