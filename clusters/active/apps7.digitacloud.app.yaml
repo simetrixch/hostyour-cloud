@@ -37,8 +37,9 @@ global:
   alertRecipients: ['info@simetrix.ch']
   deployUrl: https://github.com/digitaplatform/digita-deploy.git
   clusterIssuer: platform-acme
-  letsencryptEmail: info@simetrix.ch
-  letsencryptServer: https://acme-v02.api.letsencrypt.org/directory
+  letsencryptEmail: kartalbas@gmail.com
+  letsencryptServer: https://dv.acme-v02.api.pki.goog/directory
+  acmeEabKeyId: 27c643ece5d8e9aead63775dc15caf9d
   registryPullUser: simetrixch-pull
   registryPushUser: simetrixch-push
   timeSources: ['ntp1.hetzner.de', 'ntp2.hetzner.de', 'ntp3.hetzner.de']
