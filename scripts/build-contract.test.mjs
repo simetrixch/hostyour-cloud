@@ -470,6 +470,50 @@ test('the fetch task fetches the pinned sources with the credential, and the che
     /unit\.repoURL .* is not https:\/\/github\.com\/<owner>\/<repository>/);
 });
 
+// The clone of the ci is `git init`, `git remote add origin` and a fetch of the one commit. Of the gits the pods run
+// (2.45 and 2.39), none names the default branch of such a clone, and only one from 2.48 on does it by itself on a
+// later fetch; scripts/check.sh reads it from refs/remotes/origin/HEAD and refuses to judge a release without it.
+// followRemoteHEAD=never makes any git behave as the older ones do, and an older git ignores the key.
+const runBranches = (script, defaultBranch) => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-branches-')), remote = join(root, 'remote.git'), seed = join(root, 'seed'), clone = join(root, 'clone'), home = join(root, 'home');
+  const identity = {GIT_AUTHOR_NAME: 'ci', GIT_AUTHOR_EMAIL: 'ci@example.test', GIT_COMMITTER_NAME: 'ci', GIT_COMMITTER_EMAIL: 'ci@example.test'};
+  const git = (cwd, ...args) => execFileSync('git', args, {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: {...process.env, ...identity}}).trim();
+  try {
+    for (const dir of [seed, clone, home]) mkdirSync(dir);
+    git(root, 'init', '-q', '--bare', '-b', defaultBranch, remote);
+    git(seed, 'init', '-q', '-b', defaultBranch);
+    git(seed, 'commit', '-q', '--allow-empty', '-m', 'default');
+    git(seed, 'checkout', '-q', '-b', 'feature');
+    git(seed, 'commit', '-q', '--allow-empty', '-m', 'pushed');
+    git(seed, 'push', '-q', remote, defaultBranch, 'feature');
+    git(clone, 'init', '-q', '-b', 'main');
+    git(clone, 'remote', 'add', 'origin', remote);
+    git(clone, 'fetch', '-q', 'origin', git(seed, 'rev-parse', 'HEAD'));
+    git(clone, 'checkout', '-q', 'FETCH_HEAD');
+    const result = spawnSync('sh', ['-c', script.replaceAll('/tmp', home)], {cwd: clone, encoding: 'utf8',
+      env: {...process.env, GITCREDENTIALS: 'https://ci:token@example.test', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'remote.origin.followRemoteHEAD', GIT_CONFIG_VALUE_0: 'never'}});
+    const originHead = spawnSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], {cwd: clone, encoding: 'utf8'});
+    return {status: result.status, stderr: result.stderr, originHead: originHead.status === 0 ? originHead.stdout.trim() : null};
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+};
+
+test('the fetch task names the default branch of the clone, whichever branch was pushed and whatever the default branch is called', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const script = pipeline.spec.tasks.find((t) => t.name === 'fetch').taskSpec.steps.find((s) => s.name === 'branches').script;
+  for (const defaultBranch of ['master', 'trunk']) {
+    assert.deepEqual(runBranches(script, defaultBranch), {status: 0, stderr: '', originHead: `refs/remotes/origin/${defaultBranch}`},
+      `PLANTED INNOCENT: a push of feature to a repository whose default branch is ${defaultBranch} leaves origin/HEAD at ${defaultBranch}, not at feature`);
+  }
+  const withoutSetHead = script.replace(/^.*set-head.*\n/m, '');
+  assert.notEqual(withoutSetHead, script);
+  assert.equal(runBranches(withoutSetHead, 'master').originHead, null, 'PLANTED DEFECT: the clone as the ci made it before has no origin/HEAD, so scripts/check.sh stops at the merge probe');
+  const guessed = script.replace('--auto', 'master');
+  assert.notEqual(guessed, script);
+  assert.notEqual(runBranches(guessed, 'trunk').status, 0, 'PLANTED DEFECT: a default branch written into the pipeline fails the repository that calls it something else');
+});
+
 test('the ci gate takes a full SHA-1 as commit and as before, all zeros for a new branch, and refuses anything else', () => {
   const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
   const script = pipeline.spec.tasks.find((t) => t.name === 'gate').taskSpec.steps[0].script;

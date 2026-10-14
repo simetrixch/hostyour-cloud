@@ -305,12 +305,15 @@ spec:
 
     # ── 4. fetch — what the check compares against and what it reads ─────────
     # The clone fetches the one commit and nothing else, so no origin/<branch>
-    # exists. A check that diffs against its default branch (a freeze guard that
-    # reads origin/master) would refuse every run. A check may also read the
-    # pinned commits of sibling repositories (SOURCES OF OTHER REPOSITORIES
-    # above). Both fetches need the clone credential, which the check step must
-    # never hold, so they run here, in one pod: under the namespace's ci quota
-    # of one pod, every further task would wait for the previous pod to go.
+    # exists, and the git of this pod and of the check pod never names the
+    # default branch of such a clone: origin/HEAD is set here, from the remote.
+    # A check that diffs against its default branch (a freeze guard that reads
+    # origin/master, a release probe that reads origin/HEAD) would refuse every
+    # run. A check may also read the pinned commits of sibling repositories
+    # (SOURCES OF OTHER REPOSITORIES above). Both fetches need the clone
+    # credential, which the check step must never hold, so they run here, in one
+    # pod: under the namespace's ci quota of one pod, every further task would
+    # wait for the previous pod to go.
     # Each credential store lives in /tmp of its own container, never in the
     # workspace, and the step that reads ci-sources.json holds no credential.
     - name: fetch
@@ -344,6 +347,7 @@ spec:
               export HOME=/tmp
               git config --global credential.helper "store --file=/tmp/git-credentials"
               git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+              git remote set-head origin --auto
               echo "fetch: ok — the branch heads of origin are at refs/remotes/origin"
             # The fetch takes every branch head: 95 MiB of anonymous memory
             # for 183 branches, the most of the repositories measured.
