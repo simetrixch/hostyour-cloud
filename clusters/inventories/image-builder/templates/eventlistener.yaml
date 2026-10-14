@@ -1,11 +1,13 @@
 {{- if .Values.eventListener.enabled }}
 {{- /*
-The ONE webhook of the build plane. Two Triggers attach (templates/triggers/),
-and no push matches both:
+The ONE webhook of the build plane. Three Triggers attach (templates/triggers/),
+and no push matches two of them:
 github-deploy-request — a push of the ref deploy/<stage>/<release-tag> routes
 into the unit's own <unit>-release Pipeline in namespace <unit>-build, the
 release cycle. github-ci-push — a push of a branch routes into the unit's own
-<unit>-ci Pipeline there, which runs the repository's check. GitHub does
+<unit>-ci Pipeline there, which runs the repository's check.
+github-release-publish — a push of the release tag itself routes into the
+unit's own <unit>-publish Pipeline there, which publishes its npm packages. GitHub does
 nothing else here: it only fires this webhook; build, push, bump, sync and
 check all run in the build plane.
 
@@ -25,6 +27,7 @@ spec:
   triggers:
     - triggerRef: github-deploy-request # deploy/<stage>/<release-tag> push → <unit>-release in <unit>-build
     - triggerRef: github-ci-push # branch push → <unit>-ci in <unit>-build
+    - triggerRef: github-release-publish # <release-tag> push → <unit>-publish in <unit>-build
   resources:
     kubernetesResource:
       spec:

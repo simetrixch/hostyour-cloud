@@ -12,8 +12,12 @@ import {join} from 'node:path';
 const QUEUE = 'clusters/inventories/image-builder/files/release-queue.jq';
 
 let clock = 0;
-const run = (ns, tag, {pending = false, succeeded, pipeline = ns.replace(/-build$/, '-release'), behind} = {}) => ({
-  metadata: {namespace: ns, name: `${tag}-${++clock}`, creationTimestamp: `2026-10-08T05:${String(clock).padStart(2, '0')}:00Z`,
+// A release run carries image-builder.io/consumer and a publish run image-builder.io/publish, as their
+// TriggerTemplates and Pipelines give them; a run of any other pipeline carries neither.
+const labelOf = (pipeline) => (pipeline.endsWith('-release') ? {'image-builder.io/consumer': 'x'}
+  : pipeline.endsWith('-publish') ? {'image-builder.io/publish': 'x'} : {});
+const run = (ns, tag, {pending = false, succeeded, pipeline = ns.replace(/-build$/, '-release'), behind, labels = labelOf(pipeline)} = {}) => ({
+  metadata: {namespace: ns, name: `${tag}-${++clock}`, creationTimestamp: `2026-10-08T05:${String(clock).padStart(2, '0')}:00Z`, labels,
     ...(behind ? {annotations: {'image-builder.io/queued-behind': behind}} : {})},
   spec: {pipelineRef: {name: pipeline}, params: [{name: 'release-tag', value: tag}], ...(pending ? {status: 'PipelineRunPending'} : {})},
   status: succeeded === undefined ? {} : {conditions: [{type: 'Succeeded', status: succeeded}]},
@@ -125,7 +129,7 @@ test('planted defect: a queue that deletes by age alone, finished or not, is cau
   const dir = mkdtempSync(join(tmpdir(), 'release-queue-'));
   try {
     const byAge = join(dir, 'release-queue.jq');
-    writeFileSync(byAge, readFileSync(QUEUE, 'utf8').replace('| ([.items[] | select(isRelease) | select(isDone)]', '| ([.items[] | select(isRelease)]'));
+    writeFileSync(byAge, readFileSync(QUEUE, 'utf8').replace('| ([.items[] | select(isQueued) | select(isDone)]', '| ([.items[] | select(isQueued)]'));
     const waitingRun = run('shop-build', 'next', {pending: true});
     const items = [...finished('shop-build', 20), waitingRun];
     const changes = execFileSync('jq', ['-c', '-f', byAge], {input: JSON.stringify({items}), encoding: 'utf8'}).split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -139,6 +143,84 @@ test('planted defect: a queue that deletes by age alone, finished or not, is cau
 test('ci runs are not the queue\'s to delete, and a namespace\'s ci runs do not count against its releases', () => {
   const changes = decide([...finished('shop-build', 30, 'shop-ci'), ...finished('shop-build', 20)]);
   assert.deepEqual(deleted(changes), []);
+});
+
+// A publish run (clusters/inventories/consumer-build pipeline-publish.yaml) packs and pushes a release's npm
+// packages. It waits in the same queue under a key of its own, so it never builds beside a release: the memory
+// budget of the build node holds one release or one publish run at a time (ciCapacity in consumer-build).
+const publish = (ns, tag, options = {}) => run(ns, tag, {...options, pipeline: ns.replace(/-build$/, '-publish')});
+const decideWith = (program, items) => execFileSync('jq', ['-c', '-f', program], {input: JSON.stringify({items}), encoding: 'utf8'})
+  .split('\n').filter(Boolean).map((line) => JSON.parse(line));
+const planted = (from, to, items) => {
+  const dir = mkdtempSync(join(tmpdir(), 'release-queue-'));
+  try {
+    const program = join(dir, 'release-queue.jq'), text = readFileSync(QUEUE, 'utf8');
+    assert.ok(text.includes(from), `the queue carries ${from}`);
+    writeFileSync(program, text.replace(from, to));
+    return decideWith(program, items);
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+};
+
+test('a publish run waits behind a running release, its own release included, and starts alone', () => {
+  const release = run('shop-build', 'a'), own = publish('shop-build', 'a', {pending: true});
+  let changes = decide([release, own]);
+  assert.deepEqual(started(changes), [], 'the publish run of a running release does not start beside it');
+  assert.deepEqual(waiting(changes), [[own.metadata.name, 'shop-build/a']]);
+  const first = publish('post-build', 'b', {pending: true}), second = run('post-build', 'b', {pending: true});
+  changes = decide([second, first]);
+  assert.deepEqual(started(changes), [first.metadata.name], 'the older publish run starts alone');
+  assert.deepEqual(waiting(changes), [[second.metadata.name, 'post-build/b publish']], 'the release of the same tag waits for it');
+  assert.deepEqual(waiting(decide([publish('auth-build', 'c'), run('shop-build', 'd', {pending: true})])).map(([, behind]) => behind),
+    ['auth-build/c publish'], 'a running publish run holds every release back');
+});
+
+test('planted defect: a queue that keys a publish run like its release starts both at once', () => {
+  const items = [publish('post-build', 'b', {pending: true}), run('post-build', 'b', {pending: true})];
+  assert.equal(started(planted(' + (if isPublish then " publish" else "" end)', '', items)).length, 2, 'the planted queue starts both');
+  assert.equal(started(decide(items)).length, 1, 'PLANTED INNOCENT: the real queue starts one');
+});
+
+test('a namespace keeps its newest 20 finished publish runs beside its 20 releases, and a waiting or running publish run is never deleted', () => {
+  const old = finished('shop-build', 21, 'shop-publish');
+  const changes = decide([...old, ...finished('shop-build', 20), publish('shop-build', 'now'), publish('shop-build', 'next', {pending: true})]);
+  assert.deepEqual(deleted(changes), [old[0].metadata.name], 'only the oldest of 21 finished publish runs goes');
+  assert.deepEqual(deleted(decide([...finished('shop-build', 20, 'shop-publish'), publish('shop-build', 'now')])), [],
+    'PLANTED INNOCENT: 20 finished publish runs and a running one: nothing is deleted');
+});
+
+test('planted defect: a queue that counts publish and release runs together deletes releases the real one keeps', () => {
+  const items = [...finished('shop-build', 20), ...finished('shop-build', 1, 'shop-publish')];
+  assert.equal(deleted(planted('group_by([.metadata.namespace, .spec.pipelineRef.name])', 'group_by(.metadata.namespace)', items)).length, 1);
+  assert.deepEqual(deleted(decide(items)), []);
+});
+
+test('planted defect: a waiting run elsewhere whose pipeline ends in -release holds no release back, since the tick lists every run', () => {
+  const foreign = run('tools', 'x', {pending: true, pipeline: 'tools-release', labels: {}}), mine = run('shop-build', 'a', {pending: true});
+  const changes = decide([foreign, mine]);
+  assert.deepEqual(started(changes), [mine.metadata.name]);
+  assert.deepEqual(waiting(changes), [], 'the foreign run is neither started nor noted');
+  assert.deepEqual(started(planted('def isRelease: labelled("image-builder.io/consumer") and ', 'def isRelease: ', [foreign, mine])), [foreign.metadata.name],
+    'the planted queue, by name alone, starts the foreign run first and holds the release back');
+});
+
+test('the tick lists every PipelineRun, so a publish run, which carries no consumer label, is queued too', () => {
+  const bin = mkdtempSync(join(tmpdir(), 'release-queue-'));
+  try {
+    const runs = join(bin, 'runs.json'), log = join(bin, 'log');
+    writeFileSync(runs, JSON.stringify({items: [publish('shop-build', 'a', {pending: true})]}));
+    writeFileSync(join(bin, 'kubectl'), '#!/usr/bin/env bash\necho "$*" >> "$LOG"\nif [ "$1" = get ]; then cat "$RUNS"; fi\n');
+    chmodSync(join(bin, 'kubectl'), 0o755);
+    const result = spawnSync('bash', ['clusters/inventories/image-builder/files/release-queue.sh'], {encoding: 'utf8',
+      env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, QUEUE_DIR: 'clusters/inventories/image-builder/files'}});
+    assert.equal(result.status, 0, result.stderr);
+    const calls = readFileSync(log, 'utf8').trim().split('\n');
+    assert.equal(calls[0], 'get pipelineruns -A -o json', 'PLANTED DEFECT guard: a label selector on the consumer label never sees a publish run');
+    assert.match(calls[1], /^patch pipelinerun -n shop-build a-\d+ --type=json/);
+  } finally {
+    rmSync(bin, {recursive: true, force: true});
+  }
 });
 
 test('starts come before notes, so a note that cannot be written never holds a start back', () => {
@@ -203,12 +285,14 @@ const asks = (operation, username, object, oldObject) => ({object, oldObject, re
 const startedRun = changed((r) => delete r.spec.status);
 const asCi = (r) => { r.spec.pipelineRef.name = 'shop-ci'; r.spec.taskRunTemplate.podTemplate.priorityClassName = 'image-builder-ci'; };
 const waitingCiRun = changed(asCi);
+const asPublish = (r) => { r.spec.pipelineRef.name = 'shop-publish'; r.metadata.labels = {'image-builder.io/publish': 'shop'}; };
 const startedCiRun = changed((r) => { asCi(r); delete r.spec.status; });
 const ADMITTED = {
   'the EventListener creates a waiting run': asks('CREATE', 'system:serviceaccount:image-builder:eventlistener-sa', waitingRun(), null),
   'the queue starts a waiting run': asks('UPDATE', QUEUE_SA, startedRun, waitingRun()),
   'the queue notes what a run waits for, beside other annotations': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; }), waitingRun()),
   'the queue starts a run and drops its note': asks('UPDATE', QUEUE_SA, startedRun, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; })),
+  'the queue starts a waiting publish run': asks('UPDATE', QUEUE_SA, changed((r) => { asPublish(r); delete r.spec.status; }), changed(asPublish)),
   'the Tekton controller updates a started run': asks('UPDATE', 'system:serviceaccount:tekton:tekton-controller', changed((r) => { delete r.spec.status; r.metadata.labels['tekton.dev/pipeline'] = 'shop-release'; }), startedRun),
 };
 const DENIED = {
@@ -225,7 +309,7 @@ const DENIED = {
   'the queue removes another annotation': asks('UPDATE', QUEUE_SA, changed((r) => { delete r.metadata.annotations; }), waitingRun()),
   'the queue changes the finalizers': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.finalizers = []; }), waitingRun()),
 };
-const QUEUE_MESSAGE = 'the release queue may only start a waiting release run or note what it waits for.';
+const QUEUE_MESSAGE = 'the release queue may only start a waiting release or publish run or note what it waits for.';
 
 test('the admission policy lets the queue start a waiting run or note what it waits for, and nothing else', () => {
   const policy = guard();
@@ -246,16 +330,19 @@ const DASHBOARD = 'system:serviceaccount:tekton-pipelines:tekton-dashboard';
 const withStatus = (status, edit = () => {}) => changed((r) => { delete r.spec.status; r.status = status; edit(r); });
 const succeeded = (status, edit) => withStatus({conditions: [{type: 'Succeeded', status}]}, edit);
 const deletes = (username, oldObject) => asks('DELETE', username, null, oldObject);
-const QUEUE_DELETE_MESSAGE = 'the release queue may only delete a finished release run of its own namespace.';
+const QUEUE_DELETE_MESSAGE = 'the release queue may only delete a finished release or publish run of its own namespace.';
 const DELETE_ADMITTED = {
   'the queue deletes a release run that succeeded': deletes(QUEUE_SA, succeeded('True')),
   'the queue deletes a release run that failed': deletes(QUEUE_SA, succeeded('False')),
+  'the queue deletes a publish run that succeeded': deletes(QUEUE_SA, succeeded('True', asPublish)),
   'the Tekton Dashboard deletes a running release run': deletes(DASHBOARD, succeeded('Unknown')),
   'a user deletes a waiting release run': deletes('owner@example.com', waitingRun()),
   'a user deletes a run that breaks every other clause': deletes('owner@example.com', {metadata: {name: 'x', namespace: 'shop-build'}, spec: {}}),
 };
 const DELETE_DENIED = {
   'the queue deletes a running release run': deletes(QUEUE_SA, succeeded('Unknown')),
+  'the queue deletes a running publish run': deletes(QUEUE_SA, succeeded('Unknown', asPublish)),
+  'the queue deletes a finished run of another unit\'s publish pipeline': deletes(QUEUE_SA, succeeded('True', (r) => { asPublish(r); r.spec.pipelineRef.name = 'post-publish'; })),
   'the queue deletes a pending release run': deletes(QUEUE_SA, waitingRun()),
   'the queue deletes a release run with an empty status': deletes(QUEUE_SA, withStatus({})),
   'the queue deletes a release run with another condition only': deletes(QUEUE_SA, withStatus({conditions: [{type: 'Ready', status: 'True'}]})),
@@ -264,7 +351,7 @@ const DELETE_DENIED = {
   'the queue deletes a finished run without a pipeline': deletes(QUEUE_SA, succeeded('True', (r) => { delete r.spec.pipelineRef; })),
 };
 
-test('the admission policy sees a delete, and lets the queue delete a finished release run of its own namespace and no other run', () => {
+test('the admission policy sees a delete, and lets the queue delete a finished release or publish run of its own namespace and no other run', () => {
   const policy = guard();
   assert.ok(policy.spec.matchConstraints.resourceRules.every((rule) => rule.operations.includes('DELETE')));
   const verdicts = evaluate(policy, [...Object.values(DELETE_ADMITTED), ...Object.values(DELETE_DENIED)]);

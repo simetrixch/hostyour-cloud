@@ -740,6 +740,26 @@ for line in '@check:registry=https://npm.pkg.github.com' '//npm.pkg.github.com/:
   grep -qF -- "$line" "$work/fence-render" \
     || { grep -A3 -F '.npmrc: |' "$work/fence-render"; fail "the build .npmrc of unit check does not carry '$line' — a unit's private packages would resolve against registry.npmjs.org and 404"; }
 done
+# The same .npmrc reads the npm packages this build plane publishes (templates/pipeline-publish.yaml), which a
+# lockfile names by their tarball URL under the registry's npm prefix, with the registry's pull identity.
+grep -qE '^ +//[a-z0-9.-]+/v2/npm/:_auth=\{\{ printf "%s:%s" \.pullUser \.pullPassword \| b64enc \}\}$' "$work/fence-render" \
+  && grep -qF 'secretKey: pullUser' "$work/fence-render" && grep -qF 'secretKey: pullPassword' "$work/fence-render" \
+  || { grep -A4 -F '.npmrc: |' "$work/fence-render"; fail "the build .npmrc of unit check does not read the registry's npm prefix with its pull identity — a lockfile that names a package published here would answer 401"; }
+# A unit that builds nothing still publishes its npm packages: it renders the publish pipeline and the push identity
+# its push task mounts, and still no pull identity, which only a release reads.
+helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+  -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
+  --set-json 'unit={"name":"check","repoURL":"https://github.com/check/check.git","buildsJson":"[]"}' \
+  > "$work/publish-render" 2>&1 \
+  || { cat "$work/publish-render"; fail "clusters/inventories/consumer-build does not render a unit that builds nothing"; }
+publish_objects="$(objects_of "$work/publish-render")"
+for object in Pipeline/check-publish ExternalSecret/image-builder-registry-push; do
+  printf '%s\n' "$publish_objects" | grep -qxF "$object" \
+    || fail "a unit that builds nothing renders no $object — its release tag would publish no npm package"
+done
+printf '%s\n' "$publish_objects" | grep -q '^ExternalSecret/image-builder-registry-pull' \
+  && fail "a unit that builds nothing renders the registry pull identity, which only a release reads"
 objects_of "$work/fence-render" \
   | grep -E '^(Role|RoleBinding)/(eventlistener-create-pipelineruns|manager-read-pipelineruns)$' >> "$work/fences"
 fences_rendered="$(sort "$work/fences")"
@@ -751,6 +771,29 @@ if [ "$fences_rendered" != "$fences_expected" ]; then
   fail "the per-unit fences are not the objects they have to be — a unit would onboard green and stand unfenced"
 fi
 echo "check: all 9 per-unit fences render, over clusters/units/reconciler, clusters/units/admissionpolicy and clusters/inventories/consumer-build in unit mode."
+
+# ── The npm packages a release tag publishes ─────────────────────────────────────────────────
+# A push of the release tag itself starts the unit's publish pipeline through the Trigger github-release-publish of
+# clusters/inventories/image-builder, and the registry keeps every version that pipeline pushes: zot applies the
+# FIRST retention policy whose repositories match a repo, and only the first one keeps every tag, so npm/** must be
+# named there and not left to the ["**"] policy of the docker.io cache, which keeps the newest 50.
+helm template image-builder clusters/inventories/image-builder --namespace image-builder \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+  -f clusters/inventories/image-builder/values-common.yaml -f clusters/inventories/image-builder/values-dev.yaml -f "$cluster_map" -f "$registration" \
+  > "$work/builder-render" 2>&1 \
+  || { cat "$work/builder-render"; fail "clusters/inventories/image-builder does not render"; }
+for object in Trigger/github-release-publish TriggerBinding/github-release-publish-binding TriggerTemplate/release-publish; do
+  objects_of "$work/builder-render" | grep -qxF "$object" || fail "clusters/inventories/image-builder renders no $object — a release tag would publish nothing"
+done
+grep -qF -- '- triggerRef: github-release-publish' "$work/builder-render" || fail "the EventListener does not attach github-release-publish"
+grep -qF -- "body.ref.matches(r'^refs/tags/$(yq '.global.releaseTagFilter' clusters/platform/values-common.yaml)\$')" "$work/builder-render" \
+  || fail "the publish trigger does not take the release tag in the grammar of global.releaseTagFilter, anchored"
+first_retention="$(yq '.configmap.configmap.data."config.json"' clusters/inventories/registry/values-common.yaml | grep -m1 -F '"repositories": [')"
+case "$first_retention" in
+  *'["*", "npm/**", "simetrixch/**"]'*) ;;
+  *) fail "the first retention policy of the registry names $first_retention — a version under npm/** or simetrixch/** would be deleted once 50 newer tags are pushed" ;;
+esac
+echo "check: a release tag starts the publish pipeline of a unit, with builds or without, and the registry keeps every tag under npm/** and simetrixch/**."
 
 # ── A unit that declares an SMTP entry, and a unit that does not ─────────────────────────────
 # THE STAND-IN REGISTRATION DECLARES NO ENTRY, because almost no unit does, so every render above

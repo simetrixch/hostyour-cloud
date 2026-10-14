@@ -3,7 +3,7 @@
 # A patch or delete that fails is reported and the others still run, because the next tick replays the same
 # list in the same order: stopping at the first failure would hold every later release back for good.
 set -euo pipefail
-changes="$(kubectl get pipelineruns -A -l image-builder.io/consumer -o json | jq -c -f "${QUEUE_DIR}/release-queue.jq")"
+changes="$(kubectl get pipelineruns -A -o json | jq -c -f "${QUEUE_DIR}/release-queue.jq")"
 failed=0
 while IFS= read -r change; do
   [ -n "$change" ] || continue

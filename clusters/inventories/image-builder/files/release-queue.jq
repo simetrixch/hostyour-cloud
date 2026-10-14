@@ -1,23 +1,32 @@
-# Decides, from every PipelineRun that carries image-builder.io/consumer, which waiting release runs
-# start now and which wait, and emits one patch per run that has to change. Releases start one at a
-# time because the build plane is one node: parallel releases filled it until no task pod could start.
-# A release is one release tag in one build namespace; its stages run together. Starts come first,
-# so a note that cannot be written never holds a start back.
-# It also deletes, in each build namespace, every finished release run but the newest 20, last: every
-# run holds a workspace claim until it is deleted, and the newest twenty keep recent releases readable
-# in the Tekton Dashboard. A run that waits or runs is never deleted.
+# Decides, from every PipelineRun of the cluster, which waiting release and publish runs start now and
+# which wait, and emits one patch per run that has to change. Releases start one at a time because the
+# build plane is one node: parallel releases filled it until no task pod could start.
+# A release is one release tag in one build namespace; its stages run together. A publish run (the npm
+# packages of a release tag, consumer-build pipeline-publish.yaml) is a release of its own key,
+# `<namespace>/<tag> publish`, so it never builds beside a release, its own included. Starts come
+# first, so a note that cannot be written never holds a start back.
+# It also deletes, in each build namespace, every finished release run but the newest 20, and every
+# finished publish run but the newest 20, last: every run holds a workspace claim until it is deleted,
+# and the newest twenty keep recent runs readable in the Tekton Dashboard. A run that waits or runs is
+# never deleted.
 
-def isRelease: (.spec.pipelineRef.name // "") | endswith("-release");
+# A run is the queue's by the label its TriggerTemplate and its Pipeline give it, as when the tick listed
+# image-builder.io/consumer alone: a run elsewhere whose Pipeline merely ends in -release is not.
+def labelled($key): (.metadata.labels // {}) | has($key);
+def isRelease: labelled("image-builder.io/consumer") and ((.spec.pipelineRef.name // "") | endswith("-release"));
+def isPublish: labelled("image-builder.io/publish") and ((.spec.pipelineRef.name // "") | endswith("-publish"));
+def isQueued: isRelease or isPublish;
 def succeeded: [(.status.conditions // [])[] | select(.type == "Succeeded") | .status][0] // "";
 def isDone: succeeded == "True" or succeeded == "False";
 def isPending: .spec.status == "PipelineRunPending";
-def releaseKey: .metadata.namespace + "/" + ([(.spec.params // [])[] | select(.name == "release-tag") | .value][0] // "");
+def releaseKey: .metadata.namespace + "/" + ([(.spec.params // [])[] | select(.name == "release-tag") | .value][0] // "")
+  + (if isPublish then " publish" else "" end);
 def keep: 20;
 def queuedBehind: .metadata.annotations["image-builder.io/queued-behind"] // "";
 
-[.items[] | select(isRelease) | select(isDone | not)] as $live
-| ([.items[] | select(isRelease) | select(isDone)]
-   | group_by(.metadata.namespace)
+[.items[] | select(isQueued) | select(isDone | not)] as $live
+| ([.items[] | select(isQueued) | select(isDone)]
+   | group_by([.metadata.namespace, .spec.pipelineRef.name])
    | map(sort_by(.metadata.creationTimestamp, .metadata.name) | reverse | .[keep:][]
          | {namespace: .metadata.namespace, name: .metadata.name, verb: "delete",
             say: "deleted \(.metadata.namespace)/\(.metadata.name), created \(.metadata.creationTimestamp)"})
