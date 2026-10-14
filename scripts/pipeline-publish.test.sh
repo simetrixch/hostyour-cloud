@@ -24,6 +24,12 @@ done
 work="$(mktemp -d)" || fail "no temporary directory could be made"
 registry_pid=""
 trap '[ -z "$registry_pid" ] || kill "$registry_pid" 2>/dev/null; rm -rf "$work"' EXIT
+# No git call of a fixture leaves a process behind it, which a case removing its repository would
+# race: scripts/standin/git-quiet.sh sets the template that prevents it and measures that it does.
+# shellcheck disable=SC1091
+. "$root/scripts/standin/git-quiet.sh"
+planted="$(git_quiet_proof "$work")" || fail 'a fixture git starts a background maintenance'
+ok "a fixture commits and pushes without starting a background maintenance; the planted defect, repositories made without the template, starts $planted"
 # Stand-ins for what the cluster has and this machine must not change: curl that reaches the fixture
 # registry, and corepack, whose enable would write into this machine's Node.
 mkdir -p "$work/standin-bin"

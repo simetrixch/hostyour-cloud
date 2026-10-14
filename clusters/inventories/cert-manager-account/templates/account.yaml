@@ -5,16 +5,16 @@ and `eab-mac-key`, the MAC key of the account's External Account Binding. Both e
 hostyour-deploy deploy-platform-services on the books cluster, and every cluster reads them from that
 one store.
 
-ONLY WHERE THE CLUSTER'S MAP NAMES THE ACCOUNT, and that is why the store and the ExternalSecret are
-written here and not through clusters/charts/secret-store and external-secret: each of those renders
-on its own `enabled` value, which no key of a cluster map can set, so on a cluster not yet switched
-they would stand failing against entries it never reads. The three objects say what those charts say.
+ONLY UNDER platform-acme, and that is why the store and the ExternalSecret are written here and not
+through clusters/charts/secret-store and external-secret: each of those renders on its own `enabled`
+value, which no key of a cluster map can set, so on a cluster under platform-local they would stand
+failing against entries it never reads. The three objects say what those charts say.
 
 KEPT OUT OF cert-manager-issuers, because the installer dry-runs and installs that chart before the
 ExternalSecret kinds exist on a new cluster (hostyour-deploy deploy-platform-services).
 */ -}}
 {{- $g := .Values.global | default dict }}
-{{- if and (eq ($g.clusterIssuer | default "") "platform-acme") $g.acmeEabKeyId }}
+{{- if eq ($g.clusterIssuer | default "") "platform-acme" }}
 {{- $stage := required "stage must be set (values-<stage>.yaml of cert-manager-account)" .Values.stage }}
 {{- $store := required "global.secretStoreName must be set (clusters/platform/values-common.yaml via the $values chain)" $g.secretStoreName }}
 apiVersion: v1

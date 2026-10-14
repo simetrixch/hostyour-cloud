@@ -10,7 +10,6 @@ metadata:
 spec:
   acme:
     email: {{ required "global.letsencryptEmail is the ACME contact of platform-acme" .Values.global.letsencryptEmail | quote }}
-    {{- if .Values.global.acmeEabKeyId }}
     # THE ONE ACCOUNT OF THE INSTALLATION (Google Trust Services). Every cluster signs with the one
     # key cert-manager-account delivers, so the first cluster registers the account with the External
     # Account Binding and every later one is answered with that same account. Never a key of its own:
@@ -19,14 +18,10 @@ spec:
     privateKeySecretRef:
       name: platform-acme-account
     externalAccountBinding:
-      keyID: {{ .Values.global.acmeEabKeyId | quote }}
+      keyID: {{ required "global.acmeEabKeyId is the key id of the installation's one ACME account (clusters/active/<fqdn>.yaml); platform-acme has no form without it" .Values.global.acmeEabKeyId | quote }}
       keySecretRef:
         name: platform-acme-account
         key: eab-mac-key
-    {{- else }}
-    privateKeySecretRef:
-      name: platform-acme
-    {{- end }}
     server: {{ required "global.letsencryptServer is the ACME directory platform-acme registers with" .Values.global.letsencryptServer | quote }}
     solvers:
       - http01:
