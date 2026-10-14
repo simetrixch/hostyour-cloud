@@ -6,7 +6,9 @@
 # workspace ranges included; that every packed tarball holds files under package/ only, no .npmrc, no
 # .env* and no gitleaks finding; and that the push refuses another scope and another content under a
 # published version, pushes nothing once one tarball is refused, reads every tarball back, and logs one
-# line per tarball. The functions are read out of the template
+# line per tarball; that a tag tracking release/build.sh publishes the binaries that script leaves, and
+# only regular files of a plain name, as one manifest <owner>/<repository>:<tag> that a second run
+# reuses and another build under the same tag cannot replace. The functions are read out of the template
 # (clusters/inventories/consumer-build/templates/pipeline-publish.yaml), as the Pipeline carries
 # them, and run against fixture repositories, tarballs and a registry served on 127.0.0.1. Then the
 # Pipeline as helm renders it runs end to end, every step in Tekton's order, on fixture repositories
@@ -46,7 +48,7 @@ extract() { # function name -> its text out of the template
 }
 [ -f "$template" ] || fail "the template $template does not exist"
 for fn in scan_packages stamp_only reviewed_commit release_version stamp_versions build_packages pack_packages \
-  check_tarballs scan_leaks registry_call push_blob npm_push; do
+  check_tarballs scan_leaks registry_call push_blob npm_push build_binaries binaries_push; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
@@ -107,6 +109,31 @@ repo "$work/seeded" "npm-seed/pins.tsv=x" "npm-seed/digitaplatform-a-0.9.0.tgz=x
 [ "$(cat "$work/mode")" = source ] && [ "$(cat "$work/list")" = "packages/a	@digitaplatform/a" ] \
   || fail "PLANTED DEFECT: a tree holding npm-seed/ took the seed path, which the cut-over deleted: mode $(cat "$work/mode"), list $(cat "$work/list")"
 ok 'a tree holding npm-seed/ lists its own packages and nothing of npm-seed/'
+repo "$work/binaries" "release/build.sh=exit 0" \
+  "packages/a/package.json=$(json '{"name":"@digitaplatform/a","version":"1.0.0","publishConfig":{"registry":"https://registry.test/v2/npm/"}}')"
+(cd "$work/binaries" && MODE='' && scan_packages "$work/list" >/dev/null && echo "$MODE") > "$work/mode" || fail 'a tag tracking release/build.sh was refused at its scan'
+[ "$(cat "$work/mode")" = binaries ] && [ ! -s "$work/list" ] || fail "PLANTED DEFECT: a tag tracking release/build.sh was scanned as '$(cat "$work/mode")' or listed its packages"
+git -C "$work/binaries" rm -q --cached release/build.sh && git -C "$work/binaries" commit -q -m untrack
+(cd "$work/binaries" && MODE='' && scan_packages "$work/list" >/dev/null && echo "$MODE") > "$work/mode" || fail 'a tag with an untracked release/build.sh was refused'
+[ "$(cat "$work/mode")" = source ] || fail "PLANTED INNOCENT: a release/build.sh git does not track made the scan '$(cat "$work/mode")', not source"
+ok 'a tag that tracks release/build.sh publishes its binaries and nothing else; an untracked one changes nothing'
+
+# ── build_binaries: what release/build.sh leaves is what is published ──────────────────────
+build() { # $1 the body of release/build.sh -> the exit status of build_binaries, its output in $work/build.out
+  rm -rf "$work/bb" "$work/bb-out"; repo "$work/bb" "release/build.sh=$1"
+  (cd "$work/bb" && RELEASE_TAG=1.0.000-stable-20261014000000 build_binaries "$work/bb-out") > "$work/build.out" 2>&1
+}
+build 'printf a > "$2/tool-$1-linux-x64"; printf b > "$2/tool-rest-$1-linux-x64"' \
+  || fail "PLANTED INNOCENT: two binaries release/build.sh left were refused: $(cat "$work/build.out")"
+[ "$(ls "$work/bb-out" | tr '\n' ' ')" = 'tool-1.0.000-stable-20261014000000-linux-x64 tool-rest-1.0.000-stable-20261014000000-linux-x64 ' ] \
+  || fail "release/build.sh was not handed the tag and the folder: $(ls "$work/bb-out")"
+build 'mkdir "$2/folder"' && fail 'PLANTED DEFECT: a folder release/build.sh left was taken for a binary'
+grep -qF 'left folder, which is no regular file' "$work/build.out" || fail "the folder was not named: $(cat "$work/build.out")"
+build 'printf a > "$2/x"; ln -s x "$2/link"' && fail 'PLANTED DEFECT: a link release/build.sh left was taken for a binary'
+build 'printf a > "$2/.hidden"' && fail 'PLANTED DEFECT: a hidden file release/build.sh left was taken for a binary'
+build 'exit 0' && fail 'PLANTED DEFECT: a release/build.sh that left nothing passed'
+build 'exit 3' && fail 'PLANTED DEFECT: a release/build.sh that failed passed'
+ok 'the binaries are the regular files release/build.sh leaves; a folder, a link, a hidden file, nothing or a failed build are refused'
 
 # ── reviewed_commit: only the default branch is published ──────────────────────────────────
 repo "$work/rev" \
@@ -374,6 +401,42 @@ REGISTRY_PASSWORD=wrong push "$work/p6" && fail 'PLANTED DEFECT: a push the regi
 grep -qF 'answered 401' "$work/push.out" || fail "a refused login does not name the answer: $(cat "$work/push.out")"
 ok 'a blob that reads back other bytes and a refused login fail the push'
 
+# ── binaries_push: one manifest <owner>/<repository>:<tag>, a layer per binary ─────────────
+export BINARIES_REPOSITORY=simetrixch/ansiwise-cli RELEASE_TAG=1.0.000-stable-20261014000000
+binaries() { binaries_push "$1" "$work/bin-tmp" > "$work/push.out" 2>&1; } # $1 the folder of binaries
+mkdir -p "$work/b1"; printf 'one' > "$work/b1/ansiwise-$RELEASE_TAG-linux-x64"; printf 'two' > "$work/b1/ansiwise-rest-$RELEASE_TAG-linux-x64"
+binaries "$work/b1" || fail "PLANTED INNOCENT: two new binaries were not published: $(cat "$work/push.out")"
+manifest="$(command curl -sS -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" "http://127.0.0.1:$PORT/v2/simetrixch/ansiwise-cli/manifests/$RELEASE_TAG")"
+for f in "$work/b1"/*; do
+  hex="$(sha256sum "$f" | cut -d' ' -f1)"
+  grep -qxF "publish: ${f##*/} https://registry.test/v2/simetrixch/ansiwise-cli/blobs/sha256:${hex} sha256:${hex} published" "$work/push.out" \
+    || fail "the log carries no line for ${f##*/} with its blob URL and digest: $(cat "$work/push.out")"
+  [ "$(jq -r --arg d "sha256:$hex" '.layers[] | select(.digest == $d) | .mediaType + " " + .annotations["org.opencontainers.image.title"]' <<<"$manifest")" \
+    = "application/octet-stream ${f##*/}" ] || fail "the manifest carries no octet-stream layer titled ${f##*/}: $manifest"
+done
+[ "$(jq -r '[(.layers | length), .artifactType, .config.mediaType, .annotations["org.opencontainers.image.revision"], .annotations["org.opencontainers.image.source"], .annotations["org.opencontainers.image.version"]] | join(" ")' <<<"$manifest")" \
+  = "2 application/vnd.simetrixch.binaries.v1 application/vnd.oci.empty.v1+json ${COMMIT} ${REPO_URL} ${RELEASE_TAG}" ] \
+  || fail "the manifest is not two layers with the artifact type, an empty config, revision, source and version: $manifest"
+ok 'the binaries of a release are one manifest <owner>/<repository>:<tag>, a titled octet-stream layer each, logged with blob URL and digest'
+before="$(pushes)"
+binaries "$work/b1" || fail "a second run of the same binaries failed: $(cat "$work/push.out")"
+[ "$(grep -c ' reused$' "$work/push.out")" = 2 ] && [ "$(pushes)" = "$before" ] || fail "a second run pushed again or did not say reused: $(cat "$work/push.out")"
+ok 'a second run of the same binaries reuses them and pushes nothing'
+mkdir -p "$work/b2"; printf 'one' > "$work/b2/ansiwise-$RELEASE_TAG-linux-x64"; printf 'rebuilt' > "$work/b2/ansiwise-rest-$RELEASE_TAG-linux-x64"
+binaries "$work/b2" && fail 'PLANTED DEFECT: another build under a published release tag was pushed'
+grep -qF "simetrixch/ansiwise-cli:$RELEASE_TAG stands in registry.test with other binaries" "$work/push.out" || fail "the refusal does not name the release: $(cat "$work/push.out")"
+[ "$(pushes)" = "$before" ] && ! grep -q "sha256:$(printf rebuilt | sha256sum | cut -d' ' -f1)" "$work/registry/requests.log" \
+  || fail 'a refused build still pushed a blob or a manifest'
+mkdir -p "$work/b3"
+binaries "$work/b3" && fail 'PLANTED DEFECT: a build that left no binary passed'
+mkdir -p "$work/b4"; printf 'x' > "$work/b4/ansiwise-$RELEASE_TAG-linux-x64"
+RELEASE_TAG='1.0.0+build' binaries "$work/b4" && fail 'PLANTED DEFECT: a release tag that is no registry tag was pushed'
+touch "$work/registry/corrupt"
+RELEASE_TAG=1.0.001-stable-20261014000000 binaries "$work/b4" && fail 'PLANTED DEFECT: a binary that reads back with other bytes passed'
+grep -qF 'reads back' "$work/push.out" || fail "the readback refusal does not say so: $(cat "$work/push.out")"
+rm "$work/registry/corrupt"
+ok 'another build under a published tag, an empty build, a tag the registry cannot carry and a changed readback are refused'
+
 # ── the rendered Pipeline, end to end ──────────────────────────────────────────────────────
 # Every step of <unit>-publish as helm renders it, run on fixture repositories in Tekton's order, so
 # a call dropped from a step, a step that runs another function, or a task out of its order goes red
@@ -487,7 +550,7 @@ published() { # $1 name@version -> the published tarball's sha256, once its log 
   printf '%s' "$hex"
 }
 blob() { command curl -sS -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" "http://127.0.0.1:$PORT/v2/npm/digitaplatform/$1/blobs/sha256:$2"; }
-ALL='run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack ran|run: push ran|run: SUCCEEDED|'
+ALL='run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack ran|run: build-binaries skipped|run: push ran|run: SUCCEEDED|'
 STAMP=20261014000000
 origin() { repo "$1" "README.md=fixture"; } # $1 folder -> a fixture origin whose default branch master holds one commit
 commit_tag() { git -C "$1" add -A && git -C "$1" commit -q -m "$2" && git -C "$1" tag "$2"; } # $1 origin, $2 the tag
@@ -544,7 +607,7 @@ tgz "$work/e4/npm-seed/digitaplatform-seed-a-1.0.0.tgz" "$(json '{"name":"@digit
 printf '@digitaplatform/seed-a@1.0.0\tsha512-fixture\t%s\tdigita-platform:pnpm-lock.yaml@x\n' "$(sha256sum "$work/e4/npm-seed/digitaplatform-seed-a-1.0.0.tgz" | cut -d' ' -f1)" > "$work/e4/npm-seed/pins.tsv"
 commit_tag "$work/e4" "0.1.000-stable-$STAMP"
 pipeline_run "$work/e4" "0.1.000-stable-$STAMP" || fail "a tree holding only npm-seed/ failed: $(cat "$work/run.out")"
-[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed skipped|run: pack skipped|run: push skipped|run: SUCCEEDED|' ] \
+[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed skipped|run: pack skipped|run: build-binaries skipped|run: push skipped|run: SUCCEEDED|' ] \
   || fail "PLANTED DEFECT: a tree holding only npm-seed/ published its tarballs through the deleted seed path: $(tasks_ran)"
 ok 'end to end: a tree holding only npm-seed/ publishes nothing'
 
@@ -554,9 +617,23 @@ pipeline_run "$work/e7" "0.1.000-stable-$STAMP" && fail 'PLANTED DEFECT: a packa
 [ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan failed at scan|' ] || fail "a package that names another registry did not stop the run at its scan: $(tasks_ran)"
 origin "$work/e8"; printf 'x\n' > "$work/e8/main.go"; commit_tag "$work/e8" "0.1.000-stable-$STAMP"
 pipeline_run "$work/e8" "0.1.000-stable-$STAMP" || fail "PLANTED INNOCENT: a repository with nothing to publish failed: $(cat "$work/run.out")"
-[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed skipped|run: pack skipped|run: push skipped|run: SUCCEEDED|' ] \
+[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed skipped|run: pack skipped|run: build-binaries skipped|run: push skipped|run: SUCCEEDED|' ] \
   || fail "a repository with nothing to publish took another course: $(tasks_ran)"
 pipeline_run "$work/e8" "0.1.000-stable-$STAMP" https://github.com/digitaplatform/other.git && fail 'PLANTED DEFECT: a webhook that names another repository passed the gate'
 [ "$(tasks_ran)" = 'run: gate failed at gate|' ] || fail "another repository was not stopped at the gate before the clone: $(tasks_ran)"
 ok 'end to end: another registry stops the run at its scan, nothing to publish skips the rest, and another repository stops it at the gate'
+
+# A binaries release: release/build.sh writes two files named for the tag it is handed.
+origin "$work/e9"; mkdir -p "$work/e9/release"
+printf '%s\n' 'printf "%s" "a-$1" > "$2/tool-$1-linux-x64"' 'printf "%s" "b-$1" > "$2/tool-rest-$1-linux-x64"' > "$work/e9/release/build.sh"
+commit_tag "$work/e9" "0.2.000-stable-$STAMP"
+pipeline_run "$work/e9" "0.2.000-stable-$STAMP" || fail "PLANTED INNOCENT: a binaries release on the default branch did not publish: $(cat "$work/run.out")"
+[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack skipped|run: build-binaries ran|run: push ran|run: SUCCEEDED|' ] \
+  || fail "the binaries run took another course: $(tasks_ran)"
+for pair in tool=a tool-rest=b; do
+  name="${pair%=*}"; hex="$(printf '%s' "${pair#*=}-0.2.000-stable-$STAMP" | sha256sum | cut -d' ' -f1)"
+  grep -qxF "publish: $name-0.2.000-stable-$STAMP-linux-x64 https://${rendered_registry}/v2/digitaplatform/digita-deploy/blobs/sha256:${hex} sha256:${hex} published" "$work/run.out" \
+    || fail "the binaries run did not publish $name under <owner>/<repository>:<tag> with its log line: $(cat "$work/run.out")"
+done
+ok 'end to end: a binaries release is gated, cloned, scanned, reviewed, built by release/build.sh and published as one manifest under <owner>/<repository>'
 echo "pipeline-publish.test: OK"

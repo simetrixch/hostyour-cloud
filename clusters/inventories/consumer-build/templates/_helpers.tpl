@@ -11,8 +11,9 @@ empty one must fail the render, not produce anonymous objects.
 {{/*
 consumer-build.builds — the ATTESTED builds[] of the unit, decoded from the
 JSON string the fan-out stamps (unit.buildsJson). These are the build NAMES
-from registrations/<unit>/build.yaml — under flat image naming each name IS
-the zot repo the release pushes to.
+from registrations/<unit>/build.yaml — each name IS the zot repo the release
+pushes to, under the owner's prefix for the platform's own builds alone
+(templates/pipeline-release.yaml, the push path).
 */}}
 {{- define "consumer-build.builds" -}}
 {{- required "consumer-build: unit.buildsJson is required (stamped by the fan-out ApplicationSet)" .Values.unit.buildsJson | fromJsonArray | toJson -}}
@@ -21,9 +22,9 @@ the zot repo the release pushes to.
 {{/*
 consumer-build.repoOwner — the organisation that owns the unit's repository, read off
 unit.repoURL (https://github.com/<owner>/<repo>.git). It is the npm scope the unit's packages
-are published under: the publish pipeline publishes a package of this scope and no other
-(templates/pipeline-publish.yaml), so the scope is a fact of the registration and never a value
-of this chart.
+are published under, and the prefix the platform's own builds are pushed under: the publish
+pipeline publishes a package of this scope and no other (templates/pipeline-publish.yaml), so the
+scope is a fact of the registration and never a value of this chart.
 */}}
 {{- define "consumer-build.repoOwner" -}}
 {{- $url := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
