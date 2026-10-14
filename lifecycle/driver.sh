@@ -163,10 +163,8 @@ BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?
 # name nobody typed. install-machine.sh strips it; this refuses it, because what arrives is
 # what matters.
 #
-# COUNTED RATHER THAN MATCHED, because `grep` on a Windows workstation opens a file in
-# text mode and strips the very byte it is being asked about — so the obvious spelling
-# is green on the machine where the file is WRITTEN and only works on the one where it
-# is read. `tr` reads bytes on both.
+# COUNTED WITH `tr`, which reads bytes and nothing else, so no tool's reading of a line
+# ending stands between the file and the check.
 [ "$(tr -dc '\r' < "$CONFIG" | wc -c)" -eq 0 ] \
   || die 'the config carries carriage returns, so every value would end in one. Write it with Unix line endings' 65
 

@@ -43,8 +43,7 @@ fail() { printf '\n  %s\n\n' "$1" >&2; exit "${2:-65}"; }
 [ -r "$FILE" ]   || fail "there is no config at $FILE. Copy config.example.env, fill it in, and make it readable by you alone" 66
 
 # ------------------------------------------------------- the file, and its guards
-# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
-# Windows, where a mode says nothing, and the mode everywhere else.
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: mode 600 or 400.
 require_owner_only "$FILE" \
   || fail "$FILE $REACH and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: $OWNER_ONLY_COMMAND" 77
 
@@ -112,8 +111,8 @@ BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 #
 # The key is tried first and the password only where the key is refused, so neither
 # case needs a flag and a re-run never asks for a password a machine does not take.
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 PROBE=$(ssh "${BASE[@]}" -n -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)

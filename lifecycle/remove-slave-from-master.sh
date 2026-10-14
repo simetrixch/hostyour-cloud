@@ -244,8 +244,8 @@ fi
 # longer matches. Which account is asked with does not matter and the master's
 # own is used, because no credential of the slave's is anywhere near this act.
 PORT=22
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 ANSWER=$(ssh -n -p "$PORT" -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
              -o BatchMode=yes "$OPERATOR_USER@$SLAVE" true 2>&1)
 ANSWERED=$?
@@ -274,8 +274,7 @@ if git -C "$CONFIG_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
     || die "$CONFIG stands inside a git working tree that does not ignore it. A file of credentials belongs nowhere a commit can reach it: move it out, or name it in that tree's .gitignore" 77
 fi
 
-# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
-# Windows, where a mode says nothing, and the mode everywhere else.
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: mode 600 or 400.
 require_owner_only "$CONFIG" \
   || die "$CONFIG $REACH and carries credentials, the elevation password of the machine among them. Run: $OWNER_ONLY_COMMAND" 77
 
@@ -293,8 +292,8 @@ BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 # the case here, and the password is the exception a machine still at its birth
 # would need. The key is tried first and the password only where the key is
 # refused, so neither case needs a flag.
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 PROBE=$(ssh "${BASE[@]}" -n -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)

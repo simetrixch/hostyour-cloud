@@ -73,8 +73,8 @@ DOOR_HOST="${MACHINE_HOST:-$FQDN}"
 PORT=22
 TARGET="$OPERATOR_USER@$DOOR_HOST"
 BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new -o BatchMode=yes)
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 PROBE=$(ssh "${BASE[@]}" -n "$TARGET" true 2>&1)
 if [ $? -ne 0 ]; then
   case "$PROBE" in

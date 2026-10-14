@@ -64,13 +64,11 @@
 # port 22, so what is measured is the other verdict, that the slave is gone.
 #
 # THE OWNER-ONLY GUARD ON A CONFIG is require-owner-only.sh, which each launcher
-# sources. Windows states a file's reach as an access list and every other
-# system as a mode, and the guard reads whichever the platform it runs on keeps.
-# Its cases are driven in section FOUR with icacls, cygpath, stat and uname
-# stood in for by stubs, so they run and answer the same on every platform, and
-# once with the real tools, after a release has rewritten a config in place. Off
-# Windows, a config of mode 644 is refused by the regeneration, install-machine,
-# the backup and the restore, each in its recorded bytes. The guard beside it —
+# sources, and it reads a file's reach as its mode. Its cases are driven in
+# section FOUR with stat stood in for by a stub, and once with the real stat,
+# after a release has rewritten a config in place. A config of mode 644 is
+# refused by the regeneration, install-machine, the backup and the restore, each
+# in its recorded bytes. The guard beside it —
 # a config standing in a git working tree that does not ignore it — is the one
 # the removal's fixture config trips, which is what lets a case run all the way
 # to the slave being asked whether it answers.
@@ -556,26 +554,15 @@ RECORDED
 # A RELEASE REWRITES PLATFORM_REF IN PLACE, in every lifecycle/config.*.env
 # beside the tree it runs in, the example excepted, and a launcher then demands
 # that the file is still owner-only. The write truncates the file where it
-# stands rather than moving a copy over it, which on Windows would carry the
-# copy's access list. So each fixture config is made owner-only with the real
-# tools of this platform, the release runs, and the guard the launchers use is
-# asked again with the same real tools. The config is named after no
-# installation, so no regeneration is started over a session, and the release
+# stands rather than moving a copy over it, which would carry the copy's mode.
+# So the fixture config is made owner-only with chmod, the release runs, and the
+# guard the launchers use is asked again with the real stat. The config is named
+# after no installation, so no regeneration is started over a session, and the release
 # names apps4, whose pin no case below reads back.
-# A FILE'S REACH IS ITS MODE everywhere but Windows, where the mode says nothing
-# and the access list answers.
-reach_is_a_mode() { [ -z "${MSYSTEM:-}" ] && [ "$(uname -o 2>/dev/null)" != 'Msys' ]; }
-make_owner_only() { # a file -> nobody but the owner reaches it, in this platform's own words
-  if ! reach_is_a_mode; then
-    icacls "$(cygpath -aw "$1")" /inheritance:r /grant:r "$USERNAME:(F)" >/dev/null
-  else
-    chmod 600 "$1"
-  fi
-}
 mkdir -p "$WORK_A/lifecycle"
 printf "PLATFORM_REF=''\n" > "$WORK_A/lifecycle/config.example.env"
 printf "PLATFORM_REF='0.0.0-alpha-19700101000000'\nFQDN='other.example.invalid'\n" > "$WORK_A/lifecycle/config.other.env"
-make_owner_only "$WORK_A/lifecycle/config.other.env"
+chmod 600 "$WORK_A/lifecycle/config.other.env"
 require_owner_only "$WORK_A/lifecycle/config.other.env" \
   || fail "the fixture config could not be made owner-only: it $REACH"
 run_bash release-platform 0.6.0 alpha apps4.example.invalid
@@ -715,23 +702,21 @@ grep -q 'is pinned at' "$OUT/a.out" || fail 'the planted copy printed no pin lin
 caught regenerate-install-branch.sh 'is pinned at'
 
 # A CONFIG OTHERS CAN READ is refused by the guard the launcher sources, before
-# anything is read out of it. Off Windows the answer is the mode, which a fixture
-# sets with chmod.
-if reach_is_a_mode; then
-  REACHABLE="$WORK/config.reachable.env"
-  printf "FQDN='apps3.example.invalid'\n" > "$REACHABLE"
-  chmod 644 "$REACHABLE"
-  run_bash regenerate-install-branch apps3.example.invalid "$REACHABLE"
-  must "regenerate: $REACHABLE is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 $REACHABLE. Nothing has been changed" \
-    'a config others can read is refused with its mode and the command that closes it'
-  [ "$A_CODE" = '77' ] || fail "a config others can read must end with 77, got $A_CODE"
-  expect 'a config of mode 644' 77 <<'RECORDED'
+# anything is read out of it. The answer is the mode, which a fixture sets with
+# chmod.
+REACHABLE="$WORK/config.reachable.env"
+printf "FQDN='apps3.example.invalid'\n" > "$REACHABLE"
+chmod 644 "$REACHABLE"
+run_bash regenerate-install-branch apps3.example.invalid "$REACHABLE"
+must "regenerate: $REACHABLE is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 $REACHABLE. Nothing has been changed" \
+  'a config others can read is refused with its mode and the command that closes it'
+[ "$A_CODE" = '77' ] || fail "a config others can read must end with 77, got $A_CODE"
+expect 'a config of mode 644' 77 <<'RECORDED'
 regenerate: apps3.example.invalid is pinned to 0.4.0-alpha-TS14 in clusters/active/apps3.example.invalid.yaml, and that is the state this brings it to
 regenerate: apps3.example.invalid carries role master in clusters/active/apps3.example.invalid.yaml, and the branch is regenerated as that; the config's ROLE seeds a first installation only
 ~~~ standard error ~~~
 regenerate: <WORK>/config.reachable.env is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 <WORK>/config.reachable.env. Nothing has been changed
 RECORDED
-fi
 
 # THE ROLE IS THE MAP'S AND NOT THE CONFIG'S, AND THE RETIRED WORD IS A MASTER. apps4's
 # branch states master+slave, written before hostyour-cloud#232; the regeneration names it,
@@ -970,146 +955,80 @@ caught remove-slave-from-master.sh 'as a slave to'
 # ===========================================================================
 # FOUR — the owner-only guard
 #
-# ONE QUESTION, AND THE PLATFORM SAYS WHERE THE ANSWER IS. On Windows a mode says
-# nothing: Git Bash mounts every drive noacl, so stat answers 644 for every
-# writable file and chmod 600 changes nothing, and the access list read with
-# icacls is what counts. Everywhere else the mode is the answer. Both branches
-# are driven here with icacls, cygpath, stat and uname stood in for by stubs on
-# the path, so every case runs on every platform and answers the same. MSYSTEM
-# is set to pick the Windows branch and set EMPTY to leave it, because the MSYS
-# runtime puts the variable back when it is merely unset. Section ONE asked the
-# real tools once already, after the release's rewrite.
+# THE ANSWER IS THE MODE, 600 or 400. The guard is driven here with stat stood
+# in for by a stub on the path, so every case answers the same whatever mode
+# the probe really has. Section ONE asked the real stat once already, after the
+# release's rewrite.
 #
-# WHAT PROVES THE STUBS ARE THE ONES ANSWERING: on Windows the real icacls would
-# refuse the probe, which inherits its directory's list, so a pass on the first
-# case can only come from the stub; and the real stat there answers 644, so a
-# pass on mode 600 can only come from the stub. On Linux and macOS there is no
-# icacls and no cygpath at all.
+# WHAT PROVES THE STUB IS THE ONE ANSWERING: the probe has one real mode, and
+# the guard passes it twice and refuses it once.
 # ===========================================================================
 STUB="$WORK/stub"
-STUB_PATH="$STUB"
-if command -v cygpath >/dev/null 2>&1; then STUB_PATH="$(cygpath -u "$STUB")"; fi
 mkdir -p "$STUB"
-# icacls prints the path it was given, a space and the first entry, then one
-# entry per line under it, a blank line and a count — the shape measured on
-# Windows 11. The entries come from the file STUB_ACL names.
-cat > "$STUB/icacls" <<'EOF'
-#!/usr/bin/env bash
-first=1
-while IFS= read -r entry; do
-  if [ "$first" = 1 ]; then printf '%s %s\n' "$1" "$entry"; first=0; else printf '%*s %s\n' "${#1}" '' "$entry"; fi
-done < "$STUB_ACL"
-printf '\nSuccessfully processed 1 files; Failed processing 0 files\n'
-EOF
-cat > "$STUB/cygpath" <<'EOF'
-#!/usr/bin/env bash
-shift $(($# - 1))
-printf '%s\n' "$1"
-EOF
 cat > "$STUB/stat" <<'EOF'
 #!/usr/bin/env bash
-case "$2" in '%U') printf 'mkadm\n' ;; '%a') printf '%s\n' "$STUB_MODE" ;; *) exit 1 ;; esac
-EOF
-cat > "$STUB/uname" <<'EOF'
-#!/usr/bin/env bash
-printf 'GNU/Linux\n'
+case "$2" in '%a') printf '%s\n' "$STUB_MODE" ;; *) exit 1 ;; esac
 EOF
 chmod +x "$STUB"/*
 PROBE="$WORK/probe.env"
 printf "X='1'\n" > "$PROBE"
 
-guard() { # MSYSTEM value, the stubbed access list, the stubbed mode -> A_CODE, a.out, a.err
-  printf '%s\n' "$2" > "$STUB/acl"
+guard() { # the stubbed mode -> A_CODE, a.out, a.err
   A_CODE=0
-  MSYSTEM="$1" USERNAME=mkadm STUB_ACL="$STUB/acl" STUB_MODE="$3" PATH="$STUB_PATH:$PATH" \
+  STUB_MODE="$1" PATH="$STUB:$PATH" \
     bash -c '. "$1/require-owner-only.sh"; require_owner_only "$2" && echo passes || { echo "refused: $2 $REACH. Run: $OWNER_ONLY_COMMAND"; exit 1; }' _ "$HERE" "$PROBE" \
     > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
 }
-ICACLS_LINE="icacls \"$PROBE\" /inheritance:r /grant:r \"mkadm:(F)\""
 
-guard MINGW64 'VPC1\mkadm:(F)' 644
-must 'passes' 'the owner alone passes on Windows, whatever the mode says'
-[ "$A_CODE" = '0' ] || fail "the owner alone must pass, got $A_CODE"
+guard 600
+must 'passes' 'mode 600 passes'
+[ "$A_CODE" = '0' ] || fail "mode 600 must pass, got $A_CODE"
 [ ! -s "$OUT/a.err" ] || fail "the guard wrote to standard error: $(cat "$OUT/a.err")"
 
-guard MINGW64 $'BUILTIN\\Administrators:(I)(F)\nNT AUTHORITY\\SYSTEM:(I)(F)\nVPC1\\mkadm:(I)(F)' 644
-must 'passes' 'the owner beside SYSTEM and Administrators passes, inherited or not'
-[ "$A_CODE" = '0' ] || fail "owner, SYSTEM and Administrators must pass, got $A_CODE"
-
-guard MINGW64 $'vpc1\\MKADM:(F)\nnt authority\\system:(F)' 644
-must 'passes' 'the names are compared without case, the way Windows compares them'
-[ "$A_CODE" = '0' ] || fail "an account name in another case must still be the owner, got $A_CODE"
-
-guard MINGW64 $'Everyone:(R)\nVPC1\\mkadm:(F)' 644
-must "refused: $PROBE can be read by Everyone. Run: $ICACLS_LINE" \
-  'a stranger is refused by name, with the icacls line that closes the file'
-[ "$A_CODE" = '1' ] || fail "a stranger must refuse, got $A_CODE"
-
-guard MINGW64 $'VPC1\\CodexSandboxUsers:(I)(M)\nVPC1\\CodexSandboxUsers:(OI)(CI)(IO)(M)\nS-1-5-21-2543673324-2585280709-58404866-2868637010:(I)(M)\nNT AUTHORITY\\SYSTEM:(I)(F)\nBUILTIN\\Administrators:(I)(F)\nVPC1\\mkadm:(I)(F)' 644
-must "can be read by VPC1\\CodexSandboxUsers, S-1-5-21-2543673324-2585280709-58404866-2868637010. Run:" \
-  'every stranger is named once, in the order icacls lists them, and an unresolved SID is a stranger too'
-[ "$A_CODE" = '1' ] || fail "an inherited list with strangers must refuse, got $A_CODE"
-
-guard MINGW64 '' 644
-must "refused: $PROBE has an access list icacls did not answer. Run: $ICACLS_LINE" \
-  'an icacls that lists nobody is a refusal, not a pass'
-[ "$A_CODE" = '1' ] || fail "an empty icacls answer must refuse, got $A_CODE"
-
-guard '' 'Everyone:(R)' 600
-must 'passes' 'off Windows, mode 600 passes and the access list is never read'
-[ "$A_CODE" = '0' ] || fail "mode 600 must pass off Windows, got $A_CODE"
-
-guard '' 'VPC1\mkadm:(F)' 400
+guard 400
 must 'passes' 'and so does mode 400'
-[ "$A_CODE" = '0' ] || fail "mode 400 must pass off Windows, got $A_CODE"
+[ "$A_CODE" = '0' ] || fail "mode 400 must pass, got $A_CODE"
 
-guard '' 'VPC1\mkadm:(F)' 644
-must "refused: $PROBE is mode 644. Run: chmod 600 $PROBE" 'off Windows, mode 644 is refused with the mode sentence as it stands'
-[ "$A_CODE" = '1' ] || fail "mode 644 must refuse off Windows, got $A_CODE"
-ok 'the guard: owner alone, owner with SYSTEM and Administrators, and another case pass; a stranger, an inherited list and an empty answer refuse by name with the icacls line; off Windows 600 and 400 pass and 644 refuses with the mode sentence'
+guard 644
+must "refused: $PROBE is mode 644. Run: chmod 600 $PROBE" 'mode 644 is refused with the mode sentence as it stands'
+[ "$A_CODE" = '1' ] || fail "mode 644 must refuse, got $A_CODE"
+ok 'the guard: 600 and 400 pass, and 644 refuses with the mode sentence'
 
 # ── the three launchers refuse in their own sentence, from the one guard ────
 # EACH LAUNCHER SAYS WHICH CREDENTIALS THE FILE CARRIES and the guard says who
-# can read it and what to run. The stranger case is driven through each of the
-# three, and the mode case through one, so the sentences are measured as a
-# person meets them and not only as the pieces they are built from.
-printf 'Everyone:(R)\nVPC1\\mkadm:(F)\n' > "$STUB/acl"
-run_guarded() { # the directory to stand in, MSYSTEM value, the stubbed mode, then the script and its arguments
-  local in="$1" msystem="$2" mode="$3"; shift 3
+# can read it and what to run. The mode case is driven through each of the
+# three, so the sentences are measured as a person meets them and not only as
+# the pieces they are built from.
+run_guarded() { # the directory to stand in, the stubbed mode, then the script and its arguments
+  local in="$1" mode="$2"; shift 2
   A_CODE=0
-  ( cd "$in" && MSYSTEM="$msystem" USERNAME=mkadm STUB_ACL="$STUB/acl" STUB_MODE="$mode" PATH="$STUB_PATH:$PATH" bash "$@" ) \
+  ( cd "$in" && STUB_MODE="$mode" PATH="$STUB:$PATH" bash "$@" ) \
     > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
 }
-run_guarded "$WORK_A" MINGW64 644 "$HERE/regenerate-install-branch.sh" apps3.example.invalid "$PROBE"
-must "regenerate: $PROBE can be read by Everyone and carries credentials, the elevation password of the machine among them. Run: $ICACLS_LINE. Nothing has been changed" \
-  'the regeneration refuses a stranger in its own sentence'
-[ "$A_CODE" = '77' ] || fail "the regeneration must refuse a readable config with 77, got $A_CODE"
-
-run_guarded "$WORK_A" MINGW64 644 "$HERE/install-machine.sh" "$PROBE"
-must "$PROBE can be read by Everyone and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: $ICACLS_LINE" \
-  'the launcher refuses a stranger in its own sentence'
+run_guarded "$WORK_A" 644 "$HERE/install-machine.sh" "$PROBE"
+must "$PROBE is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 $PROBE" \
+  'the launcher refuses mode 644 in its own sentence'
 [ "$A_CODE" = '77' ] || fail "the launcher must refuse a readable config with 77, got $A_CODE"
 
 # The removal reads the master's branch and asks the slave first, so its config
 # stands outside every git tree and the guard is the refusal it reaches.
 REMOVECFG="$WORK/remove-config.env"
 cp "$MASTERCFG" "$REMOVECFG"
-run_guarded "$SLAVEWORK_A" MINGW64 644 "$HERE/remove-slave-from-master.sh" apps7.example.invalid "$REMOVECFG"
-must "remove-slave: $REMOVECFG can be read by Everyone and carries credentials, the elevation password of the machine among them. Run: icacls \"$REMOVECFG\" /inheritance:r /grant:r \"mkadm:(F)\". Nothing has been changed" \
-  'the removal refuses a stranger in its own sentence'
+run_guarded "$SLAVEWORK_A" 644 "$HERE/remove-slave-from-master.sh" apps7.example.invalid "$REMOVECFG"
+must "remove-slave: $REMOVECFG is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 $REMOVECFG. Nothing has been changed" \
+  'the removal refuses mode 644 in its own sentence'
 [ "$A_CODE" = '77' ] || fail "the removal must refuse a readable config with 77, got $A_CODE"
 
-run_guarded "$WORK_A" '' 644 "$HERE/regenerate-install-branch.sh" apps3.example.invalid "$PROBE"
+run_guarded "$WORK_A" 644 "$HERE/regenerate-install-branch.sh" apps3.example.invalid "$PROBE"
 must "regenerate: $PROBE is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 $PROBE. Nothing has been changed" \
-  'off Windows the regeneration refuses with the mode sentence as it stands'
+  'the regeneration refuses mode 644 in its own sentence'
 [ "$A_CODE" = '77' ] || fail "the regeneration must refuse mode 644 with 77, got $A_CODE"
 ok 'the three launchers refuse a readable config in their own sentence, built from the one guard'
 
 # ── install-machine refuses in its recorded sentence ─────────────────────────
 # install-machine refuses a missing config and a config others can read in the
 # words and with the code its cases record, and the sentence carries no exit
-# code. The missing config runs on every platform; the readable one where a
-# file's reach is its mode.
+# code.
 IMMISSING="$WORK/there-is-no-install-config.env"
 run_bash install-machine "$IMMISSING"
 must "there is no config at $IMMISSING. Copy config.example.env, fill it in, and make it readable by you alone" \
@@ -1136,36 +1055,34 @@ A_CODE=0
 grep -q 'readable by you only' "$OUT/a.err" \
   || fail 'the planted install-machine printed no planted line — the probe was aimed at a line the fixture does not reach'
 caught install-machine.sh 'readable by you only'
-if reach_is_a_mode; then
-  IMREACH="$WORK/install-machine.env"
-  printf "X='1'\n" > "$IMREACH"
-  chmod 644 "$IMREACH"
-  run_bash install-machine "$IMREACH"
-  must "$IMREACH is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 $IMREACH" \
-    'install-machine: a config others can read is refused with its mode and the command that closes it'
-  [ "$A_CODE" = '77' ] || fail "install-machine: a config others can read must end with 77, got $A_CODE"
-  expect 'install-machine: a config of mode 644' 77 <<'RECORDED'
+IMREACH="$WORK/install-machine.env"
+printf "X='1'\n" > "$IMREACH"
+chmod 644 "$IMREACH"
+run_bash install-machine "$IMREACH"
+must "$IMREACH is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 $IMREACH" \
+  'install-machine: a config others can read is refused with its mode and the command that closes it'
+[ "$A_CODE" = '77' ] || fail "install-machine: a config others can read must end with 77, got $A_CODE"
+expect 'install-machine: a config of mode 644' 77 <<'RECORDED'
 ~~~ standard error ~~~
 
   <WORK>/install-machine.env is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 <WORK>/install-machine.env
 
 RECORDED
 
-  # A RELATIVE PATH, as a person types it, is named as it was given; an absolute
-  # path could not tell that from a path the launcher resolved first.
-  printf "X='1'\n" > "$WORK_A/install-machine-relative.env"
-  chmod 644 "$WORK_A/install-machine-relative.env"
-  run_bash install-machine install-machine-relative.env
-  must "install-machine-relative.env is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 install-machine-relative.env" \
-    'install-machine: a config named by a relative path is named as it was given'
-  must_not "$WORK_A/install-machine-relative.env" 'install-machine: the launcher does not resolve the path it names'
-  expect 'install-machine: a config of mode 644 named by a relative path' 77 <<'RECORDED'
+# A RELATIVE PATH, as a person types it, is named as it was given; an absolute
+# path could not tell that from a path the launcher resolved first.
+printf "X='1'\n" > "$WORK_A/install-machine-relative.env"
+chmod 644 "$WORK_A/install-machine-relative.env"
+run_bash install-machine install-machine-relative.env
+must "install-machine-relative.env is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 install-machine-relative.env" \
+  'install-machine: a config named by a relative path is named as it was given'
+must_not "$WORK_A/install-machine-relative.env" 'install-machine: the launcher does not resolve the path it names'
+expect 'install-machine: a config of mode 644 named by a relative path' 77 <<'RECORDED'
 ~~~ standard error ~~~
 
   install-machine-relative.env is mode 644 and carries ten credentials, four of them tokens with WRITE access to your repositories. Run: chmod 600 install-machine-relative.env
 
 RECORDED
-fi
 
 # ===========================================================================
 # FIVE — abandon-installation, against a fixture of an installation that is gone
@@ -1336,8 +1253,6 @@ case "$method $path" in
 esac
 EOF
 chmod +x "$ASTUB/curl"
-ASTUB_PATH="$ASTUB"
-if command -v cygpath >/dev/null 2>&1; then ASTUB_PATH="$(cygpath -u "$ASTUB")"; fi
 
 # THE ZONES, one table each, as they stand before the act. The first column is
 # the record id the act has to delete by.
@@ -1373,7 +1288,7 @@ ok "fixture built — an origin and a deploy repository carrying one installatio
 run_abandon_bash() {
   local answer="$1"; shift
   A_CODE=0
-  ( cd "$AWORK_A" && export GIT_CONFIG_GLOBAL="$ABANDON/gitconfig-a" ABANDON_STUB="$ABANDON/state-a" PATH="$ASTUB_PATH:$PATH" \
+  ( cd "$AWORK_A" && export GIT_CONFIG_GLOBAL="$ABANDON/gitconfig-a" ABANDON_STUB="$ABANDON/state-a" PATH="$ASTUB:$PATH" \
     && printf '%s\n' "$answer" | bash "$HERE/abandon-installation.sh" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
 }
 untouched() { # what was being checked -> the origin, the deploy repository and every zone table stand as seeded
@@ -1488,7 +1403,7 @@ PLANTED_A="$WORK/planted-abandon.sh"
 sed 's/keeps its books on branch/keeps its books at branch/' "$HERE/abandon-installation.sh" > "$PLANTED_A"
 grep -q 'keeps its books at branch' "$PLANTED_A" || fail 'the planted line was not planted — the probe proves nothing'
 A_CODE=0
-( cd "$AWORK_A" && export GIT_CONFIG_GLOBAL="$ABANDON/gitconfig-a" ABANDON_STUB="$ABANDON/state-a" PATH="$ASTUB_PATH:$PATH" \
+( cd "$AWORK_A" && export GIT_CONFIG_GLOBAL="$ABANDON/gitconfig-a" ABANDON_STUB="$ABANDON/state-a" PATH="$ASTUB:$PATH" \
   && printf 'no\n' | bash "$PLANTED_A" apps6.example.invalid "$ACFG" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
 grep -q 'keeps its books at branch' "$OUT/a.out" || fail 'the planted copy printed no books line — the probe was aimed at a line the fixture does not reach'
 caught abandon-installation.sh 'keeps its books at branch'
@@ -1731,8 +1646,6 @@ esac
 exit 0
 EOF
 chmod +x "$GSTUB/curl" "$GSTUB/browser"
-GSTUB_PATH="$GSTUB"
-if command -v cygpath >/dev/null 2>&1; then GSTUB_PATH="$(cygpath -u "$GSTUB")"; fi
 
 seed_github() { # the state directory, the permissions the conversion answers, the installation's state
   mkdir -p "$1"
@@ -1751,12 +1664,12 @@ seed_config() { # a directory -> config.apps6.env there, owner-only, with the th
     echo "GITHUB_APP_ID=''"
     echo "GITHUB_APP_INSTALLATION_ID=''"
   } > "$1/config.apps6.env"
-  make_owner_only "$1/config.apps6.env"
+  chmod 600 "$1/config.apps6.env"
   require_owner_only "$1/config.apps6.env" || fail "the fixture config under $1 could not be made owner-only: it $REACH"
 }
 run_app_bash() {
   A_CODE=0
-  ( cd "$GHAPP/a" && export GITHUB_STUB="$GHAPP/state-a" GITHUB_PUB="$GHAPP/pub.pem" GITHUB_PEM_JSON="$GHAPP/pem.json" REAL_CURL="$REAL_CURL" BROWSER=browser PATH="$GSTUB_PATH:$PATH" \
+  ( cd "$GHAPP/a" && export GITHUB_STUB="$GHAPP/state-a" GITHUB_PUB="$GHAPP/pub.pem" GITHUB_PEM_JSON="$GHAPP/pem.json" REAL_CURL="$REAL_CURL" BROWSER=browser PATH="$GSTUB:$PATH" \
     && bash "$HERE/create-github-app.sh" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
 }
 config_line() { # the key -> the value of that key in the config
@@ -1834,9 +1747,8 @@ RECORDED
 [ ! -f "$GHAPP/state-a/opened" ] || fail 'a refusal before the browser still opened one'
 
 # ── the owner-only guard, before the browser ────────────────────────────────
-printf 'Everyone:(R)\nVPC1\\mkadm:(F)\n' > "$STUB/acl"
-run_guarded "$GHAPP/a" MINGW64 644 "$HERE/create-github-app.sh" config.apps6.env
-must "create-github-app: config.apps6.env can be read by Everyone and is where the App's private key lands. Run: icacls \"config.apps6.env\" /inheritance:r /grant:r \"mkadm:(F)\". Nothing has been changed" \
+run_guarded "$GHAPP/a" 644 "$HERE/create-github-app.sh" config.apps6.env
+must "create-github-app: config.apps6.env is mode 644 and is where the App's private key lands. Run: chmod 600 config.apps6.env. Nothing has been changed" \
   'a readable config is refused before the browser opens, in the act`s own sentence'
 [ "$A_CODE" = '77' ] || fail "a readable config must refuse with 77, got $A_CODE"
 [ ! -f "$GHAPP/state-a/opened" ] || fail 'a readable config was refused and the browser was still opened'
@@ -1992,9 +1904,9 @@ sed 's/so the App stands and this run installs it/so the App stands and this run
 grep -q 'this run will install it' "$PLANTED_G" || fail 'the planted line was not planted — the probe proves nothing'
 seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" absent-then-all
 sed -i.bak "s/^GITHUB_APP_INSTALLATION_ID=.*/GITHUB_APP_INSTALLATION_ID=''/" "$GHAPP/a/config.apps6.env" && rm -f "$GHAPP/a/config.apps6.env.bak"
-make_owner_only "$GHAPP/a/config.apps6.env"
+chmod 600 "$GHAPP/a/config.apps6.env"
 A_CODE=0
-( cd "$GHAPP/a" && export GITHUB_STUB="$GHAPP/state-a" GITHUB_PUB="$GHAPP/pub.pem" GITHUB_PEM_JSON="$GHAPP/pem.json" REAL_CURL="$REAL_CURL" BROWSER=browser PATH="$GSTUB_PATH:$PATH" \
+( cd "$GHAPP/a" && export GITHUB_STUB="$GHAPP/state-a" GITHUB_PUB="$GHAPP/pub.pem" GITHUB_PEM_JSON="$GHAPP/pem.json" REAL_CURL="$REAL_CURL" BROWSER=browser PATH="$GSTUB:$PATH" \
   && bash "$PLANTED_G" config.apps6.env ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
 grep -q 'this run will install it' "$OUT/a.out" || fail 'the planted copy printed no installing line — the probe was aimed at a line the fixture does not reach'
 caught create-github-app.sh 'this run will install it'
@@ -2027,20 +1939,18 @@ MCFG="$MASTER/config.master.env"
   echo "STORAGE_BOX_PASSWORD='p'"
   echo "BACKUP_PASSPHRASE='s'"
 } > "$MCFG"
-make_owner_only "$MCFG"
+chmod 600 "$MCFG"
 MNOPASS="$MASTER/config.nopass.env"
 grep -v '^BACKUP_PASSPHRASE=' "$MCFG" > "$MNOPASS"
-make_owner_only "$MNOPASS"
+chmod 600 "$MNOPASS"
 MNOBOX="$MASTER/config.nobox.env"
 grep -v '^STORAGE_BOX_USER=' "$MCFG" > "$MNOBOX"
-make_owner_only "$MNOBOX"
+chmod 600 "$MNOBOX"
 MNOCONFIG="$MASTER/there-is-no-config.env"
-# A config others can read, by its mode: off Windows alone, where the mode is the answer.
+# A config others can read, by its mode.
 MREACH="$MASTER/config.reach.env"
-if reach_is_a_mode; then
-  cp "$MCFG" "$MREACH"
-  chmod 644 "$MREACH"
-fi
+cp "$MCFG" "$MREACH"
+chmod 644 "$MREACH"
 
 run_master_bash() { # script base name, then its arguments
   local base="$1"; shift
@@ -2092,36 +2002,34 @@ restore: <WORK>/master/config.nopass.env states no BACKUP_PASSPHRASE, and a back
 RECORDED
   esac
 
-  if reach_is_a_mode; then
-    run_master_bash "$act" "$MREACH"
-    must "$MREACH is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 $MREACH. Nothing has been changed" \
-      "$act: a config others can read is refused with its mode and the command that closes it"
-    [ "$A_CODE" = '77' ] || fail "$act: a config others can read must end with 77, got $A_CODE"
-    case "$act" in
-      master-backup) expect "$act: a config of mode 644" 77 <<'RECORDED' ;;
+  run_master_bash "$act" "$MREACH"
+  must "$MREACH is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 $MREACH. Nothing has been changed" \
+    "$act: a config others can read is refused with its mode and the command that closes it"
+  [ "$A_CODE" = '77' ] || fail "$act: a config others can read must end with 77, got $A_CODE"
+  case "$act" in
+    master-backup) expect "$act: a config of mode 644" 77 <<'RECORDED' ;;
 ~~~ standard error ~~~
 backup: <WORK>/master/config.reach.env is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 <WORK>/master/config.reach.env. Nothing has been changed
 RECORDED
-      master-restore) expect "$act: a config of mode 644" 77 <<'RECORDED' ;;
+    master-restore) expect "$act: a config of mode 644" 77 <<'RECORDED' ;;
 ~~~ standard error ~~~
 restore: <WORK>/master/config.reach.env is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 <WORK>/master/config.reach.env. Nothing has been changed
 RECORDED
-    esac
+  esac
 
-    # The planted defect for the guard: a copy of the launcher and its driver beside a
-    # guard with one word changed. The refusal must carry the changed word, which proves
-    # the launcher reads the guard beside itself, and differ from the recorded bytes.
-    mkdir -p "$MASTER/planted-guard"
-    cp "$HERE/$act.sh" "$HERE/$act-driver.sh" "$MASTER/planted-guard/"
-    sed 's/is mode /has mode /' "$HERE/require-owner-only.sh" > "$MASTER/planted-guard/require-owner-only.sh"
-    grep -q 'has mode ' "$MASTER/planted-guard/require-owner-only.sh" \
-      || fail 'the planted line was not planted in require-owner-only.sh — the probe proves nothing'
-    A_CODE=0
-    ( cd "$MASTER" && bash "$MASTER/planted-guard/$act.sh" "$MREACH" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
-    grep -q "$MREACH has mode 644" "$OUT/a.err" \
-      || fail "$act beside the planted guard printed no planted mode line — it does not read the guard beside itself"
-    caught "the guard beside $act.sh" 'has mode 644'
-  fi
+  # The planted defect for the guard: a copy of the launcher and its driver beside a
+  # guard with one word changed. The refusal must carry the changed word, which proves
+  # the launcher reads the guard beside itself, and differ from the recorded bytes.
+  mkdir -p "$MASTER/planted-guard"
+  cp "$HERE/$act.sh" "$HERE/$act-driver.sh" "$MASTER/planted-guard/"
+  sed 's/is mode /has mode /' "$HERE/require-owner-only.sh" > "$MASTER/planted-guard/require-owner-only.sh"
+  grep -q 'has mode ' "$MASTER/planted-guard/require-owner-only.sh" \
+    || fail 'the planted line was not planted in require-owner-only.sh — the probe proves nothing'
+  A_CODE=0
+  ( cd "$MASTER" && bash "$MASTER/planted-guard/$act.sh" "$MREACH" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  grep -q "$MREACH has mode 644" "$OUT/a.err" \
+    || fail "$act beside the planted guard printed no planted mode line — it does not read the guard beside itself"
+  caught "the guard beside $act.sh" 'has mode 644'
 
   run_master_bash "$act" "$MNOBOX"
   must "states no STORAGE_BOX_USER" "$act: a config without the storage box is refused"
@@ -2437,8 +2345,8 @@ echo "test:   the four states a report can be in and a name that is no installat
 echo "test:   six refusals a regeneration makes before it touches a machine, the pin it reads"
 echo "test:   off the branch, and a launcher without its driver; the eight refusals a removal"
 echo "test:   makes before it touches a master, the registration it reads off the master's"
-echo "test:   branch and the verdict on a slave that is gone; the owner-only guard on both of"
-echo "test:   its branches, against stubbed tools, and the sentence each of the three launchers"
+echo "test:   branch and the verdict on a slave that is gone; the owner-only guard against a"
+echo "test:   stubbed stat, and the sentence each of the three launchers"
 echo "test:   builds from it; the three refusals an abandonment makes before it reads a zone,"
 echo "test:   the names it derives off the install branch and the deploy repository's books branch, the"
 echo "test:   guard that refuses a cluster whose API still answers, the confirmation, the nine"
@@ -2466,11 +2374,9 @@ echo "test:   stops its heartbeat ticker on a signal. A refusal that does not st
 echo "test:   that resumes after a TERM, a skip that asks ansiwise alone, a FETCHED left as the environment"
 echo "test:   set it, a check that takes any digest and a cleanup that leaves the ticker running are each"
 echo "test:   planted, and each is caught."
-if reach_is_a_mode; then
-  echo "test: covered off Windows — a config of mode 644, refused in its recorded sentence by the"
-  echo "test:   regeneration, the backup, the restore and install-machine, and a planted defect in"
-  echo "test:   the guard beside the backup and beside the restore that proves the launcher reads it."
-fi
+echo "test: covered — a config of mode 644, refused in its recorded sentence by the"
+echo "test:   regeneration, the backup, the restore and install-machine, and a planted defect in"
+echo "test:   the guard beside the backup and beside the restore that proves the launcher reads it."
 echo "test: not covered — an authenticated remote, two workstations minting at one moment, the"
 echo "test:   regeneration and the removal themselves on a machine, a slave that is still"
 echo "test:   answering, a branch"

@@ -72,9 +72,9 @@ BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?
 # after the closing quote, where [[:space:]] matches it — and a bash on Linux
 # then reads it as part of the value, so a slave's domain ending in a control
 # character would name a mount nothing ever created and the removal would report
-# every one of its rows as already gone. COUNTED RATHER THAN MATCHED: grep on a
-# Windows workstation opens a file in text mode and strips the very byte it is
-# being asked about, and tr reads bytes on both.
+# every one of its rows as already gone. COUNTED WITH tr, which reads bytes and
+# nothing else, so no tool's reading of a line ending stands between the file
+# and the check.
 [ "$(tr -dc '\r' < "$CONFIG" | wc -c)" -eq 0 ] \
   || die 'the config carries carriage returns, so every value would end in one. Write it with Unix line endings' 65
 

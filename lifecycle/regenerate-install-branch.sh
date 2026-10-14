@@ -156,8 +156,7 @@ say "regenerate: $FQDN carries role $ROLE in $MAP, and the branch is regenerated
 [ -r "$CONFIG" ] \
   || die "there is no config at $CONFIG. It states the installation this regenerates: copy config.example.env beside it, fill it in, and name it as the second argument" 66
 
-# OWNER-ONLY OR NOTHING, asked by the guard beside this file: the access list on
-# Windows, where a mode says nothing, and the mode everywhere else.
+# OWNER-ONLY OR NOTHING, asked by the guard beside this file: mode 600 or 400.
 require_owner_only "$CONFIG" \
   || die "$CONFIG $REACH and carries credentials, the elevation password of the machine among them. Run: $OWNER_ONLY_COMMAND" 77
 
@@ -218,8 +217,8 @@ BASE=(-p "$PORT" -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 # the case here, and the password is the exception a machine still at its birth
 # would need. The key is tried first and the password only where the key is
 # refused, so neither case needs a flag.
-# `-n`: THE PROBE READS NOTHING, and without it ssh reads this terminal. Windows' own
-# OpenSSH then stays after `true` has ended until a key is pressed.
+# `-n`: THE PROBE READS NOTHING. Without it ssh reads standard input, and takes what
+# was typed or piped there for what comes after.
 PROBE=$(ssh "${BASE[@]}" -n -o BatchMode=yes "$TARGET" true 2>&1)
 if [ $? -eq 0 ]; then
   DOOR=(-o BatchMode=yes)

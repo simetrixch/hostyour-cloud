@@ -3,7 +3,7 @@
 The life of one installation: the GitHub App it acts under, the act that brings it into being, every
 release put on it afterwards, the registration one installation holds for another taken off again, and
 what an installation whose machines are gone left outside them taken down. Everything here runs from
-an operator's own machine — Windows, Linux or macOS — and nothing here runs in a cluster.
+an operator's own machine — Linux or macOS, and Windows through WSL — and nothing here runs in a cluster.
 
 **The subject is an installation, not a delivery.** A first install delivers nothing; it creates. The
 acts below share a subject rather than a purpose, which is why they stand in one folder.
@@ -126,8 +126,8 @@ by a script.
 | `driver.sh` | **on the machine** | the whole installation: preconditions, engine, programs checkout, the six programs |
 | `install-machine.sh` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
 
-`install-machine.sh` asks whether the config is protected the way the system it runs on says it:
-Windows with an access list, read with `icacls`, Linux and macOS with a mode, read with `stat`.
+`install-machine.sh` asks whether the config is protected by its mode, read with `stat`: 600 or 400
+passes, and any other mode is refused with the `chmod` that closes it.
 
 The launcher is thin on purpose. **Everything is fetched by the machine itself, and all three
 are public**: the pin out of the platform repository, the two executables out of the release, the
@@ -140,7 +140,7 @@ say rather than what somebody's checkout happened to hold.
 ```
 cp config.example.env ~/apps4.env     # NOT inside a git working tree
 $EDITOR ~/apps4.env                   # one line per value; the credentials are marked
-chmod 600 ~/apps4.env                 # Windows: icacls, and the launcher says the line
+chmod 600 ~/apps4.env
 
 ./install-machine.sh ~/apps4.env
 ```
