@@ -272,7 +272,7 @@ test('the ci trigger needs a list of owners, and an empty or missing list fails 
   assert.throws(() => renderChart('image-builder', ['--set', 'global.booksCluster=']), /global\.booksCluster is required/);
 });
 
-test('the ci pipeline of a unit holds no GitOps credential, mounts only the packages reader, and is no release', () => {
+test('the ci pipeline of a unit holds no GitOps credential, mounts only build-npmrc, and is no release', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
   assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'commit-status-pending', 'clone', 'describe-commit', 'fetch', 'check']);
@@ -356,7 +356,7 @@ test('the publish pipeline of every unit holds the push credential in its push t
     assert.deepEqual(task('push').workspaces, [{name: 'packed', workspace: 'source', subPath: 'packed'}], 'the push reads the packed tarballs and never the repository');
     assert.equal(task('push').taskSpec.workspaces[0].readOnly, true);
     for (const name of ['reviewed', 'pack', 'push']) {
-      assert.deepEqual(task(name).when, [{input: '$(tasks.scan.results.mode)', operator: 'in', values: ['seed', 'source']}], `${name} runs only where the scan found something to publish`);
+      assert.deepEqual(task(name).when, [{input: '$(tasks.scan.results.mode)', operator: 'in', values: ['source']}], `${name} runs only where the scan found something to publish`);
     }
     assert.equal(task('clone').params.find((p) => p.name === 'revision').value, 'refs/tags/$(params.release-tag)', 'the clone is the pushed release tag');
     const env = (name, key) => task(name).taskSpec.steps.flatMap((s) => s.env ?? []).find((e) => e.name === key)?.value;
@@ -576,7 +576,7 @@ const isCiOnly = (docs) => holds(docs, CI_PARTS).every(Boolean) && !holds(docs, 
 
 test('a unit that builds nothing renders the ci check and the publish pipeline, and no release, registry pull or bump part', () => {
   const ciOnly = renderUnit('shop', []);
-  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, packages reader, issues reader, the ci grants, the publish pipeline and its push credential render; release pipeline, pull secret and bump secret do not');
+  assert.ok(isCiOnly(ciOnly), 'ci pipeline, ci quota, clone credential, build-npmrc, issues reader, the ci grants, the publish pipeline and its push credential render; release pipeline, pull secret and bump secret do not');
   const withBuilds = renderUnit('shop');
   assert.deepEqual(holds(withBuilds, [...CI_PARTS, ...RELEASE_PARTS]), Array(CI_PARTS.length + RELEASE_PARTS.length).fill(true), 'PLANTED INNOCENT: a unit with builds renders both pipelines and every credential as before');
   assert.ok(!isCiOnly(withBuilds), 'a unit with builds is not a ci-only unit');
