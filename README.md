@@ -91,10 +91,20 @@ rebuilt from nothing, gets them back with the backup of its registry (`lifecycle
 `bash scripts/check.sh` runs local chart validation and
 credential scanning. It names the suites that did not run locally.
 
-The master's ci runs those checks and `bash scripts/test.sh` on every push of a branch: the check step of the ci pipeline
+The master's ci runs those checks and `bash scripts/test.sh` on every push of the default branch: the check step of the ci pipeline
 installs the tools `ci-tools.json` names, then runs `scripts/check.sh` and `scripts/test.sh`.
 The test entry point runs `lifecycle/test.sh` and `scripts/pipeline-release.test.sh`.
 Run tests only on a remote runner.
+
+An issue branch is judged by the push gate on the machine and starts no ci run on the master.
+To run the master's ci on another commit, for example a planted defect that must show the check red,
+push it to a branch whose name starts with `ci/`:
+
+```bash
+git push origin HEAD:ci/issue-<n>-planted-1
+```
+
+Delete that branch once its run has finished.
 
 ## License
 

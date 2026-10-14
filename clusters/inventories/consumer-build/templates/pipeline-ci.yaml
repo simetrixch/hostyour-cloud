@@ -1,8 +1,9 @@
 {{- /*
 The unit's ci pipeline `<unit>-ci` — ONE generic pipeline, rendered per unit
-from this template beside `<unit>-release`. Every push of a branch runs the
-repository's own scripts/check.sh at the pushed commit, so red is seen on the
-build plane and not only on the machine of whoever pushed:
+from this template beside `<unit>-release`. Every push of the default branch
+or of a `ci/` branch runs the repository's own scripts/check.sh at the pushed
+commit, so red is seen on the build plane and not only on the machine of
+whoever pushed:
 
   gate → commit-status-pending → clone@commit → describe-commit → fetch → check,
 

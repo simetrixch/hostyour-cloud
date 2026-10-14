@@ -3,10 +3,22 @@
 {{- if not $owners }}{{ fail "image-builder: ciPush.owners is required: list the GitHub owners whose repositories run their check here" }}{{ end -}}
 {{- $booksBranch := required "image-builder: global.booksCluster is required (clusters/active/<fqdn>.yaml, the install branch of the cluster holding the master role): the ci trigger leaves that branch out" (.Values.global).booksCluster -}}
 {{- /*
-GitHub BRANCH push → the unit's own ci pipeline. Every push of a branch fires
-ONE PipelineRun `<unit>-ci-…` in the unit's build namespace, which runs the
-repository's scripts/check.sh at the pushed commit, so a red check is seen on
-the build plane and not only on the machine of whoever pushed.
+A GitHub push of the DEFAULT BRANCH or of a `ci/` BRANCH → the unit's own ci
+pipeline. Such a push fires ONE PipelineRun `<unit>-ci-…` in the unit's build
+namespace, which runs the repository's scripts/check.sh at the pushed commit,
+so a red check is seen on the build plane and not only on the machine of
+whoever pushed.
+
+ONLY THE DEFAULT BRANCH runs by itself. Every other branch is judged by the
+push gate on the machine that pushes it, which runs the same check, so a run
+per push of an issue branch would only repeat it. The default branch is read
+from the push (repository.default_branch), never named here, because each
+repository names its own.
+
+A `ci/` BRANCH is the deliberate run of any other commit, such as a planted
+defect pushed as `ci/<issue>-planted-<n>` to show that the check goes red on
+the build plane. The prefix is matched from refs/heads/, so a branch that only
+contains `ci/` further on runs nothing.
 
 It is NOT a release. The run is created waiting (spec.status PipelineRunPending)
 and the ci run keeper (templates/ci-run-keeper.yaml) starts it while fewer than
@@ -32,22 +44,22 @@ The two triggers never overlap. This filter takes refs/heads/ only, and the
 deploy trigger takes refs/tags/deploy/ only, so a branch push never builds a
 release and a tag push never runs the check.
 
-DELIVERY BRANCHES are NOT pushed to check. The release bump force-pushes
-deploy/<stage> of the unit's repository (templates/pipeline-release.yaml, the
-bump's place_delivery_branch) with the release commit plus its pins, a commit
-that was checked on its branch before its tag was cut. Without the exclusion
-every release would start one more run per stage and per repository.
+DELIVERY BRANCHES are NOT pushed to check, even in a repository whose default
+branch is one. The release bump force-pushes deploy/<stage> of the unit's
+repository (templates/pipeline-release.yaml, the bump's place_delivery_branch)
+with the release commit plus its pins, a commit that was checked on its branch
+before its tag was cut.
 
-THE BOOKS BRANCH is NOT pushed to check. It is named after the cluster that
-holds the master role (global.booksCluster), and the Manager commits to it in
-every repository that carries the installation's books, the deploy repository
-among them: registrations and pins, written by a program, not code a person
-pushed. Without the exclusion every such commit would start a ci run, and the
+THE BOOKS BRANCH is NOT pushed to check, even in a repository whose default
+branch is the books branch. It is named after the cluster that holds the master
+role (global.booksCluster), and the Manager commits to it in every repository
+that carries the installation's books, the deploy repository among them:
+registrations and pins, written by a program, not code a person pushed, and the
 check of the trunk fails on content the books branch does not carry.
 
-BRANCH DELETION is NOT a push to check: GitHub sends the SAME push event
-(deleted:true, after:000…0, head_commit:null), and a run for it could only die
-at clone. The deleted guard is has()-wrapped so a payload without the field
+BRANCH DELETION is NOT a push to check: deleting a `ci/` branch sends the SAME
+push event (deleted:true, after:000…0, head_commit:null), and a run for it could
+only die at clone. The deleted guard is has()-wrapped so a payload without the field
 cannot error the cel interceptor, and the all-zero `after` is refused on its
 own because the commit is the one thing the run cannot do without.
 */ -}}
@@ -97,7 +109,7 @@ spec:
               expression: body.repository.clone_url
         - name: filter
           value: >-
-            body.ref.startsWith('refs/heads/') &&
+            (body.ref == 'refs/heads/' + body.repository.default_branch || body.ref.startsWith('refs/heads/ci/')) &&
             !body.ref.startsWith('refs/heads/deploy/') &&
             body.ref != {{ printf "refs/heads/%s" $booksBranch | squote }} &&
             !(has(body.deleted) && body.deleted) &&
