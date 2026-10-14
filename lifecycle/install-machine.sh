@@ -31,7 +31,8 @@
 # ONE EXCEPTION, the engine of the owner's master. Every machine fetches its engine
 # from the owner's registry (RELEASES in driver.sh), and the owner's master IS that
 # registry, which does not stand while it is installed. For that machine alone the
-# engine is built here, from its tag in Git, and carried in the same session.
+# engine is built here, from its tag in Git, and carried in the same session; it is
+# built for linux-x64, so that one installation runs from a Linux x86_64 machine.
 # =============================================================================
 
 set -uo pipefail
@@ -94,7 +95,8 @@ done
 # RELEASES in driver.sh, read there and never restated, is zot.<FQDN>. The pin is the
 # one driver.sh reads, cliTools.ansiwise.version on master of the platform repository,
 # read through Git; the engine is ansiwise-cli at that tag, built by its own
-# release/build.sh, which refuses any Dart but the one it is pinned to. Both binaries
+# release/build.sh, which refuses any host but Linux x86_64 and any Dart but the one it
+# is pinned to, and runs the gate of every part of the engine before it builds. Both binaries
 # go into the session ahead of driver.sh, which places them from $HOME/.aw-engine and
 # fetches nothing. Every other installation builds nothing here.
 carry_engine() { # <file> — writes the lines of the session that put the built engine under $HOME/.aw-engine, or nothing
