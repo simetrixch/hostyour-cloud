@@ -1,6 +1,7 @@
-# Decides, from every PipelineRun of the cluster, which waiting release and publish runs start now and
-# which wait, and emits one patch per run that has to change. Releases start one at a time because the
-# build plane is one node: parallel releases filled it until no task pod could start.
+# Decides, from the PipelineRuns that carry image-builder.io/consumer or image-builder.io/publish (the
+# labels their TriggerTemplates give them), which waiting release and publish runs start now and which
+# wait, and emits one patch per run that has to change. Releases start one at a time because the build
+# plane is one node: parallel releases filled it until no task pod could start.
 # A release is one release tag in one build namespace; its stages run together. A publish run (the npm
 # packages of a release tag, consumer-build pipeline-publish.yaml) is a release of its own key,
 # `<namespace>/<tag> publish`, so it never builds beside a release, its own included. Starts come
@@ -10,11 +11,8 @@
 # and the newest twenty keep recent runs readable in the Tekton Dashboard. A run that waits or runs is
 # never deleted.
 
-# A run is the queue's by the label its TriggerTemplate and its Pipeline give it, as when the tick listed
-# image-builder.io/consumer alone: a run elsewhere whose Pipeline merely ends in -release is not.
-def labelled($key): (.metadata.labels // {}) | has($key);
-def isRelease: labelled("image-builder.io/consumer") and ((.spec.pipelineRef.name // "") | endswith("-release"));
-def isPublish: labelled("image-builder.io/publish") and ((.spec.pipelineRef.name // "") | endswith("-publish"));
+def isRelease: (.spec.pipelineRef.name // "") | endswith("-release");
+def isPublish: (.spec.pipelineRef.name // "") | endswith("-publish");
 def isQueued: isRelease or isPublish;
 def succeeded: [(.status.conditions // [])[] | select(.type == "Succeeded") | .status][0] // "";
 def isDone: succeeded == "True" or succeeded == "False";

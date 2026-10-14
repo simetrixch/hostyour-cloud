@@ -1086,6 +1086,10 @@ echo "check: every yaml_value stamp site of this tree holds its pin from cluster
 echo 'check: NOT RUN locally — lifecycle/test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in GitHub Actions via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in public GitHub Actions via scripts/test.sh.'
+for module in scripts/release-queue.test.mjs scripts/ci-run-keeper.test.mjs; do
+  node --check "$module" || fail "Node syntax: $module"
+  echo "check: NOT RUN locally — $module; runs in public GitHub Actions via scripts/test.sh."
+done
 for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-appset-fixture.mjs scripts/tenant-appset.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done

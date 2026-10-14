@@ -8,9 +8,11 @@ image-builder.io/queued-behind with the release it waits for, which the Tekton D
 `kubectl get pipelinerun -o yaml` show. A publish run (the release-publish TriggerTemplate, also
 created waiting) is a release of its own in this queue, so it never builds beside one. It also
 deletes every finished release run of a build namespace but the newest 20, and every finished
-publish run but the newest 20, and never one that waits or runs. It reads every PipelineRun, because
-a publish run carries no image-builder.io/consumer. files/release-queue.jq decides; files/release-queue.sh
-applies; scripts/release-queue.test.mjs runs the decision on planted runs.
+publish run but the newest 20, and never one that waits or runs. It reads the runs that carry
+image-builder.io/consumer and those that carry image-builder.io/publish, 50 a page
+(files/list-pipelineruns.sh), so its memory stays within its limit however many runs the cluster
+keeps. files/release-queue.jq decides; files/release-queue.sh applies; scripts/release-queue.test.mjs
+runs the decision on planted runs and the tick against a stand-in API server.
 
 A start takes up to a minute, the CronJob's period. Nothing starts while this CronJob does not run.
 
@@ -34,6 +36,8 @@ data:
 {{ .Files.Get "files/release-queue.jq" | indent 4 }}
   release-queue.sh: |
 {{ .Files.Get "files/release-queue.sh" | indent 4 }}
+  list-pipelineruns.sh: |
+{{ .Files.Get "files/list-pipelineruns.sh" | indent 4 }}
 ---
 apiVersion: v1
 kind: ServiceAccount
