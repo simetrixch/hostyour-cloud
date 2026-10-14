@@ -64,7 +64,14 @@ check_immutable_render() {
     || fail "cannot parse preceding render"
   printf '%s' "$current" | yq eval-all -o=json -I=0 '[.]' - > "$work/immutable-after.json" \
     || fail "cannot parse candidate render"
-  node "$root/scripts/check-immutable.mjs" "$work/immutable-before.json" "$work/immutable-after.json" "$namespace" \
+  # The candidate's app.yaml is what Argo CD syncs the candidate with; a unit chart has none.
+  if [ -f "$chart/app.yaml" ]; then
+    yq -o=json -I=0 '.ignoreDifferences |= (. // "[]" | from_yaml)' "$chart/app.yaml" > "$work/immutable-app.json" \
+      || fail "cannot parse $chart/app.yaml"
+  else
+    echo '{}' > "$work/immutable-app.json"
+  fi
+  node "$root/scripts/check-immutable.mjs" "$work/immutable-before.json" "$work/immutable-after.json" "$namespace" "$work/immutable-app.json" \
     || fail "$chart at $stage changes an immutable field of a retained identity; use a new identity"
   immutable_rendered=$((immutable_rendered + 1))
 }
