@@ -13,6 +13,7 @@ const yq = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', ...args], 
 const platform = yq(['.global', 'clusters/platform/values-common.yaml']);
 const app = yq(['.', 'clusters/inventories/plane/app.yaml']);
 const FORWARD_AUTH = 'idp-forwardauth@kubernetescrd';
+const MIDDLEWARES = 'traefik.ingress.kubernetes.io/router.middlewares';
 // The values plane-ce 1.8.5 falls back to, public in its own values.yaml.
 const PUBLIC_DEFAULTS = ['60gp0byfz2dvffa45cxl20p1scy9xbpf6d8c5y0geejgkyp1b5', 'htbqvBJAgpm9bzvf3r4urJer0ENReatceh', 'plane:plane@'];
 
@@ -27,14 +28,29 @@ function renderFindings(objects) {
     if (annotations['traefik.ingress.kubernetes.io/router.entrypoints'] !== 'websecure') found.push(`${ingress.metadata.name} is served on more than websecure`);
     if (ingress.spec.tls?.[0]?.secretName !== 'plane-tls') found.push(`${ingress.metadata.name} is served without the certificate plane-tls`);
     const paths = ingress.spec.rules.flatMap(rule => rule.http.paths.map(path => path.path));
-    const gated = annotations['traefik.ingress.kubernetes.io/router.middlewares'] === FORWARD_AUTH;
+    const gated = (annotations[MIDDLEWARES] ?? '').split(',')[0] === FORWARD_AUTH;
     if (!gated && JSON.stringify(paths) !== '["/api/v1"]') found.push(`${ingress.metadata.name} serves ${paths.join(', ')} without the forward auth`);
   }
   const api = ingresses.find(o => o.metadata.name === 'plane-api-v1');
   const backend = api?.spec.rules[0].http.paths[0].backend.service;
   if (backend?.name !== 'plane-api' || backend?.port.number !== 8000) found.push(`/api/v1 goes to ${backend?.name}:${backend?.port.number}, not Plane's API`);
   if (api?.metadata.annotations?.['cert-manager.io/cluster-issuer'] !== undefined) found.push('/api/v1 asks for the certificate a second time');
-  if (!ingresses.some(o => o.metadata.annotations?.['traefik.ingress.kubernetes.io/router.middlewares'] === FORWARD_AUTH)) found.push('no Ingress waits for the forward auth');
+  if (!ingresses.some(o => (o.metadata.annotations?.[MIDDLEWARES] ?? '').split(',')[0] === FORWARD_AUTH)) found.push('no Ingress waits for the forward auth');
+
+  // plane-admin's nginx answers /god-mode, which Plane's "Get started" opens, with a 301 to its own port,
+  // http://<host>:3000/god-mode/. The chart's Ingress answers it first, after the forward auth, on the host
+  // it was asked on; every other path passes untouched.
+  const pages = ingresses.find(o => o.spec.rules[0].http.paths.some(path => path.path === '/god-mode'));
+  const host = pages?.spec.rules[0].host;
+  const slash = objects.find(o => o.kind === 'Middleware' && o.metadata.name === 'god-mode-trailing-slash');
+  const chain = (pages?.metadata.annotations?.[MIDDLEWARES] ?? '').split(',');
+  if (JSON.stringify(chain) !== JSON.stringify([FORWARD_AUTH, `${app.namespace}-god-mode-trailing-slash@kubernetescrd`])) found.push(`/god-mode passes ${chain.join(', ')}, not the forward auth and then the trailing-slash redirect`);
+  const redirect = slash?.spec.redirectRegex;
+  const answer = url => redirect && new RegExp(redirect.regex).test(url) ? url.replace(new RegExp(redirect.regex), redirect.replacement.replace(/\$\{(\d+)\}/g, '$$$1')) : url;
+  for (const [asked, sent] of [['/god-mode', '/god-mode/'], ['/god-mode?next=1', '/god-mode/?next=1'], ['/god-mode/', '/god-mode/'],
+    ['/god-mode/general', '/god-mode/general'], ['/god-modes', '/god-modes'], ['/spaces', '/spaces'], ['/', '/']]) {
+    if (answer(`https://${host}${asked}`) !== `https://${host}${sent}`) found.push(`https://${host}${asked} is sent to ${answer(`https://${host}${asked}`)}`);
+  }
 
   for (const name of ['pgdb', 'redis', 'rabbitmq', 'minio']) {
     const set = objects.find(o => o.kind === 'StatefulSet' && o.metadata.name === `plane-${name}-wl`);
@@ -66,7 +82,7 @@ function renderFindings(objects) {
     if (!services.has(service) || namespace !== app.namespace) found.push(`${key} names ${host}, not a Service of the chart in ${app.namespace}`);
   }
   const vars = objects.find(o => o.kind === 'ConfigMap' && o.metadata.name === 'plane-app-vars')?.data ?? {};
-  if (!String(vars.WEB_URL).startsWith('https://')) found.push(`Plane is told it stands at ${vars.WEB_URL}`);
+  if (vars.WEB_URL !== `https://${host}`) found.push(`Plane is told it stands at ${vars.WEB_URL}`);
   return found;
 }
 
@@ -93,7 +109,7 @@ test('the embedded outpost gates plane.<domain>', () => {
   assert.deepEqual(blueprintFindings(proxyText, bindingsText), []);
 });
 
-test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class and a missing outpost binding are found', () => {
+test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class, a missing outpost binding, the chart\'s own /god-mode and a redirect to a port are found', () => {
   const planted = {
     'the pages without the gate': ['--set-string', 'plane-ce.ingress.ingress_annotations.traefik\\.ingress\\.kubernetes\\.io/router\\.middlewares='],
     'the public default keys': ['--set', 'plane-ce.external_secrets.app_keys_existingSecret=', '--set', 'plane-ce.env.requireExplicitSecrets=false'],
@@ -106,6 +122,14 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
   const widened = renderChart('plane');
   widened.find(o => o.metadata?.name === 'plane-api-v1').spec.rules[0].http.paths.push({path: '/api', pathType: 'Prefix', backend: {service: {name: 'plane-api', port: {number: 8000}}}});
   assert.deepEqual(renderFindings(widened), ['plane-api-v1 serves /api/v1, /api without the forward auth']);
+  const plain = renderChart('plane', ['--set-string', `plane-ce.ingress.ingress_annotations.traefik\\.ingress\\.kubernetes\\.io/router\\.middlewares=${FORWARD_AUTH}`])
+    .filter(o => o.kind !== 'Middleware');
+  assert.deepEqual(renderFindings(plain), [`/god-mode passes ${FORWARD_AUTH}, not the forward auth and then the trailing-slash redirect`,
+    'https://plane.example.com/god-mode is sent to https://plane.example.com/god-mode', 'https://plane.example.com/god-mode?next=1 is sent to https://plane.example.com/god-mode?next=1']);
+  const ported = renderChart('plane');
+  ported.find(o => o.kind === 'Middleware').spec.redirectRegex.replacement = 'https://${1}:3000/god-mode/${2}';
+  assert.deepEqual(renderFindings(ported), ['https://plane.example.com/god-mode is sent to https://plane.example.com:3000/god-mode/',
+    'https://plane.example.com/god-mode?next=1 is sent to https://plane.example.com:3000/god-mode/?next=1']);
   assert.notDeepEqual(blueprintFindings(proxyText, bindingsText.replace(/\n\s*- !Find \[authentik_providers_proxy.proxyprovider, \[name, Plane\]\]/g, '')), []);
 });
 
