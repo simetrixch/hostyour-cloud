@@ -21,7 +21,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
-| `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network |
+| `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network, in a clone whose origin carries the install branch (exit 69 otherwise). `status.sh` calls it as one `forgejo-ssh:` row of every installation whose branch runs Forgejo, and `install-machine.sh` at its end after an installation that ended well: green on a banner, RED on none, `not asked` where it could not ask; 66 (no Forgejo on the branch) is no row. Tekton does not call it: it runs inside the network |
 | `plan-installation-domain.sh` | plans and dry-runs proposed hostname changes across domain zones: reads every cluster map on a freshly fetched books branch, optionally probes machine names and Ingress/IngressRoute over ssh, and prints proposed hostname changes and coverage without altering remote state |
 
 `scripts/test.sh` runs their remote fixture checks.

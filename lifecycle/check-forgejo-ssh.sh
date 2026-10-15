@@ -15,7 +15,10 @@
 # Forgejo puts into every clone address it shows. So the probe asks exactly where a clone would go.
 #
 # IT ONLY ANSWERS. Exit 0 when the first bytes the port sends begin with `SSH-`; 1 when it
-# refuses, times out or sends anything else; 65 and up when the question could not be asked.
+# refuses, times out or sends anything else; 65 and up when the question could not be asked: 66 when
+# the branch runs no Forgejo (no installation/values/forgejo.yaml), 67 when it runs one that announces
+# no SSH_DOMAIN and numeric SSH_PORT, 69 when origin could not be fetched. status.sh and
+# install-machine.sh call it and read these codes: 66 is not a row, 0 is green, 1 is red.
 # =============================================================================
 
 set -uo pipefail
@@ -35,7 +38,7 @@ VALUES="$(git show "FETCH_HEAD:installation/values/forgejo.yaml" 2>/dev/null)" \
 HOST="$(yq '.forgejo.gitea.config.server.SSH_DOMAIN // ""' <<<"$VALUES")"
 PORT="$(yq '.forgejo.gitea.config.server.SSH_PORT // ""' <<<"$VALUES")"
 [ -n "$HOST" ] && [[ "$PORT" =~ ^[0-9]+$ ]] \
-  || die "$FQDN announces no SSH_DOMAIN and numeric SSH_PORT for Forgejo" 66
+  || die "$FQDN announces no SSH_DOMAIN and numeric SSH_PORT for Forgejo" 67
 
 # An SSH server speaks first, so curl's raw connection (telnet://) prints the banner and is ended by
 # the time limit, which is why only the bytes it printed are read and not its exit code.

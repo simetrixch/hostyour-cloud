@@ -114,7 +114,8 @@ mkdir -p "$OUT"
 
 # ── running one script, and holding it to the block recorded for its case ──
 # WHAT DIFFERS BETWEEN TWO RUNS OF ONE TREE is the fixture root, the folder this
-# file stands in, the home folder and the fourteen digits of a mint stamp. Those
+# file stands in, the home folder, the fourteen digits of a mint stamp and the
+# date and time (eight digits, a dash, six) install-machine names a transcript folder after. Those
 # are normalised, in that order, because the first two can lie under the third.
 # So is the reason ssh passes on from the resolver for a host name it cannot
 # resolve: glibc answers "Name or service not known" with a network and
@@ -134,6 +135,7 @@ normalise() {
     [[ "$line" == "warning: Could not find remote branch "*" to clone." ]] && continue
     line="${line//"$WORK"/<WORK>}"; line="${line//"$HERE"/<HERE>}"; line="${line//"$HOME"/<HOME>}"
     while [[ "$line" =~ ([0-9]{14}) ]]; do line="${line//${BASH_REMATCH[1]}/TS14}"; done
+    while [[ "$line" =~ ([0-9]{8}-[0-9]{6}) ]]; do line="${line//${BASH_REMATCH[1]}/TS14}"; done # the folder install-machine names its transcript after
     if [[ "$line" =~ (Could not resolve hostname [^:]+: )[^.]+ ]]; then
       line="${line/"${BASH_REMATCH[0]}"/"${BASH_REMATCH[1]}<RESOLVER>"}"
     fi
@@ -464,6 +466,7 @@ PLANTED="$WORK/planted-status.sh"
 # never reaches would prove that the probe is unreachable, not that it works.
 sed 's/commits on origin\/master since that release/changes since that release/' \
   "$HERE/status.sh" > "$PLANTED"
+cp "$HERE/check-forgejo-ssh.sh" "$WORK/"
 grep -q 'changes since that release' "$PLANTED" || fail 'the planted line was not planted — the probe proves nothing'
 A_CODE=0
 ( cd "$WORK_A" && bash "$PLANTED" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
@@ -1204,6 +1207,146 @@ run_acme "$PLANTED_ACME/install-machine.sh" "$IMACME"
 [ "$A_CODE" = '69' ] || fail "the planted install-machine must end at the recording ssh with 69, got $A_CODE"
 rm -f "$ACMESSH/called"
 ok 'the planted defect was caught — a copy without the refusal opens a session with the ACME config'
+
+# ── the Forgejo SSH row: status and install-machine ask the port an install branch announces ──
+# check-forgejo-ssh.sh is called where a person meets it, on the operator's machine: one row of
+# status.sh for an installation whose branch runs Forgejo, and the end of install-machine.sh. The
+# fixture is one origin of three installation branches: a Forgejo whose announced port answers, one
+# whose port does not, and one that runs no Forgejo. The network is one stand-in curl that gives an
+# SSH banner on the first port alone, so a green and a red row are the branch's port and nothing else.
+ORIGIN_F="$WORK/origin-f.git"
+WORK_F="$WORK/checkout-f"
+git init --quiet --bare --initial-branch=master "$ORIGIN_F"
+SEED_F="$WORK/seed-f"
+git init --quiet --initial-branch=master "$SEED_F"
+git -C "$SEED_F" remote add origin "$ORIGIN_F"
+echo '# the product tree' > "$SEED_F/README.md"
+git -C "$SEED_F" add -A
+git -C "$SEED_F" commit --quiet -m 'Seed the trunk'
+git -C "$SEED_F" push --quiet origin master
+seed_forgejo_installation() { # fqdn, announced ssh port (empty for an installation that runs no Forgejo)
+  git -C "$SEED_F" checkout --quiet -b "$1" master
+  mkdir -p "$SEED_F/clusters/active" "$SEED_F/installation/values"
+  printf 'stage: dev\nrole: master\n' > "$SEED_F/clusters/active/$1.yaml"
+  [ -z "$2" ] || printf 'forgejo:\n  gitea:\n    config:\n      server:\n        SSH_DOMAIN: forgejo.example.invalid\n        SSH_PORT: %s\n' "$2" > "$SEED_F/installation/values/forgejo.yaml"
+  git -C "$SEED_F" add -A
+  git -C "$SEED_F" commit --quiet -m "Generate the branch of $1"
+  git -C "$SEED_F" push --quiet origin "$1"
+  git -C "$SEED_F" checkout --quiet master
+}
+seed_forgejo_installation forge-green.example.invalid 2323
+seed_forgejo_installation forge-red.example.invalid 2424
+seed_forgejo_installation forge-none.example.invalid ''
+git clone --quiet "$ORIGIN_F" "$WORK_F"
+FORGEJO_NET="$WORK/forgejo-net"
+mkdir -p "$FORGEJO_NET"
+cat > "$FORGEJO_NET/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$(dirname "$0")/asked"
+case "$*" in *telnet://forgejo.example.invalid:2323) printf 'SSH-2.0-Go\r\n' ;; esac
+exit 28
+STUB
+chmod +x "$FORGEJO_NET/curl"
+run_forgejo() { # the script, then its arguments; run in the clone, with the stand-in curl first on the path
+  local script="$1"; shift
+  A_CODE=0
+  ( cd "$WORK_F" && PATH="$FORGEJO_NET:$PATH" bash "$script" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+ok 'fixture built — one origin, a Forgejo with an open port, a Forgejo with a closed one, and an installation without Forgejo'
+
+run_forgejo "$HERE/status.sh"
+expect 'status: a Forgejo row green for an open port, red for a closed one, and none where no Forgejo runs' 0 <<'RECORDED'
+status: which platform release each install branch stands on, and what origin/master carries since. A cluster carrying only the slave part has no branch here and runs the revision of the branch that keeps its books
+
+forge-green.example.invalid
+  release: none
+  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh beside this file writes that line.
+  forgejo-ssh: green, forgejo.example.invalid:2323 answers SSH-2.0-Go
+
+forge-none.example.invalid
+  release: none
+  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh beside this file writes that line.
+
+forge-red.example.invalid
+  release: none
+  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh beside this file writes that line.
+  forgejo-ssh: RED, forgejo.example.invalid:2424 gave no SSH banner
+~~~ standard error ~~~
+RECORDED
+grep -qx -- '-sS --connect-timeout 5 --max-time 8 telnet://forgejo.example.invalid:2323' "$FORGEJO_NET/asked" \
+  || fail "status: the port was not the branch's announced one: $(cat "$FORGEJO_NET/asked")"
+[ "$(grep -c . "$FORGEJO_NET/asked")" = '2' ] || fail 'status: the probe must be asked once per Forgejo installation, and not for the one without'
+rm -f "$FORGEJO_NET/asked"
+# The planted defect: a copy of status.sh that reports a closed port green.
+PLANTED_FS="$WORK/planted-status-forgejo"
+mkdir -p "$PLANTED_FS"
+cp "$HERE/check-forgejo-ssh.sh" "$PLANTED_FS/"
+sed 's/forgejo-ssh: RED/forgejo-ssh: green/' "$HERE/status.sh" > "$PLANTED_FS/status.sh"
+cmp -s "$HERE/status.sh" "$PLANTED_FS/status.sh" && fail 'the red row was not planted in status.sh — the probe proves nothing'
+run_forgejo "$PLANTED_FS/status.sh"
+grep -q 'forgejo-ssh: green, forgejo.example.invalid:2424' "$OUT/a.out" || fail 'the planted status printed no row for the closed port — the probe was aimed at a line the fixture does not reach'
+caught status.sh 'forgejo-ssh: green, forgejo.example.invalid:2424'
+rm -f "$FORGEJO_NET/asked"
+
+# install-machine: the same two rows at its end, and none after an installation that failed.
+FORGEJO_IM="$WORK/forgejo-install-machine"
+mkdir -p "$FORGEJO_IM"
+cp "$HERE/install-machine.sh" "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/check-forgejo-ssh.sh" "$FORGEJO_IM/"
+cat > "$FORGEJO_NET/ssh" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in *' true') exit 0 ;; esac
+cat > /dev/null
+[ ! -e "$(dirname "$0")/fail" ] || exit 3
+STUB
+chmod +x "$FORGEJO_NET/ssh"
+forgejo_install_config() { # fqdn
+  local file="$WORK/forgejo-install-$1.env"
+  cat > "$file" <<CONFIG
+FQDN='$1'
+OPERATOR_USER='operator'
+STAGE='prod'
+DEPLOY_REPO='https://example.invalid/deploy.git'
+PROGRAMS_REPO='https://example.invalid/programs.git'
+PLATFORM_REPO='https://example.invalid/platform.git'
+PLATFORM_REF='master'
+ELEVATION_PASSWORD='elevation-test'
+CONFIG
+  chmod 600 "$file"
+  printf '%s\n' "$file"
+}
+IM_GREEN="$(forgejo_install_config forge-green.example.invalid)"
+IM_RED="$(forgejo_install_config forge-red.example.invalid)"
+IM_NONE="$(forgejo_install_config forge-none.example.invalid)"
+run_forgejo "$FORGEJO_IM/install-machine.sh" "$IM_GREEN"
+must 'forgejo-ssh: green, forgejo.example.invalid:2323 answers SSH-2.0-Go' 'install-machine: an open port is reported green at the end'
+[ "$A_CODE" = '0' ] || fail "install-machine: an installation that ended well must end with 0, got $A_CODE"
+run_forgejo "$FORGEJO_IM/install-machine.sh" "$IM_NONE"
+must_not 'forgejo-ssh' 'install-machine: an installation without Forgejo says nothing about its port'
+run_forgejo "$FORGEJO_IM/install-machine.sh" "$IM_RED"
+expect 'install-machine: a closed Forgejo port is reported red at the end, and the installation still ends 0' 0 <<'RECORDED'
+~~~ standard error ~~~
+
+  forge-red.example.invalid  ·  stage prod
+  Everything said here is also kept in <WORK>/forgejo-install-machine/install-transcripts/forge-red.example.invalid-TS14/session.log
+  operator@forge-red.example.invalid opens to the operator key
+  The machine named no runs — read the transcript above; nothing was recorded to fetch.
+
+  forgejo-ssh: RED, forgejo.example.invalid:2424 gave no SSH banner. Forward FORGEJO_SSH_PORT on the router to the master's 2222; until it answers no clone over SSH works.
+
+RECORDED
+# The planted defect: the same copy, in the same folder (its transcript path is part of the block), reporting a closed port green.
+sed 's/forgejo-ssh: RED/forgejo-ssh: green/' "$HERE/install-machine.sh" > "$FORGEJO_IM/install-machine.sh"
+cmp -s "$HERE/install-machine.sh" "$FORGEJO_IM/install-machine.sh" && fail 'the red row was not planted in install-machine.sh — the probe proves nothing'
+run_forgejo "$FORGEJO_IM/install-machine.sh" "$IM_RED"
+grep -q 'forgejo-ssh: green, forgejo.example.invalid:2424' "$OUT/a.err" || fail 'the planted install-machine printed no row for the closed port — the probe was aimed at a line the fixture does not reach'
+caught install-machine.sh 'forgejo-ssh: green, forgejo.example.invalid:2424'
+cp "$HERE/install-machine.sh" "$FORGEJO_IM/install-machine.sh"
+touch "$FORGEJO_NET/fail"
+run_forgejo "$FORGEJO_IM/install-machine.sh" "$IM_GREEN"
+[ "$A_CODE" = '3' ] || fail "install-machine: an installation that failed must end with its own code 3, got $A_CODE"
+must_not 'forgejo-ssh' 'install-machine: a failed installation has no branch to ask about, so it reports no port'
+rm -f "$FORGEJO_NET/fail"
+ok 'install-machine reports the Forgejo port at the end of an installation that ended well, and only there'
 
 # ===========================================================================
 # FIVE — abandon-installation, against a fixture of an installation that is gone

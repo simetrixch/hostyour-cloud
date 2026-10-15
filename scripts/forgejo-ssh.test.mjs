@@ -65,7 +65,15 @@ test('PLANTED DEFECT: a port that speaks something else, or stays silent, is red
   assert.equal(silent.code, 1);
 });
 
+test('a branch that runs no Forgejo is 66, which status and install-machine read as no row', async () => {
+  const work = installation('plain', 'plain.example.invalid', 1);
+  git(work, 'rm', '-q', 'installation/values/forgejo.yaml');
+  git(work, 'commit', '-q', '-m', 'no forge');
+  git(work, 'push', '-q', 'origin', 'plain.example.invalid');
+  assert.equal((await check(work, 'plain.example.invalid')).code, 66);
+});
+
 test('a branch that announces no port, and a branch that is none, cannot be asked', async () => {
-  assert.equal((await check(installation('bare', 'bare.example.invalid', null), 'bare.example.invalid')).code, 66);
+  assert.equal((await check(installation('bare', 'bare.example.invalid', null), 'bare.example.invalid')).code, 67);
   assert.equal((await check(installation('none', 'none.example.invalid', 1), 'missing.example.invalid')).code, 69);
 });

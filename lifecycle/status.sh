@@ -53,6 +53,11 @@
 # reconciler tracks the install branch, so for these files the branch is the
 # machine. What it cannot see is a machine that has stopped reconciling.
 #
+# THE FORGEJO ROW. An installation whose branch carries installation/values/forgejo.yaml gets one more
+# row, `forgejo-ssh:`, from check-forgejo-ssh.sh: green when the SSH port the branch announces gives an
+# SSH banner, RED when it does not, `not asked` when the probe could not ask. The probe needs a clone
+# whose origin carries the install branch (exit 69 otherwise, reported as `not asked`).
+#
 # EXIT CODE. 0 whenever the report was produced, whatever the report says — an
 # installation that is behind is an answer, not a failure. A non-zero exit means
 # the question could not be answered at all: no git, no repository, no remote, or
@@ -135,31 +140,55 @@ fi
 
 say 'status: which platform release each install branch stands on, and what origin/master carries since. A cluster carrying only the slave part has no branch here and runs the revision of the branch that keeps its books'
 
-for fqdn in "${INSTALLATIONS[@]}"; do
-  say ''
-  say "$fqdn"
-
+# THE RELEASE ROWS of one installation. A function, so that a branch that ends early (no pin, a pin that
+# resolves to nothing, a level one) still gets the rows that follow it.
+release_rows() {
+  local fqdn="$1" pin total carried changed
   pin="$(value_in_map "$fqdn" release)"
   if [ -z "$pin" ]; then
     say '  release: none'
     say '  unpinned: nothing records which platform state this installation stands on, so nothing can say whether it is behind. release-platform.sh beside this file writes that line.'
-    continue
+    return
   fi
   say "  release: $pin"
 
   git rev-parse --verify --quiet "${pin}^{commit}" >/dev/null || {
     say '  unresolved: nothing here resolves that to a commit, so it names a state this repository does not carry: it was never pushed, or it has been deleted'
-    continue
+    return
   }
 
   total="$(git rev-list --count "${pin}..origin/master")"
   carried="$(git rev-list --count "${pin}..origin/master" -- "$REGENERATION_TREE")"
   if [ "$total" = '0' ]; then
     say '  level: origin/master carries nothing this release does not'
-    continue
+    return
   fi
   say "  behind: $total commits on origin/master since that release, $carried of them under $REGENERATION_TREE, which a regeneration has to carry"
   while IFS= read -r changed; do
     [ -n "$changed" ] && say "  regenerate: $changed"
   done < <(git diff --name-only "$pin" origin/master -- "$REGENERATION_TREE")
+}
+
+# THE FORGEJO ROW of one installation, only where its branch carries the values of a Forgejo (read the way
+# the cluster map is, so a machine without yq or a network says nothing about one that runs none). It asks
+# the port the branch announces, from where this runs: a person on the operator's machine, outside the
+# installation's network, which is the only place a closed port forwarded by a router shows. Red when the
+# port gives no SSH banner; a probe that could not ask is its own row, never a green one.
+forgejo_row() {
+  local out code
+  git cat-file -e "origin/$1:installation/values/forgejo.yaml" 2>/dev/null || return 0
+  out="$(bash "$(dirname "${BASH_SOURCE[0]}")/check-forgejo-ssh.sh" "$1" 2>&1)"; code=$?
+  out="${out#check-forgejo-ssh: }"
+  case "$code" in
+    0) say "  forgejo-ssh: green, $out" ;;
+    1) say "  forgejo-ssh: RED, $out" ;;
+    *) say "  forgejo-ssh: not asked, $out" ;;
+  esac
+}
+
+for fqdn in "${INSTALLATIONS[@]}"; do
+  say ''
+  say "$fqdn"
+  release_rows "$fqdn"
+  forgejo_row "$fqdn"
 done
