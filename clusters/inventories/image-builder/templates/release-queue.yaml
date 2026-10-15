@@ -1,12 +1,17 @@
 {{- /*
-THE RELEASE QUEUE. The build plane is one node with room for 110 pods, and every release run takes
-several. Releases started in parallel filled it until no task pod could start and every run hung
-until its timeout. So every release run is created waiting (the deploy-request TriggerTemplate sets
-spec.status PipelineRunPending), and this CronJob starts the oldest waiting release, all of its
-stages, once no other release runs. Each waiting run carries the annotation
-image-builder.io/queued-behind with the release it waits for, which the Tekton Dashboard and
+THE RELEASE QUEUE. The build plane is one node with room for 250 pods (the kubelet's --max-pods in
+hostyour-deploy) and a sum of memory limits that clusters/inventories/consumer-build (ciCapacity)
+holds to a budget, and every release run takes several pods. Releases started in parallel beyond
+that filled the node until no task pod could start and every run hung until its timeout. So every
+release run is created waiting (the deploy-request TriggerTemplate sets spec.status
+PipelineRunPending), and this CronJob starts the oldest waiting releases, all of their stages, while
+fewer than releaseQueue.maxRunning (2) releases run, and never two releases of one unit: a release
+whose unit already has one that runs waits for it, whatever slot is free. Each waiting run carries
+the annotation image-builder.io/queued-behind with the release it waits for (the release of its own
+unit, else the releases that take the slots), which the Tekton Dashboard and
 `kubectl get pipelinerun -o yaml` show. A publish run (the release-publish TriggerTemplate, also
-created waiting) is a release of its own in this queue, so it never builds beside one. It also
+created waiting) is a release of its own in this queue, of the unit it belongs to, so it never
+builds beside a release of its own unit and takes a slot like a release. It also
 deletes every finished release run of a build namespace but the newest 20, and every finished
 publish run but the newest 20, and never one that waits or runs. It reads the runs that carry
 image-builder.io/consumer and those that carry image-builder.io/publish, 50 a page
@@ -114,6 +119,8 @@ spec:
               env:
                 - name: QUEUE_DIR
                   value: /queue
+                - name: RELEASE_MAX_RUNNING
+                  value: {{ required "image-builder: releaseQueue.maxRunning is required" .Values.releaseQueue.maxRunning | quote }}
                 # kubectl keeps its discovery cache under HOME; the root filesystem is read only.
                 - name: HOME
                   value: /tmp

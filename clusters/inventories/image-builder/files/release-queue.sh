@@ -4,6 +4,8 @@
 # list in the same order: stopping at the first failure would hold every later release back for good.
 set -euo pipefail
 . "${QUEUE_DIR}/list-pipelineruns.sh"
+# How many releases run at once: releaseQueue.maxRunning in clusters/inventories/image-builder.
+max="${RELEASE_MAX_RUNNING:?RELEASE_MAX_RUNNING is required}"
 # The queue's runs are the release runs, which carry image-builder.io/consumer, and the publish runs,
 # which carry image-builder.io/publish; a label selector names one key, so they come in two lists. Of
 # each run only the fields release-queue.jq reads. A failed page fails the tick: a decision on part of
@@ -15,7 +17,7 @@ queue_run='{
     params: [(.spec.params // [])[] | select(.name == "release-tag")]},
   status: {conditions: [(.status.conditions // [])[] | select(.type == "Succeeded") | {type, status}]}}'
 changes="$({ list_pipelineruns image-builder.io/consumer "$queue_run" && list_pipelineruns image-builder.io/publish "$queue_run"; } \
-  | jq -cs '{items: .}' | jq -c -f "${QUEUE_DIR}/release-queue.jq")"
+  | jq -cs '{items: .}' | jq -c --argjson max "$max" -f "${QUEUE_DIR}/release-queue.jq")"
 failed=0
 while IFS= read -r change; do
   [ -n "$change" ] || continue

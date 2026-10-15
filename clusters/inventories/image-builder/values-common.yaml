@@ -73,18 +73,23 @@ eventListener:
 # ExternalSecret — the GitHub webhook signing secret. The deploy-request
 # Trigger's github Interceptor validates X-Hub-Signature-256 against the
 # `github` key of this Secret.
-# The release queue (templates/release-queue.yaml) starts one release at a time on the build plane.
+# The release queue (templates/release-queue.yaml) starts up to maxRunning releases at a time on the build
+# plane, of different units: never two releases of one unit, and a publish run is a release of its unit.
+# The memory budget and the pod limit of the node hold the two largest releases together with the ci runs
+# (ciCapacity in clusters/inventories/consumer-build, proved by scripts/build-contract.test.mjs), which is
+# why a third release waits; raising maxRunning fails that test until the budget is raised with it.
 # The image is the one the release pipeline's own kubectl steps use; it carries bash, kubectl and jq.
 releaseQueue:
   image: &kubectlImage alpine/k8s:1.35.6
+  maxRunning: 2
 
 # The ci run keeper (templates/ci-run-keeper.yaml) starts the waiting ci runs, cancels the ones that a
 # newer push replaces and deletes the oldest finished ones with their workspace claims. It runs the same
 # kubectl image as the release queue. maxRunning is the number of ci runs that run at once across all
 # units, and each unit has at most one of them, because the keeper starts no second run of a unit. The memory budget
 # test in scripts/build-contract.test.mjs multiplies the memory limits of a ci pod and of the report pod
-# by it, and fails when the sum with one release leaves the budget of ciCapacity in
-# clusters/inventories/consumer-build.
+# by it, and fails when the sum with the largest releases that run at once (releaseQueue.maxRunning) leaves
+# the budget of ciCapacity in clusters/inventories/consumer-build.
 ciRunKeeper:
   image: *kubectlImage
   maxRunning: 6

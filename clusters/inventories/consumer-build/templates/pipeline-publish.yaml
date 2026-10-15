@@ -9,8 +9,9 @@ repository's npm packages to this build plane's registry:
 The run is created by the github-release-publish Trigger
 (clusters/inventories/image-builder), waiting, and the release queue starts it
 under a key of its own, `<unit>-build/<release-tag> publish`: it never runs
-beside a release, because the memory of the build node holds the build pods of
-one release or the pack pod of one publish run (ciCapacity in values-common.yaml).
+beside a release of its unit, and it takes one of the queue's slots, because the
+memory of the build node holds, per slot, the build pods of one release or the
+pack pod of one publish run (ciCapacity in values-common.yaml).
 Neither this Pipeline nor its runs carry image-builder.io/consumer, the label the
 Manager's release watch selects, because Tekton copies a Pipeline's labels onto
 its runs.

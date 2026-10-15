@@ -1067,29 +1067,32 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
 });
 
 // The scheduler admits a pod by its requests, and the kernel kills by QoS class when the node runs out of
-// memory, so what keeps the platform pods alive is a sum of limits that fits the free memory of the node.
+// memory, so what bounds the damage to the platform pods is a sum of limits that stays within a budget
+// (ciCapacity.limitsMemoryBudget). The budget is not the free memory of the node: the owner accepted that the
+// worst case, every pod at its limit, exceeds it.
+// The sum is the limits of the ci pods of the runs that run at once (one at a time per run, because the tasks form a
+// chain, and the finally task commit-status runs after them in the same class), the report pod of each of those runs
+// (its class is the one the quota does not count, so it comes on top), plus, for each release the queue runs at once
+// (releaseSlots, of different units), the build pods of one release or the one pod of one publish run, whichever is
+// more (their tasks form a chain). The ci run keeper holds the number of running runs at maxRunning.
 const BYTES = {Gi: 1024 ** 3, Mi: 1024 ** 2};
 const quantity = (text) => Number(text.slice(0, -2)) * BYTES[text.slice(-2)];
 const podLimit = (task, cloneTask) => (task.taskSpec ?? cloneTask.spec).steps
   .reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0);
-// The limits of the ci pods of the runs that run at once (one at a time per run, because the tasks form a chain,
-// and the finally task commit-status runs after them in the same class), the report pod of each of those runs (its
-// class is the one the quota does not count, so it comes on top), plus the build pods of the one release that runs,
-// or the one pod of the one publish run, whichever is more: the release queue runs one or the other (its tasks form a
-// chain). The ci run keeper holds the number of running runs at maxRunning.
-const fitsFreeMemory = (capacity, pipeline, cloneTask, release, buildahTask, publish) => {
+const fitsBudget = (capacity, pipeline, cloneTask, release, buildahTask, publish) => {
   const largest = (tasks) => Math.max(0, ...tasks.map((task) => podLimit(task, cloneTask)));
   const isReport = (task) => task.name === 'report-failure';
   const ciPods = capacity.maxRunning * largest([...pipeline.spec.tasks, ...pipeline.spec.finally.filter((t) => !isReport(t))]);
   const reportPods = capacity.maxRunning * largest(pipeline.spec.finally.filter(isReport));
   const buildPods = release.spec.tasks.filter((task) => task.name.startsWith('build-') && task.runAfter?.includes('scan')).length;
-  const queued = Math.max(buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask), largest(publish.spec.tasks));
+  const queued = capacity.releaseSlots * Math.max(buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask), largest(publish.spec.tasks));
   return ciPods + reportPods + queued <= quantity(capacity.limitsMemoryBudget);
 };
 
-test('the memory limits of all ci pods and one release or publish run together fit the free memory of the build node', () => {
+test('the memory limits of all ci pods and the two largest releases or publish runs together fit the budget of the build node', () => {
   const capacity = {...JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'})),
-    maxRunning: Number(execFileSync('yq', ['.ciRunKeeper.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}))};
+    maxRunning: Number(execFileSync('yq', ['.ciRunKeeper.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'})),
+    releaseSlots: Number(execFileSync('yq', ['.releaseQueue.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}))};
   const images = (count) => Array.from({length: count}, (_, i) => `image-${i + 1}`);
   const docs = renderUnit('shop', images(capacity.releaseBuildPods));
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
@@ -1105,22 +1108,52 @@ test('the memory limits of all ci pods and one release or publish run together f
   assert.ok(admitsNextTask(capacity.podsPerUnit), 'the quota admits the pod of the next task while the finished pod before it still counts, and no more');
   assert.ok(!admitsNextTask(1), 'PLANTED DEFECT: one pod per unit refuses the next task until the finished pod is gone, and Tekton tries it again a minute later');
   assert.ok(!admitsNextTask(3), 'PLANTED DEFECT: a third pod has no task of a chain to run, and the memory budget counts one live ci pod per run');
-  assert.ok(fitsFreeMemory(capacity, pipeline, cloneTask, release, buildah, publish), 'PLANTED INNOCENT: the limits as they stand fit');
+  assert.equal(capacity.releaseSlots, 2, 'the owner decided two releases at once');
+  assert.ok(fitsBudget(capacity, pipeline, cloneTask, release, buildah, publish), 'PLANTED INNOCENT: the limits as they stand fit, two releases of the largest unit among them');
+  assert.ok(fitsBudget({...capacity, releaseSlots: 1}, pipeline, cloneTask, release, buildah, publish), 'PLANTED INNOCENT: one release at a time fits too');
+  assert.ok(!fitsBudget({...capacity, releaseSlots: 3}, pipeline, cloneTask, release, buildah, publish), 'PLANTED DEFECT: a third release at once, without a budget raised for it, is caught');
+  assert.ok(!fitsBudget({...capacity, limitsMemoryBudget: '38Gi'}, pipeline, cloneTask, release, buildah, publish), 'PLANTED DEFECT: two releases at once on the budget of one (38Gi) are caught');
   const planted = structuredClone(pipeline);
   planted.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].computeResources.limits.memory = '4Gi';
-  assert.ok(!fitsFreeMemory(capacity, planted, cloneTask, release, buildah, publish), 'PLANTED DEFECT: a 4Gi limit on the check step is caught');
-  assert.ok(!fitsFreeMemory({...capacity, maxRunning: 14}, pipeline, cloneTask, release, buildah, publish), 'PLANTED DEFECT: 14 runs at once, one per unit of 14 units and so no cap, is caught');
+  assert.ok(!fitsBudget(capacity, planted, cloneTask, release, buildah, publish), 'PLANTED DEFECT: a 4Gi limit on the check step is caught');
+  assert.ok(!fitsBudget({...capacity, maxRunning: 14}, pipeline, cloneTask, release, buildah, publish), 'PLANTED DEFECT: 14 runs at once, one per unit of 14 units and so no cap, is caught');
   const fourImages = renderUnit('shop', images(capacity.releaseBuildPods + 1)).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
-  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, fourImages, buildah, publish), 'PLANTED DEFECT: a fourth image built in parallel is caught');
+  assert.ok(!fitsBudget(capacity, pipeline, cloneTask, fourImages, buildah, publish), 'PLANTED DEFECT: a fourth image built in parallel is caught');
   const heavyReport = structuredClone(pipeline);
   heavyReport.spec.finally[0].taskSpec.steps[0].computeResources.limits.memory = '2Gi';
-  assert.ok(!fitsFreeMemory(capacity, heavyReport, cloneTask, release, buildah, publish), 'PLANTED DEFECT: a 2Gi limit on the report step, one report pod per running run outside the quota, is caught');
+  assert.ok(!fitsBudget(capacity, heavyReport, cloneTask, release, buildah, publish), 'PLANTED DEFECT: a 2Gi limit on the report step, one report pod per running run outside the quota, is caught');
   const heavy = structuredClone(buildah);
   heavy.spec.steps.find((step) => step.name === 'build').computeResources.limits.memory = '8Gi';
-  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, release, heavy, publish), 'PLANTED DEFECT: a raised limit of the buildah build step is caught');
+  assert.ok(!fitsBudget(capacity, pipeline, cloneTask, release, heavy, publish), 'PLANTED DEFECT: a raised limit of the buildah build step is caught');
   const heavyPublish = structuredClone(publish);
   heavyPublish.spec.tasks.find((t) => t.name === 'pack').taskSpec.steps[0].computeResources.limits.memory = '19Gi';
-  assert.ok(!fitsFreeMemory(capacity, pipeline, cloneTask, release, buildah, heavyPublish), 'PLANTED DEFECT: a publish pod above the build pods of a release is caught');
+  assert.ok(!fitsBudget(capacity, pipeline, cloneTask, release, buildah, heavyPublish), 'PLANTED DEFECT: a publish pod above the build pods of a release is caught, for it takes a slot like a release');
+});
+
+// The pods of the build node. The kubelet admits at most nodePods active pods (a finished pod does not count), and
+// a Tekton task is one pod, so this counts every task of every stage run of a release as a pod alive at once, which is
+// more than ever runs together. The queue runs releaseSlots releases of different units at once, each the larger of a
+// release (one run per stage the channel table reaches) and a publish run, beside the ci runs (each at most
+// podsPerUnit ci pods and one report pod) and the pods that stand there whatever the build plane does.
+const podsOnNode = (capacity, release, publish, stages) => capacity.releaseSlots * Math.max(stages * release.spec.tasks.length, publish.spec.tasks.length)
+  + capacity.maxRunning * (capacity.podsPerUnit + 1) + capacity.standingPods;
+
+test('the pods of all ci runs and the two largest releases or publish runs, with the pods that stand on the build node, stay below its pod limit', () => {
+  const capacity = {...JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'})),
+    maxRunning: Number(execFileSync('yq', ['.ciRunKeeper.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'})),
+    releaseSlots: Number(execFileSync('yq', ['.releaseQueue.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}))};
+  const channelStages = JSON.parse(execFileSync('yq', ['-o=json', '.global.channelStages', 'clusters/platform/values-common.yaml'], {encoding: 'utf8'}));
+  const stages = Math.max(...Object.values(channelStages).map((reached) => reached.length));
+  const docs = renderUnit('shop', Array.from({length: capacity.releaseBuildPods}, (_, i) => `image-${i + 1}`));
+  const release = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
+  const publish = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish');
+  assert.ok(podsOnNode(capacity, release, publish, stages) < capacity.nodePods, 'PLANTED INNOCENT: the pods as they stand stay below the limit');
+  assert.ok(podsOnNode({...capacity, releaseSlots: 1}, release, publish, stages) < capacity.nodePods, 'PLANTED INNOCENT: one release at a time stays below it too');
+  assert.ok(!(podsOnNode({...capacity, releaseSlots: 5}, release, publish, stages) < capacity.nodePods), 'PLANTED DEFECT: five releases at once are caught');
+  assert.ok(!(podsOnNode({...capacity, standingPods: capacity.nodePods}, release, publish, stages) < capacity.nodePods), 'PLANTED DEFECT: standing pods that fill the node are caught');
+  assert.ok(!(podsOnNode(capacity, release, publish, stages + 2) < capacity.nodePods), 'PLANTED DEFECT: a channel table that reaches two more stages, a stage run each, is caught');
+  const wide = renderUnit('shop', Array.from({length: 12}, (_, i) => `image-${i + 1}`)).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
+  assert.ok(!(podsOnNode(capacity, wide, publish, stages) < capacity.nodePods), 'PLANTED DEFECT: a unit with twelve images, two tasks each, is caught');
 });
 
 // The engine suite of a repository keeps its MongoDB files in /dev/shm where that exists, and mongod refuses to run with
