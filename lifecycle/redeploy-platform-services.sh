@@ -11,19 +11,28 @@ require_owner_only "$FILE" || fail "$FILE $REACH. Run: $OWNER_ONLY_COMMAND" 77
 if git -C "$(dirname "$FILE")" rev-parse --show-toplevel >/dev/null 2>&1; then
   git -C "$(dirname "$FILE")" check-ignore -q "$FILE" || fail 'the lifecycle config is not ignored by its Git tree' 77
 fi
-python3 - "$FILE" <<'VALIDATE'
+# The file is read, never sourced: only the keys named here leave it, and the two credentials are
+# checked by name and travel only inside the envelope, so no shell variable or trace ever holds them.
+STATED="$(python3 - "$FILE" <<'READ'
 import re, sys
+stated = {}
 with open(sys.argv[1], encoding='utf-8', newline='') as config:
     for number, line in enumerate(config, 1):
-        if '\r' in line or not re.fullmatch(r"(?:\s*(?:#.*)?|[A-Z][A-Z0-9_]*='[^']*'\s*(?:#.*)?)\n?", line):
+        named = re.fullmatch(r"\s*(?:#.*)?\n?|([A-Z][A-Z0-9_]*)='([^']*)'\s*(?:#.*)?\n?", line)
+        if '\r' in line or not named:
             sys.exit('the lifecycle config has an invalid assignment at line ' + str(number) + '; values withheld')
-VALIDATE
-# Only assignments have been admitted; the values stay in shell/process memory.
-. "$FILE"
-export -n PLANE_API_TOKEN ELEVATION_PASSWORD
-for named in PLANE_API_TOKEN ELEVATION_PASSWORD FQDN OPERATOR_USER STAGE ROLE ACME_SERVER; do
-  [ -n "${!named:-}" ] || fail "the lifecycle config states no $named; no remote mutation was started"
-done
+        if named.group(1):
+            stated[named.group(1)] = named.group(2)
+for key in ('PLANE_API_TOKEN', 'ELEVATION_PASSWORD', 'FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE', 'ACME_SERVER'):
+    if not stated.get(key):
+        sys.exit('the lifecycle config states no ' + key + '; no remote mutation was started')
+for key in ('FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE', 'ACME_SERVER', 'BOOKS_FQDN', 'BUILD_PLANE_FQDN', 'MACHINE_HOST'):
+    print(stated.get(key, ''))
+READ
+)" || fail 'the lifecycle config could not be read; no remote mutation was started'
+# Empty optional values at the end arrive as end of input, which leaves them empty.
+{ read -r FQDN; read -r OPERATOR_USER; read -r STAGE; read -r ROLE; read -r ACME_SERVER
+  read -r BOOKS_FQDN; read -r BUILD_PLANE_FQDN; read -r MACHINE_HOST; } <<<"$STATED" || true
 [[ "$FQDN" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || fail 'FQDN is not a host name'
 [[ "$OPERATOR_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail 'OPERATOR_USER is not a login name'
 [ "$ROLE" = master ] || fail 'this action requires an installed master'
@@ -50,7 +59,7 @@ DECLARATION="$(ssh "${BASE[@]}" -n "$TARGET" "cat $CHECKOUT/ansiwise/programs/de
   || fail 'the installed deploy-platform-services program could not be read' 69
 printf '%s\n' "$DECLARATION" | grep -qE '^  - name: plane_api_token[[:space:]]*$' \
   || fail 'the installed program has no plane_api_token input; release the reviewed program and engine first'
-ENVELOPE="$(project_program_input "$FILE" <(printf '%s\n' "$DECLARATION"))" \
+project_program_input "$FILE" <(printf '%s\n' "$DECLARATION") >/dev/null \
   || fail 'the declared inputs could not be projected; no remote mutation was started'
 ACTIVE_SSH=''
 cancel() {
@@ -58,18 +67,17 @@ cancel() {
     kill -TERM "$ACTIVE_SSH" 2>/dev/null || true
     wait "$ACTIVE_SSH" 2>/dev/null || true
   fi
-  unset ENVELOPE PLANE_API_TOKEN ELEVATION_PASSWORD
   exit "$1"
 }
 trap 'cancel 130' INT
 trap 'cancel 143' TERM
-trap 'unset ENVELOPE PLANE_API_TOKEN ELEVATION_PASSWORD' EXIT
 
 for mode in test dry run; do
   platform_program_command "$ENGINE" "$CHECKOUT" - "$RUNS" master "$STAGE" "$FQDN" "$mode" deploy-platform-services
   printf -v command '%q ' "${PROGRAM_COMMAND[@]}"
   printf 'redeploy-platform-services: deploy-platform-services --mode %s on %s\n' "$mode" "$FQDN"
-  printf '%s\n' "$ENVELOPE" | ssh "${BASE[@]}" "$TARGET" "cd $CHECKOUT && exec $command" &
+  # The envelope goes from the file straight into the pipe; the shell never holds it.
+  project_program_input "$FILE" <(printf '%s\n' "$DECLARATION") | ssh "${BASE[@]}" "$TARGET" "cd $CHECKOUT && exec $command" &
   ACTIVE_SSH=$!
   wait "$ACTIVE_SSH" || fail "deploy-platform-services --mode $mode failed; later modes were not started" 69
   ACTIVE_SSH='' 

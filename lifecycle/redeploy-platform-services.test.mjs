@@ -79,8 +79,8 @@ UNDECLARED_TOKEN='fixture-excluded-credential'
   await writeFile(file, config, {mode: 0o600});
   if (options.openMode) await chmod(file, 0o644);
   const run = () => new Promise((resolve, reject) => {
-    child = spawn('bash', [join(directory, 'redeploy-platform-services.sh'), file], {
-      cwd: directory, env: {...process.env, PATH: directory + ':' + process.env.PATH},
+    child = spawn('bash', [...(options.xtrace ? ['-x'] : []), join(directory, 'redeploy-platform-services.sh'), file], {
+      cwd: directory, env: {...process.env, ...options.env, PATH: directory + ':' + process.env.PATH},
     });
     child.stdin.end();
     child.stdout.on('data', d => stdout += d); child.stderr.on('data', d => stderr += d);
@@ -130,6 +130,26 @@ test('missing or empty PLANE_API_TOKEN and an invalid or readable config stop be
       await f.privateRecords();
     } finally {await f.clean();}
   }
+});
+
+test('a token inherited from the caller does not stand in for the missing config key', async () => {
+  const f = await fixture({missing: true, env: {PLANE_API_TOKEN: 'fixture-inherited-plane-token'}});
+  try {
+    const r = await f.run(); assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /states no PLANE_API_TOKEN/);
+    assert.equal(f.calls.length, 0);
+    await f.privateRecords();
+  } finally {await f.clean();}
+});
+
+test('a shell trace of the whole action shows no credential', async () => {
+  const f = await fixture({xtrace: true});
+  try {
+    const r = await f.run(); assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /^\+ /m, 'the trace was not on');
+    assert.deepEqual(f.phases, ['test', 'dry', 'run']);
+    await f.privateRecords();
+  } finally {await f.clean();}
 });
 
 test('a birth or stale installed program starts no mode', async () => {

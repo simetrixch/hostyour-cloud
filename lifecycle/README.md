@@ -202,9 +202,11 @@ because at a machine's birth there is nothing to compare it against. A **changed
 After the reviewed engine and programs release is installed on the master, run this action from
 its matching cloud release. It requires the existing operator SSH key and the owner-only config.
 The config supplies the Plane API token named `plane-update-status` in `PLANE_API_TOKEN` and the
-caller's elevation password in `ELEVATION_PASSWORD`. It refuses an empty Plane token before SSH,
-projects only the answers the installed program declares, and streams the password beside those
-answers through `--answers -`. It writes no config or answer copy on either machine.
+caller's elevation password in `ELEVATION_PASSWORD`. It reads the config without sourcing it, so the
+caller's environment cannot stand in for a key, and refuses a missing or empty Plane token before
+SSH. It projects only the answers the installed program declares and streams the password beside
+those answers through `--answers -`, straight from the file into the pipe: no shell variable and no
+shell trace holds a credential. It writes no config or answer copy on either machine.
 
 ```bash
 bash lifecycle/redeploy-platform-services.sh lifecycle/config.master.env
