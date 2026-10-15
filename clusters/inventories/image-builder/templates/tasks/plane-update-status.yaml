@@ -3,9 +3,9 @@ plane-update-status — moves the Plane work items a release names to the state 
 the module named after its tag (files/plane-update-status.sh). The Pipeline forgejo-release of
 clusters/inventories/forgejo-build runs it on a tag push, after the Forgejo release.
 
-THE TOKEN, THE WORKSPACE AND THE PROJECT reach this step alone, from the run namespace's Secret named
-by tokens-secret: keys plane-api-token, plane-workspace and plane-project. Plane is called inside the
-cluster, through its API Service, never through Traefik.
+THE TOKEN reaches this step alone, from the run namespace's Secret named by tokens-secret. The
+non-secret targets and repository arrive as parameters from the Pipeline's values. Plane is called
+inside the cluster through its API Service.
 */ -}}
 apiVersion: tekton.dev/v1
 kind: Task
@@ -17,12 +17,18 @@ metadata:
     app.kubernetes.io/component: task
 spec:
   description: >-
-    Move the Plane work items the commits of a release name to the state Released, and complete
-    the module named after the tag.
+    Move the Plane work items the commits of a release name to Released in Completed, create or
+    reuse the tag's module, attach the work items and complete it.
   workspaces:
     - name: source
       description: The cloned history of the tag.
   params:
+    - name: repository
+      description: The owner/repository whose basename selects the configured Plane project.
+      type: string
+    - name: plane-targets
+      description: The non-secret JSON workspace and projects with their repository prefixes.
+      type: string
     - name: tag
       description: The pushed tag, which names the module.
       type: string
@@ -30,7 +36,7 @@ spec:
       description: The commit of the tag before this one, empty for the first tag.
       type: string
     - name: tokens-secret
-      description: The Secret of the run namespace holding plane-api-token, plane-workspace and plane-project.
+      description: The Secret of the run namespace holding plane-api-token.
       type: string
   steps:
     - name: update-plane
@@ -41,16 +47,10 @@ spec:
             secretKeyRef:
               name: $(params.tokens-secret)
               key: plane-api-token
-        - name: PLANE_WORKSPACE
-          valueFrom:
-            secretKeyRef:
-              name: $(params.tokens-secret)
-              key: plane-workspace
-        - name: PLANE_PROJECT
-          valueFrom:
-            secretKeyRef:
-              name: $(params.tokens-secret)
-              key: plane-project
+        - name: PLANE_TARGETS
+          value: $(params.plane-targets)
+        - name: REPOSITORY
+          value: $(params.repository)
         - name: PLANE_API
           value: {{ .Values.forgejoRelease.planeApi | quote }}
         - name: TAG

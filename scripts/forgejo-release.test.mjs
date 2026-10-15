@@ -113,38 +113,120 @@ test('the release lists the commits since the nearest earlier tag and hands that
   assert.notEqual(taken.status, 0, 'PLANTED DEFECT: a release Forgejo refuses fails the task');
 });
 
-const PLANE = {PLANE_TOKEN: 'plane-token-in-a-header-file', PLANE_API: 'http://plane-api.plane.svc:8000/api/v1', PLANE_WORKSPACE: 'shop', PLANE_PROJECT: 'p1', TAG: 'v0.0.2'};
-const PLANE_ANSWERS = ['GET /projects/p1/ 200 {"identifier":"SHOP"}',
-  'GET /states/?per_page=100 200 {"results":[{"id":"todo","name":"Todo"},{"id":"done","name":"Released"}]}',
-  'GET /work-items/SHOP-2/ 200 {"id":"item-2"}', 'GET /work-items/SHOP-3/ 200 {"id":"item-3"}', 'PATCH /work-items/item-2/ 200 {}', 'PATCH /work-items/item-3/ 200 {}',
-  'GET /modules/?per_page=100 200 {"results":[{"id":"m1","name":"v0.0.1"},{"id":"m2","name":"v0.0.2"}]}', 'PATCH /modules/m2/ 200 {}'];
-const PLANE_COMMITS = ['first SHOP-1', 'fix SHOP-2 and (SHOP-3)', 'not XSHOP-4 nor SHOP-5x, again SHOP-2'];
-
-test('Plane: the work items named since the previous tag are Released and the module of the tag is completed', () => {
-  const run = execute(updatePlane, {...PLANE, PREVIOUS_COMMIT: '${SHA0}'}, PLANE_ANSWERS, PLANE_COMMITS);
+const PLANE_TARGETS = {workspace: 'simplidigita', projects: [
+  {prefixes: ['ansiwise-'], id: 'e5c01046-3739-4af7-abc4-3c13b28dd232', identifier: 'ANSIWISE'},
+  {prefixes: ['hostyour-'], id: '7bbca0da-56a0-4c33-bf6d-aaef3eb327d1', identifier: 'HOSTYOUR'},
+  {prefixes: ['simplidigita-', 'digita-'], id: '252cf88e-3c7d-4b13-a444-13403ddcb976', identifier: 'SIMPL'},
+]};
+const PLANE = {PLANE_TOKEN: 'plane-token-in-a-header-file', PLANE_API: 'http://plane-api.plane.svc:8000/api/v1',
+  PLANE_TARGETS: JSON.stringify({...PLANE_TARGETS, projects: PLANE_TARGETS.projects.map(({identifier, ...target}) => target)}),
+  REPOSITORY: 'ansiwise-owner/hostyour-release-test', TAG: 'v0.0.2', PREVIOUS_COMMIT: '${SHA0}'};
+const PLANE_COMMITS = ['first HOSTYOUR-1', 'fix HOSTYOUR-2 and (HOSTYOUR-3)', 'not XHOSTYOUR-4 nor HOSTYOUR-5x, again HOSTYOUR-2'];
+function planeAnswers(target = PLANE_TARGETS.projects[1], missing = false) {
+  return [`GET /projects/${target.id}/ 200 {"identifier":"${target.identifier}"}`,
+    'GET /states/?per_page=100 200 {"next_page_results":false,"results":[{"id":"todo","name":"Todo","group":"unstarted"},{"id":"wrong","name":"Released","group":"started"},{"id":"done","name":"Released","group":"completed"}]}',
+    ...[2, 3].flatMap(n => [`GET /work-items/${target.identifier}-${n}/ 200 {"id":"item-${n}","project":"${target.id}"}`, `PATCH /work-items/item-${n}/ 200 {}`]),
+    `GET /modules/?per_page=100 200 {"next_page_results":false,"results":${missing ? '[]' : '[{"id":"m1","name":"v0.0.1"},{"id":"m2","name":"v0.0.2"}]'}}`,
+    'POST /modules/ 201 {"id":"m2","name":"v0.0.2"}',
+    'POST /modules/m2/module-issues/ 200 [{"module":"m2","issue":"item-2"},{"module":"m2","issue":"item-3"}]',
+    'PATCH /modules/m2/ 200 {"id":"m2","status":"completed"}'];
+}
+function assertPlaneRelease(run, target, missing) {
   assert.equal(run.status, 0, run.stderr);
-  const patched = run.requests.filter(r => r.startsWith('PATCH'));
-  assert.deepEqual(patched, ['PATCH http://plane-api.plane.svc:8000/api/v1/workspaces/shop/projects/p1/work-items/item-2/',
-    'PATCH http://plane-api.plane.svc:8000/api/v1/workspaces/shop/projects/p1/work-items/item-3/',
-    'PATCH http://plane-api.plane.svc:8000/api/v1/workspaces/shop/projects/p1/modules/m2/']);
-  assert.deepEqual(run.bodies, [{state: 'done'}, {state: 'done'}, {status: 'completed'}]);
+  const project = `${PLANE.PLANE_API}/workspaces/simplidigita/projects/${target.id}`;
+  assert.deepEqual(run.requests, [`GET ${project}/`, `GET ${project}/states/?per_page=100`,
+    ...[2, 3].map(n => `GET ${PLANE.PLANE_API}/workspaces/simplidigita/work-items/${target.identifier}-${n}/`),
+    `GET ${project}/modules/?per_page=100`, ...(missing ? [`POST ${project}/modules/`] : []),
+    ...[2, 3].map(n => `PATCH ${project}/work-items/item-${n}/`),
+    `POST ${project}/modules/m2/module-issues/`, `PATCH ${project}/modules/m2/`]);
+  assert.deepEqual(run.bodies, [...(missing ? [{name: PLANE.TAG}] : []), {state: 'done'}, {state: 'done'},
+    {issues: ['item-2', 'item-3']}, {status: 'completed'}]);
+  assert.match(run.stdout, /module v0.0.2 is completed, 2 work items/);
   assert.equal(run.auth, 'X-API-Key: plane-token-in-a-header-file\n');
-  assert.ok(!run.calls.includes('plane-token-in-a-header-file'));
+  assert.ok(![run.calls, run.stdout, run.stderr].some(text => text.includes(PLANE.PLANE_TOKEN)));
+}
+
+test('Plane: every repository prefix selects only its configured project, creates a missing tag module or reuses it, attaches its work items and completes it', () => {
+  for (const target of PLANE_TARGETS.projects) for (const prefix of target.prefixes) for (const missing of [false, true]) {
+    const commits = PLANE_COMMITS.map(message => message.replaceAll('HOSTYOUR', target.identifier));
+    const owner = prefix === 'hostyour-' ? 'ansiwise-innocent-owner' : 'hostyour-innocent-owner';
+    const run = execute(updatePlane, {...PLANE, REPOSITORY: `${owner}/${prefix}release-test`}, planeAnswers(target, missing), commits);
+    assertPlaneRelease(run, target, missing);
+  }
 });
 
-test('PLANTED DEFECT: Plane without the state Released, without the module or with an unknown key stops the run', () => {
-  const without = (prefix) => PLANE_ANSWERS.filter(a => !a.startsWith(prefix));
-  const noState = execute(updatePlane, {...PLANE, PREVIOUS_COMMIT: '${SHA0}'}, [...without('GET /states/'), 'GET /states/?per_page=100 200 {"results":[{"id":"todo","name":"Todo"}]}'], PLANE_COMMITS);
-  assert.notEqual(noState.status, 0); assert.match(noState.stderr, /no state Released/);
-  const noModule = execute(updatePlane, {...PLANE, PREVIOUS_COMMIT: '${SHA0}'}, [...without('GET /modules/'), 'GET /modules/?per_page=100 200 {"results":[]}'], PLANE_COMMITS);
-  assert.notEqual(noModule.status, 0); assert.match(noModule.stderr, /no module v0.0.2/);
-  const unknown = execute(updatePlane, {...PLANE, PREVIOUS_COMMIT: '${SHA0}'}, without('GET /work-items/SHOP-3/'), PLANE_COMMITS);
-  assert.notEqual(unknown.status, 0); assert.match(unknown.stderr, /HTTP 404/);
-  // A key read without its boundaries takes XSHOP-4 and SHOP-5x for keys of the project.
+test('Plane: an unmatched repository fails by name before any HTTP, regardless of the owner prefix', () => {
+  const run = execute(updatePlane, {...PLANE, REPOSITORY: 'hostyour-owner/unmatched'}, [], PLANE_COMMITS);
+  assert.notEqual(run.status, 0); assert.match(run.stderr, /unmatched/);
+  assert.deepEqual(run.requests, []);
+});
+
+test('Plane: project IDs come from configuration, and the API supplies each identifier', () => {
+  for (const [index, original] of PLANE_TARGETS.projects.entries()) {
+    const target = {...original, id: `configured-${index}`, identifier: `API${index}`};
+    const config = {workspace: 'simplidigita', projects: [{prefixes: target.prefixes, id: target.id}]};
+    const run = execute(updatePlane, {...PLANE, REPOSITORY: `owner/${target.prefixes[0]}fixture`, PLANE_TARGETS: JSON.stringify(config)},
+      planeAnswers(target), PLANE_COMMITS.map(message => message.replaceAll('HOSTYOUR', target.identifier)));
+    assertPlaneRelease(run, target, false);
+  }
+});
+
+test('Plane: a tag module on a later page is reused, and a release with no commit keys completes without an empty attachment', () => {
+  const responses = [...planeAnswers().filter(a => !a.startsWith('GET /modules/')),
+    'GET /modules/?per_page=100 200 {"next_page_results":true,"next_cursor":"100:1:0","results":[{"id":"m1","name":"v0.0.1"}]}',
+    'GET /modules/?per_page=100&cursor=100%3A1%3A0 200 {"next_page_results":false,"results":[{"id":"m2","name":"v0.0.2"}]}'];
+  const run = execute(updatePlane, PLANE, responses, PLANE_COMMITS);
+  assert.equal(run.status, 0, run.stderr);
+  assert.ok(run.requests.some(r => r.endsWith('cursor=100%3A1%3A0')));
+  assert.ok(!run.requests.some(r => r.startsWith('POST') && r.endsWith('/modules/')));
+  assert.deepEqual(run.bodies, [{state: 'done'}, {state: 'done'}, {issues: ['item-2', 'item-3']}, {status: 'completed'}]);
+  const noKeys = execute(updatePlane, {...PLANE, PREVIOUS_COMMIT: ''}, planeAnswers(), ['an innocent message with no work item']);
+  assert.equal(noKeys.status, 0, noKeys.stderr);
+  assert.deepEqual(noKeys.bodies, [{status: 'completed'}]);
+  assert.doesNotMatch(noKeys.requests.join('\n'), /module-issues/);
+  assert.match(noKeys.stdout, /0 work items/);
+});
+
+test('PLANTED DEFECT: no Released in Completed, an unknown key and refused module creation or attachment never report completion', () => {
+  const answers = planeAnswers();
+  const replace = (prefix, replacement) => [...answers.filter(a => !a.startsWith(prefix)), replacement];
+  const cases = [
+    [replace('GET /states/', 'GET /states/?per_page=100 200 {"next_page_results":false,"results":[]}'), /no state Released/],
+    [replace('GET /states/', 'GET /states/?per_page=100 200 {"next_page_results":false,"results":[{"id":"wrong","name":"Released","group":"started"}]}'), /no state Released/],
+    [answers.filter(a => !a.startsWith('GET /work-items/HOSTYOUR-3/')), /HTTP 404/],
+    [[...planeAnswers(undefined, true).filter(a => !a.startsWith('POST /modules/ ')), 'POST /modules/ 403 {"error":"forbidden"}'], /HTTP 403/],
+    [replace('POST /modules/m2/module-issues/', 'POST /modules/m2/module-issues/ 403 {"error":"forbidden"}'), /HTTP 403/],
+    [replace('POST /modules/m2/module-issues/', 'POST /modules/m2/module-issues/ 200 []'), /attach/],
+    [replace('PATCH /work-items/item-2/', 'PATCH /work-items/item-2/ 403 {"error":"forbidden"}'), /HTTP 403/],
+    [replace('GET /work-items/HOSTYOUR-3/', 'GET /work-items/HOSTYOUR-3/ 200 {"id":"item-3","project":"another-project"}'), /project/],
+    [[...planeAnswers(undefined, true).filter(a => !a.startsWith('POST /modules/ ')), 'POST /modules/ 201 {}'], /no created module/],
+  ];
+  for (const [responses, message] of cases) {
+    const run = execute(updatePlane, PLANE, responses, PLANE_COMMITS);
+    assert.notEqual(run.status, 0); assert.match(run.stderr, message);
+    assert.ok(!run.requests.some(r => r.startsWith('PATCH') && r.endsWith('/modules/m2/')));
+    assert.doesNotMatch(run.stdout, /is completed/);
+  }
+  // A key read without its boundaries takes XHOSTYOUR-4 and HOSTYOUR-5x for keys of the project.
   const loose = updatePlane.replace('grep -E "^${identifier}-[0-9]+$"', 'grep -oE "${identifier}-[0-9]+"').replace("tr -c 'A-Za-z0-9_-' '\\n' <", 'cat');
   assert.notEqual(loose, updatePlane);
-  const looseRun = execute(loose, {...PLANE, PREVIOUS_COMMIT: '${SHA0}'}, PLANE_ANSWERS, PLANE_COMMITS);
-  assert.notEqual(looseRun.status, 0, 'the planted loose reading asks Plane for SHOP-4 and SHOP-5, which it does not know');
+  assert.notEqual(execute(loose, PLANE, answers, PLANE_COMMITS).status, 0);
+  assertPlaneRelease(execute(updatePlane, PLANE, answers, PLANE_COMMITS), PLANE_TARGETS.projects[1], false);
+});
+
+test('Plane: completion refusal and error bodies never become a successful report or disclose a credential', () => {
+  for (const answer of ['PATCH /modules/m2/ 503 {"error":"plane-token-in-a-header-file"}', 'PATCH /modules/m2/ 200 {"id":"m2","status":"planned"}']) {
+    const run = execute(updatePlane, PLANE, [...planeAnswers().filter(a => !a.startsWith('PATCH /modules/m2/')), answer], PLANE_COMMITS);
+    assert.notEqual(run.status, 0);
+    assert.doesNotMatch(run.stdout, /is completed/);
+    assert.ok(![run.calls, run.stdout, run.stderr].some(text => text.includes(PLANE.PLANE_TOKEN)));
+  }
+  const leaked = updatePlane.replace('set -euo pipefail', 'set -euo pipefail\nprintf "%s\\n" "$PLANE_TOKEN"');
+  assert.notEqual(leaked, updatePlane);
+  assert.throws(() => assertPlaneRelease(execute(leaked, PLANE, planeAnswers(), PLANE_COMMITS), PLANE_TARGETS.projects[1], false),
+    'PLANTED DEFECT: the output assertion must reject a credential leak');
+  const innocent = updatePlane.replace('set -euo pipefail', 'set -euo pipefail\nprintf "Plane target configuration loaded\\n"');
+  assertPlaneRelease(execute(innocent, PLANE, planeAnswers(), PLANE_COMMITS), PLANE_TARGETS.projects[1], false);
 });
 
 // ── The rendered charts ──────────────────────────────────────────────────────────────────────────
@@ -171,6 +253,8 @@ function namespaceFindings(docs) {
     const secret = byKind(docs, 'ExternalSecret', name);
     if (secret?.spec.target.deletionPolicy !== 'Delete') found.push(`${name} turns a missing entry into an error, which holds up the waves`);
     if (!secret || secret.spec.data.some(d => d.remoteRef.key !== `${STAGE}/app/forgejo-build`)) found.push(`${name} reads beyond ${STAGE}/app/forgejo-build`);
+    const expected = name === 'forgejo-build-tokens' ? ['forgejo-api-token', 'plane-api-token'] : ['forgejo-api-token', 'forgejo-user'];
+    if (JSON.stringify(secret?.spec.data.map(d => d.remoteRef.property).sort()) !== JSON.stringify(expected)) found.push(`${name} reads fields beyond its credentials`);
   }
   return found;
 }
@@ -191,6 +275,11 @@ function pipelineFindings(docs) {
   const param = (task, name) => task?.params.find(p => p.name === name)?.value;
   if (param(clone, 'credentials-secret') !== 'forgejo-build-git') found.push(`the clone reads ${param(clone, 'credentials-secret')}`);
   if (param(clone, 'url') !== 'http://forgejo-http.forgejo.svc:3000/$(params.repository).git') found.push(`the clone reads ${param(clone, 'url')}`);
+  const plane = tasks.find(t => t.name === 'plane');
+  if (param(plane, 'repository') !== '$(params.repository)') found.push('Plane has no repository selector');
+  const targets = {...PLANE_TARGETS, projects: PLANE_TARGETS.projects.map(({identifier, ...target}) => target)};
+  try { assert.deepEqual(JSON.parse(param(plane, 'plane-targets')), targets); }
+  catch { found.push('Plane targets do not come from the pipeline values'); }
   for (const name of ['release', 'plane']) {
     const task = tasks.find(t => t.name === name);
     if (JSON.stringify(task?.when) !== JSON.stringify([{input: '$(params.event)', operator: 'in', values: ['tag']}])) found.push(`${name} runs on more than a tag`);
@@ -210,12 +299,25 @@ test('forgejo-release hands the API tokens to the three API Tasks alone and rele
   assert.deepEqual(pipelineFindings(build), []);
 });
 
+test('Plane Task reads its target configuration and repository as parameters, and only its API token from a Secret', () => {
+  const task = byKind(builder, 'Task', 'plane-update-status');
+  const env = task.spec.steps[0].env;
+  assert.deepEqual(env.filter(e => e.valueFrom).map(e => e.valueFrom.secretKeyRef.key), ['plane-api-token']);
+  for (const [name, param] of [['REPOSITORY', 'repository'], ['PLANE_TARGETS', 'plane-targets']]) {
+    assert.equal(env.find(e => e.name === name)?.value, `$(params.${param})`);
+    assert.ok(task.spec.params.some(p => p.name === param && p.type === 'string'));
+  }
+});
+
 test('PLANTED DEFECT: the build label, a token mount, a wider grant, a token in the build, a release on a pull request are each found', () => {
   const plant = (docs, kind, name, edit) => { const copy = structuredClone(docs); edit(byKind(copy, kind, name)); return copy; };
   assert.notDeepEqual(namespaceFindings(plant(build, 'Namespace', 'forgejo-build', ns => { ns.metadata.labels['hostyour.cloud/build'] = 'true'; })), []);
   assert.notDeepEqual(namespaceFindings(plant(build, 'ServiceAccount', 'pipeline-sa', sa => { delete sa.automountServiceAccountToken; })), []);
   assert.notDeepEqual(namespaceFindings(plant(build, 'Role', 'eventlistener-create-pipelineruns', r => { r.rules[0].verbs.push('delete'); })), []);
   assert.notDeepEqual(namespaceFindings(plant(build, 'ExternalSecret', 'forgejo-build-tokens', s => { delete s.spec.target.deletionPolicy; })), []);
+  assert.notDeepEqual(namespaceFindings(plant(build, 'ExternalSecret', 'forgejo-build-tokens', s => { s.spec.data.push({remoteRef: {key: `${STAGE}/app/forgejo-build`, property: 'plane-project'}}); })), []);
+  assert.notDeepEqual(pipelineFindings(plant(build, 'Pipeline', 'forgejo-release', p => {
+    p.spec.tasks.find(t => t.name === 'plane').params = p.spec.tasks.find(t => t.name === 'plane').params.filter(p => p.name !== 'repository'); })), []);
   assert.notDeepEqual(pipelineFindings(plant(build, 'Pipeline', 'forgejo-release', p => {
     p.spec.tasks.find(t => t.name === 'build').params.push({name: 'tokens-secret', value: 'forgejo-build-tokens'}); })), []);
   assert.notDeepEqual(pipelineFindings(plant(build, 'Pipeline', 'forgejo-release', p => { delete p.spec.tasks.find(t => t.name === 'release').when; })), []);
