@@ -49,15 +49,26 @@ priorityClasses:
     value: -100
 
 # The GitHub owners whose repositories run their scripts/check.sh on the build plane for every
-# push of the default branch or of a `ci/` branch (templates/triggers/github-ci-push.yaml). A repository of any other owner is released
+# push of the default branch (except one that only moves release pins) or of a `ci/` branch (templates/triggers/github-ci-push.yaml). A repository of any other owner is released
 # through the deploy trigger as before, but its check never runs here. Required: an empty list fails
 # the render. digitaplatform is the owner of the product repositories and simetrixch the owner of
 # this platform's own (hostyour-*, ansiwise-*): each is an organisation of the operator, and a push
 # needs write access to its repositories.
+#
+# WHO MOVES A RELEASE PIN. A release pins the tag of the image it built by committing it to the default branch
+# as this identity, which the bump of clusters/inventories/consumer-build sets with git config
+# (templates/pipeline-release.yaml; scripts/build-contract.test.mjs fails when the two differ). A push whose
+# every commit comes from it, as author and as committer, and only modifies the stage files of the pins is not run
+# again: the release proved the commit it pins. A person's commit to the same files is run, whatever its subject.
+# The webhook names the author and the committer of a commit and not what the commit says it changed in a file,
+# so the identity is what tells a pin move from an edit of another line of a pin file.
 ciPush:
   owners:
     - digitaplatform
     - simetrixch
+  pinIdentity:
+    name: image-builder
+    email: image-builder@platform
 
 # EventListener config — exposed publicly so GitHub can call it on a branch
 # push and on a deploy/<stage>/<release-tag> tag push.

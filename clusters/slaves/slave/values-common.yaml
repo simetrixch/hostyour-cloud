@@ -132,12 +132,31 @@ argo-cd:
   # Single-node master, one slave per instance — one replica of everything
   # (chart defaults are already 1; pinned here so a chart-default change can
   # never silently scale an instance out).
+  #
+  # THE CPU REQUESTS, for the reason given in clusters/bootstrap/argocd/values.tpl: a pod with no request gets the
+  # smallest share of the node while a heavy build saturates it. Each request is the p95 of the busiest of the
+  # eight instances over seven days (Prometheus on the master, 2026-10-15), rounded up to the next 10m:
+  # application controller 55m -> 60m, repo server 89m -> 90m, applicationset controller 13m -> 20m,
+  # server 1m -> 10m, redis 2m -> 10m. Every slave takes the same, because they run one chart.
   controller:
     replicas: 1
+    resources:
+      requests:
+        cpu: 60m
   server:
     replicas: 1
+    resources:
+      requests:
+        cpu: 10m
   repoServer:
     replicas: 1
+    resources:
+      requests:
+        cpu: 90m
+  redis:
+    resources:
+      requests:
+        cpu: 10m
 
   # No dex: v1 has no UI/SSO login path (access is `kubectl -n <name>` or a
   # port-forward + the initial admin Secret; a <name>.<masterFqdn> ingress +
@@ -150,6 +169,9 @@ argo-cd:
   # always deploys it (no enabled toggle); replicas pinned like the rest.
   applicationSet:
     replicas: 1
+    resources:
+      requests:
+        cpu: 20m
 
   # No notifications controller — nothing subscribes to notifications
   # in v1; saves one deployment per instance (cluster RAM budget ~2-2.5 GB/slave).

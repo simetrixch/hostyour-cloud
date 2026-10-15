@@ -74,7 +74,9 @@ WHAT IT BINDS (CEL, fail-closed logic):
      against the Tekton CRD the repository renders.
   9. the ci run keeper (templates/ci-run-keeper.yaml) changes a run only on a
      ci run, and only in one of two ways: by setting spec.status to Cancelled or
-     CancelledRunFinally (a started run, so its finally tasks set its commit status), or
+     CancelledRunFinally (a started run, so its finally tasks set its commit status) and
+     writing the annotation image-builder.io/cancelled-by, which names the push that replaced
+     the run, or
      as the release queue does in clause 7, by dropping spec.status
      PipelineRunPending, which starts the run, and by its own annotation
      image-builder.io/queued-behind. Its RBAC grant is `patch` and `delete`; a
@@ -159,11 +161,15 @@ spec:
           (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) &&
           has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
           (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers))
-    - name: sameAnnotations
+    # Every annotation but the one that names the push which replaced a cancelled ci run, unchanged by an update.
+    - name: sameAnnotationsButCancelledBy
       expression: >-
         request.operation != 'UPDATE' || (
-          has(object.metadata.annotations) == has(oldObject.metadata.annotations) &&
-          (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations))
+          (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k == 'image-builder.io/cancelled-by' ||
+            (has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations &&
+             oldObject.metadata.annotations[k] == object.metadata.annotations[k]))) &&
+          (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k == 'image-builder.io/cancelled-by' ||
+            (has(object.metadata.annotations) && k in object.metadata.annotations))))
     # Every field but spec.status and the annotation of the queue and the keeper, unchanged by an update.
     - name: unchangedButStatus
       expression: >-
@@ -259,9 +265,9 @@ spec:
       message: "the release queue may only delete a finished release or publish run of its own namespace."
       reason: Forbidden
     - expression: "!variables.isCiRunKeeper || request.operation == 'DELETE' || (request.operation == 'UPDATE' && variables.refName.endsWith('-ci') && (
-        (variables.sameBody && variables.sameAnnotations && has(object.spec.status) && object.spec.status in ['Cancelled', 'CancelledRunFinally']) ||
+        (variables.sameBody && variables.sameAnnotationsButCancelledBy && has(object.spec.status) && object.spec.status in ['Cancelled', 'CancelledRunFinally']) ||
         (variables.unchangedButStatus && variables.startsOrKeepsStatus)))"
-      message: "the ci run keeper may only cancel a ci run, start a waiting one, or note what it waits for."
+      message: "the ci run keeper may only cancel a ci run and name the push that replaced it, start a waiting one, or note what it waits for."
       reason: Forbidden
     - expression: "!variables.isCiRunKeeper || request.operation != 'DELETE' || (variables.deletedRefName in variables.ownPipelines && variables.deletedRefName.endsWith('-ci') && variables.deletedRunIsFinished)"
       message: "the ci run keeper may only delete a finished ci run of its own namespace."

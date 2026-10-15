@@ -40,10 +40,24 @@ global:
       mountPath: /etc/platform-trust
       readOnly: true
 
+# THE CPU REQUESTS OF THE RECONCILER. When a heavy build saturates the node, a pod with no CPU request gets the
+# smallest share of it, and the master's GitOps would slow down with the build. Each request is the p95 of that
+# pod's CPU use over seven days (container_cpu_usage_seconds_total, 5 minute rate, read from the master's
+# Prometheus on 2026-10-15), rounded up to the next 10m, and to the next 50m from 100m on:
+#
+#   application controller 219m -> 250m    repo server 144m -> 150m      applicationset controller 18m -> 20m
+#   server 2m -> 10m                       redis 2m -> 10m               dex 0m -> 10m      notifications 1m -> 10m
+#
+# scripts/check.sh fails when one of these renders without its request, and clusters/inventories/consumer-build
+# (ciCapacity.standingCpuRequests) counts them in the budget of the node's cores.
+
 # Server Configuration
 server:
   service:
     type: ClusterIP
+  resources:
+    requests:
+      cpu: 10m
 
   # Chart-bundled k8s Ingress disabled — we ship our own Traefik IngressRoute
   # (clusters/bootstrap/argocd/ingressroute.yaml) for consistency with Vault and the
@@ -58,14 +72,38 @@ server:
 # Manager Configuration
 controller:
   replicas: 1
+  resources:
+    requests:
+      cpu: 250m
 
 # Repo Server Configuration
 repoServer:
   replicas: 1
+  resources:
+    requests:
+      cpu: 150m
 
 # Redis Configuration
 redis:
   enabled: true
+  resources:
+    requests:
+      cpu: 10m
+
+applicationSet:
+  resources:
+    requests:
+      cpu: 20m
+
+dex:
+  resources:
+    requests:
+      cpu: 10m
+
+notifications:
+  resources:
+    requests:
+      cpu: 10m
 
 # Configs
 configs:

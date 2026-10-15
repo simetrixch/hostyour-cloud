@@ -6,7 +6,9 @@ things each minute, to the ci runs only (the runs that carry image-builder.io/ci
   - it cancels a run that has not finished while a newer push to the same branch has a run of its own,
     because the newer push replaces it. The branch travels on each run as the annotation
     image-builder.io/ci-branch, set by the ci-push TriggerTemplate; a label cannot hold the `/` of a
-    branch name.
+    branch name. The same patch writes the annotation image-builder.io/cancelled-by on the run: the
+    commit and the run of the newest push to the branch, so the cancelled run says by which push it was
+    replaced.
   - it starts the oldest waiting runs while fewer than ciRunKeeper.maxRunning ci runs have started and
     not finished, at most one run per build namespace and none in a namespace that has a started run,
     because the ci quota of a unit lets one task pod run (its second slot only covers the finished pod
@@ -27,8 +29,8 @@ ITS RIGHTS. Read on PipelineRuns cluster-wide (the build namespaces come and go 
 patch and delete only in each <unit>-build namespace, rendered there by clusters/inventories/consumer-build
 (templates/rbac-ci-run-keeper.yaml). A patch can rewrite any field, so the admission policy
 image-builder-pipelinerun-guard limits this identity on a ci run to setting spec.status Cancelled or
-CancelledRunFinally, to
-dropping the waiting flag, and to its own annotation, and a delete by it to a finished run of the unit's own ci
+CancelledRunFinally together with the annotation image-builder.io/cancelled-by, to
+dropping the waiting flag, and to its own annotation image-builder.io/queued-behind, and a delete by it to a finished run of the unit's own ci
 Pipeline.
 */ -}}
 {{- if .Values.eventListener.enabled }}
