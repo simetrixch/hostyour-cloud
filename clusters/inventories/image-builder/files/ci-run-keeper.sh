@@ -11,13 +11,13 @@ apply() {
 }
 max="${CI_MAX_RUNNING:?CI_MAX_RUNNING is required}"
 . "${KEEPER_DIR}/list-pipelineruns.sh"
-# Of each run only the fields ci-run-keeper.jq reads, about 340 bytes a run. A failed page fails the
+# Of each run only the fields ci-run-keeper.jq reads, about 420 bytes a run. A failed page fails the
 # tick: a decision on part of the runs would start runs past the cap.
 ci_run='{
   metadata: (.metadata | {namespace, name, creationTimestamp,
     labels: {"image-builder.io/ci": .labels["image-builder.io/ci"]},
     annotations: ((.annotations // {}) | with_entries(select(.key == "image-builder.io/ci-branch" or .key == "image-builder.io/queued-behind")))}),
-  spec: {status: .spec.status},
+  spec: {status: .spec.status, params: [.spec.params[] | select(.name == "commit")]},
   status: {conditions: [(.status.conditions // [])[] | select(.type == "Succeeded") | {type, status}]}}'
 changes="$(list_pipelineruns image-builder.io/ci "$ci_run" | jq -cs '{items: .}' | jq -c --argjson max "$max" -f "${KEEPER_DIR}/ci-run-keeper.jq")"
 failed=0

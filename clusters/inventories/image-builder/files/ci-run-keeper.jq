@@ -8,7 +8,9 @@
 #           is never cancelled. Two runs created in the same second are not ordered, so neither cancels
 #           the other. A run that has started is cancelled gracefully (CancelledRunFinally), so its
 #           finally tasks still run and set the commit status that its first task set to pending; a run
-#           that waits has set none, and is cancelled outright (Cancelled).
+#           that waits has set none, and is cancelled outright (Cancelled). The same patch writes the
+#           annotation image-builder.io/cancelled-by on the run: the commit and the run of the newest push
+#           to its branch, so the cancelled run says by which push it was replaced.
 #   start   the oldest waiting runs (spec.status PipelineRunPending), as many as there are free slots,
 #           where a slot is held by every ci run that has started and not finished, whatever its pods
 #           wait for. Every ci run is created waiting, because ci pods at the same moment overran the
@@ -30,6 +32,8 @@ def isDone: succeeded == "True" or succeeded == "False";
 def isPending: .spec.status == "PipelineRunPending";
 def branch: .metadata.annotations["image-builder.io/ci-branch"];
 def created: .metadata.creationTimestamp;
+def commit: [.spec.params[] | select(.name == "commit") | .value][0];
+def pushOf: "\(commit) (\(.metadata.name))";
 def queuedBehind: .metadata.annotations["image-builder.io/queued-behind"] // "";
 def identity: {namespace: .metadata.namespace, name: .metadata.name};
 
@@ -38,9 +42,9 @@ def identity: {namespace: .metadata.namespace, name: .metadata.name};
    | select(isDone | not) | select(.spec.status == null or isPending)] as $open
 | ([$runs[] | select(branch != null)]
    | group_by([.metadata.namespace, branch])
-   | map(.[0] as $first | {key: ($first.metadata.namespace + "/" + ($first | branch)), value: (map(created) | max)})
+   | map(sort_by(created, .metadata.name) | last | {key: (.metadata.namespace + "/" + branch), value: .})
    | from_entries) as $newest
-| [$open[] | select(created < $newest[.metadata.namespace + "/" + branch])] as $replaced
+| [$open[] | select(created < ($newest[.metadata.namespace + "/" + branch] | created))] as $replaced
 | ($replaced | map(.metadata.namespace + "/" + .metadata.name)) as $replacedNames
 | [$runs[] | select((isDone | not) and (isPending | not))] as $started
 | ($started | length) as $running
@@ -57,9 +61,11 @@ def identity: {namespace: .metadata.namespace, name: .metadata.name};
 | "all \($max) ci slots are in use" as $slotsReason
 | "a ci run of this unit runs" as $unitReason
 | [$replaced[]
+   | ($newest[.metadata.namespace + "/" + branch] | pushOf) as $by
    | identity + {verb: "cancel", type: "merge",
-      patch: {spec: {status: (if isPending then "Cancelled" else "CancelledRunFinally" end)}},
-      say: "cancelled \(.metadata.namespace)/\(.metadata.name): a newer push to \(branch) replaces it"}] as $cancels
+      patch: {spec: {status: (if isPending then "Cancelled" else "CancelledRunFinally" end)},
+              metadata: {annotations: {"image-builder.io/cancelled-by": $by}}},
+      say: "cancelled \(.metadata.namespace)/\(.metadata.name): a newer push to \(branch) replaces it, \($by)"}] as $cancels
 | [$startable[]
    | identity + {verb: "patch", type: "json",
       patch: ([{op: "remove", path: "/spec/status"}]

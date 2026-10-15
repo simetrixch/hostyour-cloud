@@ -1336,12 +1336,12 @@ test('the ci run keeper runs every minute, reads runs cluster-wide, and may patc
 });
 
 const KEEPER = 'system:serviceaccount:image-builder:ci-run-keeper';
-const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run, start a waiting one, or note what it waits for.';
+const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run and name the push that replaced it, start a waiting one, or note what it waits for.';
 const PRIORITY_MESSAGE = "a managed run's podTemplate sets priorityClassName to the class of its pipeline and nothing else.";
 const OVERRIDE_MESSAGE = 'per-task pod, step, sidecar, metadata and account overrides are not allowed, except the report class on the task report-failure of a ci run.';
 const CI_CLASS_MESSAGE = 'a ci run carries the ci priority class: the capacity quota of its build namespace counts the pods of that class only.';
 
-test('the admission policy lets the ci run keeper cancel, start and note a ci run and change nothing else', () => {
+test('the admission policy lets the ci run keeper cancel, name the replacing push, start and note a ci run and change nothing else', () => {
   const policy = guardOf(imageBuilder());
   const running = (pipeline = 'shop-ci') => ({...createsRun('shop-build', pipeline).object,
     metadata: {namespace: 'shop-build', name: `${pipeline}-x`, labels: {'image-builder.io/ci': 'shop'}, annotations: {'image-builder.io/ci-branch': 'main'}, finalizers: ['chains.tekton.dev/pipelinerun']}});
@@ -1351,10 +1351,13 @@ test('the admission policy lets the ci run keeper cancel, start and note a ci ru
   const cancelled = changed((r) => { r.spec.status = 'Cancelled'; });
   const waiting = changed((r) => { r.spec.status = 'PipelineRunPending'; });
   const noted = changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'all 6 ci slots are in use'; }, waiting);
+  const named = (r) => { r.metadata.annotations['image-builder.io/cancelled-by'] = `${'a'.repeat(40)} (shop-ci-y)`; };
   const update = (username, object, oldObject) => ({object, oldObject, request: {operation: 'UPDATE', namespace: 'shop-build', userInfo: {username}}});
   const ADMITTED = {
     'the keeper cancels a running ci run': update(KEEPER, cancelled, base),
     'the keeper cancels a running ci run gracefully, so its finally tasks run': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; }), base),
+    'the keeper cancels a running ci run and names the push that replaced it': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; named(r); }), base),
+    'the keeper cancels a waiting ci run and names the push that replaced it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; named(r); }), waiting),
     'the keeper cancels a ci run again': update(KEEPER, cancelled, cancelled),
     'the keeper cancels a waiting ci run': update(KEEPER, cancelled, waiting),
     'the keeper starts a waiting ci run': update(KEEPER, base, waiting),
@@ -1381,6 +1384,10 @@ test('the admission policy lets the ci run keeper cancel, start and note a ci ru
     'the keeper takes the cancellation back': update(KEEPER, base, cancelled),
     'the keeper changes a label while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.labels['image-builder.io/consumer'] = 'shop'; }), base),
     'the keeper changes an annotation while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations['image-builder.io/ci-branch'] = 'other'; }), base),
+    'the keeper names a push while it cancels and changes the branch of the run beside it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; named(r); r.metadata.annotations['image-builder.io/ci-branch'] = 'other'; }), base),
+    'the keeper names a push while it cancels and drops the branch of the run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations = {'image-builder.io/cancelled-by': 'x'}; }), base),
+    'the keeper names a push on a run it does not cancel': update(KEEPER, changed(named), base),
+    'the keeper names a push while it starts a run': update(KEEPER, changed(named), waiting),
     'the keeper changes the finalizers while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.finalizers = []; }), base),
     'the keeper creates a run': {...createsRun('shop-build', 'shop-ci'), request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: KEEPER}}},
     'the keeper creates a run that is cancelled already': {object: changed((r) => { r.spec.status = 'Cancelled'; }, createsRun('shop-build', 'shop-ci').object), oldObject: null,
