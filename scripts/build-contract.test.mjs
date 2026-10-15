@@ -109,6 +109,18 @@ test('admission guard selects typed Tekton fields and keeps native inline refusa
 // trigger filters are evaluated by scripts/vap-eval, which runs the CEL library the build plane runs.
 const evaluate = (policy, requests) => execFileSync('go', ['run', '.'], {cwd: 'scripts/vap-eval', encoding: 'utf8',
   input: JSON.stringify({policy, requests})}).split('\n').filter(Boolean).map((line) => JSON.parse(line));
+// The overlays and the filter of a Trigger's cel interceptor, and whether the filter takes each push body, evaluated
+// with the library the build plane runs. `edit` rewrites the filter, to plant a defect in it.
+const triggerOf = (docs, name) => {
+  const cel = docs.find((d) => d.kind === 'Trigger' && d.metadata.name === name).spec.interceptors.find((i) => i.ref.name === 'cel').params;
+  return {overlays: cel.find((p) => p.name === 'overlays').value, filter: cel.find((p) => p.name === 'filter').value};
+};
+const triggerMatches = (docs, name, bodies, edit = (filter) => filter) => {
+  const {overlays, filter} = triggerOf(docs, name);
+  const policy = {spec: {variables: overlays.map((o) => ({name: o.key, expression: o.expression})),
+    validations: [{expression: edit(filter), message: 'ignored'}]}};
+  return evaluate(policy, bodies.map((body) => ({body}))).map((v) => ({matched: v.denied.length === 0, overlays: v.variables}));
+};
 const renderUnit = (name, builds = ['app']) => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name,
   repoURL: `https://github.com/check/${name}.git`, buildsJson: JSON.stringify(builds)})]);
 const imageBuilder = () => renderChart('image-builder');
@@ -168,16 +180,8 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: EVENT_LISTENER}}}])[0];
   assert.deepEqual(verdict.denied, [], 'PLANTED INNOCENT: the run with the report override and the three timeouts is admitted');
 
-  const trigger = (name) => {
-    const cel = byKind('Trigger', name).spec.interceptors.find((i) => i.ref.name === 'cel').params;
-    return {overlays: cel.find((p) => p.name === 'overlays').value, filter: cel.find((p) => p.name === 'filter').value};
-  };
-  const matches = (name, bodies, edit = (filter) => filter) => {
-    const {overlays, filter} = trigger(name);
-    const policy = {spec: {variables: overlays.map((o) => ({name: o.key, expression: o.expression})),
-      validations: [{expression: edit(filter), message: 'ignored'}]}};
-    return evaluate(policy, bodies.map((body) => ({body}))).map((v) => ({matched: v.denied.length === 0, overlays: v.variables}));
-  };
+  const trigger = (name) => triggerOf(builder, name);
+  const matches = (name, bodies, edit) => triggerMatches(builder, name, bodies, edit);
   // GitHub sends the repository's default branch with every push (repository.default_branch); `main` here, so a
   // filter that names `master` instead of reading it is seen.
   const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main'};
@@ -283,10 +287,100 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   }
 });
 
+// A release moves a pin by committing the new tag into clusters/inventories/<app>/values-<stage>.yaml of the default
+// branch, after the release itself ran the check on the commit it pins, and it commits as the identity its bump sets
+// (ciPush.pinIdentity, held equal to the bump below). That push is not run again: the filter reads who authored and
+// committed each commit and the files it changes, which the webhook lists as paths, and never its subject. It skips the
+// push only when every commit of it comes from that identity and modifies pin files and nothing else, so a person's commit
+// to a pin file, or one other file in any commit, starts the run. Whatever the webhook does not state well enough to tell
+// is run: a commit with no listed path or no author, a push without a commits list, a push whose list may be cut short,
+// and a forced push, whose listed commits are only the new ones while it drops the commits it rewound.
+test('the identity the ci trigger takes for a release pin is the one the release bump commits with', () => {
+  const identity = JSON.parse(execFileSync('yq', ['-o=json', '.ciPush.pinIdentity', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}));
+  const release = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
+  const bump = release.spec.tasks.flatMap((t) => t.taskSpec?.steps ?? []).map((step) => step.script ?? '').join('\n');
+  const sets = (script) => [/git config --global user\.name\s+"([^"]+)"/.exec(script)?.[1], /git config --global user\.email\s+"([^"]+)"/.exec(script)?.[1]];
+  assert.deepEqual(sets(bump), [identity.name, identity.email], 'the bump commits as the identity the trigger names');
+  assert.notDeepEqual(sets(bump.replace('"image-builder@platform"', '"someone@example.com"')), [identity.name, identity.email], 'PLANTED DEFECT: a bump that commits as another identity is caught');
+});
+
+test('a push of the default branch that only moves release pins starts no ci run, and any other change in the push does', () => {
+  const builder = imageBuilder();
+  const SHA = 'a'.repeat(40), BEFORE = 'b'.repeat(40);
+  const repository = {name: 'hostyour-cloud', clone_url: 'https://github.com/simetrixch/hostyour-cloud.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
+  const bump = JSON.parse(execFileSync('yq', ['-o=json', '.ciPush.pinIdentity', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}));
+  const person = {name: 'Mehmet', email: 'mehmet@example.com'};
+  const commit = (modified, {added = [], removed = [], message = 'release: manager 0.8.497-stable-20261015010114 — pin 0.8.497-stable-20261015010114-72bca23 (prod)', author = bump, committer = bump} = {}) =>
+    ({id: SHA, message, added, removed, modified, author, committer});
+  const push = (commits, ref = 'refs/heads/master', forced = false) => ({ref, before: BEFORE, after: SHA, deleted: false, forced, repository, ...(commits ? {commits} : {})});
+  const MANAGER = 'clusters/inventories/manager/values-prod.yaml', GATE_RUNNER = 'clusters/inventories/gate-runner/values-test.yaml';
+  const pins = commit([MANAGER, GATE_RUNNER]);
+  const filter = triggerOf(builder, 'github-ci-push').filter;
+  const lookalikes = ['clusters/inventories/manager/values-prod.yaml.bak', 'clusters/inventories/manager/values-common.yaml', 'clusters/inventories/manager/values-staging.yaml',
+    'clusters/inventories/manager/templates/values-prod.yaml', 'clusters/inventories/values-prod.yaml', 'tools/clusters/inventories/manager/values-prod.yaml',
+    'clusters/inventories/manager/Chart.yaml', 'clusters/platform/values-prod.yaml'];
+  // Each push of the table and whether it starts a run.
+  const pushes = {
+    'PLANTED INNOCENT: one pin commit': [push([pins]), false],
+    'PLANTED INNOCENT: two pin commits': [push([pins, commit([MANAGER])]), false],
+    'PLANTED INNOCENT: 19 pin commits': [push(Array.from({length: 19}, () => pins)), false],
+    'a pin file under a subject that does not say pin': [push([commit([MANAGER], {message: 'Fix the manager pin by hand'})]), false],
+    "a person's commit to a pin file, under a pin subject": [push([commit([MANAGER], {author: person, committer: person})]), true],
+    "a person's commit to a pin file, as the bump's name with another address": [push([commit([MANAGER], {author: {...bump, email: person.email}, committer: {...bump, email: person.email}})]), true],
+    "a person's commit to a pin file, as the bump's address with another name": [push([commit([MANAGER], {author: {...bump, name: person.name}, committer: {...bump, name: person.name}})]), true],
+    "a commit that the bump authored and a person committed": [push([commit([MANAGER], {committer: person})]), true],
+    "a commit that a person authored and the bump committed": [push([commit([MANAGER], {author: person})]), true],
+    "a person's commit among pin commits of the bump": [push([pins, commit([MANAGER], {author: person, committer: person})]), true],
+    'a commit without its author': [push([{id: SHA, message: 'x', added: [], removed: [], modified: [MANAGER], committer: bump}]), true],
+    'a pin file and one other file in one commit': [push([commit([MANAGER, 'clusters/platform/versions.yaml'])]), true],
+    'a pin commit and a commit of another file': [push([pins, commit(['README.md'])]), true],
+    'a commit of another file': [push([commit(['scripts/check.sh'])]), true],
+    'a pin subject on another file': [push([commit(['scripts/check.sh'], {message: 'release: manager 0.8.497 — pin 0.8.497-stable (prod)'})]), true],
+    'a pin file that is added': [push([commit([MANAGER], {added: ['clusters/inventories/manager/values-dev.yaml']})]), true],
+    'a pin file that is removed': [push([commit([MANAGER], {removed: ['clusters/inventories/manager/values-dev.yaml']})]), true],
+    ...Object.fromEntries(lookalikes.map((path) => [`${path}, which is no pin file`, [push([commit([path])]), true]])),
+    'a commit with no listed path, which an extremely large commit has': [push([commit([])]), true],
+    'a commit with no listed path among pin commits': [push([pins, commit([])]), true],
+    'a push with no commit': [push([]), true],
+    'a push without a commits list': [push(undefined), true],
+    'a list of 20 commits, which may be cut short': [push(Array.from({length: 20}, () => pins)), true],
+    'a commit without its added and removed lists': [push([{id: SHA, message: 'x', modified: [MANAGER]}]), true],
+    'a pin commit on a ci/ branch, the deliberate run of any commit': [push([pins], 'refs/heads/ci/issue-387-pins'), true],
+    'a pin commit on an issue branch, which no run takes': [push([pins], 'refs/heads/issue-387-fix'), false],
+    'a forced push of pin commits, which drops the commits it rewound': [push([pins], 'refs/heads/master', true), true],
+    'a forced push of a branch no run takes': [push([pins], 'refs/heads/issue-387-fix', true), false],
+    'a push of pin commits whose forced field is absent': [(({forced, ...body}) => body)(push([pins])), false],
+  };
+  const verdicts = triggerMatches(builder, 'github-ci-push', Object.values(pushes).map(([body]) => body));
+  Object.entries(pushes).forEach(([name, [, runs]], i) => assert.equal(verdicts[i].matched, runs, `${name} ${runs ? 'starts' : 'starts no'} run`));
+  const runs = (body, edit) => triggerMatches(builder, 'github-ci-push', [body], edit)[0].matched;
+  // PLANTED DEFECTS: each edit finds its clause and takes a push the filter must run for no run, or the reverse.
+  const planted = {
+    'the filter as it stood, without the pin clause': [(f) => f.replace("!(body.ref == 'refs/heads/' + body.repository.default_branch && !(has(body.forced) && body.forced) && has(body.commits)", '!(false && has(body.commits)'), push([pins]), false],
+    'a pin clause for every branch, a ci/ branch among them': [(f) => f.replace("!(body.ref == 'refs/heads/' + body.repository.default_branch && !(has(body.forced) && body.forced) && has(body.commits)", '!(has(body.commits)'), push([pins], 'refs/heads/ci/issue-387-pins'), true],
+    'a pin clause that takes an added file': [(f) => f.replace('size(c.added) == 0 && size(c.removed) == 0 && ', ''), push([commit([MANAGER], {added: ['clusters/inventories/manager/values-dev.yaml']})]), true],
+    'a pin clause that is not anchored at the start': [(f) => f.replace("path.matches(r'^clusters/", "path.matches(r'clusters/"), push([commit(['tools/clusters/inventories/manager/values-prod.yaml'])]), true],
+    'a pin clause that is not anchored at the end': [(f) => f.replace('[.]yaml$', '[.]yaml'), push([commit(['clusters/inventories/manager/values-prod.yaml.bak'])]), true],
+    "a pin clause that does not read the author's name": [(f) => f.replace(' && c.author.name == ' + `'${bump.name}'`, ''), push([commit([MANAGER], {author: {...bump, name: person.name}})]), true],
+    "a pin clause that does not read the author's address": [(f) => f.replace(' && c.author.email == ' + `'${bump.email}'`, ''), push([commit([MANAGER], {author: {...bump, email: person.email}})]), true],
+    "a pin clause that does not read the committer's name": [(f) => f.replace(' && c.committer.name == ' + `'${bump.name}'`, ''), push([commit([MANAGER], {committer: {...bump, name: person.name}})]), true],
+    "a pin clause that does not read the committer's address": [(f) => f.replace(' && c.committer.email == ' + `'${bump.email}'`, ''), push([commit([MANAGER], {committer: {...bump, email: person.email}})]), true],
+    'a pin clause that takes a commit with no path': [(f) => f.replace(' && size(c.modified) > 0', ''), push([commit([])]), true],
+    'a pin clause that needs one pin commit and not every commit': [(f) => f.replace('body.commits.all(c,', 'body.commits.exists(c,'), push([pins, commit(['README.md'])]), true],
+    'a pin clause that does not read a forced push': [(f) => f.replace('!(has(body.forced) && body.forced) && ', ''), push([pins], 'refs/heads/master', true), true],
+    'a pin clause with no limit on the commits': [(f) => f.replace(' && size(body.commits) < 20', ''), push(Array.from({length: 20}, () => pins)), true],
+  };
+  for (const [defect, [edit, body, expected]] of Object.entries(planted)) {
+    assert.notEqual(edit(filter), filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
+    assert.equal(runs(body), expected, `PLANTED INNOCENT: ${defect}: the filter as it stands answers ${expected}`);
+    assert.notEqual(runs(body, edit), expected, `PLANTED DEFECT: ${defect}`);
+  }
+});
+
 test('the ci trigger needs a list of owners, and an empty or missing list fails the render naming the key', () => {
   assert.throws(() => renderChart('image-builder', ['--set-json', 'ciPush={"owners":[]}']), /ciPush\.owners is required/);
   assert.throws(() => renderChart('image-builder', ['--set', 'ciPush=null']), /ciPush\.owners is required/);
-  const filter = renderChart('image-builder', ['--set-json', 'ciPush={"owners":["one","two"]}'])
+  const filter = renderChart('image-builder', ['--set-json', 'ciPush={"owners":["one","two"],"pinIdentity":{"name":"pin","email":"pin@example.com"}}'])
     .find((d) => d.kind === 'Trigger' && d.metadata.name === 'github-ci-push').spec.interceptors
     .find((i) => i.ref.name === 'cel').params.find((p) => p.name === 'filter').value;
   assert.ok(filter.endsWith("body.repository.owner.login in ['one', 'two']"), 'every listed owner reaches the filter');
@@ -1075,31 +1169,46 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
 // (its class is the one the quota does not count, so it comes on top), plus, for each release the queue runs at once
 // (releaseSlots, of different units), the build pods of one release or the one pod of one publish run, whichever is
 // more (their tasks form a chain). The ci run keeper holds the number of running runs at maxRunning.
+// The same sum of CPU requests, with the requests of the pods that stand on the node on top, is held to the cores of
+// the node by the test of the check step's cores below.
 const BYTES = {Gi: 1024 ** 3, Mi: 1024 ** 2};
 const quantity = (text) => Number(text.slice(0, -2)) * BYTES[text.slice(-2)];
 const podLimit = (task, cloneTask) => (task.taskSpec ?? cloneTask.spec).steps
   .reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0);
-const fitsBudget = (capacity, pipeline, cloneTask, release, buildahTask, publish) => {
-  const largest = (tasks) => Math.max(0, ...tasks.map((task) => podLimit(task, cloneTask)));
+// A CPU limit reserves nothing: the kernel only slows a pod that asks for more than its share, so the limits may add up
+// to more than the node has, and one limit may not exceed it. What the scheduler holds to the cores is the requests.
+const milliCores = (text) => (text.endsWith('m') ? Number(text.slice(0, -1)) : Number(text) * 1000);
+const podRequest = (task, cloneTask) => (task.taskSpec ?? cloneTask.spec).steps
+  .reduce((sum, step) => sum + milliCores(step.computeResources.requests.cpu), 0);
+const MEMORY = {pod: podLimit, standing: () => 0, budget: (capacity) => quantity(capacity.limitsMemoryBudget)};
+const CORES = {pod: podRequest, standing: (capacity) => milliCores(capacity.standingCpuRequests), budget: (capacity) => milliCores(capacity.nodeCpu)};
+const fitsBudget = (capacity, pipeline, cloneTask, release, buildahTask, publish, size = MEMORY) => {
+  const largest = (tasks) => Math.max(0, ...tasks.map((task) => size.pod(task, cloneTask)));
   const isReport = (task) => task.name === 'report-failure';
   const ciPods = capacity.maxRunning * largest([...pipeline.spec.tasks, ...pipeline.spec.finally.filter((t) => !isReport(t))]);
   const reportPods = capacity.maxRunning * largest(pipeline.spec.finally.filter(isReport));
   const buildPods = release.spec.tasks.filter((task) => task.name.startsWith('build-') && task.runAfter?.includes('scan')).length;
-  const queued = capacity.releaseSlots * Math.max(buildPods * podLimit({taskSpec: buildahTask.spec}, cloneTask), largest(publish.spec.tasks));
-  return ciPods + reportPods + queued <= quantity(capacity.limitsMemoryBudget);
+  const queued = capacity.releaseSlots * Math.max(buildPods * size.pod({taskSpec: buildahTask.spec}, cloneTask), largest(publish.spec.tasks));
+  return ciPods + reportPods + queued + size.standing(capacity) <= size.budget(capacity);
+};
+const readCiCapacity = () => ({...JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'})),
+  maxRunning: Number(execFileSync('yq', ['.ciRunKeeper.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'})),
+  releaseSlots: Number(execFileSync('yq', ['.releaseQueue.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}))});
+// The charts of the largest unit the budgets are drawn for: the ci pipeline, a release of releaseBuildPods images, the publish pipeline.
+const ciPlane = (capacity) => {
+  const docs = renderUnit('shop', Array.from({length: capacity.releaseBuildPods}, (_, i) => `image-${i + 1}`));
+  return {docs,
+    pipeline: docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci'),
+    release: docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release'),
+    publish: docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish'),
+    cloneTask: imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'git-clone'),
+    buildah: imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'buildah-build-push')};
 };
 
 test('the memory limits of all ci pods and the two largest releases or publish runs together fit the budget of the build node', () => {
-  const capacity = {...JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'})),
-    maxRunning: Number(execFileSync('yq', ['.ciRunKeeper.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'})),
-    releaseSlots: Number(execFileSync('yq', ['.releaseQueue.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}))};
+  const capacity = readCiCapacity();
   const images = (count) => Array.from({length: count}, (_, i) => `image-${i + 1}`);
-  const docs = renderUnit('shop', images(capacity.releaseBuildPods));
-  const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  const release = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
-  const cloneTask = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'git-clone');
-  const buildah = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'buildah-build-push');
-  const publish = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish');
+  const {docs, pipeline, release, cloneTask, buildah, publish} = ciPlane(capacity);
   assert.ok(publish.spec.tasks.every((t, i) => i === 0 || t.runAfter?.length === 1 && t.runAfter[0] === publish.spec.tasks[i - 1].name), 'the budget counts one publish pod, so its tasks run one after the other');
   assert.equal(String(capacity.podsPerUnit), docs.find((d) => d.kind === 'ResourceQuota').spec.hard.pods, 'the quota renders the declared pods per unit');
   assert.ok(pipeline.spec.tasks.every((t, i) => i === 0 || t.runAfter?.length === 1 && t.runAfter[0] === pipeline.spec.tasks[i - 1].name), 'the budget counts one ci pod per running run, so the tasks run one after the other');
@@ -1130,6 +1239,74 @@ test('the memory limits of all ci pods and the two largest releases or publish r
   assert.ok(!fitsBudget(capacity, pipeline, cloneTask, release, buildah, heavyPublish), 'PLANTED DEFECT: a publish pod above the build pods of a release is caught, for it takes a slot like a release');
 });
 
+// The check step takes 12 cores at most, and requests the largest whole number of cores for which the CPU requests of
+// the ci pods of the runs that run at once, of the releases or publish runs the queue runs at once and of the pods that
+// stand on the node still fit its cores (the sum of fitsBudget, in CPU requests). One more core fails the test as well as
+// a core less: the request is as far as the budget allows. The memory limit stays at 3Gi.
+const checkResources = (pipeline) => pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].computeResources;
+const withCheck = (pipeline, side, cpu) => {
+  const planted = structuredClone(pipeline);
+  checkResources(planted)[side].cpu = cpu;
+  return planted;
+};
+
+test('the check step takes 12 cores and 3Gi at most and requests the largest whole number of cores that the cpu requests of the build node admit', () => {
+  const capacity = readCiCapacity();
+  const {pipeline, cloneTask, release, buildah, publish} = ciPlane(capacity);
+  const fits = (pipelineUnderTest, capacityUnderTest = capacity) => fitsBudget(capacityUnderTest, pipelineUnderTest, cloneTask, release, buildah, publish, CORES);
+  const requestIsLargest = (pipelineUnderTest) => fits(pipelineUnderTest)
+    && !fits(withCheck(pipelineUnderTest, 'requests', String(milliCores(checkResources(pipelineUnderTest).requests.cpu) / 1000 + 1)));
+  const limitIsSound = (pipelineUnderTest) => milliCores(checkResources(pipelineUnderTest).limits.cpu) <= milliCores(capacity.nodeCpu)
+    && milliCores(checkResources(pipelineUnderTest).requests.cpu) <= milliCores(checkResources(pipelineUnderTest).limits.cpu);
+  assert.equal(checkResources(pipeline).limits.cpu, '12', 'the check step may take 12 cores');
+  assert.equal(checkResources(pipeline).limits.memory, '3Gi', 'and keeps 3Gi of memory');
+  assert.ok(limitIsSound(pipeline), 'PLANTED INNOCENT: the limit is within the cores of the node and the request within the limit');
+  assert.ok(!limitIsSound(withCheck(pipeline, 'limits', String(milliCores(capacity.nodeCpu) / 1000 + 1))), 'PLANTED DEFECT: a limit above the cores of the node is caught');
+  assert.ok(!limitIsSound(withCheck(pipeline, 'requests', '13')), 'PLANTED DEFECT: a request above the limit, which the API server refuses, is caught');
+  assert.ok(requestIsLargest(pipeline), 'PLANTED INNOCENT: the request as it stands fits, and one more core does not');
+  assert.ok(!requestIsLargest(withCheck(pipeline, 'requests', '2')), 'PLANTED DEFECT: a request below what the node admits, one more core would fit, is caught');
+  assert.ok(!requestIsLargest(withCheck(pipeline, 'requests', '4')), 'PLANTED DEFECT: a request that the node does not admit with six runs and two releases at once is caught');
+  assert.ok(fits(pipeline, {...capacity, releaseSlots: 1}), 'PLANTED INNOCENT: one release at a time fits too');
+  assert.ok(!fits(pipeline, {...capacity, maxRunning: 14}), 'PLANTED DEFECT: 14 runs at once, one per unit of 14 units and so no cap, is caught');
+  assert.ok(!fits(pipeline, {...capacity, releaseSlots: 6}), 'PLANTED DEFECT: six releases at once are caught');
+  assert.ok(!fits(pipeline, {...capacity, standingCpuRequests: capacity.nodeCpu}), 'PLANTED DEFECT: standing requests that fill the node are caught');
+  assert.ok(!fits(pipeline, {...capacity, nodeCpu: '24'}), 'PLANTED DEFECT: a build node of 24 cores is caught');
+  const heavy = structuredClone(buildah);
+  heavy.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '4';
+  assert.ok(!fitsBudget(capacity, pipeline, cloneTask, release, heavy, publish, CORES), 'PLANTED DEFECT: a raised request of the buildah build step is caught');
+  const heavyPublish = structuredClone(publish);
+  heavyPublish.spec.tasks.find((t) => t.name === 'pack').taskSpec.steps[0].computeResources.requests.cpu = '8';
+  assert.ok(!fitsBudget(capacity, pipeline, cloneTask, release, buildah, heavyPublish, CORES), 'PLANTED DEFECT: a publish pod that requests 8 cores, above the build pods of a release, is caught');
+});
+
+// The pods the master cannot work without carry a CPU request, which scripts/check.sh holds for every render. What the
+// budget of the cores counts of them is ciCapacity.standingCpuRequests: the 4530m the node held on 2026-10-15, before
+// they had requests (declared by the budget of the check step), their own requests, which this test reads from the
+// values that carry them, and the 400m of traefik that hostyour-deploy sets on the addon's DaemonSet. The 8 slave
+// instances are the app clusters apps1 to apps8, one Argo CD each on the master.
+const BASELINE_CPU = 4530, SLAVE_INSTANCES = 8, TRAEFIK_CPU = 400;
+const requestAt = (file, path) => {
+  const value = execFileSync('yq', [`${path}.resources.requests.cpu`, file], {encoding: 'utf8'}).trim();
+  assert.notEqual(value, 'null', `${file} sets no CPU request at ${path}`);
+  return milliCores(value);
+};
+const requestsOf = (file, paths) => paths.reduce((total, path) => total + requestAt(file, path), 0);
+
+test('the standing CPU requests of the budget count the requests of the pods the master cannot work without', () => {
+  const capacity = readCiCapacity();
+  const argoComponents = ['.controller', '.server', '.repoServer', '.redis', '.applicationSet'];
+  const master = requestsOf('clusters/bootstrap/argocd/values.tpl', [...argoComponents, '.dex', '.notifications']);
+  const slave = requestsOf('clusters/slaves/slave/values-common.yaml', argoComponents.map((component) => `.["argo-cd"]${component}`));
+  const certManager = requestsOf('clusters/inventories/cert-manager/values-common.yaml', ['.["cert-manager"]', '.["cert-manager"].cainjector', '.["cert-manager"].webhook']);
+  const identity = requestAt('clusters/bootstrap/idp/values.yaml', '.postgresql.primary');
+  const requests = master + SLAVE_INSTANCES * slave + certManager + identity;
+  const counted = (standing, extra = 0) => milliCores(standing) >= BASELINE_CPU + requests + extra + TRAEFIK_CPU;
+  assert.ok(counted(capacity.standingCpuRequests), 'PLANTED INNOCENT: the budget counts the requests as they stand');
+  assert.ok(!counted(capacity.standingCpuRequests, 1000), 'PLANTED DEFECT: a request raised by a core that the budget does not count is caught');
+  assert.ok(!counted(capacity.standingCpuRequests, SLAVE_INSTANCES * 10), 'PLANTED DEFECT: 10m more on each of the slave instances is caught');
+  assert.ok(!counted(`${BASELINE_CPU + requests}m`), 'PLANTED DEFECT: a budget that leaves out traefik, once its request is set, is caught');
+});
+
 // The pods of the build node. The kubelet admits at most nodePods active pods (a finished pod does not count), and
 // a Tekton task is one pod, so this counts every task of every stage run of a release as a pod alive at once, which is
 // more than ever runs together. The queue runs releaseSlots releases of different units at once, each the larger of a
@@ -1139,14 +1316,10 @@ const podsOnNode = (capacity, release, publish, stages) => capacity.releaseSlots
   + capacity.maxRunning * (capacity.podsPerUnit + 1) + capacity.standingPods;
 
 test('the pods of all ci runs and the two largest releases or publish runs, with the pods that stand on the build node, stay below its pod limit', () => {
-  const capacity = {...JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'})),
-    maxRunning: Number(execFileSync('yq', ['.ciRunKeeper.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'})),
-    releaseSlots: Number(execFileSync('yq', ['.releaseQueue.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}))};
+  const capacity = readCiCapacity();
   const channelStages = JSON.parse(execFileSync('yq', ['-o=json', '.global.channelStages', 'clusters/platform/values-common.yaml'], {encoding: 'utf8'}));
   const stages = Math.max(...Object.values(channelStages).map((reached) => reached.length));
-  const docs = renderUnit('shop', Array.from({length: capacity.releaseBuildPods}, (_, i) => `image-${i + 1}`));
-  const release = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
-  const publish = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish');
+  const {release, publish} = ciPlane(capacity);
   assert.ok(podsOnNode(capacity, release, publish, stages) < capacity.nodePods, 'PLANTED INNOCENT: the pods as they stand stay below the limit');
   assert.ok(podsOnNode({...capacity, releaseSlots: 1}, release, publish, stages) < capacity.nodePods, 'PLANTED INNOCENT: one release at a time stays below it too');
   assert.ok(!(podsOnNode({...capacity, releaseSlots: 5}, release, publish, stages) < capacity.nodePods), 'PLANTED DEFECT: five releases at once are caught');
@@ -1257,12 +1430,12 @@ test('the ci run keeper runs every minute, reads runs cluster-wide, and may patc
 });
 
 const KEEPER = 'system:serviceaccount:image-builder:ci-run-keeper';
-const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run, start a waiting one, or note what it waits for.';
+const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run and name the push that replaced it, start a waiting one, or note what it waits for.';
 const PRIORITY_MESSAGE = "a managed run's podTemplate sets priorityClassName to the class of its pipeline and nothing else.";
 const OVERRIDE_MESSAGE = 'per-task pod, step, sidecar, metadata and account overrides are not allowed, except the report class on the task report-failure of a ci run.';
 const CI_CLASS_MESSAGE = 'a ci run carries the ci priority class: the capacity quota of its build namespace counts the pods of that class only.';
 
-test('the admission policy lets the ci run keeper cancel, start and note a ci run and change nothing else', () => {
+test('the admission policy lets the ci run keeper cancel, name the replacing push, start and note a ci run and change nothing else', () => {
   const policy = guardOf(imageBuilder());
   const running = (pipeline = 'shop-ci') => ({...createsRun('shop-build', pipeline).object,
     metadata: {namespace: 'shop-build', name: `${pipeline}-x`, labels: {'image-builder.io/ci': 'shop'}, annotations: {'image-builder.io/ci-branch': 'main'}, finalizers: ['chains.tekton.dev/pipelinerun']}});
@@ -1272,10 +1445,13 @@ test('the admission policy lets the ci run keeper cancel, start and note a ci ru
   const cancelled = changed((r) => { r.spec.status = 'Cancelled'; });
   const waiting = changed((r) => { r.spec.status = 'PipelineRunPending'; });
   const noted = changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'all 6 ci slots are in use'; }, waiting);
+  const named = (r) => { r.metadata.annotations['image-builder.io/cancelled-by'] = `${'a'.repeat(40)} (shop-ci-y)`; };
   const update = (username, object, oldObject) => ({object, oldObject, request: {operation: 'UPDATE', namespace: 'shop-build', userInfo: {username}}});
   const ADMITTED = {
     'the keeper cancels a running ci run': update(KEEPER, cancelled, base),
     'the keeper cancels a running ci run gracefully, so its finally tasks run': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; }), base),
+    'the keeper cancels a running ci run and names the push that replaced it': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; named(r); }), base),
+    'the keeper cancels a waiting ci run and names the push that replaced it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; named(r); }), waiting),
     'the keeper cancels a ci run again': update(KEEPER, cancelled, cancelled),
     'the keeper cancels a waiting ci run': update(KEEPER, cancelled, waiting),
     'the keeper starts a waiting ci run': update(KEEPER, base, waiting),
@@ -1302,6 +1478,10 @@ test('the admission policy lets the ci run keeper cancel, start and note a ci ru
     'the keeper takes the cancellation back': update(KEEPER, base, cancelled),
     'the keeper changes a label while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.labels['image-builder.io/consumer'] = 'shop'; }), base),
     'the keeper changes an annotation while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations['image-builder.io/ci-branch'] = 'other'; }), base),
+    'the keeper names a push while it cancels and changes the branch of the run beside it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; named(r); r.metadata.annotations['image-builder.io/ci-branch'] = 'other'; }), base),
+    'the keeper names a push while it cancels and drops the branch of the run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations = {'image-builder.io/cancelled-by': 'x'}; }), base),
+    'the keeper names a push on a run it does not cancel': update(KEEPER, changed(named), base),
+    'the keeper names a push while it starts a run': update(KEEPER, changed(named), waiting),
     'the keeper changes the finalizers while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.finalizers = []; }), base),
     'the keeper creates a run': {...createsRun('shop-build', 'shop-ci'), request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: KEEPER}}},
     'the keeper creates a run that is cancelled already': {object: changed((r) => { r.spec.status = 'Cancelled'; }, createsRun('shop-build', 'shop-ci').object), oldObject: null,
@@ -1645,4 +1825,20 @@ test('no step of the ci pipeline or of the clone traces its commands', () => {
     plantedClone.spec.steps[0].script += `\n${trace}\n`;
     assert.ok(traces(plantedPipeline) && traces(plantedClone), `PLANTED DEFECT: ${trace} would print the clone credential into a log the failure mail quotes`);
   }
+});
+
+test('no install of the gate worker sets nodedir as an npm config, which npm 12 reports as an unknown config on every install', () => {
+  // npm_config_nodedir and --nodedir are read by npm itself, and npm 12 warns "unknown nodedir" twice per
+  // install; node-gyp takes the same headers from npm_package_config_node_gyp_nodedir, which npm does not read.
+  const setsNodedir = (docs) => /npm_config_nodedir|--nodedir/i.test(JSON.stringify(docs).replaceAll('\\n', '\n'));
+  const docs = renderUnit('shop');
+  assert.ok(docs.some((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci'), 'the pipelines under check are rendered');
+  assert.ok(!setsNodedir(docs), 'PLANTED INNOCENT: the pipelines as rendered select no headers through an npm config');
+  const planted = (change) => { const copy = structuredClone(docs); change(copy.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0]); return copy; };
+  assert.ok(!setsNodedir(planted((step) => { step.env.push({name: 'npm_package_config_node_gyp_nodedir', value: '/usr/local'}); })),
+    'PLANTED INNOCENT: node-gyp\'s own key selects the same headers and npm does not report it');
+  assert.ok(setsNodedir(planted((step) => { step.env.push({name: 'npm_config_nodedir', value: '/usr/local'}); })), 'PLANTED DEFECT: npm_config_nodedir set as an env of the check step');
+  assert.ok(setsNodedir(planted((step) => { step.env.push({name: 'NPM_CONFIG_NODEDIR', value: '/usr/local'}); })), 'PLANTED DEFECT: the upper-case spelling npm reads as well');
+  assert.ok(setsNodedir(planted((step) => { step.script += '\nexport npm_config_nodedir=/usr/local\n'; })), 'PLANTED DEFECT: npm_config_nodedir exported by the script');
+  assert.ok(setsNodedir(planted((step) => { step.script += '\nnpm ci --nodedir=/usr/local\n'; })), 'PLANTED DEFECT: the nodedir flag of the install command');
 });

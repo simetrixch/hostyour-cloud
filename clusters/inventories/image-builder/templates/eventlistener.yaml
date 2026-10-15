@@ -8,7 +8,8 @@ github-deploy-request — a push of the ref deploy/<stage>/<release-tag> routes
 into the unit's own <unit>-release Pipeline in namespace <unit>-build, the
 release cycle. github-ci-push — a push of the default branch or of a `ci/`
 branch routes into the unit's own <unit>-ci Pipeline there, which runs the
-repository's check.
+repository's check; a push of the default branch that only moves release pins
+routes nowhere.
 github-release-publish — a push of the release tag itself routes into the
 unit's own <unit>-publish Pipeline there, which publishes its npm packages. GitHub does
 nothing else here: it only fires this webhook; build, push, bump, sync and

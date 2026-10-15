@@ -1,7 +1,8 @@
-# THE COUNTER-PROBE OF THE FOUR SCANS THAT READ A RENDER: the one that looks for an unresolved Helm
+# THE COUNTER-PROBE OF THE FIVE SCANS THAT READ A RENDER: the one that looks for an unresolved Helm
 # expression, the one that looks for an Application naming one repository at two revisions, the
-# one that looks for an Ingress served over plain http, and the one that looks for a source or a
-# generator of this repository at another revision than the one the chart was handed. scripts/check.sh runs each over this file
+# one that looks for an Ingress served over plain http, the one that looks for a source or a
+# generator of this repository at another revision than the one the chart was handed, and the one
+# that looks for a workload the master cannot work without that carries no CPU request. scripts/check.sh runs each over this file
 # before any of them touches a real chart, and ends the run red
 # unless each reports EXACTLY the defects planted for it below and says nothing at all about the
 # innocents beside them. Without the defects neither scan can be shown to go red; without the
@@ -77,6 +78,21 @@
 #  14. a generator and two sources of this repository at the handed revision, the second source
 #      through an anchor, beside a source of another repository at a branch. It is the shape the
 #      reconciler's tree writes.                                           MUST STAY UNREPORTED
+#
+# WHAT THE FIFTH SCAN IS PLANTED, the workloads that must carry a CPU request and the ones that need not:
+#
+#  15. a DaemonSet traefik whose only container sets a memory request and no CPU request. It is
+#      the shape of the ingress addon's own DaemonSet.                     MUST BE REPORTED
+#  16. a Deployment argocd-repo-server whose first container carries a CPU request and whose
+#      second, a sidecar, carries none, so a scan that read only the first container misses it.
+#                                                                          MUST BE REPORTED
+#  17. a Deployment argocd-server whose container carries a CPU request.   MUST STAY UNREPORTED
+#  18. a Deployment grafana with no resources at all. The scan names the pods the master cannot
+#      work without and reads no other.                                    MUST STAY UNREPORTED
+#  19. a Deployment traefik-forward-auth with no resources, which begins with the name of a listed
+#      workload and is another one, so a scan whose names are not anchored reports it.
+#                                                                          MUST STAY UNREPORTED
+#  20. a ConfigMap named traefik, which is no workload.                    MUST STAY UNREPORTED
 #
 # The two decoded payloads are, in full:
 #
@@ -269,3 +285,86 @@ spec:
         - repoURL: "https://github.com/simetrixch/planted-state.git"
           targetRevision: planted-branch
           path: planted/chart
+---
+# Source: counter-probe/planted-defect-traefik-without-a-cpu-request.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: traefik
+  namespace: ingress
+spec:
+  template:
+    spec:
+      containers:
+        - name: traefik
+          image: traefik:planted
+          resources:
+            requests:
+              memory: 128Mi
+---
+# Source: counter-probe/planted-defect-second-container-without-a-cpu-request.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: repo-server
+          image: argocd:planted
+          resources:
+            requests:
+              cpu: 150m
+        - name: sidecar
+          image: sidecar:planted
+          resources:
+            limits:
+              cpu: 500m
+---
+# Source: counter-probe/planted-innocent-with-a-cpu-request.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          image: argocd:planted
+          resources:
+            requests:
+              cpu: 10m
+---
+# Source: counter-probe/planted-innocent-workload-that-needs-none.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  template:
+    spec:
+      containers:
+        - name: grafana
+          image: grafana:planted
+---
+# Source: counter-probe/planted-innocent-name-that-only-begins-like-a-listed-one.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik-forward-auth
+spec:
+  template:
+    spec:
+      containers:
+        - name: forward-auth
+          image: forward-auth:planted
+---
+# Source: counter-probe/planted-innocent-config-named-like-a-listed-workload.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traefik
+data:
+  planted: "no workload"

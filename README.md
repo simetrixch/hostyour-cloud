@@ -91,7 +91,7 @@ rebuilt from nothing, gets them back with the backup of its registry (`lifecycle
 `bash scripts/check.sh` runs local chart validation and
 credential scanning. It names the suites that did not run locally.
 
-The master's ci runs those checks and `bash scripts/test.sh` on every push of the default branch: the check step of the ci pipeline
+The master's ci runs those checks and `bash scripts/test.sh` on every push of the default branch that does more than move release pins: the check step of the ci pipeline
 installs the tools `ci-tools.json` names, then runs `scripts/check.sh` and `scripts/test.sh`.
 The test entry point runs `lifecycle/test.sh` and `scripts/pipeline-release.test.sh`.
 Run tests only on a remote runner.

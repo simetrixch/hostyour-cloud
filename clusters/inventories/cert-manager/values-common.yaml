@@ -10,3 +10,18 @@ cert-manager:
   # PostSync hook at every sync, beside the objects the addon's release holds; nothing waits on it.
   startupapicheck:
     enabled: false
+  # THE CPU REQUESTS. A pod with no request gets the smallest share of the node while a heavy build saturates it,
+  # and a certificate that is not renewed in time is an outage. Each request is the p95 of that pod's CPU use over
+  # seven days (Prometheus on the master, 2026-10-15: controller 2m, cainjector 3m, webhook 1m), rounded up to the
+  # next 10m, which is the least a request here can be.
+  resources:
+    requests:
+      cpu: 10m
+  cainjector:
+    resources:
+      requests:
+        cpu: 10m
+  webhook:
+    resources:
+      requests:
+        cpu: 10m

@@ -298,6 +298,36 @@ collect_plain_http() {
 $found"
 }
 
+# THE PODS THE MASTER CANNOT WORK WITHOUT CARRY A CPU REQUEST. A pod with none gets the smallest share of the node
+# once the node is saturated, and the build plane saturates it: the ci check may take 12 cores, six runs at once. The
+# ingress, the reconcilers, the certificates and the build plane's controllers are the pods that must keep working
+# then, so each container of the workloads below asks for the CPU it uses (its p95 over seven days, which the
+# comment beside each request in the values names). The names are the ones the charts render and the live pods
+# carry; traefik is the MicroK8s ingress addon's DaemonSet, which no chart of this repository renders, so it stands
+# here for the render that carries it once hostyour-deploy sets its request. The ci pods and the other pods that
+# stand on the node are budgeted in clusters/inventories/consumer-build/values-common.yaml (ciCapacity).
+cpu_guaranteed='traefik|argocd-application-controller|argocd-applicationset-controller|argocd-repo-server|argocd-server|argocd-redis|argocd-dex-server|argocd-notifications-controller|cert-manager|cert-manager-cainjector|cert-manager-webhook'
+
+# $1 says where the render came from, $2 is a file holding it. One line per finding on stdout. `eval` reads one document at
+# a time, which the variables of the filter need: `eval-all` would bind them across every document of the render.
+workloads_without_cpu_request() {
+  yq eval -N 'select((.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet") and ((.metadata.name // "") | test("^('"$cpu_guaranteed"')$")))
+    | .kind as $kind | .metadata.name as $name | .spec.template.spec.containers[] | select(.resources.requests.cpu == null)
+    | $kind + " " + $name + " container " + .name' "$2" > "$work/no-cpu-request" 2>/dev/null || fail "the render of $1 could not be read"
+  while read -r workload; do
+    [ -n "$workload" ] && printf '  %s: %s has no CPU request\n' "$1" "$workload"
+  done < "$work/no-cpu-request"
+}
+
+# $1 says where the render came from, $2 is the render itself. Adds what it finds to $no_cpu_request.
+collect_cpu_requests() {
+  printf '%s\n' "$2" > "$work/render"
+  found="$(workloads_without_cpu_request "$1" "$work/render")"
+  [ -n "$found" ] || return 0
+  no_cpu_request="$no_cpu_request
+$found"
+}
+
 # A SOURCE OR A GENERATOR OF THIS REPOSITORY STANDS AT THE COMMIT ITS ROOT APPLICATION SYNCED, which
 # that Application hands clusters/argocd and clusters/slaves/slave as `revision`, and which every
 # platform Application, standing at it, hands consumer-build the same way. One standing at a
@@ -410,6 +440,18 @@ if [ "$plain_reported" != "$plain_expected" ]; then
 fi
 echo "check: the counter-probe reports both planted Ingresses served over plain http and not the planted innocent."
 
+cpu_expected='  scripts/counter-probe.yaml: DaemonSet traefik container traefik has no CPU request
+  scripts/counter-probe.yaml: Deployment argocd-repo-server container sidecar has no CPU request'
+cpu_reported="$(workloads_without_cpu_request 'scripts/counter-probe.yaml' "$counter_probe")"
+if [ "$cpu_reported" != "$cpu_expected" ]; then
+  echo "The counter-probe plants a Traefik without a CPU request, an Argo CD repo-server whose second container has none, and four workloads that need none. The scan had to report:"
+  echo "$cpu_expected"
+  echo "and it reported:"
+  echo "${cpu_reported:-  (nothing)}"
+  fail "the scan for a workload without a CPU request does not report what scripts/counter-probe.yaml plants"
+fi
+echo "check: the counter-probe reports the planted Traefik and the planted second container without a CPU request, and not the planted innocents."
+
 off_expected='  scripts/counter-probe.yaml, counter-probe/planted-defect-generator-on-a-branch.yaml: planted-defect-generator-on-a-branch names this repository at planted.example.invalid
   scripts/counter-probe.yaml, counter-probe/planted-defect-sources-on-a-branch.yaml: planted-defect-sources-on-a-branch names this repository at planted.example.invalid'
 off_reported="$(sources_off_revision 'scripts/counter-probe.yaml' "$counter_probe" "$handed_revision")"
@@ -449,6 +491,7 @@ broken=""
 expressions=""
 disagreeing=""
 plain_http=""
+no_cpu_request=""
 off_revision=""
 rule_tests=""
 
@@ -507,6 +550,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_expressions "$name at stage $stage" "$trunk_only"
       collect_disagreeing "$name at stage $stage" "$trunk_only"
       collect_plain_http "$name at stage $stage" "$trunk_only"
+      collect_cpu_requests "$name at stage $stage" "$trunk_only"
       collect_off_revision "$name at stage $stage" "$trunk_only"
       collect_rule_test "$trunk_only"
       check_immutable_render "$trunk_only"
@@ -522,6 +566,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_expressions "$name at stage $stage" "$out"
       collect_disagreeing "$name at stage $stage" "$out"
       collect_plain_http "$name at stage $stage" "$out"
+      collect_cpu_requests "$name at stage $stage" "$out"
       collect_off_revision "$name at stage $stage" "$out"
       collect_rule_test "$out"
       check_immutable_render "$out"
@@ -545,6 +590,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_expressions "$name at stage $stage" "$out"
       collect_disagreeing "$name at stage $stage" "$out"
       collect_plain_http "$name at stage $stage" "$out"
+      collect_cpu_requests "$name at stage $stage" "$out"
       collect_off_revision "$name at stage $stage" "$out"
       collect_rule_test "$out"
       check_immutable_render "$out" --set global.placeholderTag=check-takes-the-placeholder-for-a-tag
@@ -603,6 +649,20 @@ if [ -n "$plain_http" ]; then
   fail "an Ingress is served over plain http"
 fi
 echo "check: every Ingress of those $rendered renders binds websecure alone."
+
+# THE RECONCILER OF THE MASTER IS NOT A CHART OF THIS REPOSITORY: the deploy program installs the argo-cd chart with
+# clusters/bootstrap/argocd/values.tpl. The slave chart depends on that chart at the master's version, so its archive
+# (built by the loop above) renders the master's values here, and the master's own Argo CD is held to the same scan.
+argo_chart="$(ls clusters/slaves/slave/charts/argo-cd-*.tgz 2>/dev/null | head -n 1)"
+[ -n "$argo_chart" ] || fail "the argo-cd chart of clusters/slaves/slave was not built, so the values of the master's Argo CD cannot be rendered"
+master_argo="$(helm template argocd "$argo_chart" --namespace argocd -f clusters/bootstrap/argocd/values.tpl 2>&1)" \
+  || { echo "$master_argo"; fail "the argo-cd chart does not render with clusters/bootstrap/argocd/values.tpl"; }
+collect_cpu_requests "the argo-cd chart with clusters/bootstrap/argocd/values.tpl" "$master_argo"
+if [ -n "$no_cpu_request" ]; then
+  echo "These workloads stand on the node where a heavy build runs, and without a CPU request they get the smallest share of it:$no_cpu_request"
+  fail "a workload the master cannot work without renders without a CPU request"
+fi
+echo "check: every container of those workloads that the $rendered renders and the master's Argo CD carry has a CPU request; traefik is in none of them."
 
 if [ -n "$off_revision" ]; then
   echo "These name this repository at another revision than the one their root Application synced, so they can reach a commit before its AppProjects:$off_revision"

@@ -6,8 +6,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 // The ci run keeper starts the oldest waiting ci runs while fewer than MAX ci runs run, cancels a ci run
-// that a newer push to the same branch replaces, and keeps the newest 20 finished ci runs of each build
-// namespace. Its decision is the jq program in
+// that a newer push to the same branch replaces and names that push on it, and keeps the newest 20
+// finished ci runs of each build namespace. Its decision is the jq program in
 // clusters/inventories/image-builder/files, run here on planted PipelineRuns; its script is run
 // against a stand-in kubectl. The CronJob, its rights and the admission policy clause for it are
 // asserted in scripts/build-contract.test.mjs.
@@ -23,7 +23,8 @@ let clock = 0;
 const timestamp = (minute) => new Date(Date.UTC(2026, 9, 9) + minute * 60000).toISOString().replace('.000Z', 'Z');
 // Every run is created a minute after the one before, on a branch of its own unless it is given one.
 // succeeded: 'True' and 'False' are finished, 'Unknown' is a run that waits for the quota or runs.
-const run = (namespace, {ci = true, succeeded, branch = `branch-${clock + 1}`, status, at} = {}) => {
+// commit is the push the run was created for: the parameter of the same name, a full SHA-1 of its own unless given.
+const run = (namespace, {ci = true, succeeded, branch = `branch-${clock + 1}`, status, at, commit} = {}) => {
   const unit = namespace.replace(/-build$/, '');
   const minute = at ?? ++clock;
   return {
@@ -31,7 +32,8 @@ const run = (namespace, {ci = true, succeeded, branch = `branch-${clock + 1}`, s
       creationTimestamp: timestamp(minute),
       labels: ci ? {'image-builder.io/ci': unit} : {'image-builder.io/consumer': unit},
       annotations: branch === null ? {} : {'image-builder.io/ci-branch': branch}},
-    spec: {pipelineRef: {name: `${unit}-${ci ? 'ci' : 'release'}`}, ...(status ? {status} : {})},
+    spec: {pipelineRef: {name: `${unit}-${ci ? 'ci' : 'release'}`}, ...(status ? {status} : {}),
+      params: [{name: 'commit', value: commit ?? minute.toString(16).padStart(40, 'c')}]},
     status: succeeded === undefined ? {} : {conditions: [{type: 'Succeeded', status: succeeded}]},
   };
 };
@@ -104,10 +106,37 @@ test('a replaced run that has started is cancelled gracefully, and a replaced ru
   const newest = run('shop-build', {branch: 'main'});
   const expected = {[queued.metadata.name]: 'Cancelled', [started.metadata.name]: 'CancelledRunFinally'};
   assert.deepEqual(statuses(PROGRAM, [queued, started, newest]), expected);
-  const graceless = 'patch: {spec: {status: (if isPending then "Cancelled" else "CancelledRunFinally" end)}}';
+  const graceless = 'patch: {spec: {status: (if isPending then "Cancelled" else "CancelledRunFinally" end)},';
   assert.ok(PROGRAM.includes(graceless));
-  assert.notDeepEqual(statuses(PROGRAM.replace(graceless, 'patch: {spec: {status: "Cancelled"}}'), [queued, started, newest]), expected,
+  assert.notDeepEqual(statuses(PROGRAM.replace(graceless, 'patch: {spec: {status: "Cancelled"},'), [queued, started, newest]), expected,
     'PLANTED DEFECT: a keeper that cancels a started run outright leaves its commit status at pending');
+});
+
+// The note on a cancelled run is the push of the newest run of its branch: its commit and its run. A run that is
+// replaced by a run that a third push replaces in turn names the third, never the one beside it.
+const cancelledBy = (changes, run) => changes.find((c) => c.verb === 'cancel' && c.name === run.metadata.name)?.patch.metadata?.annotations?.['image-builder.io/cancelled-by'];
+
+test('a replaced run names the newest push to its branch, whether it waited or had started', () => {
+  const COMMIT = (letter) => letter.repeat(40);
+  const queued = waiting('shop-build', {branch: 'main', commit: COMMIT('1')}), started = run('shop-build', {branch: 'main', succeeded: 'Unknown', commit: COMMIT('2')});
+  const newest = run('shop-build', {branch: 'main', commit: COMMIT('3')});
+  const changes = decide([newest, started, queued]);
+  const by = `${COMMIT('3')} (${newest.metadata.name})`;
+  assert.deepEqual([queued, started].map((r) => cancelledBy(changes, r)), [by, by]);
+  assert.deepEqual(changes.filter((c) => c.verb === 'cancel').map((c) => c.say.split(', ').at(-1)), [by, by], 'the log line names it too');
+  assert.equal(cancelledBy(changes, newest), undefined, 'the newest run is not cancelled and carries no note');
+  const unaware = PROGRAM.replace('($newest[.metadata.namespace + "/" + branch] | pushOf) as $by', '(.metadata.name) as $by');
+  assert.notEqual(unaware, PROGRAM, 'the planted defect finds its clause');
+  assert.notEqual(cancelledBy(decideWith(unaware, [newest, started, queued]), started), by, 'PLANTED DEFECT: a note that names the cancelled run itself is caught');
+  const nextOlder = PROGRAM.replace('sort_by(created, .metadata.name) | last | {key', 'sort_by(created, .metadata.name) | first | {key');
+  assert.notEqual(nextOlder, PROGRAM, 'the planted defect finds its clause');
+  assert.notEqual(cancelledBy(decideWith(nextOlder, [newest, started, queued]), queued), by, 'PLANTED DEFECT: a program that takes the oldest run of a branch for its newest names no push, and is caught');
+});
+
+test('planted innocent: pushes to two branches, and one branch in two build namespaces, cancel nothing and write no note', () => {
+  const runs = [run('shop-build', {branch: 'main'}), run('shop-build', {branch: 'feature/x'}), run('post-build', {branch: 'main'}), waiting('shop-build', {branch: 'ci/issue-1-planted-1'})];
+  assert.deepEqual(decide(runs).filter((c) => c.verb === 'cancel'), []);
+  assert.ok(decide(runs).every((c) => !JSON.stringify(c.patch ?? {}).includes('cancelled-by')));
 });
 
 test('planted defect: the newest run of a branch is not cancelled', () => {
@@ -249,7 +278,7 @@ test('planted defect: a change that fails is reported, the next one still runs, 
     assert.match(result.stderr, /could not change shop-build\/shop-ci-/);
     const calls = readFileSync(log, 'utf8').trim().split('\n');
     assert.equal(calls.length, 2);
-    assert.match(calls[0], /^patch pipelinerun -n shop-build shop-ci-\S+ --type merge -p \{"spec":\{"status":"CancelledRunFinally"\}\}$/);
+    assert.match(calls[0], /^patch pipelinerun -n shop-build shop-ci-\S+ --type merge -p \{"spec":\{"status":"CancelledRunFinally"\},"metadata":\{"annotations":\{"image-builder.io\/cancelled-by":"[0-9a-f]{40} \(shop-ci-[^)]+\)"\}\}\}$/);
     assert.match(calls[1], /^delete pipelinerun -n shop-build shop-ci-\S+ --ignore-not-found --wait=false$/);
     assert.match(result.stdout, /deleted shop-build\//);
     // Only ci runs are listed: the decision is never taken on a release run.
@@ -327,7 +356,7 @@ const pipelineSpec = {tasks: Array.from({length: 30}, (_, i) => ({name: `task-${
 const asServed = (r) => ({...r,
   metadata: {...r.metadata, uid: `uid-${r.metadata.name}`, labels: {...r.metadata.labels, 'tekton.dev/pipeline': 'ci'},
     annotations: {...r.metadata.annotations, 'image-builder.io/commit': 'a'.repeat(40)}},
-  spec: {...r.spec, params: [{name: 'revision', value: 'a'.repeat(40)}]},
+  spec: {...r.spec, params: [...r.spec.params, {name: 'before', value: 'b'.repeat(40)}, {name: 'git-url', value: 'https://github.com/check/shop.git'}]},
   status: {...r.status, pipelineSpec, childReferences: [{name: `${r.metadata.name}-build`, pipelineTaskName: 'build'}],
     conditions: [...(r.status.conditions ?? []).map((c) => ({...c, reason: 'Running'})), {type: 'Ready', status: 'True'}]}});
 // The steady state of today's 12 build namespaces and 20 more: each keeps 20 finished runs and has
@@ -363,7 +392,8 @@ test('planted defects: a keeper that reads one page, drops spec.status or sends 
   const expected = decide(items).map((c) => c.say);
   const variants = {
     'one page': [SCRIPT, LISTER.replace('[ -n "$continue_token" ] || return 0', 'return 0')],
-    'no spec.status': [SCRIPT.replace('spec: {status: .spec.status},', 'spec: {},'), LISTER],
+    'no spec.status': [SCRIPT.replace('spec: {status: .spec.status, params:', 'spec: {params:'), LISTER],
+    'no commit param': [SCRIPT.replace('spec: {status: .spec.status, params: [.spec.params[] | select(.name == "commit")]},', 'spec: {status: .spec.status, params: []},'), LISTER],
     'unencoded token': [SCRIPT, LISTER.replace('.metadata.continue // "" | @uri', '.metadata.continue // ""')],
   };
   for (const [name, [script, lister]] of Object.entries(variants)) {
