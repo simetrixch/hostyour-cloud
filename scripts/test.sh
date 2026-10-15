@@ -89,6 +89,12 @@ echo 'test: cert-manager issuers — platform-acme as every cluster holds it, or
 node --test scripts/cert-manager-issuers.test.mjs || fail 'scripts/cert-manager-issuers.test.mjs'
 echo 'test: cloudflare origin pull — the TLSOption of a proxied host requires the client certificate its CA verifies.'
 node --test scripts/cloudflare-origin-pull.test.mjs || fail 'scripts/cloudflare-origin-pull.test.mjs'
+echo 'test: tenant limits — Traefik 3.6.2 answers 429 to one flooding visitor per chain and serves the next.'
+node --test scripts/tenant-limits.test.mjs || fail 'scripts/tenant-limits.test.mjs'
+echo 'test: unit network policy — a unit admits its own pods, Traefik and the scrapers, nothing else.'
+node --test scripts/unit-networkpolicy.test.mjs || fail 'scripts/unit-networkpolicy.test.mjs'
+echo 'test: Loki retention — logs are kept at most 14 days on every stage.'
+node --test scripts/loki-retention.test.mjs || fail 'scripts/loki-retention.test.mjs'
 node --test scripts/inventory-project-fit.test.mjs || fail 'scripts/inventory-project-fit.test.mjs'
 echo 'test: e2e runner — the password of a demo target stays bound to its host, and a run names a path on it and a case, nothing else.'
 helm dependency build clusters/inventories/e2e-runner

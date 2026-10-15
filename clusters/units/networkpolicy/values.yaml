@@ -1,21 +1,25 @@
-# The platform namespaces admitted to every pod of the unit namespace, BY NAME
-# (namespaceSelector on kubernetes.io/metadata.name, the label the API server
-# sets on every namespace). Both names are fixed by the platform catalog
-# clusters/argocd/files/platform-apps-appset.yaml, not per installation:
+# The platform pods admitted to every pod of the unit namespace: per namespace, named BY NAME
+# (kubernetes.io/metadata.name, the label the API server sets on every namespace), the
+# app.kubernetes.io/name of the pods there that have to reach a unit. Both namespaces are fixed by
+# the platform catalog clusters/argocd/files/platform-apps-appset.yaml, not per installation, and
+# every other pod in them is refused:
 #
-#   ingress         Traefik. THE public path into the unit — and also the path
-#                   every cross-unit call takes, because a unit addresses another
-#                   unit by its public FQDN and CoreDNS hairpins that name back to
-#                   the Traefik ClusterIP.
-#   observability   Prometheus. It scrapes the postgres exporter on :9187 inside
-#                   the consumer's OWN namespace (clusters/units/postgresql/templates/networkpolicy.yaml
-#                   leaves that pod unpoliced on purpose) and whatever a unit
-#                   declares through clusters/charts/monitoring.
+#   ingress         traefik. THE public path into the unit — and also the path every cross-unit
+#                   call takes, because a unit addresses another unit by its public FQDN and
+#                   CoreDNS hairpins that name back to the Traefik ClusterIP.
+#   observability   prometheus, which scrapes on the master, and alloy, which scrapes on every
+#                   other cluster (clusters/charts/monitoring/templates/alloy-agent-config.yaml):
+#                   the postgres exporter on :9187 inside the consumer's OWN namespace
+#                   (clusters/units/postgresql/templates/networkpolicy.yaml leaves that pod unpoliced
+#                   on purpose) and whatever a unit declares through clusters/charts/monitoring.
 #
 # A name removed here is a path closed for every unit at once.
 admittedNamespaces:
-  - ingress
-  - observability
+  ingress:
+    - traefik
+  observability:
+    - prometheus
+    - alloy
 
 # The unit's SMTP entry, when its registration declares one: `port` alone, set by the consumer
 # ApplicationSet, which also loads the books cluster's map for the address it admits. EMPTY for

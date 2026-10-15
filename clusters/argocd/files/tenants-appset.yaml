@@ -302,7 +302,7 @@ spec:
         {{- end }}
         # LAST. The platform's own ingress policy for the tenant namespace
         #    (clusters/units/networkpolicy in this repository, one NetworkPolicy and nothing else):
-        #    the namespace is deny-by-default inbound, with its own pods, Traefik and Prometheus
+        #    the namespace is deny-by-default inbound, with its own pods, Traefik and the scrapers
         #    open. The tenant's members are all in this one namespace, so none of them needs a
         #    rule to reach another. It rides in the tenant's OWN Application on purpose — created,
         #    healed and pruned with the namespace it protects, so the namespace can never exist

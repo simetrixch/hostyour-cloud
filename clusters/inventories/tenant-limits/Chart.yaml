@@ -1,0 +1,5 @@
+apiVersion: v2
+name: tenant-limits
+version: 1.0.0
+description: The request limits a tenant's routes name, one chain per use (pages, forms, api, streams) and trust mode. A -direct chain counts by the connection's peer and drops a CF-Connecting-IP the visitor sent; a -proxied chain counts by the CF-Connecting-IP Cloudflare sets, on routes only Cloudflare can reach.
+type: application
