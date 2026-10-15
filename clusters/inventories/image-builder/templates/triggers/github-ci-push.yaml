@@ -73,7 +73,8 @@ push as a pin move only when EVERY commit comes from the identity the release bu
 (ciPush.pinIdentity, as author and as committer) and modifies pin files and nothing else: a person's
 commit to a pin file, one other path in any commit, a pin file that is added or removed, a commit
 that lists no path (the webhook lists none for an extremely large commit) or no author, and a push
-whose list of commits may be cut short (20 or more) all start the run. A `ci/` branch is the
+whose list of commits may be cut short (20 or more) all start the run, and so does a forced
+push, whose list holds only the new commits while it drops the ones it rewound. A `ci/` branch is the
 deliberate run of any commit, a pin commit included. The webhook lists paths and not lines, so the
 identity is what tells a pin move from an edit of another line of a pin file: someone who commits
 as that identity is not told from the bump.
@@ -135,7 +136,7 @@ spec:
             body.ref != {{ printf "refs/heads/%s" $booksBranch | squote }} &&
             !(has(body.deleted) && body.deleted) &&
             !body.after.matches(r'^0+$') &&
-            !(body.ref == 'refs/heads/' + body.repository.default_branch && has(body.commits) && size(body.commits) > 0 && size(body.commits) < 20 &&
+            !(body.ref == 'refs/heads/' + body.repository.default_branch && !(has(body.forced) && body.forced) && has(body.commits) && size(body.commits) > 0 && size(body.commits) < 20 &&
             body.commits.all(c, has(c.added) && has(c.removed) && has(c.modified) && has(c.author) && has(c.author.name) && has(c.author.email) &&
             has(c.committer) && has(c.committer.name) && has(c.committer.email) && size(c.added) == 0 && size(c.removed) == 0 && size(c.modified) > 0 &&
             c.author.name == {{ $pinName | squote }} && c.author.email == {{ $pinEmail | squote }} &&

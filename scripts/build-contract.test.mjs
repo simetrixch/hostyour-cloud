@@ -293,7 +293,8 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
 // committed each commit and the files it changes, which the webhook lists as paths, and never its subject. It skips the
 // push only when every commit of it comes from that identity and modifies pin files and nothing else, so a person's commit
 // to a pin file, or one other file in any commit, starts the run. Whatever the webhook does not state well enough to tell
-// is run: a commit with no listed path or no author, a push without a commits list, and a push whose list may be cut short.
+// is run: a commit with no listed path or no author, a push without a commits list, a push whose list may be cut short,
+// and a forced push, whose listed commits are only the new ones while it drops the commits it rewound.
 test('the identity the ci trigger takes for a release pin is the one the release bump commits with', () => {
   const identity = JSON.parse(execFileSync('yq', ['-o=json', '.ciPush.pinIdentity', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}));
   const release = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
@@ -311,7 +312,7 @@ test('a push of the default branch that only moves release pins starts no ci run
   const person = {name: 'Mehmet', email: 'mehmet@example.com'};
   const commit = (modified, {added = [], removed = [], message = 'release: manager 0.8.497-stable-20261015010114 — pin 0.8.497-stable-20261015010114-72bca23 (prod)', author = bump, committer = bump} = {}) =>
     ({id: SHA, message, added, removed, modified, author, committer});
-  const push = (commits, ref = 'refs/heads/master') => ({ref, before: BEFORE, after: SHA, deleted: false, repository, ...(commits ? {commits} : {})});
+  const push = (commits, ref = 'refs/heads/master', forced = false) => ({ref, before: BEFORE, after: SHA, deleted: false, forced, repository, ...(commits ? {commits} : {})});
   const MANAGER = 'clusters/inventories/manager/values-prod.yaml', GATE_RUNNER = 'clusters/inventories/gate-runner/values-test.yaml';
   const pins = commit([MANAGER, GATE_RUNNER]);
   const filter = triggerOf(builder, 'github-ci-push').filter;
@@ -346,14 +347,17 @@ test('a push of the default branch that only moves release pins starts no ci run
     'a commit without its added and removed lists': [push([{id: SHA, message: 'x', modified: [MANAGER]}]), true],
     'a pin commit on a ci/ branch, the deliberate run of any commit': [push([pins], 'refs/heads/ci/issue-387-pins'), true],
     'a pin commit on an issue branch, which no run takes': [push([pins], 'refs/heads/issue-387-fix'), false],
+    'a forced push of pin commits, which drops the commits it rewound': [push([pins], 'refs/heads/master', true), true],
+    'a forced push of a branch no run takes': [push([pins], 'refs/heads/issue-387-fix', true), false],
+    'a push of pin commits whose forced field is absent': [(({forced, ...body}) => body)(push([pins])), false],
   };
   const verdicts = triggerMatches(builder, 'github-ci-push', Object.values(pushes).map(([body]) => body));
   Object.entries(pushes).forEach(([name, [, runs]], i) => assert.equal(verdicts[i].matched, runs, `${name} ${runs ? 'starts' : 'starts no'} run`));
   const runs = (body, edit) => triggerMatches(builder, 'github-ci-push', [body], edit)[0].matched;
   // PLANTED DEFECTS: each edit finds its clause and takes a push the filter must run for no run, or the reverse.
   const planted = {
-    'the filter as it stood, without the pin clause': [(f) => f.replace("!(body.ref == 'refs/heads/' + body.repository.default_branch && has(body.commits)", '!(false && has(body.commits)'), push([pins]), false],
-    'a pin clause for every branch, a ci/ branch among them': [(f) => f.replace("!(body.ref == 'refs/heads/' + body.repository.default_branch && has(body.commits)", '!(has(body.commits)'), push([pins], 'refs/heads/ci/issue-387-pins'), true],
+    'the filter as it stood, without the pin clause': [(f) => f.replace("!(body.ref == 'refs/heads/' + body.repository.default_branch && !(has(body.forced) && body.forced) && has(body.commits)", '!(false && has(body.commits)'), push([pins]), false],
+    'a pin clause for every branch, a ci/ branch among them': [(f) => f.replace("!(body.ref == 'refs/heads/' + body.repository.default_branch && !(has(body.forced) && body.forced) && has(body.commits)", '!(has(body.commits)'), push([pins], 'refs/heads/ci/issue-387-pins'), true],
     'a pin clause that takes an added file': [(f) => f.replace('size(c.added) == 0 && size(c.removed) == 0 && ', ''), push([commit([MANAGER], {added: ['clusters/inventories/manager/values-dev.yaml']})]), true],
     'a pin clause that is not anchored at the start': [(f) => f.replace("path.matches(r'^clusters/", "path.matches(r'clusters/"), push([commit(['tools/clusters/inventories/manager/values-prod.yaml'])]), true],
     'a pin clause that is not anchored at the end': [(f) => f.replace('[.]yaml$', '[.]yaml'), push([commit(['clusters/inventories/manager/values-prod.yaml.bak'])]), true],
@@ -363,6 +367,7 @@ test('a push of the default branch that only moves release pins starts no ci run
     "a pin clause that does not read the committer's address": [(f) => f.replace(' && c.committer.email == ' + `'${bump.email}'`, ''), push([commit([MANAGER], {committer: {...bump, email: person.email}})]), true],
     'a pin clause that takes a commit with no path': [(f) => f.replace(' && size(c.modified) > 0', ''), push([commit([])]), true],
     'a pin clause that needs one pin commit and not every commit': [(f) => f.replace('body.commits.all(c,', 'body.commits.exists(c,'), push([pins, commit(['README.md'])]), true],
+    'a pin clause that does not read a forced push': [(f) => f.replace('!(has(body.forced) && body.forced) && ', ''), push([pins], 'refs/heads/master', true), true],
     'a pin clause with no limit on the commits': [(f) => f.replace(' && size(body.commits) < 20', ''), push(Array.from({length: 20}, () => pins)), true],
   };
   for (const [defect, [edit, body, expected]] of Object.entries(planted)) {
