@@ -598,7 +598,9 @@ IMAGES=example-backend; BUMPED=0; declare -A HIT_COUNT; HIT_COUNT[example-backen
 # Whether an output names the file that was looked for and the tag of the tree it was looked for in.
 names_missing_file() { grep -qF "$1" <<< "$3" && grep -qF "$2" <<< "$3"; }
 STAGE=prod
-missing_out="$(own_stage_values "$own" chart 2>&1)" || fail 'a tree without the stage file ended the step before the search went on'
+# Called in this shell with its output in a file: a substitution would hide the BUMPED it sets.
+own_stage_values "$own" chart > "$work/missing.out" 2>&1 || fail 'a tree without the stage file ended the step before the search went on'
+missing_out="$(cat "$work/missing.out")"
 names_missing_file chart/values-prod.yaml "$RELEASE_TAG" "$missing_out" \
   || fail "the line for a missing stage values file does not name the file and the tag: $missing_out"
 [ "$BUMPED" = 0 ] || fail 'a missing stage values file counted as a bumped pin'
@@ -612,7 +614,9 @@ names_missing_file chart/values-prod.yaml "$RELEASE_TAG" "$silent_out" \
   && fail 'PLANTED DEFECT: a missing values file skipped without a line is not seen by the check'
 # PLANTED INNOCENT: a tree that holds the stage file bumps it and says nothing about a missing one.
 STAGE=dev; BUMPED=0; HIT_COUNT[example-backend]=0
-present_out="$(own_stage_values "$own" chart 2>&1; echo "bumped=$BUMPED")" || fail 'a tree with the stage file was refused'
+own_stage_values "$own" chart > "$work/present.out" 2>&1 || fail 'a tree with the stage file was refused'
+present_out="$(cat "$work/present.out")"
+[ "$BUMPED" = 1 ] || fail 'PLANTED INNOCENT: a present stage file was not counted as bumped'
 grep -qF 'has no' <<< "$present_out" && fail "PLANTED INNOCENT: a present stage file is reported as missing: $present_out"
 [ "$(yq '.builds[0].tag' "$own/chart/values-dev.yaml")" = "$IMAGE_TAG" ] || fail 'PLANTED INNOCENT: a present stage file was not bumped'
 # The own-registration arm calls the function, and no arm tests the file itself before bumping it.
