@@ -1364,11 +1364,11 @@ echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the c
 bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
 echo 'check: NOT RUN locally — scripts/pipeline-publish.test.sh; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in the ci of the master via scripts/test.sh.'
-for module in scripts/release-queue.test.mjs scripts/ci-run-keeper.test.mjs; do
+for module in scripts/release-queue.test.mjs scripts/ci-run-keeper.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/tenant-limits.test.mjs scripts/unit-networkpolicy.test.mjs scripts/loki-retention.test.mjs scripts/ingress-access-log-alert.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
   echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
 done
-for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-appset-fixture.mjs scripts/tenant-appset.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
+for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-appset-fixture.mjs scripts/tenant-appset.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/tenant-proxied-hosts.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in the ci of the master via scripts/test.sh.'
@@ -1381,6 +1381,7 @@ echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in the ci 
 echo 'check: NOT RUN locally — scripts/tenant-appset.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in the ci of the master via scripts/test.sh.'
+echo 'check: NOT RUN locally — scripts/tenant-proxied-hosts.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/unit-mongodb-exporter.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in the ci of the master via scripts/test.sh.'
@@ -1388,8 +1389,10 @@ echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in t
 echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in the ci of the master via scripts/test.sh.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
 bash -n lifecycle/check-forgejo-ssh.sh || fail 'Forgejo SSH check Bash syntax'
+bash -n lifecycle/create-origin-pull-certificate.sh || fail 'origin pull certificate Bash syntax'
+bash -n lifecycle/apply-cloudflare-zone-security.sh || fail 'Cloudflare zone security Bash syntax'
 bash -n lifecycle/release-unit.sh || fail 'release-unit Bash syntax'
-for module in lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
+for module in lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 for module in scripts/forgejo.test.mjs scripts/plane.test.mjs scripts/forgejo-release.test.mjs scripts/forgejo-ssh.test.mjs; do

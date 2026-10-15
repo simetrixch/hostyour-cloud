@@ -1,0 +1,89 @@
+{{- /*
+THE ORIGIN ADMITS ONLY CLOUDFLARE'S CONNECTIONS FOR A HOST BEHIND ITS PROXY. Cloudflare presents the
+installation's own client certificate on every connection to the origin (zone-level authenticated
+origin pulls, applied by lifecycle/apply-cloudflare-zone-security.sh), and every route of such a host
+names TLSOption cloudflare-origin-pull, as `ingress-cloudflare-origin-pull@kubernetescrd`. A
+connection without that certificate, a direct one to the origin's address among them, fails the
+handshake.
+
+THE CA COMES FROM THE SECRET STORE: <stage>/app/cloudflare-origin-pull field `ca-certificate`,
+seeded by hostyour-deploy deploy-platform-services from the installation answer, one line with \n for
+each line break, which the template turns back into the PEM. Traefik reads `tls.ca` first. After a
+rotation the field holds two CAs, so the old client certificate and the new one both pass until the
+next rotation drops the older CA.
+
+deletionPolicy Delete MAKES A MISSING ENTRY NO ERROR. An installation without a host behind the proxy
+writes no entry, and the ExternalSecret stands Ready with no Secret, so this application is Healthy
+and holds up no sync wave. Traefik then refuses the TLSOption for want of a CA, and a route that names
+it refuses every connection: the policy fails closed. No route names it before a host is proxied.
+*/ -}}
+{{- $g := .Values.global | default dict }}
+{{- $stage := required "global.env must be set (clusters/platform/values-<stage>.yaml via the $values chain)" $g.env }}
+{{- $store := required "global.secretStoreName must be set (clusters/platform/values-common.yaml via the $values chain)" $g.secretStoreName }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets-sa
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: {{ $store }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  provider:
+    vault:
+      server: {{ required "global.endpoints.vault.url must be set (clusters/active/<fqdn>.yaml via the $values chain)" (dig "endpoints" "vault" "url" "" $g) | quote }}
+      path: {{ required "global.vaultKvMount must be set (clusters/platform/values-common.yaml via the $values chain)" $g.vaultKvMount | quote }}
+      version: "v2"
+      namespace: "vault"
+      auth:
+        kubernetes:
+          mountPath: {{ required "global.vaultKubernetesAuthPath must be set (clusters/active/<fqdn>.yaml via the $values chain)" $g.vaultKubernetesAuthPath | quote }}
+          role: "external-secrets"
+          serviceAccountRef:
+            name: "external-secrets-sa"
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: cloudflare-origin-pull-ca
+  namespace: {{ .Release.Namespace }}
+spec:
+  # The delivery rule of this tree (clusters/charts/external-secret): read when deployed or changed,
+  # or when the target Secret is deleted; never on a timer. A rotation asks for the read by changing
+  # an annotation of this ExternalSecret on every cluster.
+  refreshPolicy: OnChange
+  refreshInterval: "0"
+  secretStoreRef:
+    name: {{ $store }}
+    kind: SecretStore
+  target:
+    name: cloudflare-origin-pull-ca
+    creationPolicy: Owner
+    deletionPolicy: Delete
+    template:
+      engineVersion: v2
+      data:
+        tls.ca: '{{ `{{ index . "ca-certificate" | replace "\\n" "\n" }}` }}'
+  data:
+  - secretKey: ca-certificate
+    remoteRef:
+      conversionStrategy: Default
+      decodingStrategy: None
+      metadataPolicy: None
+      nullBytePolicy: Ignore
+      key: {{ $stage }}/app/cloudflare-origin-pull
+      property: ca-certificate
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: cloudflare-origin-pull
+  namespace: {{ .Release.Namespace }}
+spec:
+  clientAuth:
+    secretNames:
+      - cloudflare-origin-pull-ca
+    clientAuthType: RequireAndVerifyClientCert

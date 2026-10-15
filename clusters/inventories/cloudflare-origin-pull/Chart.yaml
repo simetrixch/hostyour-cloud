@@ -1,0 +1,7 @@
+apiVersion: v2
+name: cloudflare-origin-pull
+version: 1.0.0
+description: |
+  The TLS policy of every route of a host behind Cloudflare's proxy: TLSOption cloudflare-origin-pull
+  asks each connection for a client certificate and verifies it against the CA of the installation's
+  own origin pull certificate, which the secret store delivers into Secret cloudflare-origin-pull-ca.

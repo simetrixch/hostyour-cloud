@@ -202,7 +202,7 @@ spec:
               # THE TENANT'S OWN FACTS, handed to every chart source. Bare access is safe
               # under goTemplateOptions missingkey=error: every field read here is mandatory in the
               # registration, written explicitly by the Manager on every commit — except `demo`, `size`,
-              # `ownDomainAliases` and `displayName`, read with dig because a registration may lack them. A chart takes
+              # `ownDomainAliases`, `proxiedHosts` and `displayName`, read with dig because a registration may lack them. A chart takes
               # what it needs and ignores the rest — which is what keeps this block the same for all
               # of them, and keeps every product-specific value out of this file.
               tenant:
@@ -229,6 +229,11 @@ spec:
                 # with dig, never bare: under missingkey=error one registration without it would stop
                 # the controller for every Application of this set.
                 ownDomainAliases: {{ dig "ownDomainAliases" (list) $ | toJson }}
+                # The tenant's hosts that Cloudflare's proxy serves, the own domain or none: every route of
+                # such a host names TLSOption ingress/cloudflare-origin-pull and the -proxied request limits
+                # of ingress. Written by the Manager's tenant-set-own-domain, which leaves the key out while
+                # the list is empty, so it is read with dig, for the reason ownDomainAliases is.
+                proxiedHosts: {{ dig "proxiedHosts" (list) $ | toJson }}
                 # The image tags approved for this tenant alone, per build (`<build>: <tag>`); a
                 # build with none follows the stage pin. Written by the Manager: create-tenant and
                 # add-app at the stage pin, its boot for a build the tenant holds none of, and the
@@ -297,7 +302,7 @@ spec:
         {{- end }}
         # LAST. The platform's own ingress policy for the tenant namespace
         #    (clusters/units/networkpolicy in this repository, one NetworkPolicy and nothing else):
-        #    the namespace is deny-by-default inbound, with its own pods, Traefik and Prometheus
+        #    the namespace is deny-by-default inbound, with its own pods, Traefik and the scrapers
         #    open. The tenant's members are all in this one namespace, so none of them needs a
         #    rule to reach another. It rides in the tenant's OWN Application on purpose — created,
         #    healed and pruned with the namespace it protects, so the namespace can never exist

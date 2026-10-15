@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {renderLokiRules} from './render-loki-rules.mjs';
 
 // A failed Manager run, a nightly backup that did not start, and a run that waits behind a failed run's
 // lock reach Alertmanager through a rule of the master's Loki: the Manager writes them only to its
@@ -14,20 +12,6 @@ import {join} from 'node:path';
 
 const VALUES = 'clusters/inventories/observability/values-common.yaml';
 const yq = (expr) => JSON.parse(execFileSync('yq', ['-o=json', expr, VALUES], {encoding: 'utf8'}));
-// The template alone, in a chart of its own: the observability chart's dependencies are fetched at
-// deploy and are not in the tree, and this template reads none of them.
-const rendered = () => {
-  const chart = mkdtempSync(join(tmpdir(), 'loki-rules-'));
-  try {
-    mkdirSync(join(chart, 'templates'));
-    writeFileSync(join(chart, 'Chart.yaml'), 'apiVersion: v2\nname: observability\nversion: 1.0.0\n');
-    copyFileSync('clusters/inventories/observability/templates/loki-rules.yaml', join(chart, 'templates/loki-rules.yaml'));
-    const out = execFileSync('helm', ['template', 'observability', chart, '--namespace', 'observability'], {encoding: 'utf8'});
-    return JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(. != null)]', '-'], {encoding: 'utf8', input: out}));
-  } finally {
-    rmSync(chart, {recursive: true, force: true});
-  }
-};
 
 const rulesOf = (docs) => {
   const map = docs.find((d) => d.kind === 'ConfigMap' && d.metadata.name === 'loki-rules');
@@ -47,7 +31,7 @@ test('the ruler reads local rules and sends to the master\'s Alertmanager', () =
 });
 
 test('PLANTED DEFECT: each Manager line has its alert, on the manager namespace, never at severity info', () => {
-  const rules = rulesOf(rendered());
+  const rules = rulesOf(renderLokiRules());
   const expected = {
     ManagerRunFailed: '"msg":"run failed"',
     ManagerRunWaitsBehindFailedRun: '"msg":"a run waits behind a failed run\'s lock"',
@@ -70,7 +54,7 @@ const lineFilterOf = (expr) => {
 };
 
 test('PLANTED DEFECT: a run that waits behind a failed run is alerted by the holder, with what the log line carries', () => {
-  const rules = rulesOf(rendered());
+  const rules = rulesOf(renderLokiRules());
   const rule = rules.find((r) => r.alert === 'ManagerRunWaitsBehindFailedRun');
   assert.ok(rule, 'no ManagerRunWaitsBehindFailedRun rule');
   assert.equal(rule.labels?.severity, 'warning');
@@ -89,7 +73,7 @@ test('PLANTED DEFECT: a run that waits behind a failed run is alerted by the hol
 });
 
 test('PLANTED INNOCENT: the lines of a failed run and of a nightly backup are not a run waiting behind a failed run', () => {
-  const filter = lineFilterOf(rulesOf(rendered()).find((r) => r.alert === 'ManagerRunWaitsBehindFailedRun').expr);
+  const filter = lineFilterOf(rulesOf(renderLokiRules()).find((r) => r.alert === 'ManagerRunWaitsBehindFailedRun').expr);
   const failedRun = JSON.stringify({level: 50, runId: 'run_holder', kind: 'tenant-refresh-members', runError: 'three Applications are Degraded', msg: 'run failed'});
   const backup = JSON.stringify({level: 40, kind: 'consumer', err: 'busy', msg: 'nightly backup was not started today'});
   assert.ok(!failedRun.includes(filter));

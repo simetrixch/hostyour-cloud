@@ -54,7 +54,11 @@
 # logs every call so the exact calls can be asserted rather than the printed
 # lines alone. The GitHub App act is driven the same way, in section SIX: GitHub
 # is a second stand-in curl that verifies every JWT it is shown, and the browser
-# is a stand-in named by BROWSER that drives the act's own listener.
+# is a stand-in named by BROWSER that drives the act's own listener. The two
+# origin pull acts are node tests beside them: create-origin-pull-certificate is
+# run three times and its answers are checked with openssl verify, and
+# apply-cloudflare-zone-security runs against a stand-in curl that answers as the
+# Cloudflare API does; each carries its own planted defects.
 #
 # WHAT THIS FILE CANNOT PROVE, named rather than counted: an authenticated remote
 # (the fixtures' origins are directories, so a push never asks for a credential),
@@ -3336,3 +3340,5 @@ echo "test:   and a real browser, the two ten-minute bounds of the GitHub App ac
 echo "test:   and the restore themselves on a machine — the drill on two masters is what proves those."
 
 node --test "$HERE/redeploy-platform-services.test.mjs" || fail 'config-fed platform services redeploy'
+node --test "$HERE/create-origin-pull-certificate.test.mjs" || fail 'origin pull certificate'
+node --test "$HERE/apply-cloudflare-zone-security.test.mjs" || fail 'Cloudflare zone security'
