@@ -17,7 +17,8 @@ const FILES = 'clusters/inventories/image-builder/files';
 const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 
 // ── The scripts, against a stand-in curl ──────────────────────────────────────────────────────────
-// The stand-in logs its arguments, keeps the header file and the bodies it is given, and answers by
+// The stand-in logs its arguments, keeps the header it reads on its standard input and the bodies it
+// is given, records every header it is handed as a file instead, and answers by
 // method and path from the ANSWERS file: one line per answer, `<METHOD> <path-suffix> <code> <json>`.
 const STAND_IN_CURL = `#!/usr/bin/env bash
 echo "$*" >> "$CALLS"
@@ -26,7 +27,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift 2;;
     -X) method="$2"; shift 2;;
-    -H) case "$2" in @*) cp "\${2#@}" "$SEEN/auth";; esac; shift 2;;
+    -H) case "$2" in @-) cat > "$SEEN/auth";; @*) echo "\${2#@}" >> "$SEEN/header-files";; esac; shift 2;;
     --data-binary) n=$(ls "$SEEN" | wc -l); cp "\${2#@}" "$SEEN/body-$n.json"; shift 2;;
     -w|--max-time) shift 2;;
     -*) shift;;
@@ -62,20 +63,20 @@ function execute(scriptText, env, answers = [], commits = null) {
       PREVIOUS_COMMIT_RESULT: join(dir, 'previous'), ...Object.fromEntries(Object.entries(env).map(([k, v]) => [k, fill(v)]))}});
     const read = file => { try { return readFileSync(file, 'utf8'); } catch { return ''; } };
     const bodies = readdirSync(seen).filter(f => f.startsWith('body-')).sort().map(f => JSON.parse(read(join(seen, f))));
-    return {status: result.status, stdout: result.stdout, stderr: result.stderr, calls: read(join(dir, 'calls')), auth: read(join(seen, 'auth')),
+    return {status: result.status, stdout: result.stdout, stderr: result.stderr, calls: read(join(dir, 'calls')), auth: read(join(seen, 'auth')), headerFiles: read(join(seen, 'header-files')),
       requests: read(join(seen, 'requests')).split('\n').filter(Boolean), bodies, previous: read(join(dir, 'previous')), shas};
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
 }
 
-const TOKEN = 'forgejo-token-that-travels-only-in-a-header-file';
+const TOKEN = 'forgejo-token-that-travels-only-on-standard-input';
 const FORGEJO = {FORGEJO_TOKEN: TOKEN, FORGEJO_API: 'http://forgejo-http.forgejo.svc:3000/api/v1', REPOSITORY: 'owner/shop'};
 const setStatus = readFileSync(`${FILES}/forgejo-set-status.sh`, 'utf8');
 const createRelease = readFileSync(`${FILES}/forgejo-create-release.sh`, 'utf8');
 const updatePlane = readFileSync(`${FILES}/plane-update-status.sh`, 'utf8');
 
-test('the commit status is pending, then success on Succeeded or Completed and failure on Failed, with the token in a header file only', () => {
+test('the commit status is pending, then success on Succeeded or Completed and failure on Failed, with the token only on the standard input of curl', () => {
   const RUN_URL = 'https://tekton.example.invalid/#/namespaces/forgejo-build/pipelineruns/forgejo-release-abc12';
   for (const [runState, state] of [['pending', 'pending'], ['Succeeded', 'success'], ['Completed', 'success'], ['Failed', 'failure']]) {
     const run = execute(setStatus, {...FORGEJO, COMMIT: SHA, RUN_URL, RUN_STATE: runState}, [`POST /statuses/${SHA} 201 {}`]);
@@ -83,6 +84,7 @@ test('the commit status is pending, then success on Succeeded or Completed and f
     assert.deepEqual(run.requests, [`POST http://forgejo-http.forgejo.svc:3000/api/v1/repos/owner/shop/statuses/${SHA}`]);
     assert.deepEqual(run.bodies, [{state, target_url: RUN_URL, description: run.bodies[0].description, context: 'tekton/forgejo-release'}]);
     assert.equal(run.auth, `Authorization: token ${TOKEN}\n`);
+    assert.equal(run.headerFiles, '');
     assert.ok(!run.calls.includes(TOKEN) && !run.stdout.includes(TOKEN) && !run.stderr.includes(TOKEN));
   }
   const unknown = execute(setStatus, {...FORGEJO, COMMIT: SHA, RUN_URL, RUN_STATE: 'None'}, [`POST /statuses/${SHA} 201 {}`]);
@@ -99,6 +101,8 @@ test('the release lists the commits since the nearest earlier tag and hands that
   const run = execute(createRelease, {...FORGEJO, TAG: 'v0.0.2'}, [`GET /tags?limit=50 200 ${tags}`, 'POST /releases 201 {}'], commits);
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.previous, run.shas[0]);
+  assert.equal(run.auth, `Authorization: token ${TOKEN}\n`);
+  assert.equal(run.headerFiles, '');
   assert.equal(run.bodies.length, 1);
   assert.equal(run.bodies[0].tag_name, 'v0.0.2');
   assert.deepEqual(run.bodies[0].body.split('\n').filter(Boolean).map(line => line.replace(/ \([0-9a-f]+\)$/, '')), ['- third SHOP-3', '- second SHOP-2']);
@@ -118,7 +122,7 @@ const PLANE_TARGETS = {workspace: 'simplidigita', projects: [
   {prefixes: ['hostyour-'], id: '7bbca0da-56a0-4c33-bf6d-aaef3eb327d1', identifier: 'HOSTYOUR'},
   {prefixes: ['simplidigita-', 'digita-'], id: '252cf88e-3c7d-4b13-a444-13403ddcb976', identifier: 'SIMPL'},
 ]};
-const PLANE = {PLANE_TOKEN: 'plane-token-in-a-header-file', PLANE_API: 'http://plane-api.plane.svc:8000/api/v1',
+const PLANE = {PLANE_TOKEN: 'plane-token-on-standard-input', PLANE_API: 'http://plane-api.plane.svc:8000/api/v1',
   PLANE_TARGETS: JSON.stringify({...PLANE_TARGETS, projects: PLANE_TARGETS.projects.map(({identifier, ...target}) => target)}),
   REPOSITORY: 'ansiwise-owner/hostyour-release-test', TAG: 'v0.0.2', PREVIOUS_COMMIT: '${SHA0}'};
 const PLANE_COMMITS = ['first HOSTYOUR-1', 'fix HOSTYOUR-2 and (HOSTYOUR-3)', 'not XHOSTYOUR-4 nor HOSTYOUR-5x, again HOSTYOUR-2'];
@@ -142,9 +146,18 @@ function assertPlaneRelease(run, target, missing) {
   assert.deepEqual(run.bodies, [...(missing ? [{name: PLANE.TAG}] : []), {state: 'done'}, {state: 'done'},
     {issues: ['item-2', 'item-3']}, {status: 'completed'}]);
   assert.match(run.stdout, /module v0.0.2 is completed, 2 work items/);
-  assert.equal(run.auth, 'X-API-Key: plane-token-in-a-header-file\n');
+  assert.equal(run.auth, 'X-API-Key: plane-token-on-standard-input\n');
+  assert.equal(run.headerFiles, '');
   assert.ok(![run.calls, run.stdout, run.stderr].some(text => text.includes(PLANE.PLANE_TOKEN)));
 }
+
+test('the stand-in curl tells a token header file from a header on standard input', () => {
+  const planted = execute('printf \'X-API-Key: %s\\n\' "$PLANE_TOKEN" > "$SOURCE/auth"; curl -sS -H "@$SOURCE/auth" -o /dev/null http://plane.invalid/x', PLANE);
+  assert.notEqual(planted.headerFiles, '', 'PLANTED DEFECT: a token written to a header file is seen');
+  const innocent = execute('printf \'X-API-Key: %s\\n\' "$PLANE_TOKEN" | curl -sS -H @- -o /dev/null http://plane.invalid/x', PLANE);
+  assert.equal(innocent.headerFiles, '');
+  assert.equal(innocent.auth, `X-API-Key: ${PLANE.PLANE_TOKEN}\n`);
+});
 
 test('Plane: every repository prefix selects only its configured project, creates a missing tag module or reuses it, attaches its work items and completes it', () => {
   for (const target of PLANE_TARGETS.projects) for (const prefix of target.prefixes) for (const missing of [false, true]) {

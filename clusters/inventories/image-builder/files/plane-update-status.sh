@@ -10,8 +10,9 @@
 # module is created if missing, reused otherwise, given the resolved work items and completed.
 #
 # The non-secret targets come from the pipeline's values and select by repository basename. The
-# installer provisions the credentials in <stage>/app/forgejo-build. The Plane API token travels in
-# a private header file, so it is in no argument list, and nothing here prints it.
+# installer provisions the credentials in <stage>/app/forgejo-build. The Plane API token reaches
+# curl as a header on its standard input, so it is in no argument list and no file, and nothing here
+# prints it.
 set -euo pipefail
 umask 077
 
@@ -28,14 +29,13 @@ PLANE_PROJECT="$(printf '%s' "$PLANE_TARGETS" | jq -er --arg repo "$repository" 
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-printf 'X-API-Key: %s\n' "${PLANE_TOKEN}" > "${work}/auth"
 project="/workspaces/${PLANE_WORKSPACE}/projects/${PLANE_PROJECT}"
 
 # $1 method, $2 path below the API, $3 the JSON body or empty. The answer stands in answer.json.
 plane() {
   local code
   if [ -n "${3:-}" ]; then printf '%s' "$3" > "${work}/body.json"; fi
-  code="$(curl -sS --max-time 20 -X "$1" -H "@${work}/auth" -H 'Content-Type: application/json' \
+  code="$(printf 'X-API-Key: %s\n' "${PLANE_TOKEN}" | curl -sS --max-time 20 -X "$1" -H @- -H 'Content-Type: application/json' \
     ${3:+--data-binary "@${work}/body.json"} -o "${work}/answer.json" -w '%{http_code}' \
     "${PLANE_API}$2" 2>"${work}/curl.err")" || fail "Plane could not be reached for $1 $2"
   [ "${code}" = "${4:-200}" ] || fail "Plane answered HTTP ${code} to $1 $2"
