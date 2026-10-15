@@ -6,3 +6,4 @@ gitleaks 8.30.1 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 promtool 3.13.1 962b812371aff838d152b6ff2d56fdb7a6396f5542f48ebf73421b9721f0d103 https://github.com/prometheus/prometheus/releases/download/v3.13.1/prometheus-3.13.1.linux-amd64.tar.gz
 kubectl 1.35.6 5d11e2ba01ea68ffd053f56e27738e2b4330013ee67f7e46c6da6c585d3c9926 https://dl.k8s.io/release/v1.35.6/bin/linux/amd64/kubectl
 emcc 5.0.1 bda6917b630fcc604cca39af433180adfd7195e378075331ceac926553684249 https://storage.googleapis.com/webassembly/emscripten-releases-builds/linux/bf32ae8b61ac8efeb7eca01b54c8307f992724f7/wasm-binaries.tar.xz
+traefik 3.6.2 edc04e863795d741bdba8d70fbc1fd721b16edace829f8f25b0e13a9a34cb134 https://github.com/traefik/traefik/releases/download/v3.6.2/traefik_v3.6.2_linux_amd64.tar.gz
