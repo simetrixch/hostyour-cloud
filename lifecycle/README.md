@@ -21,6 +21,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
+| `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test |
 | `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network, in a clone whose origin carries the install branch (exit 69 otherwise). `status.sh` calls it as one `forgejo-ssh:` row of every installation whose branch runs Forgejo, and `install-machine.sh` at its end after an installation that ended well: green on a banner, RED on none, `not asked` where it could not ask; 66 (no Forgejo on the branch) is no row. Tekton does not call it: it runs inside the network |
 | `plan-installation-domain.sh` | plans and dry-runs proposed hostname changes across domain zones: reads every cluster map on a freshly fetched books branch, optionally probes machine names and Ingress/IngressRoute over ssh, and prints proposed hostname changes and coverage without altering remote state |
 
@@ -78,6 +79,42 @@ browser, an installation on selected repositories — leaves a config carrying t
 and the next run finds them, skips the creation, and installs. A config carrying all three refuses.
 The config is asked before the browser opens whether anybody but the owner can read it, and again
 after each write, with the same guard every launcher applies.
+
+# Releasing a unit by script
+
+```
+bash lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test
+bash lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod> <alpha|beta|stable> <x.y.z> <commit>
+```
+
+The first form reads the release prod runs (`GET /api/units/<unit>/release?stage=prod`: its tag,
+version, channel and full commit) and puts exactly that release on test. The Manager plans it as the
+one `put-release` step and reads prod again before it pushes the deploy ref, so a prod that moved in
+between writes nothing. The script approves no other plan of this form. The second form plans the
+release the dialog would plan for that stage, channel, version and full commit.
+
+The script runs on the operator's machine and needs `node` and `ssh`. Every exchange with the
+Manager is one `ssh <user@master-host> microk8s.kubectl exec -i` into the Manager's container
+(namespace `manager`, deployment `manager`), where the container's own `node` relays one request to
+the admin socket or to the Manager's port and ends. It mints one session over the admin socket,
+keeps it in its own memory, and never prints it, passes it as an argument or writes it to a file.
+It reads no config file and asks for no password. A plan or an approval whose answer is lost is not
+sent again; a read is repeated, so a rollout of the Manager does not end the watch.
+
+It prints the run id as soon as the Manager names it, then each change of the run's status and
+steps. The run is the one `/runs/<run-id>` shows in the Manager.
+
+| exit | what it means |
+|---|---|
+| 0 | the run succeeded |
+| 1 | the plan was refused, or the run failed or was cancelled, or a plan or an approval did not take; the run, where there is one, is named |
+| 64 | the arguments are not one of the two forms, or a setting below is not a whole number |
+| 69 | `node` or `ssh` is missing, or no session could be minted over the admin socket; nothing was planned |
+| 75 | the watch stopped while the run may go on: the session expired or was revoked, the relay gave no answer too often in a row, or a release request got no answer; the run, where there is one, is named |
+
+`RELEASE_UNIT_POLL_SECONDS` (10) is the pause between two reads of the run, and
+`RELEASE_UNIT_RETRIES` (30) the number of reads in a row that may get no answer before the watch
+stops.
 
 # Installing a first master
 

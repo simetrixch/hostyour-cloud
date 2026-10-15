@@ -2757,9 +2757,427 @@ for planted in planted-server planted-fallback planted-print; do
 done
 ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config with only the LETSENCRYPT lines composes none of the four, and three planted composers are caught"
 
+# ===========================================================================
+# NINE — release-unit, against a stand-in Manager behind a stand-in ssh and kubectl
+# ===========================================================================
+# THE WHOLE ACT RUNS, from the door to the run's end, and only the Manager is a stand-in
+# (scripts/standin/release-unit-manager.mjs): ssh runs the command it is handed the way a remote
+# shell does, kubectl runs the relay with the three values the Manager's container carries, and the
+# relay is the act's own. The stand-in mints sentinel sessions and refreshes them on every call, logs
+# whether each call carried the session issued last, and plays the release the case names. Each case
+# is held to its recorded bytes, to the calls the Manager saw, and to no sentinel standing in any
+# file, argument or environment the run left. The planted defect is a copy of the act that prints its
+# session once: the sentinel check must find it, beside every case here that finds none.
+RU="$WORK/release-unit"
+mkdir -p "$RU/bin"
+cat > "$RU/bin/ssh" <<'STANDIN'
+#!/usr/bin/env bash
+printf 'ssh %s\n' "$*" >> "$RU/argv"; env >> "$RU/env"
+while [ "$1" = '-o' ]; do shift 2; done
+shift # the door
+exec bash -c "$*"
+STANDIN
+cat > "$RU/bin/microk8s.kubectl" <<'STANDIN'
+#!/usr/bin/env bash
+printf 'kubectl %s\n' "$*" >> "$RU/argv"; env >> "$RU/env"
+[ "${*:1:8}" = 'exec -i -n manager deploy/manager -c manager --' ] || { echo "kubectl stand-in: not the Manager's container: $*" >&2; exit 2; }
+shift 8
+fails="$(cat "$RU/relay-fails" 2>/dev/null || echo 0)"
+if [ "$fails" -gt 0 ]; then
+  echo $((fails - 1)) > "$RU/relay-fails"
+  echo 'error: unable to upgrade connection: container not found ("manager")' >&2
+  exit 1
+fi
+ADMIN_SOCKET_PATH="$RU/sock" PUBLIC_URL='https://manager.example.invalid' PORT="$(cat "$RU/port")" exec "$@"
+STANDIN
+chmod +x "$RU/bin/ssh" "$RU/bin/microk8s.kubectl"
+
+RELEASE_UNIT="$HERE/release-unit.sh"
+run_release_unit() { # the scenario the stand-in Manager plays, then the act's arguments
+  local scenario="$1" fake i
+  shift
+  rm -f "$RU/port" "$RU/sock" "$RU/relay-fails"
+  : > "$RU/calls"; : > "$RU/argv"; : > "$RU/env"
+  SCENARIO="$scenario" RU="$RU" node "$HERE/../scripts/standin/release-unit-manager.mjs" &
+  fake=$!
+  for i in $(seq 100); do [ -s "$RU/port" ] && [ -S "$RU/sock" ] && break; sleep 0.05; done
+  [ -s "$RU/port" ] || fail "the stand-in Manager of '$scenario' did not start"
+  A_CODE=0
+  ( PATH="$RU/bin:$PATH" RU="$RU" RELEASE_UNIT_POLL_SECONDS=0 RELEASE_UNIT_RETRIES=4 bash "$RELEASE_UNIT" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null || true
+}
+# The calls the stand-in Manager saw, in order, held to the case's own list.
+calls() { # what was being checked; the calls on standard input
+  diff -u - "$RU/calls" || fail "$1 — the Manager saw other calls than the case records"
+}
+# No sentinel the stand-in issued stands in what the run printed, in any argument or environment of
+# a process it started, or in any file under the fixture root.
+no_session() { # what was being checked
+  if grep -rlF 'SENTINEL-' "$WORK" > "$OUT/leaks"; then
+    fail "$1 — a session stands in $(tr '\n' ' ' < "$OUT/leaks")"
+  fi
+}
+B="$(printf 'b%.0s' $(seq 40))"; C="$(printf 'c%.0s' $(seq 40))"; D="$(printf 'd%.0s' $(seq 40))"
+
+run_release_unit success manager@master.example.invalid shop --prod-to-test
+expect 'the release prod runs, put on test as its one put-release' 0 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: succeeded (put-release ok)
+run run_1 succeeded
+~~~ standard error ~~~
+RECORDED
+calls 'the release prod runs, put on test as its one put-release' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'the release prod runs, put on test as its one put-release'
+
+run_release_unit success manager@master.example.invalid shop test stable 0.3.004 $B
+expect 'an explicit release of a commit, its plan approved as it stands' 0 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+~~~ standard error ~~~
+RECORDED
+calls 'an explicit release of a commit, its plan approved as it stands' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'an explicit release of a commit, its plan approved as it stands'
+
+run_release_unit success manager@master.example.invalid ghost prod stable 0.2.001 $C
+expect 'a unit the Manager has no registration of, refused at its plan' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: failed (mint-release pending, watch-release-build pending)
+~~~ standard error ~~~
+release-unit: run run_1 was refused at its plan (failed): open /runs/run_1 for why
+RECORDED
+calls 'a unit the Manager has no registration of, refused at its plan' <<'RECORDED'
+MINT
+POST /api/units/ghost/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'a unit the Manager has no registration of, refused at its plan'
+
+run_release_unit success manager@master.example.invalid shop prod stable 0.2.001 $D
+expect 'a commit that is not on the default branch, refused at its plan' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: failed (mint-release pending, watch-release-build pending)
+~~~ standard error ~~~
+release-unit: run run_1 was refused at its plan (failed): open /runs/run_1 for why
+RECORDED
+calls 'a commit that is not on the default branch, refused at its plan' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'a commit that is not on the default branch, refused at its plan'
+
+run_release_unit success manager@master.example.invalid shop prod stable 0.2.000 $C
+expect 'a version that stands on another commit, refused at its plan' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: failed (mint-release pending, watch-release-build pending)
+~~~ standard error ~~~
+release-unit: run run_1 was refused at its plan (failed): open /runs/run_1 for why
+RECORDED
+calls 'a version that stands on another commit, refused at its plan' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'a version that stands on another commit, refused at its plan'
+
+run_release_unit success manager@master.example.invalid ghost --prod-to-test
+expect 'a unit with no release at prod to read' 1 <<'RECORDED'
+~~~ standard error ~~~
+release-unit: the release prod runs of ghost could not be read: the Manager answered 404 NOT_FOUND: no unit "ghost" is registered, so there is nothing to release; nothing was planned
+RECORDED
+calls 'a unit with no release at prod to read' <<'RECORDED'
+MINT
+GET /api/units/ghost/release?stage=prod cookie=current origin=n/a
+RECORDED
+no_session 'a unit with no release at prod to read'
+
+run_release_unit mixed manager@master.example.invalid shop --prod-to-test
+expect 'a prod whose pins name two releases' 1 <<'RECORDED'
+~~~ standard error ~~~
+release-unit: the release prod runs of shop could not be read: the Manager answered 400 VALIDATION: the release "shop" runs at prod cannot be read: its pins name 2 image tags, and one release is one image tag; nothing was planned
+RECORDED
+calls 'a prod whose pins name two releases' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+RECORDED
+no_session 'a prod whose pins name two releases'
+
+run_release_unit wrong-steps manager@master.example.invalid shop --prod-to-test
+expect 'a prod-to-test plan that is more than the one put-release' 1 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+~~~ standard error ~~~
+release-unit: run run_1 plans mint-release, watch-release-build, and a release from prod to test is the one put-release; it is not approved. Discard it on /runs/run_1
+RECORDED
+calls 'a prod-to-test plan that is more than the one put-release' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'a prod-to-test plan that is more than the one put-release'
+
+run_release_unit failed manager@master.example.invalid shop --prod-to-test
+expect 'a release run that fails' 1 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: failed (put-release failed)
+~~~ standard error ~~~
+release-unit: run run_1 failed: open /runs/run_1
+RECORDED
+calls 'a release run that fails' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'a release run that fails'
+
+run_release_unit cancelled manager@master.example.invalid shop --prod-to-test
+expect 'a release run that is cancelled' 1 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: cancelled (put-release pending)
+~~~ standard error ~~~
+release-unit: run run_1 cancelled: open /runs/run_1
+RECORDED
+calls 'a release run that is cancelled' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'a release run that is cancelled'
+
+run_release_unit relay-lost manager@master.example.invalid shop --prod-to-test
+expect 'three relays lost to a rollout while the run goes on' 0 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: succeeded (put-release ok)
+run run_1 succeeded
+~~~ standard error ~~~
+RECORDED
+calls 'three relays lost to a rollout while the run goes on' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'three relays lost to a rollout while the run goes on'
+[ "$(cat "$RU/relay-fails")" = '0' ] || fail 'three relays lost to a rollout — the stand-in kubectl did not fail the three exchanges it was told to'
+ok 'three relays lost to a rollout — the watch read through them on the one session it minted'
+
+run_release_unit watch-exhausted manager@master.example.invalid shop --prod-to-test
+expect 'relays lost for longer than the watch waits' 75 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+~~~ standard error ~~~
+release-unit: the watch on run run_1 stopped: 5 reads in a row got no answer. The run goes on in the Manager: open /runs/run_1
+RECORDED
+calls 'relays lost for longer than the watch waits' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+RECORDED
+no_session 'relays lost for longer than the watch waits'
+
+run_release_unit expired manager@master.example.invalid shop --prod-to-test
+expect 'a session that expires while the run goes on' 75 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+~~~ standard error ~~~
+release-unit: the watch on run run_1 stopped: the session is no longer valid (expired or revoked), and no other is minted. The run goes on in the Manager: open /runs/run_1
+RECORDED
+calls 'a session that expires while the run goes on' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'a session that expires while the run goes on'
+
+run_release_unit lost-post manager@master.example.invalid shop --prod-to-test
+expect 'a release request whose answer is lost' 75 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+~~~ standard error ~~~
+release-unit: the release request of shop got no answer, so whether the Manager made a run of it is not known; it is not sent again. Read the Runs page
+RECORDED
+calls 'a release request whose answer is lost' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+RECORDED
+no_session 'a release request whose answer is lost'
+
+run_release_unit lost-approve manager@master.example.invalid shop --prod-to-test
+expect 'an approval whose answer is lost after it took' 0 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: the approval got no answer; it is not sent again, and the run is read
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: succeeded (put-release ok)
+run run_1 succeeded
+~~~ standard error ~~~
+RECORDED
+calls 'an approval whose answer is lost after it took' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=stale origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'an approval whose answer is lost after it took'
+
+run_release_unit dropped-approve manager@master.example.invalid shop --prod-to-test
+expect 'an approval that never reached the Manager' 1 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: the approval got no answer; it is not sent again, and the run is read
+run run_1: planned (put-release pending)
+~~~ standard error ~~~
+release-unit: run run_1 stands planned: the approval did not reach it, and it is not sent again. Approve it on /runs/run_1
+RECORDED
+calls 'an approval that never reached the Manager' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=stale origin=n/a
+RECORDED
+no_session 'an approval that never reached the Manager'
+
+run_release_unit success manager@master.example.invalid shop
+expect 'a run naming a unit and nothing else' 64 <<'RECORDED'
+~~~ standard error ~~~
+release-unit: usage: lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test
+       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod> <alpha|beta|stable> <x.y.z> <commit>
+RECORDED
+calls 'a run naming a unit and nothing else' <<'RECORDED'
+RECORDED
+no_session 'a run naming a unit and nothing else'
+
+# PLANTED: a copy of the act that prints its session once, right where the mint lands, and one that
+# hands it to ssh in an environment variable. The sentinel check above must find each; every case
+# above, each printing its progress, is the innocent beside them.
+PLANT="$WORK/release-unit-leak"
+mkdir -p "$PLANT"
+cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
+RELEASE_UNIT="$PLANT/release-unit.sh"
+for plant in 's/^held\.add(session);$/held.add(session); process.stderr.write(`${session}\\n`);/' \
+    's/{ stdio: \["pipe", "pipe", "pipe"\] }/{ stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, MANAGER_SESSION: String(session) } }/'; do
+  sed "$plant" "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+  ! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail "the plant $plant changed nothing in release-unit.mjs"
+  run_release_unit success manager@master.example.invalid shop --prod-to-test
+  if ( no_session "a copy of release-unit planted with $plant" ) 2>/dev/null; then
+    fail "a copy of release-unit planted with $plant left no sentinel the check could find — the check proves nothing"
+  fi
+  ok "the planted defect was caught — a copy of release-unit that leaks its session leaves it in $(sed "s|$WORK|<WORK>|g" "$OUT/leaks" | tr '\n' ' ')"
+  : > "$OUT/a.out"; : > "$OUT/a.err"; : > "$RU/argv"; : > "$RU/env"
+done
+RELEASE_UNIT="$HERE/release-unit.sh"
+rm -rf "$PLANT"
+
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
 echo "test:   reason for a host name it cannot resolve normalised, in the C locale."
+echo "test:   release-unit, run whole against a stand-in Manager behind a stand-in ssh and kubectl:"
+echo "test:   prod's release put on test as its one put-release, an explicit release, the three"
+echo "test:   refusals of the plan and two of the source read, a plan that is more than the put-release,"
+echo "test:   a failed and a cancelled run, relays lost to a rollout on one session, a watch that"
+echo "test:   stops, an expired session, a lost release request and approve never sent again, and no"
+echo "test:   session in any output, argument, environment or file; a copy that prints it is caught."
 echo "test: covered — a fixture's commit and push start no background maintenance, at either end,"
 echo "test:   that could still be writing when a case removes its repository, and a planted run"
 echo "test:   without the template that prevents it is caught, and so is a copy of release-platform whose"
