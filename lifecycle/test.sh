@@ -2765,11 +2765,16 @@ ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERV
 # shell does, kubectl runs the relay with the three values the Manager's container carries, and the
 # relay is the act's own. The stand-in mints sentinel sessions and refreshes them on every call, logs
 # whether each call carried the session issued last, and plays the release the case names. Each case
-# is held to its recorded bytes, to the calls the Manager saw, and to no sentinel standing in any
-# file, argument or environment the run left. The planted defect is a copy of the act that prints its
-# session once: the sentinel check must find it, beside every case here that finds none.
+# is held to its recorded bytes, to the calls the Manager saw (a release request with the body it
+# sent), and to no sentinel standing in any file, argument or environment the run left. The act runs
+# with its home and temporary folders inside the fixture root, and /tmp is read for any file written
+# while it ran, so a session written to either is found. The planted defects are copies of the act
+# that print the session, hand it on in an environment variable, or write it to its temporary folder,
+# its home folder or /tmp: the sentinel check must find each, beside every case here that finds none.
 RU="$WORK/release-unit"
-mkdir -p "$RU/bin"
+mkdir -p "$RU/bin" "$RU/home" "$RU/tmp"
+# Every sentinel names this run of the suite, so a scan of /tmp never finds another run's.
+SENTINEL_RUN="${WORK##*/}"
 cat > "$RU/bin/ssh" <<'STANDIN'
 #!/usr/bin/env bash
 printf 'ssh %s\n' "$*" >> "$RU/argv"; env >> "$RU/env"
@@ -2802,13 +2807,13 @@ run_release_unit() { # the scenario the stand-in Manager plays, then the act's a
   local scenario="$1" fake i
   shift
   rm -f "$RU/port" "$RU/sock" "$RU/relay-fails" "$RU/relay-hangs"
-  : > "$RU/calls"; : > "$RU/argv"; : > "$RU/env"
-  SCENARIO="$scenario" RU="$RU" node "$HERE/../scripts/standin/release-unit-manager.mjs" &
+  : > "$RU/calls"; : > "$RU/argv"; : > "$RU/env"; touch "$RU/started"
+  SCENARIO="$scenario" RU="$RU" SENTINEL_RUN="$SENTINEL_RUN" node "$HERE/../scripts/standin/release-unit-manager.mjs" &
   fake=$!
   for i in $(seq 100); do [ -s "$RU/port" ] && [ -S "$RU/sock" ] && break; sleep 0.05; done
   [ -s "$RU/port" ] || fail "the stand-in Manager of '$scenario' did not start"
   A_CODE=0
-  ( PATH="$RU/bin:$PATH" RU="$RU" RELEASE_UNIT_POLL_SECONDS=0 RELEASE_UNIT_RETRIES=4 RELEASE_UNIT_EXCHANGE_SECONDS=3 timeout 15 bash "$RELEASE_UNIT" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  ( PATH="$RU/bin:$PATH" RU="$RU" HOME="$RU/home" TMPDIR="$RU/tmp" RELEASE_UNIT_POLL_SECONDS=0 RELEASE_UNIT_RETRIES=4 RELEASE_UNIT_EXCHANGE_SECONDS=3 timeout 15 bash "$RELEASE_UNIT" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
   kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null || true
 }
 # The calls the stand-in Manager saw, in order, held to the case's own list.
@@ -2816,9 +2821,13 @@ calls() { # what was being checked; the calls on standard input
   diff -u - "$RU/calls" || fail "$1 — the Manager saw other calls than the case records"
 }
 # No sentinel the stand-in issued stands in what the run printed, in any argument or environment of
-# a process it started, or in any file under the fixture root.
+# a process it started, in any file under the fixture root, or in a file under /tmp written since the
+# case began.
 no_session() { # what was being checked
-  if grep -rlF 'SENTINEL-' "$WORK" > "$OUT/leaks"; then
+  { grep -rlF "SENTINEL-$SENTINEL_RUN-" "$WORK" || true
+    find /tmp -xdev -type f -newer "$RU/started" ! -path "$WORK/*" -exec grep -lF "SENTINEL-$SENTINEL_RUN-" {} + 2>/dev/null || true
+  } > "$OUT/leaks"
+  if [ -s "$OUT/leaks" ]; then
     fail "$1 — a session stands in $(tr '\n' ' ' < "$OUT/leaks")"
   fi
 }
@@ -2840,6 +2849,7 @@ calls 'the release prod runs, put on test as its one put-release' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -2864,6 +2874,7 @@ RECORDED
 calls 'an explicit release of a commit, its plan approved as it stands' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -2885,6 +2896,7 @@ RECORDED
 calls 'a unit the Manager has no registration of, refused at its plan' <<'RECORDED'
 MINT
 POST /api/units/ghost/release cookie=current origin=ok
+  body {"stage":"prod","channel":"stable","version":"0.2.001","commit":"cccccccccccccccccccccccccccccccccccccccc"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 RECORDED
@@ -2901,6 +2913,7 @@ RECORDED
 calls 'a commit that is not on the default branch, refused at its plan' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"prod","channel":"stable","version":"0.2.001","commit":"dddddddddddddddddddddddddddddddddddddddd"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 RECORDED
@@ -2917,6 +2930,7 @@ RECORDED
 calls 'a version that stands on another commit, refused at its plan' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"prod","channel":"stable","version":"0.2.000","commit":"cccccccccccccccccccccccccccccccccccccccc"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 RECORDED
@@ -2957,10 +2971,28 @@ calls 'a prod-to-test plan that is more than the one put-release' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 RECORDED
 no_session 'a prod-to-test plan that is more than the one put-release'
+
+run_release_unit secrets manager@master.example.invalid shop prod stable 0.3.004 $B
+expect 'a plan that asks for a secret to be typed' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+~~~ standard error ~~~
+release-unit: run run_1 asks for secrets to be typed, which this script does not do; it is not approved. Open /runs/run_1
+RECORDED
+calls 'a plan that asks for a secret to be typed' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"prod","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'a plan that asks for a secret to be typed'
 
 run_release_unit failed manager@master.example.invalid shop --prod-to-test
 expect 'a release run that fails' 1 <<'RECORDED'
@@ -2978,6 +3010,7 @@ calls 'a release run that fails' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -3003,6 +3036,7 @@ calls 'a release run that is cancelled' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -3028,6 +3062,7 @@ calls 'three relays lost to a rollout while the run goes on' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -3056,6 +3091,7 @@ calls 'two relays that hang past the bound of an exchange' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -3094,6 +3130,7 @@ calls 'relays lost for longer than the watch waits' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -3114,6 +3151,7 @@ calls 'a session that expires while the run goes on' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -3132,6 +3170,7 @@ calls 'a release request whose answer is lost' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 RECORDED
 no_session 'a release request whose answer is lost'
 
@@ -3152,6 +3191,7 @@ calls 'an approval whose answer is lost after it took' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -3177,6 +3217,7 @@ calls 'an approval that never reached the Manager' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -3194,15 +3235,22 @@ calls 'a run naming a unit and nothing else' <<'RECORDED'
 RECORDED
 no_session 'a run naming a unit and nothing else'
 
-# PLANTED: a copy of the act that prints its session once, right where the mint lands, and one that
-# hands it to ssh in an environment variable. The sentinel check above must find each; every case
-# above, each printing its progress, is the innocent beside them.
+# PLANTED: a copy of the act that prints its session once, right where the mint lands, one that
+# hands it to ssh in an environment variable, and three that write it to a file: in the temporary
+# folder and the home folder node names, and in /tmp by its literal path. The sentinel check above
+# must find each; every case above, each printing its progress, is the innocent beside them.
 PLANT="$WORK/release-unit-leak"
 mkdir -p "$PLANT"
 cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
 RELEASE_UNIT="$PLANT/release-unit.sh"
+WRITES='s/^import { spawn } from "node:child_process";$/import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs"; import { tmpdir, homedir } from "node:os";/'
+LITERAL="/tmp/release-unit-plant-$SENTINEL_RUN"
+trap 'rm -rf "$WORK" "$LITERAL"' EXIT
 for plant in 's/^held\.add(session);$/held.add(session); process.stderr.write(`${session}\\n`);/' \
-    's/{ stdio: \["pipe", "pipe", "pipe"\] }/{ stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, MANAGER_SESSION: String(session) } }/'; do
+    's/{ stdio: \["pipe", "pipe", "pipe"\] }/{ stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, MANAGER_SESSION: String(session) } }/' \
+    "$WRITES"$'\n''s/^held\.add(session);$/held.add(session); writeFileSync(`${tmpdir()}\/release-unit-session`, session);/' \
+    "$WRITES"$'\n''s/^held\.add(session);$/held.add(session); writeFileSync(`${homedir()}\/.release-unit-session`, session);/' \
+    "$WRITES"$'\n''s|^held\.add(session);$|held.add(session); writeFileSync("'"$LITERAL"'", session);|'; do
   sed "$plant" "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
   ! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail "the plant $plant changed nothing in release-unit.mjs"
   run_release_unit success manager@master.example.invalid shop --prod-to-test
@@ -3211,7 +3259,10 @@ for plant in 's/^held\.add(session);$/held.add(session); process.stderr.write(`$
   fi
   ok "the planted defect was caught — a copy of release-unit that leaks its session leaves it in $(sed "s|$WORK|<WORK>|g" "$OUT/leaks" | tr '\n' ' ')"
   : > "$OUT/a.out"; : > "$OUT/a.err"; : > "$RU/argv"; : > "$RU/env"
+  rm -rf "$RU/home" "$RU/tmp" "$LITERAL"; mkdir -p "$RU/home" "$RU/tmp"
 done
+[ -e "$LITERAL" ] && fail "the plant's file $LITERAL was not removed"
+trap 'rm -rf "$WORK"' EXIT
 RELEASE_UNIT="$HERE/release-unit.sh"
 rm -rf "$PLANT"
 
@@ -3222,8 +3273,10 @@ echo "test:   release-unit, run whole against a stand-in Manager behind a stand-
 echo "test:   prod's release put on test as its one put-release, an explicit release, the three"
 echo "test:   refusals of the plan and two of the source read, a plan that is more than the put-release,"
 echo "test:   a failed and a cancelled run, relays lost to a rollout or hanging on one session, a watch that"
-echo "test:   stops, an expired session, a lost release request and approve never sent again, and no"
-echo "test:   session in any output, argument, environment or file; a copy that prints it is caught."
+echo "test:   stops, an expired session, a lost release request and approve never sent again, a plan"
+echo "test:   that asks for a secret left unapproved, each release request held to the body it sent, and"
+echo "test:   no session in any output, argument, environment or file, its home and temporary folders and"
+echo "test:   /tmp included; copies that print it, pass it on or write it to any of those are caught."
 echo "test: covered — a fixture's commit and push start no background maintenance, at either end,"
 echo "test:   that could still be writing when a case removes its repository, and a planted run"
 echo "test:   without the template that prevents it is caught, and so is a copy of release-platform whose"

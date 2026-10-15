@@ -2,7 +2,9 @@
 // mint on "$RU/sock" and the API on 127.0.0.1 at the port it writes to "$RU/port". SCENARIO says how
 // the release goes. Every call is logged to "$RU/calls" with whether its session cookie is the one
 // issued last, a stale one or none, and never with its value: the values are sentinels, and the test
-// holds every file, argument and environment of the run to carrying none of them.
+// holds every file, argument and environment of the run to carrying none of them. A release request
+// is logged with its body as sent, which carries no session, so a case holds what the act asked for.
+// Each sentinel carries SENTINEL_RUN, so a scan of a shared folder finds only this suite's.
 import { createServer } from "node:http";
 import { appendFileSync, writeFileSync } from "node:fs";
 
@@ -12,7 +14,7 @@ const ORIGIN = "https://manager.example.invalid";
 const COOKIE = "__Host-manager";
 const issued = [];
 const log = (line) => appendFileSync(`${RU}/calls`, `${line}\n`);
-const issue = (kind) => { issued.push(`SENTINEL-${kind}-${issued.length + 1}`); return issued.at(-1); };
+const issue = (kind) => { issued.push(`SENTINEL-${process.env.SENTINEL_RUN}-${kind}-${issued.length + 1}`); return issued.at(-1); };
 
 const SOURCE = { stage: "prod", tag: "0.3.004-stable-20261010101010", version: "0.3.004", channel: "stable", commit: "b".repeat(40) };
 /** The runs, each a script of the statuses its reads walk through. */
@@ -44,6 +46,7 @@ const api = createServer((req, res) => {
       return json(res, 200, { unit: release[1], version: "0.3.006", standing: SOURCE }, refresh);
     }
     if (release && req.method === "POST") {
+      log(`  body ${body}`);
       const asked = JSON.parse(body);
       const runId = `run_${runs.size + 1}`;
       // The three refusals the Manager's plan makes, each settling the run failed at its plan.
@@ -71,7 +74,8 @@ const api = createServer((req, res) => {
       if (SCENARIO === "expired" && run.statuses[0] === "running") return json(res, 401, { code: "UNAUTHENTICATED", message: "Not signed in" });
       const status = run.statuses.length > 1 ? run.statuses.shift() : run.statuses[0];
       const stepStatus = status === "succeeded" ? "ok" : status === "running" ? "running" : status === "failed" && run.approved ? "failed" : "pending";
-      return json(res, 200, { id: read[1], status, summary: "a release", requiredSecrets: [], steps: run.steps.map((name) => ({ name, status: stepStatus })) }, refresh);
+      const requiredSecrets = SCENARIO === "secrets" ? [{ name: "elevation-password" }] : [];
+      return json(res, 200, { id: read[1], status, summary: "a release", requiredSecrets, steps: run.steps.map((name) => ({ name, status: stepStatus })) }, refresh);
     }
     json(res, 404, { code: "NOT_FOUND", message: `no route ${req.method} ${url.pathname}` }, refresh);
   });
