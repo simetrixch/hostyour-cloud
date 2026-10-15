@@ -7,8 +7,8 @@
 # A pull request skips the release and the Plane update, so a run that passed all it ran reports
 # `Completed`, which is a success here.
 #
-# The token is the Forgejo machine user's, from the Secret forgejo-build-tokens. It travels in a
-# header file, so it is in no argument list, and nothing here prints it.
+# The token is the Forgejo machine user's, from the Secret forgejo-build-tokens. It reaches curl as a
+# header on its standard input, so it is in no argument list and no file, and nothing here prints it.
 set -euo pipefail
 
 : "${FORGEJO_TOKEN:?}" "${FORGEJO_API:?}" "${REPOSITORY:?}" "${COMMIT:?}" "${RUN_URL:?}" "${RUN_STATE:?}"
@@ -25,11 +25,10 @@ esac
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-printf 'Authorization: token %s\n' "${FORGEJO_TOKEN}" > "${work}/auth"
 jq -n -c --arg state "${state}" --arg url "${RUN_URL}" --arg description "${description}" \
   '{state: $state, target_url: $url, description: $description, context: "tekton/forgejo-release"}' > "${work}/status.json"
 
-code="$(curl -sS --max-time 20 -X POST -H "@${work}/auth" -H 'Content-Type: application/json' \
+code="$(printf 'Authorization: token %s\n' "${FORGEJO_TOKEN}" | curl -sS --max-time 20 -X POST -H @- -H 'Content-Type: application/json' \
   --data-binary "@${work}/status.json" -o "${work}/answer.json" -w '%{http_code}' \
   "${FORGEJO_API}/repos/${REPOSITORY}/statuses/${COMMIT}" 2>"${work}/curl.err" || true)"
 if [ "${code}" != 201 ]; then
