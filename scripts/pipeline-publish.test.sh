@@ -3,8 +3,8 @@
 # package.json a release tag publishes and which registry it may name, and that a tree holding npm-seed/
 # is no publication of its own; that the release commit is on the default branch, or differs from it in
 # stamped versions only; that every package declares the version of the tag before it is packed,
-# workspace ranges included; that every packed tarball holds files under package/ only, no .npmrc, no
-# .env* and no gitleaks finding; and that the push refuses another scope and another content under a
+# workspace ranges included; that pack installs the tools a source release's ci-tools.json names; that
+# every packed tarball holds files under package/ only, no .npmrc, no .env* and no gitleaks finding; and that the push refuses another scope and another content under a
 # published version, pushes nothing once one tarball is refused, reads every tarball back, and logs one
 # line per tarball; that a tag tracking release/build.sh publishes the binaries that script leaves, and
 # only regular files of a plain name, as one manifest <owner>/<repository>:<tag> that a second run
@@ -609,6 +609,14 @@ pipeline_run "$work/e5" "0.1.000-stable-$STAMP" && fail 'PLANTED DEFECT: a relea
 grep -q 'is not on the default branch of origin' "$work/run.out" && grep -qx 'run: reviewed failed at decide' "$work/run.out" \
   || fail "a release commit off the default branch was not refused at reviewed: $(cat "$work/run.out")"
 ok 'end to end: a packed tarball holding .env.local or a token, and a commit off the default branch, publish nothing'
+# A source release hands pack the tools of its ci-tools.json, as the ci check gets them: a version the table lacks ends pack
+# before it builds anything.
+one_package "$work/e10" @digitaplatform/e2e-tools "index.js=export {};"; printf '{"emcc": "0.0.1"}\n' > "$work/e10/ci-tools.json"
+commit_tag "$work/e10" "0.1.000-stable-$STAMP"
+pipeline_run "$work/e10" "0.1.000-stable-$STAMP" && fail 'PLANTED DEFECT: a source release whose ci-tools.json names a tool the table lacks was published end to end'
+grep -qF 'check: ci-tools.json names emcc 0.0.1, which the tools table of this pipeline does not carry' "$work/run.out" && grep -qx 'run: pack failed at prepare' "$work/run.out" \
+  && ! grep -q '^publish:' "$work/run.out" || fail "pack of a source release was not handed the tools of its ci-tools.json: $(cat "$work/run.out")"
+ok 'end to end: pack of a source release installs the tools of its ci-tools.json first, and a version the table lacks publishes nothing'
 origin "$work/e4"; mkdir -p "$work/e4/npm-seed"
 tgz "$work/e4/npm-seed/digitaplatform-seed-a-1.0.0.tgz" "$(json '{"name":"@digitaplatform/seed-a","version":"1.0.0"}')" "dist/index.js=export {};"
 printf '@digitaplatform/seed-a@1.0.0\tsha512-fixture\t%s\tdigita-platform:pnpm-lock.yaml@x\n' "$(sha256sum "$work/e4/npm-seed/digitaplatform-seed-a-1.0.0.tgz" | cut -d' ' -f1)" > "$work/e4/npm-seed/pins.tsv"

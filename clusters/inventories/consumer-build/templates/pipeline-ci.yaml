@@ -74,7 +74,7 @@ lockfile its check never reads.
 
 THE TOOLS OF A REPOSITORY. A repository that needs other versions than the
 image's names them in ci-tools.json at its root, {"<tool>": "<x.y.z>"}, with a
-tool of node, npm, go, dart, gitleaks, promtool and kubectl. The fetch task's list-tools
+tool of node, npm, go, dart, gitleaks, promtool, kubectl and emcc. The fetch task's list-tools
 step validates the file with jq and hands "<tool> <version>" lines to the check
 as a result; the check step installs each from files/ci-tools.table, which holds
 a sha256 and an https url per tool and version, unpacks it only after the sha256
@@ -412,9 +412,9 @@ spec:
               fi
               jq -rs 'if length != 1 or (.[0] | type) != "object" then error("ci-tools.json: must hold one object of tool and version")
                 else .[0] | to_entries[]
-                  | if (.key | IN("node", "npm", "go", "dart", "gitleaks", "promtool", "kubectl")) and (.value | type == "string" and test("^[0-9]+[.][0-9]+[.][0-9]+$"))
+                  | if (.key | IN("node", "npm", "go", "dart", "gitleaks", "promtool", "kubectl", "emcc")) and (.value | type == "string" and test("^[0-9]+[.][0-9]+[.][0-9]+$"))
                     then "\(.key) \(.value)"
-                    else error("ci-tools.json: \(.key | tojson) must be one of node, npm, go, dart, gitleaks, promtool, kubectl at a version x.y.z, not \(.value | tojson)") end
+                    else error("ci-tools.json: \(.key | tojson) must be one of node, npm, go, dart, gitleaks, promtool, kubectl, emcc at a version x.y.z, not \(.value | tojson)") end
                 end' ci-tools.json > "${TOOLS_RESULT}"
               echo "fetch: $(wc -l < "${TOOLS_RESULT}") tools named in ci-tools.json"
             computeResources:

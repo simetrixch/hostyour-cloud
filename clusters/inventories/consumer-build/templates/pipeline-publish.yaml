@@ -31,7 +31,9 @@ WHAT IS PUBLISHED, read at the tag by `scan`:
     (clusters/inventories/registry values-common.yaml, accessControl).
   - otherwise every tracked package.json that is not private and names
     publishConfig.registry; that registry must be https://<registry>/v2/npm/, so
-    a package that still names another registry fails the run. A repository with
+    a package that still names another registry fails the run. `pack` builds
+    them with the tools of the repository's ci-tools.json first on PATH
+    (files/ci-install-tools.sh), as the ci check does. A repository with
     neither publishes nothing, and the run ends after the scan.
 Nothing else is published: the one-time seed of npm-seed/ is over, and a tree
 that holds npm-seed/ is read like any other.
@@ -102,7 +104,7 @@ subPath repository and the tarballs and binaries in its subPath packed.
 {{- $packed := "[\"source\"]" -}}
 {{- /* The repository the binaries of a release are pushed to: <owner>/<repository name>, read off the repoURL like the owner. */ -}}
 {{- $binariesRepository := printf "%s/%s" $owner (regexReplaceAll "^https://github\\.com/[^/]+/([^/]+?)(\\.git)?$" $repoURL "${1}" | lower) -}}
-{{- /* The tools table the build of the binaries installs the repository's ci-tools.json from, as the ci pipeline does. */ -}}
+{{- /* The tools table pack and the build of the binaries install the repository's ci-tools.json from, as the ci pipeline does. */ -}}
 {{- $toolsTable := .Files.Get "files/ci-tools.table" -}}
 apiVersion: tekton.dev/v1
 kind: Pipeline
@@ -201,7 +203,7 @@ spec:
           - name: mode
             description: binaries (release/build.sh stands at the tag), source (packages to pack) or none.
           - name: tools
-            description: The tools and versions of ci-tools.json at the tag, one "<tool> <version>" per line, for the binaries alone; empty otherwise.
+            description: The tools and versions of ci-tools.json at the tag, one "<tool> <version>" per line, for pack and build-binaries; empty without the file.
         steps:
           - name: scan
             image: {{ $toolsImage }}
@@ -240,18 +242,14 @@ spec:
               }
               scan_tools() { # <the file it writes, "<tool> <version>" per line> — what ci-tools.json names, or nothing without the file
                 : > "$1"
-                [ -f ci-tools.json ] || { echo "scan: no ci-tools.json, so release/build.sh runs with the tools of its image"; return 0; }
+                [ -f ci-tools.json ] || { echo "scan: no ci-tools.json, so the build runs with the tools of its image"; return 0; }
                 jq -rs 'if length != 1 or (.[0] | type) != "object" then error("ci-tools.json: must hold one object of tool and version")
                   else .[0] | to_entries[] | "\(.key) \(.value)" end' ci-tools.json > "$1"
               }
               MODE=none
               scan_packages /workspace/packed/publishable.tsv
               printf '%s' "${MODE}" > "$(results.mode.path)"
-              if [ "${MODE}" = binaries ]; then
-                scan_tools "$(results.tools.path)"
-              else
-                : > "$(results.tools.path)"
-              fi
+              scan_tools "$(results.tools.path)"
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
@@ -341,12 +339,15 @@ spec:
           values: {{ $packed }}
       params:
         - { name: release-tag, value: "$(params.release-tag)" }
+        - { name: tools, value: "$(tasks.scan.results.tools)" }
       workspaces:
         - { name: source, workspace: source, subPath: repository }
         - { name: packed, workspace: source, subPath: packed }
       taskSpec:
         params:
           - name: release-tag
+            type: string
+          - name: tools
             type: string
         workspaces:
           - name: source
@@ -372,6 +373,11 @@ spec:
             env:
               - name: RELEASE_TAG
                 value: "$(params.release-tag)"
+              - name: CI_TOOLS
+                value: "$(params.tools)"
+              - name: CI_TOOLS_TABLE
+                value: |
+{{ $toolsTable | indent 18 }}
               - name: NPM_CONFIG_USERCONFIG
                 value: /npmrc/.npmrc
               - name: pnpm_config_store_dir
@@ -479,6 +485,9 @@ spec:
               # pnpm 11.7.0, as the ci check; a package.json that names packageManager overrides it.
               corepack enable
               corepack prepare pnpm@11.7.0 --activate
+
+{{ .Files.Get "files/ci-install-tools.sh" | indent 14 }}
+
               stamp_versions "${VERSION}"
               build_packages /workspace/packed/publishable.tsv
               pack_packages /workspace/packed/publishable.tsv /workspace/packed "${VERSION}"

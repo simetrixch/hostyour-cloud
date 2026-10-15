@@ -834,7 +834,7 @@ test('list-tools passes only a known tool at a plain version, and a repository w
       rmSync(dir, {recursive: true, force: true});
     }
   };
-  const all = {node: '26.11.1', npm: '12.2.0', go: '1.24.13', dart: '3.13.4', gitleaks: '8.30.1', promtool: '3.13.1', kubectl: '1.35.6'};
+  const all = {node: '26.11.1', npm: '12.2.0', go: '1.24.13', dart: '3.13.4', gitleaks: '8.30.1', promtool: '3.13.1', kubectl: '1.35.6', emcc: '5.0.1'};
   assert.deepEqual(list(all), {status: 0, lines: Object.entries(all).map(([tool, version]) => `${tool} ${version}`)}, 'PLANTED INNOCENT: every tool of the contract at a plain version passes');
   assert.deepEqual(list({dart: '3.13.4'}), {status: 0, lines: ['dart 3.13.4']});
   assert.deepEqual(list({}), {status: 0, lines: []}, 'a file that names no tool lists none');
@@ -850,6 +850,8 @@ test('list-tools passes only a known tool at a plain version, and a repository w
 
 const TOOLS_TABLE = readFileSync(`${CI_FILES}/ci-tools.table`, 'utf8');
 const TABLE_HOSTS = ['nodejs.org', 'registry.npmjs.org', 'go.dev', 'storage.googleapis.com', 'github.com', 'dl.k8s.io'];
+// An emcc url names the emscripten-releases build of its version, as emsdk 14c18b56's emscripten-releases-tags.json maps it.
+const EMSCRIPTEN_RELEASES = {'5.0.1': 'bf32ae8b61ac8efeb7eca01b54c8307f992724f7'};
 const tableErrors = (table, tools) => {
   const errors = [], seen = new Set();
   for (const line of table.split('\n').filter(Boolean)) {
@@ -859,7 +861,7 @@ const tableErrors = (table, tools) => {
     if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) errors.push(`${tool}: version ${version} is not x.y.z`);
     if (!/^[0-9a-f]{64}$/.test(sha256 ?? '')) errors.push(`${tool} ${version}: sha256 is not 64 hex digits`);
     if (!TABLE_HOSTS.some((host) => url?.startsWith(`https://${host}/`))) errors.push(`${tool} ${version}: ${url} is not https on a known host`);
-    if (!url?.includes(version ?? '\0')) errors.push(`${tool} ${version}: ${url} does not name the version`);
+    if (!url?.includes((tool === 'emcc' ? EMSCRIPTEN_RELEASES[version] : version) ?? '\0')) errors.push(`${tool} ${version}: ${url} does not name the version`);
     if (seen.has(`${tool} ${version}`)) errors.push(`${tool} ${version}: twice`);
     seen.add(`${tool} ${version}`);
   }
@@ -912,39 +914,58 @@ const buildToolFixtures = (root) => {
   program(join(src, 'gitleaks/gitleaks'), 'gitleaks-fixture');
   program(join(src, 'promtool/prometheus-3.13.1.linux-amd64/promtool'), 'promtool-fixture');
   program(join(out, 'kubectl'), 'kubectl-fixture');
+  // The SDK release of emscripten: LLVM in install/bin, Binaryen's programs beside it, emcc in install/emscripten. Its
+  // emcc prints the version of the emscripten-version.txt beside it, which the archive ships as <x.y.z>-git.
+  program(join(src, 'emcc/install/emscripten/emcc'), 'emcc-fixture "$(tr -d \'"\' < "$(dirname "$0")/emscripten-version.txt") (fixture)"');
+  writeFileSync(join(src, 'emcc/install/emscripten/emscripten-version.txt'), '5.0.1-git\n');
+  program(join(src, 'emcc/install/bin/clang'), 'clang-fixture');
+  program(join(src, 'emcc/install/bin/wasm-opt'), 'wasm-opt-fixture');
   const tgz = (name, dir, entry) => execFileSync('tar', ['-czf', join(out, name), '-C', join(src, dir), entry]);
   tgz('node.tgz', 'node', 'node-v'); tgz('npm.tgz', 'npm', 'package'); tgz('go.tgz', 'go', 'go');
   tgz('gitleaks.tgz', 'gitleaks', 'gitleaks'); tgz('promtool.tgz', 'promtool', 'prometheus-3.13.1.linux-amd64');
+  execFileSync('tar', ['-cJf', join(out, 'emcc.tar.xz'), '-C', join(src, 'emcc'), 'install']);
   execFileSync('python3', ['-I', '-m', 'zipfile', '-c', join(out, 'dart.zip'), 'dart-sdk'], {cwd: join(src, 'dart')});
   const row = (tool, version, archive) => `${tool} ${version} ${createHash('sha256').update(readFileSync(join(out, archive))).digest('hex')} file://${join(out, archive)}`;
   return Object.fromEntries([['node', '26.11.1', 'node.tgz'], ['npm', '12.2.0', 'npm.tgz'], ['go', '1.24.13', 'go.tgz'], ['dart', '3.13.4', 'dart.zip'],
-    ['gitleaks', '8.30.1', 'gitleaks.tgz'], ['promtool', '3.13.1', 'promtool.tgz'], ['kubectl', '1.35.6', 'kubectl']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
+    ['gitleaks', '8.30.1', 'gitleaks.tgz'], ['promtool', '3.13.1', 'promtool.tgz'], ['kubectl', '1.35.6', 'kubectl'], ['emcc', '5.0.1', 'emcc.tar.xz']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
 };
 
-const runInstallTools = (wanted, rows) => {
+const runInstallTools = (wanted, rows, plant = (script) => script) => {
   const root = mkdtempSync(join(tmpdir(), 'ci-tools-')), dir = join(root, 'installed');
   try {
     const table = rows(buildToolFixtures(root));
-    const script = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').replaceAll('/tmp/ci-tools', dir);
-    const probe = 'for t in node npm npx go dart gitleaks promtool kubectl; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
+    const script = plant(readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8')).replaceAll('/tmp/ci-tools', dir);
+    const probe = 'for t in node npm npx go dart gitleaks promtool kubectl emcc; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
     const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\n${probe}`], {encoding: 'utf8', env: {...process.env, CI_TOOLS: wanted, CI_TOOLS_TABLE: table}});
-    const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|gitleaks|promtool|kubectl)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
-    return {status: result.status, stderr: result.stderr, resolved, unpacked: [...['node', 'npm', 'go', 'dart'].filter((tool) => existsSync(join(dir, tool))), ...['gitleaks', 'promtool', 'kubectl'].filter((tool) => existsSync(join(dir, 'bin', tool)))], downloaded: existsSync(join(dir, 'node.download'))};
+    const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|gitleaks|promtool|kubectl|emcc)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
+    // emcc reads the .emscripten beside it as Python; python3 reads the two roots out of it the same way.
+    const emccConfig = join(dir, 'emcc/emscripten/.emscripten');
+    const emccRoots = existsSync(emccConfig) ? execFileSync('python3', ['-I', '-c', 'import sys; exec(open(sys.argv[1]).read()); print(LLVM_ROOT); print(BINARYEN_ROOT)', emccConfig], {encoding: 'utf8'})
+      .trim().replaceAll(dir, '<installed>').split('\n') : null;
+    return {status: result.status, stdout: result.stdout, stderr: result.stderr, resolved, emccRoots,
+      unpacked: [...['node', 'npm', 'go', 'dart', 'emcc'].filter((tool) => existsSync(join(dir, tool))), ...['gitleaks', 'promtool', 'kubectl'].filter((tool) => existsSync(join(dir, 'bin', tool)))], downloaded: existsSync(join(dir, 'node.download'))};
   } finally {
     rmSync(root, {recursive: true, force: true});
   }
 };
 const allRows = (rows) => Object.values(rows).join('\n');
-const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\ngitleaks 8.30.1\npromtool 3.13.1\nkubectl 1.35.6\n';
+const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\ngitleaks 8.30.1\npromtool 3.13.1\nkubectl 1.35.6\nemcc 5.0.1\n';
 
 test('the tools step installs each tool of ci-tools.json from the table before the image\'s own, and refuses what the table cannot vouch for', () => {
   const all = runInstallTools(WANTED_ALL, allRows);
   assert.equal(all.status, 0, all.stderr);
   assert.deepEqual(Object.entries(all.resolved).map(([tool, r]) => [tool, r.inside, r.output]), [['node', true, 'node-fixture'], ['npm', true, 'npm-fixture'], ['npx', true, 'npx-fixture'],
-    ['go', true, 'go-fixture'], ['dart', true, 'dart-fixture'], ['gitleaks', true, 'gitleaks-fixture'], ['promtool', true, 'promtool-fixture'], ['kubectl', true, 'kubectl-fixture']], 'PLANTED INNOCENT: all seven are installed, and the npm named beats the npm that ships with node');
+    ['go', true, 'go-fixture'], ['dart', true, 'dart-fixture'], ['gitleaks', true, 'gitleaks-fixture'], ['promtool', true, 'promtool-fixture'], ['kubectl', true, 'kubectl-fixture'],
+    ['emcc', true, 'emcc-fixture 5.0.1 (fixture)']], 'PLANTED INNOCENT: all eight are installed, and the npm named beats the npm that ships with node');
+  assert.deepEqual(all.emccRoots, ['<installed>/emcc/bin', '<installed>/emcc'], 'emcc reads LLVM from the bin of the SDK release and Binaryen from its root, as emsdk activate writes them');
+  assert.match(all.stdout, /^check: emcc-fixture 5\.0\.1 \(fixture\), downloaded in \d+ s and unpacked in \d+ s$/m, 'the log names what emcc --version printed and the seconds its download and unpack took');
+  const unversioned = runInstallTools('emcc 5.0.1\n', allRows, (script) => script.replace(/^.*emscripten-version\.txt.*$/gm, ''));
+  assert.equal(unversioned.resolved.emcc.output, 'emcc-fixture 5.0.1-git (fixture)', 'PLANTED DEFECT: an emcc that reports 5.0.1-git, which packages/quickjs/build.sh of digita-platform refuses, is seen');
+  const unconfigured = runInstallTools('emcc 5.0.1\n', allRows, (script) => script.replace(/^.*\.emscripten.*$/gm, ''));
+  assert.equal(unconfigured.emccRoots, null, 'PLANTED DEFECT: an emcc without its config file is seen');
   const reversed = runInstallTools('promtool 3.13.1\nnpm 12.2.0\nnode 26.11.1\n', allRows);
   assert.equal(reversed.resolved.npm.output, 'npm-fixture', 'the order of ci-tools.json does not decide which npm runs');
-  const nodeLast = runInstallTools(WANTED_ALL, (rows) => [rows.npm, rows.node, rows.go, rows.dart, rows.gitleaks, rows.promtool, rows.kubectl].join('\n'));
+  const nodeLast = runInstallTools(WANTED_ALL, (rows) => [rows.npm, rows.node, rows.go, rows.dart, rows.gitleaks, rows.promtool, rows.kubectl, rows.emcc].join('\n'));
   assert.equal(nodeLast.resolved.npm.output, 'npm-bundled-with-node', 'PLANTED DEFECT: a table that lists node after npm puts the npm of node first, and the probe sees it');
   const only = runInstallTools('gitleaks 8.30.1\n', allRows);
   assert.equal(only.status, 0, only.stderr);
@@ -1018,6 +1039,49 @@ test('build-binaries installs the fixed tools and the tools of ci-tools.json bef
     assert.notDeepEqual(toolsProblems(plant(check), 'bash scripts/check.sh'), [], `PLANTED DEFECT: the check step with ${defect}`);
   }
   assert.match(toolsProblems(without(build, fixed), 'bash release/build.sh')[0], /without helm, yq and jq/, 'the report names the tools that are missing');
+});
+
+// digita-platform's packages/quickjs/build.sh runs only with emcc 5.0.1 first on PATH, and both steps that build it name it in
+// ci-tools.json: the check of the ci, before scripts/check.sh, and pack of the publish pipeline, before its packages are
+// built. The row pins the SDK release emsdk 14c18b56 installs for 5.0.1 by the sha256 of its archive.
+const EMCC_ROW = 'emcc 5.0.1 bda6917b630fcc604cca39af433180adfd7195e378075331ceac926553684249 https://storage.googleapis.com/webassembly/emscripten-releases-builds/linux/bf32ae8b61ac8efeb7eca01b54c8307f992724f7/wasm-binaries.tar.xz';
+const emccProblems = (task, tools, runs) => {
+  const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
+  const step = task.taskSpec.steps.find((s) => s.script.includes(runs)), problems = [];
+  if (!step) return [`no step runs ${runs}`];
+  const env = (name) => step.env?.find((e) => e.name === name)?.value;
+  const rows = (env('CI_TOOLS_TABLE') ?? '').split('\n').filter((line) => line.startsWith('emcc '));
+  if (rows.join('\n') !== EMCC_ROW) problems.push(`${task.name} is handed ${rows.length ? rows.join(' and ') : 'no emcc row'}, and not ${EMCC_ROW}`);
+  if (task.params?.find((p) => p.name === 'tools')?.value !== tools || env('CI_TOOLS') !== '$(params.tools)') problems.push(`${task.name} is not handed the tools of ci-tools.json from ${tools}`);
+  const installerAt = step.script.indexOf(installer);
+  if (installerAt < 0 || installerAt > step.script.indexOf(runs)) problems.push(`${task.name} runs ${runs} before files/ci-install-tools.sh`);
+  return problems;
+};
+
+test('the check of the ci and pack of the publish pipeline put the pinned emcc 5.0.1 first on PATH before they build', () => {
+  const ci = ciPipeline().spec.tasks.find((t) => t.name === 'check');
+  const pack = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish').spec.tasks.find((t) => t.name === 'pack');
+  const holds = [[ci, '$(tasks.fetch.results.tools)', 'bash scripts/check.sh'], [pack, '$(tasks.scan.results.tools)', 'build_packages /workspace/packed/publishable.tsv']];
+  for (const [task, tools, runs] of holds) assert.deepEqual(emccProblems(task, tools, runs), [], `PLANTED INNOCENT: ${task.name} as rendered`);
+  assert.ok(TOOLS_TABLE.split('\n').includes(EMCC_ROW), 'the table file carries the row');
+  const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
+  const plant = (task, edit) => { const copy = structuredClone(task); edit(copy.taskSpec.steps.find((s) => s.env?.some((e) => e.name === 'CI_TOOLS_TABLE')), copy); return copy; };
+  const table = (edit) => (step) => { const e = step.env.find((x) => x.name === 'CI_TOOLS_TABLE'); e.value = edit(e.value); };
+  const defects = {
+    'the emcc row missing': table((value) => value.replace(`${EMCC_ROW}\n`, '')),
+    'another sha256': table((value) => value.replace(/(emcc 5\.0\.1 )[0-9a-f]{64}/, `$1${'0'.repeat(64)}`)),
+    'another release of the SDK': table((value) => value.replace('bf32ae8b61ac8efeb7eca01b54c8307f992724f7', '8c5f43157a3f069ade75876e23061330521eabde')),
+    'another version': table((value) => value.replace('emcc 5.0.1 ', 'emcc 5.0.2 ')),
+    'the installer removed': (step) => { step.script = step.script.replace(installer, ''); },
+    'the tools of ci-tools.json not handed over': (step, task) => { task.params = task.params.filter((p) => p.name !== 'tools'); },
+  };
+  for (const [task, tools, runs] of holds) {
+    for (const [defect, edit] of Object.entries(defects)) {
+      assert.notDeepEqual(emccProblems(plant(task, edit), tools, runs), [], `PLANTED DEFECT: ${task.name} with ${defect}`);
+    }
+  }
+  const late = plant(pack, (step) => { step.script = `${step.script.replace(installer, '')}\n${installer}`; });
+  assert.notDeepEqual(emccProblems(late, '$(tasks.scan.results.tools)', 'build_packages /workspace/packed/publishable.tsv'), [], 'PLANTED DEFECT: pack installs the tools after it built its packages');
 });
 
 // A step that runs a repository's own code runs as the user of its image, pptruser, uid 10042, and not as root: root keeps
