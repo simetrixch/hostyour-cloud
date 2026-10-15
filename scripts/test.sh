@@ -102,4 +102,6 @@ echo 'test: forge — a Forgejo delivery runs forgejo-release in forgejo-build p
 helm dependency update clusters/inventories/forgejo-build
 helm dependency update clusters/inventories/image-builder
 node --test scripts/forgejo-release.test.mjs || fail 'scripts/forgejo-release.test.mjs'
+echo 'test: forge — the Forgejo SSH check reads the announced port from the install branch, is green on an SSH banner, and red on a closed, a silent or a wrong port.'
+node --test scripts/forgejo-ssh.test.mjs || fail 'scripts/forgejo-ssh.test.mjs'
 echo 'test: OK — all suites green'
