@@ -1391,7 +1391,8 @@ bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash 
 bash -n lifecycle/check-forgejo-ssh.sh || fail 'Forgejo SSH check Bash syntax'
 bash -n lifecycle/create-origin-pull-certificate.sh || fail 'origin pull certificate Bash syntax'
 bash -n lifecycle/apply-cloudflare-zone-security.sh || fail 'Cloudflare zone security Bash syntax'
-for module in lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs; do
+bash -n lifecycle/release-unit.sh || fail 'release-unit Bash syntax'
+for module in lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 for module in scripts/forgejo.test.mjs scripts/plane.test.mjs scripts/forgejo-release.test.mjs scripts/forgejo-ssh.test.mjs; do
