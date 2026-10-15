@@ -1185,6 +1185,34 @@ test('the check step takes 12 cores and 3Gi at most and requests the largest who
   assert.ok(!fitsBudget(capacity, pipeline, cloneTask, release, buildah, heavyPublish, CORES), 'PLANTED DEFECT: a publish pod that requests 8 cores, above the build pods of a release, is caught');
 });
 
+// The pods the master cannot work without carry a CPU request, which scripts/check.sh holds for every render. What the
+// budget of the cores counts of them is ciCapacity.standingCpuRequests: the 4530m the node held on 2026-10-15, before
+// they had requests (declared by the budget of the check step), their own requests, which this test reads from the
+// values that carry them, and the 400m of traefik that hostyour-deploy sets on the addon's DaemonSet. The 8 slave
+// instances are the app clusters apps1 to apps8, one Argo CD each on the master.
+const BASELINE_CPU = 4530, SLAVE_INSTANCES = 8, TRAEFIK_CPU = 400;
+const requestAt = (file, path) => {
+  const value = execFileSync('yq', [`${path}.resources.requests.cpu`, file], {encoding: 'utf8'}).trim();
+  assert.notEqual(value, 'null', `${file} sets no CPU request at ${path}`);
+  return milliCores(value);
+};
+const requestsOf = (file, paths) => paths.reduce((total, path) => total + requestAt(file, path), 0);
+
+test('the standing CPU requests of the budget count the requests of the pods the master cannot work without', () => {
+  const capacity = readCiCapacity();
+  const argoComponents = ['.controller', '.server', '.repoServer', '.redis', '.applicationSet'];
+  const master = requestsOf('clusters/bootstrap/argocd/values.tpl', [...argoComponents, '.dex', '.notifications']);
+  const slave = requestsOf('clusters/slaves/slave/values-common.yaml', argoComponents.map((component) => `.["argo-cd"]${component}`));
+  const certManager = requestsOf('clusters/inventories/cert-manager/values-common.yaml', ['.["cert-manager"]', '.["cert-manager"].cainjector', '.["cert-manager"].webhook']);
+  const identity = requestAt('clusters/bootstrap/idp/values.yaml', '.postgresql.primary');
+  const requests = master + SLAVE_INSTANCES * slave + certManager + identity;
+  const counted = (standing, extra = 0) => milliCores(standing) >= BASELINE_CPU + requests + extra + TRAEFIK_CPU;
+  assert.ok(counted(capacity.standingCpuRequests), 'PLANTED INNOCENT: the budget counts the requests as they stand');
+  assert.ok(!counted(capacity.standingCpuRequests, 1000), 'PLANTED DEFECT: a request raised by a core that the budget does not count is caught');
+  assert.ok(!counted(capacity.standingCpuRequests, SLAVE_INSTANCES * 10), 'PLANTED DEFECT: 10m more on each of the slave instances is caught');
+  assert.ok(!counted(`${BASELINE_CPU + requests}m`), 'PLANTED DEFECT: a budget that leaves out traefik, once its request is set, is caught');
+});
+
 // The pods of the build node. The kubelet admits at most nodePods active pods (a finished pod does not count), and
 // a Tekton task is one pod, so this counts every task of every stage run of a release as a pod alive at once, which is
 // more than ever runs together. The queue runs releaseSlots releases of different units at once, each the larger of a

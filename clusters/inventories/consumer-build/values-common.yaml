@@ -134,8 +134,20 @@ releaseQueue:
 # The check step requests the largest whole number of cores for which that still holds: the test fails when
 # the request is above it and when one more core would fit. nodeCpu is the allocatable CPU of master1 (32 on
 # 2026-10-15). standingCpuRequests is DECLARED, not derived: the CPU requests of the pods of the node that are
-# not in a build namespace and not finished, 4.53 cores on 2026-10-15. 71 of the 122 pods that ran then had no
-# request at all, and get the smallest share while the ci pods take the node.
+# not in a build namespace and not finished. On 2026-10-15 they were 4.53 cores, and 72 of the pods standing there
+# had no request at all, among them traefik and Argo CD, which get the smallest share while the ci pods take the
+# node. The pods the master cannot work without now carry a request, each its p95 CPU use over seven days, and
+# the figure is the 4.53 cores plus them:
+#
+#   Argo CD of the master (clusters/bootstrap/argocd/values.tpl)             460m
+#   Argo CD of the 8 slave instances, 190m each (clusters/slaves/slave)     1520m
+#   cert-manager, its cainjector and its webhook, 10m each                    30m
+#   the identity database (clusters/bootstrap/idp/values.yaml)                30m
+#   traefik, the ingress addon's DaemonSet                                   400m
+#
+# Traefik's request is set where the addon is patched, in hostyour-deploy, and is counted here already, so the
+# figure may be a little high until that lands, never low. scripts/build-contract.test.mjs adds the requests of the
+# values files up and fails when this figure is below the sum.
 ciCapacity:
   priorityClassName: image-builder-ci
   podsPerUnit: 2
@@ -144,7 +156,7 @@ ciCapacity:
   nodePods: 250
   standingPods: 121
   nodeCpu: "32"
-  standingCpuRequests: 4530m
+  standingCpuRequests: 6970m
 
 # WHO STARTS, CANCELS AND DELETES A CI RUN. The ci run keeper of clusters/inventories/image-builder starts
 # the waiting ci runs up to ciRunKeeper.maxRunning, cancels a ci run that a newer push to the same branch

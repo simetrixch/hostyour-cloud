@@ -72,6 +72,12 @@ postgresql:
       userPasswordKey: password
       adminPasswordKey: postgres-password
   primary:
+    # Every sign-in to the reconciler, the Manager and Vault reads this database, so it keeps the share of CPU
+    # it uses while a heavy build saturates the node: its p95 over seven days is 21m (Prometheus on the master,
+    # 2026-10-15), rounded up to the next 10m.
+    resources:
+      requests:
+        cpu: 30m
     persistence:
       enabled: true
       size: 8Gi
