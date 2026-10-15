@@ -42,7 +42,7 @@ const params = paramSet(guid, stage, body);
 // The facts the charts are written against, which are the keys below and no others: `member` and
 // `appName` are not among them, `demo` stands only where the registration is a demo.
 const tenantKeys = ['apps', 'appsImage', 'appsImageTag', 'approvedTags', 'displayName', 'guid', 'members', 'ownDomain',
-  'ownDomainAliases', 'ownDomainRedirects', 'quiesced', 'removedApps', 'seedUsers', 'senderDomain', 'size', 'stage',
+  'ownDomainAliases', 'ownDomainRedirects', 'proxiedHosts', 'quiesced', 'removedApps', 'seedUsers', 'senderDomain', 'size', 'stage',
   'subdomain', 'suspended', 'zone'];
 
 // Whether the rendered Applications of one registration are the ONE Application of its tenant stage.

@@ -1,0 +1,67 @@
+{{- /* A route names ingress-tenant-<use>-limits-<direct|proxied>@kubernetescrd. -direct is for a host
+whose DNS record is not proxied: the visitor's own connection reaches Traefik, so the peer address is
+the visitor, and a CF-Connecting-IP header is the visitor's own text, dropped before anything reads
+it. -proxied is for a host behind Cloudflare, whose routes also name TLSOption cloudflare-origin-pull,
+so only Cloudflare connects and the CF-Connecting-IP it sets is the visitor; the peer there is a
+Cloudflare edge address shared by many visitors. A -direct limit names its ipStrategy, because
+inFlightReq without one counts per request host; ipv6Subnet 64 counts one IPv6 host as one visitor,
+since it owns the whole /64 and could change its address with every request. */ -}}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: tenant-limits-direct-drop-cf-connecting-ip
+spec:
+  headers:
+    customRequestHeaders:
+      CF-Connecting-IP: ""
+{{- range $use := list "pages" "forms" "api" "streams" }}
+{{- $limit := required (printf "tenantLimits.%s is required" $use) (index $.Values.tenantLimits $use) }}
+{{- range $mode := list "direct" "proxied" }}
+{{- $name := printf "tenant-%s-limits-%s" $use $mode }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $name }}-rate
+spec:
+  rateLimit:
+    average: {{ required (printf "tenantLimits.%s.average is required" $use) $limit.average }}
+    period: 1s
+    burst: {{ required (printf "tenantLimits.%s.burst is required" $use) $limit.burst }}
+    sourceCriterion:
+      {{- if eq $mode "direct" }}
+      ipStrategy:
+        ipv6Subnet: 64
+      {{- else }}
+      requestHeaderName: CF-Connecting-IP
+      {{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $name }}-in-flight
+spec:
+  inFlightReq:
+    amount: {{ required (printf "tenantLimits.%s.inFlight is required" $use) $limit.inFlight }}
+    sourceCriterion:
+      {{- if eq $mode "direct" }}
+      ipStrategy:
+        ipv6Subnet: 64
+      {{- else }}
+      requestHeaderName: CF-Connecting-IP
+      {{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $name }}
+spec:
+  chain:
+    middlewares:
+      {{- if eq $mode "direct" }}
+      - name: tenant-limits-direct-drop-cf-connecting-ip
+      {{- end }}
+      - name: {{ $name }}-rate
+      - name: {{ $name }}-in-flight
+{{- end }}
+{{- end }}

@@ -1,0 +1,12 @@
+name: cloudflare-origin-pull
+project: core
+# The wave of https-redirect, the other application in the ingress controller's namespace.
+syncWave: "5"
+namespace: ingress
+prune: "true"
+# The namespace is the MicroK8s addon's and stands already. "true" is what makes Argo CD write the
+# label hostyour.cloud/workload onto it (managedNamespaceMetadata, platform-apps-appset.yaml), and the
+# store's Vault role admits only a namespace that carries it.
+createNamespace: "true"
+# A route of any cluster may serve a host behind the proxy, and it names this TLSOption.
+runsOn: every-cluster

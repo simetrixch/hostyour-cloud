@@ -5,6 +5,11 @@ and `eab-mac-key`, the MAC key of the account's External Account Binding. Both e
 hostyour-deploy deploy-platform-services on the books cluster, and every cluster reads them from that
 one store.
 
+THE DNS-01 TOKEN, delivered into Secret platform-acme-cloudflare-dns as `api-token` for the DNS-01
+solver of platform-acme: the installation's one DNS token, the entry <stage>/app/cloudflare-dns the
+Manager reads too, seeded by the same program. cert-manager reads a ClusterIssuer's Secrets in its own
+namespace, which is why the token is delivered here and not read where the Manager reads it.
+
 ONLY UNDER platform-acme, and that is why the store and the ExternalSecret are written here and not
 through clusters/charts/secret-store and external-secret: each of those renders on its own `enabled`
 value, which no key of a cluster map can set, so on a cluster under platform-local they would stand
@@ -75,4 +80,28 @@ spec:
       nullBytePolicy: Ignore
       key: {{ $stage }}/app/acme-eab
       property: mac-key
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: platform-acme-cloudflare-dns
+  namespace: {{ .Release.Namespace }}
+spec:
+  refreshPolicy: OnChange
+  refreshInterval: "0"
+  secretStoreRef:
+    name: {{ $store }}
+    kind: SecretStore
+  target:
+    name: platform-acme-cloudflare-dns
+    creationPolicy: Owner
+  data:
+  - secretKey: api-token
+    remoteRef:
+      conversionStrategy: Default
+      decodingStrategy: None
+      metadataPolicy: None
+      nullBytePolicy: Ignore
+      key: {{ $stage }}/app/cloudflare-dns
+      property: api-token
 {{- end }}

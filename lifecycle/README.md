@@ -24,6 +24,8 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
 | `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test |
 | `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network, in a clone whose origin carries the install branch (exit 69 otherwise). `status.sh` calls it as one `forgejo-ssh:` row of every installation whose branch runs Forgejo, and `install-machine.sh` at its end after an installation that ended well: green on a banner, RED on none, `not asked` where it could not ask; 66 (no Forgejo on the branch) is no row. Tekton does not call it: it runs inside the network |
+| `create-origin-pull-certificate.sh` | makes the CA and the client certificate Cloudflare presents to the origins of proxied hosts, and writes `CLOUDFLARE_ORIGIN_PULL_CA`, `CLOUDFLARE_ORIGIN_PULL_CERTIFICATE` and `CLOUDFLARE_ORIGIN_PULL_PRIVATE_KEY` into the config; a second run is a rotation |
+| `apply-cloudflare-zone-security.sh` | previews or applies, and reads back, the Cloudflare Free controls of the installation's two zones |
 | `plan-installation-domain.sh` | plans and dry-runs proposed hostname changes across domain zones: reads every cluster map on a freshly fetched books branch, optionally probes machine names and Ingress/IngressRoute over ssh, and prints proposed hostname changes and coverage without altering remote state |
 
 `scripts/test.sh` runs their remote fixture checks.
@@ -453,3 +455,33 @@ report lists proposed hostname changes and coverage; current configuration and r
 Exit 0 means a dry-run report, never cutover approval; JSON `cutoverReady=false`, full
 persisted-store/client/IdP/TLS/redirect execution belongs to the coordinated Manager migration. Only
 `--dry-run` is implemented. Execution and rollback require the coordinated Manager migration.
+
+# Origin pull and zone security
+
+```
+bash lifecycle/create-origin-pull-certificate.sh lifecycle/config.master.env
+bash lifecycle/apply-cloudflare-zone-security.sh lifecycle/config.master.env preview
+bash lifecycle/apply-cloudflare-zone-security.sh lifecycle/config.master.env apply
+```
+
+A proxied host's origin admits a TLS connection only with the client certificate Cloudflare
+presents for the zone, verified by `TLSOption` `ingress/cloudflare-origin-pull` against the CA in
+`secret/<stage>/app/cloudflare-origin-pull`. `create-origin-pull-certificate.sh` makes both with
+`openssl`: the CA key lives only in a temporary folder that is removed on every exit, so nothing but
+the one client certificate ever chains to it. Each run writes a new pair and keeps the newest CA the
+config held beside the new one, so a rotation never refuses Cloudflare in between. The order: the
+script, then `regenerate-install-branch.sh` and the redeploy of the master, which carry
+`CLOUDFLARE_ORIGIN_PULL_CA` into the secret store, then `apply-cloudflare-zone-security.sh apply`,
+which uploads the new client certificate. The run after the next drops the old CA.
+
+`apply-cloudflare-zone-security.sh` reads `CLOUDFLARE_ZONE_SECURITY_API_TOKEN` and the client
+certificate from the config, and the zones `platformDomain` and `unitApex` from the map on the books
+branch. On each zone it sets SSL mode Full (strict), uploads the client certificate and turns origin
+pull on, deploys the Cloudflare Free Managed Ruleset, and keeps two rules of its own by their `ref`:
+`hostyour-next-action` blocks every request with a `Next-Action` header (403 on Free), and
+`hostyour-login-rate` limits the sign-in path per address in 10-second windows. Every other rule and
+setting stays as it stands. `preview` writes nothing; `apply` writes, then reads back and fails on
+any difference. It stops, naming the item, on a missing permission (exit 77), a missing Free
+Managed Ruleset or a full rule slot (65), and a client certificate Cloudflare does not present yet
+(75: run `preview` again, and let no route require origin pull before it reads back active). The
+token and the private key reach curl on its standard input only, and nothing prints them.
