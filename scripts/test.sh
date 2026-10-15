@@ -26,6 +26,7 @@ node --test scripts/ci-failure-mail.test.mjs || fail 'scripts/ci-failure-mail.te
 echo 'test: manager-generator-refresh — approved grant only.'
 helm dependency build clusters/inventories/manager
 node --test scripts/manager-generator-refresh.test.mjs || fail 'scripts/manager-generator-refresh.test.mjs'
+node --test scripts/manager-pat-storage.test.mjs || fail 'scripts/manager-pat-storage.test.mjs'
 echo 'test: ingress entrypoints — the shared ingress chart writes websecure once, whatever a consumer sets.'
 node --test scripts/ingress-entrypoints.test.mjs || fail 'scripts/ingress-entrypoints.test.mjs'
 echo 'test: installation domain planning and its launcher.'
