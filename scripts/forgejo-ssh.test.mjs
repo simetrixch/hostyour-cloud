@@ -14,7 +14,9 @@ import {promisify} from 'node:util';
 
 const script = resolve('lifecycle/check-forgejo-ssh.sh');
 const run = promisify(execFile);
-const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], {cwd, encoding: 'utf8'});
+const gitWith = (options, ...args) =>
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], {encoding: 'utf8', ...options});
+const git = (cwd, ...args) => gitWith({cwd}, ...args);
 const root = mkdtempSync(join(tmpdir(), 'forgejo-ssh-'));
 test.after(() => rmSync(root, {recursive: true, force: true}));
 
@@ -80,5 +82,7 @@ test('a branch that announces no port, and a branch that is none, cannot be aske
 });
 
 test('PLANTED DEFECT: a Git command of a fixture that fails throws, so no case stands on a broken fixture', () => {
-  assert.throws(() => git(root, 'clone', '-q', join(root, 'absent.git'), join(root, 'absent')), {status: 128});
+  // Git's stderr is captured for this one call, so a green log carries no fatal line.
+  assert.throws(() => gitWith({cwd: root, stdio: 'pipe'}, 'clone', '-q', join(root, 'absent.git'), join(root, 'absent')),
+    {status: 128, stderr: /^fatal: repository '.*absent\.git' does not exist$/m});
 });
