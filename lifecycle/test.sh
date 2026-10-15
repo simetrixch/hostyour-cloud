@@ -3281,3 +3281,5 @@ echo "test:   deletion a remote refuses (a directory origin refuses none), a DNS
 echo "test:   that fails in the middle of the abandonment, GitHub's own answers to a manifest"
 echo "test:   and a real browser, the two ten-minute bounds of the GitHub App act, and the backup"
 echo "test:   and the restore themselves on a machine — the drill on two masters is what proves those."
+
+node --test "$HERE/redeploy-platform-services.test.mjs" || fail 'config-fed platform services redeploy'

@@ -1,7 +1,7 @@
 # Puts the tools a repository's ci-tools.json names first on PATH. The ci pipeline inlines this file in
-# its check step, and the publish pipeline in build-binaries, after files/ci-fixed-tools.sh and before the
-# repository's own install and check or release build; scripts/build-contract.test.mjs runs it against a
-# stand-in table and stand-in archives.
+# its check step, and the publish pipeline in pack and in build-binaries, before the repository's own
+# install and check or release build; scripts/build-contract.test.mjs runs it against a stand-in table and
+# stand-in archives.
 #
 # CI_TOOLS is what the fetch task's list-tools step validated, one "<tool> <version>" per line, and empty
 # for a repository without ci-tools.json. CI_TOOLS_TABLE is files/ci-tools.table, one
@@ -27,8 +27,10 @@ PATH="${ci_tools_dir}/bin:${PATH}"
 while read -r tool version sha256 url; do
   grep -qxF "${tool} ${version}" "${ci_tools_dir}/wanted" || continue
   archive="${ci_tools_dir}/${tool}.download"
+  started="${SECONDS}"
   curl -fsSL -o "${archive}" "${url}"
   echo "${sha256}  ${archive}" | sha256sum -c -
+  downloaded="${SECONDS}"
   case "${tool}" in
     node | go)
       mkdir -p "${ci_tools_dir}/${tool}"
@@ -58,6 +60,19 @@ while read -r tool version sha256 url; do
     kubectl)
       # The download is the program itself, not an archive.
       install -m 0755 "${archive}" "${ci_tools_dir}/bin/kubectl"
+      ;;
+    emcc)
+      # The SDK release emsdk installs for this version: LLVM in bin, Binaryen's programs beside it, emcc in
+      # emscripten. What emsdk install and activate write, this writes: the version the release stands for, which
+      # the archive itself spells <x.y.z>-git, and the roots emcc reads from the .emscripten beside it; emcc finds
+      # node on PATH. emsdk itself never runs, so nothing is fetched that the table does not vouch for.
+      mkdir -p "${ci_tools_dir}/emcc"
+      tar -xJf "${archive}" -C "${ci_tools_dir}/emcc" --strip-components=1
+      printf '"%s"\n' "${version}" > "${ci_tools_dir}/emcc/emscripten/emscripten-version.txt"
+      printf "LLVM_ROOT = '%s'\nBINARYEN_ROOT = '%s'\n" "${ci_tools_dir}/emcc/bin" "${ci_tools_dir}/emcc" > "${ci_tools_dir}/emcc/emscripten/.emscripten"
+      PATH="${ci_tools_dir}/emcc/emscripten:${PATH}"
+      emcc_version="$(emcc --version)"
+      echo "check: ${emcc_version%%$'\n'*}, downloaded in $((downloaded - started)) s and unpacked in $((SECONDS - downloaded)) s"
       ;;
     *)
       echo "check: the tools table of this pipeline names ${tool}, which this step cannot install" >&2

@@ -775,7 +775,7 @@ cliTools:
   # a version out of — a machine carrying it can never be reported as at the pin or
   # off it, only as absent.
   ansiwise:
-    version: "0.8.314-stable-20261014233514"
+    version: "0.8.316-stable-20261015180703"
     upstream:
       # THE TAGS OF THE MANIFESTS THE OWNER'S REGISTRY HOLDS, read without a credential:
       # every release of ansiwise-cli is published there by the master's Tekton as one
