@@ -13,6 +13,7 @@ const yq = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', ...args], 
 const platform = yq(['.global', 'clusters/platform/values-common.yaml']);
 const app = yq(['.', 'clusters/inventories/plane/app.yaml']);
 const FORWARD_AUTH = 'idp-forwardauth@kubernetescrd';
+const MIDDLEWARES = 'traefik.ingress.kubernetes.io/router.middlewares';
 // The values plane-ce 1.8.5 falls back to, public in its own values.yaml.
 const PUBLIC_DEFAULTS = ['60gp0byfz2dvffa45cxl20p1scy9xbpf6d8c5y0geejgkyp1b5', 'htbqvBJAgpm9bzvf3r4urJer0ENReatceh', 'plane:plane@'];
 
@@ -27,14 +28,29 @@ function renderFindings(objects) {
     if (annotations['traefik.ingress.kubernetes.io/router.entrypoints'] !== 'websecure') found.push(`${ingress.metadata.name} is served on more than websecure`);
     if (ingress.spec.tls?.[0]?.secretName !== 'plane-tls') found.push(`${ingress.metadata.name} is served without the certificate plane-tls`);
     const paths = ingress.spec.rules.flatMap(rule => rule.http.paths.map(path => path.path));
-    const gated = annotations['traefik.ingress.kubernetes.io/router.middlewares'] === FORWARD_AUTH;
+    const gated = (annotations[MIDDLEWARES] ?? '').split(',')[0] === FORWARD_AUTH;
     if (!gated && JSON.stringify(paths) !== '["/api/v1"]') found.push(`${ingress.metadata.name} serves ${paths.join(', ')} without the forward auth`);
   }
   const api = ingresses.find(o => o.metadata.name === 'plane-api-v1');
   const backend = api?.spec.rules[0].http.paths[0].backend.service;
   if (backend?.name !== 'plane-api' || backend?.port.number !== 8000) found.push(`/api/v1 goes to ${backend?.name}:${backend?.port.number}, not Plane's API`);
   if (api?.metadata.annotations?.['cert-manager.io/cluster-issuer'] !== undefined) found.push('/api/v1 asks for the certificate a second time');
-  if (!ingresses.some(o => o.metadata.annotations?.['traefik.ingress.kubernetes.io/router.middlewares'] === FORWARD_AUTH)) found.push('no Ingress waits for the forward auth');
+  if (!ingresses.some(o => (o.metadata.annotations?.[MIDDLEWARES] ?? '').split(',')[0] === FORWARD_AUTH)) found.push('no Ingress waits for the forward auth');
+
+  // plane-admin's nginx answers /god-mode, which Plane's "Get started" opens, with a 301 to its own port,
+  // http://<host>:3000/god-mode/. The chart's Ingress answers it first, after the forward auth, on the host
+  // it was asked on; every other path passes untouched.
+  const pages = ingresses.find(o => o.spec.rules[0].http.paths.some(path => path.path === '/god-mode'));
+  const host = pages?.spec.rules[0].host;
+  const slash = objects.find(o => o.kind === 'Middleware' && o.metadata.name === 'god-mode-trailing-slash');
+  const chain = (pages?.metadata.annotations?.[MIDDLEWARES] ?? '').split(',');
+  if (JSON.stringify(chain) !== JSON.stringify([FORWARD_AUTH, `${app.namespace}-god-mode-trailing-slash@kubernetescrd`])) found.push(`/god-mode passes ${chain.join(', ')}, not the forward auth and then the trailing-slash redirect`);
+  const redirect = slash?.spec.redirectRegex;
+  const answer = url => redirect && new RegExp(redirect.regex).test(url) ? url.replace(new RegExp(redirect.regex), redirect.replacement.replace(/\$\{(\d+)\}/g, '$$$1')) : url;
+  for (const [asked, sent] of [['/god-mode', '/god-mode/'], ['/god-mode?next=1', '/god-mode/?next=1'], ['/god-mode/', '/god-mode/'],
+    ['/god-mode/general', '/god-mode/general'], ['/god-modes', '/god-modes'], ['/spaces', '/spaces'], ['/', '/']]) {
+    if (answer(`https://${host}${asked}`) !== `https://${host}${sent}`) found.push(`https://${host}${asked} is sent to ${answer(`https://${host}${asked}`)}`);
+  }
 
   for (const name of ['pgdb', 'redis', 'rabbitmq', 'minio']) {
     const set = objects.find(o => o.kind === 'StatefulSet' && o.metadata.name === `plane-${name}-wl`);
@@ -57,16 +73,29 @@ function renderFindings(objects) {
   const missing = [...referenced].filter(name => !delivered.has(name));
   if (missing.length > 0) found.push(`the workloads read Secrets nothing delivers: ${missing.join(', ')}`);
 
+  // The worker runs `celery -A plane worker` with no --concurrency, so Celery forks one process per core
+  // of the node (32 on the master) unless CELERY_WORKER_CONCURRENCY names a number. Each process holds
+  // Plane's Django app (the beat worker, the same app, holds 147Mi on the master), so the limit carries
+  // the main process and every child at 200Mi each.
+  const worker = workloads.find(o => o.metadata.name === 'plane-worker-wl')?.spec.template.spec.containers[0];
+  const workerEnv = Object.assign({}, ...(worker?.envFrom ?? []).map(source => source.configMapRef ?
+    objects.find(o => o.kind === 'ConfigMap' && o.metadata.name === source.configMapRef.name)?.data :
+    external.find(o => o.spec.target.name === source.secretRef?.name)?.spec.target.template?.data));
+  const concurrency = workerEnv.CELERY_WORKER_CONCURRENCY;
+  const memory = Number(/^(\d+)Mi$/.exec(worker?.resources.limits.memory ?? '')?.[1]);
+  if (!/^[1-4]$/.test(concurrency ?? '')) found.push(`the worker forks ${concurrency ?? 'one process per core of the node'}, not a fixed few`);
+  else if (!(memory >= (Number(concurrency) + 1) * 200)) found.push(`the worker's ${worker?.resources.limits.memory} does not hold ${concurrency} children and their parent`);
+
   // The addresses the app is handed name the chart's own Services in the app's own namespace.
   const services = new Set(objects.filter(o => o.kind === 'Service').map(o => o.metadata.name));
   const env = external.find(o => o.metadata.name === 'plane-app-env')?.spec.target.template?.data ?? {};
-  for (const [key, url] of Object.entries(env)) {
+  for (const [key, url] of Object.entries(env).filter(([key]) => key.endsWith('_URL'))) {
     const host = /^[a-z]+:\/\/(?:[^@/]*@)?([^:/]+)/.exec(url)?.[1] ?? '';
     const [service, namespace] = host.split('.');
     if (!services.has(service) || namespace !== app.namespace) found.push(`${key} names ${host}, not a Service of the chart in ${app.namespace}`);
   }
   const vars = objects.find(o => o.kind === 'ConfigMap' && o.metadata.name === 'plane-app-vars')?.data ?? {};
-  if (!String(vars.WEB_URL).startsWith('https://')) found.push(`Plane is told it stands at ${vars.WEB_URL}`);
+  if (vars.WEB_URL !== `https://${host}`) found.push(`Plane is told it stands at ${vars.WEB_URL}`);
   return found;
 }
 
@@ -93,7 +122,7 @@ test('the embedded outpost gates plane.<domain>', () => {
   assert.deepEqual(blueprintFindings(proxyText, bindingsText), []);
 });
 
-test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class and a missing outpost binding are found', () => {
+test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class, a missing outpost binding, the chart\'s own /god-mode, a redirect to a port, a worker forking per core and a limit too small for it are found', () => {
   const planted = {
     'the pages without the gate': ['--set-string', 'plane-ce.ingress.ingress_annotations.traefik\\.ingress\\.kubernetes\\.io/router\\.middlewares='],
     'the public default keys': ['--set', 'plane-ce.external_secrets.app_keys_existingSecret=', '--set', 'plane-ce.env.requireExplicitSecrets=false'],
@@ -106,6 +135,21 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
   const widened = renderChart('plane');
   widened.find(o => o.metadata?.name === 'plane-api-v1').spec.rules[0].http.paths.push({path: '/api', pathType: 'Prefix', backend: {service: {name: 'plane-api', port: {number: 8000}}}});
   assert.deepEqual(renderFindings(widened), ['plane-api-v1 serves /api/v1, /api without the forward auth']);
+  const plain = renderChart('plane', ['--set-string', `plane-ce.ingress.ingress_annotations.traefik\\.ingress\\.kubernetes\\.io/router\\.middlewares=${FORWARD_AUTH}`])
+    .filter(o => o.kind !== 'Middleware');
+  assert.deepEqual(renderFindings(plain), [`/god-mode passes ${FORWARD_AUTH}, not the forward auth and then the trailing-slash redirect`,
+    'https://plane.example.com/god-mode is sent to https://plane.example.com/god-mode', 'https://plane.example.com/god-mode?next=1 is sent to https://plane.example.com/god-mode?next=1']);
+  const forking = renderChart('plane');
+  delete forking.find(o => o.metadata.name === 'plane-app-env').spec.target.template.data.CELERY_WORKER_CONCURRENCY;
+  assert.deepEqual(renderFindings(forking), ['the worker forks one process per core of the node, not a fixed few']);
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set-string', 'externalsecret-app-env.externalSecret.template.data.CELERY_WORKER_CONCURRENCY=32'])),
+    ['the worker forks 32, not a fixed few']);
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.worker.memoryLimit=500Mi'])),
+    ["the worker's 500Mi does not hold 2 children and their parent"]);
+  const ported = renderChart('plane');
+  ported.find(o => o.kind === 'Middleware').spec.redirectRegex.replacement = 'https://${1}:3000/god-mode/${2}';
+  assert.deepEqual(renderFindings(ported), ['https://plane.example.com/god-mode is sent to https://plane.example.com:3000/god-mode/',
+    'https://plane.example.com/god-mode?next=1 is sent to https://plane.example.com:3000/god-mode/?next=1']);
   assert.notDeepEqual(blueprintFindings(proxyText, bindingsText.replace(/\n\s*- !Find \[authentik_providers_proxy.proxyprovider, \[name, Plane\]\]/g, '')), []);
 });
 
