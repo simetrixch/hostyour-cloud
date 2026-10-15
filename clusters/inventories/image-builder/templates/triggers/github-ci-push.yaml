@@ -1,6 +1,9 @@
 {{- if .Values.eventListener.enabled }}
 {{- $owners := (default (dict) .Values.ciPush).owners -}}
 {{- if not $owners }}{{ fail "image-builder: ciPush.owners is required: list the GitHub owners whose repositories run their check here" }}{{ end -}}
+{{- /* The stages a release reaches, from the one table of the channels: the stage files of the pins are named after them. */ -}}
+{{- $stages := list -}}
+{{- range $reached := values (required "image-builder: global.channelStages is required (clusters/platform/values-common.yaml): the ci trigger names the stage files of the release pins after it" .Values.global.channelStages) }}{{ range $stage := $reached }}{{ $stages = append $stages $stage }}{{ end }}{{ end -}}
 {{- $booksBranch := required "image-builder: global.booksCluster is required (clusters/active/<fqdn>.yaml, the install branch of the cluster holding the master role): the ci trigger leaves that branch out" (.Values.global).booksCluster -}}
 {{- /*
 A GitHub push of the DEFAULT BRANCH or of a `ci/` BRANCH → the unit's own ci
@@ -56,6 +59,19 @@ role (global.booksCluster), and the Manager commits to it in every repository
 that carries the installation's books, the deploy repository among them:
 registrations and pins, written by a program, not code a person pushed, and the
 check of the trunk fails on content the books branch does not carry.
+
+A PUSH THAT ONLY MOVES RELEASE PINS is NOT pushed to check, on the default branch. A release pins
+the tag of the image it built by committing it to clusters/inventories/<app>/values-<stage>.yaml of
+the default branch (templates/pipeline-release.yaml in consumer-build, the bump), after the release
+run itself proved the commit it pins, so a full check of the pin commit repeats what has been proven
+and holds the build node for it. The filter reads what the webhook lists for each commit of the push
+(added, removed, modified: paths) and never the subject, and takes the push as a pin move only
+when EVERY commit modifies pin files and nothing else: one other path in any commit, a pin file that
+is added or removed, a commit that lists no path (the webhook lists none for an extremely large
+commit) and a push whose list of commits may be cut short (20 or more) all start the run. A `ci/`
+branch is the deliberate run of any commit, a pin commit included. The webhook lists paths and not
+lines, so an edit of another line of a pin file, by a person, is not told from a pin move here:
+the push gate of the machine that pushes it runs the check.
 
 BRANCH DELETION is NOT a push to check: deleting a `ci/` branch sends the SAME
 push event (deleted:true, after:000…0, head_commit:null), and a run for it could
@@ -114,6 +130,9 @@ spec:
             body.ref != {{ printf "refs/heads/%s" $booksBranch | squote }} &&
             !(has(body.deleted) && body.deleted) &&
             !body.after.matches(r'^0+$') &&
+            !(body.ref == 'refs/heads/' + body.repository.default_branch && has(body.commits) && size(body.commits) > 0 && size(body.commits) < 20 &&
+            body.commits.all(c, has(c.added) && has(c.removed) && has(c.modified) && size(c.added) == 0 && size(c.removed) == 0 && size(c.modified) > 0 &&
+            c.modified.all(path, path.matches(r'^clusters/inventories/[^/]+/values-({{ $stages | uniq | sortAlpha | join "|" }})[.]yaml$')))) &&
             body.repository.owner.login in [{{ range $index, $owner := $owners }}{{ if $index }}, {{ end }}{{ $owner | squote }}{{ end }}]
   bindings:
     - ref: github-ci-push-binding

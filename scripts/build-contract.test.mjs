@@ -109,6 +109,18 @@ test('admission guard selects typed Tekton fields and keeps native inline refusa
 // trigger filters are evaluated by scripts/vap-eval, which runs the CEL library the build plane runs.
 const evaluate = (policy, requests) => execFileSync('go', ['run', '.'], {cwd: 'scripts/vap-eval', encoding: 'utf8',
   input: JSON.stringify({policy, requests})}).split('\n').filter(Boolean).map((line) => JSON.parse(line));
+// The overlays and the filter of a Trigger's cel interceptor, and whether the filter takes each push body, evaluated
+// with the library the build plane runs. `edit` rewrites the filter, to plant a defect in it.
+const triggerOf = (docs, name) => {
+  const cel = docs.find((d) => d.kind === 'Trigger' && d.metadata.name === name).spec.interceptors.find((i) => i.ref.name === 'cel').params;
+  return {overlays: cel.find((p) => p.name === 'overlays').value, filter: cel.find((p) => p.name === 'filter').value};
+};
+const triggerMatches = (docs, name, bodies, edit = (filter) => filter) => {
+  const {overlays, filter} = triggerOf(docs, name);
+  const policy = {spec: {variables: overlays.map((o) => ({name: o.key, expression: o.expression})),
+    validations: [{expression: edit(filter), message: 'ignored'}]}};
+  return evaluate(policy, bodies.map((body) => ({body}))).map((v) => ({matched: v.denied.length === 0, overlays: v.variables}));
+};
 const renderUnit = (name, builds = ['app']) => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name,
   repoURL: `https://github.com/check/${name}.git`, buildsJson: JSON.stringify(builds)})]);
 const imageBuilder = () => renderChart('image-builder');
@@ -168,16 +180,8 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: EVENT_LISTENER}}}])[0];
   assert.deepEqual(verdict.denied, [], 'PLANTED INNOCENT: the run with the report override and the three timeouts is admitted');
 
-  const trigger = (name) => {
-    const cel = byKind('Trigger', name).spec.interceptors.find((i) => i.ref.name === 'cel').params;
-    return {overlays: cel.find((p) => p.name === 'overlays').value, filter: cel.find((p) => p.name === 'filter').value};
-  };
-  const matches = (name, bodies, edit = (filter) => filter) => {
-    const {overlays, filter} = trigger(name);
-    const policy = {spec: {variables: overlays.map((o) => ({name: o.key, expression: o.expression})),
-      validations: [{expression: edit(filter), message: 'ignored'}]}};
-    return evaluate(policy, bodies.map((body) => ({body}))).map((v) => ({matched: v.denied.length === 0, overlays: v.variables}));
-  };
+  const trigger = (name) => triggerOf(builder, name);
+  const matches = (name, bodies, edit) => triggerMatches(builder, name, bodies, edit);
   // GitHub sends the repository's default branch with every push (repository.default_branch); `main` here, so a
   // filter that names `master` instead of reading it is seen.
   const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main'};
@@ -280,6 +284,68 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   for (const [defect, [edit, push]] of Object.entries(planted)) {
     assert.notEqual(edit(trigger('github-ci-push').filter), trigger('github-ci-push').filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
     assert.ok(matches('github-ci-push', [pushes[push]], edit)[0].matched, `PLANTED DEFECT: ${defect}`);
+  }
+});
+
+// A release moves a pin by committing the new tag into clusters/inventories/<app>/values-<stage>.yaml of the default
+// branch, after the release itself ran the check on the commit it pins. That push is not run again: the filter reads the
+// files each commit of the push changes, which the webhook lists as paths, and never its subject. It skips the push only
+// when every commit of it modifies pin files and nothing else, so one other file in the push, in any of its commits,
+// starts the run. Whatever the webhook does not state well enough to tell is run: a commit with no listed path, a push
+// without a commits list, and a push whose list may be cut short.
+test('a push of the default branch that only moves release pins starts no ci run, and any other change in the push does', () => {
+  const builder = imageBuilder();
+  const SHA = 'a'.repeat(40), BEFORE = 'b'.repeat(40);
+  const repository = {name: 'hostyour-cloud', clone_url: 'https://github.com/simetrixch/hostyour-cloud.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
+  const commit = (modified, {added = [], removed = [], message = 'release: manager 0.8.497-stable-20261015010114 — pin 0.8.497-stable-20261015010114-72bca23 (prod)'} = {}) =>
+    ({id: SHA, message, added, removed, modified});
+  const push = (commits, ref = 'refs/heads/master') => ({ref, before: BEFORE, after: SHA, deleted: false, repository, ...(commits ? {commits} : {})});
+  const MANAGER = 'clusters/inventories/manager/values-prod.yaml', GATE_RUNNER = 'clusters/inventories/gate-runner/values-test.yaml';
+  const pins = commit([MANAGER, GATE_RUNNER]);
+  const filter = triggerOf(builder, 'github-ci-push').filter;
+  const lookalikes = ['clusters/inventories/manager/values-prod.yaml.bak', 'clusters/inventories/manager/values-common.yaml', 'clusters/inventories/manager/values-staging.yaml',
+    'clusters/inventories/manager/templates/values-prod.yaml', 'clusters/inventories/values-prod.yaml', 'tools/clusters/inventories/manager/values-prod.yaml',
+    'clusters/inventories/manager/Chart.yaml', 'clusters/platform/values-prod.yaml'];
+  // Each push of the table and whether it starts a run.
+  const pushes = {
+    'PLANTED INNOCENT: one pin commit': [push([pins]), false],
+    'PLANTED INNOCENT: two pin commits': [push([pins, commit([MANAGER])]), false],
+    'PLANTED INNOCENT: 19 pin commits': [push(Array.from({length: 19}, () => pins)), false],
+    'a pin file under a subject that does not say pin': [push([commit([MANAGER], {message: 'Fix the manager pin by hand'})]), false],
+    'a pin file and one other file in one commit': [push([commit([MANAGER, 'clusters/platform/versions.yaml'])]), true],
+    'a pin commit and a commit of another file': [push([pins, commit(['README.md'])]), true],
+    'a commit of another file': [push([commit(['scripts/check.sh'])]), true],
+    'a pin subject on another file': [push([commit(['scripts/check.sh'], {message: 'release: manager 0.8.497 — pin 0.8.497-stable (prod)'})]), true],
+    'a pin file that is added': [push([commit([MANAGER], {added: ['clusters/inventories/manager/values-dev.yaml']})]), true],
+    'a pin file that is removed': [push([commit([MANAGER], {removed: ['clusters/inventories/manager/values-dev.yaml']})]), true],
+    ...Object.fromEntries(lookalikes.map((path) => [`${path}, which is no pin file`, [push([commit([path])]), true]])),
+    'a commit with no listed path, which an extremely large commit has': [push([commit([])]), true],
+    'a commit with no listed path among pin commits': [push([pins, commit([])]), true],
+    'a push with no commit': [push([]), true],
+    'a push without a commits list': [push(undefined), true],
+    'a list of 20 commits, which may be cut short': [push(Array.from({length: 20}, () => pins)), true],
+    'a commit without its added and removed lists': [push([{id: SHA, message: 'x', modified: [MANAGER]}]), true],
+    'a pin commit on a ci/ branch, the deliberate run of any commit': [push([pins], 'refs/heads/ci/issue-387-pins'), true],
+    'a pin commit on an issue branch, which no run takes': [push([pins], 'refs/heads/issue-387-fix'), false],
+  };
+  const verdicts = triggerMatches(builder, 'github-ci-push', Object.values(pushes).map(([body]) => body));
+  Object.entries(pushes).forEach(([name, [, runs]], i) => assert.equal(verdicts[i].matched, runs, `${name} ${runs ? 'starts' : 'starts no'} run`));
+  const runs = (body, edit) => triggerMatches(builder, 'github-ci-push', [body], edit)[0].matched;
+  // PLANTED DEFECTS: each edit finds its clause and takes a push the filter must run for no run, or the reverse.
+  const planted = {
+    'the filter as it stood, without the pin clause': [(f) => f.replace("!(body.ref == 'refs/heads/' + body.repository.default_branch && has(body.commits)", '!(false && has(body.commits)'), push([pins]), false],
+    'a pin clause for every branch, a ci/ branch among them': [(f) => f.replace("!(body.ref == 'refs/heads/' + body.repository.default_branch && has(body.commits)", '!(has(body.commits)'), push([pins], 'refs/heads/ci/issue-387-pins'), true],
+    'a pin clause that takes an added file': [(f) => f.replace('size(c.added) == 0 && size(c.removed) == 0 && ', ''), push([commit([MANAGER], {added: ['clusters/inventories/manager/values-dev.yaml']})]), true],
+    'a pin clause that is not anchored at the start': [(f) => f.replace("path.matches(r'^clusters/", "path.matches(r'clusters/"), push([commit(['tools/clusters/inventories/manager/values-prod.yaml'])]), true],
+    'a pin clause that is not anchored at the end': [(f) => f.replace('[.]yaml$', '[.]yaml'), push([commit(['clusters/inventories/manager/values-prod.yaml.bak'])]), true],
+    'a pin clause that takes a commit with no path': [(f) => f.replace(' && size(c.modified) > 0', ''), push([commit([])]), true],
+    'a pin clause that needs one pin commit and not every commit': [(f) => f.replace('body.commits.all(c,', 'body.commits.exists(c,'), push([pins, commit(['README.md'])]), true],
+    'a pin clause with no limit on the commits': [(f) => f.replace(' && size(body.commits) < 20', ''), push(Array.from({length: 20}, () => pins)), true],
+  };
+  for (const [defect, [edit, body, expected]] of Object.entries(planted)) {
+    assert.notEqual(edit(filter), filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
+    assert.equal(runs(body), expected, `PLANTED INNOCENT: ${defect}: the filter as it stands answers ${expected}`);
+    assert.notEqual(runs(body, edit), expected, `PLANTED DEFECT: ${defect}`);
   }
 });
 
