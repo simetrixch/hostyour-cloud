@@ -14,7 +14,8 @@ exist, and the pipeline's gate compares the webhook's clone_url fail-closed
 against its pinned repoURL.
 
 THE RUN WAITS IN THE RELEASE QUEUE (templates/release-queue.yaml), under a key
-of its own, so it never builds beside a release. It carries
+of its own: it takes one of the queue's slots (up to two releases run at once, of different
+units) and never builds beside a release of its own unit. It carries
 image-builder.io/publish and never image-builder.io/consumer, the label the
 Manager's release watch selects release runs by.
 
@@ -104,7 +105,7 @@ spec:
         labels:
           image-builder.io/publish: $(tt.params.unit)
       spec:
-        # Created waiting: the release queue starts it once no release and no other publish run runs.
+        # Created waiting: the release queue starts it when a slot is free and no release or publish run of its unit runs.
         status: PipelineRunPending
         pipelineRef:
           name: $(tt.params.unit)-publish
