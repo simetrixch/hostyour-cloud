@@ -558,9 +558,14 @@ spec:
             # count in the sum that ciCapacity.limitsMemoryBudget bounds, with the
             # two releases the queue runs at once (values-common.yaml). The timeout of the task is
             # twice the measured run, the install and the downloads included.
+            # The CPU limit is 12 of the cores of the build node, and the request
+            # is the largest whole number of cores for which the requests of all
+            # ci pods, of the releases the queue runs at once and of the pods that
+            # stand on the node still fit its cores (ciCapacity in
+            # values-common.yaml, held by scripts/build-contract.test.mjs).
             computeResources:
-              requests: { cpu: "1", memory: 2Gi }
-              limits: { cpu: "4", memory: 3Gi }
+              requests: { cpu: "3", memory: 2Gi }
+              limits: { cpu: "12", memory: 3Gi }
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
