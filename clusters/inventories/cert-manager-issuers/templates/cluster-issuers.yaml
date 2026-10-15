@@ -3,6 +3,7 @@
   {{- $issuer = .Values.global.clusterIssuer }}
 {{- end }}
 {{- if eq $issuer "platform-acme" }}
+{{- $zones := list (required "global.platformDomain is a zone of the installation's own that platform-acme answers by DNS-01 (clusters/active/<fqdn>.yaml)" .Values.global.platformDomain) (required "global.unitApex is a zone of the installation's own that platform-acme answers by DNS-01 (clusters/active/<fqdn>.yaml)" .Values.global.unitApex) | uniq }}
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -30,6 +31,21 @@ spec:
             # The solver's own Service must be a ClusterIP, because a unit namespace admits no other
             # Service type; the challenge is answered over the ingress class, so nothing is lost.
             serviceType: ClusterIP
+      # A NAME UNDER THE INSTALLATION'S OWN ZONES is answered by DNS-01, through the zone's DNS API,
+      # so no challenge request has to reach the origin and no solver route stands beside the routes of
+      # a host behind the edge. cert-manager picks the solver whose dnsZones match a name over the one
+      # without a selector; every other name, a tenant's domain outside these zones among them, keeps
+      # HTTP-01 above.
+      - selector:
+          dnsZones:
+            {{- range $zones }}
+            - {{ . | quote }}
+            {{- end }}
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: platform-acme-cloudflare-dns
+              key: api-token
 {{- else if eq $issuer "platform-local" }}
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer

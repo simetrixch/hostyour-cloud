@@ -49,6 +49,7 @@ echo 'test: tenant size — every registration renders, with the word or without
 node --test scripts/tenant-size.test.mjs || fail 'scripts/tenant-size.test.mjs'
 echo 'test: tenant own domain aliases — every chart gets the list, or [] without one.'
 node --test scripts/tenant-own-domain-aliases.test.mjs || fail 'scripts/tenant-own-domain-aliases.test.mjs'
+node --test scripts/tenant-proxied-hosts.test.mjs || fail 'scripts/tenant-proxied-hosts.test.mjs'
 node --test scripts/tenant-display-name.test.mjs || fail 'scripts/tenant-display-name.test.mjs'
 echo 'test: tekton feature flags — a refresh of the vendored manifest keeps coschedule disabled and the build plane alert stands.'
 node --test scripts/tekton-feature-flags.test.mjs || fail 'scripts/tekton-feature-flags.test.mjs'
@@ -86,6 +87,8 @@ echo 'test: trust-manager bundles — the Bundle after trust-manager, in the for
 node --test scripts/trust-manager-bundles.test.mjs || fail 'scripts/trust-manager-bundles.test.mjs'
 echo 'test: cert-manager issuers — platform-acme as every cluster holds it, or the cluster authority, nothing else.'
 node --test scripts/cert-manager-issuers.test.mjs || fail 'scripts/cert-manager-issuers.test.mjs'
+echo 'test: cloudflare origin pull — the TLSOption of a proxied host requires the client certificate its CA verifies.'
+node --test scripts/cloudflare-origin-pull.test.mjs || fail 'scripts/cloudflare-origin-pull.test.mjs'
 node --test scripts/inventory-project-fit.test.mjs || fail 'scripts/inventory-project-fit.test.mjs'
 echo 'test: e2e runner — the password of a demo target stays bound to its host, and a run names a path on it and a case, nothing else.'
 helm dependency build clusters/inventories/e2e-runner
