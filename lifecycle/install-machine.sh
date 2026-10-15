@@ -258,4 +258,22 @@ else
   printf '  The machine named no runs — read the transcript above; nothing was recorded to fetch.\n\n' >&2
 fi
 
+# --------------------------------------------------------- the forge's SSH port
+# A MASTER THAT RUNS FORGEJO announces an SSH port its router has to forward to the master's 2222.
+# Nothing on the machine can see that forward closed; only a probe from here, outside its network, can. So a finished installation asks it, and reports a closed port in this
+# report rather than at the first clone. Only after an installation that ended 0, because a failed one
+# has no branch to read. The probe needs a clone whose origin carries the install branch, which is where
+# this is started from (exit 69 otherwise, reported as not asked); a branch with no Forgejo says nothing.
+# The exit code stays the installation's: a closed port is not an installation that failed.
+if [ "$INSTALLED" -eq 0 ]; then
+  FORGEJO_SSH=$(bash "$HERE/check-forgejo-ssh.sh" "$FQDN" 2>&1); FORGEJO_CODE=$?
+  FORGEJO_SSH="${FORGEJO_SSH#check-forgejo-ssh: }"
+  case "$FORGEJO_CODE" in
+    0)  printf '  forgejo-ssh: green, %s\n\n' "$FORGEJO_SSH" >&2 ;;
+    1)  printf '  forgejo-ssh: RED, %s. Forward FORGEJO_SSH_PORT on the router to the master'"'"'s 2222; until it answers no clone over SSH works.\n\n' "$FORGEJO_SSH" >&2 ;;
+    66) ;;
+    *)  printf '  forgejo-ssh: not asked, %s\n\n' "$FORGEJO_SSH" >&2 ;;
+  esac
+fi
+
 exit "$INSTALLED"

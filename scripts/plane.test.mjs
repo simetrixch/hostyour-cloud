@@ -85,6 +85,11 @@ function renderFindings(objects) {
   const memory = Number(/^(\d+)Mi$/.exec(worker?.resources.limits.memory ?? '')?.[1]);
   if (!/^[1-4]$/.test(concurrency ?? '')) found.push(`the worker forks ${concurrency ?? 'one process per core of the node'}, not a fixed few`);
   else if (!(memory >= (Number(concurrency) + 1) * 200)) found.push(`the worker's ${worker?.resources.limits.memory} does not hold ${concurrency} children and their parent`);
+  // At concurrency 2 the worker's working set stood flat at 260.1Mi (p95 of 5.5 h on the master,
+  // 2026-10-15); the chart's 50Mi request lets the scheduler place it where that
+  // does not fit. The request is the measured p95, rounded up, and never above the limit.
+  const request = Number(/^(\d+)Mi$/.exec(worker?.resources.requests.memory ?? '')?.[1]);
+  if (!(request >= 261 && request <= memory)) found.push(`the worker requests ${worker?.resources.requests.memory}, not its measured 261Mi up to its limit`);
 
   // The addresses the app is handed name the chart's own Services in the app's own namespace.
   const services = new Set(objects.filter(o => o.kind === 'Service').map(o => o.metadata.name));
@@ -146,6 +151,8 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
     ['the worker forks 32, not a fixed few']);
   assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.worker.memoryLimit=500Mi'])),
     ["the worker's 500Mi does not hold 2 children and their parent"]);
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.worker.memoryRequest=50Mi'])),
+    ['the worker requests 50Mi, not its measured 261Mi up to its limit']);
   const ported = renderChart('plane');
   ported.find(o => o.kind === 'Middleware').spec.redirectRegex.replacement = 'https://${1}:3000/god-mode/${2}';
   assert.deepEqual(renderFindings(ported), ['https://plane.example.com/god-mode is sent to https://plane.example.com:3000/god-mode/',
@@ -155,6 +162,7 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
 
 test('PLANTED INNOCENT: more replicas of the web app and a larger upload limit change nothing the rules hold', () => {
   assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.web.replicas=2', '--set', 'plane-ce.env.doc_upload_size_limit=10485760'])), []);
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.worker.memoryRequest=300Mi', '--set', 'plane-ce.worker.cpuRequest=100m'])), []);
 });
 
 // plane-ce stamps the render time into the pod template of its seven Deployments and of its migration

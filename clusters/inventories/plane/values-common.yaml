@@ -32,6 +32,14 @@ plane-ce:
     local_setup: true
     storageClass: microk8s-hostpath
 
+  # The worker at CELERY_WORKER_CONCURRENCY 2 (externalsecret-app-env below) stood flat at 260.1Mi,
+  # p95 over 5.5 h on the master (2026-10-15), against the chart's 50Mi request.
+  # The limit is the least that holds the parent and two children (scripts/plane.test.mjs); the CPU
+  # values stay the chart's.
+  worker:
+    memoryRequest: 270Mi
+    memoryLimit: 600Mi
+
   # The chart refuses to render its public default keys; every secret comes from the Secrets below.
   env:
     requireExplicitSecrets: true
