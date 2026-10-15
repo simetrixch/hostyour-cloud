@@ -1,0 +1,20 @@
+{{- /*
+GET /god-mode, which Plane's own "Get started" opens, reaches plane-admin's nginx, and nginx answers a
+directory asked for without its slash with a 301 to its own address and port,
+http://<host>:3000/god-mode/. No value of the chart or of Plane changes that, so the chart's Ingress
+answers /god-mode itself, after the forward auth, on the host the browser asked for and with the query
+kept; every other path passes untouched. It stands a wave before the Ingress that names it, because
+Traefik serves none of an Ingress's routes while a middleware it names is missing.
+*/ -}}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: god-mode-trailing-slash
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  redirectRegex:
+    regex: '^https://([^/]+)/god-mode(\?.*)?$'
+    replacement: 'https://${1}/god-mode/${2}'
+    permanent: true
