@@ -2782,6 +2782,11 @@ cat > "$RU/bin/microk8s.kubectl" <<'STANDIN'
 printf 'kubectl %s\n' "$*" >> "$RU/argv"; env >> "$RU/env"
 [ "${*:1:8}" = 'exec -i -n manager deploy/manager -c manager --' ] || { echo "kubectl stand-in: not the Manager's container: $*" >&2; exit 2; }
 shift 8
+hangs="$(cat "$RU/relay-hangs" 2>/dev/null || echo 0)"
+if [ "$hangs" -gt 0 ]; then
+  echo $((hangs - 1)) > "$RU/relay-hangs"
+  exec sleep 20
+fi
 fails="$(cat "$RU/relay-fails" 2>/dev/null || echo 0)"
 if [ "$fails" -gt 0 ]; then
   echo $((fails - 1)) > "$RU/relay-fails"
@@ -2796,14 +2801,14 @@ RELEASE_UNIT="$HERE/release-unit.sh"
 run_release_unit() { # the scenario the stand-in Manager plays, then the act's arguments
   local scenario="$1" fake i
   shift
-  rm -f "$RU/port" "$RU/sock" "$RU/relay-fails"
+  rm -f "$RU/port" "$RU/sock" "$RU/relay-fails" "$RU/relay-hangs"
   : > "$RU/calls"; : > "$RU/argv"; : > "$RU/env"
   SCENARIO="$scenario" RU="$RU" node "$HERE/../scripts/standin/release-unit-manager.mjs" &
   fake=$!
   for i in $(seq 100); do [ -s "$RU/port" ] && [ -S "$RU/sock" ] && break; sleep 0.05; done
   [ -s "$RU/port" ] || fail "the stand-in Manager of '$scenario' did not start"
   A_CODE=0
-  ( PATH="$RU/bin:$PATH" RU="$RU" RELEASE_UNIT_POLL_SECONDS=0 RELEASE_UNIT_RETRIES=4 bash "$RELEASE_UNIT" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  ( PATH="$RU/bin:$PATH" RU="$RU" RELEASE_UNIT_POLL_SECONDS=0 RELEASE_UNIT_RETRIES=4 RELEASE_UNIT_EXCHANGE_SECONDS=3 timeout 15 bash "$RELEASE_UNIT" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
   kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null || true
 }
 # The calls the stand-in Manager saw, in order, held to the case's own list.
@@ -3035,6 +3040,47 @@ no_session 'three relays lost to a rollout while the run goes on'
 [ "$(cat "$RU/relay-fails")" = '0' ] || fail 'three relays lost to a rollout — the stand-in kubectl did not fail the three exchanges it was told to'
 ok 'three relays lost to a rollout — the watch read through them on the one session it minted'
 
+run_release_unit relay-hangs manager@master.example.invalid shop --prod-to-test
+expect 'two relays that hang past the bound of an exchange' 0 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: succeeded (put-release ok)
+run run_1 succeeded
+~~~ standard error ~~~
+RECORDED
+calls 'two relays that hang past the bound of an exchange' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'two relays that hang past the bound of an exchange'
+[ "$(cat "$RU/relay-hangs")" = '0' ] || fail 'two relays that hang — the stand-in kubectl did not hang the two exchanges it was told to'
+ok 'two relays that hang — each was ended at the bound of an exchange, and the watch read on'
+# PLANTED: a copy whose exchanges have no bound waits on each hanging relay for its whole 20
+# seconds, and is still waiting when the 15 seconds every case is allowed run out.
+PLANT="$WORK/release-unit-unbound"
+mkdir -p "$PLANT"
+cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
+sed 's/const bound = setTimeout(() => child.kill("SIGKILL"), EXCHANGE_MS);/const bound = undefined;/' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail 'the plant that drops the bound of an exchange changed nothing in release-unit.mjs'
+RELEASE_UNIT="$PLANT/release-unit.sh"
+run_release_unit relay-hangs manager@master.example.invalid shop --prod-to-test
+RELEASE_UNIT="$HERE/release-unit.sh"
+[ "$A_CODE" = '124' ] || fail "a copy with no bound on an exchange ended with $A_CODE, where the 15 seconds of its case should have run out"
+ok 'the planted defect was caught — a copy with no bound on an exchange still waits on a hanging relay when its case'"'"'s 15 seconds run out'
+rm -rf "$PLANT"
+
 run_release_unit watch-exhausted manager@master.example.invalid shop --prod-to-test
 expect 'relays lost for longer than the watch waits' 75 <<'RECORDED'
 source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -3175,7 +3221,7 @@ echo "test:   reason for a host name it cannot resolve normalised, in the C loca
 echo "test:   release-unit, run whole against a stand-in Manager behind a stand-in ssh and kubectl:"
 echo "test:   prod's release put on test as its one put-release, an explicit release, the three"
 echo "test:   refusals of the plan and two of the source read, a plan that is more than the put-release,"
-echo "test:   a failed and a cancelled run, relays lost to a rollout on one session, a watch that"
+echo "test:   a failed and a cancelled run, relays lost to a rollout or hanging on one session, a watch that"
 echo "test:   stops, an expired session, a lost release request and approve never sent again, and no"
 echo "test:   session in any output, argument, environment or file; a copy that prints it is caught."
 echo "test: covered — a fixture's commit and push start no background maintenance, at either end,"

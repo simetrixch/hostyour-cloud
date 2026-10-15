@@ -61,6 +61,7 @@ const api = createServer((req, res) => {
       run.approved = true;
       if (SCENARIO === "relay-lost") writeFileSync(`${RU}/relay-fails`, "3");
       if (SCENARIO === "watch-exhausted") writeFileSync(`${RU}/relay-fails`, "99");
+      if (SCENARIO === "relay-hangs") writeFileSync(`${RU}/relay-hangs`, "2");
       if (SCENARIO === "lost-approve") return req.socket.destroy();
       return json(res, 200, { status: "queued" }, refresh);
     }

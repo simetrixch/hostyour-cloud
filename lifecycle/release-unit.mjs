@@ -89,16 +89,18 @@ function stop(line, code) {
 }
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-/** One exchange through a new relay: its answer, or null where the relay gave none. */
+/** One exchange through a new relay: its answer, or null where the relay gave none in EXCHANGE_MS. */
 function exchange(request) {
   return new Promise((resolve) => {
-    const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=20", DOOR, REMOTE], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", DOOR, REMOTE], { stdio: ["pipe", "pipe", "pipe"] });
+    const bound = setTimeout(() => child.kill("SIGKILL"), EXCHANGE_MS);
     let out = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => { out += chunk; });
     child.stderr.resume(); // what ssh and kubectl say stays here: only an allowlisted line is printed
-    child.on("error", () => resolve(null));
+    child.on("error", () => { clearTimeout(bound); resolve(null); });
     child.on("close", () => {
+      clearTimeout(bound);
       try {
         const answer = JSON.parse(out.trim().split("\n").pop());
         resolve(Number.isInteger(answer.status) ? answer : null);
@@ -160,6 +162,8 @@ if (!(PROD_TO_TEST || args.length === 6)) stop(USAGE, EXIT.usage);
 if (!/^[a-z_][a-z0-9_-]*@[A-Za-z0-9.-]+$/.test(DOOR)) stop(`the door must be <user>@<host> (got '${DOOR}')`, EXIT.usage);
 if (!/^[a-z0-9-]+$/.test(UNIT)) stop(`'${UNIT}' is no unit name`, EXIT.usage);
 const POLL_MS = setting("RELEASE_UNIT_POLL_SECONDS", 10) * 1000;
+/** How long one exchange may take before its relay counts as lost: a read is repeated, a mutation is not. */
+const EXCHANGE_MS = setting("RELEASE_UNIT_EXCHANGE_SECONDS", 120) * 1000;
 const RETRIES = setting("RELEASE_UNIT_RETRIES", 30);
 let release;
 if (!PROD_TO_TEST) {

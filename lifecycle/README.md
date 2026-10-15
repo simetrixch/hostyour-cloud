@@ -114,7 +114,8 @@ steps. The run is the one `/runs/<run-id>` shows in the Manager.
 
 `RELEASE_UNIT_POLL_SECONDS` (10) is the pause between two reads of the run, and
 `RELEASE_UNIT_RETRIES` (30) the number of reads in a row that may get no answer before the watch
-stops.
+stops, and `RELEASE_UNIT_EXCHANGE_SECONDS` (120) how long one exchange may take before it counts as
+one with no answer.
 
 # Installing a first master
 
