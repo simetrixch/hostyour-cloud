@@ -394,9 +394,8 @@ spec:
     # ── probe: {{ $b }} — build only when THIS COMMIT's image is missing ─────
     # A 200 IS NOT PROOF THE PLATFORM BUILT THE IMAGE. The registry answers a
     # local miss by fetching from its sync upstreams on demand
-    # (clusters/inventories/registry/values-common.yaml, extensions.sync: ghcr.io
-    # for the seed's simetrixch/ prefix, then registry-1.docker.io
-    # unfiltered), so a repo this installation has never pushed to still answers
+    # (clusters/inventories/registry/values-common.yaml, extensions.sync:
+    # registry-1.docker.io unfiltered), so a repo this installation has never pushed to still answers
     # 200 with whatever an upstream publishes under that name and tag. Taking
     # that for "already built" would skip the build and pin an image nobody
     # here made from a commit nobody here verified.
@@ -408,8 +407,7 @@ spec:
     # cloned and .source is the repoURL its registration pins. That is the whole
     # of what the pin needs: the tag names an image built from this commit of
     # this repository. It is NOT a claim about bytes — two builds of one commit
-    # differ — so an image reused across stages is the same image, and an image
-    # the seed fetched from ghcr.io for the same commit is the same source.
+    # differ — so an image reused across stages is the same image.
     #
     # A tag that exists but cannot be proven is neither present nor absent: the
     # run fails rather than build over bytes another installation may already be
@@ -521,7 +519,7 @@ spec:
               echo "  this run cloned ${REPO_URL} at ${COMMIT}" >&2
               echo "  the image says source '${SRC:-<no org.opencontainers.image.source label>}', revision '${REV:-<no org.opencontainers.image.revision label>}'" >&2
               echo "  The registry answers a local miss from its sync upstreams, so this is what a tag" >&2
-              echo "  fetched from ghcr.io or docker.io under the same name looks like. Building over it" >&2
+              echo "  fetched from docker.io under the same name looks like. Building over it" >&2
               echo "  would leave two sets of bytes under one version, so the run stops here." >&2
               exit 1
             computeResources:

@@ -2284,17 +2284,26 @@ placed() { # <driver file> <served digests> [<the asset served in place of ansiw
   local driver="$1"
   ( SERVED_DIGESTS="$2" SWAPPED="${3:-}"
     ENGINE="$SANDBOX/bin/ansiwise" PIN="$ENGINE_PIN" CONFIG="$ENGINE_WORK/no-config"
-    RELEASES='https://releases.example.invalid' DIGESTS_URL='https://pins.example.invalid/ansiwise.sha256'
+    FQDN='machine.example.invalid' CARRIED="$SANDBOX/carried"
+    RELEASES="https://${RELEASES_HOST:-registry.example.invalid}/v2/acme/ansiwise-cli/blobs" DIGESTS_URL='https://pins.example.invalid/ansiwise.sha256'
     say() { echo "say: $*"; }; good() { echo "good: $*"; }; summary() { echo 'summary'; }
     die() { echo "die: $1" >&2; exit "${2:-1}"; }
     root() { "$@" && { [ -z "${TERM_AFTER_FIRST_INSTALL:-}" ] || { TERM_AFTER_FIRST_INSTALL=''; kill -TERM "$BASHPID"; }; }; }
-    curl() { # -fsSL [-o <file>] <url>
-      local out='' url=''
+    curl() { # -fsSL [-o <file>] <url> — the registry serves a blob at the SHA-256 of its bytes
+      local out='' url='' hex file
       while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
       case "$url" in
         "$DIGESTS_URL") printf '%s\n' "$SERVED_DIGESTS" ;;
-        "$RELEASES"/*/ansiwise-rest-*) if [ -n "$SWAPPED" ]; then cp "$SWAPPED" "$out"; else cp "$SERVED/${url##*/}" "$out"; fi ;;
-        "$RELEASES"/*) cp "$SERVED/${url##*/}" "$out" ;;
+        "$RELEASES"/sha256:*)
+          echo "$url" >> "$OUT/fetched.log"
+          hex="${url##*/sha256:}"
+          if [ -n "$SWAPPED" ] && [ "$hex" = "$(sha256sum < "$SERVED/ansiwise-rest-$ENGINE_PIN-linux-x64" | cut -d' ' -f1)" ]; then
+            cp "$SWAPPED" "$out"; return 0
+          fi
+          for file in "$SERVED"/*; do
+            [ "$(sha256sum < "$file" | cut -d' ' -f1)" != "$hex" ] || { cp "$file" "$out"; return 0; }
+          done
+          return 22 ;;
         *) return 22 ;;
       esac
     }
@@ -2303,7 +2312,8 @@ placed() { # <driver file> <served digests> [<the asset served in place of ansiw
     eval "$(sed -n '/^ENGINE_ANSWERS=\$("\$ENGINE" --version/,/^fi$/p' "$driver" | sed "s#/usr/local/bin/#$SANDBOX/bin/#g")"
   ) > "$OUT/placed.out" 2>&1
 }
-fresh_machine() { rm -rf "$SANDBOX"; mkdir -p "$SANDBOX/bin"; }
+fresh_machine() { rm -rf "$SANDBOX" "$OUT/fetched.log"; mkdir -p "$SANDBOX/bin"; }
+blob_of() { printf 'https://registry.example.invalid/v2/acme/ansiwise-cli/blobs/sha256:%s\n' "$(sha256sum < "$SERVED/$1-$ENGINE_PIN-linux-x64" | cut -d' ' -f1)"; } # <tool>
 carries() { cat "$SANDBOX/bin/$1" 2>/dev/null; } # <tool> — what the machine holds under that name
 released() { cat "$SERVED/$1-$ENGINE_PIN-linux-x64"; } # <tool> — what the release built
 SWAPPED_ASSET="$ENGINE_WORK/swapped"
@@ -2341,7 +2351,17 @@ for engine_driver in driver.sh regenerate-driver.sh; do
   placed "$D" "$PINNED_DIGESTS" || fail "$engine_driver: a clean machine was refused the engine at its pinned digests: $(cat "$OUT/placed.out")"
   [ "$(carries ansiwise)" = "$(released ansiwise)" ] && [ "$(carries ansiwise-rest)" = "$(released ansiwise-rest)" ] \
     || fail "$engine_driver: a clean machine does not carry the release's bytes after the placement"
-  ok "$engine_driver: a clean machine is given both executables at their pinned digests"
+  [ "$(cat "$OUT/fetched.log")" = "$(blob_of ansiwise; blob_of ansiwise-rest)" ] \
+    || fail "$engine_driver: the engine was not fetched from the blob address of each asset's digest: $(cat "$OUT/fetched.log" 2>/dev/null)"
+  ok "$engine_driver: a clean machine is given both executables at their pinned digests, each fetched at the blob address of its digest"
+
+  fresh_machine
+  CODE=0; placed "$D" "$(printf '%s\n' "$PINNED_DIGESTS" | head -1)" || CODE=$?
+  [ "$CODE" = 65 ] || fail "$engine_driver: a digest file without the ansiwise-rest line must end the placement with 65, got $CODE: $(cat "$OUT/placed.out")"
+  [ ! -s "$OUT/fetched.log" ] || fail "$engine_driver: a digest file without the ansiwise-rest line still downloaded $(cat "$OUT/fetched.log")"
+  grep -q "states no single SHA-256 for ansiwise-rest-$ENGINE_PIN-linux-x64" "$OUT/placed.out" \
+    || fail "$engine_driver: the missing digest line was not named: $(cat "$OUT/placed.out")"
+  ok "$engine_driver: an asset with no digest line has no address, and nothing is downloaded"
 
   fresh_machine
   CODE=0; placed "$D" "$PINNED_DIGESTS" "$SWAPPED_ASSET" || CODE=$?
@@ -2364,6 +2384,64 @@ for engine_driver in driver.sh regenerate-driver.sh; do
   ok "$engine_driver: a TERM ends the run where it stands, and the next run places what is missing"
 done
 
+# THE ENGINE OF THE OWNER'S MASTER is built by install-machine from its tag and carried in the session,
+# because that machine IS the registry the others fetch from. driver.sh places what it carries, asks it
+# for the pin, and fetches nothing; regenerate-driver.sh runs where the registry stands, and carries none.
+D="$HERE/driver.sh"
+carry() { mkdir -p "$SANDBOX/carried"; asset_text ansiwise "$1" > "$SANDBOX/carried/ansiwise"; asset_text ansiwise-rest "$2" > "$SANDBOX/carried/ansiwise-rest"; chmod 700 "$SANDBOX/carried"/*; }
+fresh_machine; carry "$ENGINE_PIN" "$ENGINE_PIN"
+RELEASES_HOST=zot.machine.example.invalid placed "$D" "$PINNED_DIGESTS" || fail "driver.sh: a carried engine at the pin was refused: $(cat "$OUT/placed.out")"
+[ "$(carries ansiwise-rest)" = "$(asset_text ansiwise-rest "$ENGINE_PIN")" ] && [ ! -e "$SANDBOX/carried" ] && [ ! -s "$OUT/fetched.log" ] \
+  || fail "driver.sh: a carried engine was not placed as carried, left behind, or fetched as well"
+grep -q 'not held against ansiwise.sha256' "$OUT/placed.out" || fail "driver.sh: the placement of a carried engine does not say it is not held against the digests: $(cat "$OUT/placed.out")"
+ok 'driver.sh: the engine install-machine carries is placed at the pin, removed, and nothing is fetched'
+fresh_machine; carry "$ENGINE_PIN" '0.8.306-stable-20260929191649'
+CODE=0; RELEASES_HOST=zot.machine.example.invalid placed "$D" "$PINNED_DIGESTS" || CODE=$?
+[ "$CODE" = 65 ] && [ -z "$(ls -A "$SANDBOX/bin")" ] || fail "driver.sh: a carried ansiwise-rest of another version must end with 65 and place nothing, got $CODE: $(ls "$SANDBOX/bin")"
+fresh_machine
+CODE=0; RELEASES_HOST=zot.machine.example.invalid placed "$D" "$PINNED_DIGESTS" || CODE=$?
+[ "$CODE" = 65 ] && [ ! -s "$OUT/fetched.log" ] || fail "driver.sh: the owner's master with no carried engine must end with 65 and fetch nothing from itself, got $CODE"
+grep -q 'is the registry of this very machine' "$OUT/placed.out" || fail "driver.sh: the refusal does not say the registry is this machine: $(cat "$OUT/placed.out")"
+ok "driver.sh: a carried engine off the pin is refused, and the owner's master fetches nothing from its own registry"
+
+# install-machine builds that engine only where the host of driver.sh's RELEASES is zot.<FQDN>, out of Git
+# (stand-in clones here) with ansiwise-cli's own release/build.sh, and writes both files into the stream.
+carry_engine_of() { sed -n '/^carry_engine() {/,/^}/p' "$HERE/install-machine.sh"; }
+carried_stream() { # <RELEASES host of the stand-in driver> — runs carry_engine, the stream in $OUT/stream, the clones in $OUT/git.log
+  rm -f "$OUT/stream" "$OUT/git.log"
+  printf 'readonly RELEASES=https://%s/v2/acme/ansiwise-cli/blobs\n' "$1" > "$ENGINE_WORK/driver.sh"
+  ( DRIVER="$ENGINE_WORK/driver.sh" FQDN='machine.example.invalid' PLATFORM_REPO='acme/platform'
+    fail() { echo "fail: $1" >&2; exit "${2:-1}"; }
+    git() { # clone -q --depth 1 --branch <ref> <url> <dir>
+      local dir="${*: -1}" url="${*: -2:1}"
+      echo "$*" >> "$OUT/git.log"
+      case "$url" in
+        */acme/platform.git) mkdir -p "$dir/clusters/platform"
+          printf 'cliTools:\n  ansiwise:\n    version: "%s"\n  yq:\n    version: "v4"\n' "$ENGINE_PIN" > "$dir/clusters/platform/versions.yaml" ;;
+        */ansiwise-cli.git) mkdir -p "$dir/release"
+          printf '%s\n' 'mkdir -p "$2"; for t in ansiwise ansiwise-rest; do printf "#!/bin/sh\necho %s\n" "$1" > "$2/$t-$1-linux-x64"; done' > "$dir/release/build.sh" ;;
+        *) return 128 ;;
+      esac
+    }
+    eval "$(carry_engine_of)"
+    ENGINE_WORK='' # carry_engine's own, as install-machine starts it; the fixture's folder of that name stays
+    carry_engine "$OUT/stream"
+    rm -rf "${ENGINE_WORK:-}"
+  ) > "$OUT/carry.out" 2>&1
+}
+carried_stream zot.machine.example.invalid || fail "install-machine: the engine of the owner's master was not built: $(cat "$OUT/carry.out")"
+grep -q -- "--branch $ENGINE_PIN https://github.com/simetrixch/ansiwise-cli.git" "$OUT/git.log" \
+  || fail "install-machine: ansiwise-cli was not cloned at the pin: $(cat "$OUT/git.log")"
+STREAM_HOME="$ENGINE_WORK/stream-home"; rm -rf "$STREAM_HOME"; mkdir -p "$STREAM_HOME"
+HOME="$STREAM_HOME" bash "$OUT/stream" || fail 'install-machine: the stream it carries does not run'
+for tool in ansiwise ansiwise-rest; do
+  [ "$(sh "$STREAM_HOME/.aw-engine/$tool")" = "$ENGINE_PIN" ] || fail "install-machine: the stream does not leave $tool answering the pin under \$HOME/.aw-engine"
+done
+ok "install-machine: for the owner's master the engine is built from its tag and both files arrive under \$HOME/.aw-engine"
+carried_stream registry.example.invalid || fail "install-machine: an installation that fetches its engine failed: $(cat "$OUT/carry.out")"
+[ ! -s "$OUT/stream" ] && [ ! -s "$OUT/git.log" ] || fail 'install-machine: an installation that fetches its engine still built or carried one'
+ok 'install-machine: every other installation builds and carries nothing'
+
 # The planted defects, each through the probe that measures the real driver.
 plant() { sed "$2" "$HERE/driver.sh" > "$ENGINE_WORK/planted-driver.sh"; grep -q "$3" "$ENGINE_WORK/planted-driver.sh" \
   || fail "the planted line was not planted ($1) — the probe proves nothing"; }
@@ -2377,7 +2455,7 @@ fresh_machine
 CODE=0; TERM_AFTER_FIRST_INSTALL=1 placed "$ENGINE_WORK/planted-driver.sh" "$PINNED_DIGESTS" || CODE=$?
 [ "$CODE" != 143 ] || fail 'a driver that resumes after a TERM ended with 143 all the same — the probe proves nothing'
 ok "the planted defect was caught — a driver that resumes after a TERM ends with $CODE, not 143"
-plant 'a skip that asks ansiwise alone' 's/^if \[ "\$ENGINE_ANSWERS" = "\$PIN" \] && \[ "\$SERVING_ANSWERS" = "\$PIN" \]; then$/if [ "$ENGINE_ANSWERS" = "$PIN" ]; then/' '^if \[ "\$ENGINE_ANSWERS" = "\$PIN" \]; then$'
+plant 'a skip that asks ansiwise alone' 's/^elif \[ "\$ENGINE_ANSWERS" = "\$PIN" \] && \[ "\$SERVING_ANSWERS" = "\$PIN" \]; then$/elif [ "$ENGINE_ANSWERS" = "$PIN" ]; then/' '^elif \[ "\$ENGINE_ANSWERS" = "\$PIN" \]; then$'
 fresh_machine
 released ansiwise > "$SANDBOX/bin/ansiwise"; asset_text ansiwise-rest '0.8.306-stable-20260929191649' > "$SANDBOX/bin/ansiwise-rest"
 chmod +x "$SANDBOX/bin/ansiwise" "$SANDBOX/bin/ansiwise-rest"
