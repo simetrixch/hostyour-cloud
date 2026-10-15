@@ -162,6 +162,8 @@ spec:
           - { name: name, value: plane-update-status }
           - { name: namespace, value: {{ $shared }} }
       params:
+        - { name: repository, value: "$(params.repository)" }
+        - { name: plane-targets, value: {{ .Values.plane | toJson | quote }} }
         - { name: tag, value: "$(params.tag)" }
         - { name: previous-commit, value: "$(tasks.release.results.previous-commit)" }
         - { name: tokens-secret, value: forgejo-build-tokens }

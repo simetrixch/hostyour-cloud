@@ -10,20 +10,19 @@
 # ponytail: reads the newest page of tags (50); a repository with more tags than that finds its
 # previous tag only among them.
 #
-# The token is the Forgejo machine user's, from the Secret forgejo-build-tokens. It travels in a
-# header file, so it is in no argument list, and nothing here prints it.
+# The token is the Forgejo machine user's, from the Secret forgejo-build-tokens. It reaches curl as a
+# header on its standard input, so it is in no argument list and no file, and nothing here prints it.
 set -euo pipefail
 
 : "${FORGEJO_TOKEN:?}" "${FORGEJO_API:?}" "${REPOSITORY:?}" "${TAG:?}" "${SOURCE:?}" "${PREVIOUS_COMMIT_RESULT:?}"
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-printf 'Authorization: token %s\n' "${FORGEJO_TOKEN}" > "${work}/auth"
 
 # $1 method, $2 path below the API, $3 the body file or empty, $4 the HTTP code it must answer.
 forgejo() {
   local code
-  code="$(curl -sS --max-time 20 -X "$1" -H "@${work}/auth" -H 'Content-Type: application/json' \
+  code="$(printf 'Authorization: token %s\n' "${FORGEJO_TOKEN}" | curl -sS --max-time 20 -X "$1" -H @- -H 'Content-Type: application/json' \
     ${3:+--data-binary "@$3"} -o "${work}/answer.json" -w '%{http_code}' \
     "${FORGEJO_API}$2" 2>"${work}/curl.err" || true)"
   if [ "${code}" != "$4" ]; then

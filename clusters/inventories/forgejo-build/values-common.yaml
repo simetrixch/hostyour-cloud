@@ -13,6 +13,16 @@ eventListener:
 forgejo:
   url: http://forgejo-http.forgejo.svc:3000
 
+plane:
+  workspace: simplidigita
+  projects:
+    - prefixes: [ansiwise-]
+      id: e5c01046-3739-4af7-abc4-3c13b28dd232
+    - prefixes: [hostyour-]
+      id: 7bbca0da-56a0-4c33-bf6d-aaef3eb327d1
+    - prefixes: [simplidigita-, digita-]
+      id: 252cf88e-3c7d-4b13-a444-13403ddcb976
+
 # The image of the check before the build: bash, grep and date, the image the build plane's own
 # kubectl steps run.
 checkImage: alpine/k8s:1.35.6

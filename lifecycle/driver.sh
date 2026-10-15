@@ -60,6 +60,107 @@
 # names each run's identifier on a line of its own so nothing has to be guessed.
 # =============================================================================
 
+# Shared input projection and command transport for installation and installed-master redeploy.
+project_program_input() { # <config> <program declaration> [answer file; omitted streams stdout]
+  python3 - "$1" "$2" "${3:--}" <<'COMPOSE'
+import json, re, sys
+
+BESIDE = 'elevation_password'
+config_path, declares_path, into = sys.argv[1], sys.argv[2], sys.argv[3]
+
+stated = {}
+for line in open(config_path, encoding='utf-8'):
+    named = re.match(r"^([A-Z][A-Z0-9_]*)='([^']*)'\s*(#.*)?$", line)
+    if named and named.group(2) != '':
+        stated[named.group(1).lower()] = named.group(2)
+
+# THE OWNER'S ACME BLOCK. ACME_SERVER and ACME_EMAIL alone answer letsencrypt_server and
+# letsencrypt_email; the LETSENCRYPT lines older configs carry are read by nothing, because GTS is the
+# one directory and a slave is regenerated from the master's map by the Manager.
+# ACME_CREDENTIALS_JSON, the External Account Binding Google Trust Services issued as one line of
+# JSON, gives acme_eab_key_id its keyId and acme_eab_mac_key its b64MacKey. A binding that cannot be read is refused by the key's name, and
+# never with its value: the MAC key is a credential.
+stated.pop('letsencrypt_server', None)
+stated.pop('letsencrypt_email', None)
+if 'acme_server' in stated:
+    stated['letsencrypt_server'] = stated['acme_server']
+if 'acme_email' in stated:
+    stated['letsencrypt_email'] = stated['acme_email']
+if 'acme_credentials_json' in stated:
+    try:
+        binding = json.loads(stated['acme_credentials_json'])
+    except ValueError:
+        binding = None
+    if not isinstance(binding, dict) or not all(
+            isinstance(binding.get(field), str) and binding[field] for field in ('keyId', 'b64MacKey')):
+        sys.exit('ACME_CREDENTIALS_JSON in the config is not one line of JSON carrying keyId and '
+                 'b64MacKey, the External Account Binding Google Trust Services issued; its value is not shown')
+    stated['acme_eab_key_id'] = binding['keyId']
+    stated['acme_eab_mac_key'] = binding['b64MacKey']
+
+# WHAT EACH ANSWER IS, not only what it is called. An answer declared as a list and
+# given a string is refused by kind — "alert_recipients" holds textList, and was
+# given String — and the config has one line per name, so the shape has to be read
+# off the program rather than guessed from the value.
+declared, kinds, inside, current = [], {}, False, None
+for line in open(declares_path, encoding='utf-8').read().splitlines():
+    if re.match(r'^answers:\s*(#.*)?$', line):
+        inside = True
+        continue
+    if not inside:
+        continue
+    if line.strip() and not line[0].isspace():
+        break
+    entry = re.match(r'^\s*-\s*name:\s*([a-z][a-z0-9_]*)\s*(#.*)?$', line)
+    if entry:
+        current = entry.group(1)
+        declared.append(current)
+        continue
+    of_kind = re.match(r'^\s+kind:\s*(\S+)', line)
+    if of_kind and current:
+        kinds[current] = of_kind.group(1)
+
+
+def shaped(name, value):
+    """The value as the kind the program declared it, out of one config line.
+
+    A LIST IS WRITTEN COMMA-SEPARATED, because a config file states one value per
+    line and a list has to fit on that line. Whitespace around an entry is the
+    operator's formatting, not part of the entry, and an empty entry is a trailing
+    comma rather than a member."""
+    if kinds.get(name, '').endswith('_list'):
+        return [part.strip() for part in value.split(',') if part.strip()]
+    return value
+
+
+answers = {name: shaped(name, stated[name]) for name in declared
+           if name in stated and name != BESIDE}
+envelope = {'answers': answers}
+if BESIDE in stated:
+    envelope[BESIDE] = stated[BESIDE]
+
+if into == '-':
+    json.dump(envelope, sys.stdout)
+    sys.exit(0)
+with open(into, 'w', encoding='utf-8') as written:
+    json.dump(envelope, written, indent=2)
+
+silent = [name for name in declared if name not in stated and name != BESIDE]
+print(f"{len(answers)} of the {len(declared)} it declares"
+      + (f", and {len(silent)} left to its own default: {' '.join(silent)}" if silent else ""))
+COMPOSE
+}
+
+platform_program_command() { # <engine> <checkout> <answers> <runs> <role> <stage> <fqdn> <mode> <program>
+  PROGRAM_COMMAND=("$1" "$9" --programs "$2/ansiwise/programs" --config "$2/ansiwise.yaml"
+    --answers "$3" --runs "$4" --role "$5" --stage "$6" --fqdn "$7" --mode "$8")
+}
+
+# A launcher may source only the shared functions; stdin execution remains the birth driver.
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  return 0
+fi
+
 set -uo pipefail
 
 # ---------------------------------------------------------------- what it says
@@ -780,90 +881,7 @@ compose_answers() {
 
   ANSWERS="$ANSWERS_DIR/$program.json"
   local counted
-  counted=$(python3 - "$CONFIG" "$declares" "$ANSWERS" <<'COMPOSE'
-import json, re, sys
-
-BESIDE = 'elevation_password'
-config_path, declares_path, into = sys.argv[1], sys.argv[2], sys.argv[3]
-
-stated = {}
-for line in open(config_path, encoding='utf-8'):
-    named = re.match(r"^([A-Z][A-Z0-9_]*)='([^']*)'\s*(#.*)?$", line)
-    if named and named.group(2) != '':
-        stated[named.group(1).lower()] = named.group(2)
-
-# THE OWNER'S ACME BLOCK. ACME_SERVER and ACME_EMAIL alone answer letsencrypt_server and
-# letsencrypt_email; the LETSENCRYPT lines older configs carry are read by nothing, because GTS is the
-# one directory and a slave is regenerated from the master's map by the Manager.
-# ACME_CREDENTIALS_JSON, the External Account Binding Google Trust Services issued as one line of
-# JSON, gives acme_eab_key_id its keyId and acme_eab_mac_key its b64MacKey. A binding that cannot be read is refused by the key's name, and
-# never with its value: the MAC key is a credential.
-stated.pop('letsencrypt_server', None)
-stated.pop('letsencrypt_email', None)
-if 'acme_server' in stated:
-    stated['letsencrypt_server'] = stated['acme_server']
-if 'acme_email' in stated:
-    stated['letsencrypt_email'] = stated['acme_email']
-if 'acme_credentials_json' in stated:
-    try:
-        binding = json.loads(stated['acme_credentials_json'])
-    except ValueError:
-        binding = None
-    if not isinstance(binding, dict) or not all(
-            isinstance(binding.get(field), str) and binding[field] for field in ('keyId', 'b64MacKey')):
-        sys.exit('ACME_CREDENTIALS_JSON in the config is not one line of JSON carrying keyId and '
-                 'b64MacKey, the External Account Binding Google Trust Services issued; its value is not shown')
-    stated['acme_eab_key_id'] = binding['keyId']
-    stated['acme_eab_mac_key'] = binding['b64MacKey']
-
-# WHAT EACH ANSWER IS, not only what it is called. An answer declared as a list and
-# given a string is refused by kind — "alert_recipients" holds textList, and was
-# given String — and the config has one line per name, so the shape has to be read
-# off the program rather than guessed from the value.
-declared, kinds, inside, current = [], {}, False, None
-for line in open(declares_path, encoding='utf-8').read().splitlines():
-    if re.match(r'^answers:\s*(#.*)?$', line):
-        inside = True
-        continue
-    if not inside:
-        continue
-    if line.strip() and not line[0].isspace():
-        break
-    entry = re.match(r'^\s*-\s*name:\s*([a-z][a-z0-9_]*)\s*(#.*)?$', line)
-    if entry:
-        current = entry.group(1)
-        declared.append(current)
-        continue
-    of_kind = re.match(r'^\s+kind:\s*(\S+)', line)
-    if of_kind and current:
-        kinds[current] = of_kind.group(1)
-
-
-def shaped(name, value):
-    """The value as the kind the program declared it, out of one config line.
-
-    A LIST IS WRITTEN COMMA-SEPARATED, because a config file states one value per
-    line and a list has to fit on that line. Whitespace around an entry is the
-    operator's formatting, not part of the entry, and an empty entry is a trailing
-    comma rather than a member."""
-    if kinds.get(name, '').endswith('_list'):
-        return [part.strip() for part in value.split(',') if part.strip()]
-    return value
-
-
-answers = {name: shaped(name, stated[name]) for name in declared
-           if name in stated and name != BESIDE}
-envelope = {'answers': answers}
-if BESIDE in stated:
-    envelope[BESIDE] = stated[BESIDE]
-
-with open(into, 'w', encoding='utf-8') as written:
-    json.dump(envelope, written, indent=2)
-
-silent = [name for name in declared if name not in stated and name != BESIDE]
-print(f"{len(answers)} of the {len(declared)} it declares"
-      + (f", and {len(silent)} left to its own default: {' '.join(silent)}" if silent else ""))
-COMPOSE
+  counted=$(project_program_input "$CONFIG" "$declares" "$ANSWERS"
   ) || { bad "could not write the answers for $program"; return 1; }
 
   chmod 600 "$ANSWERS" || { bad "could not close $ANSWERS to this account alone"; return 1; }
@@ -945,13 +963,8 @@ run_program() {
   #
   # The file is kept all the same: tee writes the one the failing-record reader and
   # the summary both read afterwards.
-  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$PROGRAMS_CHECKOUT" && sudo -S -p '' -u "$OPERATOR" "$ENGINE" "$program" \
-      --programs "$PROGRAMS_CHECKOUT/ansiwise/programs" \
-      --config "$PROGRAMS_CHECKOUT/ansiwise.yaml" \
-      --answers "$ANSWERS" \
-      --runs "$RUNS" \
-      --role "$ROLE" --stage "$STAGE" --fqdn "$FQDN" \
-      --mode "$mode" ) 2>&1 | tee "$log" | sed -u 's/^/       /'
+  platform_program_command "$ENGINE" "$PROGRAMS_CHECKOUT" "$ANSWERS" "$RUNS" "$ROLE" "$STAGE" "$FQDN" "$mode" "$program"
+  printf '%s\n' "$ELEVATION_PASSWORD" | ( cd "$PROGRAMS_CHECKOUT" && sudo -S -p '' -u "$OPERATOR" "${PROGRAM_COMMAND[@]}" ) 2>&1 | tee "$log" | sed -u 's/^/       /'
   # THE SECOND ELEMENT, not the last. The pipeline is printf, the run, tee, sed —
   # so $? is sed's, which succeeds whatever the run did.
   local status=${PIPESTATUS[1]}
