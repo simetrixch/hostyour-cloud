@@ -288,17 +288,29 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
 });
 
 // A release moves a pin by committing the new tag into clusters/inventories/<app>/values-<stage>.yaml of the default
-// branch, after the release itself ran the check on the commit it pins. That push is not run again: the filter reads the
-// files each commit of the push changes, which the webhook lists as paths, and never its subject. It skips the push only
-// when every commit of it modifies pin files and nothing else, so one other file in the push, in any of its commits,
-// starts the run. Whatever the webhook does not state well enough to tell is run: a commit with no listed path, a push
-// without a commits list, and a push whose list may be cut short.
+// branch, after the release itself ran the check on the commit it pins, and it commits as the identity its bump sets
+// (ciPush.pinIdentity, held equal to the bump below). That push is not run again: the filter reads who authored and
+// committed each commit and the files it changes, which the webhook lists as paths, and never its subject. It skips the
+// push only when every commit of it comes from that identity and modifies pin files and nothing else, so a person's commit
+// to a pin file, or one other file in any commit, starts the run. Whatever the webhook does not state well enough to tell
+// is run: a commit with no listed path or no author, a push without a commits list, and a push whose list may be cut short.
+test('the identity the ci trigger takes for a release pin is the one the release bump commits with', () => {
+  const identity = JSON.parse(execFileSync('yq', ['-o=json', '.ciPush.pinIdentity', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}));
+  const release = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
+  const bump = release.spec.tasks.flatMap((t) => t.taskSpec?.steps ?? []).map((step) => step.script ?? '').join('\n');
+  const sets = (script) => [/git config --global user\.name\s+"([^"]+)"/.exec(script)?.[1], /git config --global user\.email\s+"([^"]+)"/.exec(script)?.[1]];
+  assert.deepEqual(sets(bump), [identity.name, identity.email], 'the bump commits as the identity the trigger names');
+  assert.notDeepEqual(sets(bump.replace('"image-builder@platform"', '"someone@example.com"')), [identity.name, identity.email], 'PLANTED DEFECT: a bump that commits as another identity is caught');
+});
+
 test('a push of the default branch that only moves release pins starts no ci run, and any other change in the push does', () => {
   const builder = imageBuilder();
   const SHA = 'a'.repeat(40), BEFORE = 'b'.repeat(40);
   const repository = {name: 'hostyour-cloud', clone_url: 'https://github.com/simetrixch/hostyour-cloud.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
-  const commit = (modified, {added = [], removed = [], message = 'release: manager 0.8.497-stable-20261015010114 — pin 0.8.497-stable-20261015010114-72bca23 (prod)'} = {}) =>
-    ({id: SHA, message, added, removed, modified});
+  const bump = JSON.parse(execFileSync('yq', ['-o=json', '.ciPush.pinIdentity', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}));
+  const person = {name: 'Mehmet', email: 'mehmet@example.com'};
+  const commit = (modified, {added = [], removed = [], message = 'release: manager 0.8.497-stable-20261015010114 — pin 0.8.497-stable-20261015010114-72bca23 (prod)', author = bump, committer = bump} = {}) =>
+    ({id: SHA, message, added, removed, modified, author, committer});
   const push = (commits, ref = 'refs/heads/master') => ({ref, before: BEFORE, after: SHA, deleted: false, repository, ...(commits ? {commits} : {})});
   const MANAGER = 'clusters/inventories/manager/values-prod.yaml', GATE_RUNNER = 'clusters/inventories/gate-runner/values-test.yaml';
   const pins = commit([MANAGER, GATE_RUNNER]);
@@ -312,6 +324,13 @@ test('a push of the default branch that only moves release pins starts no ci run
     'PLANTED INNOCENT: two pin commits': [push([pins, commit([MANAGER])]), false],
     'PLANTED INNOCENT: 19 pin commits': [push(Array.from({length: 19}, () => pins)), false],
     'a pin file under a subject that does not say pin': [push([commit([MANAGER], {message: 'Fix the manager pin by hand'})]), false],
+    "a person's commit to a pin file, under a pin subject": [push([commit([MANAGER], {author: person, committer: person})]), true],
+    "a person's commit to a pin file, as the bump's name with another address": [push([commit([MANAGER], {author: {...bump, email: person.email}, committer: {...bump, email: person.email}})]), true],
+    "a person's commit to a pin file, as the bump's address with another name": [push([commit([MANAGER], {author: {...bump, name: person.name}, committer: {...bump, name: person.name}})]), true],
+    "a commit that the bump authored and a person committed": [push([commit([MANAGER], {committer: person})]), true],
+    "a commit that a person authored and the bump committed": [push([commit([MANAGER], {author: person})]), true],
+    "a person's commit among pin commits of the bump": [push([pins, commit([MANAGER], {author: person, committer: person})]), true],
+    'a commit without its author': [push([{id: SHA, message: 'x', added: [], removed: [], modified: [MANAGER], committer: bump}]), true],
     'a pin file and one other file in one commit': [push([commit([MANAGER, 'clusters/platform/versions.yaml'])]), true],
     'a pin commit and a commit of another file': [push([pins, commit(['README.md'])]), true],
     'a commit of another file': [push([commit(['scripts/check.sh'])]), true],
@@ -338,6 +357,10 @@ test('a push of the default branch that only moves release pins starts no ci run
     'a pin clause that takes an added file': [(f) => f.replace('size(c.added) == 0 && size(c.removed) == 0 && ', ''), push([commit([MANAGER], {added: ['clusters/inventories/manager/values-dev.yaml']})]), true],
     'a pin clause that is not anchored at the start': [(f) => f.replace("path.matches(r'^clusters/", "path.matches(r'clusters/"), push([commit(['tools/clusters/inventories/manager/values-prod.yaml'])]), true],
     'a pin clause that is not anchored at the end': [(f) => f.replace('[.]yaml$', '[.]yaml'), push([commit(['clusters/inventories/manager/values-prod.yaml.bak'])]), true],
+    "a pin clause that does not read the author's name": [(f) => f.replace(' && c.author.name == ' + `'${bump.name}'`, ''), push([commit([MANAGER], {author: {...bump, name: person.name}})]), true],
+    "a pin clause that does not read the author's address": [(f) => f.replace(' && c.author.email == ' + `'${bump.email}'`, ''), push([commit([MANAGER], {author: {...bump, email: person.email}})]), true],
+    "a pin clause that does not read the committer's name": [(f) => f.replace(' && c.committer.name == ' + `'${bump.name}'`, ''), push([commit([MANAGER], {committer: {...bump, name: person.name}})]), true],
+    "a pin clause that does not read the committer's address": [(f) => f.replace(' && c.committer.email == ' + `'${bump.email}'`, ''), push([commit([MANAGER], {committer: {...bump, email: person.email}})]), true],
     'a pin clause that takes a commit with no path': [(f) => f.replace(' && size(c.modified) > 0', ''), push([commit([])]), true],
     'a pin clause that needs one pin commit and not every commit': [(f) => f.replace('body.commits.all(c,', 'body.commits.exists(c,'), push([pins, commit(['README.md'])]), true],
     'a pin clause with no limit on the commits': [(f) => f.replace(' && size(body.commits) < 20', ''), push(Array.from({length: 20}, () => pins)), true],
