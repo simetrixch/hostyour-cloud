@@ -18,12 +18,13 @@ const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'u
 const root = mkdtempSync(join(tmpdir(), 'forgejo-ssh-'));
 test.after(() => rmSync(root, {recursive: true, force: true}));
 
-/** A clone whose origin carries the branch `fqdn`, announcing `port` on 127.0.0.1 (none when port is null). */
+/** A repository whose origin carries the branch `fqdn`, announcing `port` on 127.0.0.1 (none when port is null). */
 function installation(name, fqdn, port) {
   const origin = join(root, `${name}.git`), work = join(root, name);
   git(root, 'init', '--bare', '-q', '-b', 'master', origin);
-  git(root, 'clone', '-q', origin, work);
-  git(work, 'checkout', '-q', '-b', fqdn);
+  // Pushed to, never cloned from: a clone of the still empty origin warns that it is empty.
+  git(root, 'init', '-q', '-b', fqdn, work);
+  git(work, 'remote', 'add', 'origin', origin);
   mkdirSync(join(work, 'installation/values'), {recursive: true});
   writeFileSync(join(work, 'installation/values/forgejo.yaml'),
     port === null ? 'forgejo: {}\n' : `forgejo:\n  gitea:\n    config:\n      server:\n        SSH_DOMAIN: 127.0.0.1\n        SSH_PORT: ${port}\n`);
@@ -76,4 +77,8 @@ test('a branch that runs no Forgejo is 66, which status and install-machine read
 test('a branch that announces no port, and a branch that is none, cannot be asked', async () => {
   assert.equal((await check(installation('bare', 'bare.example.invalid', null), 'bare.example.invalid')).code, 67);
   assert.equal((await check(installation('none', 'none.example.invalid', 1), 'missing.example.invalid')).code, 69);
+});
+
+test('PLANTED DEFECT: a Git command of a fixture that fails throws, so no case stands on a broken fixture', () => {
+  assert.throws(() => git(root, 'clone', '-q', join(root, 'absent.git'), join(root, 'absent')), {status: 128});
 });
