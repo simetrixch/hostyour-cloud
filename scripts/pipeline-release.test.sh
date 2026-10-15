@@ -620,4 +620,4 @@ grep -qF 'has no' <<< "$present_out" && fail "PLANTED INNOCENT: a present stage 
 grep -qF '[ -f "${vf}" ] && bump_file "${vf}"' "$template" && fail 'a stage values file is still skipped without a line in the template'
 ok 'a stage values file the release tree lacks is named with the tag that was read; the silent arm is seen; a present file is bumped quietly'
 
-pipeline-release.test: OK
+echo "pipeline-release.test: OK"
