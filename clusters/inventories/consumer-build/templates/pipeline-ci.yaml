@@ -120,6 +120,7 @@ the check with a warning, so one blip of GitHub skips no ci run.
 */ -}}
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
+{{- $checkMemory := get .Values.ciCheckMemory.units $unit | default .Values.ciCheckMemory.default -}}
 {{- $repoURL := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
 {{- /* The image the shared git-clone Task runs (image-builder/templates/tasks/git-clone.yaml). */ -}}
 {{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
@@ -512,6 +513,10 @@ spec:
               # build plane (a missing sibling checkout) reads it to say so.
               - name: CI
                 value: "true"
+{{- if $checkMemory.maxWorkers }}
+              - name: VITEST_MAX_WORKERS
+                value: {{ $checkMemory.maxWorkers | quote }}
+{{- end }}
               # The bare repositories the fetch task filled from ci-sources.json.
               - name: CI_SOURCES_DIR
                 value: /workspace/sources
@@ -549,23 +554,17 @@ spec:
                 mountPath: /pnpm-store
               - name: shm
                 mountPath: /dev/shm
-            # Sized from the whole check.sh of the largest repository, every test
-            # suite included and the install cold, under a CPU quota of 4 cores
-            # and a memory cap of 4 GiB on a 32-core development machine: 8.75
-            # minutes, 1.4 cores on average, 1.7 GiB of anonymous memory. The
-            # repository whose tests print PDFs peaked at 2.3 GiB. The memory
-            # limit is 3 GiB, 30 % above that peak: the limits of all ci pods
-            # count in the sum that ciCapacity.limitsMemoryBudget bounds, with the
-            # two releases the queue runs at once (values-common.yaml). The timeout of the task is
-            # twice the measured run, the install and the downloads included.
+            # The memory request and limit come from ciCheckMemory in values-common.yaml.
+            # The limits of the largest six distinct ci units count against
+            # ciCapacity.limitsMemoryBudget alongside two releases.
             # The CPU limit is 12 of the cores of the build node, and the request
             # is the largest whole number of cores for which the requests of all
             # ci pods, of the releases the queue runs at once and of the pods that
             # stand on the node still fit its cores (ciCapacity in
             # values-common.yaml, held by scripts/build-contract.test.mjs).
             computeResources:
-              requests: { cpu: "3", memory: 2Gi }
-              limits: { cpu: "12", memory: 3Gi }
+              requests: { cpu: "3", memory: {{ required "consumer-build: ciCheckMemory.requests is required" $checkMemory.requests | quote }} }
+              limits: { cpu: "12", memory: {{ required "consumer-build: ciCheckMemory.limits is required" $checkMemory.limits | quote }} }
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
