@@ -207,8 +207,9 @@ test('ci runs are not the queue\'s to delete, and a namespace\'s ci runs do not 
 });
 
 // A publish run (clusters/inventories/consumer-build pipeline-publish.yaml) packs and pushes a release's npm
-// packages. It waits in the same queue under a key of its own, so it never builds beside a release: the memory
-// budget of the build node holds one release or one publish run at a time (ciCapacity in consumer-build).
+// packages. It waits in the same queue under a key of its own and takes a slot like a release: up to two releases or
+// publish runs run at once, of different units, never two of one unit. The memory budget (ciCapacity in consumer-build)
+// bounds the sum of the limits of two such runs, not the free memory of the node.
 const publish = (ns, tag, options = {}) => run(ns, tag, {...options, pipeline: ns.replace(/-build$/, '-publish')});
 test('a publish run waits behind a running release of its own unit, its own release included, and runs beside one of another unit', () => {
   const release = run('shop-build', 'a'), own = publish('shop-build', 'a', {pending: true});
