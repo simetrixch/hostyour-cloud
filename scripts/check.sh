@@ -1364,7 +1364,7 @@ echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the c
 bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
 echo 'check: NOT RUN locally — scripts/pipeline-publish.test.sh; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in the ci of the master via scripts/test.sh.'
-for module in scripts/release-queue.test.mjs scripts/ci-run-keeper.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/tenant-limits.test.mjs scripts/unit-networkpolicy.test.mjs scripts/loki-retention.test.mjs; do
+for module in scripts/release-queue.test.mjs scripts/ci-run-keeper.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/tenant-limits.test.mjs scripts/unit-networkpolicy.test.mjs scripts/loki-retention.test.mjs scripts/ingress-access-log-alert.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
   echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
 done

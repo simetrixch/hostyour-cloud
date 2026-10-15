@@ -95,6 +95,8 @@ echo 'test: unit network policy — a unit admits its own pods, Traefik and the 
 node --test scripts/unit-networkpolicy.test.mjs || fail 'scripts/unit-networkpolicy.test.mjs'
 echo 'test: Loki retention — logs are kept at most 14 days on every stage.'
 node --test scripts/loki-retention.test.mjs || fail 'scripts/loki-retention.test.mjs'
+echo 'test: ingress access log — Loki 3.7.4 alerts on an ingress that wrote access lines in the last day and none in the last hour.'
+node --test scripts/ingress-access-log-alert.test.mjs || fail 'scripts/ingress-access-log-alert.test.mjs'
 node --test scripts/inventory-project-fit.test.mjs || fail 'scripts/inventory-project-fit.test.mjs'
 echo 'test: e2e runner — the password of a demo target stays bound to its host, and a run names a path on it and a case, nothing else.'
 helm dependency build clusters/inventories/e2e-runner
