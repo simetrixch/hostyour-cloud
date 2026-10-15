@@ -116,6 +116,26 @@ releaseQueue:
 # stages is the most stages a channel reaches (global.channelStages in clusters/platform/values-common.yaml, 3).
 # For two releases of the unit above that is 2 x (3 x 14) + 6 x 3 + 121 = 223 of 250. standingPods is DECLARED,
 # not derived: the pods of the node that are not in a build namespace and not finished, 121 on 2026-10-14.
+#
+# THE CORES OF THE BUILD NODE. The scheduler admits a pod by its CPU requests, and a pod whose requests do not
+# fit what is left of the node waits Pending, so a ci run would wait for a free core. A CPU limit reserves
+# nothing: the kernel only slows the pods that ask for more than their share, in proportion to their requests.
+# So the limits may add up to more than the node has (the check step alone may take 12 of its 32 cores, and
+# six runs at once may ask for 72), and only a single limit may not exceed the node. What must fit is the sum
+# of requests, and scripts/build-contract.test.mjs fails when it does not:
+#
+#   maxRunning x the largest CPU request of a ci pod (the sum of its steps)
+#   + maxRunning x the CPU request of the report pod
+#   + releaseSlots x max(releaseBuildPods x the CPU request of a buildah pod (the sum of its steps),
+#                        the largest CPU request of a pod of the publish pipeline)
+#   + standingCpuRequests
+#   <= nodeCpu
+#
+# The check step requests the largest whole number of cores for which that still holds: the test fails when
+# the request is above it and when one more core would fit. nodeCpu is the allocatable CPU of master1 (32 on
+# 2026-10-15). standingCpuRequests is DECLARED, not derived: the CPU requests of the pods of the node that are
+# not in a build namespace and not finished, 4.53 cores on 2026-10-15. 71 of the 122 pods that ran then had no
+# request at all, and get the smallest share while the ci pods take the node.
 ciCapacity:
   priorityClassName: image-builder-ci
   podsPerUnit: 2
@@ -123,6 +143,8 @@ ciCapacity:
   limitsMemoryBudget: 56Gi
   nodePods: 250
   standingPods: 121
+  nodeCpu: "32"
+  standingCpuRequests: 4530m
 
 # WHO STARTS, CANCELS AND DELETES A CI RUN. The ci run keeper of clusters/inventories/image-builder starts
 # the waiting ci runs up to ciRunKeeper.maxRunning, cancels a ci run that a newer push to the same branch

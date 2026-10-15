@@ -386,7 +386,8 @@ spec:
                 mountPath: /pnpm-store
               - name: scratch
                 mountPath: /scratch
-            # The install and build of the ci check, without its test suites: its limits.
+            # The install and build of the ci check, without its test suites. The
+            # cpu and memory budgets of ciCapacity (values-common.yaml) count this pod.
             computeResources:
               requests: { cpu: "1", memory: 2Gi }
               limits: { cpu: "4", memory: 3Gi }
