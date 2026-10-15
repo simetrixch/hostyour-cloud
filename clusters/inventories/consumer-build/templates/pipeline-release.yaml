@@ -1066,6 +1066,19 @@ spec:
               own_checkout() {
                 git clone -q --depth 1 --branch "${RELEASE_TAG}" "${REPO_URL}" "$1"                   || { echo "bump: FAIL — cannot clone ${REPO_URL} at its release tag ${RELEASE_TAG}; deploy/${STAGE} stands where it was" >&2; exit 1; }
               }
+              # own_stage_values <dir> <chartPath> — bump this unit's own stage values
+              # file in the release tree cloned into <dir>. A tag whose tree lacks the
+              # file has no own pin surface, and the step goes on without one: the
+              # line names the file and the tag it was looked for in, so that a later
+              # "no pin found" can be traced to the tree that was read.
+              own_stage_values() {
+                local vf="$1/$2/values-${STAGE}.yaml"
+                if [ ! -f "${vf}" ]; then
+                  echo "bump: ${UNIT} has no $2/values-${STAGE}.yaml in the tree of its release tag ${RELEASE_TAG} — no own pin surface to bump"
+                  return 0
+                fi
+                bump_file "${vf}"
+              }
               # place_delivery_branch <dir> — commit whatever pins were written
               # into the checkout, then force deploy/<stage> onto the result.
               place_delivery_branch() {
@@ -1371,8 +1384,7 @@ spec:
                   dest="${WORK}/own"
                   own_checkout "${dest}"
                   BUMPED=0
-                  vf="${dest}/${rchart}/values-${STAGE}.yaml"
-                  [ -f "${vf}" ] && bump_file "${vf}"
+                  own_stage_values "${dest}" "${rchart}"
                   place_delivery_branch "${dest}"
                   [ "${BUMPED}" = "1" ] && echo "consumer ${rname} ${rcluster}" >> "${HITS_FILE}"
                   continue

@@ -35,7 +35,7 @@ extract() { # function name -> its text out of the template
     on && /^ *\}$/ && match($0, /[^ ]/) == indent { exit }
   ' "$template"
 }
-for fn in concurrent_push_refusal commit_push bump_file pin_bundles carrier_credential; do
+for fn in concurrent_push_refusal commit_push bump_file pin_bundles carrier_credential own_stage_values; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
@@ -585,5 +585,43 @@ carrier_body='{"data":{"data":{"pat":"pat-of-shop","packages":"","issues":"","st
 grep -qF "secret/build/shop/repo-pat carries no property 'push'" "$work/carrier.err" || fail "the refusal does not name push: $(cat "$work/carrier.err")"
 [ -s "$CREDENTIALS_FILE" ] && fail 'an entry without push appended a record'
 ok 'a carrier entry without push is refused by name, and appends nothing'
+
+# ── own_stage_values: a stage file the release tree lacks is named, with the tag that was read ──
+# The tree of the tag holds the dev and test files only, as hostyour-demo-consumer's tag did. The
+# bump goes on without an own pin surface and, where no other class pins the image, fails with "no
+# pin found": the line before that failure is what shows which tree was read, and which file lacked.
+own="$work/own-tree"; mkdir -p "$own/chart"
+printf 'builds: [{name: backend, image: example-backend, tag: product-default}]\n' > "$own/chart/values-dev.yaml"
+cp "$own/chart/values-dev.yaml" "$own/chart/values-test.yaml"
+UNIT=demo; RELEASE_TAG=0.8.374-stable-20261007003602; IMAGE_TAG=0.8.374-stable-20261007003602-fixture
+IMAGES=example-backend; BUMPED=0; declare -A HIT_COUNT; HIT_COUNT[example-backend]=0
+# Whether an output names the file that was looked for and the tag of the tree it was looked for in.
+names_missing_file() { grep -qF "$1" <<< "$3" && grep -qF "$2" <<< "$3"; }
+STAGE=prod
+# Called in this shell with its output in a file: a substitution would hide the BUMPED it sets.
+own_stage_values "$own" chart > "$work/missing.out" 2>&1 || fail 'a tree without the stage file ended the step before the search went on'
+missing_out="$(cat "$work/missing.out")"
+names_missing_file chart/values-prod.yaml "$RELEASE_TAG" "$missing_out" \
+  || fail "the line for a missing stage values file does not name the file and the tag: $missing_out"
+[ "$BUMPED" = 0 ] || fail 'a missing stage values file counted as a bumped pin'
+# PLANTED DEFECT: the arm as it was, the file skipped without a word.
+extract own_stage_values | grep -v 'echo "bump:' | sed 's/^\( *\)own_stage_values()/\1silent_own_stage_values()/' > "$work/silent.sh"
+grep -q 'silent_own_stage_values()' "$work/silent.sh" && ! grep -q 'echo' "$work/silent.sh" || fail 'the planted silent arm was not made from the template function'
+# shellcheck source=/dev/null
+. "$work/silent.sh"
+silent_out="$(silent_own_stage_values "$own" chart 2>&1)" || fail 'the planted silent arm refused a missing file'
+names_missing_file chart/values-prod.yaml "$RELEASE_TAG" "$silent_out" \
+  && fail 'PLANTED DEFECT: a missing values file skipped without a line is not seen by the check'
+# PLANTED INNOCENT: a tree that holds the stage file bumps it and says nothing about a missing one.
+STAGE=dev; BUMPED=0; HIT_COUNT[example-backend]=0
+own_stage_values "$own" chart > "$work/present.out" 2>&1 || fail 'a tree with the stage file was refused'
+present_out="$(cat "$work/present.out")"
+[ "$BUMPED" = 1 ] || fail 'PLANTED INNOCENT: a present stage file was not counted as bumped'
+grep -qF 'has no' <<< "$present_out" && fail "PLANTED INNOCENT: a present stage file is reported as missing: $present_out"
+[ "$(yq '.builds[0].tag' "$own/chart/values-dev.yaml")" = "$IMAGE_TAG" ] || fail 'PLANTED INNOCENT: a present stage file was not bumped'
+# The own-registration arm calls the function, and no arm tests the file itself before bumping it.
+[ "$(grep -cF 'own_stage_values "${dest}" "${rchart}"' "$template")" = 1 ] || fail 'the own-registration arm does not call own_stage_values once'
+grep -qF '[ -f "${vf}" ] && bump_file "${vf}"' "$template" && fail 'a stage values file is still skipped without a line in the template'
+ok 'a stage values file the release tree lacks is named with the tag that was read; the silent arm is seen; a present file is bumped quietly'
 
 echo "pipeline-release.test: OK"

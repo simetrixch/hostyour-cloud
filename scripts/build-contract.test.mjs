@@ -1697,3 +1697,19 @@ test('no step of the ci pipeline or of the clone traces its commands', () => {
     assert.ok(traces(plantedPipeline) && traces(plantedClone), `PLANTED DEFECT: ${trace} would print the clone credential into a log the failure mail quotes`);
   }
 });
+
+test('no install of the gate worker sets nodedir as an npm config, which npm 12 reports as an unknown config on every install', () => {
+  // npm_config_nodedir and --nodedir are read by npm itself, and npm 12 warns "unknown nodedir" twice per
+  // install; node-gyp takes the same headers from npm_package_config_node_gyp_nodedir, which npm does not read.
+  const setsNodedir = (docs) => /npm_config_nodedir|--nodedir/i.test(JSON.stringify(docs).replaceAll('\\n', '\n'));
+  const docs = renderUnit('shop');
+  assert.ok(docs.some((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci'), 'the pipelines under check are rendered');
+  assert.ok(!setsNodedir(docs), 'PLANTED INNOCENT: the pipelines as rendered select no headers through an npm config');
+  const planted = (change) => { const copy = structuredClone(docs); change(copy.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0]); return copy; };
+  assert.ok(!setsNodedir(planted((step) => { step.env.push({name: 'npm_package_config_node_gyp_nodedir', value: '/usr/local'}); })),
+    'PLANTED INNOCENT: node-gyp\'s own key selects the same headers and npm does not report it');
+  assert.ok(setsNodedir(planted((step) => { step.env.push({name: 'npm_config_nodedir', value: '/usr/local'}); })), 'PLANTED DEFECT: npm_config_nodedir set as an env of the check step');
+  assert.ok(setsNodedir(planted((step) => { step.env.push({name: 'NPM_CONFIG_NODEDIR', value: '/usr/local'}); })), 'PLANTED DEFECT: the upper-case spelling npm reads as well');
+  assert.ok(setsNodedir(planted((step) => { step.script += '\nexport npm_config_nodedir=/usr/local\n'; })), 'PLANTED DEFECT: npm_config_nodedir exported by the script');
+  assert.ok(setsNodedir(planted((step) => { step.script += '\nnpm ci --nodedir=/usr/local\n'; })), 'PLANTED DEFECT: the nodedir flag of the install command');
+});
