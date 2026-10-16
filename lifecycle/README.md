@@ -259,8 +259,17 @@ bash lifecycle/redeploy-platform-services.sh lifecycle/config.master.env
 
 It runs `deploy-platform-services` in `test`, `dry`, then `run` mode and stops at the first failure.
 The installed program provisions the restricted `forgejo-build` identity and writes the complete
-credential entry. Later Manager redeploys preserve that entry without reading the local config.
+credential entry `<stage>/app/forgejo-build`. Later Manager redeploys hand that entry back to the
+program without reading the local config.
 `regenerate-install-branch.sh` regenerates the branch; it does not import this Plane token.
+
+**This run is a step of every installation whose master runs the books, the build plane and Plane**:
+once after the installation, again after a loss of Vault, and again for every rotation of the Plane
+key. A Manager redeploy carries no Plane key. On a master whose Vault holds no
+`<stage>/app/forgejo-build`, it stops at the forge credential row (`vault_kv_entry_from_command` in
+`deploy-platform-services`) with `plane-api-token is absent`, and only this run gets past that row.
+The forge Secrets form on the next Manager redeploy of the master: its last step,
+`refresh-external-secrets`, has ESO read the new entry.
 
 ## What it refuses, and why
 
