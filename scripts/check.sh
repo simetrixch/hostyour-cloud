@@ -1069,9 +1069,9 @@ fault="$(zot_revision_fault)"
 echo "check: the zot pod rolls with the config.json of every stage; the check refuses a changed config under an old revision and a revision no config names, and takes a change outside config.json."
 
 # ── The images the owner's mirror holds ─────────────────────────────────────────────────────────
-# scripts/list-mirror-images.sh lists every image the tree names on ghcr.io or under the mirror, for the
-# `mirror` task of the platform's publish run. An entry is one digest under its tag, so a ref without its
-# digest has none and fails the list, and the publish run with it.
+# scripts/list-mirror-images.sh lists every image the tree names on ghcr.io or under a mirror of it, for
+# the `mirror` task of the platform's publish run and for the release that waits on it. An entry is one
+# digest under its tag, so a ref without its digest has none and fails the list, and the release with it.
 mirror_refs="$(bash scripts/list-mirror-images.sh --rendered)" || fail "scripts/list-mirror-images.sh cannot render the tree"
 mirror_entries="$(printf '%s\n' "$mirror_refs" | bash scripts/list-mirror-images.sh --entries 2>&1)" \
   || fail "an image the mirror must hold has no entry: $mirror_entries"
@@ -1082,6 +1082,33 @@ printf 'ghcr.io/planted/image:1.0.0 planted\n' | bash scripts/list-mirror-images
 printf '%s/planted/image:1.0.0 planted\n' "$mirror_prefix" | bash scripts/list-mirror-images.sh --entries >/dev/null 2>&1 \
   && fail "scripts/list-mirror-images.sh lists a ref under the mirror that names no digest"
 echo "check: the mirror holds $(printf '%s\n' "$mirror_entries" | wc -l | tr -d ' ') images, each at its digest; the list refuses a planted ref on ghcr.io and one under the mirror without it."
+
+# A REF STAYS ON ghcr.io ONLY WHILE ITS WORKLOAD CAN START BEFORE THE MIRROR SERVES: the registry's own zot;
+# External Secrets, which writes zot's htpasswd Secret before zot starts; the Tekton images, which sync
+# before zot; and headscale, Authentik, Dex and Headlamp, which a cold master starts before Argo CD or zot.
+# Every other image of the list is pulled from the mirror, so it does not wait on GitHub.
+mirror_stays='^ghcr\.io/(project-zot/zot-linux-amd64|tektoncd/[^:]+|external-secrets/external-secrets|juanfont/headscale|goauthentik/server|dexidp/dex|headlamp-k8s/headlamp):'
+ghcr_pull_fault() { # "<ref> [<where>]" lines on standard input -> the first ref pulled from ghcr.io that the mirror serves, or nothing
+  grep -E '^ghcr\.io/' | grep -vE "$mirror_stays" | head -n 1
+}
+fault="$(printf '%s\n' "$mirror_refs" | ghcr_pull_fault)"
+[ -z "$fault" ] || fail "$fault is pulled from ghcr.io, and the mirror serves it under $mirror_prefix"
+observability_refs() { # extra helm arguments -> the refs of the observability chart at stage dev
+  helm template observability clusters/inventories/observability --namespace observability --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+    -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+    -f clusters/inventories/observability/values-common.yaml -f clusters/inventories/observability/values-dev.yaml \
+    -f "$installation_values" -f "$cluster_map" -f "$registration" "$@" > "$work/observability-render" 2>&1 \
+    || { cat "$work/observability-render"; fail "clusters/inventories/observability does not render at stage dev"; }
+  bash scripts/list-mirror-images.sh --refs < "$work/observability-render"
+}
+# The planted defects: the admission Jobs' override dropped back to the chart's registry, and the access-log
+# exporter under a mirror name that is not the trunk's.
+[ -n "$(observability_refs --set kube-prometheus-stack.prometheusOperator.admissionWebhooks.patch.image.registry=ghcr.io | ghcr_pull_fault)" ] \
+  || fail "ghcr_pull_fault takes the admission Jobs' image pulled from ghcr.io"
+observability_refs --set loki.gateway.metrics.image.registry=zot.old.example.invalid/simetrixch/ghcr.io \
+  | bash scripts/list-mirror-images.sh --entries >/dev/null 2>&1 \
+  && fail "scripts/list-mirror-images.sh lists the access-log exporter under a mirror name that is not $mirror_prefix"
+echo "check: $(printf '%s\n' "$mirror_refs" | awk '{print $1}' | grep -E '^ghcr\.io/' | sort -u | wc -l | tr -d ' ') rendered refs stay on ghcr.io, each of a workload that starts before the mirror serves; the check refuses a planted pull from ghcr.io and a planted stale mirror name."
 
 # WHERE A CHART HAS NO FIELD FOR A DIGEST, the digest rides on the tag of an override, and the override then
 # names the tag as well. Each such tag is held to the one its chart names, so a bump of the chart cannot

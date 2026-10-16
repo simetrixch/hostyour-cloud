@@ -498,11 +498,7 @@ spec:
             emptyDir: {}
         steps:
           - name: check
-            # ghcr.io/puppeteer/puppeteer: Node 24, git, bash, curl, and the
-            # Chrome for Testing its PDF tests need, on the node:24-bookworm
-            # base. The tag and the digest were read from the registry
-            # (manifest of 25.13.0, linux/amd64).
-            image: ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
+            image: {{ include "consumer-build.nodeImage" $ }}
             workingDir: /workspace/source
             # Not root (consumer-build.checkUser); the fetch task hands the clone
             # to this user.
