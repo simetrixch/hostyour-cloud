@@ -68,6 +68,35 @@ scope is a fact of the registration and never a value of this chart.
 {{ include "common.buildRegistry" . }}/ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
 {{- end -}}
 
+{{/* "true" for the platform tree on the owner's master, whose registry/owner is global.buildRegistry, and
+     nothing for any other unit or cluster. Its publish run fills the mirror the platform's images are
+     pulled from and writes the recovery folder of the owner's master; the recovery credential and the
+     pinhole to the storage box render for it alone. */}}
+{{- define "consumer-build.isPlatformMirror" -}}
+{{- if and .Values.unit (eq (.Values.unit.repoURL | default "") "https://github.com/simetrixch/hostyour-cloud.git") (eq (printf "%s/%s" (include "common.registryHost" .) (include "consumer-build.repoOwner" . | lower)) (include "common.buildRegistry" .)) -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/* The recovery sub-account's login, from the Secret recovery-box (externalsecret-recovery-box.yaml), as
+     the environment of a step of `recovery-export`, and the rclone remote `box:` made of it. The password
+     reaches `rclone obscure` on standard input, never as an argument. */}}
+{{- define "consumer-build.recoveryBoxEnv" -}}
+- name: STORAGE_BOX_HOST
+  valueFrom: { secretKeyRef: { name: recovery-box, key: host } }
+- name: STORAGE_BOX_USER
+  valueFrom: { secretKeyRef: { name: recovery-box, key: user } }
+- name: STORAGE_BOX_PASSWORD
+  valueFrom: { secretKeyRef: { name: recovery-box, key: password } }
+{{- end -}}
+{{- define "consumer-build.recoveryBoxLogin" -}}
+export RCLONE_CONFIG_BOX_TYPE=sftp
+export RCLONE_CONFIG_BOX_HOST="${STORAGE_BOX_HOST}"
+export RCLONE_CONFIG_BOX_USER="${STORAGE_BOX_USER}"
+RCLONE_CONFIG_BOX_PASS="$(printf '%s' "${STORAGE_BOX_PASSWORD}" | rclone obscure -)"
+export RCLONE_CONFIG_BOX_PASS
+{{- end -}}
+
 {{- define "consumer-build.checkUser" -}}
 10042
 {{- end -}}

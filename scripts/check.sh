@@ -582,13 +582,14 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
   # this repository, so this leaves the working copy clean. UPDATE AND NOT BUILD: once a Chart.lock
   # stands, `helm dependency build` resolves a dependency named by URL only through a
   # `helm repo add`, so every run after the first failed on a machine that never added one; update
-  # resolves it the same way on every run.
-  if grep -q '^dependencies:' "$chart/Chart.yaml"; then
+  # resolves it the same way on every run. A CHART WHOSE DEPENDENCIES NAME NO REPOSITORY is vendored
+  # (clusters/inventories/external-secrets): helm refuses to update it, and its render needs nothing fetched.
+  if grep -qE '^[[:space:]]+repository:' "$chart/Chart.yaml"; then
     out="$(helm dependency update "$chart" 2>&1)" \
       || { echo "$out"; fail "the dependencies of $chart could not be built"; }
   fi
 
-  if [ -f "$work/baseline/$chart/Chart.yaml" ] && grep -q '^dependencies:' "$work/baseline/$chart/Chart.yaml"; then
+  if [ -f "$work/baseline/$chart/Chart.yaml" ] && grep -qE '^[[:space:]]+repository:' "$work/baseline/$chart/Chart.yaml"; then
     out="$(cd "$work/baseline" && helm dependency update "$chart" 2>&1)" \
       || { echo "$out"; fail "cannot build baseline dependencies of $chart"; }
   fi
@@ -1083,6 +1084,31 @@ printf '%s/planted/image:1.0.0 planted\n' "$mirror_prefix" | bash scripts/list-m
   && fail "scripts/list-mirror-images.sh lists a ref under the mirror that names no digest"
 echo "check: the mirror holds $(printf '%s\n' "$mirror_entries" | wc -l | tr -d ' ') images, each at its digest; the list refuses a planted ref on ghcr.io and one under the mirror without it."
 
+# ── The images the recovery folder of the owner's master holds ──────────────────────────────────
+# clusters/platform/recovery-images.list names, at its digest, every image the `recovery-export` task of the
+# platform's publish run writes into the recovery folder and lifecycle/driver.sh imports into a cold owner's
+# master: every mirror name of the list above, and the skopeo the publish run copies with, which the seed of a
+# first owner's master runs. The driver reads the file from git and renders nothing, because a cold master has
+# no registry to fetch a chart from, so it is held here to the render and to the template's skopeo. The
+# planted defects: the list without zot, and the list with skopeo at another digest.
+recovery_images_expected() {
+  { printf '%s\n' "$mirror_entries" | awk '{print $2}'
+    sed -n 's/^{{- \$skopeoImage := "\([^"]*\)" -}}$/\1/p' clusters/inventories/consumer-build/templates/pipeline-publish.yaml
+  } | sort
+}
+recovery_images_fault() { # <a list file> -> what differs from the render, or nothing
+  [ "$(grep -v '^#' "$1" | grep .)" = "$(recovery_images_expected)" ] && return
+  echo "$1 does not name the images the tree renders at their digests; it reads, after its comment:"
+  recovery_images_expected
+}
+fault="$(recovery_images_fault clusters/platform/recovery-images.list)"
+[ -z "$fault" ] || { echo "$fault"; fail "clusters/platform/recovery-images.list is stale"; }
+grep -v '/project-zot/' clusters/platform/recovery-images.list > "$work/recovery-images-planted"
+[ -n "$(recovery_images_fault "$work/recovery-images-planted")" ] || fail "recovery_images_fault takes a list without zot"
+sed 's|^\(quay.io/skopeo/[^@]*\)@sha256:.*|\1@sha256:'"$(printf '0%.0s' {1..64})"'|' clusters/platform/recovery-images.list > "$work/recovery-images-planted"
+[ -n "$(recovery_images_fault "$work/recovery-images-planted")" ] || fail "recovery_images_fault takes skopeo at another digest"
+echo "check: clusters/platform/recovery-images.list names the $(recovery_images_expected | wc -l | tr -d ' ') images the tree renders and the publish run's skopeo, each at its digest; the check refuses a planted list without zot and one with skopeo at another digest."
+
 # ── The tools and charts the owner's mirror holds ───────────────────────────────────────────────
 # scripts/list-mirror-sources.sh writes one line per row of clusters/platform/mirror-sources.table for the
 # steps fetch, copy-sources and read-back-sources of the mirror task, and refuses a row of another form by
@@ -1097,32 +1123,92 @@ out="$(bash scripts/list-mirror-sources.sh --chart headlamp 0.0.0 2>&1)" \
 case "$out" in *"the chart headlamp at 0.0.0"*) ;; *) fail "scripts/list-mirror-sources.sh --chart does not name the chart and the version it has no row for: $out" ;; esac
 echo "check: the mirror holds $(printf '%s\n' "$mirror_sources" | grep -c '^tool ') tools and $(printf '%s\n' "$mirror_sources" | grep -c '^chart ') charts of the $(printf '%s\n' "$mirror_sources" | grep -c .) rows of clusters/platform/mirror-sources.table, each at its sha256; the list refuses a planted tool row without its url and a chart at a version no row holds."
 
-# A REF STAYS ON ghcr.io ONLY WHILE ITS WORKLOAD CAN START BEFORE THE MIRROR SERVES: the registry's own zot;
-# External Secrets, which writes zot's htpasswd Secret before zot starts; the Tekton images, which sync
-# before zot; and headscale, Authentik, Dex and Headlamp, which a cold master starts before Argo CD or zot.
-# Every other image of the list is pulled from the mirror, so it does not wait on GitHub.
-mirror_stays='^ghcr\.io/(project-zot/zot-linux-amd64|tektoncd/[^:]+|external-secrets/external-secrets|juanfont/headscale|goauthentik/server|dexidp/dex|headlamp-k8s/headlamp):'
-ghcr_pull_fault() { # "<ref> [<where>]" lines on standard input -> the first ref pulled from ghcr.io that the mirror serves, or nothing
-  grep -E '^ghcr\.io/' | grep -vE "$mirror_stays" | head -n 1
+# NO REF IS PULLED FROM ghcr.io. Every image of the list is pulled from the mirror, the registry's own zot, External
+# Secrets, Tekton with the helpers its controllers inject, headscale, Authentik, Dex and Headlamp included: a cold
+# owner's master starts those from the images lifecycle/driver.sh imports into its node before Argo CD or zot
+# stand, and every other cluster pulls them from the owner's zot.
+ghcr_pull_fault() { # "<ref> [<where>]" lines on standard input -> the first ref pulled from ghcr.io, or nothing
+  grep -E '^ghcr\.io/' | head -n 1
 }
 fault="$(printf '%s\n' "$mirror_refs" | ghcr_pull_fault)"
 [ -z "$fault" ] || fail "$fault is pulled from ghcr.io, and the mirror serves it under $mirror_prefix"
-observability_refs() { # extra helm arguments -> the refs of the observability chart at stage dev
-  helm template observability clusters/inventories/observability --namespace observability --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+inventory_refs() { # <app> <extra helm arguments...> -> the refs of clusters/inventories/<app> at stage dev
+  local app="$1" values=()
+  shift
+  [ -f "clusters/inventories/$app/values-dev.yaml" ] && values=(-f "clusters/inventories/$app/values-dev.yaml")
+  helm template "$app" "clusters/inventories/$app" --namespace "$app" --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
     -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
-    -f clusters/inventories/observability/values-common.yaml -f clusters/inventories/observability/values-dev.yaml \
-    -f "$installation_values" -f "$cluster_map" -f "$registration" "$@" > "$work/observability-render" 2>&1 \
-    || { cat "$work/observability-render"; fail "clusters/inventories/observability does not render at stage dev"; }
-  bash scripts/list-mirror-images.sh --refs < "$work/observability-render"
+    -f "clusters/inventories/$app/values-common.yaml" "${values[@]}" \
+    -f "$installation_values" -f "$cluster_map" -f "$registration" "$@" > "$work/$app-render" 2>&1 \
+    || { cat "$work/$app-render"; fail "clusters/inventories/$app does not render at stage dev"; }
+  bash scripts/list-mirror-images.sh --refs < "$work/$app-render"
 }
-# The planted defects: the admission Jobs' override dropped back to the chart's registry, and the access-log
-# exporter under a mirror name that is not the trunk's.
-[ -n "$(observability_refs --set kube-prometheus-stack.prometheusOperator.admissionWebhooks.patch.image.registry=ghcr.io | ghcr_pull_fault)" ] \
+# The planted defects: the admission Jobs' override dropped back to the chart's registry, zot's own image back on
+# ghcr.io, a Tekton controller that injects its entrypoint image from ghcr.io, and the access-log exporter under a
+# mirror name that is not the trunk's.
+[ -n "$(inventory_refs observability --set kube-prometheus-stack.prometheusOperator.admissionWebhooks.patch.image.registry=ghcr.io | ghcr_pull_fault)" ] \
   || fail "ghcr_pull_fault takes the admission Jobs' image pulled from ghcr.io"
-observability_refs --set loki.gateway.metrics.image.registry=zot.old.example.invalid/simetrixch/ghcr.io \
+[ -n "$(inventory_refs registry --set app.image.repository=ghcr.io/project-zot/zot-linux-amd64 | ghcr_pull_fault)" ] \
+  || fail "ghcr_pull_fault takes zot's own image pulled from ghcr.io"
+[ -z "$(inventory_refs tekton | ghcr_pull_fault)" ] || fail "the tekton chart pulls from ghcr.io on the trunk"
+rm -rf "$work/planted-tekton" && cp -R clusters/inventories/tekton "$work/planted-tekton" \
+  || fail "clusters/inventories/tekton could not be copied to plant a defect in it"
+sed -i 's|"-entrypoint-image", "{{ include "common.buildRegistry" \$ }}/ghcr.io/|"-entrypoint-image", "ghcr.io/|' "$work/planted-tekton/templates/release-pipelines.yaml"
+cmp -s "$work/planted-tekton/templates/release-pipelines.yaml" clusters/inventories/tekton/templates/release-pipelines.yaml \
+  && fail "the planted entrypoint image was not planted in a copy of clusters/inventories/tekton/templates/release-pipelines.yaml"
+helm template tekton "$work/planted-tekton" --namespace tekton-pipelines --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+  -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml -f clusters/inventories/tekton/values-common.yaml \
+  -f "$installation_values" -f "$cluster_map" -f "$registration" > "$work/planted-tekton-render" 2>&1 \
+  || { cat "$work/planted-tekton-render"; fail "the planted copy of clusters/inventories/tekton does not render at stage dev"; }
+[ -n "$(bash scripts/list-mirror-images.sh --refs < "$work/planted-tekton-render" | ghcr_pull_fault)" ] \
+  || fail "ghcr_pull_fault takes a Tekton controller that injects its entrypoint image from ghcr.io"
+inventory_refs observability --set loki.gateway.metrics.image.registry=zot.old.example.invalid/simetrixch/ghcr.io \
   | bash scripts/list-mirror-images.sh --entries >/dev/null 2>&1 \
   && fail "scripts/list-mirror-images.sh lists the access-log exporter under a mirror name that is not $mirror_prefix"
-echo "check: $(printf '%s\n' "$mirror_refs" | awk '{print $1}' | grep -E '^ghcr\.io/' | sort -u | wc -l | tr -d ' ') rendered refs stay on ghcr.io, each of a workload that starts before the mirror serves; the check refuses a planted pull from ghcr.io and a planted stale mirror name."
+echo "check: no rendered ref is pulled from ghcr.io; the check refuses a planted pull from ghcr.io of the admission Jobs, of zot itself and of an image a Tekton controller injects, and a planted stale mirror name."
+
+# ZOT'S NEXT IMAGE IS PULLED BY A PreSync HOOK while the old zot serves it (clusters/inventories/registry/templates/
+# zot-image-hook.yaml): the hook runs exactly the Deployment's image, neither pulls Always, and the hook is
+# recreated before each sync, which keeps its last pod readable. The planted defects: a hook with another image,
+# no hook, and a pull Always. The innocent case is the trunk render.
+zot_hook_fault() { # <a render of the registry chart> -> what is wrong, or nothing
+  local deployed hooked policies
+  deployed="$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].image' "$1")"
+  hooked="$(yq -N 'select(.kind == "Job" and .metadata.annotations["argocd.argoproj.io/hook"] == "PreSync") | .spec.template.spec.containers[0].image' "$1")"
+  policies="$(yq -N 'select(.kind == "Job" or .kind == "Deployment") | .spec.template.spec.containers[0].imagePullPolicy' "$1" | sort -u)"
+  [ "$(printf "%s\n" "$deployed" | grep -c .)" = 1 ] || { echo "the registry renders $(printf "%s\n" "$deployed" | grep -c .) Deployments, and it runs zot in one"; return; }
+  [ -n "$hooked" ] || { echo "the registry renders no PreSync Job that pulls zot's next image while the old zot serves"; return; }
+  [ "$hooked" = "$deployed" ] || { echo "the PreSync Job pulls $hooked, and the Deployment runs $deployed"; return; }
+  [ "$policies" = IfNotPresent ] || { echo "zot or its PreSync Job pulls $(printf '%s' "$policies" | tr '\n' ' '), and a pod that pulls Always asks the zot it replaces"; return; }
+  [ "$(yq -N 'select(.kind == "Job") | .metadata.annotations["argocd.argoproj.io/hook-delete-policy"]' "$1")" = BeforeHookCreation ] \
+    || echo "the PreSync Job of zot is not deleted BeforeHookCreation"
+}
+inventory_refs registry > /dev/null
+cp "$work/registry-render" "$work/registry-trunk-render"
+fault="$(zot_hook_fault "$work/registry-trunk-render")"
+[ -z "$fault" ] || fail "$fault"
+yq 'select(.kind == "Job").spec.template.spec.containers[0].image |= sub("@sha256:", "-planted@sha256:")' "$work/registry-trunk-render" > "$work/registry-planted"
+[ -n "$(zot_hook_fault "$work/registry-planted")" ] || fail "zot_hook_fault takes a PreSync Job that pulls another image than zot runs"
+yq 'select(.kind != "Job")' "$work/registry-trunk-render" > "$work/registry-planted"
+[ -n "$(zot_hook_fault "$work/registry-planted")" ] || fail "zot_hook_fault takes a registry without its PreSync Job"
+inventory_refs registry --set app.image.pullPolicy=Always > /dev/null
+[ -n "$(zot_hook_fault "$work/registry-render")" ] || fail "zot_hook_fault takes zot pulled Always"
+echo "check: zot's next image is pulled by a PreSync Job that runs exactly the Deployment's image, IfNotPresent; the check refuses a planted other image, a missing hook and a pull Always."
+
+# NOTHING A COLD OWNER'S MASTER STARTS BEFORE ZOT ANSWERS PULLS Always. External Secrets, Tekton and zot start
+# from the images lifecycle/driver.sh imports into the node, and a pull Always would ask the zot that is not up.
+# The planted defect: External Secrets pulled Always. The innocent case is the trunk render.
+always_pull_fault() { # <a render> -> the first container that pulls Always, or nothing
+  yq -N '.. | select(tag == "!!map" and .imagePullPolicy == "Always") | .name' "$1" | head -n 1
+}
+for app in external-secrets tekton registry; do
+  inventory_refs "$app" > /dev/null
+  fault="$(always_pull_fault "$work/$app-render")"
+  [ -z "$fault" ] || fail "the container $fault of clusters/inventories/$app pulls Always, and a cold owner's master starts it from the node's image before zot answers"
+done
+inventory_refs external-secrets --set external-secrets.image.pullPolicy=Always > /dev/null
+[ -n "$(always_pull_fault "$work/external-secrets-render")" ] || fail "always_pull_fault takes External Secrets pulled Always"
+echo "check: no container of external-secrets, tekton or registry pulls Always; the check refuses a planted External Secrets pulled Always."
 
 # WHERE A CHART HAS NO FIELD FOR A DIGEST, the digest rides on the tag of an override, and the override then
 # names the tag as well. Each such tag is held to the one its chart names, so a bump of the chart cannot
@@ -1152,6 +1238,83 @@ done
 [ -n "$(pinned_tag_fault Headlamp v0.0.0-planted clusters/bootstrap/headlamp/values.tpl .image.tag)" ] \
   || fail "pinned_tag_fault takes an override whose tag its chart no longer names"
 echo "check: ${#pinned_tags[@]} overrides carry a digest on their chart's own tag; the check refuses a planted chart that names another."
+
+# ── The charts a cold owner's master renders before zot answers ───────────────────────────────
+# AN INVENTORY WHOSE SYNC WAVE IS AT MOST THE REGISTRY'S renders before zot serves, so a chart it fetches from
+# zot never arrives, and one it fetches from ghcr.io makes a cold start wait on GitHub. Its dependencies name
+# neither host, and no inventory names ghcr.io at all. Such a chart is vendored instead: its dependency names no
+# repository, its archive <name>-<version>.tgz stands in its charts/ folder, holds that version in its own
+# Chart.yaml (helm renders a stale archive without a word), and has exactly one line in
+# clusters/platform/charts.sha256, which `sha256sum --check` holds it to. The waves are read from the app.yaml
+# files, so the set moves with the registry's wave.
+zot_host="${mirror_prefix%%/*}"
+charts_fault() { # <tree root> <file listing its vendored archives> -> the first fault, or nothing
+  local root="$1" archives="$2" registry_wave app wave chart name version repository archive lines out
+  out="$(cd "$root" && sha256sum --check --strict --quiet clusters/platform/charts.sha256 2>&1)" \
+    || { echo "clusters/platform/charts.sha256 does not hold: $out"; return; }
+  while read -r archive; do
+    lines="$(awk -v path="$archive" '$2 == path' "$root/clusters/platform/charts.sha256" | grep -c .)"
+    [ "$lines" = 1 ] || { echo "$archive has $lines lines in clusters/platform/charts.sha256, and a vendored archive has exactly one"; return; }
+  done < "$archives"
+  registry_wave="$(yq '.syncWave' "$root/clusters/inventories/registry/app.yaml")"
+  for app in "$root"/clusters/inventories/*/app.yaml; do
+    chart="$(dirname "$app")"
+    [ -f "$chart/Chart.yaml" ] || continue
+    wave="$(yq '.syncWave' "$app")"
+    while read -r name version repository; do
+      [ -n "$name" ] || continue
+      case "$repository" in
+        *ghcr.io*) echo "${chart#"$root/"} names its dependency $name on $repository, and nothing the tree renders is fetched from ghcr.io"; return ;;
+        *"$zot_host"*)
+          if [ "$wave" -le "$registry_wave" ]; then
+            echo "${chart#"$root/"} renders in sync wave $wave, before zot in wave $registry_wave, and fetches its dependency $name from $repository"
+            return
+          fi ;;
+        '')
+          archive="${chart#"$root/"}/charts/$name-$version.tgz"
+          grep -qxF "$archive" "$archives" || { echo "${chart#"$root/"} names no repository for $name, and $archive is no vendored archive"; return; }
+          [ "$(tar -xzOf "$root/$archive" "$name/Chart.yaml" 2>/dev/null | yq '.version')" = "$version" ] \
+            || { echo "$archive does not hold $name $version in its own Chart.yaml, and helm would render it as that version"; return; } ;;
+      esac
+    done < <(yq '.dependencies[] | .name + " " + .version + " " + (.repository // "")' "$chart/Chart.yaml")
+  done
+}
+git ls-files 'clusters/inventories/*/charts/*.tgz' > "$work/vendored-charts"
+fault="$(charts_fault "$root" "$work/vendored-charts")"
+[ -z "$fault" ] || fail "$fault"
+# The planted defects, each in a copy of what the check reads: the external-secrets dependency given back its
+# repository on ghcr.io; cert-manager fetched from zot; the archive removed; one byte of it changed; Chart.yaml
+# stamped to 2.9.0 beside the 2.8.0 archive; a second archive with no line; the 2.8.0 archive renamed to 2.9.0
+# with its line.
+plant_charts() { # <name> <a command run in the copy> -> the fault the check finds in that copy, or nothing
+  local copy="$work/planted-charts/$1"
+  rm -rf "$copy" && mkdir -p "$copy/clusters/platform" "$copy/clusters/inventories" || return 1
+  cp clusters/platform/charts.sha256 "$copy/clusters/platform/"
+  for app in clusters/inventories/*/app.yaml; do
+    mkdir -p "$copy/$(dirname "$app")" && cp "$app" "$copy/$app"
+    [ -f "$(dirname "$app")/Chart.yaml" ] && cp "$(dirname "$app")/Chart.yaml" "$copy/$(dirname "$app")/"
+  done
+  while read -r archive; do mkdir -p "$copy/$(dirname "$archive")" && cp "$archive" "$copy/$archive"; done < "$work/vendored-charts"
+  cp "$work/vendored-charts" "$copy.archives"
+  ( cd "$copy" && eval "$2" ) || return 1
+  charts_fault "$copy" "$copy.archives"
+}
+eso=clusters/inventories/external-secrets
+planted_charts=(
+  "ghcr|sed -i 's#^    version: 2.8.0\$#    version: 2.8.0\n    repository: oci://ghcr.io/external-secrets/charts#' $eso/Chart.yaml|names its dependency external-secrets on oci://ghcr.io/external-secrets/charts"
+  "zot|sed -i 's#oci://quay.io/jetstack/charts#oci://$zot_host/simetrixch/quay.io/jetstack/charts#' clusters/inventories/cert-manager/Chart.yaml|renders in sync wave 0, before zot"
+  "removed|rm $eso/charts/external-secrets-2.8.0.tgz|clusters/platform/charts.sha256 does not hold"
+  "changed|printf x >> $eso/charts/external-secrets-2.8.0.tgz|clusters/platform/charts.sha256 does not hold"
+  "stamped|sed -i 's#^    version: 2.8.0\$#    version: 2.9.0#' $eso/Chart.yaml|names no repository for external-secrets, and $eso/charts/external-secrets-2.9.0.tgz is no vendored archive"
+  "unlisted|cp $eso/charts/external-secrets-2.8.0.tgz $eso/charts/external-secrets-2.9.0.tgz && echo $eso/charts/external-secrets-2.9.0.tgz >> ../unlisted.archives|has 0 lines in clusters/platform/charts.sha256"
+  "renamed|mv $eso/charts/external-secrets-2.8.0.tgz $eso/charts/external-secrets-2.9.0.tgz && sed -i 's#external-secrets-2.8.0.tgz#external-secrets-2.9.0.tgz#' clusters/platform/charts.sha256 ../renamed.archives && sed -i 's#^    version: 2.8.0\$#    version: 2.9.0#' $eso/Chart.yaml|does not hold external-secrets 2.9.0 in its own Chart.yaml"
+)
+for row in "${planted_charts[@]}"; do
+  IFS='|' read -r name command expected <<< "$row"
+  fault="$(plant_charts "$name" "$command")" || fail "the planted chart defect '$name' could not be planted"
+  case "$fault" in *"$expected"*) ;; *) fail "charts_fault does not refuse the planted chart defect '$name' as expected ('$expected'): ${fault:-it found nothing}" ;; esac
+done
+echo "check: $(grep -c . "$work/vendored-charts") vendored chart archive holds its line in clusters/platform/charts.sha256 and its version; no inventory up to the registry's sync wave fetches a chart from ghcr.io or zot, and none fetches one from ghcr.io; the check refuses ${#planted_charts[@]} planted defects."
 
 push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
   helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
@@ -1679,6 +1842,8 @@ bash -n lifecycle/check-forgejo-ssh.sh || fail 'Forgejo SSH check Bash syntax'
 bash -n lifecycle/create-origin-pull-certificate.sh || fail 'origin pull certificate Bash syntax'
 bash -n lifecycle/apply-cloudflare-zone-security.sh || fail 'Cloudflare zone security Bash syntax'
 bash -n lifecycle/release-unit.sh || fail 'release-unit Bash syntax'
+bash -n lifecycle/recovery-folder.sh || fail 'recovery folder Bash syntax'
+bash -n scripts/standin/recovery-microk8s.sh || fail 'recovery folder stand-in Bash syntax'
 for module in lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done

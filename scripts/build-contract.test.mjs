@@ -1236,6 +1236,67 @@ test('the publish run of the platform tree on the owner\'s master copies its ima
     .find((t) => t.name === 'scan').taskSpec.steps[0].env.find((e) => e.name === 'MIRRORS_IMAGES').value, 'false');
 });
 
+// The platform tree on the owner's master also writes the recovery folder of that master, in `recovery-export` after the
+// mirror. Its login, the Secret recovery-box, reaches the two rclone steps alone, which run no code of the repository; the
+// pod reaches the storage box on port 22 through recovery-export-egress, which selects that task's pod alone and admits
+// exactly global.storageBoxCidrs. build-egress, which every pod of the namespace falls under, opens no port 22. No other
+// unit renders the policy or the credential, and the platform's render stops by name while the address list is empty.
+const platformUnit = (extra = []) => renderChart('consumer-build', ['--set', 'global.buildRegistry=zot.check.example.invalid/simetrixch',
+  '--set-json', 'unit=' + JSON.stringify({name: 'hostyour-cloud', repoURL: 'https://github.com/simetrixch/hostyour-cloud.git', buildsJson: '[]'}), ...extra]);
+const recoveryProblems = (docs, cidrs) => {
+  const problems = [], of = (kind, name) => docs.find((d) => d.kind === kind && d.metadata.name === name);
+  const pinhole = of('NetworkPolicy', 'recovery-export-egress'), fence = of('NetworkPolicy', 'build-egress');
+  if (!pinhole) return ['the platform unit renders no recovery-export-egress'];
+  if (JSON.stringify(pinhole.spec.podSelector) !== JSON.stringify({matchLabels: {'tekton.dev/pipelineTask': 'recovery-export'}})) {
+    problems.push(`recovery-export-egress selects ${JSON.stringify(pinhole.spec.podSelector)}, not the recovery-export pod alone`);
+  }
+  if (JSON.stringify(pinhole.spec.egress) !== JSON.stringify([{to: cidrs.map((cidr) => ({ipBlock: {cidr}})), ports: [{protocol: 'TCP', port: 22}]}])) {
+    problems.push(`recovery-export-egress admits ${JSON.stringify(pinhole.spec.egress)}, not port 22 of ${cidrs.join(', ')} alone`);
+  }
+  if (fence.spec.egress.some((rule) => (rule.ports ?? []).some((port) => port.port === 22))) problems.push('build-egress opens port 22 to every pod of the namespace');
+  const pipeline = of('Pipeline', 'hostyour-cloud-publish'), task = pipeline.spec.tasks.find((t) => t.name === 'recovery-export');
+  if (!task) return [...problems, 'the publish pipeline of the platform tree has no recovery-export task'];
+  if (JSON.stringify(task.runAfter) !== '["mirror"]') problems.push(`recovery-export runs after ${task.runAfter}, not after mirror`);
+  if (JSON.stringify(task.when) !== JSON.stringify([{input: '$(tasks.scan.results.mode)', operator: 'in', values: ['mirror']}])) problems.push('recovery-export runs for another scan mode than mirror');
+  const holding = task.taskSpec.steps.filter((s) => JSON.stringify(s).includes('"recovery-box"')).map((s) => s.name);
+  if (holding.join(' ') !== 'present upload') problems.push(`the recovery login stands in the steps ${holding.join(', ')}, not in present and upload alone`);
+  for (const s of task.taskSpec.steps) {
+    if (!/@sha256:[0-9a-f]{64}$/.test(s.image)) problems.push(`recovery-export/${s.name} runs ${s.image}, not an image pinned by its digest`);
+    if (holding.includes(s.name) && /scripts\/|bash |\.sh\b/.test(s.script)) problems.push(`recovery-export/${s.name} holds the login and runs a script of the repository`);
+  }
+  if (/\brclone (sync|delete|deletefile|purge|move|moveto)\b/m.test(task.taskSpec.steps.map((s) => s.script).join('\n'))) problems.push('recovery-export deletes on the storage box');
+  return problems;
+};
+
+test('the recovery folder of the owner\'s master is written by recovery-export alone, through a pinhole to the storage box on port 22', () => {
+  const cidrs = ['192.0.2.22/32', '198.51.100.7/32'];
+  const docs = platformUnit(['--set-json', `global.storageBoxCidrs=${JSON.stringify(cidrs)}`]);
+  assert.deepEqual(recoveryProblems(docs, cidrs), [], 'PLANTED INNOCENT: the platform unit as rendered');
+  const secret = docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'recovery-box');
+  assert.deepEqual(secret.spec.data.map((d) => `${d.remoteRef.key}#${d.remoteRef.property}`),
+    ['build/hostyour-cloud/recovery-box#host', 'build/hostyour-cloud/recovery-box#user', 'build/hostyour-cloud/recovery-box#password']);
+  const plant = (change) => { const planted = structuredClone(docs); change(planted); return recoveryProblems(planted, cidrs); };
+  const policy = (d, name) => d.find((x) => x.kind === 'NetworkPolicy' && x.metadata.name === name);
+  assert.notDeepEqual(plant((d) => { policy(d, 'build-egress').spec.egress[1].ports.push({protocol: 'TCP', port: 22}); }), [],
+    'PLANTED DEFECT: port 22 opened in build-egress');
+  assert.notDeepEqual(plant((d) => { policy(d, 'recovery-export-egress').spec.podSelector = {}; }), [], 'PLANTED DEFECT: the pinhole with podSelector {}');
+  assert.notDeepEqual(plant((d) => { policy(d, 'recovery-export-egress').spec.egress[0].to = [{ipBlock: {cidr: '0.0.0.0/0'}}]; }), [],
+    'PLANTED DEFECT: the pinhole open to every address');
+  const steps = (d) => d.find((x) => x.kind === 'Pipeline' && x.metadata.name === 'hostyour-cloud-publish').spec.tasks.find((t) => t.name === 'recovery-export').taskSpec.steps;
+  assert.notDeepEqual(plant((d) => { steps(d)[0].env.push(...steps(d)[1].env); }), [], 'PLANTED DEFECT: the login beside the plan the tree\'s files feed');
+  assert.notDeepEqual(plant((d) => { steps(d)[4].script += '\nrclone sync /workspace/packed/recovery box:\n'; }), [], 'PLANTED DEFECT: a sync that deletes on the box');
+  const empty = spawnSync('helm', ['template', 'consumer-build', 'clusters/inventories/consumer-build', '--namespace', 'argocd',
+    '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml', '-f', 'clusters/inventories/consumer-build/values-common.yaml',
+    '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', '--set', 'global.buildRegistry=zot.check.example.invalid/simetrixch',
+    '--set-json', 'global.storageBoxCidrs=[]', '--set-json', 'unit=' + JSON.stringify({name: 'hostyour-cloud', repoURL: 'https://github.com/simetrixch/hostyour-cloud.git', buildsJson: '[]'})],
+    {encoding: 'utf8'});
+  assert.notEqual(empty.status, 0, 'the platform unit renders with an empty global.storageBoxCidrs');
+  assert.match(empty.stderr, /global\.storageBoxCidrs is empty/);
+  for (const other of [renderUnit('shop', []), renderUnit('shop'), platformUnit(['--set', 'global.buildRegistry=zot.elsewhere.example.invalid/simetrixch'])]) {
+    assert.equal(other.some((d) => ['recovery-export-egress', 'recovery-box'].includes(d.metadata.name)), false, 'another unit or cluster renders the recovery pinhole or login');
+  }
+});
+
 // Three tools are pinned for the repositories that name them in ci-tools.json, and both steps that build a repository install
 // them: the check of the ci, before scripts/check.sh, and pack of the publish pipeline, before its packages are built.
 // digita-platform's packages/quickjs/build.sh runs only with emcc 5.0.1 first on PATH; its row pins the SDK release emsdk

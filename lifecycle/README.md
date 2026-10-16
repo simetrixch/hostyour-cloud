@@ -174,6 +174,7 @@ by a script.
 |---|---|---|
 | `driver.sh` | **on the machine** | the whole installation: preconditions, engine, programs checkout, the six programs |
 | `install-machine.sh` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
+| `recovery-folder.sh` | the machine, and the platform's publish run | names the archives of the owner master's recovery folder and the test each passes; sourced, never run |
 
 `install-machine.sh` asks whether the config is protected by its mode, read with `stat`: 600 or 400
 passes, and any other mode is refused with the `chmod` that closes it.
@@ -183,6 +184,19 @@ are public**: the pin out of the platform repository, the two executables out of
 programs checkout out of `hostyour-deploy`, the repository the deployment programs stand in. Nothing is
 carried from the operator's disk, so what stands on the machine afterwards is what the repositories
 say rather than what somebody's checkout happened to hold.
+
+**The owner's master is the one machine that cannot reach the release**, because the registry the
+release is served from is its own zot, which does not stand while it is installed, on a first
+installation as on a restore. Every image of the platform is pulled from that zot too, zot's own
+among them. So that machine reads `<fqdn>/recovery/` on the storage box, with the `STORAGE_BOX_HOST`,
+`STORAGE_BOX_USER` and `STORAGE_BOX_PASSWORD` of its config, which it then requires. The platform's
+publish run writes the folder at every release (`recovery-export`): one OCI archive per image the tree
+pulls, per own image at the builds of the stage, and the released engine. `driver.sh` takes the engine
+out of the folder by the digests `clusters/platform/ansiwise.sha256` states. After `deploy-cluster` it
+fetches every archive the installation's tree names, holds each to the digests the tree states, and
+only then imports them into the node's containerd, so External Secrets, Tekton and zot start without a
+registry. Once zot answers, it pushes every archive named under zot there, with the push identity of
+the Secret `registry/registry-seed-push` handed to skopeo by path, and reads each back.
 
 ## Running it
 

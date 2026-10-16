@@ -8,10 +8,14 @@
 # manifests are vendored in templates/release-*.yaml (refresh by re-downloading).
 # Vendored versions, recorded here rather than inside the manifests because a
 # re-download overwrites those files verbatim:
-#   templates/release-pipelines.yaml     v1.12.0  (ghcr.io anon-pull, gcr.io retired pre-v0.65)
+#   templates/release-pipelines.yaml     v1.12.0
 #   templates/release-triggers.yaml      v0.35.0
 #   templates/release-interceptors.yaml  v0.35.0
 #   templates/release-dashboard.yaml     v0.69.0  (build cluster only)
+# EVERY IMAGE IS PULLED FROM THE OWNER'S MIRROR OF ghcr.io, the controller arguments that inject the
+# entrypoint, nop, sidecarlogresults, workingdirinit and eventlistenersink images included. A re-download
+# names ghcr.io/tektoncd/... again, so each such ref gets `{{ include "common.buildRegistry" $ }}/` in
+# front of it; scripts/check.sh refuses a rendered ref pulled from ghcr.io.
 #
 # THE FEATURE FLAGS THIS PLATFORM DEPENDS ON, in the `feature-flags` ConfigMap of
 # templates/release-pipelines.yaml. A re-download overwrites that file verbatim, and

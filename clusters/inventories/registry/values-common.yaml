@@ -13,8 +13,11 @@
 # ----- Zot pod (Deployment + Service via clusters/charts/deployment/) ----------------
 app:
   image:
-    # Single-binary OCI registry. Tag MUST match Chart.yaml appVersion above.
-    repository: ghcr.io/project-zot/zot-linux-amd64
+    # Single-binary OCI registry. Tag MUST match Chart.yaml appVersion above. Pulled from the owner's
+    # mirror, which is this zot: a cold owner's master starts it from the image lifecycle/driver.sh
+    # imports into the node, and a running one pulls a new digest through templates/zot-image-hook.yaml
+    # while the old zot still serves.
+    repository: zot.master.digitacloud.app/simetrixch/ghcr.io/project-zot/zot-linux-amd64
     tag: "v2.1.18"
     sha256: "34f18f783037f967dba10df02f9d4086c4d626f5643ef9f5e51e4a4547280a0b"
     pullPolicy: IfNotPresent
@@ -186,7 +189,7 @@ ingress:
 # master instead of once per node per pull. Local repos always win (sync only
 # fires on a local miss); the retention policy below also evicts stale cached
 # upstream tags. Requires a Zot image built with the sync extension (the
-# official ghcr.io/project-zot/zot images bundle it).
+# official project-zot images bundle it, and the mirror holds the official one).
 #
 # credentialsFile IS WRITTEN ONLY WHERE THE FILE WILL EXIST. Zot reads
 # ONE file for EVERY upstream, and a path that is named and absent fails credential
