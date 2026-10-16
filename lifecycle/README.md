@@ -259,8 +259,17 @@ bash lifecycle/redeploy-platform-services.sh lifecycle/config.master.env
 
 It runs `deploy-platform-services` in `test`, `dry`, then `run` mode and stops at the first failure.
 The installed program provisions the restricted `forgejo-build` identity and writes the complete
-credential entry. Later Manager redeploys preserve that entry without reading the local config.
+credential entry `<stage>/app/forgejo-build`. Later Manager redeploys hand that entry back to the
+program without reading the local config.
 `regenerate-install-branch.sh` regenerates the branch; it does not import this Plane token.
+
+**This run is a step of every installation whose master runs the books, the build plane and Plane**:
+once after the installation, again after a loss of Vault, and again for every rotation of the Plane
+key. A Manager redeploy carries no Plane key. On a master whose Vault holds no
+`<stage>/app/forgejo-build`, it stops at the forge credential row (`vault_kv_entry_from_command` in
+`deploy-platform-services`) with `plane-api-token is absent`, and only this run gets past that row.
+The forge Secrets form on the next Manager redeploy of the master: its last step,
+`refresh-external-secrets`, has ESO read the new entry.
 
 ## What it refuses, and why
 
@@ -482,11 +491,11 @@ which uploads the new client certificate. The run after the next drops the old C
 `apply-cloudflare-zone-security.sh` reads `CLOUDFLARE_ZONE_SECURITY_API_TOKEN` and the client
 certificate from the config, and the zones `platformDomain` and `unitApex` from the map on the books
 branch. On each zone it sets SSL mode Full (strict), uploads the client certificate and turns origin
-pull on, deploys the Cloudflare Free Managed Ruleset, and keeps two rules of its own by their `ref`:
+pull on, deploys the Cloudflare Managed Free Ruleset, and keeps two rules of its own by their `ref`:
 `hostyour-next-action` blocks every request with a `Next-Action` header (403 on Free), and
 `hostyour-login-rate` limits the sign-in path per address in 10-second windows. Every other rule and
 setting stays as it stands. `preview` writes nothing; `apply` writes, then reads back and fails on
-any difference. It stops, naming the item, on a missing permission (exit 77), a missing Free
-Managed Ruleset or a full rule slot (65), and a client certificate Cloudflare does not present yet
+any difference. It stops, naming the item, on a missing permission (exit 77), a missing Managed
+Free Ruleset or a full rule slot (65), and a client certificate Cloudflare does not present yet
 (75: run `preview` again, and let no route require origin pull before it reads back active). The
 token and the private key reach curl on its standard input only, and nothing prints them.

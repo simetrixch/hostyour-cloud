@@ -3,7 +3,7 @@
 //
 // PER ZONE, platformDomain and unitApex of the books branch's map:
 //   SSL mode Full (strict); the zone-level origin pull certificate of the config uploaded and origin pull on;
-//   the Cloudflare Free Managed Ruleset deployed; the custom rule `hostyour-next-action`, which blocks
+//   the Cloudflare Managed Free Ruleset deployed; the custom rule `hostyour-next-action`, which blocks
 //   (403 on Free) every request carrying a Next-Action header, WebSocket handshakes included; the one
 //   rate rule `hostyour-login-rate` on the login path. Every other rule and setting is left as it stands.
 //
@@ -19,7 +19,9 @@ const API = 'https://api.cloudflare.com/client/v4';
 const CUSTOM = 'http_request_firewall_custom';
 const RATE = 'http_ratelimit';
 const MANAGED = 'http_request_firewall_managed';
-const FREE_MANAGED = 'Cloudflare Free Managed Ruleset';
+// The ruleset Free carries, as the zone's ruleset listing spells it: kind managed, phase MANAGED. The same
+// words in another order match nothing.
+const FREE_MANAGED = 'Cloudflare Managed Free Ruleset';
 // Free admits five custom rules and one rate rule per zone.
 const CUSTOM_SLOTS = 5;
 const NEXT_ACTION = {
@@ -102,7 +104,7 @@ function changesOf(api, zone, certificate, privateKey) {
   if (api('GET', `${at}/origin_tls_client_auth/settings`).enabled !== true)
     changes.push({what: 'origin pull on', method: 'PUT', path: `${at}/origin_tls_client_auth/settings`, body: {enabled: true}});
 
-  const free = api('GET', `${at}/rulesets`).find(r => r.kind === 'managed' && r.name === FREE_MANAGED)
+  const free = api('GET', `${at}/rulesets`).find(r => r.kind === 'managed' && r.phase === MANAGED && r.name === FREE_MANAGED)
     ?? fail(`zone ${zone.name} lists no ${FREE_MANAGED}, so the plan it is on does not carry it`);
   const deploy = {ref: 'hostyour-free-managed', description: `hostyour: ${FREE_MANAGED}`, expression: 'true',
     action: 'execute', action_parameters: {id: free.id}, enabled: true};

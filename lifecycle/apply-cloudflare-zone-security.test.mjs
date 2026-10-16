@@ -83,10 +83,11 @@ function fixture(mjs = readFileSync(join(HERE, `${ACT}.mjs`), 'utf8')) {
   chmodSync(join(root, 'config.env'), 0o600);
   return root;
 }
-/** Two Free zones as a new installation finds them: SSL Full, no origin pull, an unrelated custom rule. */
+/** Two Free zones as a new installation finds them: SSL Full, no origin pull, an unrelated custom rule, and the
+ * Free managed ruleset as Cloudflare lists it on a Free zone. */
 function cloudflare(root, change = state => state) {
   const zone = (id, name) => ({id, name, ssl: 'full', certificates: [], originPull: false,
-    managed: [{id: FREE_ID, name: 'Cloudflare Free Managed Ruleset', kind: 'managed', phase: 'http_request_firewall_managed'}],
+    managed: [{id: FREE_ID, name: 'Cloudflare Managed Free Ruleset', kind: 'managed', phase: 'http_request_firewall_managed'}],
     entrypoints: {http_request_firewall_custom: {id: `e-custom-${id}`, kind: 'zone', phase: 'http_request_firewall_custom', rules: [UNRELATED]}}});
   const state = change({token: TOKEN, denied: [], uploadStatus: 'active', zones: [zone('z1', 'shop.invalid'), zone('z2', 'units.invalid')]});
   writeFileSync(join(root, 'state.json'), JSON.stringify(state));
@@ -127,16 +128,16 @@ function findings(root) {
     expect(`${zone.name}: the unrelated rule stands as it stood`, JSON.stringify(rules('http_request_firewall_custom')[0]) === JSON.stringify(UNRELATED));
     expect(`${zone.name}: the Next-Action rule blocks`, rules('http_request_firewall_custom').some(r => r.ref === 'hostyour-next-action' && r.action === 'block' && r.expression === 'len(http.request.headers["next-action"]) > 0'));
     expect(`${zone.name}: one rate rule counts the login per IP in 10 seconds`, rules('http_ratelimit').length === 1 && rules('http_ratelimit')[0].expression === 'http.request.uri.path eq "/auth/api/v1/auth/login"' && rules('http_ratelimit')[0].ratelimit.period === 10 && rules('http_ratelimit')[0].ratelimit.characteristics.includes('ip.src'));
-    expect(`${zone.name}: the Free Managed Ruleset runs`, rules('http_request_firewall_managed').some(r => r.action === 'execute' && r.action_parameters.id === FREE_ID && r.enabled));
+    expect(`${zone.name}: the Managed Free Ruleset runs`, rules('http_request_firewall_managed').some(r => r.action === 'execute' && r.action_parameters.id === FREE_ID && r.enabled));
   }
   expect('apply reads back', (result.stdout.match(/read back as declared; the origin pull certificate is active/g) ?? []).length === 2);
   result = run(root, 'preview');
   expect('a second preview has nothing to change', result.status === 0 && result.writes.length === 0 && (result.stdout.match(/nothing to change/g) ?? []).length === 2);
 
-  // Cloudflare's own deployment of the Free Managed Ruleset counts, and is not deployed a second time.
+  // Cloudflare's own deployment of the Managed Free Ruleset counts, and is not deployed a second time.
   cloudflare(root, state => { state.zones[0].entrypoints.http_request_firewall_managed = {id: 'e-m', kind: 'zone', phase: 'http_request_firewall_managed', rules: [{id: 'd1', ref: 'd1', action: 'execute', action_parameters: {id: FREE_ID}, expression: 'true', enabled: true}]}; return state; });
   result = run(root, 'apply');
-  expect('a standing Free Managed deployment is kept alone', result.status === 0 && result.state.zones[0].entrypoints.http_request_firewall_managed.rules.length === 1);
+  expect('a standing Managed Free deployment is kept alone', result.status === 0 && result.state.zones[0].entrypoints.http_request_firewall_managed.rules.length === 1);
 
   cloudflare(root, state => { state.zones[1].entrypoints.http_request_firewall_custom.rules = [1, 2, 3, 4, 5].map(n => ({...UNRELATED, id: `u${n}`, ref: `u${n}`})); return state; });
   result = run(root, 'apply');
@@ -149,7 +150,12 @@ function findings(root) {
 
   cloudflare(root, state => { state.zones[0].managed = []; return state; });
   result = run(root, 'preview');
-  expect('a zone without the Free Managed Ruleset stops the run naming it', result.status === 65 && /zone shop\.invalid lists no Cloudflare Free Managed Ruleset/.test(result.stderr));
+  expect('a zone without the Managed Free Ruleset stops the run naming it', result.status === 65 && /zone shop\.invalid lists no Cloudflare Managed Free Ruleset, so the plan it is on does not carry it/.test(result.stderr));
+
+  // Only a ruleset of the managed firewall phase is one the managed phase can execute.
+  cloudflare(root, state => { state.zones[0].managed = state.zones[0].managed.map(r => ({...r, phase: 'ddos_l7'})); return state; });
+  result = run(root, 'preview');
+  expect('a zone whose Managed Free Ruleset stands in another phase stops the run naming it', result.status === 65 && /zone shop\.invalid lists no Cloudflare Managed Free Ruleset/.test(result.stderr));
 
   cloudflare(root, state => { state.denied = ['waf']; return state; });
   result = run(root, 'apply');
@@ -179,7 +185,7 @@ test('a config others can read is refused before Cloudflare is asked', () => {
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
-test('PLANTED DEFECT: an act that replaces a whole ruleset, shows the token, skips the slot check or writes on preview is caught', () => {
+test('PLANTED DEFECT: an act that replaces a whole ruleset, shows the token, skips the slot check, writes on preview or misses the Managed Free Ruleset as Cloudflare lists it is caught', () => {
   const act = readFileSync(join(HERE, `${ACT}.mjs`), 'utf8');
   const planted = {
     'a whole ruleset replaced': act.replace("method: 'POST', path: `${at}/rulesets/${entrypoint.id}/rules`, body: rule", "method: 'PUT', path: `${at}/rulesets/phases/${phase}/entrypoint`, body: {rules: [rule]}"),
@@ -187,6 +193,8 @@ test('PLANTED DEFECT: an act that replaces a whole ruleset, shows the token, ski
     'no slot check': act.replace('if (refusal) fail(', 'if (false) fail('),
     'preview writes': act.replace("if (mode === 'apply') api(", 'api('),
     'no read-back': act.replace("if (pending) fail(", "if (false) fail("),
+    'the name the ruleset does not carry': act.replace("'Cloudflare Managed Free Ruleset'", "'Cloudflare Free Managed Ruleset'"),
+    'no phase check': act.replace(" && r.phase === MANAGED", ""),
   };
   for (const [name, text] of Object.entries(planted)) {
     assert.notEqual(text, act, name);

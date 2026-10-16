@@ -121,8 +121,9 @@ externalsecret-webhooks:
 # deletionPolicy Delete makes a missing entry no error: the ExternalSecret stays Ready with no Secret,
 # so this application and every sync wave after it go on, and every Forgejo delivery is refused until
 # the Secret stands. A property missing from an entry that exists would be an error, which is why the
-# key does not join github's entry. The Secret is fetched once the ExternalSecret changes (an
-# annotation), the same explicit act as every other value put in front of the cluster.
+# key does not join github's entry. The Secret is fetched once the ExternalSecret changes: the last
+# step of a master redeploy in hostyour-manager, refresh-external-secrets, sets the annotation
+# hostyour.cloud/refreshRequestedAt on every ExternalSecret of the master.
 externalsecret-forgejo-webhook:
   externalSecret:
     enabled: true
