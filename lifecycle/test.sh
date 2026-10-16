@@ -34,10 +34,6 @@
 # folder, on another machine, without a network or at another time is held to
 # the same bytes.
 #
-# WHY THE BLOCKS STAND IN THIS FILE and not in a file of their own: an install
-# branch stamps its domain over the fixtures' example.invalid in every tracked
-# file under lifecycle/ that is no script, and this file is a script.
-#
 # THE PLANTED DEFECTS. A copy of status.sh with one printed line changed is run
 # where its case ran, and so is a copy of regenerate-install-branch.sh, of
 # remove-slave-from-master.sh, of install-machine.sh, of abandon-installation.sh,

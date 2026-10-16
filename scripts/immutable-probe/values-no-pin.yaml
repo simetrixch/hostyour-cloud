@@ -1,0 +1,2 @@
+# No pin at all: common.buildImageName requires one, and no chain supplies it.
+builds: []

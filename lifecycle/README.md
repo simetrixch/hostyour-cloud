@@ -443,8 +443,8 @@ is installed from it.
 # Planning an installation domain move
 
 ```
-bash lifecycle/plan-installation-domain.sh --books-fqdn master.old.example.invalid --from-domain old.example.invalid --to-domain new.example.invalid --dry-run # set-domain:keep
-bash lifecycle/plan-installation-domain.sh --books-fqdn master.old.example.invalid --from-domain old.example.invalid --to-domain new.example.invalid --dry-run --fqdn master.old.example.invalid --ssh-user operator # set-domain:keep
+bash lifecycle/plan-installation-domain.sh --books-fqdn master.old.example.invalid --from-domain old.example.invalid --to-domain new.example.invalid --dry-run
+bash lifecycle/plan-installation-domain.sh --books-fqdn master.old.example.invalid --from-domain old.example.invalid --to-domain new.example.invalid --dry-run --fqdn master.old.example.invalid --ssh-user operator
 ```
 
 It accepts `--books-fqdn HOST --from-domain DOMAIN --to-domain DOMAIN --dry-run`,
