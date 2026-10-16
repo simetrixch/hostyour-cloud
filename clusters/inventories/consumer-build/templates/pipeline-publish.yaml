@@ -955,6 +955,7 @@ spec:
               mirror_read_back() { # <the list> <a folder of its own>: every entry is served without a credential at its own digest and media type
                 local list="$1" scratch="$2" source target name digest code served type declared rc
                 local accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
+                mkdir -p "${scratch}" || return 1
                 while read -r source target; do
                   name="${target%@*}" digest="${target##*@}"
                   name="${name%:*}"
@@ -976,7 +977,6 @@ spec:
                   echo "mirror: ${target} ${type} read back"
                 done < "${list}"
               }
-              mkdir -p /tmp/mirror
               mirror_read_back /workspace/packed/mirror.list /tmp/mirror
 {{- end }}
 {{- end }}
