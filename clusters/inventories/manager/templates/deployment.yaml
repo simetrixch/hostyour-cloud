@@ -273,14 +273,10 @@ spec:
               value: {{ .Values.github.deployRepo | default (required "manager: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.deployUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
             {{- if and .Values.reaper.enabled .Values.master.sshUser }}
             # The registry reaper inside the manager (hostyour-manager server/boot/registry-reap.ts):
-            # once a day at this hour, UTC, it prunes the central registry, deleting unless the dry
-            # run is "true". All three or none; the manager refuses one without the others.
-            - name: REGISTRY_REAPER_HOUR
-              value: {{ required "manager: reaper.hour is required when reaper.enabled" .Values.reaper.hour | quote }}
+            # once a day it prunes the central registry named here. The hour it runs at and whether it
+            # only logs its plan are Manager settings, edited on the Manager's Settings page.
             - name: REGISTRY_HOST
               value: {{ include "common.registryHost" . | quote }}
-            - name: REGISTRY_REAPER_DRY_RUN
-              value: {{ required "manager: reaper.dryRun is required when reaper.enabled" .Values.reaper.dryRun | quote }}
             {{- end }}
             {{- end }}
             {{- end }}

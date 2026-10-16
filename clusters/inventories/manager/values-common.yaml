@@ -33,18 +33,15 @@ replicas: 1
 # registry-reaper — prunes aged, UNREFERENCED image tags of OUR flat, single-segment repos from the
 # central zot registry, from inside the manager (hostyour-manager server/boot/registry-reap.ts), on
 # the manager's own database, credential store and GitHub App. Its keep floor is every builds[] pin
-# the release bump writes, every plugin's pins and every image a tenant holds; per repository it
-# also keeps the last ten stable and the last ten other tags. Rendered only on the control/build
-# host: gated on master.sshUser AND github.repo, like the push credential it deletes with
+# the release bump writes, every plugin's pins and every image a tenant holds. The hour it runs at
+# and whether it deletes or only logs are Manager settings, edited on the Manager's Settings page,
+# so this inventory carries neither. Rendered only on the control/build host: gated on
+# master.sshUser AND github.repo, like the push credential it deletes with
 # (externalsecret-registry-push.yaml). zot's own retention never touches the single-segment repos
 # (the ["*"] keep-all policy in clusters/inventories/registry/values-common.yaml) — the reaper is the
 # sole cleaner there.
 reaper:
   enabled: true
-  # The hour of the day (UTC) it runs, off-peak.
-  hour: 3
-  # "false" deletes; "true" only logs the keep/delete plan.
-  dryRun: "false"
 
 # Run the manager pod on the node's host network so it can SSH to the clusters
 # on the physical LAN. This is REQUIRED whenever the MicroK8s pod CIDR
