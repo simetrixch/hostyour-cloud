@@ -482,11 +482,11 @@ which uploads the new client certificate. The run after the next drops the old C
 `apply-cloudflare-zone-security.sh` reads `CLOUDFLARE_ZONE_SECURITY_API_TOKEN` and the client
 certificate from the config, and the zones `platformDomain` and `unitApex` from the map on the books
 branch. On each zone it sets SSL mode Full (strict), uploads the client certificate and turns origin
-pull on, deploys the Cloudflare Free Managed Ruleset, and keeps two rules of its own by their `ref`:
+pull on, deploys the Cloudflare Managed Free Ruleset, and keeps two rules of its own by their `ref`:
 `hostyour-next-action` blocks every request with a `Next-Action` header (403 on Free), and
 `hostyour-login-rate` limits the sign-in path per address in 10-second windows. Every other rule and
 setting stays as it stands. `preview` writes nothing; `apply` writes, then reads back and fails on
-any difference. It stops, naming the item, on a missing permission (exit 77), a missing Free
-Managed Ruleset or a full rule slot (65), and a client certificate Cloudflare does not present yet
+any difference. It stops, naming the item, on a missing permission (exit 77), a missing Managed
+Free Ruleset or a full rule slot (65), and a client certificate Cloudflare does not present yet
 (75: run `preview` again, and let no route require origin pull before it reads back active). The
 token and the private key reach curl on its standard input only, and nothing prints them.
