@@ -1503,8 +1503,8 @@ spec:
       serviceAccountName: tekton-triggers-controller
       containers:
         - name: tekton-triggers-controller
-          image: "{{ include "common.buildRegistry" $ }}/ghcr.io/tektoncd/triggers/controller-f656ca31de179ab913fa76abc255c315:v0.35.0@sha256:59addf5899cd2cf1e74001ddf7ad30e0492b8c80b80857c351e2deac545d9555"
-          args: ["-logtostderr", "-stderrthreshold", "INFO", "-el-image", "{{ include "common.buildRegistry" $ }}/ghcr.io/tektoncd/triggers/eventlistenersink-7ad1faa98cddbcb0c24990303b220bb8:v0.35.0@sha256:d4ddfc09a5389474452644826540973a53fea11be718abf7ab3d04159c29ed05", "-el-port", "8080", "-el-security-context=true", "-el-read-only-root-filesystem=true", "-el-events", "disable", "-el-readtimeout", "5", "-el-writetimeout", "40", "-el-idletimeout", "120", "-el-timeouthandler", "30", "-el-httpclient-readtimeout", "30", "-el-httpclient-keep-alive", "30", "-el-httpclient-tlshandshaketimeout", "10", "-el-httpclient-responseheadertimeout", "10", "-el-httpclient-expectcontinuetimeout", "1", "-period-seconds", "10", "-failure-threshold", "3"]
+          image: '{{ include "common.buildRegistry" $ }}/ghcr.io/tektoncd/triggers/controller-f656ca31de179ab913fa76abc255c315:v0.35.0@sha256:59addf5899cd2cf1e74001ddf7ad30e0492b8c80b80857c351e2deac545d9555'
+          args: ["-logtostderr", "-stderrthreshold", "INFO", "-el-image", '{{ include "common.buildRegistry" $ }}/ghcr.io/tektoncd/triggers/eventlistenersink-7ad1faa98cddbcb0c24990303b220bb8:v0.35.0@sha256:d4ddfc09a5389474452644826540973a53fea11be718abf7ab3d04159c29ed05', "-el-port", "8080", "-el-security-context=true", "-el-read-only-root-filesystem=true", "-el-events", "disable", "-el-readtimeout", "5", "-el-writetimeout", "40", "-el-idletimeout", "120", "-el-timeouthandler", "30", "-el-httpclient-readtimeout", "30", "-el-httpclient-keep-alive", "30", "-el-httpclient-tlshandshaketimeout", "10", "-el-httpclient-responseheadertimeout", "10", "-el-httpclient-expectcontinuetimeout", "1", "-period-seconds", "10", "-failure-threshold", "3"]
           env:
             - name: SYSTEM_NAMESPACE
               valueFrom:
@@ -1631,7 +1631,7 @@ spec:
         - name: webhook
           # This is the Go import path for the binary that is containerized
           # and substituted here.
-          image: "{{ include "common.buildRegistry" $ }}/ghcr.io/tektoncd/triggers/webhook-dd1edc925ee1772a9f76e2c1bc291ef6:v0.35.0@sha256:bc97fb4dd2e55b5723e3f2ee7c5a9a5beea4a1362c0a4b2fa40a2cf638cbd9c7"
+          image: '{{ include "common.buildRegistry" $ }}/ghcr.io/tektoncd/triggers/webhook-dd1edc925ee1772a9f76e2c1bc291ef6:v0.35.0@sha256:bc97fb4dd2e55b5723e3f2ee7c5a9a5beea4a1362c0a4b2fa40a2cf638cbd9c7'
           env:
             - name: SYSTEM_NAMESPACE
               valueFrom:

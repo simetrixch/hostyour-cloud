@@ -1153,7 +1153,7 @@ inventory_refs() { # <app> <extra helm arguments...> -> the refs of clusters/inv
 [ -z "$(inventory_refs tekton | ghcr_pull_fault)" ] || fail "the tekton chart pulls from ghcr.io on the trunk"
 rm -rf "$work/planted-tekton" && cp -R clusters/inventories/tekton "$work/planted-tekton" \
   || fail "clusters/inventories/tekton could not be copied to plant a defect in it"
-sed -i 's|"-entrypoint-image", "{{ include "common.buildRegistry" \$ }}/ghcr.io/|"-entrypoint-image", "ghcr.io/|' "$work/planted-tekton/templates/release-pipelines.yaml"
+sed -i "s|\"-entrypoint-image\", '{{ include \"common.buildRegistry\" [$] }}/ghcr.io/|\"-entrypoint-image\", 'ghcr.io/|" "$work/planted-tekton/templates/release-pipelines.yaml"
 cmp -s "$work/planted-tekton/templates/release-pipelines.yaml" clusters/inventories/tekton/templates/release-pipelines.yaml \
   && fail "the planted entrypoint image was not planted in a copy of clusters/inventories/tekton/templates/release-pipelines.yaml"
 helm template tekton "$work/planted-tekton" --namespace tekton-pipelines --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
