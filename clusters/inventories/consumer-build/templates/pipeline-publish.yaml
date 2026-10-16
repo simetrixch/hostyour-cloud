@@ -96,10 +96,12 @@ THE REPOSITORY'S OWN CODE RUNS IN `pack` (pnpm install, build, pack), which hold
 the packages reader build-npmrc and nothing else, and in `build-binaries`
 (release/build.sh), which holds no credential at all. build-git-https is held by the
 clone and by the one step of `reviewed` that fetches the default branch, which
-runs git alone; the push identity image-builder-registry-push is held by `push`
-alone, which runs no code of the repository and reads the packed tarballs or the
-built binaries and never the clone. The run's one volume holds the clone in its
-subPath repository and the tarballs and binaries in its subPath packed.
+runs git alone; the push identity image-builder-registry-push is held by `push`,
+which runs no code of the repository and reads the packed tarballs or the built
+binaries and never the clone, and on the platform tree by `copy` and `copy-sources`
+of the mirror, which run no code of the repository either. The run's one volume
+holds the clone in its subPath repository and the tarballs, binaries and mirror
+lists in its subPath packed.
 */ -}}
 {{- if .Values.unit }}
 {{- $unit := include "consumer-build.unitName" . -}}
@@ -660,39 +662,9 @@ spec:
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
-              # One bounded call to the registry, the URL last: the HTTP status, or a failure that names curl's exit.
-              registry_call() { # <body file> <curl arguments...>
-                local out="$1" code rc=0
-                shift
-                code="$(curl -sS --connect-timeout 10 --max-time 600 -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" -o "${out}" -w '%{http_code}' "$@")" || rc=$?
-                if [ "${rc}" != 0 ]; then
-                  echo "publish: FAIL — curl exited ${rc} on ${*: -1} (28 is the 600s ceiling, reached when the registry is still fetching from an upstream)" >&2
-                  return 1
-                fi
-                printf '%s' "${code}"
-              }
-              push_blob() { # <repository URL> <file> <digest> <scratch folder>: the blob stands in the repository afterwards
-                local base="$1" file="$2" digest="$3" tmp="$4" code location
-                code="$(registry_call /dev/null -I "${base}/blobs/${digest}")" || return 1
-                [ "${code}" != 200 ] || return 0
-                code="$(registry_call /dev/null -D "${tmp}/headers" -X POST "${base}/blobs/uploads/")" || return 1
-                if [ "${code}" != 202 ]; then
-                  echo "publish: FAIL — ${base}/blobs/uploads/ answered ${code} to the start of an upload" >&2
-                  return 1
-                fi
-                location="$(tr -d '\r' < "${tmp}/headers" | awk 'tolower($1) == "location:" { print $2 }' | tail -n 1)"
-                case "${location}" in
-                  /*) location="https://${REGISTRY}${location}" ;;
-                  https://*) ;;
-                  *) echo "publish: FAIL — the upload to ${base} named no location to put ${digest}" >&2; return 1 ;;
-                esac
-                case "${location}" in *\?*) location="${location}&digest=${digest}" ;; *) location="${location}?digest=${digest}" ;; esac
-                code="$(registry_call /dev/null -X PUT -H 'Content-Type: application/octet-stream' --data-binary "@${file}" "${location}")" || return 1
-                if [ "${code}" != 201 ]; then
-                  echo "publish: FAIL — the blob ${digest} was answered ${code} at ${base}" >&2
-                  return 1
-                fi
-              }
+
+{{ .Files.Get "files/registry-push.sh" | indent 14 }}
+
               npm_push() { # <folder of the packed tarballs> <scratch folder>
                 local dir="$1" tmp="$2" tgz name version pkg hex repo base code held state entry seen=" "
                 local accept='application/vnd.oci.image.manifest.v1+json'
@@ -863,10 +835,12 @@ spec:
               limits: { cpu: 500m, memory: 256Mi }
 {{- if $mirrorsImages }}
 
-    # ── 7. mirror — the images of the platform tree, copied into the owner's registry and read back
-    # The list is the tree's own script, run with the fixed tools and no credential; the push identity is
-    # held by `copy` alone, which runs no code of the repository and copies nothing the list does not name
-    # in the one form an entry has.
+    # ── 7. mirror — the images, tools and charts of the platform tree, copied into the owner's registry and read back
+    # Each list is the tree's own script, run with no credential: `list` with the fixed tools for the images,
+    # `fetch` for the tools and charts, which it alone downloads from their upstreams. The push identity is
+    # held by `copy` and `copy-sources`, which run no code of the repository and push nothing their list
+    # does not name in the one form its kind has. The tools and charts come after the images are read back,
+    # so a tool or chart that cannot be fetched never holds an image back.
     - name: mirror
       runAfter: [push]
       when:
@@ -980,5 +954,215 @@ spec:
                 done < "${list}"
               }
               mirror_read_back /workspace/packed/mirror.list /tmp/mirror
+          - name: fetch
+            image: {{ $toolsImage }}
+            workingDir: /workspace/source
+            env:
+              - name: REGISTRY
+                value: {{ $registry | quote }}
+              - name: OWNER
+                value: {{ $owner | quote }}
+            computeResources:
+              requests: { cpu: 100m, memory: 128Mi }
+              limits: { cpu: "1", memory: 512Mi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+{{ .Files.Get "files/mirror-sources.sh" | indent 14 }}
+
+              mirror_fetch() { # <the list> <the staging folder> <a folder of its own>: every row the mirror does not serve, fetched from its upstream and staged under its sha256
+                local list="$1" staged="$2" scratch="$3" line reference row hex upstream held file got rc rows=0 fetched=0 served=0
+                mkdir -p "${staged}" "${scratch}" || return 1
+                while IFS= read -r line; do
+                  reference="$(mirror_source_target "${line}")" || return 1
+                  read -r -a row <<< "${line}"
+                  rows=$((rows + 1))
+                  if [ "${row[0]}" = tool ]; then
+                    hex="${row[2]}" upstream="${row[1]}"
+                  else
+                    hex="${row[4]}" upstream="${row[2]} ${row[3]} of ${row[1]}"
+                  fi
+                  held="$(mirror_source_held "${reference}" "${hex}" "${scratch}")" || return 1
+                  if [ "${held%% *}" = served ]; then
+                    echo "mirror: ${reference} already served"
+                    served=$((served + 1))
+                    continue
+                  fi
+                  rm -rf "${scratch}/download" && mkdir -p "${scratch}/download" || return 1
+                  rc=0
+                  if [ "${row[0]}" = tool ]; then
+                    file="${scratch}/download/${row[1]##*/}"
+                    curl -fsSL --connect-timeout 10 --max-time 900 -o "${file}" "${row[1]}" > "${scratch}/error" 2>&1 || rc=$?
+                  else
+                    file="${scratch}/download/${row[2]}-${row[3]}.tgz"
+                    case "${row[1]}" in
+                      oci://*) helm pull "${row[1]}/${row[2]}" --version "${row[3]}" --destination "${scratch}/download" > "${scratch}/error" 2>&1 || rc=$? ;;
+                      *) helm pull "${row[2]}" --repo "${row[1]}" --version "${row[3]}" --destination "${scratch}/download" > "${scratch}/error" 2>&1 || rc=$? ;;
+                    esac
+                  fi
+                  if [ "${rc}" != 0 ] || [ ! -f "${file}" ]; then
+                    echo "mirror: FAIL — row ${reference}: ${upstream} could not be fetched (exit ${rc}): $(tail -n 1 "${scratch}/error")" >&2
+                    return 1
+                  fi
+                  got="$(sha256sum "${file}" | cut -d' ' -f1)"
+                  if [ "${got}" != "${hex}" ]; then
+                    echo "mirror: FAIL — row ${reference}: ${upstream} reads as sha256:${got}, and the row pins sha256:${hex}" >&2
+                    return 1
+                  fi
+                  mv "${file}" "${staged}/${hex}" || return 1
+                  echo "mirror: ${reference} fetched from ${upstream} as sha256:${hex}"
+                  fetched=$((fetched + 1))
+                done < "${list}"
+                echo "mirror: the tree at this tag names ${rows} tools and charts for the mirror: ${fetched} fetched and held to their sha256, ${served} already served"
+              }
+              bash scripts/list-mirror-sources.sh > /workspace/packed/mirror-sources.list
+              mirror_fetch /workspace/packed/mirror-sources.list /workspace/packed/mirror-sources /tmp/mirror-sources
+          - name: copy-sources
+            image: {{ $toolsImage }}
+            envFrom:
+              - secretRef:
+                  name: image-builder-registry-push
+            env:
+              - name: REGISTRY
+                value: {{ $registry | quote }}
+              - name: OWNER
+                value: {{ $owner | quote }}
+            computeResources:
+              requests: { cpu: 100m, memory: 64Mi }
+              limits: { cpu: "1", memory: 256Mi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+{{ .Files.Get "files/registry-push.sh" | indent 14 }}
+
+{{ .Files.Get "files/mirror-sources.sh" | indent 14 }}
+
+              mirror_copy_sources() { # <the list> <the staging folder> <a folder of its own>: every row stands in the mirror under its tag as the one layer of its sha256
+                local list="$1" staged="$2" scratch="$3" line reference row hex held entry state path base file config code pushed=0 kept=0
+                local accept='application/vnd.oci.image.manifest.v1+json'
+                local empty_digest='sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'
+                local plan=()
+                mkdir -p "${scratch}" || return 1
+                # 1. Every line is held to its row, to what the mirror holds under its tag and to the file fetch staged
+                #    before anything is pushed, so a refused one leaves the mirror as it was.
+                while IFS= read -r line; do
+                  reference="$(mirror_source_target "${line}")" || return 1
+                  read -r -a row <<< "${line}"
+                  if [ "${row[0]}" = tool ]; then hex="${row[2]}"; else hex="${row[4]}"; fi
+                  held="$(mirror_source_held "${reference}" "${hex}" "${scratch}")" || return 1
+                  case "${held%% *}" in
+                    served) plan+=("kept ${line}") ;;
+                    absent)
+                      if [ ! -f "${staged}/${hex}" ] || [ "$(sha256sum "${staged}/${hex}" | cut -d' ' -f1)" != "${hex}" ]; then
+                        echo "mirror: REFUSE — row ${reference}: the file fetch staged for it is missing or is not sha256:${hex}" >&2
+                        return 1
+                      fi
+                      plan+=("pushed ${line}") ;;
+                    *)
+                      echo "mirror: REFUSE — row ${reference}: the mirror ${held#* }, not the one layer sha256:${hex}. A mirrored tool or chart is never replaced: give its row another version." >&2
+                      return 1 ;;
+                  esac
+                done < "${list}"
+                # 2. What is absent is pushed: the verified file as the one layer, then the manifest under the tag.
+                printf '{}' > "${scratch}/empty.json"
+                for entry in "${plan[@]}"; do
+                  state="${entry%% *}" line="${entry#* }"
+                  read -r -a row <<< "${line}"
+                  if [ "${row[0]}" = tool ]; then hex="${row[2]}" reference="${row[3]}"; else hex="${row[4]}" reference="${row[5]}"; fi
+                  if [ "${state}" = pushed ]; then
+                    path="${reference#*/}" file="${staged}/${hex}"
+                    base="https://${REGISTRY}/v2/${path%:*}"
+                    push_blob "${base}" "${file}" "sha256:${hex}" "${scratch}" || return 1
+                    if [ "${row[0]}" = tool ]; then
+                      push_blob "${base}" "${scratch}/empty.json" "${empty_digest}" "${scratch}" || return 1
+                      jq -n --arg empty "${empty_digest}" --arg digest "sha256:${hex}" --argjson size "$(wc -c < "${file}")" --arg title "${row[1]##*/}" \
+                        '{schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json", artifactType: "application/vnd.simetrixch.tool.v1",
+                          config: {mediaType: "application/vnd.oci.empty.v1+json", digest: $empty, size: 2},
+                          layers: [{mediaType: "application/octet-stream", digest: $digest, size: $size, annotations: {"org.opencontainers.image.title": $title}}]}' \
+                        > "${scratch}/manifest.json" || return 1
+                    else
+                      # The config is the Chart.yaml of the chart just verified, as helm writes it when it pushes a chart.
+                      if ! tar -xzOf "${file}" "${row[2]}/Chart.yaml" | yq -o=json > "${scratch}/config.json"; then
+                        echo "mirror: REFUSE — row ${reference}: sha256:${hex} holds no ${row[2]}/Chart.yaml that reads as JSON" >&2
+                        return 1
+                      fi
+                      config="sha256:$(sha256sum "${scratch}/config.json" | cut -d' ' -f1)"
+                      push_blob "${base}" "${scratch}/config.json" "${config}" "${scratch}" || return 1
+                      jq -n --arg config "${config}" --argjson config_size "$(wc -c < "${scratch}/config.json")" --arg digest "sha256:${hex}" --argjson size "$(wc -c < "${file}")" \
+                        '{schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json",
+                          config: {mediaType: "application/vnd.cncf.helm.config.v1+json", digest: $config, size: $config_size},
+                          layers: [{mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", digest: $digest, size: $size}]}' \
+                        > "${scratch}/manifest.json" || return 1
+                    fi
+                    code="$(registry_call /dev/null -X PUT -H "Content-Type: ${accept}" --data-binary "@${scratch}/manifest.json" "${base}/manifests/${path##*:}")" || return 1
+                    if [ "${code}" != 201 ]; then
+                      echo "mirror: FAIL — the manifest of row ${reference} was answered ${code}" >&2
+                      return 1
+                    fi
+                    pushed=$((pushed + 1))
+                  else
+                    kept=$((kept + 1))
+                  fi
+                  echo "mirror: ${reference} ${state}"
+                done
+                echo "mirror: ${#plan[@]} tools and charts: ${pushed} pushed, ${kept} kept"
+              }
+              mirror_copy_sources /workspace/packed/mirror-sources.list /workspace/packed/mirror-sources /tmp/mirror-sources
+          - name: read-back-sources
+            image: {{ $toolsImage }}
+            env:
+              - name: REGISTRY
+                value: {{ $registry | quote }}
+              - name: OWNER
+                value: {{ $owner | quote }}
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 500m, memory: 256Mi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+{{ .Files.Get "files/mirror-sources.sh" | indent 14 }}
+
+              mirror_read_back_sources() { # <the list> <a folder of its own>: every row is served without a login and reads back as the bytes of its sha256
+                local list="$1" scratch="$2" line reference row hex address held file got rc rows=0 served=0
+                mkdir -p "${scratch}" || return 1
+                while IFS= read -r line; do
+                  rows=$((rows + 1))
+                  reference="$(mirror_source_target "${line}")" || continue
+                  read -r -a row <<< "${line}"
+                  if [ "${row[0]}" = tool ]; then hex="${row[2]}" address="${row[4]}"; else hex="${row[4]}" address="${row[6]}/${row[2]}"; fi
+                  held="$(mirror_source_held "${reference}" "${hex}" "${scratch}")" || return 1
+                  if [ "${held%% *}" != served ]; then
+                    echo "mirror: FAIL — row ${reference}: the mirror ${held#* }, not the one layer sha256:${hex}" >&2
+                    continue
+                  fi
+                  rm -rf "${scratch}/read" && mkdir -p "${scratch}/read" || return 1
+                  rc=0
+                  if [ "${row[0]}" = tool ]; then
+                    file="${scratch}/read/${row[1]##*/}"
+                    curl -fsSL --connect-timeout 10 --max-time 900 -o "${file}" "${address}" > "${scratch}/error" 2>&1 || rc=$?
+                  else
+                    file="${scratch}/read/${row[2]}-${row[3]}.tgz"
+                    helm pull "${address}" --version "${row[3]}" --destination "${scratch}/read" > "${scratch}/error" 2>&1 || rc=$?
+                  fi
+                  if [ "${rc}" != 0 ] || [ ! -f "${file}" ]; then
+                    echo "mirror: FAIL — row ${reference}: ${address} cannot be read without a login (exit ${rc}): $(tail -n 1 "${scratch}/error")" >&2
+                    continue
+                  fi
+                  got="$(sha256sum "${file}" | cut -d' ' -f1)"
+                  if [ "${got}" != "${hex}" ]; then
+                    echo "mirror: FAIL — row ${reference}: ${address} reads back as sha256:${got}, not sha256:${hex}" >&2
+                    continue
+                  fi
+                  echo "mirror: ${reference} read back from ${address}"
+                  served=$((served + 1))
+                done < "${list}"
+                echo "mirror: ${served} of ${rows} tools and charts served"
+                [ "${served}" = "${rows}" ]
+              }
+              mirror_read_back_sources /workspace/packed/mirror-sources.list /tmp/mirror-sources
 {{- end }}
 {{- end }}
