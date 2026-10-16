@@ -5,8 +5,10 @@
 #
 # CI_TOOLS is what the fetch task's list-tools step validated, one "<tool> <version>" per line, and empty
 # for a repository without ci-tools.json. CI_TOOLS_TABLE is files/ci-tools.table, one
-# "<tool> <version> <sha256> <url>" per line. A tool or version the table lacks ends the run before
-# anything is downloaded, and an archive whose sha256 differs ends it before anything is unpacked: a
+# "<tool> <version> <sha256> <url>" per line, where a "<sha256>" in the url stands for the row's sha256 and is filled
+# in before the download, so the hex stands once per row (the owner's mirror serves a file by the blob of its sha256).
+# A tool or version the table lacks ends the run before anything is downloaded, and an archive whose sha256 differs
+# ends it before anything is unpacked: a
 # check that ran with the image's own tool instead of the one it named reads exactly like a check that
 # ran with the right one. Tools are installed in the order of the table, so npm stands before node on
 # PATH, and everything installed stands before the image's own.
@@ -24,10 +26,12 @@ while read -r tool version; do
 done < "${ci_tools_dir}/wanted"
 
 PATH="${ci_tools_dir}/bin:${PATH}"
+sha256_slot='<sha256>'
 while read -r tool version sha256 url; do
   grep -qxF "${tool} ${version}" "${ci_tools_dir}/wanted" || continue
   archive="${ci_tools_dir}/${tool}.download"
   started="${SECONDS}"
+  url="${url//${sha256_slot}/${sha256}}"
   curl -fsSL -o "${archive}" "${url}"
   echo "${sha256}  ${archive}" | sha256sum -c -
   downloaded="${SECONDS}"

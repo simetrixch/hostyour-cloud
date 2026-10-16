@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync, spawnSync} from 'node:child_process';
-import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {immutableChanges, probeImmutableChanges} from './check-immutable.mjs';
@@ -915,7 +915,7 @@ test('list-tools passes only a known tool at a plain version, and a repository w
 });
 
 const TOOLS_TABLE = readFileSync(`${CI_FILES}/ci-tools.table`, 'utf8');
-const TABLE_HOSTS = ['nodejs.org', 'registry.npmjs.org', 'go.dev', 'storage.googleapis.com', 'github.com', 'dl.k8s.io'];
+const TABLE_HOSTS = ['nodejs.org', 'registry.npmjs.org', 'go.dev', 'storage.googleapis.com', 'zot.master.digitacloud.app', 'dl.k8s.io'];
 // An emcc url names the emscripten-releases build of its version, as emsdk 14c18b56's emscripten-releases-tags.json maps it.
 const EMSCRIPTEN_RELEASES = {'5.0.1': 'bf32ae8b61ac8efeb7eca01b54c8307f992724f7'};
 const tableErrors = (table, tools) => {
@@ -927,6 +927,7 @@ const tableErrors = (table, tools) => {
     if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) errors.push(`${tool}: version ${version} is not x.y.z`);
     if (!/^[0-9a-f]{64}$/.test(sha256 ?? '')) errors.push(`${tool} ${version}: sha256 is not 64 hex digits`);
     if (!TABLE_HOSTS.some((host) => url?.startsWith(`https://${host}/`))) errors.push(`${tool} ${version}: ${url} is not https on a known host`);
+    if (/[0-9a-f]{64}/.test(url ?? '') || (url?.startsWith('https://zot.master.digitacloud.app/') && !url.endsWith('/blobs/sha256:<sha256>'))) errors.push(`${tool} ${version}: ${url} writes the sha256 again, where the owned address ends in the slot <sha256>`);
     if (!url?.includes((tool === 'emcc' ? EMSCRIPTEN_RELEASES[version] : version) ?? '\0')) errors.push(`${tool} ${version}: ${url} does not name the version`);
     if (seen.has(`${tool} ${version}`)) errors.push(`${tool} ${version}: twice`);
     seen.add(`${tool} ${version}`);
@@ -940,6 +941,7 @@ test('the tools table carries one sha256 and one https url per tool and version,
   assert.deepEqual(tableErrors(TOOLS_TABLE, tools), [], 'PLANTED INNOCENT: the table as it stands');
   assert.deepEqual([...new Set(TOOLS_TABLE.split('\n').filter(Boolean).map((line) => line.split(' ')[0]))].sort(), [...tools].sort(), 'every accepted tool has a row and no row names another');
   const first = TOOLS_TABLE.split('\n')[0], [tool, version, sha256, url] = first.split(' ');
+  const owned = Object.fromEntries(['tool', 'version', 'sha256', 'url'].map((key, at) => [key, TOOLS_TABLE.split('\n').find((line) => line.startsWith('traefik ')).split(' ')[at]]));
   for (const [defect, row] of [
     ['a short sha256', [tool, version, sha256.slice(1), url]],
     ['an upper-case sha256', [tool, version, sha256.toUpperCase(), url]],
@@ -949,6 +951,9 @@ test('the tools table carries one sha256 and one https url per tool and version,
     ['a tool of no contract', ['ruby', version, sha256, url]],
     ['a version that is no x.y.z', [tool, 'latest', sha256, url.replaceAll(version, 'latest')]],
     ['a fifth field', [tool, version, sha256, url, 'extra']],
+    ['an owned address that writes the hex instead of the slot', [owned.tool, owned.version, owned.sha256, owned.url.replace('<sha256>', owned.sha256)]],
+    ['an owned address without the blob of its file', [owned.tool, owned.version, owned.sha256, owned.url.replace('/blobs/sha256:<sha256>', '')]],
+    ['a row back on a GitHub Release asset', [owned.tool, owned.version, owned.sha256, owned.url.replace(/^https:\/\/zot\.master\.digitacloud\.app\/v2\/simetrixch\//, 'https://').replace('/blobs/sha256:<sha256>', '')]],
   ]) {
     assert.notDeepEqual(tableErrors(`${row.join(' ')}\n`, tools), [], `PLANTED DEFECT: ${defect} is caught`);
   }
@@ -995,7 +1000,11 @@ const buildToolFixtures = (root) => {
   execFileSync('tar', ['-cJf', join(out, 'emcc.tar.xz'), '-C', join(src, 'emcc'), 'install']);
   execFileSync('python3', ['-I', '-m', 'zipfile', '-c', join(out, 'dart.zip'), 'dart-sdk'], {cwd: join(src, 'dart')});
   execFileSync('python3', ['-I', '-m', 'zipfile', '-c', join(out, 'loki.zip'), 'loki-linux-amd64'], {cwd: join(src, 'loki')});
-  const row = (tool, version, archive) => `${tool} ${version} ${createHash('sha256').update(readFileSync(join(out, archive))).digest('hex')} file://${join(out, archive)}`;
+  // The owner's mirror serves a file as the blob of its sha256: the fixture serves traefik that way, and its row names the blob by the slot.
+  const sha256Of = (archive) => createHash('sha256').update(readFileSync(join(out, archive))).digest('hex');
+  mkdirSync(join(out, 'owned/blobs'), {recursive: true});
+  copyFileSync(join(out, 'traefik.tgz'), join(out, 'owned/blobs', `sha256:${sha256Of('traefik.tgz')}`));
+  const row = (tool, version, archive) => `${tool} ${version} ${sha256Of(archive)} ${tool === 'traefik' ? `file://${join(out, 'owned/blobs/sha256:<sha256>')}` : `file://${join(out, archive)}`}`;
   return Object.fromEntries([['node', '26.11.1', 'node.tgz'], ['npm', '12.2.0', 'npm.tgz'], ['go', '1.24.13', 'go.tgz'], ['dart', '3.13.4', 'dart.zip'],
     ['gitleaks', '8.30.1', 'gitleaks.tgz'], ['promtool', '3.13.1', 'promtool.tgz'], ['kubectl', '1.35.6', 'kubectl'], ['emcc', '5.0.1', 'emcc.tar.xz'],
     ['traefik', '3.6.2', 'traefik.tgz'], ['loki', '3.7.4', 'loki.zip']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
@@ -1057,6 +1066,12 @@ test('the tools step installs each tool of ci-tools.json from the table before t
   const forgedTraefik = runInstallTools('traefik 3.6.2\n', (rows) => allRows({...rows, traefik: rows.traefik.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `)}));
   assert.notEqual(forgedTraefik.status, 0, 'PLANTED DEFECT: a traefik archive whose sha256 differs ends the run');
   assert.deepEqual(forgedTraefik.unpacked, [], 'before the traefik of the archive is unpacked');
+  const blobOf = (row) => { const [, , hex, url] = row.split(' '); return url.replace('file://', '').replace('<sha256>', hex); };
+  assert.match(all.stdout, /^check: traefik 3\.6\.2, file:\/\/\S+\/blobs\/sha256:[0-9a-f]{64}, sha256 [0-9a-f]{64}$/m, 'PLANTED INNOCENT: the slot of the traefik row is filled with its sha256, and the log names the address that was read');
+  const otherBytes = runInstallTools('traefik 3.6.2\n', (rows) => { writeFileSync(blobOf(rows.traefik), 'other bytes'); return allRows(rows); });
+  assert.notEqual(otherBytes.status, 0, 'PLANTED DEFECT: an owned address whose filled blob serves other bytes ends the run');
+  assert.match(otherBytes.stdout + otherBytes.stderr, /FAILED/, 'at the sha256sum -c, and not at the fetch');
+  assert.deepEqual(otherBytes.unpacked, [], 'before anything of the file is unpacked');
   const forgedLoki = runInstallTools('loki 3.7.4\n', (rows) => allRows({...rows, loki: rows.loki.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `)}));
   assert.notEqual(forgedLoki.status, 0, 'PLANTED DEFECT: a loki archive whose sha256 differs ends the run');
   assert.deepEqual(forgedLoki.unpacked, [], 'before the loki of the archive is unpacked');
@@ -1092,6 +1107,38 @@ const toolsProblems = (script, runs) => {
   if (/helm-v\d|yq_linux|jq-linux/.test(script.replace(fixed, ''))) problems.push('the script installs helm, yq or jq by a copy of its own beside files/ci-fixed-tools.sh');
   return problems;
 };
+
+// yq and jq are fetched from the owner's mirror, by the blob of their sha256, and the hex stands once, in the variable the url and
+// the sha256sum -c both read. helm stays on get.helm.sh.
+const OWNED_TOOLS = {yq: 'mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64', jq: 'jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64'};
+const fixedToolsMirrorProblems = (script) => {
+  const problems = [], lines = script.split('\n');
+  for (const [tool, path] of Object.entries(OWNED_TOOLS)) {
+    const fetched = lines.filter((line) => line.startsWith('curl ') && line.includes(`"\${ci_bin}/${tool}"`));
+    const wanted = `curl -fsSL -o "\${ci_bin}/${tool}" "https://zot.master.digitacloud.app/v2/simetrixch/github.com/${path}/blobs/sha256:\${${tool}_sha256}"`;
+    if (fetched.join('\n') !== wanted) problems.push(`${tool} is fetched by ${fetched.join(' and ') || 'nothing'}, not from its owned address by ${tool}_sha256`);
+    if (lines.filter((line) => new RegExp(`^${tool}_sha256=[0-9a-f]{64}$`).test(line)).length !== 1) problems.push(`${tool}_sha256 is not assigned one sha256 once`);
+    if (!lines.includes(`echo "\${${tool}_sha256}  \${ci_bin}/${tool}" | sha256sum -c -`)) problems.push(`${tool} is not held to ${tool}_sha256 by sha256sum -c`);
+  }
+  const hexLines = lines.filter((line) => /[0-9a-f]{64}/.test(line) && !/^(yq|jq)_sha256=/.test(line) && !line.includes('helm'));
+  if (hexLines.length) problems.push(`a sha256 is written beside its variable: ${hexLines.join(' and ')}`);
+  return problems;
+};
+
+test('ci-fixed-tools.sh fetches yq and jq from the owner\'s mirror by the one sha256 it checks them against, and helm from get.helm.sh', () => {
+  const fixed = readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8');
+  assert.deepEqual(fixedToolsMirrorProblems(fixed), [], 'PLANTED INNOCENT: the file as it stands');
+  assert.match(fixed, /^curl -fsSL -o \/tmp\/helm\.tar\.gz https:\/\/get\.helm\.sh\//m, 'helm stays on get.helm.sh');
+  const hex = (tool) => fixed.match(new RegExp(`^${tool}_sha256=([0-9a-f]{64})$`, 'm'))[1];
+  const defects = {
+    'yq back on its GitHub Release asset': fixed.replace(/"https:\/\/zot\.master\.digitacloud\.app\/v2\/simetrixch\/github\.com\/(mikefarah[^"]*)\/blobs[^"]*"/, 'https://github.com/$1'),
+    'the hex of jq written again in the check': fixed.replace('echo "${jq_sha256}  ', `echo "${hex('jq')}  `),
+    'the hex of yq written again in the url': fixed.replace('/blobs/sha256:${yq_sha256}', `/blobs/sha256:${hex('yq')}`),
+    'jq back on its GitHub Release asset': fixed.replace('https://zot.master.digitacloud.app/v2/simetrixch/github.com/jqlang', 'https://github.com/jqlang'),
+    'the variable of yq missing': fixed.replace(/^yq_sha256=.*\n/m, ''),
+  };
+  for (const [defect, planted] of Object.entries(defects)) assert.notDeepEqual(fixedToolsMirrorProblems(planted), [], `PLANTED DEFECT: ${defect}`);
+});
 
 test('build-binaries installs the fixed tools and the tools of ci-tools.json before release/build.sh, by the files the ci check uses', () => {
   const fixed = readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd();
@@ -1201,9 +1248,9 @@ test('the publish run of the platform tree on the owner\'s master copies its ima
 const PINNED_ROWS = [
   {row: 'emcc 5.0.1 bda6917b630fcc604cca39af433180adfd7195e378075331ceac926553684249 https://storage.googleapis.com/webassembly/emscripten-releases-builds/linux/bf32ae8b61ac8efeb7eca01b54c8307f992724f7/wasm-binaries.tar.xz',
     release: ['bf32ae8b61ac8efeb7eca01b54c8307f992724f7', '8c5f43157a3f069ade75876e23061330521eabde']},
-  {row: 'traefik 3.6.2 edc04e863795d741bdba8d70fbc1fd721b16edace829f8f25b0e13a9a34cb134 https://github.com/traefik/traefik/releases/download/v3.6.2/traefik_v3.6.2_linux_amd64.tar.gz',
+  {row: 'traefik 3.6.2 edc04e863795d741bdba8d70fbc1fd721b16edace829f8f25b0e13a9a34cb134 https://zot.master.digitacloud.app/v2/simetrixch/github.com/traefik/traefik/releases/download/v3.6.2/traefik_v3.6.2_linux_amd64.tar.gz/blobs/sha256:<sha256>',
     release: ['/v3.6.2/traefik_v3.6.2_', '/v3.6.1/traefik_v3.6.1_']},
-  {row: 'loki 3.7.4 4b4f17fc9416bd2099dac815ede1aac15aa0f8d1a21225e08909796b99aaad59 https://github.com/grafana/loki/releases/download/v3.7.4/loki-linux-amd64.zip',
+  {row: 'loki 3.7.4 4b4f17fc9416bd2099dac815ede1aac15aa0f8d1a21225e08909796b99aaad59 https://zot.master.digitacloud.app/v2/simetrixch/github.com/grafana/loki/releases/download/v3.7.4/loki-linux-amd64.zip/blobs/sha256:<sha256>',
     release: ['/v3.7.4/', '/v3.7.3/']},
 ];
 const pinnedRowProblems = (task, tools, runs, pinned) => {

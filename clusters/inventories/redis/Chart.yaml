@@ -79,7 +79,7 @@ dependencies:
   # the ACL rule refuses a claim's own user.
   - name: prometheus-redis-exporter
     version: 6.28.0
-    repository: https://prometheus-community.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
 
   # ExternalSecret — materializes the `redis-credentials` K8s Secret (the
   # `default` user's password) from Vault path `<env>/app/redis`. The Deployment

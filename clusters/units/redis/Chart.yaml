@@ -64,7 +64,7 @@ dependencies:
 
   - name: prometheus-redis-exporter
     version: 6.28.0
-    repository: https://prometheus-community.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
     condition: metrics.enabled
 
   - name: common

@@ -143,13 +143,22 @@ dependencies_of() { # <chart>
   # The other three bootstrap releases, by the component of clusters/platform/versions.yaml that pins each.
   for pair in headlamp:headlamp idp:authentik vault:vault; do
     release="${pair%%:*}" component="${pair#*:}"
-    repository="$(yq ".bootstrap.$component.upstream.repository" clusters/platform/versions.yaml)"
-    name="$(yq ".bootstrap.$component.upstream.chart" clusters/platform/versions.yaml)"
+    name="$component"
     version="$(yq ".bootstrap.$component.version" clusters/platform/versions.yaml)"
     values="$(ls clusters/bootstrap/$release/values.yaml clusters/bootstrap/$release/values.tpl 2>/dev/null | head -n 1)"
     [ -n "$values" ] || fail "clusters/bootstrap/$release carries no values.yaml or values.tpl"
-    helm pull "$name" --repo "$repository" --version "$version" --destination "$work/bootstrap" > "$work/pull.out" 2>&1 \
-      || { cat "$work/pull.out" >&2; fail "the $name chart $version could not be fetched from $repository"; }
+    # headlamp and authentik are pulled from the mirror, by the row of mirror-sources.table that holds the version
+    # versions.yaml pins; vault, which the mirror does not hold, from its own repository.
+    if [ "$component" = vault ]; then
+      repository="$(yq ".bootstrap.$component.upstream.repository" clusters/platform/versions.yaml)"
+      helm pull "$name" --repo "$repository" --version "$version" --destination "$work/bootstrap" > "$work/pull.out" 2>&1 \
+        || { cat "$work/pull.out" >&2; fail "the $name chart $version could not be fetched from $repository"; }
+    else
+      repository="$(bash scripts/list-mirror-sources.sh --chart "$name" "$version")" \
+        || fail "versions.yaml pins the $name chart at $version, and mirror-sources.table has no row for it"
+      helm pull "$repository/$name" --version "$version" --destination "$work/bootstrap" > "$work/pull.out" 2>&1 \
+        || { cat "$work/pull.out" >&2; fail "the $name chart $version could not be fetched from $repository"; }
+    fi
     render "the $release release with $values" "$release" "$work/bootstrap/$name-$version.tgz" --namespace "$release" -f "$values" \
       || { cat "$work/render.err" >&2; fail "the $name chart $version does not render with $values"; }
   done

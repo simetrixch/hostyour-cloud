@@ -31,7 +31,7 @@ dependencies:
   # No-auth connection (the DB is NetworkPolicy-isolated).
   - name: prometheus-mongodb-exporter
     version: 3.20.0
-    repository: https://prometheus-community.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
 
   # ExternalSecret — materializes the mongodb-credentials K8s Secret (root
   # password + replica-set keyFile) from Vault path `<env>/app/mongodb`. The

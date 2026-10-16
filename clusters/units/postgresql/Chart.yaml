@@ -93,11 +93,11 @@ dependencies:
   # The PER-CONSUMER project (hostyour-manager appproject.ts renderConsumerAppProject)
   # currently permits only [consumerRepo, platformRepo], so a per-consumer render
   # with metrics.enabled would be REJECTED until that project also allows
-  # https://prometheus-community.github.io/helm-charts. That fix lives in
+  # oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts. That fix lives in
   # hostyour-manager (part of slice S4), NOT in this chart.
   - name: prometheus-postgres-exporter
     version: 8.2.0
-    repository: https://prometheus-community.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
     condition: metrics.enabled
 
   # Shared named templates (common.labels / common.fullname) used by the
