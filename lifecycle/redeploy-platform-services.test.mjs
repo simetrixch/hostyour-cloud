@@ -48,6 +48,8 @@ async function fixture(options = {}) {
       }
       res.writeHead(options.fail === phase ? 500 : 200);
       res.end(options.leak ? PLANE : 'innocent non-secret program output\n');
+    } else if (/\breset\b.*--hard/.test(command)) {
+      res.writeHead(options.stale ? 500 : 200); res.end('programs checkout\n');
     } else if (command.startsWith('cat ')) {
       res.end(options.oldProgram ? declaration.replace('plane_api_token', 'unrelated_token') : declaration);
     } else {
@@ -70,12 +72,12 @@ OPERATOR_USER='master'
 STAGE='prod'
 ROLE='master'
 BUILD_PLANE_FQDN='master.fixture.invalid'
-ACME_SERVER='https://dv.acme-v02.api.pki.goog/directory'
 ELEVATION_PASSWORD='${PASSWORD}'
 UNDECLARED_TOKEN='fixture-excluded-credential'
 `;
   if (!options.missing) config += `PLANE_API_TOKEN='${options.empty ? '' : PLANE}'\n`;
   if (options.invalid) config += 'echo ' + PLANE + '\n';
+  if (options.acmeServer) config += `ACME_SERVER='${options.acmeServer}'\n`;
   await writeFile(file, config, {mode: 0o600});
   if (options.openMode) await chmod(file, 0o644);
   const run = () => new Promise((resolve, reject) => {
@@ -117,6 +119,36 @@ test('the installed master receives only declared answers and the password envel
     }
     assert.equal(f.calls.filter(c => c.input).length, 3);
     await f.privateRecords();
+  } finally {await f.clean();}
+});
+
+test('an ACME_SERVER the config states is neither judged nor sent', async () => {
+  const f = await fixture({acmeServer: 'https://acme-v02.api.letsencrypt.org/directory'});
+  try {
+    const r = await f.run(); assert.equal(r.code, 0, r.stderr);
+    for (const call of f.calls.filter(c => c.input)) assert.equal(JSON.parse(call.input).answers.acme_server, undefined);
+  } finally {await f.clean();}
+});
+
+test('the programs checkout is brought to the head of its branch before its declaration is read', async () => {
+  const f = await fixture();
+  try {
+    const r = await f.run(); assert.equal(r.code, 0, r.stderr);
+    const at = test => f.calls.findIndex(c => test(c.argv.at(-1)));
+    const refresh = at(command => /fetch\b.*\borigin\b/.test(command) && /\breset\b.*--hard/.test(command));
+    assert.ok(refresh >= 0, 'nothing brought /srv/ansiwise-programs to the head of its branch');
+    assert.ok(refresh < at(command => command.startsWith('cat ')), 'the declaration was read before the checkout was brought forward');
+    assert.deepEqual(f.phases, ['test', 'dry', 'run']);
+  } finally {await f.clean();}
+});
+
+test('a programs checkout that cannot be brought forward starts no read and no mode', async () => {
+  const f = await fixture({stale: true});
+  try {
+    const r = await f.run(); assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /programs checkout/);
+    assert.deepEqual(f.phases, []);
+    assert.equal(f.calls.filter(c => c.argv.at(-1).startsWith('cat ')).length, 0);
   } finally {await f.clean();}
 });
 

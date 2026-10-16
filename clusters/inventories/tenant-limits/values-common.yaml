@@ -1,0 +1,24 @@
+# THE LIMITS PER VISITOR, per use, on each ingress pod: rateLimit admits `average` requests a second
+# with bursts up to `burst`, and inFlightReq admits `inFlight` requests open at once; past either the
+# answer is 429. They are counted in the memory of one pod and start again when it restarts, so a
+# cluster of n ingress pods admits up to n times as much. Streams count opens and open streams, never
+# a sign-in budget. The values are a first envelope wide enough for one office behind one address;
+# measure before relying on them, and change them for one installation in
+# installation/values/tenant-limits.yaml.
+tenantLimits:
+  pages:
+    average: 50
+    burst: 200
+    inFlight: 100
+  forms:
+    average: 5
+    burst: 30
+    inFlight: 20
+  api:
+    average: 30
+    burst: 120
+    inFlight: 60
+  streams:
+    average: 5
+    burst: 30
+    inFlight: 100

@@ -60,6 +60,14 @@ scope is a fact of the registration and never a value of this chart.
      CAP_DAC_OVERRIDE and reads and writes through any mode, so a test that expects a directory to
      refuse a write (a record this account cannot remove) is red in a pod and green on a
      workstation. */}}
+{{/* The image a repository's check, pack and build run in: ghcr.io/puppeteer/puppeteer, with Node 24,
+     git, bash, curl and the Chrome for Testing that PDF tests need, on the node:24-bookworm base. It
+     is pulled from the owner's mirror of ghcr.io, at the digest of 25.13.0 for linux/amd64, a Docker
+     v2 schema 2 manifest the mirror keeps as it is. */}}
+{{- define "consumer-build.nodeImage" -}}
+{{ include "common.buildRegistry" . }}/ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
+{{- end -}}
+
 {{- define "consumer-build.checkUser" -}}
 10042
 {{- end -}}

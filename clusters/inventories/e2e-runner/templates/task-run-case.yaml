@@ -13,6 +13,9 @@ with a TaskRun and reads the step's log:
       - {name: path, value: /app/<name>/}
       - {name: case, value: cases/settings.spec.ts}
 
+cases/dropped-member-roles.spec.ts also takes dropped-member and dropped-account, which name the member
+a drop removed and the account that held its role. Neither is a secret, so both travel as params.
+
 THE TARGET BINDS THE PASSWORD TO ITS HOST. The Secret e2e-<target> carries both the tenant's E2E
 password and the host that tenant is served at, from one ExternalSecret that
 clusters/argocd/files/e2e-targets-appset.yaml derives from the books. A run names the path on that
@@ -55,6 +58,14 @@ spec:
     - name: case
       type: string
       description: The case file under packages/e2e, for example cases/settings.spec.ts.
+    - name: dropped-member
+      type: string
+      default: ""
+      description: The member a drop removed, for cases/dropped-member-roles.spec.ts, for example testco-workshop.
+    - name: dropped-account
+      type: string
+      default: ""
+      description: The email of the account that held the dropped member's role, for cases/dropped-member-roles.spec.ts.
   steps:
     - name: run-case
       # Built inside this installation by the release of digita-testkit and pushed to its own
@@ -76,6 +87,10 @@ spec:
           value: $(params.path)
         - name: E2E_CASE
           value: $(params.case)
+        - name: E2E_DROPPED_MEMBER
+          value: $(params.dropped-member)
+        - name: E2E_DROPPED_ACCOUNT
+          value: $(params.dropped-account)
         - name: HOME
           value: /tmp
         - name: TMPDIR
@@ -100,6 +115,14 @@ spec:
         esac
         case "${E2E_CASE}" in
           *[!A-Za-z0-9._/-]*) refuse "case ${E2E_CASE} holds a character that is not a path character" ;;
+        esac
+        # The case matches the member as the role prefix `<member>:`, so a `:` would reach another
+        # member's roles. The account is compared to an email address and sent as a search query.
+        case "${E2E_DROPPED_MEMBER}" in
+          *[!A-Za-z0-9._-]*) refuse "dropped-member ${E2E_DROPPED_MEMBER} holds a character that is not a member name character" ;;
+        esac
+        case "${E2E_DROPPED_ACCOUNT}" in
+          *[!A-Za-z0-9._%+@-]*) refuse "dropped-account ${E2E_DROPPED_ACCOUNT} holds a character that is not an email address character" ;;
         esac
         export PLAYWRIGHT_BASE_URL="https://${E2E_TARGET_HOST}${E2E_APP_PATH}"
         echo "run-case: ${E2E_CASE} against ${PLAYWRIGHT_BASE_URL}"

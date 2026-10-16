@@ -559,6 +559,72 @@ test('the image check builds only a new tag of an image named after the unit, fr
   }
 });
 
+// The check step of the release's builds task, run on a tagged manifest. Its stand-ins run in lockstep:
+// grep -qx closes its input at the first line it matches, and printf writes its next line only after
+// grep has decided the one before. A check that pipes printf into grep -q under pipefail then meets
+// SIGPIPE on every run instead of at random.
+const REAL_GREP = execFileSync('sh', ['-c', 'command -v grep'], {encoding: 'utf8'}).trim();
+const LOCKSTEP_GREP = `#!/usr/bin/env bash
+[ "$1" = -qx ] || exec "$REAL_GREP" "$@"
+n=0
+while IFS= read -r line; do
+  n=$((n + 1))
+  if "$REAL_GREP" -qx -e "$2" <<< "$line"; then exec 0<&-; : > "$LOCKSTEP/$n"; exit 0; fi
+  : > "$LOCKSTEP/$n"
+done
+exit 1
+`;
+const LOCKSTEP_PRINTF = `() { if [ "$1" != '%s\\n' ] || [ $# -lt 3 ]; then builtin printf "$@"; return; fi
+  local format="$1" n=0; shift; rm -f "$LOCKSTEP"/*
+  for word; do
+    [ "$n" = 0 ] || until [ -e "$LOCKSTEP/$n" ]; do sleep 0.01; done
+    builtin printf "$format" "$word"; n=$((n + 1))
+  done
+}`;
+const RELEASE_BUILDS = ['shop-engine', 'shop-app', 'shop-web'];
+let releaseBuildsStep;
+const runReleaseBuilds = (declared, edit = (script) => script) => {
+  releaseBuildsStep ??= renderUnit('shop', RELEASE_BUILDS).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release')
+    .spec.tasks.find((t) => t.name === 'builds').taskSpec.steps.find((s) => s.name === 'check');
+  const root = mkdtempSync(join(tmpdir(), 'release-builds-')), source = join(root, 'source'), bin = join(root, 'bin');
+  const results = join(root, 'results'), lockstep = join(root, 'lockstep');
+  for (const dir of [join(source, 'deploy'), bin, results, lockstep]) mkdirSync(dir, {recursive: true});
+  writeFileSync(join(source, 'deploy/platform.yaml'),
+    `name: shop\nbuilds:\n${declared.map((b) => `  - {name: '${b}', containerfile: Containerfile, context: .}\n`).join('')}`);
+  writeFileSync(join(bin, 'grep'), LOCKSTEP_GREP); chmodSync(join(bin, 'grep'), 0o755);
+  const env = Object.fromEntries(releaseBuildsStep.env.map((e) => [e.name, e.value]));
+  const result = spawnSync('bash', ['-c', edit(releaseBuildsStep.script).replaceAll('/tekton/results', results)], {cwd: source,
+    encoding: 'utf8', timeout: 60000, env: {PATH: `${bin}:${process.env.PATH}`, REAL_GREP, LOCKSTEP: lockstep, 'BASH_FUNC_printf%%': LOCKSTEP_PRINTF, ...env}});
+  const declaredResults = RELEASE_BUILDS.map((b) => existsSync(join(results, `${b}-declared`)) && readFileSync(join(results, `${b}-declared`), 'utf8'));
+  rmSync(root, {recursive: true, force: true});
+  return {...result, declaredResults};
+};
+
+test('the release builds check passes every attested build, the first one too, when grep -q stops reading at its match', () => {
+  const innocent = runReleaseBuilds(RELEASE_BUILDS);
+  assert.equal(releaseBuildsStep.env.find((e) => e.name === 'ATTESTED').value, RELEASE_BUILDS.join(' '));
+  assert.equal(innocent.status, 0, `PLANTED INNOCENT: three attested builds — ${innocent.stderr}`);
+  assert.deepEqual(innocent.declaredResults, ['true', 'true', 'true']);
+  const attestedCheck = 'if ! [[ " ${ATTESTED} " == *" ${b} "* ]]; then';
+  const racing = (script) => script.replace(attestedCheck, 'if ! printf \'%s\\n\' ${ATTESTED} | grep -qx "${b}"; then');
+  assert.notEqual(racing(releaseBuildsStep.script), releaseBuildsStep.script, 'the step carries the attested check this test replaces');
+  const raced = runReleaseBuilds(RELEASE_BUILDS, racing);
+  assert.notEqual(raced.status, 0, 'PLANTED DEFECT: the attested check piped into grep -q is refused by the stand-ins on its first build');
+  assert.match(raced.stderr, /build 'shop-engine' is declared/);
+  const NOT_ATTESTED = {
+    'a build missing from ATTESTED': [...RELEASE_BUILDS, 'shop-extra'],
+    'a prefix of an attested build': ['shop-eng'],
+    'an attested build with a suffix': ['shop-engines'],
+    'a name that matches an attested build only as a pattern': ['shop-.pp'],
+  };
+  for (const [name, declared] of Object.entries(NOT_ATTESTED)) {
+    const refused = runReleaseBuilds(declared);
+    const missing = declared.at(-1);
+    assert.notEqual(refused.status, 0, `PLANTED DEFECT: ${name}`);
+    assert.equal(refused.stderr, `builds: FAIL — build '${missing}' is declared in deploy/platform.yaml but not attested in registrations/shop/build.yaml — run the onboard verb again to re-attest\n`, name);
+  }
+});
+
 test('the build offers REGISTRY only to a Containerfile that declares it', () => {
   const script = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'buildah-build-push')
     .spec.steps.find((step) => step.name === 'build').script;
@@ -834,12 +900,12 @@ test('list-tools passes only a known tool at a plain version, and a repository w
       rmSync(dir, {recursive: true, force: true});
     }
   };
-  const all = {node: '26.11.1', npm: '12.2.0', go: '1.24.13', dart: '3.13.4', gitleaks: '8.30.1', promtool: '3.13.1', kubectl: '1.35.6', emcc: '5.0.1'};
+  const all = {node: '26.11.1', npm: '12.2.0', go: '1.24.13', dart: '3.13.4', gitleaks: '8.30.1', promtool: '3.13.1', kubectl: '1.35.6', emcc: '5.0.1', traefik: '3.6.2', loki: '3.7.4'};
   assert.deepEqual(list(all), {status: 0, lines: Object.entries(all).map(([tool, version]) => `${tool} ${version}`)}, 'PLANTED INNOCENT: every tool of the contract at a plain version passes');
   assert.deepEqual(list({dart: '3.13.4'}), {status: 0, lines: ['dart 3.13.4']});
   assert.deepEqual(list({}), {status: 0, lines: []}, 'a file that names no tool lists none');
   assert.deepEqual(list(undefined), {status: 0, lines: []}, 'a repository without ci-tools.json lists none and keeps the tools of its image');
-  for (const [tool, version] of [['ruby', '3.4.0'], ['NODE', '26.11.1'], ['node', 'latest'], ['node', '26'], ['node', '26.11'], ['node', 'v26.11.1'], ['node', '26.11.1-rc.1'], ['node', '26.11.1; id'], ['node', '$(id)'], ['node', 26.11], ['node', null]]) {
+  for (const [tool, version] of [['ruby', '3.4.0'], ['NODE', '26.11.1'], ['node', 'latest'], ['node', '26'], ['node', '26.11'], ['node', 'v26.11.1'], ['node', '26.11.1-rc.1'], ['traefik', 'v3.6.2'], ['loki', 'v3.7.4'], ['node', '26.11.1; id'], ['node', '$(id)'], ['node', 26.11], ['node', null]]) {
     assert.notEqual(list({[tool]: version}).status, 0, `PLANTED DEFECT: ${tool} at ${JSON.stringify(version)} is refused`);
   }
   assert.notEqual(list({node: '26.11.1', ruby: '3.4.0'}).status, 0, 'one unknown tool among known ones refuses the file');
@@ -914,6 +980,8 @@ const buildToolFixtures = (root) => {
   program(join(src, 'gitleaks/gitleaks'), 'gitleaks-fixture');
   program(join(src, 'promtool/prometheus-3.13.1.linux-amd64/promtool'), 'promtool-fixture');
   program(join(out, 'kubectl'), 'kubectl-fixture');
+  program(join(src, 'traefik/traefik'), 'traefik-fixture');
+  program(join(src, 'loki/loki-linux-amd64'), 'loki-fixture');
   // The SDK release of emscripten: LLVM in install/bin, Binaryen's programs beside it, emcc in install/emscripten. Its
   // emcc prints the version of the emscripten-version.txt beside it, which the archive ships as <x.y.z>-git.
   program(join(src, 'emcc/install/emscripten/emcc'), 'emcc-fixture "$(tr -d \'"\' < "$(dirname "$0")/emscripten-version.txt") (fixture)"');
@@ -923,11 +991,14 @@ const buildToolFixtures = (root) => {
   const tgz = (name, dir, entry) => execFileSync('tar', ['-czf', join(out, name), '-C', join(src, dir), entry]);
   tgz('node.tgz', 'node', 'node-v'); tgz('npm.tgz', 'npm', 'package'); tgz('go.tgz', 'go', 'go');
   tgz('gitleaks.tgz', 'gitleaks', 'gitleaks'); tgz('promtool.tgz', 'promtool', 'prometheus-3.13.1.linux-amd64');
+  tgz('traefik.tgz', 'traefik', 'traefik');
   execFileSync('tar', ['-cJf', join(out, 'emcc.tar.xz'), '-C', join(src, 'emcc'), 'install']);
   execFileSync('python3', ['-I', '-m', 'zipfile', '-c', join(out, 'dart.zip'), 'dart-sdk'], {cwd: join(src, 'dart')});
+  execFileSync('python3', ['-I', '-m', 'zipfile', '-c', join(out, 'loki.zip'), 'loki-linux-amd64'], {cwd: join(src, 'loki')});
   const row = (tool, version, archive) => `${tool} ${version} ${createHash('sha256').update(readFileSync(join(out, archive))).digest('hex')} file://${join(out, archive)}`;
   return Object.fromEntries([['node', '26.11.1', 'node.tgz'], ['npm', '12.2.0', 'npm.tgz'], ['go', '1.24.13', 'go.tgz'], ['dart', '3.13.4', 'dart.zip'],
-    ['gitleaks', '8.30.1', 'gitleaks.tgz'], ['promtool', '3.13.1', 'promtool.tgz'], ['kubectl', '1.35.6', 'kubectl'], ['emcc', '5.0.1', 'emcc.tar.xz']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
+    ['gitleaks', '8.30.1', 'gitleaks.tgz'], ['promtool', '3.13.1', 'promtool.tgz'], ['kubectl', '1.35.6', 'kubectl'], ['emcc', '5.0.1', 'emcc.tar.xz'],
+    ['traefik', '3.6.2', 'traefik.tgz'], ['loki', '3.7.4', 'loki.zip']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
 };
 
 const runInstallTools = (wanted, rows, plant = (script) => script) => {
@@ -935,28 +1006,28 @@ const runInstallTools = (wanted, rows, plant = (script) => script) => {
   try {
     const table = rows(buildToolFixtures(root));
     const script = plant(readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8')).replaceAll('/tmp/ci-tools', dir);
-    const probe = 'for t in node npm npx go dart gitleaks promtool kubectl emcc; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
+    const probe = 'for t in node npm npx go dart gitleaks promtool kubectl emcc traefik loki; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
     const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\n${probe}`], {encoding: 'utf8', env: {...process.env, CI_TOOLS: wanted, CI_TOOLS_TABLE: table}});
-    const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|gitleaks|promtool|kubectl|emcc)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
+    const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|gitleaks|promtool|kubectl|emcc|traefik|loki)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
     // emcc reads the .emscripten beside it as Python; python3 reads the two roots out of it the same way.
     const emccConfig = join(dir, 'emcc/emscripten/.emscripten');
     const emccRoots = existsSync(emccConfig) ? execFileSync('python3', ['-I', '-c', 'import sys; exec(open(sys.argv[1]).read()); print(LLVM_ROOT); print(BINARYEN_ROOT)', emccConfig], {encoding: 'utf8'})
       .trim().replaceAll(dir, '<installed>').split('\n') : null;
     return {status: result.status, stdout: result.stdout, stderr: result.stderr, resolved, emccRoots,
-      unpacked: [...['node', 'npm', 'go', 'dart', 'emcc'].filter((tool) => existsSync(join(dir, tool))), ...['gitleaks', 'promtool', 'kubectl'].filter((tool) => existsSync(join(dir, 'bin', tool)))], downloaded: existsSync(join(dir, 'node.download'))};
+      unpacked: [...['node', 'npm', 'go', 'dart', 'emcc'].filter((tool) => existsSync(join(dir, tool))), ...['gitleaks', 'promtool', 'kubectl', 'traefik', 'loki'].filter((tool) => existsSync(join(dir, 'bin', tool)))], downloaded: existsSync(join(dir, 'node.download'))};
   } finally {
     rmSync(root, {recursive: true, force: true});
   }
 };
 const allRows = (rows) => Object.values(rows).join('\n');
-const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\ngitleaks 8.30.1\npromtool 3.13.1\nkubectl 1.35.6\nemcc 5.0.1\n';
+const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\ngitleaks 8.30.1\npromtool 3.13.1\nkubectl 1.35.6\nemcc 5.0.1\ntraefik 3.6.2\nloki 3.7.4\n';
 
 test('the tools step installs each tool of ci-tools.json from the table before the image\'s own, and refuses what the table cannot vouch for', () => {
   const all = runInstallTools(WANTED_ALL, allRows);
   assert.equal(all.status, 0, all.stderr);
   assert.deepEqual(Object.entries(all.resolved).map(([tool, r]) => [tool, r.inside, r.output]), [['node', true, 'node-fixture'], ['npm', true, 'npm-fixture'], ['npx', true, 'npx-fixture'],
     ['go', true, 'go-fixture'], ['dart', true, 'dart-fixture'], ['gitleaks', true, 'gitleaks-fixture'], ['promtool', true, 'promtool-fixture'], ['kubectl', true, 'kubectl-fixture'],
-    ['emcc', true, 'emcc-fixture 5.0.1 (fixture)']], 'PLANTED INNOCENT: all eight are installed, and the npm named beats the npm that ships with node');
+    ['emcc', true, 'emcc-fixture 5.0.1 (fixture)'], ['traefik', true, 'traefik-fixture'], ['loki', true, 'loki-fixture']], 'PLANTED INNOCENT: all ten are installed, and the npm named beats the npm that ships with node');
   assert.deepEqual(all.emccRoots, ['<installed>/emcc/bin', '<installed>/emcc'], 'emcc reads LLVM from the bin of the SDK release and Binaryen from its root, as emsdk activate writes them');
   assert.match(all.stdout, /^check: emcc-fixture 5\.0\.1 \(fixture\), downloaded in \d+ s and unpacked in \d+ s$/m, 'the log names what emcc --version printed and the seconds its download and unpack took');
   const unversioned = runInstallTools('emcc 5.0.1\n', allRows, (script) => script.replace(/^.*emscripten-version\.txt.*$/gm, ''));
@@ -965,7 +1036,7 @@ test('the tools step installs each tool of ci-tools.json from the table before t
   assert.equal(unconfigured.emccRoots, null, 'PLANTED DEFECT: an emcc without its config file is seen');
   const reversed = runInstallTools('promtool 3.13.1\nnpm 12.2.0\nnode 26.11.1\n', allRows);
   assert.equal(reversed.resolved.npm.output, 'npm-fixture', 'the order of ci-tools.json does not decide which npm runs');
-  const nodeLast = runInstallTools(WANTED_ALL, (rows) => [rows.npm, rows.node, rows.go, rows.dart, rows.gitleaks, rows.promtool, rows.kubectl, rows.emcc].join('\n'));
+  const nodeLast = runInstallTools(WANTED_ALL, (rows) => [rows.npm, rows.node, rows.go, rows.dart, rows.gitleaks, rows.promtool, rows.kubectl, rows.emcc, rows.traefik, rows.loki].join('\n'));
   assert.equal(nodeLast.resolved.npm.output, 'npm-bundled-with-node', 'PLANTED DEFECT: a table that lists node after npm puts the npm of node first, and the probe sees it');
   const only = runInstallTools('gitleaks 8.30.1\n', allRows);
   assert.equal(only.status, 0, only.stderr);
@@ -983,6 +1054,12 @@ test('the tools step installs each tool of ci-tools.json from the table before t
   const forged = runInstallTools('node 26.11.1\n', (rows) => rows.node.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `));
   assert.notEqual(forged.status, 0, 'PLANTED DEFECT: an archive whose sha256 differs ends the run');
   assert.deepEqual([forged.downloaded, forged.unpacked], [true, []], 'after the download and before anything is unpacked');
+  const forgedTraefik = runInstallTools('traefik 3.6.2\n', (rows) => allRows({...rows, traefik: rows.traefik.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `)}));
+  assert.notEqual(forgedTraefik.status, 0, 'PLANTED DEFECT: a traefik archive whose sha256 differs ends the run');
+  assert.deepEqual(forgedTraefik.unpacked, [], 'before the traefik of the archive is unpacked');
+  const forgedLoki = runInstallTools('loki 3.7.4\n', (rows) => allRows({...rows, loki: rows.loki.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `)}));
+  assert.notEqual(forgedLoki.status, 0, 'PLANTED DEFECT: a loki archive whose sha256 differs ends the run');
+  assert.deepEqual(forgedLoki.unpacked, [], 'before the loki of the archive is unpacked');
   const unknown = runInstallTools('ruby 3.4.0\n', (rows) => `ruby 3.4.0 ${rows.node.split(' ')[2]} ${rows.node.split(' ')[3]}`);
   assert.notEqual(unknown.status, 0, 'a row for a tool this step cannot install ends the run');
   assert.match(unknown.stderr, /ruby, which this step cannot install/);
@@ -1041,47 +1118,135 @@ test('build-binaries installs the fixed tools and the tools of ci-tools.json bef
   assert.match(toolsProblems(without(build, fixed), 'bash release/build.sh')[0], /without helm, yq and jq/, 'the report names the tools that are missing');
 });
 
-// digita-platform's packages/quickjs/build.sh runs only with emcc 5.0.1 first on PATH, and both steps that build it name it in
-// ci-tools.json: the check of the ci, before scripts/check.sh, and pack of the publish pipeline, before its packages are
-// built. The row pins the SDK release emsdk 14c18b56 installs for 5.0.1 by the sha256 of its archive.
-const EMCC_ROW = 'emcc 5.0.1 bda6917b630fcc604cca39af433180adfd7195e378075331ceac926553684249 https://storage.googleapis.com/webassembly/emscripten-releases-builds/linux/bf32ae8b61ac8efeb7eca01b54c8307f992724f7/wasm-binaries.tar.xz';
-const emccProblems = (task, tools, runs) => {
+// The platform tree on the owner's master publishes no package: its publish run copies the images its tag names on ghcr.io
+// into the mirror, then the tools and charts its tag names. The lists run the tree's own scripts, `list` for the images and
+// `fetch` for the tools and charts, so they hold no secret; the push credential is in `copy` and `copy-sources`, whose
+// scripts run no code of the repository, each on an image pinned by its digest; the read-backs read without a credential,
+// as every cluster pulls.
+const platformPublish = (registry) => renderChart('consumer-build', ['--set', `global.buildRegistry=${registry}`, '--set-json', 'unit=' +
+  JSON.stringify({name: 'hostyour-cloud', repoURL: 'https://github.com/simetrixch/hostyour-cloud.git', buildsJson: '[]'})])
+  .find((d) => d.kind === 'Pipeline' && d.metadata.name === 'hostyour-cloud-publish');
+const mirrorProblems = (pipeline) => {
+  const problems = [], task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
+  const mirror = task('mirror');
+  if (!mirror) return ['the publish pipeline of the platform tree has no mirror task'];
+  const steps = mirror.taskSpec.steps, step = (name) => steps.find((s) => s.name === name);
+  if (steps.map((s) => s.name).join(' ') !== 'list copy read-back fetch copy-sources read-back-sources') {
+    problems.push(`the mirror runs ${steps.map((s) => s.name).join(', ')}, not list, copy, read-back, fetch, copy-sources and read-back-sources`);
+  }
+  const holding = pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('image-builder-registry-push')).map((t) => t.name);
+  if (holding.join(' ') !== 'push mirror') problems.push(`the push credential is held by ${holding.join(', ')}, not by push and mirror`);
+  const secretSteps = steps.filter((s) => JSON.stringify(s).includes('image-builder-registry-push')).map((s) => s.name);
+  if (secretSteps.join(' ') !== 'copy copy-sources') problems.push(`the push credential stands in the mirror steps ${secretSteps.join(', ')}, not in copy and copy-sources alone`);
+  if (!/^quay\.io\/skopeo\/stable:v[0-9.]+-immutable@sha256:[0-9a-f]{64}$/.test(step('copy')?.image ?? '')) problems.push(`copy runs ${step('copy')?.image}, not the immutable skopeo image by its digest`);
+  if ((step('copy')?.script ?? '').includes('scripts/')) problems.push('copy runs a script of the repository');
+  if (!/^alpine\/k8s:[0-9.]+@sha256:[0-9a-f]{64}$/.test(step('copy-sources')?.image ?? '')) problems.push(`copy-sources runs ${step('copy-sources')?.image}, not alpine/k8s by its digest`);
+  if ((step('copy-sources')?.script ?? '').includes('scripts/')) problems.push('copy-sources runs a script of the repository');
+  if (!(step('fetch')?.script ?? '').includes('bash scripts/list-mirror-sources.sh')) problems.push('the fetch step never runs scripts/list-mirror-sources.sh');
+  const fixed = readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd(), list = step('list')?.script ?? '';
+  const fixedAt = list.indexOf(fixed), runAt = list.indexOf('bash scripts/list-mirror-images.sh');
+  if (runAt < 0) problems.push('the list step never runs scripts/list-mirror-images.sh');
+  else if (fixedAt < 0 || fixedAt > runAt) problems.push('the list step runs scripts/list-mirror-images.sh without helm and yq of files/ci-fixed-tools.sh before it');
+  if (JSON.stringify(mirror.runAfter) !== '["push"]') problems.push(`the mirror runs after ${mirror.runAfter}, not after push`);
+  if (JSON.stringify(mirror.when) !== JSON.stringify([{input: '$(tasks.scan.results.mode)', operator: 'in', values: ['mirror']}])) problems.push('the mirror runs for another scan mode than mirror');
+  if (!JSON.stringify(task('reviewed').when).includes('"mirror"')) problems.push('the tag of the platform tree is not held to the default branch before the mirror');
+  for (const s of steps) for (const side of ['requests', 'limits']) if (!(s.computeResources?.[side]?.cpu && s.computeResources?.[side]?.memory)) problems.push(`mirror/${s.name} has no ${side}`);
+  return problems;
+};
+
+test('the publish run of the platform tree on the owner\'s master copies its images, tools and charts into the mirror, with the push credential in copy and copy-sources alone', () => {
+  const pipeline = platformPublish('zot.check.example.invalid/simetrixch');
+  assert.deepEqual(mirrorProblems(pipeline), [], 'PLANTED INNOCENT: the publish pipeline of the platform tree as rendered');
+  const env = (step, key) => pipeline.spec.tasks.find((t) => t.name === step[0]).taskSpec.steps.find((s) => s.name === step[1]).env.find((e) => e.name === key).value;
+  assert.equal(env(['scan', 'scan'], 'MIRRORS_IMAGES'), 'true');
+  assert.deepEqual([env(['mirror', 'copy'], 'REGISTRY'), env(['mirror', 'copy'], 'OWNER'), env(['mirror', 'read-back'], 'REGISTRY')],
+    ['zot.check.example.invalid', 'simetrixch', 'zot.check.example.invalid'], 'the mirror is the registry of global.buildRegistry');
+  for (const name of ['fetch', 'copy-sources', 'read-back-sources']) {
+    assert.deepEqual([env(['mirror', name], 'REGISTRY'), env(['mirror', name], 'OWNER')], ['zot.check.example.invalid', 'simetrixch'],
+      `${name} names its rows under the registry and owner of global.buildRegistry`);
+  }
+  assert.equal(pipeline.spec.tasks.find((t) => t.name === 'push').when[0].values.includes('mirror'), false, 'the platform tree pushes no package');
+  const plant = (change) => { const planted = structuredClone(pipeline); change(planted.spec.tasks.find((t) => t.name === 'mirror').taskSpec.steps); return mirrorProblems(planted); };
+  assert.notDeepEqual(plant((steps) => { steps[0].envFrom = steps[1].envFrom; }), [], 'PLANTED DEFECT: the push credential beside the list the repository\'s script prints');
+  assert.notDeepEqual(plant((steps) => { steps[0].script = steps[0].script.replace(readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd(), ''); }), [],
+    'PLANTED DEFECT: the list step without the fixed tools');
+  assert.notDeepEqual(plant((steps) => { steps[1].image = 'quay.io/skopeo/stable:v1.22.3'; }), [], 'PLANTED DEFECT: skopeo by a tag that is rebuilt every night');
+  assert.notDeepEqual(plant((steps) => { steps.pop(); }), [], 'PLANTED DEFECT: a mirror whose tools and charts are never read back');
+  const named = (steps, name) => steps.find((s) => s.name === name);
+  assert.notDeepEqual(plant((steps) => { named(steps, 'fetch').envFrom = steps[1].envFrom; }), [], 'PLANTED DEFECT: the push credential in fetch, which downloads from the upstreams');
+  assert.notDeepEqual(plant((steps) => { named(steps, 'read-back-sources').envFrom = steps[1].envFrom; }), [], 'PLANTED DEFECT: the push credential in read-back-sources');
+  assert.notDeepEqual(plant((steps) => { named(steps, 'copy-sources').script += '\nbash scripts/list-mirror-sources.sh\n'; }), [],
+    'PLANTED DEFECT: copy-sources runs the script of the repository');
+  assert.notDeepEqual(plant((steps) => { named(steps, 'copy-sources').image = 'alpine/k8s:1.35.6'; }), [], 'PLANTED DEFECT: copy-sources on alpine/k8s by a tag');
+  assert.notDeepEqual(plant((steps) => { steps.splice(steps.indexOf(named(steps, 'fetch')), 1); }), [], 'PLANTED DEFECT: a mirror without fetch');
+  assert.notDeepEqual(plant((steps) => { steps.splice(1, 0, ...steps.splice(steps.indexOf(named(steps, 'fetch')), 1)); }), [], 'PLANTED DEFECT: fetch before copy');
+  // Only the platform tree on the owner's master mirrors: its trunk value of global.buildRegistry names another registry
+  // than the stand-in cluster's, and every other unit's publish pipeline is the one the test above holds.
+  const elsewhere = platformPublish('zot.elsewhere.example.invalid/simetrixch');
+  assert.deepEqual(elsewhere.spec.tasks.map((t) => t.name), ['gate', 'clone', 'scan', 'reviewed', 'pack', 'build-binaries', 'push']);
+  assert.equal(elsewhere.spec.tasks.find((t) => t.name === 'scan').taskSpec.steps[0].env.find((e) => e.name === 'MIRRORS_IMAGES').value, 'false');
+  assert.equal(renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish').spec.tasks
+    .find((t) => t.name === 'scan').taskSpec.steps[0].env.find((e) => e.name === 'MIRRORS_IMAGES').value, 'false');
+});
+
+// Three tools are pinned for the repositories that name them in ci-tools.json, and both steps that build a repository install
+// them: the check of the ci, before scripts/check.sh, and pack of the publish pipeline, before its packages are built.
+// digita-platform's packages/quickjs/build.sh runs only with emcc 5.0.1 first on PATH; its row pins the SDK release emsdk
+// 14c18b56 installs for 5.0.1. hostyour-deploy's access-log fixture needs the Traefik release its clusters run, 3.6.2; its
+// row pins the linux_amd64 archive of that release, whose sha256 the release's traefik_v3.6.2_checksums.txt names. This
+// repository's log alerts are evaluated on the Loki release the master runs, 3.7.4; its row pins loki-linux-amd64.zip of
+// that release, whose sha256 the release's SHA256SUMS names. Each row
+// pins its archive by its sha256; release holds a part of its url and what that part reads for another release, the
+// planted defect.
+const PINNED_ROWS = [
+  {row: 'emcc 5.0.1 bda6917b630fcc604cca39af433180adfd7195e378075331ceac926553684249 https://storage.googleapis.com/webassembly/emscripten-releases-builds/linux/bf32ae8b61ac8efeb7eca01b54c8307f992724f7/wasm-binaries.tar.xz',
+    release: ['bf32ae8b61ac8efeb7eca01b54c8307f992724f7', '8c5f43157a3f069ade75876e23061330521eabde']},
+  {row: 'traefik 3.6.2 edc04e863795d741bdba8d70fbc1fd721b16edace829f8f25b0e13a9a34cb134 https://github.com/traefik/traefik/releases/download/v3.6.2/traefik_v3.6.2_linux_amd64.tar.gz',
+    release: ['/v3.6.2/traefik_v3.6.2_', '/v3.6.1/traefik_v3.6.1_']},
+  {row: 'loki 3.7.4 4b4f17fc9416bd2099dac815ede1aac15aa0f8d1a21225e08909796b99aaad59 https://github.com/grafana/loki/releases/download/v3.7.4/loki-linux-amd64.zip',
+    release: ['/v3.7.4/', '/v3.7.3/']},
+];
+const pinnedRowProblems = (task, tools, runs, pinned) => {
   const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
   const step = task.taskSpec.steps.find((s) => s.script.includes(runs)), problems = [];
   if (!step) return [`no step runs ${runs}`];
   const env = (name) => step.env?.find((e) => e.name === name)?.value;
-  const rows = (env('CI_TOOLS_TABLE') ?? '').split('\n').filter((line) => line.startsWith('emcc '));
-  if (rows.join('\n') !== EMCC_ROW) problems.push(`${task.name} is handed ${rows.length ? rows.join(' and ') : 'no emcc row'}, and not ${EMCC_ROW}`);
+  const tool = pinned.split(' ')[0];
+  const rows = (env('CI_TOOLS_TABLE') ?? '').split('\n').filter((line) => line.startsWith(`${tool} `));
+  if (rows.join('\n') !== pinned) problems.push(`${task.name} is handed ${rows.length ? rows.join(' and ') : `no ${tool} row`}, and not ${pinned}`);
   if (task.params?.find((p) => p.name === 'tools')?.value !== tools || env('CI_TOOLS') !== '$(params.tools)') problems.push(`${task.name} is not handed the tools of ci-tools.json from ${tools}`);
   const installerAt = step.script.indexOf(installer);
   if (installerAt < 0 || installerAt > step.script.indexOf(runs)) problems.push(`${task.name} runs ${runs} before files/ci-install-tools.sh`);
   return problems;
 };
 
-test('the check of the ci and pack of the publish pipeline put the pinned emcc 5.0.1 first on PATH before they build', () => {
+test('the check of the ci and pack of the publish pipeline put the pinned emcc 5.0.1, traefik 3.6.2 and loki 3.7.4 first on PATH before they build', () => {
   const ci = ciPipeline().spec.tasks.find((t) => t.name === 'check');
   const pack = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish').spec.tasks.find((t) => t.name === 'pack');
   const holds = [[ci, '$(tasks.fetch.results.tools)', 'bash scripts/check.sh'], [pack, '$(tasks.scan.results.tools)', 'build_packages /workspace/packed/publishable.tsv']];
-  for (const [task, tools, runs] of holds) assert.deepEqual(emccProblems(task, tools, runs), [], `PLANTED INNOCENT: ${task.name} as rendered`);
-  assert.ok(TOOLS_TABLE.split('\n').includes(EMCC_ROW), 'the table file carries the row');
   const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
   const plant = (task, edit) => { const copy = structuredClone(task); edit(copy.taskSpec.steps.find((s) => s.env?.some((e) => e.name === 'CI_TOOLS_TABLE')), copy); return copy; };
   const table = (edit) => (step) => { const e = step.env.find((x) => x.name === 'CI_TOOLS_TABLE'); e.value = edit(e.value); };
-  const defects = {
-    'the emcc row missing': table((value) => value.replace(`${EMCC_ROW}\n`, '')),
-    'another sha256': table((value) => value.replace(/(emcc 5\.0\.1 )[0-9a-f]{64}/, `$1${'0'.repeat(64)}`)),
-    'another release of the SDK': table((value) => value.replace('bf32ae8b61ac8efeb7eca01b54c8307f992724f7', '8c5f43157a3f069ade75876e23061330521eabde')),
-    'another version': table((value) => value.replace('emcc 5.0.1 ', 'emcc 5.0.2 ')),
-    'the installer removed': (step) => { step.script = step.script.replace(installer, ''); },
-    'the tools of ci-tools.json not handed over': (step, task) => { task.params = task.params.filter((p) => p.name !== 'tools'); },
-  };
-  for (const [task, tools, runs] of holds) {
-    for (const [defect, edit] of Object.entries(defects)) {
-      assert.notDeepEqual(emccProblems(plant(task, edit), tools, runs), [], `PLANTED DEFECT: ${task.name} with ${defect}`);
+  for (const {row, release: [named, another]} of PINNED_ROWS) {
+    const [tool, version] = row.split(' ');
+    for (const [task, tools, runs] of holds) assert.deepEqual(pinnedRowProblems(task, tools, runs, row), [], `PLANTED INNOCENT: ${task.name} as rendered, for ${tool}`);
+    assert.ok(TOOLS_TABLE.split('\n').includes(row), `the table file carries the ${tool} row`);
+    const defects = {
+      [`the ${tool} row missing`]: table((value) => value.replace(`${row}\n`, '')),
+      'another sha256': table((value) => value.replace(row, row.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `))),
+      'another release': table((value) => value.replace(row, row.replace(named, another))),
+      'another version': table((value) => value.replace(`${tool} ${version} `, `${tool} ${version}9 `)),
+      'the installer removed': (step) => { step.script = step.script.replace(installer, ''); },
+      'the tools of ci-tools.json not handed over': (step, task) => { task.params = task.params.filter((p) => p.name !== 'tools'); },
+    };
+    for (const [task, tools, runs] of holds) {
+      for (const [defect, edit] of Object.entries(defects)) {
+        assert.notDeepEqual(pinnedRowProblems(plant(task, edit), tools, runs, row), [], `PLANTED DEFECT: ${task.name} with ${defect}`);
+      }
     }
+    const late = plant(pack, (step) => { step.script = `${step.script.replace(installer, '')}\n${installer}`; });
+    assert.notDeepEqual(pinnedRowProblems(late, '$(tasks.scan.results.tools)', 'build_packages /workspace/packed/publishable.tsv', row), [], `PLANTED DEFECT: pack installs ${tool} after it built its packages`);
   }
-  const late = plant(pack, (step) => { step.script = `${step.script.replace(installer, '')}\n${installer}`; });
-  assert.notDeepEqual(emccProblems(late, '$(tasks.scan.results.tools)', 'build_packages /workspace/packed/publishable.tsv'), [], 'PLANTED DEFECT: pack installs the tools after it built its packages');
 });
 
 // A step that runs a repository's own code runs as the user of its image, pptruser, uid 10042, and not as root: root keeps

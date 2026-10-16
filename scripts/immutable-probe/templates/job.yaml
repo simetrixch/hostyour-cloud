@@ -1,0 +1,12 @@
+{{- $builds := dict "root" $ "builds" .Values.builds "name" "immutable-probe" }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: immutable-probe
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: probe
+          image: {{ printf "probe/%s:%s" (include "common.buildImageName" $builds) (include "common.buildTag" $builds) | quote }}

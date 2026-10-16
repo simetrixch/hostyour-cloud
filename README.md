@@ -91,10 +91,18 @@ rebuilt from nothing, gets them back with the backup of its registry (`lifecycle
 `bash scripts/check.sh` runs local chart validation and
 credential scanning. It names the suites that did not run locally.
 
-The master's ci runs those checks and `bash scripts/test.sh` on every push of the default branch that does more than move release pins: the check step of the ci pipeline
-installs the tools `ci-tools.json` names, then runs `scripts/check.sh` and `scripts/test.sh`.
+The master's ci is the Tekton pipeline `hostyour-cloud-ci`
+(`clusters/inventories/consumer-build/templates/pipeline-ci.yaml`). It runs those checks and
+`bash scripts/test.sh` on every push of the default branch that does more than move release pins: the check
+step installs the tools `ci-tools.json` names, then runs `scripts/check.sh` and `scripts/test.sh`.
 The test entry point runs `lifecycle/test.sh` and `scripts/pipeline-release.test.sh`.
 Run tests only on a remote runner.
+
+Read its runs on the master as the PipelineRuns `hostyour-cloud-ci-*` in the namespace `hostyour-cloud-build`,
+or as the commit status `tekton/ci` on the commit
+(`clusters/inventories/consumer-build/files/ci-commit-status.sh`). A push of the default branch or of a
+`ci/` branch starts a run through the Trigger `github-ci-push`
+(`clusters/inventories/image-builder/templates/triggers/github-ci-push.yaml`).
 
 An issue branch is judged by the push gate on the machine and starts no ci run on the master.
 To run the master's ci on another commit, for example a planted defect that must show the check red,

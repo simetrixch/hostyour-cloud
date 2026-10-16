@@ -153,19 +153,19 @@ spec:
               set -euo pipefail
               fail() { echo "check: FAIL — $*" >&2; exit 1; }
 
-              printf '%s' "${IMAGE}" | grep -Eq '^[a-z0-9]+([._-][a-z0-9]+)*$' \
+              [[ "${IMAGE}" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] \
                 || fail "image '${IMAGE}' is not a lowercase image name"
               case "${IMAGE}" in "${UNIT}"-*) ;; *) fail "image '${IMAGE}' does not start with '${UNIT}-'" ;; esac
               for build in ${RELEASE_BUILDS}; do
                 [ "${IMAGE}" != "${build}" ] || fail "image '${IMAGE}' is a release build of ${UNIT}; its tags belong to the release"
               done
-              printf '%s' "${VERSION}" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$' \
+              [[ "${VERSION}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]] \
                 || fail "version '${VERSION}' is not an image tag"
               for path in "${CONTAINERFILE}" "${CONTEXT}"; do
                 [ "${path}" = "." ] && continue
-                printf '%s' "${path}" | grep -Eq '^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$' \
+                [[ "${path}" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] \
                   || fail "'${path}' is not a relative path of [A-Za-z0-9._-] segments"
-                ! printf '%s' "${path}" | tr '/' '\n' | grep -qx '\.\.' \
+                [[ "/${path}/" != */../* ]] \
                   || fail "'${path}' leaves the checkout with a '..' segment"
               done
               [ -f "/workspace/source/${CONTEXT}/${CONTAINERFILE}" ] \

@@ -1,0 +1,4 @@
+builds:
+  - name: immutable-probe
+    image: immutable-probe
+    tag: "1.0.0-probe"

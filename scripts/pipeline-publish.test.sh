@@ -8,9 +8,16 @@
 # published version, pushes nothing once one tarball is refused, reads every tarball back, and logs one
 # line per tarball; that a tag tracking release/build.sh publishes the binaries that script leaves, and
 # only regular files of a plain name, as one manifest <owner>/<repository>:<tag> that a second run
-# reuses and another build under the same tag cannot replace. The functions are read out of the template
-# (clusters/inventories/consumer-build/templates/pipeline-publish.yaml), as the Pipeline carries
-# them, and run against fixture repositories, tarballs and a registry served on 127.0.0.1. Then the
+# reuses and another build under the same tag cannot replace; that the platform tree copies every image
+# its list names into the mirror at the digest it pins, after the tag upstream is found to name that
+# digest, and reads each back without a login at that digest and its own media type; that the platform
+# tree's list of tools and charts refuses a row of another form by its line, that fetch downloads every
+# row the mirror does not serve and holds it to its sha256, that copy-sources pushes each as the one layer
+# under its tag, after every line is held to its row, to the mirror and to the file fetch staged, and
+# replaces nothing, and that read-back-sources reads each back without a login as its bytes. The functions
+# are read out of the template (clusters/inventories/consumer-build/templates/pipeline-publish.yaml) and
+# the files it includes, as the Pipeline carries them, and run against fixture repositories, tarballs, a
+# registry served on 127.0.0.1 and upstreams served from files. Then the
 # Pipeline as helm renders it runs end to end, every step in Tekton's order, on fixture repositories
 # and the same registry, so each step is held to calling its functions.
 #
@@ -35,7 +42,7 @@ ok "a fixture commits and pushes without starting a background maintenance; the 
 # Stand-ins for what the cluster has and this machine must not change: curl that reaches the fixture
 # registry, and corepack, whose enable would write into this machine's Node.
 mkdir -p "$work/standin-bin"
-real_curl="$(command -v curl)"
+real_curl="$(command -v curl)" real_helm="$(command -v helm)"
 PATH="$work/standin-bin:$PATH"
 
 # A function from its first line to the brace that closes it at the same indent.
@@ -47,8 +54,12 @@ extract() { # function name -> its text out of the template
   ' "$template"
 }
 [ -f "$template" ] || fail "the template $template does not exist"
+# shellcheck source=../clusters/inventories/consumer-build/files/registry-push.sh
+. "$root/clusters/inventories/consumer-build/files/registry-push.sh"
+# shellcheck source=../clusters/inventories/consumer-build/files/mirror-sources.sh
+. "$root/clusters/inventories/consumer-build/files/mirror-sources.sh"
 for fn in scan_packages stamp_only reviewed_commit release_version stamp_versions build_packages pack_packages \
-  check_tarballs scan_leaks registry_call push_blob npm_push build_binaries binaries_push; do
+  check_tarballs scan_leaks npm_push build_binaries binaries_push mirror_copy mirror_read_back mirror_fetch mirror_copy_sources mirror_read_back_sources; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
@@ -280,10 +291,13 @@ scan_leaks "$work/unpacked" >/dev/null 2>&1 && fail 'PLANTED DEFECT: a token in 
 ok 'a gitleaks finding in an unpacked tarball fails its scan'
 
 # ── npm_push: the registry, served on 127.0.0.1 ────────────────────────────────────────────
-# A registry of the OCI distribution API, as much of it as the push uses, behind one basic login. It
-# keeps blobs and manifests per repository, refuses a manifest that names a blob the repository lacks
-# and a blob whose bytes are not its digest, logs every request, and answers a blob read with a
-# changed byte while the file `corrupt` stands beside it.
+# A registry of the OCI distribution API, as much of it as the push and the mirror use, behind one basic
+# login, which a read under simetrixch/ does not need, as zot's anonymousPolicy on <owner>/**
+# lets it. It keeps blobs and manifests per repository, a manifest under its tag and its digest with
+# the media type it was pushed as, refuses a manifest that names a blob or, for an index, a manifest
+# the repository lacks and a blob whose bytes are not its digest, logs every request, answers a blob
+# read with a changed byte while the file `corrupt` stands beside it, and serves every manifest as an
+# OCI image manifest while the file `retype` does.
 mkdir -p "$work/registry"
 cat > "$work/registry.mjs" <<'EOF'
 import {createServer} from 'node:http';
@@ -299,7 +313,8 @@ const server = createServer((req, res) => {
   req.on('end', () => {
     const body = Buffer.concat(chunks), url = new URL(req.url, 'http://x');
     appendFileSync(`${dir}/requests.log`, `${req.method} ${url.pathname}\n`);
-    if (req.headers.authorization !== login) { res.writeHead(401); return res.end(); }
+    const anonymous = ['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/v2/simetrixch/');
+    if (req.headers.authorization !== login && !anonymous) { res.writeHead(401); return res.end(); }
     let m;
     if ((m = url.pathname.match(/^\/v2\/(.+)\/blobs\/uploads\/(.*)$/))) {
       if (req.method === 'POST') { res.writeHead(202, {Location: `/v2/${m[1]}/blobs/uploads/${randomUUID()}?state=x`}); return res.end(); }
@@ -321,13 +336,16 @@ const server = createServer((req, res) => {
       const key = `${m[1]}:${m[2]}`;
       if (req.method === 'PUT') {
         const manifest = JSON.parse(body);
-        if (![manifest.config, ...manifest.layers].every((d) => blobs.has(`${m[1]}@${d.digest}`))) { res.writeHead(400); return res.end('MANIFEST_BLOB_UNKNOWN'); }
-        manifests.set(key, body); res.writeHead(201); return res.end();
+        if (manifest.manifests ? !manifest.manifests.every((d) => manifests.has(`${m[1]}:${d.digest}`))
+          : ![manifest.config, ...manifest.layers].every((d) => blobs.has(`${m[1]}@${d.digest}`))) { res.writeHead(400); return res.end('MANIFEST_BLOB_UNKNOWN'); }
+        const stored = {body, type: req.headers['content-type'] ?? 'application/vnd.oci.image.manifest.v1+json'};
+        manifests.set(key, stored); manifests.set(`${m[1]}:${digest(body)}`, stored); res.writeHead(201); return res.end();
       }
       const manifest = manifests.get(key);
       if (!manifest) { res.writeHead(404); return res.end(); }
-      res.writeHead(200, {'Content-Type': 'application/vnd.oci.image.manifest.v1+json'});
-      return res.end(req.method === 'HEAD' ? undefined : manifest);
+      res.writeHead(200, {'Content-Type': existsSync(`${dir}/retype`) ? 'application/vnd.oci.image.manifest.v1+json' : manifest.type,
+        'Docker-Content-Digest': digest(manifest.body)});
+      return res.end(req.method === 'HEAD' ? undefined : manifest.body);
     }
     res.writeHead(404); res.end();
   });
@@ -338,11 +356,17 @@ node "$work/registry.mjs" "$work/registry" & registry_pid=$!
 for _ in $(seq 50); do [ -s "$work/registry/port" ] && break; sleep 0.1; done
 [ -s "$work/registry/port" ] || fail 'the fixture registry did not start'
 PORT="$(cat "$work/registry/port")"
-# The pipeline names https://<REGISTRY>/v2/; the fixture serves plain http on its own port.
+# The pipeline names https://<REGISTRY>/v2/; the fixture serves plain http on its own port. The upstreams
+# of the fixture tools and charts are files under upstream-files/, and each read of one is logged.
+mkdir -p "$work/upstream-files"
 cat > "$work/standin-bin/curl" <<EOF
 #!/usr/bin/env bash
 args=()
 for a in "\$@"; do
+  if [[ "\$a" =~ ^https://((github\.com/fixture|charts\.example\.invalid)/.*)\$ ]]; then
+    echo "curl \$a" >> "$work/upstream.log"
+    a="file://$work/upstream-files/\${BASH_REMATCH[1]}"
+  fi
   [[ "\$a" =~ ^https://[^/]+(/v2/.*)\$ ]] && a="http://127.0.0.1:${PORT}\${BASH_REMATCH[1]}"
   args+=("\$a")
 done
@@ -436,6 +460,372 @@ RELEASE_TAG=1.0.001-stable-20261014000000 binaries "$work/b4" && fail 'PLANTED D
 grep -qF 'reads back' "$work/push.out" || fail "the readback refusal does not say so: $(cat "$work/push.out")"
 rm "$work/registry/corrupt"
 ok 'another build under a published tag, an empty build, a tag the registry cannot carry and a changed readback are refused'
+
+# ── mirror_copy and mirror_read_back: the images of the platform tree, in the mirror ───────
+# ghcr.io as a stand-in skopeo sees it: under upstream/, every blob and manifest by its digest and
+# every tag as the digest it names. The stand-in reads a tag, and copies an image by its digest to
+# the fixture registry, blobs first, as skopeo does: an index with every manifest under --all and
+# with its first only without, and every manifest as its bytes under --preserve-digests and written
+# again without, as a conversion would write it.
+mkdir -p "$work/upstream/blobs"
+cat > "$work/standin-bin/skopeo" <<EOF
+#!/usr/bin/env bash
+set -uo pipefail
+echo "skopeo \$*" >> "$work/skopeo.log"
+up="$work/upstream"
+command="\$1"; shift
+all=no preserve=no auth="" refs=()
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --all) all=yes ;;
+    --preserve-digests) preserve=yes ;;
+    --dest-authfile) auth="\$2"; shift ;;
+    --retry-times) shift ;;
+    --*) ;;
+    *) refs+=("\$1") ;;
+  esac
+  shift
+done
+if [ "\$command" = inspect ]; then
+  [[ "\${refs[0]}" =~ ^docker://ghcr\.io/(.+):([^:/]+)\$ ]] && [ -f "\$up/\${BASH_REMATCH[1]}/tags/\${BASH_REMATCH[2]}" ] \
+    || { echo "skopeo: manifest unknown: \${refs[0]}" >&2; exit 1; }
+  exec cat "\$up/blobs/\$(cat "\$up/\${BASH_REMATCH[1]}/tags/\${BASH_REMATCH[2]}")"
+fi
+[ "\$command" = copy ] && [[ "\${refs[0]}" =~ ^docker://ghcr\.io/.+@(sha256:[0-9a-f]{64})\$ ]] || { echo "skopeo: no copy of an image by its digest: \$*" >&2; exit 1; }
+source="\${BASH_REMATCH[1]}"
+[[ "\${refs[1]}" =~ ^docker://([^/]+)/(.+):([^:/]+)\$ ]] || { echo "skopeo: no destination by tag: \${refs[1]}" >&2; exit 1; }
+host="\${BASH_REMATCH[1]}" repository="\${BASH_REMATCH[2]}" tag="\${BASH_REMATCH[3]}"
+login="\$(jq -r --arg host "\$host" '.auths[\$host].auth' "\$auth" | base64 -d)" || exit 1
+call() { "${real_curl}" -fsS -u "\$login" "\$@"; }
+put_blob() { # <digest>
+  local location
+  location="\$(call -X POST -D - -o /dev/null "http://127.0.0.1:${PORT}/v2/\$repository/blobs/uploads/" | tr -d '\r' | sed -n 's/^Location: //p')" || return 1
+  call -X PUT --data-binary "@\$up/blobs/\$1" "http://127.0.0.1:${PORT}\${location}&digest=\$1" -o /dev/null
+}
+put_manifest() { # <digest> <reference>
+  local body="\$up/blobs/\$1" child
+  [ -f "\$body" ] || { echo "skopeo: ghcr.io names no manifest \$1" >&2; return 1; }
+  if jq -e '.manifests' "\$body" > /dev/null; then
+    if [ "\$all" = no ]; then put_manifest "\$(jq -r '.manifests[0].digest' "\$body")" "\$2"; return; fi
+    for child in \$(jq -r '.manifests[].digest' "\$body"); do put_manifest "\$child" "\$child" || return 1; done
+  else
+    for child in \$(jq -r '.config.digest, .layers[].digest' "\$body"); do put_blob "\$child" || return 1; done
+  fi
+  if [ "\$preserve" = yes ]; then cp "\$body" "\$up/sent"; else jq -c . "\$body" > "\$up/sent"; fi
+  call -X PUT -H "Content-Type: \$(jq -r .mediaType "\$body")" --data-binary "@\$up/sent" "http://127.0.0.1:${PORT}/v2/\$repository/manifests/\$2" -o /dev/null
+}
+put_manifest "\$source" "\$tag"
+EOF
+chmod +x "$work/standin-bin/skopeo"
+upstream_blob() { # standard input -> its digest, the blob stored under it upstream
+  local hex
+  cat > "$work/upstream/incoming"; hex="$(sha256sum "$work/upstream/incoming" | cut -d' ' -f1)"
+  mv "$work/upstream/incoming" "$work/upstream/blobs/sha256:$hex"; printf 'sha256:%s' "$hex"
+}
+upstream_tag() { mkdir -p "$work/upstream/$1/tags"; printf '%s' "$3" > "$work/upstream/$1/tags/$2"; } # <path> <tag> <digest>
+upstream_image() { # <manifest media type> <layer media type> <layer bytes> -> the digest of a manifest of one layer, written as a person reads it
+  local config layer
+  config="$(printf '{"architecture":"amd64","os":"linux"}' | upstream_blob)"; layer="$(printf '%s' "$3" | upstream_blob)"
+  jq -n --arg type "$1" --arg config "$config" --arg ltype "$2" --arg layer "$layer" \
+    '{schemaVersion: 2, mediaType: $type, config: {mediaType: "application/vnd.oci.image.config.v1+json", digest: $config, size: 37}, layers: [{mediaType: $ltype, digest: $layer, size: 1}]}' | upstream_blob
+}
+oci_image="$(upstream_image application/vnd.oci.image.manifest.v1+json application/vnd.oci.image.layer.v1.tar+gzip one)"
+upstream_tag fixture/one 1.0.0 "$oci_image"
+v2s2_amd64="$(upstream_image application/vnd.docker.distribution.manifest.v2+json application/vnd.docker.image.rootfs.diff.tar.gzip amd64)"
+v2s2_arm64="$(upstream_image application/vnd.docker.distribution.manifest.v2+json application/vnd.docker.image.rootfs.diff.tar.gzip arm64)"
+v2s2_list="$(jq -n --arg a "$v2s2_amd64" --arg b "$v2s2_arm64" '{schemaVersion: 2, mediaType: "application/vnd.docker.distribution.manifest.list.v2+json",
+  manifests: [{mediaType: "application/vnd.docker.distribution.manifest.v2+json", digest: $a, size: 1, platform: {architecture: "amd64", os: "linux"}},
+    {mediaType: "application/vnd.docker.distribution.manifest.v2+json", digest: $b, size: 1, platform: {architecture: "arm64", os: "linux"}}]}' | upstream_blob)"
+upstream_tag fixture/multi 2.0 "$v2s2_list"
+entry() { printf 'ghcr.io/%s %s/%s/ghcr.io/%s\n' "$1" "${2:-registry.test}" "${3:-simetrixch}" "$1"; } # <path>:<tag>@<digest> [registry] [owner]
+mirror() { # $1 the list -> the exit status of mirror_copy and then mirror_read_back, their output in $work/mirror.out
+  rm -rf "$work/mirror-tmp"
+  { OWNER=simetrixch mirror_copy "$1" "$work/mirror-tmp/copy" && mirror_read_back "$1" "$work/mirror-tmp/read"; } > "$work/mirror.out" 2>&1
+}
+{ entry "fixture/multi:2.0@$v2s2_list"; entry "fixture/one:1.0.0@$oci_image"; } > "$work/mirror.list"
+mirror "$work/mirror.list" || fail "PLANTED INNOCENT: an OCI image and a Docker manifest list of two platforms were not mirrored: $(cat "$work/mirror.out")"
+[ "$(grep '^mirror: ' "$work/mirror.out")" = "mirror: 2 images copied
+mirror: registry.test/simetrixch/ghcr.io/fixture/multi:2.0@$v2s2_list application/vnd.docker.distribution.manifest.list.v2+json read back
+mirror: registry.test/simetrixch/ghcr.io/fixture/one:1.0.0@$oci_image application/vnd.oci.image.manifest.v1+json read back" ] \
+  || fail "the mirror does not log every image copied and read back at its digest and media type: $(cat "$work/mirror.out")"
+for platform in "$v2s2_amd64" "$v2s2_arm64"; do
+  [ "$(command curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/v2/simetrixch/ghcr.io/fixture/multi/manifests/$platform")" = 200 ] \
+    || fail "the manifest $platform of the Docker manifest list was not copied beside it"
+done
+grep -q "^skopeo inspect --raw --no-creds .* docker://ghcr.io/fixture/one:1.0.0$" "$work/skopeo.log" \
+  && grep -q "^skopeo copy .*--all --preserve-digests .*--src-no-creds .* docker://ghcr.io/fixture/one@$oci_image docker://registry.test/simetrixch/ghcr.io/fixture/one:1.0.0$" "$work/skopeo.log" \
+  || fail "the copy was not made by the digest from the tag upstream, with every platform and its digests kept: $(cat "$work/skopeo.log")"
+! grep -q 'fixture-password' "$work/skopeo.log" || fail 'the push credential reached the arguments of skopeo'
+ok 'the mirror copies every entry by its digest with every platform, logs it, and reads it back without a login at that digest and its media type'
+mirror "$work/mirror.list" || fail "a second run of the same list failed: $(cat "$work/mirror.out")"
+ok 'a second run of the same list copies and reads back the same digests'
+
+moved="$(upstream_image application/vnd.oci.image.manifest.v1+json application/vnd.oci.image.layer.v1.tar+gzip moved)"
+upstream_tag fixture/one 1.0.0 "$moved"
+mirror "$work/mirror.list" && fail 'PLANTED DEFECT: a tag that names another digest upstream than the tree pins was mirrored'
+grep -qF "mirror: FAIL — ghcr.io/fixture/one:1.0.0 names $moved upstream, and the tree pins $oci_image" "$work/mirror.out" \
+  || fail "the refusal does not name the tag and both digests: $(cat "$work/mirror.out")"
+upstream_tag fixture/one 1.0.0 "$oci_image"
+entry "fixture/gone:1.0.0@$oci_image" > "$work/mirror-gone.list"
+mirror "$work/mirror-gone.list" && fail 'PLANTED DEFECT: an image that ghcr.io does not hold passed'
+grep -qF 'mirror: FAIL — ghcr.io/fixture/gone:1.0.0 cannot be read upstream' "$work/mirror.out" || fail "the missing source is not named: $(cat "$work/mirror.out")"
+for list in "ghcr.io/fixture/one:1.0.0 registry.test/simetrixch/ghcr.io/fixture/one:1.0.0" "$(entry "fixture/one:1.0.0@$oci_image" registry.test other)" \
+  "docker.io/fixture/one:1.0.0@$oci_image registry.test/simetrixch/docker.io/fixture/one:1.0.0@$oci_image"; do
+  printf '%s\n' "$list" > "$work/mirror-shape.list"
+  mirror "$work/mirror-shape.list" && fail "PLANTED DEFECT: the entry '$list' was copied"
+  grep -qF 'mirror: REFUSE — ' "$work/mirror.out" || fail "the entry '$list' was not refused by its shape: $(cat "$work/mirror.out")"
+done
+ok 'a tag that moved upstream, a source that is gone, a ref without its digest, another owner and another registry are refused by name'
+# A copy that wrote another digest, an index copied as one platform, and a manifest served as another media
+# type all stand in the mirror under the tag, and none of them is the image the tree pins.
+extract mirror_copy | sed 's/ --preserve-digests//' > "$work/mirror_copy-converting.sh"
+( . "$work/mirror_copy-converting.sh"; entry "fixture/one:1.0.0@$oci_image" | sed 's|/fixture/one|/fixture/converted|g' > "$work/mirror-converted.list"
+  mkdir -p "$work/upstream/fixture/converted/tags"; cp "$work/upstream/fixture/one/tags/1.0.0" "$work/upstream/fixture/converted/tags/"
+  mirror "$work/mirror-converted.list" ) && fail 'PLANTED DEFECT: a copy that changed the digest read back'
+grep -qF "mirror: FAIL — registry.test/simetrixch/ghcr.io/fixture/converted:1.0.0@$oci_image answers 404" "$work/mirror.out" \
+  || fail "a copy that changed the digest is not named at its read-back: $(cat "$work/mirror.out")"
+extract mirror_copy | sed 's/ --all//' > "$work/mirror_copy-one-platform.sh"
+( . "$work/mirror_copy-one-platform.sh"; entry "fixture/multi:2.0@$v2s2_list" | sed 's|/fixture/multi|/fixture/single|g' > "$work/mirror-single.list"
+  mkdir -p "$work/upstream/fixture/single/tags"; cp "$work/upstream/fixture/multi/tags/2.0" "$work/upstream/fixture/single/tags/"
+  mirror "$work/mirror-single.list" ) && fail 'PLANTED DEFECT: an index copied as one platform read back'
+grep -qF "mirror: FAIL — registry.test/simetrixch/ghcr.io/fixture/single:2.0@$v2s2_list answers 404" "$work/mirror.out" \
+  || fail "an index copied as one platform is not named at its read-back: $(cat "$work/mirror.out")"
+touch "$work/registry/retype"
+mirror "$work/mirror.list" && fail 'PLANTED DEFECT: a Docker manifest list served as an OCI image manifest read back'
+grep -qF "mirror: FAIL — registry.test/simetrixch/ghcr.io/fixture/multi:2.0@$v2s2_list is served as $v2s2_list and application/vnd.oci.image.manifest.v1+json" "$work/mirror.out" \
+  || fail "the media type the registry serves is not named: $(cat "$work/mirror.out")"
+rm "$work/registry/retype"
+ok 'a copy that changed the digest, an index copied as one platform and a manifest served as another media type fail the read-back by name'
+
+# ── the tools and charts of the platform tree: the list, fetch, copy-sources and read-back-sources ──
+# helm as the steps call it, a pull. charts.example.invalid stands for an upstream, a chart repository
+# index or an oci registry, whose packaged charts are files under upstream-files/; every read of one is
+# logged. Any other oci registry is the fixture registry, read without a login through the stand-in curl
+# as helm reads a chart: the manifest by its tag, a config of the helm media type that names the chart and
+# its version and whose text fields are strings, as helm unmarshals them, and the one chart layer, each blob
+# as the bytes of its digest. Every other command is the real helm, which renders the Pipeline below and
+# shows a chart.
+cat > "$work/standin-bin/helm" <<EOF
+#!/usr/bin/env bash
+set -uo pipefail
+[ "\${1:-}" = pull ] || exec "${real_helm}" "\$@"
+shift
+ref="" repo="" version="" dest=.
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --repo) repo="\$2"; shift ;;
+    --version) version="\$2"; shift ;;
+    --destination) dest="\$2"; shift ;;
+    *) ref="\$1" ;;
+  esac
+  shift
+done
+upstream() { # <path under upstream-files>
+  echo "helm pull \$1" >> "$work/upstream.log"
+  [ -f "$work/upstream-files/\$1" ] || { echo "Error: chart \$ref version \$version not found" >&2; exit 1; }
+  exec cp "$work/upstream-files/\$1" "\$dest/"
+}
+if [ -n "\$repo" ]; then
+  [[ "\$repo" =~ ^https://(charts\.example\.invalid(/.*)?)\$ ]] || { echo "Error: no fixture repository \$repo" >&2; exit 1; }
+  upstream "\${BASH_REMATCH[1]}/\$ref-\$version.tgz"
+fi
+[[ "\$ref" =~ ^oci://(([^/]+)/(.+))/([^/]+)\$ ]] || { echo "Error: invalid chart reference \$ref" >&2; exit 1; }
+[ "\${BASH_REMATCH[2]}" != charts.example.invalid ] || upstream "\${BASH_REMATCH[1]}/\${BASH_REMATCH[4]}-\$version.tgz"
+chart="\${BASH_REMATCH[4]}" base="https://\${BASH_REMATCH[2]}/v2/\${BASH_REMATCH[3]}/\${BASH_REMATCH[4]}"
+tmp="\$(mktemp -d)" && trap 'rm -rf "\$tmp"' EXIT || exit 1
+blob() { # <digest> <file>: the blob, held to its digest
+  curl -fsS -o "\$2" "\$base/blobs/\$1" && [ "sha256:\$(sha256sum "\$2" | cut -d' ' -f1)" = "\$1" ]
+}
+curl -fsS -H 'Accept: application/vnd.oci.image.manifest.v1+json' -o "\$tmp/manifest" "\$base/manifests/\$version" \
+  || { echo "Error: \$ref:\$version: not found" >&2; exit 1; }
+jq -e '.config.mediaType == "application/vnd.cncf.helm.config.v1+json" and (.layers | length) == 1
+  and .layers[0].mediaType == "application/vnd.cncf.helm.chart.content.v1.tar+gzip"' "\$tmp/manifest" > /dev/null \
+  || { echo "Error: \$ref:\$version is no helm chart" >&2; exit 1; }
+blob "\$(jq -r .config.digest "\$tmp/manifest")" "\$tmp/config" \
+  && jq -e --arg chart "\$chart" --arg version "\$version" '(.name == \$chart) and (.version == \$version)' "\$tmp/config" > /dev/null \
+  || { echo "Error: the config of \$ref:\$version names no chart \$chart \$version" >&2; exit 1; }
+jq -e '[.apiVersion, .name, .version, .kubeVersion, .description, .type, .home, .icon, .appVersion, .condition, .tags,
+  (.keywords // [])[], (.sources // [])[], (.annotations // {})[]] | map(select(. != null)) | all(type == "string")' "\$tmp/config" > /dev/null \
+  || { echo "Error: the config of \$ref:\$version carries a text field that is no string" >&2; exit 1; }
+blob "\$(jq -r '.layers[0].digest' "\$tmp/manifest")" "\$tmp/chart.tgz" || { echo "Error: the chart layer of \$ref:\$version is not its digest" >&2; exit 1; }
+mv "\$tmp/chart.tgz" "\$dest/\$chart-\$version.tgz"
+EOF
+chmod +x "$work/standin-bin/helm"
+upstream_file() { # <path under upstream-files> <bytes> -> the sha256 of the file written there
+  mkdir -p "$work/upstream-files/$(dirname "$1")" && printf '%s' "$2" > "$work/upstream-files/$1" && sha256sum "$work/upstream-files/$1" | cut -d' ' -f1
+}
+upstream_chart() { # <path under upstream-files> <chart> <version> [<appVersion as Chart.yaml writes it>] -> the sha256 of the packaged chart written there as <chart>-<version>.tgz
+  mkdir -p "$work/chart-src/$2" "$work/upstream-files/$1"
+  printf 'apiVersion: v2\nname: %s\nversion: %s\nappVersion: %s\n' "$2" "$3" "${4:-\"1.0\"}" > "$work/chart-src/$2/Chart.yaml"
+  tar -czf "$work/upstream-files/$1/$2-$3.tgz" -C "$work/chart-src" "$2" && rm -rf "$work/chart-src"
+  sha256sum "$work/upstream-files/$1/$2-$3.tgz" | cut -d' ' -f1
+}
+tool_url=https://github.com/fixture/tool/releases/download/v1.0.0/tool-linux-amd64
+tool_hex="$(upstream_file github.com/fixture/tool/releases/download/v1.0.0/tool-linux-amd64 'the fixture tool 1.0.0')"
+chart_hex="$(upstream_chart charts.example.invalid fixture-chart 1.0.0)"
+
+# The list: one line per row, both names under global.buildRegistry, and a row of another form refused by its line.
+owned="$(yq '.global.buildRegistry' "$root/clusters/platform/values-common.yaml")"
+printf '# a comment\n\ntool %s %s\nchart https://charts.example.invalid fixture-chart 1.0.0 %s # a comment after a row\n' "$tool_url" "$tool_hex" "$chart_hex" > "$work/sources.table"
+bash "$root/scripts/list-mirror-sources.sh" "$work/sources.table" > "$work/sources.lines" 2>&1 || fail "PLANTED INNOCENT: a tool row and a chart row were not listed: $(cat "$work/sources.lines")"
+[ "$(cat "$work/sources.lines")" = "tool $tool_url $tool_hex $owned/github.com/fixture/tool/releases/download/v1.0.0/tool-linux-amd64:v1.0.0 https://${owned%%/*}/v2/${owned#*/}/github.com/fixture/tool/releases/download/v1.0.0/tool-linux-amd64/blobs/sha256:$tool_hex
+chart https://charts.example.invalid fixture-chart 1.0.0 $chart_hex $owned/charts.example.invalid/fixture-chart:1.0.0 oci://$owned/charts.example.invalid" ] \
+  || fail "the list does not name each row under $owned as the mirror serves it: $(cat "$work/sources.lines")"
+ok 'the list writes one line per row of the table, with the tag it stands under and the address a consumer reads, under global.buildRegistry'
+while IFS='|' read -r row reason; do
+  printf 'tool %s %s\n%s\n' "$tool_url" "$tool_hex" "$row" > "$work/planted.table"
+  bash "$root/scripts/list-mirror-sources.sh" "$work/planted.table" > "$work/sources.lines" 2>&1 && fail "PLANTED DEFECT: the row '$row' was listed"
+  grep -qxF "list-mirror-sources: FAIL — $work/planted.table:2: $reason" "$work/sources.lines" || fail "the row '$row' is not refused by its line and its reason: $(cat "$work/sources.lines")"
+done <<ROWS
+tool $tool_hex|a row is tool <url> <sha256> or chart <repository> <chart> <version> <sha256>
+tool https://github.com/Fixture/tool/releases/download/v1.0.0/tool-linux-amd64 $tool_hex|the url https://github.com/Fixture/tool/releases/download/v1.0.0/tool-linux-amd64 is no asset of a GitHub Release whose owner, name, tag and file are lower-case path components
+tool https://github.com/fixture/tool/archive/v1.0.0.tar.gz $tool_hex|the url https://github.com/fixture/tool/archive/v1.0.0.tar.gz is no asset of a GitHub Release whose owner, name, tag and file are lower-case path components
+chart https://charts.example.invalid/ fixture-chart 1.0.0 $chart_hex|the repository https://charts.example.invalid/ is neither a chart repository index over https nor an oci registry, by a lower-case host and path without a trailing slash
+chart https://charts.example.invalid Fixture-Chart 1.0.0 $chart_hex|the chart Fixture-Chart is no lower-case path component
+chart https://charts.example.invalid fixture-chart 1.0 $chart_hex|the version 1.0 is no chart version a registry can carry as a tag
+tool $tool_url $(printf %s "$tool_hex" | tr a-f A-F)|the sha256 $(printf %s "$tool_hex" | tr a-f A-F) is not 64 lower-case hex digits
+tool $tool_url $chart_hex|$owned/github.com/fixture/tool/releases/download/v1.0.0/tool-linux-amd64:v1.0.0 has a row above already
+ROWS
+ok 'a malformed row, an upper-case name, a tool url that is no Release asset, a chart repository with a trailing slash, a version that is no tag, a sha256 in upper case and a row that stands twice are refused by their line'
+
+# The steps, on lines under the fixture registry, in the order the mirror runs them; the staging folder is
+# the run's, and stays from one call to the next.
+source_line() { OWNER=simetrixch mirror_source_line "$@"; }
+tool_line="$(source_line tool "$tool_url" "$tool_hex")" chart_line="$(source_line chart https://charts.example.invalid fixture-chart 1.0.0 "$chart_hex")"
+owned_reference() { read -r -a fields <<< "$1"; printf '%s' "${fields[${#fields[@]} - 2]}"; }
+sources() { # $1 the list -> the exit status of fetch, copy-sources and read-back-sources run in order, their output in $work/sources.out
+  rm -rf "$work/sources-tmp" "$work/upstream.log"
+  { OWNER=simetrixch mirror_fetch "$1" "$work/sources-staged" "$work/sources-tmp/fetch" \
+    && OWNER=simetrixch mirror_copy_sources "$1" "$work/sources-staged" "$work/sources-tmp/copy" \
+    && OWNER=simetrixch mirror_read_back_sources "$1" "$work/sources-tmp/read"; } > "$work/sources.out" 2>&1
+}
+mirrored() { # <owned reference> -> the manifest it stands under, read without a login
+  local path="${1#*/}"
+  command curl -fsS -H 'Accept: application/vnd.oci.image.manifest.v1+json' "http://127.0.0.1:$PORT/v2/${path%:*}/manifests/${path##*:}"
+}
+printf '%s\n' "$tool_line" "$chart_line" > "$work/sources.list"
+sources "$work/sources.list" || fail "PLANTED INNOCENT: a tool and a chart were not mirrored: $(cat "$work/sources.out")"
+[ "$(grep '^mirror: ' "$work/sources.out")" = "mirror: $(owned_reference "$tool_line") fetched from $tool_url as sha256:$tool_hex
+mirror: $(owned_reference "$chart_line") fetched from fixture-chart 1.0.0 of https://charts.example.invalid as sha256:$chart_hex
+mirror: the tree at this tag names 2 tools and charts for the mirror: 2 fetched and held to their sha256, 0 already served
+mirror: $(owned_reference "$tool_line") pushed
+mirror: $(owned_reference "$chart_line") pushed
+mirror: 2 tools and charts: 2 pushed, 0 kept
+mirror: $(owned_reference "$tool_line") read back from https://registry.test/v2/simetrixch/github.com/fixture/tool/releases/download/v1.0.0/tool-linux-amd64/blobs/sha256:$tool_hex
+mirror: $(owned_reference "$chart_line") read back from oci://registry.test/simetrixch/charts.example.invalid/fixture-chart
+mirror: 2 of 2 tools and charts served" ] || fail "the steps do not log every row fetched, pushed and read back: $(cat "$work/sources.out")"
+mirrored "$(owned_reference "$tool_line")" | jq -e --arg hex "sha256:$tool_hex" '.config.mediaType == "application/vnd.oci.empty.v1+json" and (.layers | length) == 1
+  and .layers[0].digest == $hex and .layers[0].mediaType == "application/octet-stream" and .layers[0].annotations["org.opencontainers.image.title"] == "tool-linux-amd64"' > /dev/null \
+  && mirrored "$(owned_reference "$chart_line")" | jq -e --arg hex "sha256:$chart_hex" '.config.mediaType == "application/vnd.cncf.helm.config.v1+json" and (.layers | length) == 1
+  and .layers[0].digest == $hex and .layers[0].mediaType == "application/vnd.cncf.helm.chart.content.v1.tar+gzip"' > /dev/null \
+  || fail "the tool or the chart does not stand as the one layer of its sha256 under the media types of its kind"
+ok 'a tool and a chart are fetched, held to their sha256, pushed as the one layer of their kind and read back without a login, each counted'
+before="$(pushes)"
+mv "$work/upstream-files" "$work/upstream-files-away" && mkdir "$work/upstream-files"
+sources "$work/sources.list" || fail "PLANTED INNOCENT: a second run of rows the mirror serves failed: $(cat "$work/sources.out")"
+rm -rf "$work/upstream-files" && mv "$work/upstream-files-away" "$work/upstream-files"
+grep -qxF 'mirror: the tree at this tag names 2 tools and charts for the mirror: 0 fetched and held to their sha256, 2 already served' "$work/sources.out" \
+  && grep -qxF 'mirror: 2 tools and charts: 0 pushed, 2 kept' "$work/sources.out" && grep -qxF 'mirror: 2 of 2 tools and charts served' "$work/sources.out" \
+  && [ ! -s "$work/upstream.log" ] && [ "$(pushes)" = "$before" ] \
+  || fail "rows the mirror serves were downloaded or pushed again: $(cat "$work/sources.out") $(cat "$work/upstream.log" 2>/dev/null)"
+ok 'rows the mirror already serves are neither downloaded nor pushed, and read back'
+# A Chart.yaml that writes a text field as a number stands in the mirror with the config helm reads from the
+# chart, where that field is text, so helm pulls it back, in this run and in the next.
+numbered_hex="$(upstream_chart charts.example.invalid numbered-chart 1.0.0 1.10)"
+source_line chart https://charts.example.invalid numbered-chart 1.0.0 "$numbered_hex" > "$work/sources-numbered.list"
+numbered="$(owned_reference "$(cat "$work/sources-numbered.list")")"
+sources "$work/sources-numbered.list" && grep -qxF "mirror: $numbered pushed" "$work/sources.out" && grep -qxF 'mirror: 1 of 1 tools and charts served' "$work/sources.out" \
+  || fail "a chart whose Chart.yaml writes appVersion: 1.10 does not read back through helm: $(cat "$work/sources.out")"
+sources "$work/sources-numbered.list" && grep -qxF "mirror: $numbered kept" "$work/sources.out" && grep -qxF 'mirror: 1 of 1 tools and charts served' "$work/sources.out" \
+  || fail "a second run does not read back the chart whose Chart.yaml writes appVersion: 1.10: $(cat "$work/sources.out")"
+ok 'a chart whose Chart.yaml writes appVersion: 1.10 is pushed with a config helm reads, and read back by the next run'
+
+# What fetch refuses: an upstream that does not hold the row, and bytes that are not its sha256.
+gone_url=https://github.com/fixture/gone/releases/download/v1.0.0/gone-linux-amd64
+source_line tool "$gone_url" "$tool_hex" > "$work/sources-gone.list"
+sources "$work/sources-gone.list" && fail 'PLANTED DEFECT: a tool its upstream does not hold passed'
+grep -qF "mirror: FAIL — row $(owned_reference "$(cat "$work/sources-gone.list")"): $gone_url could not be fetched" "$work/sources.out" \
+  || fail "a tool its upstream does not hold is not named by its row: $(cat "$work/sources.out")"
+source_line chart https://charts.example.invalid fixture-chart 9.9.9 "$chart_hex" > "$work/sources-gone.list"
+sources "$work/sources-gone.list" && fail 'PLANTED DEFECT: a chart version its repository does not hold passed'
+grep -qF "mirror: FAIL — row $(owned_reference "$(cat "$work/sources-gone.list")"): fixture-chart 9.9.9 of https://charts.example.invalid could not be fetched" "$work/sources.out" \
+  || fail "a chart version its repository does not hold is not named by its row: $(cat "$work/sources.out")"
+moved_url=https://github.com/fixture/moved/releases/download/v1.0.0/moved-linux-amd64
+moved_hex="$(upstream_file github.com/fixture/moved/releases/download/v1.0.0/moved-linux-amd64 'other bytes')"
+source_line tool "$moved_url" "$tool_hex" > "$work/sources-moved.list"
+sources "$work/sources-moved.list" && fail 'PLANTED DEFECT: upstream bytes that are not the row'\''s sha256 passed'
+grep -qxF "mirror: FAIL — row $(owned_reference "$(cat "$work/sources-moved.list")"): $moved_url reads as sha256:$moved_hex, and the row pins sha256:$tool_hex" "$work/sources.out" \
+  || fail "upstream bytes that are not the row's sha256 are not named by the row and both digests: $(cat "$work/sources.out")"
+ok 'an upstream 404 of a tool and of a chart, and upstream bytes that differ from the row, stop fetch naming the row'
+
+# What copy-sources refuses before it pushes anything: a staged file that changed after fetch, and a tag
+# that stands in the mirror with another layer.
+fresh_url=https://github.com/fixture/fresh/releases/download/v1.0.0/fresh-linux-amd64
+fresh_hex="$(upstream_file github.com/fixture/fresh/releases/download/v1.0.0/fresh-linux-amd64 'a fresh tool')"
+source_line tool "$fresh_url" "$fresh_hex" > "$work/sources-fresh.list"
+OWNER=simetrixch mirror_fetch "$work/sources-fresh.list" "$work/sources-staged" "$work/sources-tmp/fetch" > "$work/sources.out" 2>&1 || fail "fetch failed: $(cat "$work/sources.out")"
+printf 'changed' > "$work/sources-staged/$fresh_hex"
+before="$(pushes)"
+OWNER=simetrixch mirror_copy_sources "$work/sources-fresh.list" "$work/sources-staged" "$work/sources-tmp/copy" > "$work/sources.out" 2>&1 \
+  && fail 'PLANTED DEFECT: a staged file changed between fetch and copy-sources was pushed'
+grep -qxF "mirror: REFUSE — row $(owned_reference "$(cat "$work/sources-fresh.list")"): the file fetch staged for it is missing or is not sha256:$fresh_hex" "$work/sources.out" \
+  && [ "$(pushes)" = "$before" ] || fail "a staged file that changed is not refused by its row before a push: $(cat "$work/sources.out")"
+rm "$work/sources-staged/$fresh_hex"
+taken_url=https://github.com/fixture/taken/releases/download/v1.0.0/taken-linux-amd64
+taken_hex="$(upstream_file github.com/fixture/taken/releases/download/v1.0.0/taken-linux-amd64 'the taken tool')"
+taken_line="$(source_line tool "$taken_url" "$taken_hex")"
+other_hex="$(printf 'another layer' | sha256sum | cut -d' ' -f1)"
+printf 'another layer' > "$work/other-layer"
+taken="$(owned_reference "$taken_line")"; taken="${taken#*/}"
+printf '{}' > "$work/empty.json"
+empty_digest="sha256:$(sha256sum "$work/empty.json" | cut -d' ' -f1)"
+push_blob "https://registry.test/v2/${taken%:*}" "$work/other-layer" "sha256:$other_hex" "$work" \
+  && push_blob "https://registry.test/v2/${taken%:*}" "$work/empty.json" "$empty_digest" "$work" \
+  && jq -n --arg empty "$empty_digest" --arg layer "sha256:$other_hex" \
+    '{schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json", config: {mediaType: "application/vnd.oci.empty.v1+json", digest: $empty, size: 2},
+      layers: [{mediaType: "application/octet-stream", digest: $layer, size: 13}]}' > "$work/taken.json" \
+  && [ "$(registry_call /dev/null -X PUT -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' --data-binary "@$work/taken.json" "https://registry.test/v2/${taken%:*}/manifests/${taken##*:}")" = 201 ] \
+  || fail 'the fixture could not stand another layer under the tag'
+printf '%s\n' "$(cat "$work/sources-fresh.list")" "$taken_line" > "$work/sources-taken.list"
+before="$(pushes)"
+sources "$work/sources-taken.list" && fail 'PLANTED DEFECT: a tag that stands in the mirror with another layer was replaced'
+grep -qxF "mirror: REFUSE — row $(owned_reference "$taken_line"): the mirror answered 200 with the one layer sha256:$other_hex, not the one layer sha256:$taken_hex. A mirrored tool or chart is never replaced: give its row another version." "$work/sources.out" \
+  && [ "$(pushes)" = "$before" ] || fail "a tag that stands with another layer is not refused by its row before anything is pushed: $(cat "$work/sources.out")"
+ok 'a staged file changed after fetch and a tag that stands with another layer are refused by their row, and nothing is pushed'
+# A mirror that does not answer says nothing about the tag: copy-sources fails naming what it found, and pushes nothing.
+before="$(pushes)"
+# shellcheck disable=SC2329 # mirror_source_held calls this curl, inside the subshell
+(curl() { return 28; }; OWNER=simetrixch mirror_copy_sources "$work/sources-fresh.list" "$work/sources-staged" "$work/sources-tmp/copy") > "$work/sources.out" 2>&1 \
+  && fail 'PLANTED DEFECT: copy-sources went on past a mirror it could not read'
+grep -qxF "mirror: FAIL — row $(owned_reference "$(cat "$work/sources-fresh.list")"): the mirror was not read (curl exited 28), so what stands under its tag is not known, and nothing is pushed" "$work/sources.out" \
+  && [ "$(pushes)" = "$before" ] || fail "a mirror that does not answer is not named as such by the row, or something was pushed: $(cat "$work/sources.out")"
+ok 'a mirror that does not answer stops copy-sources naming the row and what it read, and nothing is pushed'
+
+# A line that is not the line of its row under the owner is refused by each step, before it reads an upstream or pushes.
+outside="$(source_line tool "$fresh_url" "$fresh_hex" | sed 's|/simetrixch/|/other/|g')"
+printf '%s\n' "$outside" > "$work/sources-outside.list"
+for step in mirror_fetch mirror_copy_sources; do
+  rm -f "$work/upstream.log"; before="$(pushes)"
+  OWNER=simetrixch "$step" "$work/sources-outside.list" "$work/sources-staged" "$work/sources-tmp/$step" > "$work/sources.out" 2>&1 && fail "PLANTED DEFECT: $step took a line outside the owner"
+  grep -qxF "mirror: REFUSE — $outside is not the line of its row under registry.test/simetrixch, which is $(source_line tool "$fresh_url" "$fresh_hex")" "$work/sources.out" \
+    && [ ! -s "$work/upstream.log" ] && [ "$(pushes)" = "$before" ] || fail "$step does not refuse a line outside the owner by name, before anything: $(cat "$work/sources.out")"
+done
+OWNER=simetrixch mirror_read_back_sources "$work/sources-outside.list" "$work/sources-tmp/read" > "$work/sources.out" 2>&1 && fail 'PLANTED DEFECT: read-back-sources passed a line outside the owner'
+grep -qxF 'mirror: 0 of 1 tools and charts served' "$work/sources.out" || fail "read-back-sources counted a line outside the owner: $(cat "$work/sources.out")"
+ok 'a line whose owned reference is outside the owner is refused by fetch, copy-sources and read-back-sources'
+
+# What read-back-sources refuses: a mirror that serves other bytes, and one that serves nothing.
+touch "$work/registry/corrupt"
+OWNER=simetrixch mirror_read_back_sources "$work/sources.list" "$work/sources-tmp/read" > "$work/sources.out" 2>&1 && fail 'PLANTED DEFECT: a mirror that serves other bytes read back'
+rm "$work/registry/corrupt"
+grep -qF "mirror: FAIL — row $(owned_reference "$tool_line"): https://registry.test/v2/simetrixch/github.com/fixture/tool/releases/download/v1.0.0/tool-linux-amd64/blobs/sha256:$tool_hex reads back as sha256:" "$work/sources.out" \
+  && grep -qF "mirror: FAIL — row $(owned_reference "$chart_line"): reading oci://registry.test/simetrixch/charts.example.invalid/fixture-chart failed (exit 1): Error: " "$work/sources.out" \
+  && grep -qxF 'mirror: 0 of 2 tools and charts served' "$work/sources.out" || fail "other bytes are not named by each row: $(cat "$work/sources.out")"
+printf '%s\n' "$(cat "$work/sources-fresh.list")" "$tool_line" > "$work/sources-unserved.list"
+OWNER=simetrixch mirror_read_back_sources "$work/sources-unserved.list" "$work/sources-tmp/read" > "$work/sources.out" 2>&1 && fail 'PLANTED DEFECT: a row the mirror does not serve read back'
+grep -qxF "mirror: FAIL — row $(owned_reference "$(cat "$work/sources-fresh.list")"): the mirror answered 404, not the one layer sha256:$fresh_hex" "$work/sources.out" \
+  && grep -qxF 'mirror: 1 of 2 tools and charts served' "$work/sources.out" || fail "a row the mirror does not serve is not named, or the count is not of every row: $(cat "$work/sources.out")"
+ok 'a mirror that serves other bytes or nothing fails read-back-sources, naming every row it does not serve'
 
 # ── the rendered Pipeline, end to end ──────────────────────────────────────────────────────
 # Every step of <unit>-publish as helm renders it, run on fixture repositories in Tekton's order, so
@@ -653,4 +1043,63 @@ for pair in tool=a tool-rest=b; do
     || fail "the binaries run did not publish $name under <owner>/<repository>:<tag> with its log line: $(cat "$work/run.out")"
 done
 ok 'end to end: a binaries release is gated, cloned, scanned, reviewed, built by release/build.sh and published as one manifest under <owner>/<repository>'
+
+# The platform tree on the owner's master: its publish run copies the images its list names into the mirror,
+# then the tools and charts its other list names, pushes no package, fails at the copy when an image is
+# gone upstream, before any tool or chart is fetched, and at fetch when a tool is gone, with every image
+# already read back.
+helm template consumer-build "$root/clusters/inventories/consumer-build" --namespace argocd \
+  -f "$root/clusters/platform/values-common.yaml" -f "$root/clusters/platform/values-prod.yaml" \
+  -f "$root/clusters/inventories/consumer-build/values-common.yaml" \
+  -f "$root/scripts/standin/cluster-map.yaml" -f "$root/scripts/standin/registration.yaml" \
+  --set "global.buildRegistry=${rendered_registry}/simetrixch" \
+  --set-json 'unit={"name":"hostyour-cloud","repoURL":"https://github.com/simetrixch/hostyour-cloud.git","buildsJson":"[]"}' \
+  | yq -o=json 'select(.kind == "Pipeline" and .metadata.name == "hostyour-cloud-publish")' > "$work/platform-pipeline.json" \
+  && [ -s "$work/platform-pipeline.json" ] || fail 'the chart renders no hostyour-cloud-publish Pipeline for the platform tree'
+platform_run() { # $1 the fixture origin, $2 the release tag -> the run's status, its log in $work/run.out
+  rm -rf "${work:?}/run"; mkdir -p "$work/run"
+  node "$work/run-pipeline.mjs" "$work/platform-pipeline.json" "$work/run" "$1" https://github.com/simetrixch/hostyour-cloud.git \
+    "$(jq -nc --arg tag "$2" '{"release-tag": $tag, "git-url": "https://github.com/simetrixch/hostyour-cloud.git"}')" "$secrets" > "$work/run.out" 2>&1
+}
+platform_tree() { # $1 folder, $2 the lines its list of tools and charts prints, then the entries its list of images prints -> a fixture platform tree whose two list scripts print them
+  local dir="$1" lines="$2"; shift 2
+  origin "$dir"; mkdir -p "$dir/scripts"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n"%s\n' "$(printf " '%s'" "$@")" > "$dir/scripts/list-mirror-images.sh"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" %s\n' "'$lines'" > "$dir/scripts/list-mirror-sources.sh"
+  manifest @digitaplatform/e2e-platform > "$dir/package.json"
+}
+# The fixture registry keeps a repository by its path whatever host names it, so the run mirrors a tool and a
+# chart of its own, which the cases above never pushed.
+platform_tool_url=https://github.com/fixture/platform-tool/releases/download/v1.0.0/platform-tool-linux-amd64
+platform_tool_hex="$(upstream_file github.com/fixture/platform-tool/releases/download/v1.0.0/platform-tool-linux-amd64 'the platform tool 1.0.0')"
+platform_chart_hex="$(upstream_chart charts.example.invalid platform-chart 1.0.0)"
+platform_sources="$(REGISTRY="$rendered_registry" source_line tool "$platform_tool_url" "$platform_tool_hex")
+$(REGISTRY="$rendered_registry" source_line chart https://charts.example.invalid platform-chart 1.0.0 "$platform_chart_hex")"
+platform_tree "$work/e11" "$platform_sources" "$(entry "fixture/multi:2.0@$v2s2_list" "$rendered_registry")" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")"
+commit_tag "$work/e11" "0.5.000-stable-$STAMP"
+platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "PLANTED INNOCENT: the platform tree did not mirror its images: $(cat "$work/run.out")"
+[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack skipped|run: build-binaries skipped|run: push skipped|run: mirror ran|run: SUCCEEDED|' ] \
+  || fail "the platform run took another course: $(tasks_ran)"
+grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/multi:2.0@$v2s2_list application/vnd.docker.distribution.manifest.list.v2+json read back" "$work/run.out" \
+  && grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/one:1.0.0@$oci_image application/vnd.oci.image.manifest.v1+json read back" "$work/run.out" \
+  && ! grep -q '^publish:' "$work/run.out" || fail "the platform run did not read every image back, or published a package: $(cat "$work/run.out")"
+grep -qxF 'mirror: the tree at this tag names 2 tools and charts for the mirror: 2 fetched and held to their sha256, 0 already served' "$work/run.out" \
+  && grep -qxF 'mirror: 2 tools and charts: 2 pushed, 0 kept' "$work/run.out" && grep -qxF 'mirror: 2 of 2 tools and charts served' "$work/run.out" \
+  && [ "$(grep -n ' read back$' "$work/run.out" | tail -n 1 | cut -d: -f1)" -lt "$(grep -n ' fetched from ' "$work/run.out" | head -n 1 | cut -d: -f1)" ] \
+  || fail "the platform run did not mirror its tools and charts after its images were read back: $(cat "$work/run.out")"
+platform_tree "$work/e12" "$platform_sources" "$(entry "fixture/gone:1.0.0@$oci_image" "$rendered_registry")"
+commit_tag "$work/e12" "0.5.000-stable-$STAMP"
+platform_run "$work/e12" "0.5.000-stable-$STAMP" && fail 'PLANTED DEFECT: the platform tree passed with an image ghcr.io does not hold'
+grep -qxF 'run: mirror failed at copy' "$work/run.out" && grep -qF 'mirror: FAIL — ghcr.io/fixture/gone:1.0.0 cannot be read upstream' "$work/run.out" \
+  || fail "an image ghcr.io does not hold did not fail the run at the copy by name: $(cat "$work/run.out")"
+! grep -q 'tools and charts' "$work/run.out" || fail "a tool or chart was fetched though an image was not copied: $(cat "$work/run.out")"
+gone_line="$(REGISTRY="$rendered_registry" source_line tool "$gone_url" "$tool_hex")"
+platform_tree "$work/e13" "$gone_line" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")"
+commit_tag "$work/e13" "0.5.000-stable-$STAMP"
+platform_run "$work/e13" "0.5.000-stable-$STAMP" && fail 'PLANTED DEFECT: the platform tree passed with a tool its upstream does not hold'
+grep -qxF 'run: mirror failed at fetch' "$work/run.out" \
+  && grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/one:1.0.0@$oci_image application/vnd.oci.image.manifest.v1+json read back" "$work/run.out" \
+  && grep -qF "mirror: FAIL — row $(owned_reference "$gone_line"): $gone_url could not be fetched" "$work/run.out" \
+  || fail "a tool its upstream does not hold did not fail the run at fetch by its row, after the images were read back: $(cat "$work/run.out")"
+ok 'end to end: the platform tree mirrors every image its list names and reads it back, then every tool and chart, publishes no package; an image gone upstream fails the run before a tool or chart is fetched, and a tool gone upstream fails it at fetch with the images read back'
 echo "pipeline-publish.test: OK"

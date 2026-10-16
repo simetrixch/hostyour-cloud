@@ -78,7 +78,7 @@ const task = () => {
 test('the password reaches the step only from the target Secret, and nothing a run writes outlives its pod', () => {
   const {spec} = task();
   const [step] = spec.steps;
-  assert.deepEqual(spec.params.map(({name}) => name), ['target', 'path', 'case']);
+  assert.deepEqual(spec.params.map(({name}) => name), ['target', 'path', 'case', 'dropped-member', 'dropped-account']);
   const env = Object.fromEntries(step.env.map(({name, ...source}) => [name, source]));
   assert.deepEqual(env.E2E_PASSWORD, {valueFrom: {secretKeyRef: {name: 'e2e-$(params.target)', key: 'password'}}});
   assert.deepEqual(env.E2E_TARGET_HOST, {valueFrom: {secretKeyRef: {name: 'e2e-$(params.target)', key: 'host'}}});
@@ -94,16 +94,30 @@ test('the password reaches the step only from the target Secret, and nothing a r
   assert.match(step.image, /\/digita-testkit-e2e:0\.1\.0$/);
 });
 
-// The step's script run under sh, with a stand-in Playwright that prints what it was handed.
-const runScript = (path, testCase) => {
+test('the dropped member and account reach the step as params, empty by default', () => {
+  const {spec} = task();
+  const [step] = spec.steps;
+  const param = name => spec.params.find(candidate => candidate.name === name);
+  assert.equal(param('dropped-member').default, '');
+  assert.equal(param('dropped-account').default, '');
+  const env = Object.fromEntries(step.env.map(({name, ...source}) => [name, source]));
+  assert.deepEqual(env.E2E_DROPPED_MEMBER, {value: '$(params.dropped-member)'});
+  assert.deepEqual(env.E2E_DROPPED_ACCOUNT, {value: '$(params.dropped-account)'});
+});
+
+// The step's script run under sh, with a stand-in Playwright that prints what it was handed. Tekton sets
+// every param's variable, empty where the run gives none, so the run here does as well.
+const runScript = (path, testCase, {member = '', account = '', script = task().spec.steps[0].script} = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'e2e-runner-'));
   try {
     mkdirSync(join(dir, 'node_modules/.bin'), {recursive: true});
-    writeFileSync(join(dir, 'node_modules/.bin/playwright'), '#!/bin/sh\necho "playwright $PLAYWRIGHT_BASE_URL $*"\n');
+    writeFileSync(join(dir, 'node_modules/.bin/playwright'),
+      '#!/bin/sh\necho "playwright $PLAYWRIGHT_BASE_URL $*"\necho "dropped [$E2E_DROPPED_MEMBER] [$E2E_DROPPED_ACCOUNT]"\n');
     chmodSync(join(dir, 'node_modules/.bin/playwright'), 0o755);
-    writeFileSync(join(dir, 'run-case.sh'), task().spec.steps[0].script);
+    writeFileSync(join(dir, 'run-case.sh'), script);
     return spawnSync('sh', ['run-case.sh'], {cwd: dir, encoding: 'utf8',
-      env: {PATH: process.env.PATH, E2E_TARGET_HOST: 'shop.example.test', E2E_APP_PATH: path, E2E_CASE: testCase}});
+      env: {PATH: process.env.PATH, E2E_TARGET_HOST: 'shop.example.test', E2E_APP_PATH: path, E2E_CASE: testCase,
+        E2E_DROPPED_MEMBER: member, E2E_DROPPED_ACCOUNT: account}});
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
@@ -130,5 +144,43 @@ test('a path that could name another host, or a case that is not a file under ca
     const run = runScript(path, testCase);
     assert.equal(run.status, 2, `${path} ${testCase}: ${run.stdout}${run.stderr}`);
     assert.doesNotMatch(run.stdout, /playwright/);
+  }
+});
+
+test('PLANTED INNOCENT: a member, an account with a subaddress, and no values at all reach Playwright', () => {
+  for (const [member, account] of [['testco-workshop', 'e2e+drop@example.test'], ['', '']]) {
+    const run = runScript('/app/shop/', 'cases/dropped-member-roles.spec.ts', {member, account});
+    assert.equal(run.status, 0, `${member} ${account}: ${run.stderr}`);
+    assert.match(run.stdout, /^playwright https:\/\/shop\.example\.test\/app\/shop\/ test cases\/dropped-member-roles\.spec\.ts$/m);
+    assert.ok(run.stdout.includes(`dropped [${member}] [${account}]\n`), run.stdout);
+  }
+});
+
+const unsafeDropped = [
+  ['dropped-member', {member: 'testco workshop'}],
+  ['dropped-member', {member: 'testco;id'}],
+  ['dropped-member', {member: 'testco$HOME'}],
+  ['dropped-member', {member: 'testco-workshop:admin'}],
+  ['dropped-account', {account: 'e2e drop@example.test'}],
+  ['dropped-account', {account: 'e2e;id@example.test'}],
+  ['dropped-account', {account: 'e2e$HOME@example.test'}],
+];
+
+test('PLANTED DEFECT: a dropped member or account with a space or a shell character is refused, naming the param, before Playwright starts', () => {
+  for (const [param, dropped] of unsafeDropped) {
+    const run = runScript('/app/shop/', 'cases/dropped-member-roles.spec.ts', dropped);
+    assert.equal(run.status, 2, `${param} ${JSON.stringify(dropped)}: ${run.stdout}${run.stderr}`);
+    assert.match(run.stderr, new RegExp(`^run-case: ${param} `, 'm'));
+    assert.doesNotMatch(run.stdout, /playwright/);
+  }
+});
+
+test('PLANTED DEFECT: a step without the refusals hands every unsafe value to Playwright, so the test above goes red on it', () => {
+  const script = task().spec.steps[0].script;
+  const unrefused = script.replace(/^ *case "\$\{E2E_DROPPED_(MEMBER|ACCOUNT)\}" in\n.*\n *esac\n/gm, '');
+  for (const [param, dropped] of unsafeDropped) {
+    const run = runScript('/app/shop/', 'cases/dropped-member-roles.spec.ts', {...dropped, script: unrefused});
+    assert.equal(run.status, 0, `${param} ${JSON.stringify(dropped)}: ${run.stderr}`);
+    assert.match(run.stdout, /playwright/);
   }
 });

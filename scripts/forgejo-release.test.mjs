@@ -126,6 +126,16 @@ const PLANE = {PLANE_TOKEN: 'plane-token-on-standard-input', PLANE_API: 'http://
   PLANE_TARGETS: JSON.stringify({...PLANE_TARGETS, projects: PLANE_TARGETS.projects.map(({identifier, ...target}) => target)}),
   REPOSITORY: 'ansiwise-owner/hostyour-release-test', TAG: 'v0.0.2', PREVIOUS_COMMIT: '${SHA0}'};
 const PLANE_COMMITS = ['first HOSTYOUR-1', 'fix HOSTYOUR-2 and (HOSTYOUR-3)', 'not XHOSTYOUR-4 nor HOSTYOUR-5x, again HOSTYOUR-2'];
+// Plane v1.4.2 (plane-ce 1.8.5) answers a module PATCH with the fields of ModuleUpdateSerializer, which
+// hold no id, and a GET of the module with every field of ModuleSerializer
+// (apps/api/plane/api/views/module.py, apps/api/plane/api/serializers/module.py).
+const PLANE_MODULE_PATCHED = '{"name":"v0.0.2","description":"","start_date":null,"target_date":null,"status":"completed","lead":null,"external_source":null,"external_id":null}';
+const planeModule = (status, id = 'm2') => JSON.stringify({id, total_issues: 2, cancelled_issues: 0, completed_issues: 2,
+  started_issues: 0, unstarted_issues: 0, backlog_issues: 0, created_at: '2026-10-16T12:40:01.000000Z',
+  updated_at: '2026-10-16T12:40:03.000000Z', deleted_at: null, name: 'v0.0.2', description: '', description_text: null,
+  description_html: null, start_date: null, target_date: null, status, view_props: {}, sort_order: 65535, external_source: null,
+  external_id: null, archived_at: null, logo_props: {}, created_by: 'bot', updated_by: 'bot', project: 'project', workspace: 'workspace',
+  lead: null, members: []});
 function planeAnswers(target = PLANE_TARGETS.projects[1], missing = false) {
   return [`GET /projects/${target.id}/ 200 {"identifier":"${target.identifier}"}`,
     'GET /states/?per_page=100 200 {"next_page_results":false,"results":[{"id":"todo","name":"Todo","group":"unstarted"},{"id":"wrong","name":"Released","group":"started"},{"id":"done","name":"Released","group":"completed"}]}',
@@ -133,7 +143,8 @@ function planeAnswers(target = PLANE_TARGETS.projects[1], missing = false) {
     `GET /modules/?per_page=100 200 {"next_page_results":false,"results":${missing ? '[]' : '[{"id":"m1","name":"v0.0.1"},{"id":"m2","name":"v0.0.2"}]'}}`,
     'POST /modules/ 201 {"id":"m2","name":"v0.0.2"}',
     'POST /modules/m2/module-issues/ 200 [{"module":"m2","issue":"item-2"},{"module":"m2","issue":"item-3"}]',
-    'PATCH /modules/m2/ 200 {"id":"m2","status":"completed"}'];
+    `PATCH /modules/m2/ 200 ${PLANE_MODULE_PATCHED}`,
+    `GET /modules/m2/ 200 ${planeModule('completed')}`];
 }
 function assertPlaneRelease(run, target, missing) {
   assert.equal(run.status, 0, run.stderr);
@@ -142,7 +153,7 @@ function assertPlaneRelease(run, target, missing) {
     ...[2, 3].map(n => `GET ${PLANE.PLANE_API}/workspaces/simplidigita/work-items/${target.identifier}-${n}/`),
     `GET ${project}/modules/?per_page=100`, ...(missing ? [`POST ${project}/modules/`] : []),
     ...[2, 3].map(n => `PATCH ${project}/work-items/item-${n}/`),
-    `POST ${project}/modules/m2/module-issues/`, `PATCH ${project}/modules/m2/`]);
+    `POST ${project}/modules/m2/module-issues/`, `PATCH ${project}/modules/m2/`, `GET ${project}/modules/m2/`]);
   assert.deepEqual(run.bodies, [...(missing ? [{name: PLANE.TAG}] : []), {state: 'done'}, {state: 'done'},
     {issues: ['item-2', 'item-3']}, {status: 'completed'}]);
   assert.match(run.stdout, /module v0.0.2 is completed, 2 work items/);
@@ -185,7 +196,7 @@ test('Plane: project IDs come from configuration, and the API supplies each iden
 });
 
 test('Plane: a tag module on a later page is reused, and a release with no commit keys completes without an empty attachment', () => {
-  const responses = [...planeAnswers().filter(a => !a.startsWith('GET /modules/')),
+  const responses = [...planeAnswers().filter(a => !a.startsWith('GET /modules/?')),
     'GET /modules/?per_page=100 200 {"next_page_results":true,"next_cursor":"100:1:0","results":[{"id":"m1","name":"v0.0.1"}]}',
     'GET /modules/?per_page=100&cursor=100%3A1%3A0 200 {"next_page_results":false,"results":[{"id":"m2","name":"v0.0.2"}]}'];
   const run = execute(updatePlane, PLANE, responses, PLANE_COMMITS);
@@ -227,10 +238,15 @@ test('PLANTED DEFECT: no Released in Completed, an unknown key and refused modul
   assertPlaneRelease(execute(updatePlane, PLANE, answers, PLANE_COMMITS), PLANE_TARGETS.projects[1], false);
 });
 
-test('Plane: completion refusal and error bodies never become a successful report or disclose a credential', () => {
-  for (const answer of ['PATCH /modules/m2/ 503 {"error":"plane-token-in-a-header-file"}', 'PATCH /modules/m2/ 200 {"id":"m2","status":"planned"}']) {
-    const run = execute(updatePlane, PLANE, [...planeAnswers().filter(a => !a.startsWith('PATCH /modules/m2/')), answer], PLANE_COMMITS);
-    assert.notEqual(run.status, 0);
+test('Plane: a refused completion, a module read back as not completed and error bodies never become a successful report or disclose a credential', () => {
+  for (const [answer, message] of [['PATCH /modules/m2/ 503 {"error":"plane-token-in-a-header-file"}', /HTTP 503 to PATCH/],
+    [`GET /modules/m2/ 200 ${planeModule('planned')}`, /did not complete module v0\.0\.2/],
+    [`GET /modules/m2/ 200 ${planeModule('completed', 'm1')}`, /did not complete module v0\.0\.2/],
+    ['GET /modules/m2/ 404 {"error":"Module not found"}', /HTTP 404 to GET/]]) {
+    const request = answer.split(' ', 2).join(' ') + ' ';
+    const run = execute(updatePlane, PLANE, [...planeAnswers().filter(a => !a.startsWith(request)), answer], PLANE_COMMITS);
+    assert.notEqual(run.status, 0, `PLANTED DEFECT: ${answer}`);
+    assert.match(run.stderr, message);
     assert.doesNotMatch(run.stdout, /is completed/);
     assert.ok(![run.calls, run.stdout, run.stderr].some(text => text.includes(PLANE.PLANE_TOKEN)));
   }

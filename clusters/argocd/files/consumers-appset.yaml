@@ -432,7 +432,7 @@ spec:
         # 3. The platform's own ingress policy for this consumer's namespace
         #    (clusters/units/networkpolicy on the trunk, one NetworkPolicy and nothing else):
         #    the namespace is deny-by-default inbound, with same-namespace pods, Traefik
-        #    and Prometheus open. UNCONDITIONAL, unlike source 2 — a namespace with no
+        #    and the scrapers open. UNCONDITIONAL, unlike source 2 — a namespace with no
         #    policy is the gap this closes, so a consumer that claims no service is
         #    exactly the case that must not be skipped. It rides in the consumer's OWN
         #    Application so it is created, healed and pruned with the namespace it

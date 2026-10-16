@@ -1,0 +1,18 @@
+apiVersion: v2
+name: immutable-probe
+version: 1.0.0
+description: >-
+  The chart scripts/check.sh plants as a baseline before it compares the real
+  ones. It has the shape of clusters/inventories/e2e-runner: secret-store reads
+  the Vault URL that only the stand-in cluster map carries, so it renders only
+  through the stand-in chain, and its Job pins its image through
+  common.buildTag, so a pin that changes is a change of an immutable field.
+type: application
+
+dependencies:
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../clusters/charts/secret-store
+  - name: common
+    version: 1.0.0
+    repository: file://../../clusters/charts/common

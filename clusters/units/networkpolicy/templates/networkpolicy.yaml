@@ -19,8 +19,9 @@ WHAT STAYS OPEN, and why each one has to:
 
   1. same-namespace pods. The unit's own workloads, its migrate Job, its
      exporters. Without this a unit cannot talk to itself.
-  2. the platform namespaces in .Values.admittedNamespaces (ingress,
-     observability) — see values.yaml for what each one carries.
+  2. the platform pods in .Values.admittedNamespaces: Traefik in ingress, and
+     the metrics scrapers in observability — see values.yaml for why each one.
+     Every other pod of those namespaces is refused like a pod of any other.
   3. the books cluster's tailnet address, on one port, when the unit declares an
      SMTP entry (.Values.smtpEntry.port). The installation's mail relay runs on
      the books cluster and hands its mail to the entry over the tailnet, so it
@@ -61,10 +62,18 @@ spec:
   ingress:
     - from:
         - podSelector: {}
-        {{- range .Values.admittedNamespaces }}
+        {{- range $namespace, $names := .Values.admittedNamespaces }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ . | quote }}
+              kubernetes.io/metadata.name: {{ $namespace | quote }}
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  {{- range $names }}
+                  - {{ . | quote }}
+                  {{- end }}
         {{- end }}
     {{- with .Values.smtpEntry.port }}
     - from:
