@@ -8,7 +8,9 @@
 # published version, pushes nothing once one tarball is refused, reads every tarball back, and logs one
 # line per tarball; that a tag tracking release/build.sh publishes the binaries that script leaves, and
 # only regular files of a plain name, as one manifest <owner>/<repository>:<tag> that a second run
-# reuses and another build under the same tag cannot replace. The functions are read out of the template
+# reuses and another build under the same tag cannot replace; that the platform tree copies every image
+# its list names into the mirror at the digest it pins, after the tag upstream is found to name that
+# digest, and reads each back without a login at that digest and its own media type. The functions are read out of the template
 # (clusters/inventories/consumer-build/templates/pipeline-publish.yaml), as the Pipeline carries
 # them, and run against fixture repositories, tarballs and a registry served on 127.0.0.1. Then the
 # Pipeline as helm renders it runs end to end, every step in Tekton's order, on fixture repositories
@@ -48,7 +50,7 @@ extract() { # function name -> its text out of the template
 }
 [ -f "$template" ] || fail "the template $template does not exist"
 for fn in scan_packages stamp_only reviewed_commit release_version stamp_versions build_packages pack_packages \
-  check_tarballs scan_leaks registry_call push_blob npm_push build_binaries binaries_push; do
+  check_tarballs scan_leaks registry_call push_blob npm_push build_binaries binaries_push mirror_copy mirror_read_back; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
@@ -280,10 +282,13 @@ scan_leaks "$work/unpacked" >/dev/null 2>&1 && fail 'PLANTED DEFECT: a token in 
 ok 'a gitleaks finding in an unpacked tarball fails its scan'
 
 # ── npm_push: the registry, served on 127.0.0.1 ────────────────────────────────────────────
-# A registry of the OCI distribution API, as much of it as the push uses, behind one basic login. It
-# keeps blobs and manifests per repository, refuses a manifest that names a blob the repository lacks
-# and a blob whose bytes are not its digest, logs every request, and answers a blob read with a
-# changed byte while the file `corrupt` stands beside it.
+# A registry of the OCI distribution API, as much of it as the push and the mirror use, behind one basic
+# login, which a read under simetrixch/ghcr.io/ does not need, as zot's anonymousPolicy on <owner>/**
+# lets it. It keeps blobs and manifests per repository, a manifest under its tag and its digest with
+# the media type it was pushed as, refuses a manifest that names a blob or, for an index, a manifest
+# the repository lacks and a blob whose bytes are not its digest, logs every request, answers a blob
+# read with a changed byte while the file `corrupt` stands beside it, and serves every manifest as an
+# OCI image manifest while the file `retype` does.
 mkdir -p "$work/registry"
 cat > "$work/registry.mjs" <<'EOF'
 import {createServer} from 'node:http';
@@ -299,7 +304,8 @@ const server = createServer((req, res) => {
   req.on('end', () => {
     const body = Buffer.concat(chunks), url = new URL(req.url, 'http://x');
     appendFileSync(`${dir}/requests.log`, `${req.method} ${url.pathname}\n`);
-    if (req.headers.authorization !== login) { res.writeHead(401); return res.end(); }
+    const anonymous = ['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/v2/simetrixch/ghcr.io/');
+    if (req.headers.authorization !== login && !anonymous) { res.writeHead(401); return res.end(); }
     let m;
     if ((m = url.pathname.match(/^\/v2\/(.+)\/blobs\/uploads\/(.*)$/))) {
       if (req.method === 'POST') { res.writeHead(202, {Location: `/v2/${m[1]}/blobs/uploads/${randomUUID()}?state=x`}); return res.end(); }
@@ -321,13 +327,16 @@ const server = createServer((req, res) => {
       const key = `${m[1]}:${m[2]}`;
       if (req.method === 'PUT') {
         const manifest = JSON.parse(body);
-        if (![manifest.config, ...manifest.layers].every((d) => blobs.has(`${m[1]}@${d.digest}`))) { res.writeHead(400); return res.end('MANIFEST_BLOB_UNKNOWN'); }
-        manifests.set(key, body); res.writeHead(201); return res.end();
+        if (manifest.manifests ? !manifest.manifests.every((d) => manifests.has(`${m[1]}:${d.digest}`))
+          : ![manifest.config, ...manifest.layers].every((d) => blobs.has(`${m[1]}@${d.digest}`))) { res.writeHead(400); return res.end('MANIFEST_BLOB_UNKNOWN'); }
+        const stored = {body, type: req.headers['content-type'] ?? 'application/vnd.oci.image.manifest.v1+json'};
+        manifests.set(key, stored); manifests.set(`${m[1]}:${digest(body)}`, stored); res.writeHead(201); return res.end();
       }
       const manifest = manifests.get(key);
       if (!manifest) { res.writeHead(404); return res.end(); }
-      res.writeHead(200, {'Content-Type': 'application/vnd.oci.image.manifest.v1+json'});
-      return res.end(req.method === 'HEAD' ? undefined : manifest);
+      res.writeHead(200, {'Content-Type': existsSync(`${dir}/retype`) ? 'application/vnd.oci.image.manifest.v1+json' : manifest.type,
+        'Docker-Content-Digest': digest(manifest.body)});
+      return res.end(req.method === 'HEAD' ? undefined : manifest.body);
     }
     res.writeHead(404); res.end();
   });
@@ -436,6 +445,142 @@ RELEASE_TAG=1.0.001-stable-20261014000000 binaries "$work/b4" && fail 'PLANTED D
 grep -qF 'reads back' "$work/push.out" || fail "the readback refusal does not say so: $(cat "$work/push.out")"
 rm "$work/registry/corrupt"
 ok 'another build under a published tag, an empty build, a tag the registry cannot carry and a changed readback are refused'
+
+# ── mirror_copy and mirror_read_back: the images of the platform tree, in the mirror ───────
+# ghcr.io as a stand-in skopeo sees it: under upstream/, every blob and manifest by its digest and
+# every tag as the digest it names. The stand-in reads a tag, and copies an image by its digest to
+# the fixture registry, blobs first, as skopeo does: an index with every manifest under --all and
+# with its first only without, and every manifest as its bytes under --preserve-digests and written
+# again without, as a conversion would write it.
+mkdir -p "$work/upstream/blobs"
+cat > "$work/standin-bin/skopeo" <<EOF
+#!/usr/bin/env bash
+set -uo pipefail
+echo "skopeo \$*" >> "$work/skopeo.log"
+up="$work/upstream"
+command="\$1"; shift
+all=no preserve=no auth="" refs=()
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --all) all=yes ;;
+    --preserve-digests) preserve=yes ;;
+    --dest-authfile) auth="\$2"; shift ;;
+    --retry-times) shift ;;
+    --*) ;;
+    *) refs+=("\$1") ;;
+  esac
+  shift
+done
+if [ "\$command" = inspect ]; then
+  [[ "\${refs[0]}" =~ ^docker://ghcr\.io/(.+):([^:/]+)\$ ]] && [ -f "\$up/\${BASH_REMATCH[1]}/tags/\${BASH_REMATCH[2]}" ] \
+    || { echo "skopeo: manifest unknown: \${refs[0]}" >&2; exit 1; }
+  exec cat "\$up/blobs/\$(cat "\$up/\${BASH_REMATCH[1]}/tags/\${BASH_REMATCH[2]}")"
+fi
+[ "\$command" = copy ] && [[ "\${refs[0]}" =~ ^docker://ghcr\.io/.+@(sha256:[0-9a-f]{64})\$ ]] || { echo "skopeo: no copy of an image by its digest: \$*" >&2; exit 1; }
+source="\${BASH_REMATCH[1]}"
+[[ "\${refs[1]}" =~ ^docker://([^/]+)/(.+):([^:/]+)\$ ]] || { echo "skopeo: no destination by tag: \${refs[1]}" >&2; exit 1; }
+host="\${BASH_REMATCH[1]}" repository="\${BASH_REMATCH[2]}" tag="\${BASH_REMATCH[3]}"
+login="\$(jq -r --arg host "\$host" '.auths[\$host].auth' "\$auth" | base64 -d)" || exit 1
+call() { "${real_curl}" -fsS -u "\$login" "\$@"; }
+put_blob() { # <digest>
+  local location
+  location="\$(call -X POST -D - -o /dev/null "http://127.0.0.1:${PORT}/v2/\$repository/blobs/uploads/" | tr -d '\r' | sed -n 's/^Location: //p')" || return 1
+  call -X PUT --data-binary "@\$up/blobs/\$1" "http://127.0.0.1:${PORT}\${location}&digest=\$1" -o /dev/null
+}
+put_manifest() { # <digest> <reference>
+  local body="\$up/blobs/\$1" child
+  [ -f "\$body" ] || { echo "skopeo: ghcr.io names no manifest \$1" >&2; return 1; }
+  if jq -e '.manifests' "\$body" > /dev/null; then
+    if [ "\$all" = no ]; then put_manifest "\$(jq -r '.manifests[0].digest' "\$body")" "\$2"; return; fi
+    for child in \$(jq -r '.manifests[].digest' "\$body"); do put_manifest "\$child" "\$child" || return 1; done
+  else
+    for child in \$(jq -r '.config.digest, .layers[].digest' "\$body"); do put_blob "\$child" || return 1; done
+  fi
+  if [ "\$preserve" = yes ]; then cp "\$body" "\$up/sent"; else jq -c . "\$body" > "\$up/sent"; fi
+  call -X PUT -H "Content-Type: \$(jq -r .mediaType "\$body")" --data-binary "@\$up/sent" "http://127.0.0.1:${PORT}/v2/\$repository/manifests/\$2" -o /dev/null
+}
+put_manifest "\$source" "\$tag"
+EOF
+chmod +x "$work/standin-bin/skopeo"
+upstream_blob() { # standard input -> its digest, the blob stored under it upstream
+  local hex
+  cat > "$work/upstream/incoming"; hex="$(sha256sum "$work/upstream/incoming" | cut -d' ' -f1)"
+  mv "$work/upstream/incoming" "$work/upstream/blobs/sha256:$hex"; printf 'sha256:%s' "$hex"
+}
+upstream_tag() { mkdir -p "$work/upstream/$1/tags"; printf '%s' "$3" > "$work/upstream/$1/tags/$2"; } # <path> <tag> <digest>
+upstream_image() { # <manifest media type> <layer media type> <layer bytes> -> the digest of a manifest of one layer, written as a person reads it
+  local config layer
+  config="$(printf '{"architecture":"amd64","os":"linux"}' | upstream_blob)"; layer="$(printf '%s' "$3" | upstream_blob)"
+  jq -n --arg type "$1" --arg config "$config" --arg ltype "$2" --arg layer "$layer" \
+    '{schemaVersion: 2, mediaType: $type, config: {mediaType: "application/vnd.oci.image.config.v1+json", digest: $config, size: 37}, layers: [{mediaType: $ltype, digest: $layer, size: 1}]}' | upstream_blob
+}
+oci_image="$(upstream_image application/vnd.oci.image.manifest.v1+json application/vnd.oci.image.layer.v1.tar+gzip one)"
+upstream_tag fixture/one 1.0.0 "$oci_image"
+v2s2_amd64="$(upstream_image application/vnd.docker.distribution.manifest.v2+json application/vnd.docker.image.rootfs.diff.tar.gzip amd64)"
+v2s2_arm64="$(upstream_image application/vnd.docker.distribution.manifest.v2+json application/vnd.docker.image.rootfs.diff.tar.gzip arm64)"
+v2s2_list="$(jq -n --arg a "$v2s2_amd64" --arg b "$v2s2_arm64" '{schemaVersion: 2, mediaType: "application/vnd.docker.distribution.manifest.list.v2+json",
+  manifests: [{mediaType: "application/vnd.docker.distribution.manifest.v2+json", digest: $a, size: 1, platform: {architecture: "amd64", os: "linux"}},
+    {mediaType: "application/vnd.docker.distribution.manifest.v2+json", digest: $b, size: 1, platform: {architecture: "arm64", os: "linux"}}]}' | upstream_blob)"
+upstream_tag fixture/multi 2.0 "$v2s2_list"
+entry() { printf 'ghcr.io/%s %s/%s/ghcr.io/%s\n' "$1" "${2:-registry.test}" "${3:-simetrixch}" "$1"; } # <path>:<tag>@<digest> [registry] [owner]
+mirror() { # $1 the list -> the exit status of mirror_copy and then mirror_read_back, their output in $work/mirror.out
+  rm -rf "$work/mirror-tmp"
+  { OWNER=simetrixch mirror_copy "$1" "$work/mirror-tmp/copy" && mirror_read_back "$1" "$work/mirror-tmp/read"; } > "$work/mirror.out" 2>&1
+}
+{ entry "fixture/multi:2.0@$v2s2_list"; entry "fixture/one:1.0.0@$oci_image"; } > "$work/mirror.list"
+mirror "$work/mirror.list" || fail "PLANTED INNOCENT: an OCI image and a Docker manifest list of two platforms were not mirrored: $(cat "$work/mirror.out")"
+[ "$(grep '^mirror: ' "$work/mirror.out")" = "mirror: 2 images copied
+mirror: registry.test/simetrixch/ghcr.io/fixture/multi:2.0@$v2s2_list application/vnd.docker.distribution.manifest.list.v2+json read back
+mirror: registry.test/simetrixch/ghcr.io/fixture/one:1.0.0@$oci_image application/vnd.oci.image.manifest.v1+json read back" ] \
+  || fail "the mirror does not log every image copied and read back at its digest and media type: $(cat "$work/mirror.out")"
+for platform in "$v2s2_amd64" "$v2s2_arm64"; do
+  [ "$(command curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/v2/simetrixch/ghcr.io/fixture/multi/manifests/$platform")" = 200 ] \
+    || fail "the manifest $platform of the Docker manifest list was not copied beside it"
+done
+grep -q "^skopeo inspect --raw --no-creds .* docker://ghcr.io/fixture/one:1.0.0$" "$work/skopeo.log" \
+  && grep -q "^skopeo copy .*--all --preserve-digests .*--src-no-creds .* docker://ghcr.io/fixture/one@$oci_image docker://registry.test/simetrixch/ghcr.io/fixture/one:1.0.0$" "$work/skopeo.log" \
+  || fail "the copy was not made by the digest from the tag upstream, with every platform and its digests kept: $(cat "$work/skopeo.log")"
+! grep -q 'fixture-password' "$work/skopeo.log" || fail 'the push credential reached the arguments of skopeo'
+ok 'the mirror copies every entry by its digest with every platform, logs it, and reads it back without a login at that digest and its media type'
+mirror "$work/mirror.list" || fail "a second run of the same list failed: $(cat "$work/mirror.out")"
+ok 'a second run of the same list copies and reads back the same digests'
+
+moved="$(upstream_image application/vnd.oci.image.manifest.v1+json application/vnd.oci.image.layer.v1.tar+gzip moved)"
+upstream_tag fixture/one 1.0.0 "$moved"
+mirror "$work/mirror.list" && fail 'PLANTED DEFECT: a tag that names another digest upstream than the tree pins was mirrored'
+grep -qF "mirror: FAIL — ghcr.io/fixture/one:1.0.0 names $moved upstream, and the tree pins $oci_image" "$work/mirror.out" \
+  || fail "the refusal does not name the tag and both digests: $(cat "$work/mirror.out")"
+upstream_tag fixture/one 1.0.0 "$oci_image"
+entry "fixture/gone:1.0.0@$oci_image" > "$work/mirror-gone.list"
+mirror "$work/mirror-gone.list" && fail 'PLANTED DEFECT: an image that ghcr.io does not hold passed'
+grep -qF 'mirror: FAIL — ghcr.io/fixture/gone:1.0.0 cannot be read upstream' "$work/mirror.out" || fail "the missing source is not named: $(cat "$work/mirror.out")"
+for list in "ghcr.io/fixture/one:1.0.0 registry.test/simetrixch/ghcr.io/fixture/one:1.0.0" "$(entry "fixture/one:1.0.0@$oci_image" registry.test other)" \
+  "docker.io/fixture/one:1.0.0@$oci_image registry.test/simetrixch/docker.io/fixture/one:1.0.0@$oci_image"; do
+  printf '%s\n' "$list" > "$work/mirror-shape.list"
+  mirror "$work/mirror-shape.list" && fail "PLANTED DEFECT: the entry '$list' was copied"
+  grep -qF 'mirror: REFUSE — ' "$work/mirror.out" || fail "the entry '$list' was not refused by its shape: $(cat "$work/mirror.out")"
+done
+ok 'a tag that moved upstream, a source that is gone, a ref without its digest, another owner and another registry are refused by name'
+# A copy that wrote another digest, an index copied as one platform, and a manifest served as another media
+# type all stand in the mirror under the tag, and none of them is the image the tree pins.
+extract mirror_copy | sed 's/ --preserve-digests//' > "$work/mirror_copy-converting.sh"
+( . "$work/mirror_copy-converting.sh"; entry "fixture/one:1.0.0@$oci_image" | sed 's|/fixture/one|/fixture/converted|g' > "$work/mirror-converted.list"
+  mkdir -p "$work/upstream/fixture/converted/tags"; cp "$work/upstream/fixture/one/tags/1.0.0" "$work/upstream/fixture/converted/tags/"
+  mirror "$work/mirror-converted.list" ) && fail 'PLANTED DEFECT: a copy that changed the digest read back'
+grep -qF "mirror: FAIL — registry.test/simetrixch/ghcr.io/fixture/converted:1.0.0@$oci_image answers 404" "$work/mirror.out" \
+  || fail "a copy that changed the digest is not named at its read-back: $(cat "$work/mirror.out")"
+extract mirror_copy | sed 's/ --all//' > "$work/mirror_copy-one-platform.sh"
+( . "$work/mirror_copy-one-platform.sh"; entry "fixture/multi:2.0@$v2s2_list" | sed 's|/fixture/multi|/fixture/single|g' > "$work/mirror-single.list"
+  mkdir -p "$work/upstream/fixture/single/tags"; cp "$work/upstream/fixture/multi/tags/2.0" "$work/upstream/fixture/single/tags/"
+  mirror "$work/mirror-single.list" ) && fail 'PLANTED DEFECT: an index copied as one platform read back'
+grep -qF "mirror: FAIL — registry.test/simetrixch/ghcr.io/fixture/single:2.0@$v2s2_list answers 404" "$work/mirror.out" \
+  || fail "an index copied as one platform is not named at its read-back: $(cat "$work/mirror.out")"
+touch "$work/registry/retype"
+mirror "$work/mirror.list" && fail 'PLANTED DEFECT: a Docker manifest list served as an OCI image manifest read back'
+grep -qF "mirror: FAIL — registry.test/simetrixch/ghcr.io/fixture/multi:2.0@$v2s2_list is served as $v2s2_list and application/vnd.oci.image.manifest.v1+json" "$work/mirror.out" \
+  || fail "the media type the registry serves is not named: $(cat "$work/mirror.out")"
+rm "$work/registry/retype"
+ok 'a copy that changed the digest, an index copied as one platform and a manifest served as another media type fail the read-back by name'
 
 # ── the rendered Pipeline, end to end ──────────────────────────────────────────────────────
 # Every step of <unit>-publish as helm renders it, run on fixture repositories in Tekton's order, so
@@ -653,4 +798,40 @@ for pair in tool=a tool-rest=b; do
     || fail "the binaries run did not publish $name under <owner>/<repository>:<tag> with its log line: $(cat "$work/run.out")"
 done
 ok 'end to end: a binaries release is gated, cloned, scanned, reviewed, built by release/build.sh and published as one manifest under <owner>/<repository>'
+
+# The platform tree on the owner's master: its publish run copies the images its list names into the mirror,
+# pushes no package, and fails at the copy when an image is gone upstream.
+helm template consumer-build "$root/clusters/inventories/consumer-build" --namespace argocd \
+  -f "$root/clusters/platform/values-common.yaml" -f "$root/clusters/platform/values-prod.yaml" \
+  -f "$root/clusters/inventories/consumer-build/values-common.yaml" \
+  -f "$root/scripts/standin/cluster-map.yaml" -f "$root/scripts/standin/registration.yaml" \
+  --set "global.buildRegistry=${rendered_registry}/simetrixch" \
+  --set-json 'unit={"name":"hostyour-cloud","repoURL":"https://github.com/simetrixch/hostyour-cloud.git","buildsJson":"[]"}' \
+  | yq -o=json 'select(.kind == "Pipeline" and .metadata.name == "hostyour-cloud-publish")' > "$work/platform-pipeline.json" \
+  && [ -s "$work/platform-pipeline.json" ] || fail 'the chart renders no hostyour-cloud-publish Pipeline for the platform tree'
+platform_run() { # $1 the fixture origin, $2 the release tag -> the run's status, its log in $work/run.out
+  rm -rf "${work:?}/run"; mkdir -p "$work/run"
+  node "$work/run-pipeline.mjs" "$work/platform-pipeline.json" "$work/run" "$1" https://github.com/simetrixch/hostyour-cloud.git \
+    "$(jq -nc --arg tag "$2" '{"release-tag": $tag, "git-url": "https://github.com/simetrixch/hostyour-cloud.git"}')" "$secrets" > "$work/run.out" 2>&1
+}
+platform_tree() { # $1 folder, then the entries its list prints -> a fixture platform tree whose list script prints them
+  local dir="$1"; shift
+  origin "$dir"; mkdir -p "$dir/scripts"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n"%s\n' "$(printf " '%s'" "$@")" > "$dir/scripts/list-mirror-images.sh"
+  manifest @digitaplatform/e2e-platform > "$dir/package.json"
+}
+platform_tree "$work/e11" "$(entry "fixture/multi:2.0@$v2s2_list" "$rendered_registry")" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")"
+commit_tag "$work/e11" "0.5.000-stable-$STAMP"
+platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "PLANTED INNOCENT: the platform tree did not mirror its images: $(cat "$work/run.out")"
+[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack skipped|run: build-binaries skipped|run: push skipped|run: mirror ran|run: SUCCEEDED|' ] \
+  || fail "the platform run took another course: $(tasks_ran)"
+grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/multi:2.0@$v2s2_list application/vnd.docker.distribution.manifest.list.v2+json read back" "$work/run.out" \
+  && grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/one:1.0.0@$oci_image application/vnd.oci.image.manifest.v1+json read back" "$work/run.out" \
+  && ! grep -q '^publish:' "$work/run.out" || fail "the platform run did not read every image back, or published a package: $(cat "$work/run.out")"
+platform_tree "$work/e12" "$(entry "fixture/gone:1.0.0@$oci_image" "$rendered_registry")"
+commit_tag "$work/e12" "0.5.000-stable-$STAMP"
+platform_run "$work/e12" "0.5.000-stable-$STAMP" && fail 'PLANTED DEFECT: the platform tree passed with an image ghcr.io does not hold'
+grep -qxF 'run: mirror failed at copy' "$work/run.out" && grep -qF 'mirror: FAIL — ghcr.io/fixture/gone:1.0.0 cannot be read upstream' "$work/run.out" \
+  || fail "an image ghcr.io does not hold did not fail the run at the copy by name: $(cat "$work/run.out")"
+ok 'end to end: the platform tree mirrors every image its list names and reads it back, publishes no package, and an image gone upstream fails the run'
 echo "pipeline-publish.test: OK"

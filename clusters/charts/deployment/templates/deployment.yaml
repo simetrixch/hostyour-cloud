@@ -52,7 +52,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ include "common.name" . }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ with .Values.image.sha256 }}@sha256:{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- with .Values.command }}
           command:

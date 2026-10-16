@@ -1,6 +1,7 @@
 # helm, yq and jq: the tools a repository's check or release build may read whatever its ci-tools.json names, each pinned
 # here by its sha256. The ci pipeline inlines this file in its check step and the publish pipeline in build-binaries, before
-# files/ci-install-tools.sh and before any script of the repository; scripts/build-contract.test.mjs holds both steps to it.
+# files/ci-install-tools.sh and before any script of the repository, and in the list step of mirror, before
+# scripts/list-mirror-images.sh, which needs helm and yq alone; scripts/build-contract.test.mjs holds the three steps to it.
 # The user of those steps owns /tmp and not /usr/local/bin, so the tools go to a directory of its own, first on PATH.
 ci_bin=/tmp/ci-bin
 mkdir -p "${ci_bin}"

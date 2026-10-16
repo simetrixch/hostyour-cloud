@@ -21,8 +21,10 @@
 #   version:   the pin, ALWAYS QUOTED — YAML would read 8.8 as a number and
 #              26.04 as a number that lost its trailing zero.
 #   sha256:    the digest of the file the pin fetches, where a site holds the
-#              fetched file against one, quoted like the version. A stamp
-#              with `writes: sha256` writes it instead of the version.
+#              fetched file against one, quoted like the version: for an
+#              image, the manifest its tag names, which the node then pulls by
+#              digest. A stamp with `writes: sha256` writes it instead of the
+#              version.
 #   stamps:    every place the pin is written. `tree` is a LABEL the program
 #              row maps to a checkout: `platform` is this repository, `deploy`
 #              the installation repository carrying the ansiwise programs,
@@ -46,6 +48,7 @@
 images:
   zot:
     version: "v2.1.18"
+    sha256: "34f18f783037f967dba10df02f9d4086c4d626f5643ef9f5e51e4a4547280a0b"
     upstream:
       kind: oci_tags
       host: ghcr.io
@@ -57,6 +60,12 @@ images:
         file: clusters/inventories/registry/values-common.yaml
         key: tag
         anchor: 'repository: ghcr.io/project-zot/zot-linux-amd64'
+      - kind: yaml_value
+        tree: platform
+        file: clusters/inventories/registry/values-common.yaml
+        key: sha256
+        anchor: 'repository: ghcr.io/project-zot/zot-linux-amd64'
+        writes: sha256
       - kind: yaml_value
         tree: platform
         file: clusters/inventories/registry/Chart.yaml
@@ -86,6 +95,7 @@ images:
   # cliTools below.
   headscale:
     version: "v0.29.2"
+    sha256: "d337f1be4a9155b330aa9077bf6c82d24ff0581b8e69390ebc6d7c623bb339ce"
     upstream:
       kind: oci_tags
       host: ghcr.io
@@ -97,6 +107,12 @@ images:
         file: clusters/inventories/headscale/values-common.yaml
         key: tag
         anchor: 'repository: ghcr.io/juanfont/headscale'
+      - kind: yaml_value
+        tree: platform
+        file: clusters/inventories/headscale/values-common.yaml
+        key: sha256
+        anchor: 'repository: ghcr.io/juanfont/headscale'
+        writes: sha256
       - kind: yaml_value
         tree: platform
         file: clusters/inventories/headscale/Chart.yaml
@@ -161,10 +177,12 @@ images:
   # process that serves for half a minute and then segfaults passes them on the
   # way past. A restart count climbing on its own IS this defect.
   mongodb:
-    # THE TAG CARRIES THE DIGEST OF ITS linux/amd64 MANIFEST. Docker Hub's index for this image
-    # mixes OCI manifests with Docker-v2 manifests for Windows, and the registry mirror (zot)
-    # refuses to commit such an index — "invalid manifest content" — so a pull by tag never
-    # arrives on a slave. A pull by digest asks the mirror for one manifest and needs no index.
+    # THE TAG CARRIES THE DIGEST OF ITS linux/amd64 MANIFEST, so a pull asks the registry mirror
+    # (zot) for that one manifest and never for the index. Docker Hub's index for this image mixes
+    # OCI manifests with Docker-v2 manifests for Windows, and zot commits such an index only while
+    # clusters/inventories/registry accepts Docker v2 schema 2 (http.compat): without it zot refuses
+    # it as "invalid manifest content", and a pull by tag never arrives on a slave. Measured with
+    # zot v2.1.18 and compat on: the index of 8.0.4 syncs and is served by tag.
     # The digest moves with the tag: read it off the index's linux/amd64 entry when this moves.
     version: "8.0.4@sha256:6b0f3b8898c09d1d15753978cd8a733834f692d70aa3d424f680bccd2896f6a1"
     note: pinned deliberately until the kernel moves — see the comment above this entry
