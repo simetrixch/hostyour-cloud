@@ -14,7 +14,9 @@
 # tree's list of tools and charts refuses a row of another form by its line, that fetch downloads every
 # row the mirror does not serve and holds it to its sha256, that copy-sources pushes each as the one layer
 # under its tag, after every line is held to its row, to the mirror and to the file fetch staged, and
-# replaces nothing, and that read-back-sources reads each back without a login as its bytes. The functions
+# replaces nothing, and that read-back-sources reads each back without a login as its bytes; and that a
+# binaries build reads the owned yq and jq of files/ci-fixed-tools.sh from the mirror and holds them to
+# their sha256. The functions
 # are read out of the template (clusters/inventories/consumer-build/templates/pipeline-publish.yaml) and
 # the files it includes, as the Pipeline carries them, and run against fixture repositories, tarballs, a
 # registry served on 127.0.0.1 and upstreams served from files. Then the
@@ -296,13 +298,14 @@ ok 'a gitleaks finding in an unpacked tarball fails its scan'
 # lets it. It keeps blobs and manifests per repository, a manifest under its tag and its digest with
 # the media type it was pushed as, refuses a manifest that names a blob or, for an index, a manifest
 # the repository lacks and a blob whose bytes are not its digest, logs every request, answers a blob
-# read with a changed byte while the file `corrupt` stands beside it, and serves every manifest as an
-# OCI image manifest while the file `retype` does.
+# read with a changed byte while the file `corrupt` stands beside it (of the repositories whose path holds
+# the text of that file, when it has any), and serves every manifest as an OCI image manifest while the
+# file `retype` does.
 mkdir -p "$work/registry"
 cat > "$work/registry.mjs" <<'EOF'
 import {createServer} from 'node:http';
 import {createHash, randomUUID} from 'node:crypto';
-import {appendFileSync, existsSync, writeFileSync} from 'node:fs';
+import {appendFileSync, existsSync, readFileSync, writeFileSync} from 'node:fs';
 const dir = process.argv[2];
 const login = 'Basic ' + Buffer.from('fixture-push:fixture-password').toString('base64');
 const blobs = new Map(), manifests = new Map();
@@ -328,7 +331,7 @@ const server = createServer((req, res) => {
       const blob = blobs.get(`${m[1]}@${m[2]}`);
       if (!blob) { res.writeHead(404); return res.end(); }
       const sent = Buffer.from(blob);
-      if (existsSync(`${dir}/corrupt`)) sent[0] ^= 1;
+      if (existsSync(`${dir}/corrupt`) && m[1].includes(readFileSync(`${dir}/corrupt`, 'utf8'))) sent[0] ^= 1;
       res.writeHead(200, {'Content-Length': sent.length});
       return res.end(req.method === 'HEAD' ? undefined : sent);
     }
@@ -357,13 +360,14 @@ for _ in $(seq 50); do [ -s "$work/registry/port" ] && break; sleep 0.1; done
 [ -s "$work/registry/port" ] || fail 'the fixture registry did not start'
 PORT="$(cat "$work/registry/port")"
 # The pipeline names https://<REGISTRY>/v2/; the fixture serves plain http on its own port. The upstreams
-# of the fixture tools and charts are files under upstream-files/, and each read of one is logged.
+# of the tools (any asset of a GitHub Release) and of the fixture charts are files under upstream-files/, and
+# each read of one is logged; an asset no file stands for is no read of GitHub, it fails.
 mkdir -p "$work/upstream-files"
 cat > "$work/standin-bin/curl" <<EOF
 #!/usr/bin/env bash
 args=()
 for a in "\$@"; do
-  if [[ "\$a" =~ ^https://((github\.com/fixture|charts\.example\.invalid)/.*)\$ ]]; then
+  if [[ "\$a" =~ ^https://((github\.com/[^/]+/[^/]+/releases/download|charts\.example\.invalid)/.*)\$ ]]; then
     echo "curl \$a" >> "$work/upstream.log"
     a="file://$work/upstream-files/\${BASH_REMATCH[1]}"
   fi
@@ -1028,6 +1032,22 @@ pipeline_run "$work/e8" "0.1.000-stable-$STAMP" https://github.com/digitaplatfor
 [ "$(tasks_ran)" = 'run: gate failed at gate|' ] || fail "another repository was not stopped at the gate before the clone: $(tasks_ran)"
 ok 'end to end: another registry stops the run at its scan, nothing to publish skips the rest, and another repository stops it at the gate'
 
+# The build-binaries step and the list step of mirror read the owned yq and jq of files/ci-fixed-tools.sh from the
+# mirror's address, which holds a sha256. So the mirror holds the two rows of clusters/platform/mirror-sources.table
+# that file pins, copied by the mirror's own steps from upstream files: the bytes of this machine's yq and jq, which
+# the sha256 of the row holds to the pinned release, as ci has installed it. The step reads what its address names.
+fixed_tools="$root/clusters/inventories/consumer-build/files/ci-fixed-tools.sh"
+: > "$work/fixed-tools.list"
+for tool in yq jq; do
+  pinned="$(sed -n "s/^${tool}_sha256=//p" "$fixed_tools")"
+  row="$(grep -E "^tool [^ ]+ ${pinned:-no-pin}\$" "$root/clusters/platform/mirror-sources.table")" \
+    || fail "$fixed_tools pins $tool by a sha256 that no row of the table holds"
+  read -r _ url hex <<< "$row"
+  mkdir -p "$work/upstream-files/$(dirname "${url#https://}")" && cp "$(command -v "$tool")" "$work/upstream-files/${url#https://}" \
+    && source_line tool "$url" "$hex" >> "$work/fixed-tools.list" || fail "the row of $tool could not be made a line of the mirror"
+done
+sources "$work/fixed-tools.list" || fail "the owned yq and jq were not mirrored; this machine's must be the pinned release: $(cat "$work/sources.out")"
+
 # A binaries release: release/build.sh writes two files named for the tag it is handed.
 origin "$work/e9"; mkdir -p "$work/e9/release"
 printf '%s\n' 'printf "%s" "a-$1" > "$2/tool-$1-linux-x64"' 'printf "%s" "b-$1" > "$2/tool-rest-$1-linux-x64"' > "$work/e9/release/build.sh"
@@ -1043,6 +1063,16 @@ for pair in tool=a tool-rest=b; do
     || fail "the binaries run did not publish $name under <owner>/<repository>:<tag> with its log line: $(cat "$work/run.out")"
 done
 ok 'end to end: a binaries release is gated, cloned, scanned, reviewed, built by release/build.sh and published as one manifest under <owner>/<repository>'
+
+# The same release against a mirror that serves other bytes for the owned yq, then for the owned jq, builds nothing.
+for tool in yq jq; do
+  printf '/%s/' "$tool" > "$work/registry/corrupt"
+  pipeline_run "$work/e9" "0.2.000-stable-$STAMP" && fail "PLANTED DEFECT: a binaries release whose owned $tool read with other bytes was published"
+  rm "$work/registry/corrupt"
+  [ "$(grep -c ': FAILED$' "$work/run.out")" = 1 ] && grep -qE "/ci-bin/$tool: FAILED\$" "$work/run.out" && grep -qx 'run: build-binaries failed at build' "$work/run.out" \
+    && ! grep -q '^publish:' "$work/run.out" || fail "other bytes for the owned $tool did not fail the build at its sha256, alone: $(cat "$work/run.out")"
+done
+ok 'end to end: other bytes under the owned address of yq, or of jq, fail the build of a binaries release at their sha256 and publish nothing'
 
 # The platform tree on the owner's master: its publish run copies the images its list names into the mirror,
 # then the tools and charts its other list names, pushes no package, fails at the copy when an image is
