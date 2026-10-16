@@ -70,12 +70,12 @@ OPERATOR_USER='master'
 STAGE='prod'
 ROLE='master'
 BUILD_PLANE_FQDN='master.fixture.invalid'
-ACME_SERVER='https://dv.acme-v02.api.pki.goog/directory'
 ELEVATION_PASSWORD='${PASSWORD}'
 UNDECLARED_TOKEN='fixture-excluded-credential'
 `;
   if (!options.missing) config += `PLANE_API_TOKEN='${options.empty ? '' : PLANE}'\n`;
   if (options.invalid) config += 'echo ' + PLANE + '\n';
+  if (options.acmeServer) config += `ACME_SERVER='${options.acmeServer}'\n`;
   await writeFile(file, config, {mode: 0o600});
   if (options.openMode) await chmod(file, 0o644);
   const run = () => new Promise((resolve, reject) => {
@@ -117,6 +117,14 @@ test('the installed master receives only declared answers and the password envel
     }
     assert.equal(f.calls.filter(c => c.input).length, 3);
     await f.privateRecords();
+  } finally {await f.clean();}
+});
+
+test('an ACME_SERVER the config states is neither judged nor sent', async () => {
+  const f = await fixture({acmeServer: 'https://acme-v02.api.letsencrypt.org/directory'});
+  try {
+    const r = await f.run(); assert.equal(r.code, 0, r.stderr);
+    for (const call of f.calls.filter(c => c.input)) assert.equal(JSON.parse(call.input).answers.acme_server, undefined);
   } finally {await f.clean();}
 });
 

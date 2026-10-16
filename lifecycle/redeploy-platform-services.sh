@@ -23,20 +23,19 @@ with open(sys.argv[1], encoding='utf-8', newline='') as config:
             sys.exit('the lifecycle config has an invalid assignment at line ' + str(number) + '; values withheld')
         if named.group(1):
             stated[named.group(1)] = named.group(2)
-for key in ('PLANE_API_TOKEN', 'ELEVATION_PASSWORD', 'FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE', 'ACME_SERVER'):
+for key in ('PLANE_API_TOKEN', 'ELEVATION_PASSWORD', 'FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE'):
     if not stated.get(key):
         sys.exit('the lifecycle config states no ' + key + '; no remote mutation was started')
-for key in ('FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE', 'ACME_SERVER', 'BOOKS_FQDN', 'BUILD_PLANE_FQDN', 'MACHINE_HOST'):
+for key in ('FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE', 'BOOKS_FQDN', 'BUILD_PLANE_FQDN', 'MACHINE_HOST'):
     print(stated.get(key, ''))
 READ
 )" || fail 'the lifecycle config could not be read; no remote mutation was started'
 # Empty optional values at the end arrive as end of input, which leaves them empty.
-{ read -r FQDN; read -r OPERATOR_USER; read -r STAGE; read -r ROLE; read -r ACME_SERVER
+{ read -r FQDN; read -r OPERATOR_USER; read -r STAGE; read -r ROLE
   read -r BOOKS_FQDN; read -r BUILD_PLANE_FQDN; read -r MACHINE_HOST; } <<<"$STATED" || true
 [[ "$FQDN" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || fail 'FQDN is not a host name'
 [[ "$OPERATOR_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail 'OPERATOR_USER is not a login name'
 [ "$ROLE" = master ] || fail 'this action requires an installed master'
-[ "$ACME_SERVER" = https://dv.acme-v02.api.pki.goog/directory ] || fail 'ACME_SERVER must name Google Trust Services'
 [ "${BOOKS_FQDN:-$FQDN}" = "$FQDN" ] && [ "${BUILD_PLANE_FQDN:-}" = "$FQDN" ] \
   || fail 'this master must keep the books and the build plane'
 case "$STAGE" in dev|test|prod) ;; *) fail 'STAGE is not dev, test or prod' ;; esac
