@@ -210,10 +210,45 @@ must_not() {
 ORIGIN_A="$WORK/origin-a.git"
 WORK_A="$WORK/checkout-a"
 
+# THE MIRROR A RELEASE READS ITS IMAGES BACK FROM is a stand-in curl first on the path of every
+# run here. It answers a GET of /v2/<repository>/manifests/<digest> with 200 and that digest where
+# serves holds <host>/<repository>@<digest>, with 404 everywhere else, logs every address it is
+# asked, and logs a login it is handed, which a read of the mirror never carries. A release here
+# waits for it not at all.
+MIRROR_NET="$WORK/mirror-net"
+mkdir -p "$MIRROR_NET"
+HEX_A="$(printf 'a%.0s' $(seq 64))"
+HEX_B="$(printf 'b%.0s' $(seq 64))"
+cat > "$MIRROR_NET/curl" <<'STUB'
+#!/usr/bin/env bash
+headers="" url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -D) headers="$2"; shift ;;
+    -u|--user) echo "login: $2" >> "$(dirname "$0")/requests.log"; shift ;;
+    -o|-w|-H|--connect-timeout|--max-time) shift ;;
+    https://*) url="$1" ;;
+  esac
+  shift
+done
+echo "GET $url" >> "$(dirname "$0")/requests.log"
+if [[ "$url" =~ ^https://([^/]+)/v2/(.+)/manifests/(sha256:[0-9a-f]{64})$ ]] \
+  && grep -qxF "${BASH_REMATCH[1]}/${BASH_REMATCH[2]}@${BASH_REMATCH[3]}" "$(dirname "$0")/serves"; then
+  printf 'HTTP/1.1 200 OK\r\nDocker-Content-Digest: %s\r\n\r\n' "${BASH_REMATCH[3]}" > "$headers"
+  printf 200
+else
+  printf 'HTTP/1.1 404 Not Found\r\n\r\n' > "$headers"
+  printf 404
+fi
+STUB
+chmod +x "$MIRROR_NET/curl"
+printf '%s\n' "zot.example.invalid/owner/ghcr.io/fixture/one@sha256:$HEX_A" "zot.example.invalid/owner/ghcr.io/fixture/two@sha256:$HEX_B" > "$MIRROR_NET/serves"
+export RELEASE_MIRROR_WAIT=0
+
 run_bash() { # script base name, then its arguments
   local base="$1"; shift
   A_CODE=0
-  ( cd "$WORK_A" && bash "$HERE/$base.sh" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  ( cd "$WORK_A" && PATH="$MIRROR_NET:$PATH" bash "$HERE/$base.sh" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
 }
 
 # ── the fixture: a trunk, three install branches, one other ref ─────────────
@@ -234,6 +269,16 @@ echo "host: idp.<fqdn>" > "$SEED/clusters/bootstrap/idp/ingressroute.tpl"
 echo "platform: 0.0.0" > "$SEED/clusters/platform/versions.yaml"
 echo "# the product tree" > "$SEED/README.md"
 touch "$SEED/clusters/active/.gitkeep"
+# The list a release reads its images off, as the tree at the tag prints it: two images, each
+# beside its name in the mirror.
+mkdir -p "$SEED/scripts"
+cat > "$SEED/scripts/list-mirror-images.sh" <<STUB
+#!/usr/bin/env bash
+# The images of the fixture tree: two on ghcr.io, each beside its name in the mirror.
+printf '%s\n' \\
+  'ghcr.io/fixture/one:1.0.0@sha256:$HEX_A zot.example.invalid/owner/ghcr.io/fixture/one:1.0.0@sha256:$HEX_A' \\
+  'ghcr.io/fixture/two:2.0.0@sha256:$HEX_B zot.example.invalid/owner/ghcr.io/fixture/two:2.0.0@sha256:$HEX_B'
+STUB
 git -C "$SEED" add -A
 git -C "$SEED" commit --quiet -m "Seed the trunk"
 git -C "$SEED" push --quiet origin master
@@ -280,7 +325,7 @@ pin_maintenance_starts() { # the release script to run; prints how many backgrou
   d="$(mktemp -d "$WORK/pin.XXXXXX")" || return 1
   cp -a "$ORIGIN_A" "$d/origin.git"
   git clone --quiet "$d/origin.git" "$d/checkout"
-  ( cd "$d/checkout" && unset GIT_TEMPLATE_DIR && GIT_TRACE="$d/trace" bash "$1" 0.4.0 alpha apps3.example.invalid ) > /dev/null 2>&1 || {
+  ( cd "$d/checkout" && unset GIT_TEMPLATE_DIR && PATH="$MIRROR_NET:$PATH" GIT_TRACE="$d/trace" bash "$1" 0.4.0 alpha apps3.example.invalid ) > /dev/null 2>&1 || {
     echo "the traced release of $1 did not end clean" >&2
     return 1
   }
@@ -345,9 +390,9 @@ must "bash lifecycle/regenerate-install-branch.sh apps3.example.invalid" \
      'the second act is named, as the script that performs it'
 must_not "ansiwise deploy-branch" 'the second act is a script beside this one, not a command to retype'
 expect 'the mint and the pin' 0 <<'RECORDED'
-release: minted 0.1.0-alpha-TS14 on origin/master (commit 784fb6e)
-release: this tree builds nothing. The tree at the tag IS the release, so there is no image and nothing further to wait for
+release: minted 0.1.0-alpha-TS14 on origin/master (commit ec7f96a)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 2 images of 0.1.0-alpha-TS14 at their digests, read without a login
 release: pinned apps3.example.invalid to 0.1.0-alpha-TS14 in clusters/active/apps3.example.invalid.yaml
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps3.example.invalid beside this tree (lifecycle/config.apps3.env), so it is pinned and not regenerated. Bring it onto 0.1.0-alpha-TS14 with:
@@ -378,6 +423,7 @@ must_not "release: minted" 'a second run must not mint'
 expect 'the second run for the same version and channel' 0 <<'RECORDED'
 release: reusing 0.1.0-alpha-TS14. One release per version and channel, so putting it on apps3.example.invalid cuts nothing new
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 2 images of 0.1.0-alpha-TS14 at their digests, read without a login
 release: clusters/active/apps3.example.invalid.yaml already records 0.1.0-alpha-TS14, so it is left as it stands
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps3.example.invalid beside this tree (lifecycle/config.apps3.env), so it is pinned and not regenerated. Bring it onto 0.1.0-alpha-TS14 with:
@@ -511,10 +557,10 @@ must "it is dropped and cut again" 'and it is dropped rather than reused'
 must "release: minted 0.2.0-alpha-" 'a fresh tag is cut in its place'
 must_not "release: reusing $STALE" 'the leftover is never reused'
 expect 'a tag a refused push left behind' 0 <<'RECORDED'
-release: 0.2.0-alpha-TS14 stands on this workstation only and names 53caca1, not the commit this release is cut from. A run whose push was refused left it behind; it is dropped and cut again.
-release: minted 0.2.0-alpha-TS14 on origin/master (commit ca2ef88)
-release: this tree builds nothing. The tree at the tag IS the release, so there is no image and nothing further to wait for
+release: 0.2.0-alpha-TS14 stands on this workstation only and names 2b5b292, not the commit this release is cut from. A run whose push was refused left it behind; it is dropped and cut again.
+release: minted 0.2.0-alpha-TS14 on origin/master (commit d3bc98f)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 2 images of 0.2.0-alpha-TS14 at their digests, read without a login
 release: pinned apps4.example.invalid to 0.2.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.2.0-alpha-TS14 with:
@@ -541,6 +587,7 @@ must_not "release: minted 0.3.0" 'and nothing is cut a second time'
 expect 'a tag that never reached origin but names the released commit' 0 <<'RECORDED'
 release: reusing 0.3.0-alpha-TS14. One release per version and channel, so putting it on apps4.example.invalid cuts nothing new
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 2 images of 0.3.0-alpha-TS14 at their digests, read without a login
 release: pinned apps4.example.invalid to 0.3.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.3.0-alpha-TS14 with:
@@ -576,9 +623,9 @@ must_not "release: pinned apps9" 'nor is the prod installation'
 must "no config beside this tree names a PLATFORM_REF, so none was written" 'the fixture carries no machine config, and the run says so instead of writing one'
 must_not "work/no-map" 'a branch carrying no map is no installation and is not pinned'
 expect 'the mint that names no installation' 0 <<'RECORDED'
-release: minted 0.4.0-alpha-TS14 on origin/master (commit ca2ef88)
-release: this tree builds nothing. The tree at the tag IS the release, so there is no image and nothing further to wait for
+release: minted 0.4.0-alpha-TS14 on origin/master (commit d3bc98f)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 2 images of 0.4.0-alpha-TS14 at their digests, read without a login
 release: pinned apps3.example.invalid to 0.4.0-alpha-TS14 in clusters/active/apps3.example.invalid.yaml
 release: pinned apps4.example.invalid to 0.4.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: apps5.example.invalid is stage test and channel alpha admits only: dev - left as it stands
@@ -641,9 +688,9 @@ must "release: pinned apps4.example.invalid to 0.6.0-alpha-" 'the named installa
 must "release: PLATFORM_REF=0.6.0-alpha-" 'the tag is written into the config beside the tree'
 must "written into 1 config(s) under lifecycle/" 'and the example beside it is not counted'
 expect 'the mint that rewrites the config beside the tree' 0 <<'RECORDED'
-release: minted 0.6.0-alpha-TS14 on origin/master (commit ca2ef88)
-release: this tree builds nothing. The tree at the tag IS the release, so there is no image and nothing further to wait for
+release: minted 0.6.0-alpha-TS14 on origin/master (commit d3bc98f)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 2 images of 0.6.0-alpha-TS14 at their digests, read without a login
 release: pinned apps4.example.invalid to 0.6.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: PLATFORM_REF=0.6.0-alpha-TS14 written into 1 config(s) under lifecycle/
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.6.0-alpha-TS14 with:
@@ -672,9 +719,9 @@ must "release: master is fast-forwarded onto origin/master" 'a lagging master is
 must "release: minted 0.7.0-alpha-" 'and the run goes on to mint'
 expect 'a checkout whose master lags origin/master' 0 <<'RECORDED'
 release: master is fast-forwarded onto origin/master, where the tag goes - the push gate lets through only what is checked out
-release: minted 0.7.0-alpha-TS14 on origin/master (commit ca2ef88)
-release: this tree builds nothing. The tree at the tag IS the release, so there is no image and nothing further to wait for
+release: minted 0.7.0-alpha-TS14 on origin/master (commit d3bc98f)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 2 images of 0.7.0-alpha-TS14 at their digests, read without a login
 release: pinned apps4.example.invalid to 0.7.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: PLATFORM_REF=0.7.0-alpha-TS14 written into 1 config(s) under lifecycle/
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.7.0-alpha-TS14 with:
@@ -701,6 +748,37 @@ git -C "$WORK_A" reset --quiet --hard origin/master
 [ -z "$(git --git-dir="$ORIGIN_A" tag -l '0.8.0-*')" ] \
   || fail 'the refused run pushed a tag'
 ok 'the refused run cut no tag, here or on origin'
+
+# ── a mirror that lacks one image of the tag stops the release before the pin ──
+# THE PUBLISH RUN OF THE TAG COPIES THE IMAGES INTO THE MIRROR, and a pin before the copy is a pod
+# that cannot pull. The stand-in mirror serves the second image of the list only: the release mints
+# and pushes its tag, lists the images off the tree at the tag, reads each back by its digest, names
+# the one the mirror lacks, and pins, writes and regenerates nothing. The innocent case is every
+# release above, against a mirror that serves both.
+HEAD_APPS4="$(git --git-dir="$ORIGIN_A" rev-parse refs/heads/apps4.example.invalid)"
+CONFIG_BEFORE="$(cat "$WORK_A/lifecycle/config.other.env")"
+cp "$MIRROR_NET/serves" "$MIRROR_NET/serves.all"
+grep -vF fixture/one "$MIRROR_NET/serves.all" > "$MIRROR_NET/serves"
+: > "$MIRROR_NET/requests.log"
+run_bash release-platform 0.9.0 alpha apps4.example.invalid
+cp "$MIRROR_NET/serves.all" "$MIRROR_NET/serves"
+must "release: the mirror does not serve 1 of the 2 images of 0.9.0-alpha-" 'a mirror that lacks one image of the tag stops the release'
+must "zot.example.invalid/owner/ghcr.io/fixture/one:1.0.0@sha256:$HEX_A;" 'and names the image the mirror lacks'
+must_not "release: pinned" 'nothing is pinned before the mirror serves every image of the tag'
+expect 'a mirror that lacks one image of the tag' 69 <<RECORDED
+release: minted 0.9.0-alpha-TS14 on origin/master (commit d3bc98f)
+release: the tag stands on the remote, so a machine that fetches origin can resolve it
+~~~ standard error ~~~
+release: the mirror does not serve 1 of the 2 images of 0.9.0-alpha-TS14 after 0s: zot.example.invalid/owner/ghcr.io/fixture/one:1.0.0@sha256:$HEX_A; the publish run of 0.9.0-alpha-TS14 on the owner's master copies them. Nothing was pinned. Read that run, then release again: the tag is reused
+RECORDED
+[ "$(cat "$MIRROR_NET/requests.log")" = "GET https://zot.example.invalid/v2/owner/ghcr.io/fixture/one/manifests/sha256:$HEX_A
+GET https://zot.example.invalid/v2/owner/ghcr.io/fixture/two/manifests/sha256:$HEX_B" ] \
+  || fail "the release did not read every image of the list once, by its digest and without a login: $(cat "$MIRROR_NET/requests.log")"
+[ "$(git --git-dir="$ORIGIN_A" rev-parse refs/heads/apps4.example.invalid)" = "$HEAD_APPS4" ] \
+  || fail 'the release moved the branch of apps4 although the mirror lacked an image of the tag'
+[ "$(cat "$WORK_A/lifecycle/config.other.env")" = "$CONFIG_BEFORE" ] \
+  || fail 'the release wrote PLATFORM_REF although the mirror lacked an image of the tag'
+ok 'a mirror that lacks one image stops the release by name after the tag and before the pin, the config and the regeneration'
 
 # ===========================================================================
 # TWO — regenerate-install-branch, on the fixture the release above pinned

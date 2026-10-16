@@ -36,13 +36,18 @@
 # one tree. A RELEASE IS THEREFORE A DEPLOY of every installation whose config stands
 # beside the tree, and the person cutting it says so when asking for it.
 #
-# WHAT A PLATFORM RELEASE IS, AND WHAT IT IS NOT. This repository builds nothing
-# — no image, no archive, no package. THE TREE AT THE TAG IS THE RELEASE. So
-# there is no pipeline to start and nothing to wait for, and this script needs
-# nothing but git: no gh, no token, no network service. What it waits on instead
-# is the one thing a machine actually needs — that the tag is on the REMOTE,
+# WHAT A PLATFORM RELEASE IS, AND WHAT IT IS NOT. This repository builds no
+# image, no archive and no package. THE TREE AT THE TAG IS THE RELEASE, and this
+# script starts no pipeline and needs no gh and no token. It waits on the two
+# things a machine needs before a pin. First, that the tag is on the REMOTE,
 # because a pin naming a tag the machine cannot fetch is a pin that fails three
-# systems away, in a message about a git ref rather than about a release.
+# systems away, in a message about a git ref rather than about a release. Second,
+# that the owner's mirror serves every image the tree at the tag pulls from it.
+# The tag starts the publish run of the platform tree on the owner's master, and
+# that run copies those images from ghcr.io into the mirror; a pin before the copy
+# is a pod that cannot pull. So the release reads each image back from the mirror,
+# by its digest and without a login, with curl, and the list of them is made by the
+# tree's own scripts/list-mirror-images.sh, which renders the tree with helm and yq.
 #
 # WHY THE PIN IS WRITTEN HERE. The line `release: <tag>` in
 # clusters/active/<fqdn>.yaml is what says which state an installation stands on,
@@ -175,7 +180,16 @@ case "$CHANNEL" in
 esac
 
 command -v git >/dev/null 2>&1 \
-  || die 'git is not on this path, and a platform release is nothing but git'
+  || die 'git is not on this path, and a platform release is cut, pushed and pinned with it'
+for TOOL in curl helm yq tar; do
+  command -v "$TOOL" >/dev/null 2>&1 \
+    || die "$TOOL is not on this path, and the release lists the images of its tag and reads them back from the mirror with it"
+done
+# THE LONGEST WAIT FOR THE MIRROR, in seconds. The publish run of the tag waits in
+# the release queue behind at most two runs, each held to an hour, and then copies.
+MIRROR_WAIT="${RELEASE_MIRROR_WAIT:-7200}"
+[[ "$MIRROR_WAIT" =~ ^[0-9]+$ ]] \
+  || die "RELEASE_MIRROR_WAIT is the number of seconds the release waits for the mirror at most (got '$MIRROR_WAIT')" 64
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
   || die 'not inside a git repository. Run this from a checkout of the platform tree' 66
 
@@ -286,7 +300,6 @@ else
     || die "the tag $TAG could not be put on origin/master"
   SHA7="$(git rev-parse --short=7 "${TAG}^{commit}")"
   say "release: minted $TAG on origin/master (commit $SHA7)"
-  say 'release: this tree builds nothing. The tree at the tag IS the release, so there is no image and nothing further to wait for'
 fi
 
 if git rev-parse --verify --quiet master >/dev/null; then
@@ -303,6 +316,49 @@ git push --quiet origin "refs/tags/$TAG" \
 [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ] \
   || die "origin does not carry $TAG after the push, so a machine could not fetch it and nothing was pinned" 74
 say 'release: the tag stands on the remote, so a machine that fetches origin can resolve it'
+
+# NOTHING IS PINNED BEFORE THE MIRROR SERVES THE IMAGES OF THE TAG. The list is the
+# one the publish run of the tag copies: the tree at the tag prints it, so a list
+# of this checkout could name other images than the run copied. Each entry is
+# `<source> <mirror name>`, the mirror name `<registry>/<owner>/ghcr.io/<path>:<tag>@<digest>`;
+# it is served when a GET of its manifest by that digest, without a login as every
+# cluster pulls, answers 200 and names the same digest. The release reads every
+# entry again every 30 seconds until all are served, and stops once MIRROR_WAIT
+# has passed with one still missing: by name, before any pin, any config and any
+# regeneration. A later run reuses the tag and reads again.
+LISTED="$(mktemp -d)" && mkdir "$LISTED/tree" \
+  || die 'no temporary directory could be made for the tree at the tag, and nothing was pinned' 69
+trap 'rm -rf "${WORK:-}" "$LISTED"' EXIT
+git archive --format=tar "$TAG" | tar -x -C "$LISTED/tree" \
+  || die "the tree at $TAG could not be unpacked to list its images, and nothing was pinned"
+[ -f "$LISTED/tree/scripts/list-mirror-images.sh" ] \
+  || die "the tree at $TAG carries no scripts/list-mirror-images.sh, so nothing names the images its clusters pull from the mirror, and nothing was pinned"
+bash "$LISTED/tree/scripts/list-mirror-images.sh" > "$LISTED/mirror.list" \
+  || die "the images of $TAG could not be listed - the lines above say why - and nothing was pinned"
+mirror_unserved() { # the list -> each mirror name in it that the mirror does not serve at its digest, one per line
+  local target name digest code served
+  while read -r _ target; do
+    name="${target%@*}"
+    digest="${target##*@}"
+    name="${name%:*}"
+    : > "$LISTED/headers"
+    code="$(curl -sS --connect-timeout 10 --max-time 60 -o /dev/null -D "$LISTED/headers" -w '%{http_code}' \
+      -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+      "https://${name%%/*}/v2/${name#*/}/manifests/${digest}" 2>/dev/null)" || code=000
+    served="$(tr -d '\r' < "$LISTED/headers" | awk 'tolower($1) == "docker-content-digest:" { print $2 }' | tail -n 1)"
+    [ "$code" = 200 ] && [ "$served" = "$digest" ] || printf '%s\n' "$target"
+  done < "$1"
+}
+LISTED_COUNT="$(grep -c . "$LISTED/mirror.list")"
+MIRROR_DEADLINE=$((SECONDS + MIRROR_WAIT))
+while :; do
+  UNSERVED="$(mirror_unserved "$LISTED/mirror.list")"
+  [ -z "$UNSERVED" ] && break
+  [ "$SECONDS" -lt "$MIRROR_DEADLINE" ] \
+    || die "the mirror does not serve $(printf '%s\n' "$UNSERVED" | grep -c .) of the $LISTED_COUNT images of $TAG after ${MIRROR_WAIT}s: $(printf '%s\n' "$UNSERVED" | sed 's/$/;/' | tr '\n' ' ')the publish run of $TAG on the owner's master copies them. Nothing was pinned. Read that run, then release again: the tag is reused" 69
+  sleep 30
+done
+say "release: the mirror serves all $LISTED_COUNT images of $TAG at their digests, read without a login"
 
 # EVERY INSTALLATION ORIGIN CARRIES TAKES THE RELEASE, or the one that was named. An
 # installation is a branch carrying its own map, clusters/active/<branch>.yaml; the
