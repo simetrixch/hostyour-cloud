@@ -786,6 +786,14 @@ queryPolicy:
 kube-prometheus-stack:
   fullnameOverride: observability
 
+  # THE IMAGE OF THE ADMISSION CREATE AND PATCH JOBS, AT ITS DIGEST. The tag stays the chart's, and the
+  # release's mirror refuses a digest that tag no longer names.
+  prometheusOperator:
+    admissionWebhooks:
+      patch:
+        image:
+          sha: "d0e80b2f62fe43bb5e1b96adc692132fb4522e802f4cf673c09b1f94722b8cb6"
+
   # node-exporter: enable the systemd collector so failed host units
   # (snap.microk8s.*, kubelet, containerd) are scraped and alertable — B4 host
   # observability.
@@ -1238,6 +1246,12 @@ loki:
     deploymentStrategy:
       type: Recreate
       rollingUpdate: null
+    # THE ACCESS-LOG EXPORTER BESIDE NGINX, AT ITS DIGEST. The chart's `digest` field drops the tag, so
+    # the digest rides on the tag. scripts/check.sh holds the tag before the @ to the one the chart
+    # itself names, so a bump of the chart cannot leave the image behind.
+    metrics:
+      image:
+        tag: "0.4.8@sha256:433b5013966b085ea3d0865ca4ba66fa50a4d7d1abe77f99106c31cf7a3a0e74"
   singleBinary:
     replicas: 1
     persistence:

@@ -1052,6 +1052,58 @@ test('build-binaries installs the fixed tools and the tools of ci-tools.json bef
   assert.match(toolsProblems(without(build, fixed), 'bash release/build.sh')[0], /without helm, yq and jq/, 'the report names the tools that are missing');
 });
 
+// The platform tree on the owner's master publishes no package: its publish run copies the images its tag names on ghcr.io
+// into the mirror. The list runs the tree's own script, so it holds no secret; the push credential is in `copy` alone, whose
+// image runs no code of the repository; the read-back reads without a credential, as every cluster pulls.
+const platformPublish = (registry) => renderChart('consumer-build', ['--set', `global.buildRegistry=${registry}`, '--set-json', 'unit=' +
+  JSON.stringify({name: 'hostyour-cloud', repoURL: 'https://github.com/simetrixch/hostyour-cloud.git', buildsJson: '[]'})])
+  .find((d) => d.kind === 'Pipeline' && d.metadata.name === 'hostyour-cloud-publish');
+const mirrorProblems = (pipeline) => {
+  const problems = [], task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
+  const mirror = task('mirror');
+  if (!mirror) return ['the publish pipeline of the platform tree has no mirror task'];
+  const steps = mirror.taskSpec.steps, step = (name) => steps.find((s) => s.name === name);
+  if (steps.map((s) => s.name).join(' ') !== 'list copy read-back') problems.push(`the mirror runs ${steps.map((s) => s.name).join(', ')}, not list, copy and read-back`);
+  const holding = pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('image-builder-registry-push')).map((t) => t.name);
+  if (holding.join(' ') !== 'push mirror') problems.push(`the push credential is held by ${holding.join(', ')}, not by push and mirror`);
+  const secretSteps = steps.filter((s) => JSON.stringify(s).includes('image-builder-registry-push')).map((s) => s.name);
+  if (secretSteps.join(' ') !== 'copy') problems.push(`the push credential stands in the mirror steps ${secretSteps.join(', ')}, not in copy alone`);
+  if (!/^quay\.io\/skopeo\/stable:v[0-9.]+-immutable@sha256:[0-9a-f]{64}$/.test(step('copy')?.image ?? '')) problems.push(`copy runs ${step('copy')?.image}, not the immutable skopeo image by its digest`);
+  if ((step('copy')?.script ?? '').includes('scripts/')) problems.push('copy runs a script of the repository');
+  const fixed = readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd(), list = step('list')?.script ?? '';
+  const fixedAt = list.indexOf(fixed), runAt = list.indexOf('bash scripts/list-mirror-images.sh');
+  if (runAt < 0) problems.push('the list step never runs scripts/list-mirror-images.sh');
+  else if (fixedAt < 0 || fixedAt > runAt) problems.push('the list step runs scripts/list-mirror-images.sh without helm and yq of files/ci-fixed-tools.sh before it');
+  if (JSON.stringify(mirror.runAfter) !== '["push"]') problems.push(`the mirror runs after ${mirror.runAfter}, not after push`);
+  if (JSON.stringify(mirror.when) !== JSON.stringify([{input: '$(tasks.scan.results.mode)', operator: 'in', values: ['mirror']}])) problems.push('the mirror runs for another scan mode than mirror');
+  if (!JSON.stringify(task('reviewed').when).includes('"mirror"')) problems.push('the tag of the platform tree is not held to the default branch before the mirror');
+  for (const s of steps) for (const side of ['requests', 'limits']) if (!(s.computeResources?.[side]?.cpu && s.computeResources?.[side]?.memory)) problems.push(`mirror/${s.name} has no ${side}`);
+  return problems;
+};
+
+test('the publish run of the platform tree on the owner\'s master copies its images into the mirror, with the push credential in copy alone', () => {
+  const pipeline = platformPublish('zot.check.example.invalid/simetrixch');
+  assert.deepEqual(mirrorProblems(pipeline), [], 'PLANTED INNOCENT: the publish pipeline of the platform tree as rendered');
+  const env = (step, key) => pipeline.spec.tasks.find((t) => t.name === step[0]).taskSpec.steps.find((s) => s.name === step[1]).env.find((e) => e.name === key).value;
+  assert.equal(env(['scan', 'scan'], 'MIRRORS_IMAGES'), 'true');
+  assert.deepEqual([env(['mirror', 'copy'], 'REGISTRY'), env(['mirror', 'copy'], 'OWNER'), env(['mirror', 'read-back'], 'REGISTRY')],
+    ['zot.check.example.invalid', 'simetrixch', 'zot.check.example.invalid'], 'the mirror is the registry of global.buildRegistry');
+  assert.equal(pipeline.spec.tasks.find((t) => t.name === 'push').when[0].values.includes('mirror'), false, 'the platform tree pushes no package');
+  const plant = (change) => { const planted = structuredClone(pipeline); change(planted.spec.tasks.find((t) => t.name === 'mirror').taskSpec.steps); return mirrorProblems(planted); };
+  assert.notDeepEqual(plant((steps) => { steps[0].envFrom = steps[1].envFrom; }), [], 'PLANTED DEFECT: the push credential beside the list the repository\'s script prints');
+  assert.notDeepEqual(plant((steps) => { steps[0].script = steps[0].script.replace(readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd(), ''); }), [],
+    'PLANTED DEFECT: the list step without the fixed tools');
+  assert.notDeepEqual(plant((steps) => { steps[1].image = 'quay.io/skopeo/stable:v1.22.3'; }), [], 'PLANTED DEFECT: skopeo by a tag that is rebuilt every night');
+  assert.notDeepEqual(plant((steps) => { steps.pop(); }), [], 'PLANTED DEFECT: a mirror that is never read back');
+  // Only the platform tree on the owner's master mirrors: its trunk value of global.buildRegistry names another registry
+  // than the stand-in cluster's, and every other unit's publish pipeline is the one the test above holds.
+  const elsewhere = platformPublish('zot.elsewhere.example.invalid/simetrixch');
+  assert.deepEqual(elsewhere.spec.tasks.map((t) => t.name), ['gate', 'clone', 'scan', 'reviewed', 'pack', 'build-binaries', 'push']);
+  assert.equal(elsewhere.spec.tasks.find((t) => t.name === 'scan').taskSpec.steps[0].env.find((e) => e.name === 'MIRRORS_IMAGES').value, 'false');
+  assert.equal(renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish').spec.tasks
+    .find((t) => t.name === 'scan').taskSpec.steps[0].env.find((e) => e.name === 'MIRRORS_IMAGES').value, 'false');
+});
+
 // Three tools are pinned for the repositories that name them in ci-tools.json, and both steps that build a repository install
 // them: the check of the ci, before scripts/check.sh, and pack of the publish pipeline, before its packages are built.
 // digita-platform's packages/quickjs/build.sh runs only with emcc 5.0.1 first on PATH; its row pins the SDK release emsdk

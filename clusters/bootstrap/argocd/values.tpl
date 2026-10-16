@@ -96,6 +96,11 @@ applicationSet:
       cpu: 20m
 
 dex:
+  # THE CHART'S OWN DEX, AT ITS DIGEST. The chart composes <repository>:<tag> and has no field for a digest, so the
+  # digest rides on the tag. scripts/check.sh holds the tag before the @ to the one the chart itself
+  # names, so a bump of the chart cannot leave the image behind.
+  image:
+    tag: "v2.45.1@sha256:8499afd690c437f52301efd2b05b2455da5bd2dfc20332cd697dc9937f808462"
   resources:
     requests:
       cpu: 10m

@@ -924,6 +924,8 @@ zot_fault() { # $1 the zot config.json -> the first way it differs from the acce
     || { echo "simetrixch/** is not open to an anonymous read, so another installation pulls the platform's images with no credential and gets 401"; return; }
   [ "$(repository_policy "$1" 'simetrixch/**' policies)" = "$(repository_policy "$1" '**' policies)" ] \
     || { echo "simetrixch/** grants the push and pull users other actions than **, and zot takes the longest matching pattern alone"; return; }
+  [ "$(yq -p=json -o=json -I=0 '.http.compat' "$1")" = '["docker2s2"]' ] \
+    || { echo "zot refuses a Docker v2 schema 2 manifest, so the mirror cannot hold an upstream image of that media type at the digest its consumers pin"; return; }
   [ "$(yq -p=json -o=json -I=0 '[.extensions.sync.registries[].urls[]] | map(select(test("ghcr\\.io"))) | length' "$1")" = 0 ] \
     || echo "zot still fetches from ghcr.io on a miss, so a platform image it lacks is pulled through from GitHub instead of failing"
 }
@@ -935,11 +937,13 @@ helm template registry clusters/inventories/registry --namespace registry \
 yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' "$work/registry-render" > "$work/zot.json"
 fault="$(zot_fault "$work/zot.json")"
 [ -z "$fault" ] || fail "the registry's zot config: $fault"
-# The planted defects: every repository open to an anonymous read, and the seed storing flat.
+# The planted defects: every repository open to an anonymous read, the seed storing flat, and no Docker v2 schema 2.
 yq -p=json -o=json '(.http.accessControl.repositories[] | .anonymousPolicy) = ["read"]' "$work/zot.json" > "$work/zot-planted.json"
 [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that lets anyone read every repository"
 yq -p=json -o=json '.extensions.sync.registries = [{"urls": ["https://ghcr.io"], "onDemand": true, "content": [{"prefix": "/simetrixch/*", "destination": "/simetrixch", "stripPrefix": true}]}] + .extensions.sync.registries' "$work/zot.json" > "$work/zot-planted.json"
 [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that still fetches from ghcr.io"
+yq -p=json -o=json 'del(.http.compat)' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that refuses Docker v2 schema 2 manifests"
 # The planted innocent: buildRegistry naming the owner's own registry keeps the owner's prefix.
 helm template registry clusters/inventories/registry --namespace registry \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -948,7 +952,7 @@ helm template registry clusters/inventories/registry --namespace registry \
   | yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' > "$work/zot-planted.json"
 fault="$(zot_fault "$work/zot-planted.json")"
 [ -z "$fault" ] || fail "the planted innocent, buildRegistry at the owner's own registry, is refused: $fault"
-echo "check: zot opens simetrixch/** alone to an anonymous read and fetches nothing from ghcr.io; the check refuses both planted defects and takes the planted innocent."
+echo "check: zot opens simetrixch/** alone to an anonymous read, takes Docker v2 schema 2 manifests as they are and fetches nothing from ghcr.io; the check refuses the three planted defects and takes the planted innocent."
 
 # ── The pod of zot rolls when the config.json it was started with is not the one the ConfigMap holds ─
 # zot loads its config at start and never again, and a ConfigMap mount that follows an edit does not
@@ -995,6 +999,49 @@ render_registry_stages --set app.replicas=2 --set-string pvc.pvc.storageSize=60G
 fault="$(zot_revision_fault)"
 [ -z "$fault" ] || fail "the planted innocent, a replica count and a volume size outside config.json, is refused: $fault"
 echo "check: the zot pod rolls with the config.json of every stage; the check refuses a changed config under an old revision and a revision no config names, and takes a change outside config.json."
+
+# ── The images the owner's mirror holds ─────────────────────────────────────────────────────────
+# scripts/list-mirror-images.sh lists every image the tree names on ghcr.io or under the mirror, for the
+# `mirror` task of the platform's publish run. An entry is one digest under its tag, so a ref without its
+# digest has none and fails the list, and the publish run with it.
+mirror_refs="$(bash scripts/list-mirror-images.sh --rendered)" || fail "scripts/list-mirror-images.sh cannot render the tree"
+mirror_entries="$(printf '%s\n' "$mirror_refs" | bash scripts/list-mirror-images.sh --entries 2>&1)" \
+  || fail "an image the mirror must hold has no entry: $mirror_entries"
+mirror_prefix="$(yq '.global.buildRegistry' clusters/platform/values-common.yaml)/ghcr.io"
+# The planted defects: a ref on ghcr.io and a ref under the mirror, each without its digest.
+printf 'ghcr.io/planted/image:1.0.0 planted\n' | bash scripts/list-mirror-images.sh --entries >/dev/null 2>&1 \
+  && fail "scripts/list-mirror-images.sh lists a ref on ghcr.io that names no digest"
+printf '%s/planted/image:1.0.0 planted\n' "$mirror_prefix" | bash scripts/list-mirror-images.sh --entries >/dev/null 2>&1 \
+  && fail "scripts/list-mirror-images.sh lists a ref under the mirror that names no digest"
+echo "check: the mirror holds $(printf '%s\n' "$mirror_entries" | wc -l | tr -d ' ') images, each at its digest; the list refuses a planted ref on ghcr.io and one under the mirror without it."
+
+# WHERE A CHART HAS NO FIELD FOR A DIGEST, the digest rides on the tag of an override, and the override then
+# names the tag as well. Each such tag is held to the one its chart names, so a bump of the chart cannot
+# leave its image behind at the old one.
+pinned_tag_fault() { # <what> <the chart's own tag> <values file> <yq path of the override> -> what is wrong, or nothing
+  local pinned
+  pinned="$(yq "$4" "$3")"
+  [ "${pinned%%@*}" = "$2" ] || echo "$1 is pinned at ${pinned%%@*} in $3 ($4), and its chart names $2"
+}
+headlamp_app="$(helm show chart "$(yq '.bootstrap.headlamp.upstream.chart' clusters/platform/versions.yaml)" \
+  --repo "$(yq '.bootstrap.headlamp.upstream.repository' clusters/platform/versions.yaml)" \
+  --version "$(yq '.bootstrap.headlamp.version' clusters/platform/versions.yaml)" | yq '.appVersion')" \
+  || fail "the headlamp chart clusters/platform/versions.yaml pins could not be read"
+pinned_tags=(
+  "the master's Dex|$(helm show values "$argo_chart" | yq '.dex.image.tag')|clusters/bootstrap/argocd/values.tpl|.dex.image.tag"
+  "Headlamp|v$headlamp_app|clusters/bootstrap/headlamp/values.tpl|.image.tag"
+  "the External Secrets controller|$(helm show chart clusters/inventories/external-secrets/charts/external-secrets-*.tgz | yq '.appVersion')|clusters/inventories/external-secrets/values-common.yaml|.external-secrets.image.tag"
+  "the Loki gateway's access-log exporter|$(helm show values clusters/inventories/observability/charts/loki-*.tgz | yq '.gateway.metrics.image.tag')|clusters/inventories/observability/values-common.yaml|.loki.gateway.metrics.image.tag"
+)
+for row in "${pinned_tags[@]}"; do
+  IFS='|' read -r what chart_tag file path <<< "$row"
+  fault="$(pinned_tag_fault "$what" "$chart_tag" "$file" "$path")"
+  [ -z "$fault" ] || fail "$fault — write the chart's tag with the digest it names there"
+done
+# The planted defect: a chart that names another tag than the override.
+[ -n "$(pinned_tag_fault Headlamp v0.0.0-planted clusters/bootstrap/headlamp/values.tpl .image.tag)" ] \
+  || fail "pinned_tag_fault takes an override whose tag its chart no longer names"
+echo "check: ${#pinned_tags[@]} overrides carry a digest on their chart's own tag; the check refuses a planted chart that names another."
 
 push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
   helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
