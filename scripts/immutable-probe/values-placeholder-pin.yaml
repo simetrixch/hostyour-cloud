@@ -1,0 +1,5 @@
+# The pin a stage carries before its first release (global.placeholderTag).
+builds:
+  - name: immutable-probe
+    image: immutable-probe
+    tag: "0.0.0-placeholder"

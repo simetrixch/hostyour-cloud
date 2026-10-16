@@ -43,23 +43,40 @@ mkdir "$work/baseline" || fail "cannot prepare immutable baseline"
 git archive "$baseline" clusters scripts/standin | tar -x -C "$work/baseline" || fail "cannot extract immutable baseline"
 node scripts/check-immutable.mjs --probe || fail "immutable-field counter-probe failed"
 immutable_rendered=0
+immutable_skipped=""
 
 # args, chart, name and namespace are the same value chain used by the render below. The baseline's
 # own stand-ins load first and the candidate's over them, so every key both answer takes the
 # candidate's value, and a key the candidate renamed is still answered for the baseline chart that
-# requires it under its old name. Every argument after the first is one the candidate was rendered
-# with beyond that chain, and the baseline gets it too: a chart rendered with the placeholder taken
-# for a tag stops at the baseline without it, the same as it would at the candidate.
+# requires it under its old name. Every argument is one the candidate was rendered with beyond that
+# chain, and the baseline gets it too: a chart rendered with the placeholder taken for a tag stops at
+# the baseline without it, the same as it would at the candidate.
+render_baseline() {
+  (cd "$work/baseline" &&
+    { helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" "$@" 2>/dev/null ||
+      helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" \
+        -f scripts/standin/installation-values.yaml -f scripts/standin/cluster-map.yaml -f scripts/standin/registration.yaml \
+        -f "$installation_values" -f "$cluster_map" -f "$registration" "$@"; })
+}
+
 check_immutable_render() {
   local current="$1" previous
   shift
   [ -f "$work/baseline/$chart/Chart.yaml" ] || return 0
-  previous="$(cd "$work/baseline" &&
-    { helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" "$@" 2>/dev/null ||
-      helm template "$name" "$chart" --namespace "$namespace" "${args[@]}" \
-        -f scripts/standin/installation-values.yaml -f scripts/standin/cluster-map.yaml -f scripts/standin/registration.yaml \
-        -f "$installation_values" -f "$cluster_map" -f "$registration" "$@"; })" \
-    || fail "cannot render $chart at preceding stable release $baseline"
+  if ! previous="$(render_baseline "$@" 2>"$work/immutable-baseline.err")"; then
+    # A BASELINE PIN AT THE PLACEHOLDER IS NO BASELINE. common.buildTag stops the render of a stage
+    # no release has reached, so the preceding release deployed nothing of this chart at this stage,
+    # and there is nothing to compare against. Only that cause is skipped: the render is repeated
+    # through both chains with the placeholder taken for a tag and nothing else changed, and a
+    # baseline that still does not render is red with the message of its first render.
+    if render_baseline "$@" --set global.placeholderTag=check-takes-the-placeholder-for-a-tag >/dev/null 2>&1; then
+      echo "check: no immutable comparison for $chart at $stage: $baseline pins it at the placeholder, so nothing was deployed there."
+      immutable_skipped="$immutable_skipped $name at $stage,"
+      return 0
+    fi
+    cat "$work/immutable-baseline.err"
+    fail "cannot render $chart at preceding stable release $baseline"
+  fi
   printf '%s' "$previous" | yq eval-all -o=json -I=0 '[.]' - > "$work/immutable-before.json" \
     || fail "cannot parse preceding render"
   printf '%s' "$current" | yq eval-all -o=json -I=0 '[.]' - > "$work/immutable-after.json" \
@@ -89,6 +106,56 @@ for standin in "$cluster_map" "$registration" "$installation_values"; do
 done
 handed_revision="$(yq '.revision // ""' "$registration")"
 [ -n "$handed_revision" ] || fail "$registration carries no revision, and it is what the reconciler's charts are handed as the commit their root Application synced"
+
+# ── The probe of the immutable comparison ───────────────────────────────────────────────────
+# THE COMPARISON IS RUN OVER A PLANTED BASELINE BEFORE IT IS RUN OVER A REAL ONE. scripts/immutable-probe
+# is planted under a baseline of its own with what its render reads, and each case hands
+# check_immutable_render the candidate rendered from another values file of it. Each case runs in a
+# subshell, because a red comparison exits. The baseline that pins the placeholder is the planted
+# innocent: it renders only through the stand-in chain with the placeholder taken for a tag, so a
+# skip that retried one chain alone, or retried without that tag, is red on it.
+probe="$work/immutable-probe"
+mkdir -p "$probe/baseline/clusters/charts" "$probe/baseline/clusters/platform" "$probe/baseline/scripts" \
+  && cp -R clusters/charts/common clusters/charts/secret-store "$probe/baseline/clusters/charts/" \
+  && cp clusters/platform/values-common.yaml "$probe/baseline/clusters/platform/" \
+  && cp -R scripts/standin scripts/immutable-probe "$probe/baseline/scripts/" \
+  && out="$(cd "$probe/baseline" && helm dependency update scripts/immutable-probe 2>&1)" \
+  || { echo "${out:-}"; fail "cannot prepare the planted baseline of scripts/immutable-probe"; }
+
+# $1 is the exit status the comparison must end with, $2 the values file of the baseline, $3 the one
+# of the candidate, and the rest are the lines it must print.
+expect_immutable() {
+  local status="$1" previous_values="$2" current_values="$3" said line
+  shift 3
+  said="$(
+    exec 2>&1
+    work="$probe" chart=scripts/immutable-probe name=immutable-probe namespace=check stage=test
+    args=(-f clusters/platform/values-common.yaml -f "$chart/$previous_values")
+    current="$(cd "$probe/baseline" && helm template "$name" "$chart" --namespace "$namespace" \
+      -f clusters/platform/values-common.yaml -f "$chart/$current_values" \
+      -f "$installation_values" -f "$cluster_map" -f "$registration")" \
+      || fail "cannot render the planted candidate $current_values"
+    check_immutable_render "$current"
+    echo "check: $immutable_rendered compared"
+  )"
+  if [ $? -ne "$status" ]; then
+    printf '%s\n' "$said" | sed 's/^/  /'
+    fail "the immutable comparison of a baseline at $previous_values and a candidate at $current_values did not exit $status"
+  fi
+  for line in "$@"; do
+    grep -qxF -- "$line" <<< "$said" && continue
+    printf '%s\n' "$said" | sed 's/^/  /'
+    fail "the immutable comparison of a baseline at $previous_values and a candidate at $current_values did not print: $line"
+  done
+}
+expect_immutable 0 values-placeholder-pin.yaml values-real-pin.yaml \
+  "check: no immutable comparison for scripts/immutable-probe at test: $baseline pins it at the placeholder, so nothing was deployed there." \
+  'check: 0 compared'
+expect_immutable 1 values-real-pin.yaml values-changed-pin.yaml \
+  'check: FAIL — scripts/immutable-probe at test changes an immutable field of a retained identity; use a new identity'
+expect_immutable 1 values-no-pin.yaml values-real-pin.yaml \
+  "check: FAIL — cannot render scripts/immutable-probe at preceding stable release $baseline"
+echo "check: the immutable comparison skips the planted baseline that pins the placeholder, and is red on the planted immutable change and on the planted baseline that renders through no chain."
 
 # ── What a render must never carry ──────────────────────────────────────────────────────────
 # A HELM EXPRESSION THAT SURVIVED THE RENDER REACHES A CLUSTER AS TEXT. helm resolves `{{ ... }}`
@@ -620,6 +687,7 @@ for stage in $stages; do
   check_immutable_render "$out"
 done
 echo "check: $immutable_rendered immutable render comparisons green against $baseline."
+[ -n "$immutable_skipped" ] && echo "check: no immutable comparison where $baseline pins the placeholder:${immutable_skipped%,}."
 
 [ -n "$skipped_library" ] && echo "check: library charts, which render only through what depends on them:$skipped_library"
 [ -n "$needed_standin" ] && echo "check: charts that render only with an installation's own answers, which no file of this repository carries:$needed_standin"
