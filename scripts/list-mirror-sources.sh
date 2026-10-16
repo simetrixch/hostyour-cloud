@@ -24,7 +24,7 @@ table="${1:-$root/clusters/platform/mirror-sources.table}"
 fail() { echo "list-mirror-sources: FAIL — $1" >&2; exit 1; }
 command -v yq >/dev/null 2>&1 || fail "yq is not on this path, and global.buildRegistry is read with it"
 [ -f "$table" ] || fail "$table does not exist"
-# shellcheck source=../clusters/inventories/consumer-build/files/mirror-sources.sh
+# shellcheck source-path=SCRIPTDIR source=../clusters/inventories/consumer-build/files/mirror-sources.sh
 . "$root/clusters/inventories/consumer-build/files/mirror-sources.sh"
 
 registry="$(yq '.global.buildRegistry' "$root/clusters/platform/values-common.yaml")"

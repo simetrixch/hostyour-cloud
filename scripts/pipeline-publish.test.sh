@@ -602,8 +602,9 @@ ok 'a copy that changed the digest, an index copied as one platform and a manife
 # index or an oci registry, whose packaged charts are files under upstream-files/; every read of one is
 # logged. Any other oci registry is the fixture registry, read without a login through the stand-in curl
 # as helm reads a chart: the manifest by its tag, a config of the helm media type that names the chart and
-# its version, and the one chart layer, each blob as the bytes of its digest. Every other command is the
-# real helm, which renders the Pipeline below.
+# its version and whose text fields are strings, as helm unmarshals them, and the one chart layer, each blob
+# as the bytes of its digest. Every other command is the real helm, which renders the Pipeline below and
+# shows a chart.
 cat > "$work/standin-bin/helm" <<EOF
 #!/usr/bin/env bash
 set -uo pipefail
@@ -643,6 +644,9 @@ jq -e '.config.mediaType == "application/vnd.cncf.helm.config.v1+json" and (.lay
 blob "\$(jq -r .config.digest "\$tmp/manifest")" "\$tmp/config" \
   && jq -e --arg chart "\$chart" --arg version "\$version" '(.name == \$chart) and (.version == \$version)' "\$tmp/config" > /dev/null \
   || { echo "Error: the config of \$ref:\$version names no chart \$chart \$version" >&2; exit 1; }
+jq -e '[.apiVersion, .name, .version, .kubeVersion, .description, .type, .home, .icon, .appVersion, .condition, .tags,
+  (.keywords // [])[], (.sources // [])[], (.annotations // {})[]] | map(select(. != null)) | all(type == "string")' "\$tmp/config" > /dev/null \
+  || { echo "Error: the config of \$ref:\$version carries a text field that is no string" >&2; exit 1; }
 blob "\$(jq -r '.layers[0].digest' "\$tmp/manifest")" "\$tmp/chart.tgz" || { echo "Error: the chart layer of \$ref:\$version is not its digest" >&2; exit 1; }
 mv "\$tmp/chart.tgz" "\$dest/\$chart-\$version.tgz"
 EOF
@@ -650,9 +654,9 @@ chmod +x "$work/standin-bin/helm"
 upstream_file() { # <path under upstream-files> <bytes> -> the sha256 of the file written there
   mkdir -p "$work/upstream-files/$(dirname "$1")" && printf '%s' "$2" > "$work/upstream-files/$1" && sha256sum "$work/upstream-files/$1" | cut -d' ' -f1
 }
-upstream_chart() { # <path under upstream-files> <chart> <version> -> the sha256 of the packaged chart written there as <chart>-<version>.tgz
+upstream_chart() { # <path under upstream-files> <chart> <version> [<appVersion as Chart.yaml writes it>] -> the sha256 of the packaged chart written there as <chart>-<version>.tgz
   mkdir -p "$work/chart-src/$2" "$work/upstream-files/$1"
-  printf 'apiVersion: v2\nname: %s\nversion: %s\nappVersion: "1.0"\n' "$2" "$3" > "$work/chart-src/$2/Chart.yaml"
+  printf 'apiVersion: v2\nname: %s\nversion: %s\nappVersion: %s\n' "$2" "$3" "${4:-\"1.0\"}" > "$work/chart-src/$2/Chart.yaml"
   tar -czf "$work/upstream-files/$1/$2-$3.tgz" -C "$work/chart-src" "$2" && rm -rf "$work/chart-src"
   sha256sum "$work/upstream-files/$1/$2-$3.tgz" | cut -d' ' -f1
 }
@@ -725,6 +729,16 @@ grep -qxF 'mirror: the tree at this tag names 2 tools and charts for the mirror:
   && [ ! -s "$work/upstream.log" ] && [ "$(pushes)" = "$before" ] \
   || fail "rows the mirror serves were downloaded or pushed again: $(cat "$work/sources.out") $(cat "$work/upstream.log" 2>/dev/null)"
 ok 'rows the mirror already serves are neither downloaded nor pushed, and read back'
+# A Chart.yaml that writes a text field as a number stands in the mirror with the config helm reads from the
+# chart, where that field is text, so helm pulls it back, in this run and in the next.
+numbered_hex="$(upstream_chart charts.example.invalid numbered-chart 1.0.0 1.10)"
+source_line chart https://charts.example.invalid numbered-chart 1.0.0 "$numbered_hex" > "$work/sources-numbered.list"
+numbered="$(owned_reference "$(cat "$work/sources-numbered.list")")"
+sources "$work/sources-numbered.list" && grep -qxF "mirror: $numbered pushed" "$work/sources.out" && grep -qxF 'mirror: 1 of 1 tools and charts served' "$work/sources.out" \
+  || fail "a chart whose Chart.yaml writes appVersion: 1.10 does not read back through helm: $(cat "$work/sources.out")"
+sources "$work/sources-numbered.list" && grep -qxF "mirror: $numbered kept" "$work/sources.out" && grep -qxF 'mirror: 1 of 1 tools and charts served' "$work/sources.out" \
+  || fail "a second run does not read back the chart whose Chart.yaml writes appVersion: 1.10: $(cat "$work/sources.out")"
+ok 'a chart whose Chart.yaml writes appVersion: 1.10 is pushed with a config helm reads, and read back by the next run'
 
 # What fetch refuses: an upstream that does not hold the row, and bytes that are not its sha256.
 gone_url=https://github.com/fixture/gone/releases/download/v1.0.0/gone-linux-amd64
@@ -778,6 +792,14 @@ sources "$work/sources-taken.list" && fail 'PLANTED DEFECT: a tag that stands in
 grep -qxF "mirror: REFUSE — row $(owned_reference "$taken_line"): the mirror answered 200 with the one layer sha256:$other_hex, not the one layer sha256:$taken_hex. A mirrored tool or chart is never replaced: give its row another version." "$work/sources.out" \
   && [ "$(pushes)" = "$before" ] || fail "a tag that stands with another layer is not refused by its row before anything is pushed: $(cat "$work/sources.out")"
 ok 'a staged file changed after fetch and a tag that stands with another layer are refused by their row, and nothing is pushed'
+# A mirror that does not answer says nothing about the tag: copy-sources fails naming what it found, and pushes nothing.
+before="$(pushes)"
+# shellcheck disable=SC2329 # mirror_source_held calls this curl, inside the subshell
+(curl() { return 28; }; OWNER=simetrixch mirror_copy_sources "$work/sources-fresh.list" "$work/sources-staged" "$work/sources-tmp/copy") > "$work/sources.out" 2>&1 \
+  && fail 'PLANTED DEFECT: copy-sources went on past a mirror it could not read'
+grep -qxF "mirror: FAIL — row $(owned_reference "$(cat "$work/sources-fresh.list")"): the mirror was not read (curl exited 28), so what stands under its tag is not known, and nothing is pushed" "$work/sources.out" \
+  && [ "$(pushes)" = "$before" ] || fail "a mirror that does not answer is not named as such by the row, or something was pushed: $(cat "$work/sources.out")"
+ok 'a mirror that does not answer stops copy-sources naming the row and what it read, and nothing is pushed'
 
 # A line that is not the line of its row under the owner is refused by each step, before it reads an upstream or pushes.
 outside="$(source_line tool "$fresh_url" "$fresh_hex" | sed 's|/simetrixch/|/other/|g')"
@@ -797,7 +819,7 @@ touch "$work/registry/corrupt"
 OWNER=simetrixch mirror_read_back_sources "$work/sources.list" "$work/sources-tmp/read" > "$work/sources.out" 2>&1 && fail 'PLANTED DEFECT: a mirror that serves other bytes read back'
 rm "$work/registry/corrupt"
 grep -qF "mirror: FAIL — row $(owned_reference "$tool_line"): https://registry.test/v2/simetrixch/github.com/fixture/tool/releases/download/v1.0.0/tool-linux-amd64/blobs/sha256:$tool_hex reads back as sha256:" "$work/sources.out" \
-  && grep -qF "mirror: FAIL — row $(owned_reference "$chart_line"): oci://registry.test/simetrixch/charts.example.invalid/fixture-chart cannot be read without a login" "$work/sources.out" \
+  && grep -qF "mirror: FAIL — row $(owned_reference "$chart_line"): reading oci://registry.test/simetrixch/charts.example.invalid/fixture-chart failed (exit 1): Error: " "$work/sources.out" \
   && grep -qxF 'mirror: 0 of 2 tools and charts served' "$work/sources.out" || fail "other bytes are not named by each row: $(cat "$work/sources.out")"
 printf '%s\n' "$(cat "$work/sources-fresh.list")" "$tool_line" > "$work/sources-unserved.list"
 OWNER=simetrixch mirror_read_back_sources "$work/sources-unserved.list" "$work/sources-tmp/read" > "$work/sources.out" 2>&1 && fail 'PLANTED DEFECT: a row the mirror does not serve read back'

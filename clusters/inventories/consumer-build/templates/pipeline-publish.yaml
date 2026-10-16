@@ -1052,16 +1052,19 @@ spec:
                   read -r -a row <<< "${line}"
                   if [ "${row[0]}" = tool ]; then hex="${row[2]}"; else hex="${row[4]}"; fi
                   held="$(mirror_source_held "${reference}" "${hex}" "${scratch}")" || return 1
-                  case "${held%% *}" in
-                    served) plan+=("kept ${line}") ;;
-                    absent)
+                  case "${held}" in
+                    "served "*) plan+=("kept ${line}") ;;
+                    "absent "*)
                       if [ ! -f "${staged}/${hex}" ] || [ "$(sha256sum "${staged}/${hex}" | cut -d' ' -f1)" != "${hex}" ]; then
                         echo "mirror: REFUSE — row ${reference}: the file fetch staged for it is missing or is not sha256:${hex}" >&2
                         return 1
                       fi
                       plan+=("pushed ${line}") ;;
-                    *)
+                    "other answered 200 "*)
                       echo "mirror: REFUSE — row ${reference}: the mirror ${held#* }, not the one layer sha256:${hex}. A mirrored tool or chart is never replaced: give its row another version." >&2
+                      return 1 ;;
+                    *)
+                      echo "mirror: FAIL — row ${reference}: the mirror ${held#* }, so what stands under its tag is not known, and nothing is pushed" >&2
                       return 1 ;;
                   esac
                 done < "${list}"
@@ -1083,9 +1086,11 @@ spec:
                           layers: [{mediaType: "application/octet-stream", digest: $digest, size: $size, annotations: {"org.opencontainers.image.title": $title}}]}' \
                         > "${scratch}/manifest.json" || return 1
                     else
-                      # The config is the Chart.yaml of the chart just verified, as helm writes it when it pushes a chart.
-                      if ! tar -xzOf "${file}" "${row[2]}/Chart.yaml" | yq -o=json > "${scratch}/config.json"; then
-                        echo "mirror: REFUSE — row ${reference}: sha256:${hex} holds no ${row[2]}/Chart.yaml that reads as JSON" >&2
+                      # The config is the metadata of the chart just verified as helm reads it, which is what helm writes
+                      # when it pushes a chart: a text field that Chart.yaml writes as a number (appVersion: 1.10) is text
+                      # here, and a pull refuses a config that carries it as a number.
+                      if ! helm show chart "${file}" | yq -o=json > "${scratch}/config.json"; then
+                        echo "mirror: REFUSE — row ${reference}: sha256:${hex} is no chart helm can read" >&2
                         return 1
                       fi
                       config="sha256:$(sha256sum "${scratch}/config.json" | cut -d' ' -f1)"
@@ -1149,7 +1154,7 @@ spec:
                     helm pull "${address}" --version "${row[3]}" --destination "${scratch}/read" > "${scratch}/error" 2>&1 || rc=$?
                   fi
                   if [ "${rc}" != 0 ] || [ ! -f "${file}" ]; then
-                    echo "mirror: FAIL — row ${reference}: ${address} cannot be read without a login (exit ${rc}): $(tail -n 1 "${scratch}/error")" >&2
+                    echo "mirror: FAIL — row ${reference}: reading ${address} failed (exit ${rc}): $(tail -n 1 "${scratch}/error")" >&2
                     continue
                   fi
                   got="$(sha256sum "${file}" | cut -d' ' -f1)"

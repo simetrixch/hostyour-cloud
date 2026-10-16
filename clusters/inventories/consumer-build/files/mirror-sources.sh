@@ -19,7 +19,7 @@ mirror_source_line() { # tool <url> <sha256> | chart <repository> <chart> <versi
       return 1
       ;;
   esac
-  if ! [[ "${@: -1}" =~ ^[0-9a-f]{64}$ ]]; then
+  if ! [[ "${*: -1}" =~ ^[0-9a-f]{64}$ ]]; then
     echo "the sha256 ${*: -1} is not 64 lower-case hex digits"
     return 1
   fi
