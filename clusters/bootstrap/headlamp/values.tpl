@@ -1,8 +1,8 @@
 # Headlamp Helm Values
 
-# THE CHART'S OWN IMAGE, AT ITS DIGEST. The chart composes <registry>/<repository>:<tag> and has no field
-# for a digest, so the digest rides on the tag. scripts/check.sh holds the tag before the @ to the one
-# the chart itself names, so a bump of the chart cannot leave the image behind.
+# THE CHART'S OWN IMAGE, AT ITS DIGEST. The chart composes the image from its registry, repository and
+# tag fields and has no field for a digest, so the digest rides on the tag. scripts/check.sh holds the
+# tag before the @ to the one the chart itself names, so a bump of the chart cannot leave the image behind.
 image:
   tag: "v0.42.0@sha256:c9754bae1d799220da0547e51ceee234f6e66ebadc138518ca73e33ecd331e59"
 
