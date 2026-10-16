@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# The images the owner's mirror holds: every image ref the platform tree renders on ghcr.io or under
-# the mirror's own name, and the refs no render names that are mirrored all the same.
+# The images the owner's mirror holds: every image ref the platform tree renders on ghcr.io or under a
+# mirror of it, and the refs no render names that are mirrored all the same.
 #
 #   bash scripts/list-mirror-images.sh              one entry per image: <source> <mirror name>
 #   bash scripts/list-mirror-images.sh --rendered   every such ref as the tree renders it: <ref> <where>
 #   bash scripts/list-mirror-images.sh --refs       the refs of one render, read on standard input
 #   bash scripts/list-mirror-images.sh --entries    the entries of "<ref> [<where>]" lines read on standard input
 #
-# ONE LIST, TWO READERS. scripts/check.sh holds every rendered ref to where it may point, and the
+# ONE LIST, THREE READERS. scripts/check.sh holds every rendered ref to where it may point, the
 # `mirror` task of clusters/inventories/consumer-build/templates/pipeline-publish.yaml copies every
-# entry into the mirror. Both run this script on the tree they act on.
+# entry into the mirror, and lifecycle/release-platform.sh pins nothing before the mirror serves every
+# entry. All three run this script on the tree they act on.
 #
 # AN ENTRY is the source `ghcr.io/<path>:<tag>@sha256:<hex>` and the mirror name
 # `<global.buildRegistry>/ghcr.io/<path>:<tag>@sha256:<hex>`. A ref without its tag or its digest has no
@@ -42,8 +43,11 @@ declared_refs() {
   echo 'ghcr.io/digitaplatform/digita-report-browser:152.0.7977.82-r0@sha256:a344f8b5ebc846dc0c6450e8b111c86f59187634334cedf85523d7653febfcef'
 }
 
-refs_in() { # a render on standard input -> every string in it that names an image on ghcr.io or under the mirror, one per line
-  yq '.. | select(tag == "!!str")' | tr -s "[:space:]\"',=" '[\n*]' | grep -E "^(ghcr\.io|${mirror//./\\.})/" || true
+# A ref under any other name of a mirror of ghcr.io is read too, so a stale mirror name fails the list. A
+# word before ghcr.io that no registry name can spell, an oci:// chart source or a <placeholder> of a
+# text, is no image ref.
+refs_in() { # a render on standard input -> every string in it that names an image on ghcr.io or under a mirror of it, one per line
+  yq '.. | select(tag == "!!str")' | tr -s "[:space:]\"',=" '[\n*]' | grep -E '^([a-z0-9._-]+/)*ghcr\.io/' || true
 }
 
 entries_of() { # "<ref> [<where>]" lines on standard input -> the sorted entries, the declared refs among them
@@ -86,7 +90,7 @@ render() { # <where> <helm template arguments...> -> "<ref> <where>" for every r
   local where="$1"
   shift
   helm template "$@" > "$work/render" 2> "$work/render.err" || return 1
-  grep -qE "(ghcr\.io|${mirror//./\\.})/" "$work/render" || return 0
+  grep -q 'ghcr\.io/' "$work/render" || return 0
   refs_in < "$work/render" | sed "s|\$| $where|"
 }
 
