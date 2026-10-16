@@ -3377,11 +3377,93 @@ run_release_unit success manager@master.example.invalid shop
 expect 'a run naming a unit and nothing else' 64 <<'RECORDED'
 ~~~ standard error ~~~
 release-unit: usage: lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test
-       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod> <alpha|beta|stable> <x.y.z> <commit>
+       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit>
 RECORDED
 calls 'a run naming a unit and nothing else' <<'RECORDED'
 RECORDED
 no_session 'a run naming a unit and nothing else'
+
+# THE STAGE WORD none is the release of a library: the Manager plans only its tag and the publish of
+# its package, and takes no stage, so the request carries a JSON null. A stage word that is none of
+# the four is refused before the door is even called.
+run_release_unit success manager@master.example.invalid digita-plugins-free none stable 0.6.025 $B
+expect 'the release of a library, which has no stage' 0 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+~~~ standard error ~~~
+RECORDED
+LIBRARY_CALLS="$OUT/library-calls"
+cat > "$LIBRARY_CALLS" <<'RECORDED'
+MINT
+POST /api/units/digita-plugins-free/release cookie=current origin=ok
+  body {"stage":null,"channel":"stable","version":"0.6.025","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+calls 'the release of a library, which has no stage' < "$LIBRARY_CALLS"
+no_session 'the release of a library, which has no stage'
+
+run_release_unit success manager@master.example.invalid shop staging stable 0.3.004 $B
+expect 'a stage word that is none of dev, test, prod and none' 64 <<'RECORDED'
+~~~ standard error ~~~
+release-unit: the stage must be dev, test, prod or none (got 'staging')
+RECORDED
+calls 'a stage word that is none of dev, test, prod and none' <<'RECORDED'
+RECORDED
+no_session 'a stage word that is none of dev, test, prod and none'
+
+# PLANTED: a copy of the act that sends the word none as the string "none", and one that lets any
+# stage word through to the Manager. The first must send other bytes than the library case recorded,
+# in the body's stage alone; the second must call the Manager where the refusal recorded no call. The
+# innocent beside them is the same first copy given prod, which sends what the act itself sends.
+PLANT="$WORK/release-unit-stage"
+mkdir -p "$PLANT"
+cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
+RELEASE_UNIT="$PLANT/release-unit.sh"
+sed 's/release = { stage: stage === "none" ? null : stage, channel, version, commit };/release = { stage, channel, version, commit };/' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail 'the plant that sends none as a string changed nothing in release-unit.mjs'
+run_release_unit success manager@master.example.invalid digita-plugins-free none stable 0.6.025 $B
+if diff "$LIBRARY_CALLS" "$RU/calls" > "$OUT/planted.diff"; then
+  fail 'a copy of release-unit that sends none as the string "none" sent the calls the library case recorded — the check proves nothing'
+fi
+if grep '^[<>] ' "$OUT/planted.diff" | grep -vqF '"stage":'; then
+  fail "a copy of release-unit that sends none as a string differs in a line that is not the stage: $(cat "$OUT/planted.diff")"
+fi
+grep -qF '> ' "$OUT/planted.diff" && grep -qF '"stage":"none"' "$OUT/planted.diff" \
+  || fail "a copy of release-unit that sends none as a string did not send the string: $(cat "$OUT/planted.diff")"
+ok 'the planted defect was caught — a copy of release-unit that sends none as the string "none" differs from the recorded calls in the stage of the body alone'
+run_release_unit success manager@master.example.invalid shop prod stable 0.3.004 $B
+calls 'the copy that sends none as a string, given prod' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"prod","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+ok 'the innocent beside it stayed green — the same copy given prod sends the stage prod, as the act does'
+sed '/the stage must be dev, test, prod or none/d' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail 'the plant that drops the refusal of a stage word changed nothing in release-unit.mjs'
+run_release_unit success manager@master.example.invalid shop staging stable 0.3.004 $B
+[ -s "$RU/calls" ] || fail 'a copy of release-unit with no refusal of a stage word called nothing where the act refuses before any call — the check proves nothing'
+[ "$A_CODE" != 64 ] || fail 'a copy of release-unit with no refusal of a stage word still ended with 64 — the check proves nothing'
+ok 'the planted defect was caught — a copy of release-unit that lets any stage word through calls the Manager with it and does not end with 64'
+RELEASE_UNIT="$HERE/release-unit.sh"
+rm -rf "$PLANT"
 
 # PLANTED: a copy of the act that prints its session once, right where the mint lands, one that
 # hands it to ssh in an environment variable, and three that write it to a file: in the temporary
