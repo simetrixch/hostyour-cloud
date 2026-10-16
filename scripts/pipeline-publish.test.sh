@@ -1046,8 +1046,13 @@ platform_tree() { # $1 folder, $2 the lines its list of tools and charts prints,
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" %s\n' "'$lines'" > "$dir/scripts/list-mirror-sources.sh"
   manifest @digitaplatform/e2e-platform > "$dir/package.json"
 }
-platform_sources="$(REGISTRY="$rendered_registry" source_line tool "$tool_url" "$tool_hex")
-$(REGISTRY="$rendered_registry" source_line chart https://charts.example.invalid fixture-chart 1.0.0 "$chart_hex")"
+# The fixture registry keeps a repository by its path whatever host names it, so the run mirrors a tool and a
+# chart of its own, which the cases above never pushed.
+platform_tool_url=https://github.com/fixture/platform-tool/releases/download/v1.0.0/platform-tool-linux-amd64
+platform_tool_hex="$(upstream_file github.com/fixture/platform-tool/releases/download/v1.0.0/platform-tool-linux-amd64 'the platform tool 1.0.0')"
+platform_chart_hex="$(upstream_chart charts.example.invalid platform-chart 1.0.0)"
+platform_sources="$(REGISTRY="$rendered_registry" source_line tool "$platform_tool_url" "$platform_tool_hex")
+$(REGISTRY="$rendered_registry" source_line chart https://charts.example.invalid platform-chart 1.0.0 "$platform_chart_hex")"
 platform_tree "$work/e11" "$platform_sources" "$(entry "fixture/multi:2.0@$v2s2_list" "$rendered_registry")" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")"
 commit_tag "$work/e11" "0.5.000-stable-$STAMP"
 platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "PLANTED INNOCENT: the platform tree did not mirror its images: $(cat "$work/run.out")"
