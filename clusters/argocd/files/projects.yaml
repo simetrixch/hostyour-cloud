@@ -61,7 +61,7 @@ spec:
   description: Cluster foundation — External-Secrets operator, CoreDNS, the plain-http redirect to https and the cert-manager family. Privileged (CRDs, kube-system).
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
-    - oci://ghcr.io/external-secrets/charts
+    - oci://zot.master.digitacloud.app/simetrixch/ghcr.io/external-secrets/charts
   destinations:
     - name: __CLUSTER_NAME__
       namespace: external-secrets
@@ -129,7 +129,7 @@ spec:
   description: Stateful data stores — MongoDB and Redis. Namespaced only; never creates cluster-scoped resources.
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
-    - https://prometheus-community.github.io/helm-charts
+    - oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
   destinations:
     - name: __CLUSTER_NAME__
       namespace: mongodb
@@ -170,7 +170,7 @@ spec:
   description: Supporting platform services — the mail relay, DBGate, the tailnet coordinator. Namespaced only.
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
-    - https://bokysan.github.io/docker-postfix/
+    - oci://zot.master.digitacloud.app/simetrixch/bokysan.github.io/docker-postfix
   destinations:
     - name: __CLUSTER_NAME__
       namespace: postfix
@@ -228,7 +228,7 @@ spec:
   description: Plane, the platform's own project tracker, on the master. Namespaced only.
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
-    - https://helm.plane.so/
+    - oci://zot.master.digitacloud.app/simetrixch/helm.plane.so
   destinations:
     - name: __CLUSTER_NAME__
       namespace: plane
@@ -252,9 +252,9 @@ spec:
   description: Monitoring plane — kube-prometheus-stack, Loki, Tempo, Alloy, Grafana. Cluster-wide scraper.
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
-    - https://prometheus-community.github.io/helm-charts
-    - https://grafana.github.io/helm-charts
-    - https://grafana-community.github.io/helm-charts
+    - oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
+    - oci://zot.master.digitacloud.app/simetrixch/grafana.github.io/helm-charts
+    - oci://zot.master.digitacloud.app/simetrixch/grafana-community.github.io/helm-charts
   destinations:
     - name: __CLUSTER_NAME__
       namespace: observability

@@ -32,7 +32,7 @@ platformRepoUrl: https://github.com/simetrixch/hostyour-cloud.git
 # ArgoCD runs `helm dependency build` for that source, so the project must permit it or the sync is
 # rejected. Allowed for EVERY unit: an allowlist entry creates nothing, and the postgres source
 # itself is rendered only where the registration claims `postgresql`.
-exporterChartsUrl: https://prometheus-community.github.io/helm-charts
+exporterChartsUrl: oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
 
 # The identity every release PipelineRun of a unit runs as, in that unit's own build namespace. It is
 # the subject the argo-sync grant arms, and it is one per build namespace, so a unit's pipeline holds

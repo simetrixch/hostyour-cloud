@@ -12,7 +12,7 @@ type: application
 dependencies:
   - name: plane-ce
     version: 1.8.5
-    repository: https://helm.plane.so/
+    repository: oci://zot.master.digitacloud.app/simetrixch/helm.plane.so
   - name: external-secret
     version: 1.0.0
     repository: file://../../charts/external-secret

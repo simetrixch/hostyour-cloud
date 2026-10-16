@@ -7,7 +7,7 @@ dependencies:
   - name: mail
     alias: postfix
     version: 5.1.0
-    repository: https://bokysan.github.io/docker-postfix/
+    repository: oci://zot.master.digitacloud.app/simetrixch/bokysan.github.io/docker-postfix
   - name: external-secret
     version: 1.0.0
     repository: file://../../charts/external-secret

@@ -181,9 +181,9 @@ esac
 
 command -v git >/dev/null 2>&1 \
   || die 'git is not on this path, and a platform release is cut, pushed and pinned with it'
-for TOOL in curl helm yq tar; do
+for TOOL in curl helm yq jq tar; do
   command -v "$TOOL" >/dev/null 2>&1 \
-    || die "$TOOL is not on this path, and the release lists the images of its tag and reads them back from the mirror with it"
+    || die "$TOOL is not on this path, and the release lists the images, tools and charts of its tag and reads them back from the mirror with it"
 done
 # THE LONGEST WAIT FOR THE MIRROR, in seconds. The publish run of the tag waits in
 # the release queue behind at most two runs, each held to an hour, and then copies.
@@ -359,6 +359,42 @@ while :; do
   sleep 30
 done
 say "release: the mirror serves all $LISTED_COUNT images of $TAG at their digests, read without a login"
+
+# THE TOOLS AND CHARTS ARE HELD THE SAME WAY, by the same tree at the tag: scripts/list-mirror-sources.sh
+# prints one line per row of its mirror-sources.table, the list the publish run of the tag copies, and
+# mirror_source_held of the tree's own files/mirror-sources.sh reads a row exactly as the mirror task does,
+# by the anonymous GET of the manifest under the row's tag, which must answer 200 and name one layer whose
+# digest is the row's sha256. The wait is the one the images already spent: a row is read again every 30
+# seconds until MIRROR_WAIT has passed, and the release stops naming each row the mirror does not serve.
+SOURCES_LIB='clusters/inventories/consumer-build/files/mirror-sources.sh'
+for FILE in scripts/list-mirror-sources.sh "$SOURCES_LIB"; do
+  [ -f "$LISTED/tree/$FILE" ] \
+    || die "the tree at $TAG carries no $FILE, so nothing names the tools and charts its clusters read from the mirror, and nothing was pinned"
+done
+bash "$LISTED/tree/scripts/list-mirror-sources.sh" > "$LISTED/sources.list" \
+  || die "the tools and charts of $TAG could not be listed - the lines above say why - and nothing was pinned"
+# shellcheck disable=SC1090
+. "$LISTED/tree/$SOURCES_LIB"
+sources_unserved() { # the list -> each row of it that the mirror does not serve, one per line: its owned reference and what the mirror answered
+  local line parts held
+  while read -r line; do
+    read -r -a parts <<< "$line"
+    held="$(mirror_source_held "${parts[${#parts[@]} - 2]}" "${parts[${#parts[@]} - 3]}" "$LISTED/held")"
+    case "$held" in
+      served\ *) ;;
+      *) printf '%s (%s)\n' "${parts[${#parts[@]} - 2]}" "$held" ;;
+    esac
+  done < "$1"
+}
+SOURCES_COUNT="$(grep -c . "$LISTED/sources.list")"
+while :; do
+  UNSERVED="$(sources_unserved "$LISTED/sources.list")"
+  [ -z "$UNSERVED" ] && break
+  [ "$SECONDS" -lt "$MIRROR_DEADLINE" ] \
+    || die "the mirror does not serve $(printf '%s\n' "$UNSERVED" | grep -c .) of the $SOURCES_COUNT tools and charts of $TAG after ${MIRROR_WAIT}s: $(printf '%s\n' "$UNSERVED" | sed 's/$/;/' | tr '\n' ' ')the publish run of $TAG on the owner's master copies them. Nothing was pinned. Read that run, then release again: the tag is reused" 69
+  sleep 30
+done
+say "release: the mirror serves all $SOURCES_COUNT tools and charts of $TAG"
 
 # EVERY INSTALLATION ORIGIN CARRIES TAKES THE RELEASE, or the one that was named. An
 # installation is a branch carrying its own map, clusters/active/<branch>.yaml; the

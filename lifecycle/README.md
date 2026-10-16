@@ -39,8 +39,10 @@ launcher beside each carries it over the session it opens. None of them is start
 
 A release is TWO acts and they are separate on purpose. `release-platform` puts the tag on the remote,
 waits until the owner's mirror serves every image the tree at the tag lists (`scripts/list-mirror-images.sh`,
-copied there by the publish run the tag starts, read back by digest without a login, for
-`RELEASE_MIRROR_WAIT` seconds at most, 7200 unless set), and writes `release: <tag>` into
+copied there by the publish run the tag starts, read back by digest without a login) and every
+tool and chart its `clusters/platform/mirror-sources.table` lists (`scripts/list-mirror-sources.sh`, read back by
+the manifest of its tag, which must name one layer of the row's sha256), for `RELEASE_MIRROR_WAIT` seconds at
+most, 7200 unless set, and writes `release: <tag>` into
 `clusters/active/<fqdn>.yaml` on the installation's own branch — and stops. The installation still
 stands on the state before it: that line RECORDS which state it should stand on and carries none of
 it, because every source of every Application this platform generates targets the install branch.
