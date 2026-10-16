@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The images the owner's mirror holds: every image ref the platform tree renders on ghcr.io or under
-# the mirror's own name, and the refs no render names that are mirrored all the same.
+# the mirror's own name.
 #
 #   bash scripts/list-mirror-images.sh              one entry per image: <source> <mirror name>
 #   bash scripts/list-mirror-images.sh --rendered   every such ref as the tree renders it: <ref> <where>
@@ -36,19 +36,13 @@ mirror="$(yq '.global.buildRegistry' clusters/platform/values-common.yaml)/ghcr.
 [[ "$mirror" =~ ^[a-z0-9.-]+/[a-z0-9._-]+/ghcr\.io$ ]] \
   || fail "clusters/platform/values-common.yaml names no global.buildRegistry of the form <host>/<owner>, so the mirror has no name"
 
-# Refs that no render names. One line each: the ref, then why it is mirrored.
-declared_refs() {
-  # digita-report's docker/report-backend.Dockerfile builds FROM this browser base, and Alpine may no longer carry its chromium build.
-  echo 'ghcr.io/digitaplatform/digita-report-browser:152.0.7977.82-r0@sha256:a344f8b5ebc846dc0c6450e8b111c86f59187634334cedf85523d7653febfcef'
-}
-
 refs_in() { # a render on standard input -> every string in it that names an image on ghcr.io or under the mirror, one per line
   yq '.. | select(tag == "!!str")' | tr -s "[:space:]\"',=" '[\n*]' | grep -E "^(ghcr\.io|${mirror//./\\.})/" || true
 }
 
-entries_of() { # "<ref> [<where>]" lines on standard input -> the sorted entries, the declared refs among them
+entries_of() { # "<ref> [<where>]" lines on standard input -> the sorted entries
   local entries twice
-  entries="$({ cat; declared_refs | sed 's|$| declared in scripts/list-mirror-images.sh|'; } | while read -r ref where; do
+  entries="$(while read -r ref where; do
     [ -n "$ref" ] || continue
     case "$ref" in
       "$mirror/"*) image="${ref#"$mirror/"}" ;;
