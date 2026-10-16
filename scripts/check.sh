@@ -1225,8 +1225,8 @@ echo "check: an SMTP entry opens a unit's fence and admission boundary where one
 # ── What clusters/bootstrap must never carry ─────────────────────────────────────────────────
 # NOTHING STAMPS THAT TREE, AND A PLACEHOLDER LEFT IN IT TRAVELS AS TEXT. The seven files under
 # clusters/bootstrap that carry one installation's own domain and short name are TEMPLATES: the
-# branch program renders each .tpl onto the install branch beside itself, filling <fqdn>,
-# <cluster-name> and <books-name>. No stamping row reaches the tree any more, and a row whose
+# branch program renders each .tpl onto the install branch beside itself, filling the slots its row
+# hands it, which the next section holds. No stamping row reaches the tree any more, and a row whose
 # literal is gone reports itself satisfied rather than refusing, so a placeholder written here
 # afterwards would reach every machine spelled out, with no run saying a word.
 #
@@ -1237,6 +1237,136 @@ if [ -n "$placeholders" ]; then
   fail "a file under clusters/bootstrap carries a placeholder, and nothing stamps that tree — write the value as a template slot in the .tpl beside it instead"
 fi
 echo "check: no file under clusters/bootstrap carries a placeholder, which nothing there would replace."
+
+# ── What the branch program hands the templates of clusters/bootstrap ───────────────────────
+# A TEMPLATE AND ITS ROW ARE TWO HALVES OF ONE CALL, IN TWO REPOSITORIES. The write_file_from_template
+# rows of hostyour-deploy's ansiwise/programs/deploy-branch.yaml render every .tpl here, and the engine
+# refuses the run when a template and its row's values do not fit. Every slot counts, one in a comment
+# as much as one in a value, so a comment that names <tag> stops the regeneration of every machine
+# after the release is already pinned. Each template is read here against its row as the engine reads it.
+#
+# THE RULE IS THE ENGINE'S, COPIED ONCE: the grammar is ansiwise-core lib/src/steps/slots.dart
+# slotPattern, the refusals are template.dart Template.filledWith. A required slot <name> its row does
+# not hand, a value of the row that no slot takes and a value handed to a carried slot <name!?> are
+# refused; an optional slot <name?> may go without one. Beside the engine's rule, a .tpl that no row
+# names is refused, because nothing hands its slots, and so is a row that names a template of this
+# tree that does not stand in it.
+bootstrap_template_faults() { # <program> <tree> -> one line per template and row that do not fit, or nothing
+  local rows template values file lines slot name kind slots names value
+  rows="$(yq '.. | select(tag == "!!map" and .step == "write_file_from_template") | [.template, (.values // {} | keys | join(" "))] | @tsv' "$1")" \
+    || { echo "the write_file_from_template rows of $1 could not be read"; return; }
+  bootstrap_rows=0
+  local named=" "
+  while IFS=$'\t' read -r template values; do
+    case "$template" in /srv/hostyour-cloud/*) ;; *) continue ;; esac
+    file="${template#/srv/hostyour-cloud/}"
+    named="$named$file "
+    bootstrap_rows=$((bootstrap_rows + 1))
+    # yq's own line operator names lines this program's text does not have there, so the row is found
+    # by its template line.
+    lines="$(awk -v t="$template" '{ s = $0; sub(/^[ \t]*(- )?/, "", s); sub(/[ \t]+$/, "", s); gsub(/["'\'']/, "", s) }
+      s == "template: " t { printf "%s%s", (n++ ? "," : ""), NR }' "$1")"
+    if [ ! -f "$2/$file" ]; then
+      echo "$file: the row at deploy-branch.yaml:$lines names it, and it does not stand in this tree"
+      continue
+    fi
+    slots="$(grep -oE '<[a-z][a-z0-9-]*(!\?|\?)?>' "$2/$file" | sort -u)"
+    names=" "
+    while IFS= read -r slot; do
+      [ -n "$slot" ] || continue
+      name="${slot#<}"; name="${name%>}"
+      case "$name" in
+        *'!?') kind=carried; name="${name%'!?'}" ;;
+        *'?') kind=optional; name="${name%'?'}" ;;
+        *) kind=required ;;
+      esac
+      names="$names$name "
+      case " $values " in
+        *" $name "*) [ "$kind" != carried ] \
+          || echo "$file carries $slot, and its row at deploy-branch.yaml:$lines hands it a value, which a carried slot never takes" ;;
+        *) [ "$kind" != required ] \
+          || echo "$file names $slot, and its row at deploy-branch.yaml:$lines hands no value under that name" ;;
+      esac
+    done <<< "$slots"
+    while IFS= read -r value; do
+      [ -n "$value" ] || continue
+      case "$names" in
+        *" $value "*) ;;
+        *) echo "$file names no slot <$value>, and its row at deploy-branch.yaml:$lines hands a value under that name" ;;
+      esac
+    done < <(printf '%s\n' "$values" | tr ' ' '\n')
+  done <<< "$rows"
+  while IFS= read -r file; do
+    case "$named" in
+      *" $file "*) ;;
+      *) echo "$file: no write_file_from_template row of the program names it, so nothing hands its slots" ;;
+    esac
+  done < <(cd "$2" && find clusters/bootstrap -name '*.tpl' | sort)
+}
+
+# THE ROWS ARE READ AT THE COMMIT ci-sources.json PINS, NEVER FROM A WORKING TREE: on the master's ci
+# out of the bare repository the fetch task makes under CI_SOURCES_DIR, on a machine out of the object
+# store of the hostyour-deploy clone beside the main checkout, which a worktree finds through its
+# common git directory. A template that needs a new binding moves the pin to the row's commit, and the
+# pin records which rows the templates were held to.
+deploy_pin="$(yq -p=json -o=yaml '.git["hostyour-deploy"] // ""' ci-sources.json)" \
+  || fail "ci-sources.json could not be read, so the commit of hostyour-deploy whose rows render clusters/bootstrap is not known"
+[[ "$deploy_pin" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "ci-sources.json pins hostyour-deploy at '$deploy_pin', not a full commit (40 lowercase hex digits)"
+if [ -n "${CI_SOURCES_DIR:-}" ]; then
+  deploy_source="$CI_SOURCES_DIR/hostyour-deploy.git"
+  deploy_from="CI_SOURCES_DIR ($deploy_source)"
+  deploy_read=(git --git-dir="$deploy_source")
+else
+  common="$(git rev-parse --git-common-dir)" || fail "the common git directory of this checkout could not be read"
+  case "$common" in /*) ;; *) common="$root/$common" ;; esac
+  deploy_source="$(cd "$common/../.." && pwd)/hostyour-deploy"
+  [ -d "$deploy_source" ] \
+    || fail "no hostyour-deploy clone at $deploy_source, beside the main checkout, and the rows that render clusters/bootstrap stand in it — clone simetrixch/hostyour-deploy there"
+  deploy_from="the clone beside the main checkout ($deploy_source)"
+  deploy_read=(git -C "$deploy_source")
+fi
+"${deploy_read[@]}" show "$deploy_pin:ansiwise/programs/deploy-branch.yaml" > "$work/deploy-branch.yaml" \
+  || fail "hostyour-deploy ansiwise/programs/deploy-branch.yaml at $deploy_pin, the pin of ci-sources.json, could not be read from $deploy_source — fetch that commit into it"
+bootstrap_template_faults "$work/deploy-branch.yaml" "$root" > "$work/bootstrap-faults"
+if [ -s "$work/bootstrap-faults" ]; then
+  sed 's/^/  /' "$work/bootstrap-faults"
+  fail "a template under clusters/bootstrap and its row of hostyour-deploy ansiwise/programs/deploy-branch.yaml at ${deploy_pin:0:7} do not fit, and the engine would stop the regeneration there — bind the slot in that row and move the hostyour-deploy pin of ci-sources.json to its commit, or take the angle brackets off a word that is no slot"
+fi
+[ "$bootstrap_rows" -gt 0 ] || fail "no write_file_from_template row of hostyour-deploy ansiwise/programs/deploy-branch.yaml at ${deploy_pin:0:7} names a template of this tree"
+bootstrap_templates="$(find clusters/bootstrap -name '*.tpl' | wc -l | tr -d ' ')"
+real_rows=$bootstrap_rows
+planted_red=0
+planted_green=0
+
+# The planted cases, through the same function: <red|green>|<what>|<template, \n for a new line, empty for
+# no file>|<the row's values, empty for no row>.
+bootstrap_plants=(
+  "red|a comment that names <repository>:<tag>, which its row does not hand|# The chart composes <repository>:<tag> and has no field for a digest.\ndomain: argo.<fqdn>|{fqdn: {answer: fqdn}}"
+  "red|a row that hands a value no slot takes|domain: argo.<fqdn>|{fqdn: {answer: fqdn}, cluster-name: {answer: cluster_name}}"
+  "red|a row that hands a value to a carried slot|domain: argo.<fqdn>\nkept: <kept!?>|{fqdn: {answer: fqdn}, kept: {answer: kept}}"
+  "red|a template no row names|domain: argo.<fqdn>|"
+  "red|a row that names a template which does not stand in the tree||{fqdn: {answer: fqdn}}"
+  "green|only <fqdn>, which its row hands|domain: argo.<fqdn>|{fqdn: {answer: fqdn}}"
+  "green|an optional and a carried slot left without a value|domain: argo.<fqdn>\nnote: <note?>\nkept: <kept!?>|{fqdn: {answer: fqdn}}"
+)
+for plant_case in "${bootstrap_plants[@]}"; do
+  IFS='|' read -r expected what text values <<< "$plant_case"
+  plant="$(mktemp -d "$work/bootstrap-plant.XXXXXX")" || fail "no folder for a planted bootstrap template could be made"
+  mkdir -p "$plant/clusters/bootstrap/planted" || fail "no folder for a planted bootstrap template could be made"
+  [ -z "$text" ] || printf '%b\n' "$text" > "$plant/clusters/bootstrap/planted/values.tpl"
+  : > "$plant/program.yaml"
+  [ -z "$values" ] || printf '%s\n' '- step: write_file_from_template' \
+    '  template: /srv/hostyour-cloud/clusters/bootstrap/planted/values.tpl' "  values: $values" > "$plant/program.yaml"
+  bootstrap_template_faults "$plant/program.yaml" "$plant" > "$plant/faults"
+  case "$expected" in
+    red) [ -s "$plant/faults" ] || fail "bootstrap_template_faults passes a planted template with $what"
+      planted_red=$((planted_red + 1)) ;;
+    green) [ ! -s "$plant/faults" ] || { sed 's/^/  /' "$plant/faults"; fail "bootstrap_template_faults refuses a planted template with $what"; }
+      planted_green=$((planted_green + 1)) ;;
+  esac
+done
+echo "check: the $bootstrap_templates templates under clusters/bootstrap fit the $real_rows rows of hostyour-deploy ansiwise/programs/deploy-branch.yaml at ${deploy_pin:0:7} that render them, read from $deploy_from; the check refuses $planted_red planted misfits, a comment that names <repository>:<tag> among them, and passes $planted_green planted innocents, one with only <fqdn>."
 
 # ── What an installation's branch must be able to take ───────────────────────────────────────
 # A RELEASE REACHES A MACHINE AS A MERGE into its installation's branch, the branch named after its
