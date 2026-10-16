@@ -23,20 +23,19 @@ with open(sys.argv[1], encoding='utf-8', newline='') as config:
             sys.exit('the lifecycle config has an invalid assignment at line ' + str(number) + '; values withheld')
         if named.group(1):
             stated[named.group(1)] = named.group(2)
-for key in ('PLANE_API_TOKEN', 'ELEVATION_PASSWORD', 'FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE', 'ACME_SERVER'):
+for key in ('PLANE_API_TOKEN', 'ELEVATION_PASSWORD', 'FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE'):
     if not stated.get(key):
         sys.exit('the lifecycle config states no ' + key + '; no remote mutation was started')
-for key in ('FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE', 'ACME_SERVER', 'BOOKS_FQDN', 'BUILD_PLANE_FQDN', 'MACHINE_HOST'):
+for key in ('FQDN', 'OPERATOR_USER', 'STAGE', 'ROLE', 'BOOKS_FQDN', 'BUILD_PLANE_FQDN', 'MACHINE_HOST'):
     print(stated.get(key, ''))
 READ
 )" || fail 'the lifecycle config could not be read; no remote mutation was started'
 # Empty optional values at the end arrive as end of input, which leaves them empty.
-{ read -r FQDN; read -r OPERATOR_USER; read -r STAGE; read -r ROLE; read -r ACME_SERVER
+{ read -r FQDN; read -r OPERATOR_USER; read -r STAGE; read -r ROLE
   read -r BOOKS_FQDN; read -r BUILD_PLANE_FQDN; read -r MACHINE_HOST; } <<<"$STATED" || true
 [[ "$FQDN" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || fail 'FQDN is not a host name'
 [[ "$OPERATOR_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail 'OPERATOR_USER is not a login name'
 [ "$ROLE" = master ] || fail 'this action requires an installed master'
-[ "$ACME_SERVER" = https://dv.acme-v02.api.pki.goog/directory ] || fail 'ACME_SERVER must name Google Trust Services'
 [ "${BOOKS_FQDN:-$FQDN}" = "$FQDN" ] && [ "${BUILD_PLANE_FQDN:-}" = "$FQDN" ] \
   || fail 'this master must keep the books and the build plane'
 case "$STAGE" in dev|test|prod) ;; *) fail 'STAGE is not dev, test or prod' ;; esac
@@ -55,6 +54,11 @@ printf -v fqdn_arg '%q' "$FQDN"
 printf -v master_map_check '%q' 'import pathlib,re,sys; s=pathlib.Path(sys.argv[1]).read_text(); sys.exit(0 if re.search(r"(?m)^role:[ \t]*[\x22\x27]?master[\x22\x27]?[ \t]*(?:#.*)?$",s) else 1)'
 probe="python3 -c $master_map_check /srv/hostyour-cloud/clusters/active/$FQDN.yaml && test -x $ENGINE && test -r $CHECKOUT/ansiwise.yaml && test -r /srv/hostyour-cloud/clusters/active/$FQDN.yaml && test \"\$(git -C /srv/hostyour-cloud branch --show-current)\" = $fqdn_arg"
 ssh "${BASE[@]}" -n "$TARGET" "$probe" || fail 'the target is not the installed master on its own branch' 69
+# The programs checkout is brought to the head of the branch it stands on, as the Manager's
+# cluster-redeploy does before it reads a program (hostyour-manager machine-programs.ts
+# refreshPrograms): the declaration read below and the run after it are the programs that landed.
+printf -v refresh 'branch=$(git -C %q symbolic-ref --short HEAD) && git -C %q fetch --quiet origin "$branch" && git -C %q reset --quiet --hard "origin/$branch"' "$CHECKOUT" "$CHECKOUT" "$CHECKOUT"
+ssh "${BASE[@]}" -n "$TARGET" "$refresh" || fail 'the programs checkout could not be brought to the head of its branch' 69
 DECLARATION="$(ssh "${BASE[@]}" -n "$TARGET" "cat $CHECKOUT/ansiwise/programs/deploy-platform-services.yaml")" \
   || fail 'the installed deploy-platform-services program could not be read' 69
 printf '%s\n' "$DECLARATION" | grep -qE '^  - name: plane_api_token[[:space:]]*$' \
