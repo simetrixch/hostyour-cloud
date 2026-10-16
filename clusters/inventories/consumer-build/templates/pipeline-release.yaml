@@ -322,11 +322,11 @@ spec:
               # character a shell or a flag parser would read as syntax.
               relpath() {
                 local field="$1" build="$2" value="$3"
-                if ! printf '%s' "${value}" | grep -Eq '^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$'; then
+                if ! [[ "${value}" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]]; then
                   echo "builds: FAIL — ${build}.${field} '${value}' is not a relative path of [A-Za-z0-9._-] segments" >&2
                   exit 1
                 fi
-                if printf '%s' "${value}" | tr '/' '\n' | grep -qx '\.\.'; then
+                if [[ "/${value}/" == */../* ]]; then
                   echo "builds: FAIL — ${build}.${field} '${value}' leaves the checkout with a '..' segment" >&2
                   exit 1
                 fi
@@ -347,7 +347,7 @@ spec:
               # Every manifest build must be attested — checked BEFORE any
               # probe, build or push.
               for b in $(yq eval '.builds[].name' "${MANIFEST}"); do
-                if ! printf '%s\n' ${ATTESTED} | grep -qx "${b}"; then
+                if ! [[ " ${ATTESTED} " == *" ${b} "* ]]; then
                   echo "builds: FAIL — build '${b}' is declared in ${MANIFEST} but not attested in registrations/${UNIT}/build.yaml — run the onboard verb again to re-attest" >&2
                   exit 1
                 fi
@@ -1010,7 +1010,7 @@ spec:
               # the tag must admit the stage, or NOTHING is written.
               CHANNEL="$(printf '%s' "${RELEASE_TAG}" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|stable)-[0-9]{14}$/\1/')"
               ALLOWED="$(printf '%s\n' "${CHANNEL_STAGES}" | awk -v c="${CHANNEL}" '$1 == c { $1=""; sub(/^ /,""); print }')"
-              if [ -z "${ALLOWED}" ] || ! printf '%s\n' ${ALLOWED} | grep -qx "${STAGE}"; then
+              if [ -z "${ALLOWED}" ] || ! [[ " ${ALLOWED} " == *" ${STAGE} "* ]]; then
                 echo "bump: REFUSE — channel '${CHANNEL}' may not write stage '${STAGE}' (allowed: ${ALLOWED:-<none>}); no pin is written" >&2
                 exit 1
               fi
@@ -1047,7 +1047,7 @@ spec:
               # builds[].name. Held again here, because the manifest at the tag
               # is what this run releases: a bundle naming no build of this
               # release is a pin nothing could ever write.
-              if [ -n "${APPS_BUNDLE}" ] && ! printf '%s\n' "${IMAGES}" | grep -qxF "${APPS_BUNDLE}"; then
+              if [ -n "${APPS_BUNDLE}" ] && ! [[ $'\n'"${IMAGES}"$'\n' == *$'\n'"${APPS_BUNDLE}"$'\n'* ]]; then
                 echo "bump: FAIL — ${SRC}/deploy/platform.yaml declares appsBundle '${APPS_BUNDLE}', which is not one of its builds[].name ($(printf '%s' "${IMAGES:-<none>}" | tr '\n' ',')); a tenant's apps bundle is one of the builds this release ships" >&2
                 exit 1
               fi
@@ -1620,7 +1620,7 @@ spec:
                     # because helm strips the missing-key marker from every
                     # render — which is why the third check is the name's
                     # <guid>-<stage> shape and not marker text.
-                    if printf '%s' "${RENDERED}" | grep -qE '[{][{]'; then
+                    if [[ "${RENDERED}" == *[{][{]* ]]; then
                       echo "bump: FAIL — ${asname} left unrendered template actions against ${reg#"${WORK}/"} — the tenant sync cannot be derived:" >&2
                       printf '%s\n' "${RENDERED}" | grep -nE '[{][{]' >&2
                       exit 1
@@ -1633,7 +1633,7 @@ spec:
                     # and either takes the reach to empty with nothing said.
                     # The markers in the source repoURLs and targetRevisions
                     # are not read here and are left where they are.
-                    if printf '%s\n%s\n' "${ANAME}" "${APATHS}" | grep -q '__[A-Z][A-Z_]*__'; then
+                    if [[ "${ANAME}"$'\n'"${APATHS}" =~ __[A-Z][A-Z_]*__ ]]; then
                       echo "bump: FAIL — ${asname} rendered an unfilled __MARKER__ into a value the tenant reach reads against ${reg#"${WORK}/"} — name '${ANAME}', source paths:" >&2
                       printf '%s\n' "${APATHS}" >&2
                       exit 1
@@ -1648,7 +1648,7 @@ spec:
                     # renders.
                     HIT=0
                     for C in ${BUMPED_CHARTS}; do
-                      if printf '%s\n' "${APATHS}" | grep -qx "charts/${C}"; then HIT=1; fi
+                      if [[ $'\n'"${APATHS}"$'\n' == *$'\n'"charts/${C}"$'\n'* ]]; then HIT=1; fi
                     done
                     if [ "${HIT}" = "1" ]; then
                       grep -qxF "tenant ${ANAME} ${rcluster}" "${HITS_FILE}" \
@@ -1816,7 +1816,7 @@ spec:
                 git -C "${ancestry}" init -q
                 while :; do
                   if ! answer="$(kubectl get application.argoproj.io "${app}" -n argocd -o json 2>&1)"; then
-                    if printf '%s' "${answer}" | grep -qi 'notfound\|not found'; then
+                    if [[ "${answer,,}" == *notfound* || "${answer,,}" == *"not found"* ]]; then
                       echo "argo-sync: ${app} in ns argocd does not exist — the master runs no platform app of that name, as at a stage it does not run. The pin is committed and pushed, and a cluster that runs the inventory at this stage renders it on ArgoCD's own poll."
                       return 0
                     fi
@@ -1919,7 +1919,7 @@ spec:
                 if refreshed=$(kubectl annotate application.argoproj.io "${app}" -n "${ns}" \
                      argocd.argoproj.io/refresh=normal --overwrite 2>&1); then
                   printf '%s\n' "${refreshed}"
-                elif printf '%s' "${refreshed}" | grep -qi 'notfound\|not found'; then
+                elif [[ "${refreshed,,}" == *notfound* || "${refreshed,,}" == *"not found"* ]]; then
                   echo "argo-sync: ${app} in ns ${ns} does not exist yet — nothing to refresh. The ApplicationSet generates it from the registration committed before this cycle, and it syncs the pins THIS run just pushed on its first pass. The manager's watch-deployment step is what proves it arrived."
                 else
                   printf '%s\n' "${refreshed}" >&2

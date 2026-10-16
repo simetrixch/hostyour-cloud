@@ -452,7 +452,7 @@ spec:
                 pnpm install --frozen-lockfile || return 1
                 members="$(pnpm ls -r --depth -1 --json | node -e 'for (const p of JSON.parse(require("fs").readFileSync(0, "utf8"))) console.log(p.path)')" || return 1
                 while IFS=$'\t' read -r dir name; do
-                  if ! printf '%s\n' "${members}" | grep -qxF "$(cd "${dir}" && pwd)"; then
+                  if ! [[ $'\n'"${members}"$'\n' == *$'\n'"$(cd "${dir}" && pwd)"$'\n'* ]]; then
                     echo "pack: ${name} (${dir}) is no package of this pnpm workspace, so nothing here builds it - list its folder in pnpm-workspace.yaml" >&2
                     return 1
                   fi

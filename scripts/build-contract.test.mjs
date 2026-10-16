@@ -559,6 +559,72 @@ test('the image check builds only a new tag of an image named after the unit, fr
   }
 });
 
+// The check step of the release's builds task, run on a tagged manifest. Its stand-ins run in lockstep:
+// grep -qx closes its input at the first line it matches, and printf writes its next line only after
+// grep has decided the one before. A check that pipes printf into grep -q under pipefail then meets
+// SIGPIPE on every run instead of at random.
+const REAL_GREP = execFileSync('sh', ['-c', 'command -v grep'], {encoding: 'utf8'}).trim();
+const LOCKSTEP_GREP = `#!/usr/bin/env bash
+[ "$1" = -qx ] || exec "$REAL_GREP" "$@"
+n=0
+while IFS= read -r line; do
+  n=$((n + 1))
+  if "$REAL_GREP" -qx -e "$2" <<< "$line"; then exec 0<&-; : > "$LOCKSTEP/$n"; exit 0; fi
+  : > "$LOCKSTEP/$n"
+done
+exit 1
+`;
+const LOCKSTEP_PRINTF = `() { if [ "$1" != '%s\\n' ] || [ $# -lt 3 ]; then builtin printf "$@"; return; fi
+  local format="$1" n=0; shift; rm -f "$LOCKSTEP"/*
+  for word; do
+    [ "$n" = 0 ] || until [ -e "$LOCKSTEP/$n" ]; do sleep 0.01; done
+    builtin printf "$format" "$word"; n=$((n + 1))
+  done
+}`;
+const RELEASE_BUILDS = ['shop-engine', 'shop-app', 'shop-web'];
+let releaseBuildsStep;
+const runReleaseBuilds = (declared, edit = (script) => script) => {
+  releaseBuildsStep ??= renderUnit('shop', RELEASE_BUILDS).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release')
+    .spec.tasks.find((t) => t.name === 'builds').taskSpec.steps.find((s) => s.name === 'check');
+  const root = mkdtempSync(join(tmpdir(), 'release-builds-')), source = join(root, 'source'), bin = join(root, 'bin');
+  const results = join(root, 'results'), lockstep = join(root, 'lockstep');
+  for (const dir of [join(source, 'deploy'), bin, results, lockstep]) mkdirSync(dir, {recursive: true});
+  writeFileSync(join(source, 'deploy/platform.yaml'),
+    `name: shop\nbuilds:\n${declared.map((b) => `  - {name: '${b}', containerfile: Containerfile, context: .}\n`).join('')}`);
+  writeFileSync(join(bin, 'grep'), LOCKSTEP_GREP); chmodSync(join(bin, 'grep'), 0o755);
+  const env = Object.fromEntries(releaseBuildsStep.env.map((e) => [e.name, e.value]));
+  const result = spawnSync('bash', ['-c', edit(releaseBuildsStep.script).replaceAll('/tekton/results', results)], {cwd: source,
+    encoding: 'utf8', timeout: 60000, env: {PATH: `${bin}:${process.env.PATH}`, REAL_GREP, LOCKSTEP: lockstep, 'BASH_FUNC_printf%%': LOCKSTEP_PRINTF, ...env}});
+  const declaredResults = RELEASE_BUILDS.map((b) => existsSync(join(results, `${b}-declared`)) && readFileSync(join(results, `${b}-declared`), 'utf8'));
+  rmSync(root, {recursive: true, force: true});
+  return {...result, declaredResults};
+};
+
+test('the release builds check passes every attested build, the first one too, when grep -q stops reading at its match', () => {
+  const innocent = runReleaseBuilds(RELEASE_BUILDS);
+  assert.equal(releaseBuildsStep.env.find((e) => e.name === 'ATTESTED').value, RELEASE_BUILDS.join(' '));
+  assert.equal(innocent.status, 0, `PLANTED INNOCENT: three attested builds — ${innocent.stderr}`);
+  assert.deepEqual(innocent.declaredResults, ['true', 'true', 'true']);
+  const attestedCheck = 'if ! [[ " ${ATTESTED} " == *" ${b} "* ]]; then';
+  const racing = (script) => script.replace(attestedCheck, 'if ! printf \'%s\\n\' ${ATTESTED} | grep -qx "${b}"; then');
+  assert.notEqual(racing(releaseBuildsStep.script), releaseBuildsStep.script, 'the step carries the attested check this test replaces');
+  const raced = runReleaseBuilds(RELEASE_BUILDS, racing);
+  assert.notEqual(raced.status, 0, 'PLANTED DEFECT: the attested check piped into grep -q is refused by the stand-ins on its first build');
+  assert.match(raced.stderr, /build 'shop-engine' is declared/);
+  const NOT_ATTESTED = {
+    'a build missing from ATTESTED': [...RELEASE_BUILDS, 'shop-extra'],
+    'a prefix of an attested build': ['shop-eng'],
+    'an attested build with a suffix': ['shop-engines'],
+    'a name that matches an attested build only as a pattern': ['shop-.pp'],
+  };
+  for (const [name, declared] of Object.entries(NOT_ATTESTED)) {
+    const refused = runReleaseBuilds(declared);
+    const missing = declared.at(-1);
+    assert.notEqual(refused.status, 0, `PLANTED DEFECT: ${name}`);
+    assert.equal(refused.stderr, `builds: FAIL — build '${missing}' is declared in deploy/platform.yaml but not attested in registrations/shop/build.yaml — run the onboard verb again to re-attest\n`, name);
+  }
+});
+
 test('the build offers REGISTRY only to a Containerfile that declares it', () => {
   const script = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'buildah-build-push')
     .spec.steps.find((step) => step.name === 'build').script;
