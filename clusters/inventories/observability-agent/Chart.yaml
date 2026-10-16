@@ -50,14 +50,14 @@ dependencies:
   # configMap.create=false → reads the ConfigMap the monitoring chart renders above.
   - name: alloy
     version: 1.11.0
-    repository: https://grafana.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/grafana.github.io/helm-charts
 
   # kube_* metrics. Version pinned to what the master's kube-prometheus-stack
   # (clusters/inventories/observability/Chart.yaml) bundles for KSM — so the slave and the
   # master emit the same kube-state-metrics schema across the clusters.
   - name: kube-state-metrics
     version: 8.0.0
-    repository: https://prometheus-community.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
 
   # Per-namespace SecretStore (the Vault backend the push-cred ExternalSecret
   # reads). On a slave this resolves to the master's per-slave KV mount via the

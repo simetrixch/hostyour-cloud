@@ -14,22 +14,22 @@ dependencies:
   # Core metrics + Grafana + Alertmanager
   - name: kube-prometheus-stack
     version: 87.21.0
-    repository: https://prometheus-community.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
 
   # Logs
   - name: loki
     version: 18.7.0
-    repository: https://grafana-community.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/grafana-community.github.io/helm-charts
 
   # Traces
   - name: tempo
     version: 2.2.3
-    repository: https://grafana-community.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/grafana-community.github.io/helm-charts
 
   # Unified log shipper + OTLP receiver
   - name: alloy
     version: 1.11.0
-    repository: https://grafana.github.io/helm-charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/grafana.github.io/helm-charts
 
   # Vault-backed secrets (one alias per credential)
   - name: external-secret

@@ -21,4 +21,4 @@ type: application
 dependencies:
   - name: external-secrets
     version: 2.8.0
-    repository: oci://ghcr.io/external-secrets/charts
+    repository: oci://zot.master.digitacloud.app/simetrixch/ghcr.io/external-secrets/charts

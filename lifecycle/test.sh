@@ -212,21 +212,25 @@ WORK_A="$WORK/checkout-a"
 
 # THE MIRROR A RELEASE READS ITS IMAGES BACK FROM is a stand-in curl first on the path of every
 # run here. It answers a GET of /v2/<repository>/manifests/<digest> with 200 and that digest where
-# serves holds <host>/<repository>@<digest>, with 404 everywhere else, logs every address it is
-# asked, and logs a login it is handed, which a read of the mirror never carries. A release here
-# waits for it not at all.
+# serves holds <host>/<repository>@<digest>, and a GET of /v2/<repository>/manifests/<tag> with 200 and a
+# manifest of one layer of <sha256> where serves-sources holds <host>/<repository>:<tag> <sha256>, with
+# 404 everywhere else, logs every address it is asked, and logs a login it is handed, which a read of
+# the mirror never carries. A release here waits for it not at all.
 MIRROR_NET="$WORK/mirror-net"
 mkdir -p "$MIRROR_NET"
 HEX_A="$(printf 'a%.0s' $(seq 64))"
 HEX_B="$(printf 'b%.0s' $(seq 64))"
+HEX_C="$(printf 'c%.0s' $(seq 64))"
+HEX_D="$(printf 'd%.0s' $(seq 64))"
 cat > "$MIRROR_NET/curl" <<'STUB'
 #!/usr/bin/env bash
-headers="" url=""
+headers=/dev/null url="" out=/dev/null
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -D) headers="$2"; shift ;;
     -u|--user) echo "login: $2" >> "$(dirname "$0")/requests.log"; shift ;;
-    -o|-w|-H|--connect-timeout|--max-time) shift ;;
+    -o) out="$2"; shift ;;
+    -w|-H|--connect-timeout|--max-time) shift ;;
     https://*) url="$1" ;;
   esac
   shift
@@ -236,6 +240,10 @@ if [[ "$url" =~ ^https://([^/]+)/v2/(.+)/manifests/(sha256:[0-9a-f]{64})$ ]] \
   && grep -qxF "${BASH_REMATCH[1]}/${BASH_REMATCH[2]}@${BASH_REMATCH[3]}" "$(dirname "$0")/serves"; then
   printf 'HTTP/1.1 200 OK\r\nDocker-Content-Digest: %s\r\n\r\n' "${BASH_REMATCH[3]}" > "$headers"
   printf 200
+elif [[ "$url" =~ ^https://([^/]+)/v2/(.+)/manifests/([A-Za-z0-9_][A-Za-z0-9._-]*)$ ]] \
+  && held="$(grep -F "${BASH_REMATCH[1]}/${BASH_REMATCH[2]}:${BASH_REMATCH[3]} " "$(dirname "$0")/serves-sources")"; then
+  printf '{"schemaVersion":2,"layers":[{"digest":"sha256:%s"}]}' "${held##* }" > "$out"
+  printf 200
 else
   printf 'HTTP/1.1 404 Not Found\r\n\r\n' > "$headers"
   printf 404
@@ -243,6 +251,7 @@ fi
 STUB
 chmod +x "$MIRROR_NET/curl"
 printf '%s\n' "zot.example.invalid/owner/ghcr.io/fixture/one@sha256:$HEX_A" "zot.example.invalid/owner/ghcr.io/fixture/two@sha256:$HEX_B" > "$MIRROR_NET/serves"
+printf '%s\n' "zot.example.invalid/owner/charts.example.invalid/fixture-one:1.0.0 $HEX_C" "zot.example.invalid/owner/charts.example.invalid/fixture-two:2.0.0 $HEX_D" > "$MIRROR_NET/serves-sources"
 export RELEASE_MIRROR_WAIT=0
 
 run_bash() { # script base name, then its arguments
@@ -279,6 +288,17 @@ printf '%s\n' \\
   'ghcr.io/fixture/one:1.0.0@sha256:$HEX_A zot.example.invalid/owner/ghcr.io/fixture/one:1.0.0@sha256:$HEX_A' \\
   'ghcr.io/fixture/two:2.0.0@sha256:$HEX_B zot.example.invalid/owner/ghcr.io/fixture/two:2.0.0@sha256:$HEX_B'
 STUB
+# The tools and charts of the fixture tree: two charts on a repository of no upstream, each beside its name in the
+# mirror, and the file of the real tree that reads a row back, as the tree at a tag carries it.
+cat > "$SEED/scripts/list-mirror-sources.sh" <<STUB
+#!/usr/bin/env bash
+# The tools and charts of the fixture tree: two charts, each beside its name in the mirror.
+printf '%s\n' \\
+  'chart https://charts.example.invalid fixture-one 1.0.0 $HEX_C zot.example.invalid/owner/charts.example.invalid/fixture-one:1.0.0 oci://zot.example.invalid/owner/charts.example.invalid' \\
+  'chart https://charts.example.invalid fixture-two 2.0.0 $HEX_D zot.example.invalid/owner/charts.example.invalid/fixture-two:2.0.0 oci://zot.example.invalid/owner/charts.example.invalid'
+STUB
+mkdir -p "$SEED/clusters/inventories/consumer-build/files"
+cp "$HERE/../clusters/inventories/consumer-build/files/mirror-sources.sh" "$SEED/clusters/inventories/consumer-build/files/mirror-sources.sh"
 git -C "$SEED" add -A
 git -C "$SEED" commit --quiet -m "Seed the trunk"
 git -C "$SEED" push --quiet origin master
@@ -390,9 +410,10 @@ must "bash lifecycle/regenerate-install-branch.sh apps3.example.invalid" \
      'the second act is named, as the script that performs it'
 must_not "ansiwise deploy-branch" 'the second act is a script beside this one, not a command to retype'
 expect 'the mint and the pin' 0 <<'RECORDED'
-release: minted 0.1.0-alpha-TS14 on origin/master (commit ec7f96a)
+release: minted 0.1.0-alpha-TS14 on origin/master (commit aa499c5)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
 release: the mirror serves all 2 images of 0.1.0-alpha-TS14 at their digests, read without a login
+release: the mirror serves all 2 tools and charts of 0.1.0-alpha-TS14
 release: pinned apps3.example.invalid to 0.1.0-alpha-TS14 in clusters/active/apps3.example.invalid.yaml
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps3.example.invalid beside this tree (lifecycle/config.apps3.env), so it is pinned and not regenerated. Bring it onto 0.1.0-alpha-TS14 with:
@@ -424,6 +445,7 @@ expect 'the second run for the same version and channel' 0 <<'RECORDED'
 release: reusing 0.1.0-alpha-TS14. One release per version and channel, so putting it on apps3.example.invalid cuts nothing new
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
 release: the mirror serves all 2 images of 0.1.0-alpha-TS14 at their digests, read without a login
+release: the mirror serves all 2 tools and charts of 0.1.0-alpha-TS14
 release: clusters/active/apps3.example.invalid.yaml already records 0.1.0-alpha-TS14, so it is left as it stands
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps3.example.invalid beside this tree (lifecycle/config.apps3.env), so it is pinned and not regenerated. Bring it onto 0.1.0-alpha-TS14 with:
@@ -557,10 +579,11 @@ must "it is dropped and cut again" 'and it is dropped rather than reused'
 must "release: minted 0.2.0-alpha-" 'a fresh tag is cut in its place'
 must_not "release: reusing $STALE" 'the leftover is never reused'
 expect 'a tag a refused push left behind' 0 <<'RECORDED'
-release: 0.2.0-alpha-TS14 stands on this workstation only and names 2b5b292, not the commit this release is cut from. A run whose push was refused left it behind; it is dropped and cut again.
-release: minted 0.2.0-alpha-TS14 on origin/master (commit d3bc98f)
+release: 0.2.0-alpha-TS14 stands on this workstation only and names 778a9c6, not the commit this release is cut from. A run whose push was refused left it behind; it is dropped and cut again.
+release: minted 0.2.0-alpha-TS14 on origin/master (commit 9aec6ae)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
 release: the mirror serves all 2 images of 0.2.0-alpha-TS14 at their digests, read without a login
+release: the mirror serves all 2 tools and charts of 0.2.0-alpha-TS14
 release: pinned apps4.example.invalid to 0.2.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.2.0-alpha-TS14 with:
@@ -588,6 +611,7 @@ expect 'a tag that never reached origin but names the released commit' 0 <<'RECO
 release: reusing 0.3.0-alpha-TS14. One release per version and channel, so putting it on apps4.example.invalid cuts nothing new
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
 release: the mirror serves all 2 images of 0.3.0-alpha-TS14 at their digests, read without a login
+release: the mirror serves all 2 tools and charts of 0.3.0-alpha-TS14
 release: pinned apps4.example.invalid to 0.3.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: no config beside this tree names a PLATFORM_REF, so none was written
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.3.0-alpha-TS14 with:
@@ -623,9 +647,10 @@ must_not "release: pinned apps9" 'nor is the prod installation'
 must "no config beside this tree names a PLATFORM_REF, so none was written" 'the fixture carries no machine config, and the run says so instead of writing one'
 must_not "work/no-map" 'a branch carrying no map is no installation and is not pinned'
 expect 'the mint that names no installation' 0 <<'RECORDED'
-release: minted 0.4.0-alpha-TS14 on origin/master (commit d3bc98f)
+release: minted 0.4.0-alpha-TS14 on origin/master (commit 9aec6ae)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
 release: the mirror serves all 2 images of 0.4.0-alpha-TS14 at their digests, read without a login
+release: the mirror serves all 2 tools and charts of 0.4.0-alpha-TS14
 release: pinned apps3.example.invalid to 0.4.0-alpha-TS14 in clusters/active/apps3.example.invalid.yaml
 release: pinned apps4.example.invalid to 0.4.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: apps5.example.invalid is stage test and channel alpha admits only: dev - left as it stands
@@ -688,9 +713,10 @@ must "release: pinned apps4.example.invalid to 0.6.0-alpha-" 'the named installa
 must "release: PLATFORM_REF=0.6.0-alpha-" 'the tag is written into the config beside the tree'
 must "written into 1 config(s) under lifecycle/" 'and the example beside it is not counted'
 expect 'the mint that rewrites the config beside the tree' 0 <<'RECORDED'
-release: minted 0.6.0-alpha-TS14 on origin/master (commit d3bc98f)
+release: minted 0.6.0-alpha-TS14 on origin/master (commit 9aec6ae)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
 release: the mirror serves all 2 images of 0.6.0-alpha-TS14 at their digests, read without a login
+release: the mirror serves all 2 tools and charts of 0.6.0-alpha-TS14
 release: pinned apps4.example.invalid to 0.6.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: PLATFORM_REF=0.6.0-alpha-TS14 written into 1 config(s) under lifecycle/
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.6.0-alpha-TS14 with:
@@ -719,9 +745,10 @@ must "release: master is fast-forwarded onto origin/master" 'a lagging master is
 must "release: minted 0.7.0-alpha-" 'and the run goes on to mint'
 expect 'a checkout whose master lags origin/master' 0 <<'RECORDED'
 release: master is fast-forwarded onto origin/master, where the tag goes - the push gate lets through only what is checked out
-release: minted 0.7.0-alpha-TS14 on origin/master (commit d3bc98f)
+release: minted 0.7.0-alpha-TS14 on origin/master (commit 9aec6ae)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
 release: the mirror serves all 2 images of 0.7.0-alpha-TS14 at their digests, read without a login
+release: the mirror serves all 2 tools and charts of 0.7.0-alpha-TS14
 release: pinned apps4.example.invalid to 0.7.0-alpha-TS14 in clusters/active/apps4.example.invalid.yaml
 release: PLATFORM_REF=0.7.0-alpha-TS14 written into 1 config(s) under lifecycle/
 release: no config for apps4.example.invalid beside this tree (lifecycle/config.apps4.env), so it is pinned and not regenerated. Bring it onto 0.7.0-alpha-TS14 with:
@@ -766,7 +793,7 @@ must "release: the mirror does not serve 1 of the 2 images of 0.9.0-alpha-" 'a m
 must "zot.example.invalid/owner/ghcr.io/fixture/one:1.0.0@sha256:$HEX_A;" 'and names the image the mirror lacks'
 must_not "release: pinned" 'nothing is pinned before the mirror serves every image of the tag'
 expect 'a mirror that lacks one image of the tag' 69 <<RECORDED
-release: minted 0.9.0-alpha-TS14 on origin/master (commit d3bc98f)
+release: minted 0.9.0-alpha-TS14 on origin/master (commit 9aec6ae)
 release: the tag stands on the remote, so a machine that fetches origin can resolve it
 ~~~ standard error ~~~
 release: the mirror does not serve 1 of the 2 images of 0.9.0-alpha-TS14 after 0s: zot.example.invalid/owner/ghcr.io/fixture/one:1.0.0@sha256:$HEX_A; the publish run of 0.9.0-alpha-TS14 on the owner's master copies them. Nothing was pinned. Read that run, then release again: the tag is reused
@@ -779,6 +806,49 @@ GET https://zot.example.invalid/v2/owner/ghcr.io/fixture/two/manifests/sha256:$H
 [ "$(cat "$WORK_A/lifecycle/config.other.env")" = "$CONFIG_BEFORE" ] \
   || fail 'the release wrote PLATFORM_REF although the mirror lacked an image of the tag'
 ok 'a mirror that lacks one image stops the release by name after the tag and before the pin, the config and the regeneration'
+
+# ── a mirror that lacks a tool or chart of the tag, or serves another file for it, stops the release before the pin ──
+# THE TOOLS AND CHARTS OF THE TAG ARE COPIED BY THE SAME RUN, and a pin before the copy is a master that cannot
+# fetch its own tools. The tree at the tag lists them (scripts/list-mirror-sources.sh) and the release reads
+# each row by the manifest of its tag, which has to name one layer of the row's sha256. The first stand-in
+# mirror lacks the first row, the second serves the second row as a layer of another sha256: each stops the
+# release after the images were read, naming the row and what the mirror answered, and pins, writes and
+# regenerates nothing. The innocent case is every release above, against a mirror that serves both rows.
+cp "$MIRROR_NET/serves-sources" "$MIRROR_NET/serves-sources.all"
+grep -vF fixture-one "$MIRROR_NET/serves-sources.all" > "$MIRROR_NET/serves-sources"
+: > "$MIRROR_NET/requests.log"
+run_bash release-platform 0.9.1 alpha apps4.example.invalid
+cp "$MIRROR_NET/serves-sources.all" "$MIRROR_NET/serves-sources"
+must "release: the mirror does not serve 1 of the 2 tools and charts of 0.9.1-alpha-" 'a mirror that lacks one row of the tag stops the release'
+must "zot.example.invalid/owner/charts.example.invalid/fixture-one:1.0.0 (absent answered 404);" 'and names the row the mirror lacks and what it answered'
+must_not "release: the mirror serves all 2 tools and charts" 'a mirror that lacks a row is not reported as serving them'
+must_not "release: pinned" 'nothing is pinned before the mirror serves every tool and chart of the tag'
+expect 'a mirror that lacks one tool or chart of the tag' 69 <<RECORDED
+release: minted 0.9.1-alpha-TS14 on origin/master (commit 9aec6ae)
+release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 2 images of 0.9.1-alpha-TS14 at their digests, read without a login
+~~~ standard error ~~~
+release: the mirror does not serve 1 of the 2 tools and charts of 0.9.1-alpha-TS14 after 0s: zot.example.invalid/owner/charts.example.invalid/fixture-one:1.0.0 (absent answered 404); the publish run of 0.9.1-alpha-TS14 on the owner's master copies them. Nothing was pinned. Read that run, then release again: the tag is reused
+RECORDED
+[ "$(grep -c 'manifests/[0-9]' "$MIRROR_NET/requests.log")" = 2 ] && grep -qxF 'GET https://zot.example.invalid/v2/owner/charts.example.invalid/fixture-one/manifests/1.0.0' "$MIRROR_NET/requests.log" \
+  && grep -qxF 'GET https://zot.example.invalid/v2/owner/charts.example.invalid/fixture-two/manifests/2.0.0' "$MIRROR_NET/requests.log" \
+  || fail "the release did not read every tool and chart of the list once, by its tag and without a login: $(cat "$MIRROR_NET/requests.log")"
+! grep -q '^login' "$MIRROR_NET/requests.log" || fail 'the release handed the mirror a login'
+[ "$(git --git-dir="$ORIGIN_A" rev-parse refs/heads/apps4.example.invalid)" = "$HEAD_APPS4" ] \
+  || fail 'the release moved the branch of apps4 although the mirror lacked a tool or chart of the tag'
+[ "$(cat "$WORK_A/lifecycle/config.other.env")" = "$CONFIG_BEFORE" ] \
+  || fail 'the release wrote PLATFORM_REF although the mirror lacked a tool or chart of the tag'
+ok 'a mirror that lacks one tool or chart stops the release by name after the images and before the pin, the config and the regeneration'
+
+grep -vF fixture-two "$MIRROR_NET/serves-sources.all" > "$MIRROR_NET/serves-sources"
+printf '%s\n' "zot.example.invalid/owner/charts.example.invalid/fixture-two:2.0.0 $HEX_C" >> "$MIRROR_NET/serves-sources"
+run_bash release-platform 0.9.2 alpha apps4.example.invalid
+cp "$MIRROR_NET/serves-sources.all" "$MIRROR_NET/serves-sources"
+must "release: the mirror does not serve 1 of the 2 tools and charts of 0.9.2-alpha-" 'a mirror that serves another file for a row stops the release'
+must "zot.example.invalid/owner/charts.example.invalid/fixture-two:2.0.0 (other answered 200 with the one layer sha256:$HEX_C);" 'and names the row and the layer the mirror answered with'
+must_not "release: pinned" 'nothing is pinned before the mirror serves the file of every row'
+[ "$A_CODE" = 69 ] || fail "a mirror that serves another file for a row ended the release with $A_CODE, not 69"
+ok 'a mirror that serves another file for a row stops the release by name, with the layer it answered with'
 
 # ===========================================================================
 # TWO — regenerate-install-branch, on the fixture the release above pinned

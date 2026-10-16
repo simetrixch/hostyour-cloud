@@ -1086,12 +1086,16 @@ echo "check: the mirror holds $(printf '%s\n' "$mirror_entries" | wc -l | tr -d 
 # ── The tools and charts the owner's mirror holds ───────────────────────────────────────────────
 # scripts/list-mirror-sources.sh writes one line per row of clusters/platform/mirror-sources.table for the
 # steps fetch, copy-sources and read-back-sources of the mirror task, and refuses a row of another form by
-# its line number. The planted defect: a tool row without its url.
+# its line number. The planted defects: a tool row without its url, and a chart pinned at a version no row holds,
+# which --chart refuses by naming it; the innocent case is the chart the pin of versions.yaml names, found below.
 mirror_sources="$(bash scripts/list-mirror-sources.sh)" || fail "scripts/list-mirror-sources.sh refuses clusters/platform/mirror-sources.table"
 printf 'tool %s\n' "$(printf '0%.0s' {1..64})" > "$work/planted-mirror-sources.table"
 bash scripts/list-mirror-sources.sh "$work/planted-mirror-sources.table" >/dev/null 2>&1 \
   && fail "scripts/list-mirror-sources.sh lists a planted tool row without its url"
-echo "check: the mirror holds $(printf '%s\n' "$mirror_sources" | grep -c '^tool ') tools and $(printf '%s\n' "$mirror_sources" | grep -c '^chart ') charts of the $(printf '%s\n' "$mirror_sources" | grep -c .) rows of clusters/platform/mirror-sources.table, each at its sha256; the list refuses a planted tool row without its url."
+out="$(bash scripts/list-mirror-sources.sh --chart headlamp 0.0.0 2>&1)" \
+  && fail "scripts/list-mirror-sources.sh --chart gives an address for a headlamp version no row holds"
+case "$out" in *"the chart headlamp at 0.0.0"*) ;; *) fail "scripts/list-mirror-sources.sh --chart does not name the chart and the version it has no row for: $out" ;; esac
+echo "check: the mirror holds $(printf '%s\n' "$mirror_sources" | grep -c '^tool ') tools and $(printf '%s\n' "$mirror_sources" | grep -c '^chart ') charts of the $(printf '%s\n' "$mirror_sources" | grep -c .) rows of clusters/platform/mirror-sources.table, each at its sha256; the list refuses a planted tool row without its url and a chart at a version no row holds."
 
 # A REF STAYS ON ghcr.io ONLY WHILE ITS WORKLOAD CAN START BEFORE THE MIRROR SERVES: the registry's own zot;
 # External Secrets, which writes zot's htpasswd Secret before zot starts; the Tekton images, which sync
@@ -1128,10 +1132,11 @@ pinned_tag_fault() { # <what> <the chart's own tag> <values file> <yq path of th
   pinned="$(yq "$4" "$3")"
   [ "${pinned%%@*}" = "$2" ] || echo "$1 is pinned at ${pinned%%@*} in $3 ($4), and its chart names $2"
 }
-headlamp_app="$(helm show chart "$(yq '.bootstrap.headlamp.upstream.chart' clusters/platform/versions.yaml)" \
-  --repo "$(yq '.bootstrap.headlamp.upstream.repository' clusters/platform/versions.yaml)" \
-  --version "$(yq '.bootstrap.headlamp.version' clusters/platform/versions.yaml)" | yq '.appVersion')" \
-  || fail "the headlamp chart clusters/platform/versions.yaml pins could not be read"
+headlamp_version="$(yq '.bootstrap.headlamp.version' clusters/platform/versions.yaml)"
+headlamp_address="$(bash scripts/list-mirror-sources.sh --chart headlamp "$headlamp_version")" \
+  || fail "clusters/platform/versions.yaml pins the headlamp chart at $headlamp_version, and clusters/platform/mirror-sources.table has no row for it"
+headlamp_app="$(helm show chart "$headlamp_address/headlamp" --version "$headlamp_version" | yq '.appVersion')" \
+  || fail "the headlamp chart clusters/platform/versions.yaml pins could not be read from $headlamp_address"
 pinned_tags=(
   "the master's Dex|$(helm show values "$argo_chart" | yq '.dex.image.tag')|clusters/bootstrap/argocd/values.tpl|.dex.image.tag"
   "Headlamp|v$headlamp_app|clusters/bootstrap/headlamp/values.tpl|.image.tag"

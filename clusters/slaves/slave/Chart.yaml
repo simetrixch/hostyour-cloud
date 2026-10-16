@@ -56,7 +56,7 @@ dependencies:
   # this chart renders (clusters/charts/common labels).
   - name: argo-cd
     version: 10.2.1
-    repository: https://argoproj.github.io/argo-helm
+    repository: oci://zot.master.digitacloud.app/simetrixch/argoproj.github.io/argo-helm
 
   # Per-namespace ESO SecretStore (vault-backend) + ServiceAccount in ns <name>,
   # so the ExternalSecrets in templates/ can read the MASTER's Vault (mount
