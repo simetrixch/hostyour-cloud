@@ -16,6 +16,7 @@ app:
     # Single-binary OCI registry. Tag MUST match Chart.yaml appVersion above.
     repository: ghcr.io/project-zot/zot-linux-amd64
     tag: "v2.1.18"
+    sha256: "34f18f783037f967dba10df02f9d4086c4d626f5643ef9f5e51e4a4547280a0b"
     pullPolicy: IfNotPresent
   replicas: 1
   podAnnotations:
@@ -24,7 +25,7 @@ app:
     # restart it. The value is "config-" and 12 hex digits of the git hash of the
     # config.json every stage renders. scripts/check.sh refuses any other value and
     # prints the one to set.
-    hostyour.cloud/config-revision: "config-8a6be16b4bfb"
+    hostyour.cloud/config-revision: "config-beba28a38bf6"
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
   # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
   # With RollingUpdate, the new pod fails to start until the old pod
@@ -151,9 +152,11 @@ ingress:
 #   - Anonymous read on <owner>/** alone, <owner> being the last segment of
 #     global.buildRegistry: the platform's own images under their owner's name, which
 #     every other installation and the relocation Jobs on the app clusters pull without
-#     a credential. Only two things write there: the release pipeline for
-#     global.buildRegistryUnit on the owner's master, and the binary publish of a
-#     repository that carries release/build.sh. Everything else stays closed
+#     a credential. Only three things write there: the release pipeline for
+#     global.buildRegistryUnit on the owner's master, the binary publish of a
+#     repository that carries release/build.sh, and the publish run of the platform
+#     tree on the owner's master, which copies the images the tree pulls from ghcr.io
+#     to <owner>/ghcr.io/<path>. Everything else stays closed
 #     (defaultPolicy + anonymousPolicy both []).
 # Default storage: filesystem at /var/lib/registry (bound to the PVC above).
 #
@@ -169,6 +172,11 @@ ingress:
 # one. Four of the metric families zot registers carry a repo label
 # (pkg/extensions/monitoring/extension.go), which would hand anybody the name, the byte size and
 # the pull count of every repository in a private registry.
+#
+# DOCKER V2 SCHEMA 2 IS TAKEN AS IT IS (http.compat). The mirror under <owner>/ghcr.io/ holds each
+# upstream image at the digest its consumers pin, and some upstreams publish that older media type
+# (ghcr.io/puppeteer/puppeteer does). Without compat zot refuses such a manifest, and converting it to
+# OCI would give it another digest. scripts/check.sh refuses a config.json without it.
 #
 # docker.io pull-through cache (extensions.sync, onDemand): a pull of any
 # repo NOT found locally triggers an on-demand fetch from registry-1.docker.io,
@@ -345,6 +353,7 @@ configmap:
             "address": "0.0.0.0",
             "port": "5000",
             "realm": "zot",
+            "compat": ["docker2s2"],
             "auth": {
               "htpasswd": {
                 "path": "/secret/htpasswd"

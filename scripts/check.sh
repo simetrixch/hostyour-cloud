@@ -992,6 +992,8 @@ zot_fault() { # $1 the zot config.json -> the first way it differs from the acce
     || { echo "simetrixch/** is not open to an anonymous read, so another installation pulls the platform's images with no credential and gets 401"; return; }
   [ "$(repository_policy "$1" 'simetrixch/**' policies)" = "$(repository_policy "$1" '**' policies)" ] \
     || { echo "simetrixch/** grants the push and pull users other actions than **, and zot takes the longest matching pattern alone"; return; }
+  [ "$(yq -p=json -o=json -I=0 '.http.compat' "$1")" = '["docker2s2"]' ] \
+    || { echo "zot refuses a Docker v2 schema 2 manifest, so the mirror cannot hold an upstream image of that media type at the digest its consumers pin"; return; }
   [ "$(yq -p=json -o=json -I=0 '[.extensions.sync.registries[].urls[]] | map(select(test("ghcr\\.io"))) | length' "$1")" = 0 ] \
     || echo "zot still fetches from ghcr.io on a miss, so a platform image it lacks is pulled through from GitHub instead of failing"
 }
@@ -1003,11 +1005,13 @@ helm template registry clusters/inventories/registry --namespace registry \
 yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' "$work/registry-render" > "$work/zot.json"
 fault="$(zot_fault "$work/zot.json")"
 [ -z "$fault" ] || fail "the registry's zot config: $fault"
-# The planted defects: every repository open to an anonymous read, and the seed storing flat.
+# The planted defects: every repository open to an anonymous read, the seed storing flat, and no Docker v2 schema 2.
 yq -p=json -o=json '(.http.accessControl.repositories[] | .anonymousPolicy) = ["read"]' "$work/zot.json" > "$work/zot-planted.json"
 [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that lets anyone read every repository"
 yq -p=json -o=json '.extensions.sync.registries = [{"urls": ["https://ghcr.io"], "onDemand": true, "content": [{"prefix": "/simetrixch/*", "destination": "/simetrixch", "stripPrefix": true}]}] + .extensions.sync.registries' "$work/zot.json" > "$work/zot-planted.json"
 [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that still fetches from ghcr.io"
+yq -p=json -o=json 'del(.http.compat)' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that refuses Docker v2 schema 2 manifests"
 # The planted innocent: buildRegistry naming the owner's own registry keeps the owner's prefix.
 helm template registry clusters/inventories/registry --namespace registry \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -1016,7 +1020,7 @@ helm template registry clusters/inventories/registry --namespace registry \
   | yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' > "$work/zot-planted.json"
 fault="$(zot_fault "$work/zot-planted.json")"
 [ -z "$fault" ] || fail "the planted innocent, buildRegistry at the owner's own registry, is refused: $fault"
-echo "check: zot opens simetrixch/** alone to an anonymous read and fetches nothing from ghcr.io; the check refuses both planted defects and takes the planted innocent."
+echo "check: zot opens simetrixch/** alone to an anonymous read, takes Docker v2 schema 2 manifests as they are and fetches nothing from ghcr.io; the check refuses the three planted defects and takes the planted innocent."
 
 # ── The pod of zot rolls when the config.json it was started with is not the one the ConfigMap holds ─
 # zot loads its config at start and never again, and a ConfigMap mount that follows an edit does not
@@ -1063,6 +1067,49 @@ render_registry_stages --set app.replicas=2 --set-string pvc.pvc.storageSize=60G
 fault="$(zot_revision_fault)"
 [ -z "$fault" ] || fail "the planted innocent, a replica count and a volume size outside config.json, is refused: $fault"
 echo "check: the zot pod rolls with the config.json of every stage; the check refuses a changed config under an old revision and a revision no config names, and takes a change outside config.json."
+
+# ── The images the owner's mirror holds ─────────────────────────────────────────────────────────
+# scripts/list-mirror-images.sh lists every image the tree names on ghcr.io or under the mirror, for the
+# `mirror` task of the platform's publish run. An entry is one digest under its tag, so a ref without its
+# digest has none and fails the list, and the publish run with it.
+mirror_refs="$(bash scripts/list-mirror-images.sh --rendered)" || fail "scripts/list-mirror-images.sh cannot render the tree"
+mirror_entries="$(printf '%s\n' "$mirror_refs" | bash scripts/list-mirror-images.sh --entries 2>&1)" \
+  || fail "an image the mirror must hold has no entry: $mirror_entries"
+mirror_prefix="$(yq '.global.buildRegistry' clusters/platform/values-common.yaml)/ghcr.io"
+# The planted defects: a ref on ghcr.io and a ref under the mirror, each without its digest.
+printf 'ghcr.io/planted/image:1.0.0 planted\n' | bash scripts/list-mirror-images.sh --entries >/dev/null 2>&1 \
+  && fail "scripts/list-mirror-images.sh lists a ref on ghcr.io that names no digest"
+printf '%s/planted/image:1.0.0 planted\n' "$mirror_prefix" | bash scripts/list-mirror-images.sh --entries >/dev/null 2>&1 \
+  && fail "scripts/list-mirror-images.sh lists a ref under the mirror that names no digest"
+echo "check: the mirror holds $(printf '%s\n' "$mirror_entries" | wc -l | tr -d ' ') images, each at its digest; the list refuses a planted ref on ghcr.io and one under the mirror without it."
+
+# WHERE A CHART HAS NO FIELD FOR A DIGEST, the digest rides on the tag of an override, and the override then
+# names the tag as well. Each such tag is held to the one its chart names, so a bump of the chart cannot
+# leave its image behind at the old one.
+pinned_tag_fault() { # <what> <the chart's own tag> <values file> <yq path of the override> -> what is wrong, or nothing
+  local pinned
+  pinned="$(yq "$4" "$3")"
+  [ "${pinned%%@*}" = "$2" ] || echo "$1 is pinned at ${pinned%%@*} in $3 ($4), and its chart names $2"
+}
+headlamp_app="$(helm show chart "$(yq '.bootstrap.headlamp.upstream.chart' clusters/platform/versions.yaml)" \
+  --repo "$(yq '.bootstrap.headlamp.upstream.repository' clusters/platform/versions.yaml)" \
+  --version "$(yq '.bootstrap.headlamp.version' clusters/platform/versions.yaml)" | yq '.appVersion')" \
+  || fail "the headlamp chart clusters/platform/versions.yaml pins could not be read"
+pinned_tags=(
+  "the master's Dex|$(helm show values "$argo_chart" | yq '.dex.image.tag')|clusters/bootstrap/argocd/values.tpl|.dex.image.tag"
+  "Headlamp|v$headlamp_app|clusters/bootstrap/headlamp/values.tpl|.image.tag"
+  "the External Secrets controller|$(helm show chart clusters/inventories/external-secrets/charts/external-secrets-*.tgz | yq '.appVersion')|clusters/inventories/external-secrets/values-common.yaml|.external-secrets.image.tag"
+  "the Loki gateway's access-log exporter|$(helm show values clusters/inventories/observability/charts/loki-*.tgz | yq '.gateway.metrics.image.tag')|clusters/inventories/observability/values-common.yaml|.loki.gateway.metrics.image.tag"
+)
+for row in "${pinned_tags[@]}"; do
+  IFS='|' read -r what chart_tag file path <<< "$row"
+  fault="$(pinned_tag_fault "$what" "$chart_tag" "$file" "$path")"
+  [ -z "$fault" ] || fail "$fault — write the chart's tag with the digest it names there"
+done
+# The planted defect: a chart that names another tag than the override.
+[ -n "$(pinned_tag_fault Headlamp v0.0.0-planted clusters/bootstrap/headlamp/values.tpl .image.tag)" ] \
+  || fail "pinned_tag_fault takes an override whose tag its chart no longer names"
+echo "check: ${#pinned_tags[@]} overrides carry a digest on their chart's own tag; the check refuses a planted chart that names another."
 
 push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
   helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
@@ -1178,8 +1225,8 @@ echo "check: an SMTP entry opens a unit's fence and admission boundary where one
 # ── What clusters/bootstrap must never carry ─────────────────────────────────────────────────
 # NOTHING STAMPS THAT TREE, AND A PLACEHOLDER LEFT IN IT TRAVELS AS TEXT. The seven files under
 # clusters/bootstrap that carry one installation's own domain and short name are TEMPLATES: the
-# branch program renders each .tpl onto the install branch beside itself, filling <fqdn>,
-# <cluster-name> and <books-name>. No stamping row reaches the tree any more, and a row whose
+# branch program renders each .tpl onto the install branch beside itself, filling the slots its row
+# hands it, which the next section holds. No stamping row reaches the tree any more, and a row whose
 # literal is gone reports itself satisfied rather than refusing, so a placeholder written here
 # afterwards would reach every machine spelled out, with no run saying a word.
 #
@@ -1190,6 +1237,136 @@ if [ -n "$placeholders" ]; then
   fail "a file under clusters/bootstrap carries a placeholder, and nothing stamps that tree — write the value as a template slot in the .tpl beside it instead"
 fi
 echo "check: no file under clusters/bootstrap carries a placeholder, which nothing there would replace."
+
+# ── What the branch program hands the templates of clusters/bootstrap ───────────────────────
+# A TEMPLATE AND ITS ROW ARE TWO HALVES OF ONE CALL, IN TWO REPOSITORIES. The write_file_from_template
+# rows of hostyour-deploy's ansiwise/programs/deploy-branch.yaml render every .tpl here, and the engine
+# refuses the run when a template and its row's values do not fit. Every slot counts, one in a comment
+# as much as one in a value, so a comment that names <tag> stops the regeneration of every machine
+# after the release is already pinned. Each template is read here against its row as the engine reads it.
+#
+# THE RULE IS THE ENGINE'S, COPIED ONCE: the grammar is ansiwise-core lib/src/steps/slots.dart
+# slotPattern, the refusals are template.dart Template.filledWith. A required slot <name> its row does
+# not hand, a value of the row that no slot takes and a value handed to a carried slot <name!?> are
+# refused; an optional slot <name?> may go without one. Beside the engine's rule, a .tpl that no row
+# names is refused, because nothing hands its slots, and so is a row that names a template of this
+# tree that does not stand in it.
+bootstrap_template_faults() { # <program> <tree> -> one line per template and row that do not fit, or nothing
+  local rows template values file lines slot name kind slots names value
+  rows="$(yq '.. | select(tag == "!!map" and .step == "write_file_from_template") | [.template, (.values // {} | keys | join(" "))] | @tsv' "$1")" \
+    || { echo "the write_file_from_template rows of $1 could not be read"; return; }
+  bootstrap_rows=0
+  local named=" "
+  while IFS=$'\t' read -r template values; do
+    case "$template" in /srv/hostyour-cloud/*) ;; *) continue ;; esac
+    file="${template#/srv/hostyour-cloud/}"
+    named="$named$file "
+    bootstrap_rows=$((bootstrap_rows + 1))
+    # yq's own line operator names lines this program's text does not have there, so the row is found
+    # by its template line.
+    lines="$(awk -v t="$template" '{ s = $0; sub(/^[ \t]*(- )?/, "", s); sub(/[ \t]+$/, "", s); gsub(/["'\'']/, "", s) }
+      s == "template: " t { printf "%s%s", (n++ ? "," : ""), NR }' "$1")"
+    if [ ! -f "$2/$file" ]; then
+      echo "$file: the row at deploy-branch.yaml:$lines names it, and it does not stand in this tree"
+      continue
+    fi
+    slots="$(grep -oE '<[a-z][a-z0-9-]*(!\?|\?)?>' "$2/$file" | sort -u)"
+    names=" "
+    while IFS= read -r slot; do
+      [ -n "$slot" ] || continue
+      name="${slot#<}"; name="${name%>}"
+      case "$name" in
+        *'!?') kind=carried; name="${name%'!?'}" ;;
+        *'?') kind=optional; name="${name%'?'}" ;;
+        *) kind=required ;;
+      esac
+      names="$names$name "
+      case " $values " in
+        *" $name "*) [ "$kind" != carried ] \
+          || echo "$file carries $slot, and its row at deploy-branch.yaml:$lines hands it a value, which a carried slot never takes" ;;
+        *) [ "$kind" != required ] \
+          || echo "$file names $slot, and its row at deploy-branch.yaml:$lines hands no value under that name" ;;
+      esac
+    done <<< "$slots"
+    while IFS= read -r value; do
+      [ -n "$value" ] || continue
+      case "$names" in
+        *" $value "*) ;;
+        *) echo "$file names no slot <$value>, and its row at deploy-branch.yaml:$lines hands a value under that name" ;;
+      esac
+    done < <(printf '%s\n' "$values" | tr ' ' '\n')
+  done <<< "$rows"
+  while IFS= read -r file; do
+    case "$named" in
+      *" $file "*) ;;
+      *) echo "$file: no write_file_from_template row of the program names it, so nothing hands its slots" ;;
+    esac
+  done < <(cd "$2" && find clusters/bootstrap -name '*.tpl' | sort)
+}
+
+# THE ROWS ARE READ AT THE COMMIT ci-sources.json PINS, NEVER FROM A WORKING TREE: on the master's ci
+# out of the bare repository the fetch task makes under CI_SOURCES_DIR, on a machine out of the object
+# store of the hostyour-deploy clone beside the main checkout, which a worktree finds through its
+# common git directory. A template that needs a new binding moves the pin to the row's commit, and the
+# pin records which rows the templates were held to.
+deploy_pin="$(yq -p=json -o=yaml '.git["hostyour-deploy"] // ""' ci-sources.json)" \
+  || fail "ci-sources.json could not be read, so the commit of hostyour-deploy whose rows render clusters/bootstrap is not known"
+[[ "$deploy_pin" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "ci-sources.json pins hostyour-deploy at '$deploy_pin', not a full commit (40 lowercase hex digits)"
+if [ -n "${CI_SOURCES_DIR:-}" ]; then
+  deploy_source="$CI_SOURCES_DIR/hostyour-deploy.git"
+  deploy_from="CI_SOURCES_DIR ($deploy_source)"
+  deploy_read=(git --git-dir="$deploy_source")
+else
+  common="$(git rev-parse --git-common-dir)" || fail "the common git directory of this checkout could not be read"
+  case "$common" in /*) ;; *) common="$root/$common" ;; esac
+  deploy_source="$(cd "$common/../.." && pwd)/hostyour-deploy"
+  [ -d "$deploy_source" ] \
+    || fail "no hostyour-deploy clone at $deploy_source, beside the main checkout, and the rows that render clusters/bootstrap stand in it — clone simetrixch/hostyour-deploy there"
+  deploy_from="the clone beside the main checkout ($deploy_source)"
+  deploy_read=(git -C "$deploy_source")
+fi
+"${deploy_read[@]}" show "$deploy_pin:ansiwise/programs/deploy-branch.yaml" > "$work/deploy-branch.yaml" \
+  || fail "hostyour-deploy ansiwise/programs/deploy-branch.yaml at $deploy_pin, the pin of ci-sources.json, could not be read from $deploy_source — fetch that commit into it"
+bootstrap_template_faults "$work/deploy-branch.yaml" "$root" > "$work/bootstrap-faults"
+if [ -s "$work/bootstrap-faults" ]; then
+  sed 's/^/  /' "$work/bootstrap-faults"
+  fail "a template under clusters/bootstrap and its row of hostyour-deploy ansiwise/programs/deploy-branch.yaml at ${deploy_pin:0:7} do not fit, and the engine would stop the regeneration there — bind the slot in that row and move the hostyour-deploy pin of ci-sources.json to its commit, or take the angle brackets off a word that is no slot"
+fi
+[ "$bootstrap_rows" -gt 0 ] || fail "no write_file_from_template row of hostyour-deploy ansiwise/programs/deploy-branch.yaml at ${deploy_pin:0:7} names a template of this tree"
+bootstrap_templates="$(find clusters/bootstrap -name '*.tpl' | wc -l | tr -d ' ')"
+real_rows=$bootstrap_rows
+planted_red=0
+planted_green=0
+
+# The planted cases, through the same function: <red|green>|<what>|<template, \n for a new line, empty for
+# no file>|<the row's values, empty for no row>.
+bootstrap_plants=(
+  "red|a comment that names <repository>:<tag>, which its row does not hand|# The chart composes <repository>:<tag> and has no field for a digest.\ndomain: argo.<fqdn>|{fqdn: {answer: fqdn}}"
+  "red|a row that hands a value no slot takes|domain: argo.<fqdn>|{fqdn: {answer: fqdn}, cluster-name: {answer: cluster_name}}"
+  "red|a row that hands a value to a carried slot|domain: argo.<fqdn>\nkept: <kept!?>|{fqdn: {answer: fqdn}, kept: {answer: kept}}"
+  "red|a template no row names|domain: argo.<fqdn>|"
+  "red|a row that names a template which does not stand in the tree||{fqdn: {answer: fqdn}}"
+  "green|only <fqdn>, which its row hands|domain: argo.<fqdn>|{fqdn: {answer: fqdn}}"
+  "green|an optional and a carried slot left without a value|domain: argo.<fqdn>\nnote: <note?>\nkept: <kept!?>|{fqdn: {answer: fqdn}}"
+)
+for plant_case in "${bootstrap_plants[@]}"; do
+  IFS='|' read -r expected what text values <<< "$plant_case"
+  plant="$(mktemp -d "$work/bootstrap-plant.XXXXXX")" || fail "no folder for a planted bootstrap template could be made"
+  mkdir -p "$plant/clusters/bootstrap/planted" || fail "no folder for a planted bootstrap template could be made"
+  [ -z "$text" ] || printf '%b\n' "$text" > "$plant/clusters/bootstrap/planted/values.tpl"
+  : > "$plant/program.yaml"
+  [ -z "$values" ] || printf '%s\n' '- step: write_file_from_template' \
+    '  template: /srv/hostyour-cloud/clusters/bootstrap/planted/values.tpl' "  values: $values" > "$plant/program.yaml"
+  bootstrap_template_faults "$plant/program.yaml" "$plant" > "$plant/faults"
+  case "$expected" in
+    red) [ -s "$plant/faults" ] || fail "bootstrap_template_faults passes a planted template with $what"
+      planted_red=$((planted_red + 1)) ;;
+    green) [ ! -s "$plant/faults" ] || { sed 's/^/  /' "$plant/faults"; fail "bootstrap_template_faults refuses a planted template with $what"; }
+      planted_green=$((planted_green + 1)) ;;
+  esac
+done
+echo "check: the $bootstrap_templates templates under clusters/bootstrap fit the $real_rows rows of hostyour-deploy ansiwise/programs/deploy-branch.yaml at ${deploy_pin:0:7} that render them, read from $deploy_from; the check refuses $planted_red planted misfits, a comment that names <repository>:<tag> among them, and passes $planted_green planted innocents, one with only <fqdn>."
 
 # ── What an installation's branch must be able to take ───────────────────────────────────────
 # A RELEASE REACHES A MACHINE AS A MERGE into its installation's branch, the branch named after its

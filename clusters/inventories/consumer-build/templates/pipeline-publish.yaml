@@ -4,7 +4,8 @@ per unit from this template beside `<unit>-ci`, also for a unit that builds
 nothing. A push of a release tag runs it at that tag and publishes the
 repository's npm packages to this build plane's registry:
 
-  gate → clone@tag → scan → reviewed → pack | build-binaries → push.
+  gate → clone@tag → scan → reviewed → pack | build-binaries → push
+  (→ mirror, for the platform tree on the owner's master).
 
 The run is created by the github-release-publish Trigger
 (clusters/inventories/image-builder), waiting, and the release queue starts it
@@ -35,6 +36,17 @@ WHAT IS PUBLISHED, read at the tag by `scan`:
     them with the tools of the repository's ci-tools.json first on PATH
     (files/ci-install-tools.sh), as the ci check does. A repository with
     neither publishes nothing, and the run ends after the scan.
+  - the platform tree (https://github.com/simetrixch/hostyour-cloud.git) on
+    the owner's master, whose registry is global.buildRegistry, publishes no
+    package: `mirror` copies every image its tag names on ghcr.io into that
+    registry under <owner>/ghcr.io/<path>, the list scripts/list-mirror-images.sh
+    prints at the tag. Each entry is copied at its own digest with every
+    platform manifest of its index (skopeo --all --preserve-digests), after the
+    tag is read upstream and found to name that digest still; then every entry
+    is read back without a credential, by digest, and logged as one line:
+    `mirror: <mirror name> <media type> read back`. A source that is gone, a tag
+    that names another digest, a copy that would change a digest and a read
+    that answers anything else fail the run and name the image.
 Nothing else is published: the one-time seed of npm-seed/ is over, and a tree
 that holds npm-seed/ is read like any other.
 
@@ -101,6 +113,11 @@ subPath repository and the tarballs and binaries in its subPath packed.
 {{- $nodeImage := "ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3" -}}
 {{- $gitleaksImage := "zricethezav/gitleaks:v8.21.2@sha256:0e99e8821643ea5b235718642b93bb32486af9c8162c8b8731f7cbdc951a7f46" -}}
 {{- $published := "[\"source\", \"binaries\"]" -}}
+{{- /* The platform tree on the owner's master fills the mirror the platform's images are pulled from. */ -}}
+{{- $mirrorsImages := and (eq $repoURL "https://github.com/simetrixch/hostyour-cloud.git") (eq (printf "%s/%s" $registry $owner) (include "common.buildRegistry" .)) -}}
+{{- $reviewed := ternary "[\"source\", \"binaries\", \"mirror\"]" $published $mirrorsImages -}}
+{{- /* skopeo for the copy, its -immutable tag: the plain tag is rebuilt every night. */ -}}
+{{- $skopeoImage := "quay.io/skopeo/stable:v1.22.3-immutable@sha256:c0ee1f4edca5c01cb8d5611124f92f3cc47196ecab68aee5d0f90834e00574d5" -}}
 {{- $packed := "[\"source\"]" -}}
 {{- /* The repository the binaries of a release are pushed to: <owner>/<repository name>, read off the repoURL like the owner. */ -}}
 {{- $binariesRepository := printf "%s/%s" $owner (regexReplaceAll "^https://github\\.com/[^/]+/([^/]+?)(\\.git)?$" $repoURL "${1}" | lower) -}}
@@ -201,7 +218,7 @@ spec:
           - name: packed
         results:
           - name: mode
-            description: binaries (release/build.sh stands at the tag), source (packages to pack) or none.
+            description: binaries (release/build.sh stands at the tag), source (packages to pack), mirror (the platform tree on the owner's master) or none.
           - name: tools
             description: The tools and versions of ci-tools.json at the tag, one "<tool> <version>" per line, for pack and build-binaries; empty without the file.
         steps:
@@ -211,6 +228,8 @@ spec:
             env:
               - name: NPM_REGISTRY
                 value: {{ printf "https://%s/v2/npm/" $registry | quote }}
+              - name: MIRRORS_IMAGES
+                value: {{ $mirrorsImages | quote }}
             script: |
               #!/usr/bin/env bash
               set -euo pipefail
@@ -247,7 +266,12 @@ spec:
                   else .[0] | to_entries[] | "\(.key) \(.value)" end' ci-tools.json > "$1"
               }
               MODE=none
-              scan_packages /workspace/packed/publishable.tsv
+              if [ "${MIRRORS_IMAGES}" = true ]; then
+                MODE=mirror
+                echo "scan: the platform tree on the owner's master - the images it names are copied into the mirror, and nothing else is published"
+              else
+                scan_packages /workspace/packed/publishable.tsv
+              fi
               printf '%s' "${MODE}" > "$(results.mode.path)"
               scan_tools "$(results.tools.path)"
             computeResources:
@@ -260,7 +284,7 @@ spec:
       when:
         - input: "$(tasks.scan.results.mode)"
           operator: in
-          values: {{ $published }}
+          values: {{ $reviewed }}
       workspaces:
         - { name: source, workspace: source, subPath: repository }
       taskSpec:
@@ -835,4 +859,124 @@ spec:
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 500m, memory: 256Mi }
+{{- if $mirrorsImages }}
+
+    # ── 7. mirror — the images of the platform tree, copied into the owner's registry and read back
+    # The list is the tree's own script, run with the fixed tools and no credential; the push identity is
+    # held by `copy` alone, which runs no code of the repository and copies nothing the list does not name
+    # in the one form an entry has.
+    - name: mirror
+      runAfter: [push]
+      when:
+        - input: "$(tasks.scan.results.mode)"
+          operator: in
+          values: ["mirror"]
+      workspaces:
+        - { name: source, workspace: source, subPath: repository }
+        - { name: packed, workspace: source, subPath: packed }
+      taskSpec:
+        workspaces:
+          - name: source
+          - name: packed
+        steps:
+          - name: list
+            image: {{ $toolsImage }}
+            workingDir: /workspace/source
+            computeResources:
+              requests: { cpu: 500m, memory: 512Mi }
+              limits: { cpu: "2", memory: 1Gi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+{{ .Files.Get "files/ci-fixed-tools.sh" | indent 14 }}
+
+              bash scripts/list-mirror-images.sh > /workspace/packed/mirror.list
+              echo "mirror: the tree at this tag names $(wc -l < /workspace/packed/mirror.list) images for the mirror"
+          - name: copy
+            image: {{ $skopeoImage }}
+            envFrom:
+              - secretRef:
+                  name: image-builder-registry-push
+            env:
+              - name: REGISTRY
+                value: {{ $registry | quote }}
+              - name: OWNER
+                value: {{ $owner | quote }}
+            computeResources:
+              requests: { cpu: 200m, memory: 256Mi }
+              limits: { cpu: "1", memory: 512Mi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              mirror_copy() { # <the list> <a folder of its own>: every entry stands in the mirror at its own digest, as ghcr.io serves it
+                local list="$1" scratch="$2" source target path tag digest count=0
+                mkdir -p "${scratch}" && chmod 700 "${scratch}" || return 1
+                printf '{"auths":{"%s":{"auth":"%s"}}}' "${REGISTRY}" "$(printf '%s:%s' "${REGISTRY_USERNAME}" "${REGISTRY_PASSWORD}" | base64 -w0)" > "${scratch}/auth.json"
+                while read -r source target; do
+                  if ! [[ "${source}" =~ ^ghcr\.io/([a-z0-9._/-]+):([A-Za-z0-9_][A-Za-z0-9._-]*)@(sha256:[0-9a-f]{64})$ ]]; then
+                    echo "mirror: REFUSE — ${source} is no image of ghcr.io named by tag and digest" >&2
+                    return 1
+                  fi
+                  path="${BASH_REMATCH[1]}" tag="${BASH_REMATCH[2]}" digest="${BASH_REMATCH[3]}"
+                  if [ "${target}" != "${REGISTRY}/${OWNER}/ghcr.io/${path}:${tag}@${digest}" ]; then
+                    echo "mirror: REFUSE — ${target} is not the mirror name of ${source}" >&2
+                    return 1
+                  fi
+                  if ! skopeo inspect --raw --no-creds --retry-times 3 "docker://ghcr.io/${path}:${tag}" > "${scratch}/upstream"; then
+                    echo "mirror: FAIL — ghcr.io/${path}:${tag} cannot be read upstream" >&2
+                    return 1
+                  fi
+                  if [ "sha256:$(sha256sum "${scratch}/upstream" | cut -d' ' -f1)" != "${digest}" ]; then
+                    echo "mirror: FAIL — ghcr.io/${path}:${tag} names sha256:$(sha256sum "${scratch}/upstream" | cut -d' ' -f1) upstream, and the tree pins ${digest}" >&2
+                    return 1
+                  fi
+                  if ! skopeo copy --quiet --all --preserve-digests --retry-times 3 --src-no-creds --dest-authfile "${scratch}/auth.json" \
+                    "docker://ghcr.io/${path}@${digest}" "docker://${REGISTRY}/${OWNER}/ghcr.io/${path}:${tag}"; then
+                    echo "mirror: FAIL — ${source} could not be copied to ${target} at its own digest" >&2
+                    return 1
+                  fi
+                  count=$((count + 1))
+                done < "${list}"
+                echo "mirror: ${count} images copied"
+              }
+              mirror_copy /workspace/packed/mirror.list /tmp/mirror
+          - name: read-back
+            image: {{ $toolsImage }}
+            env:
+              - name: REGISTRY
+                value: {{ $registry | quote }}
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 500m, memory: 128Mi }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              mirror_read_back() { # <the list> <a folder of its own>: every entry is served without a credential at its own digest and media type
+                local list="$1" scratch="$2" source target name digest code served type declared rc
+                local accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
+                mkdir -p "${scratch}" || return 1
+                while read -r source target; do
+                  name="${target%@*}" digest="${target##*@}"
+                  name="${name%:*}"
+                  rc=0
+                  code="$(curl -sS --connect-timeout 10 --max-time 120 -H "Accept: ${accept}" -D "${scratch}/headers" -o "${scratch}/manifest" -w '%{http_code}' \
+                    "https://${REGISTRY}/v2/${name#"${REGISTRY}/"}/manifests/${digest}")" || rc=$?
+                  if [ "${rc}" != 0 ] || [ "${code}" != 200 ]; then
+                    echo "mirror: FAIL — ${target} answers ${code:-nothing} (curl ${rc}) to a read without a credential" >&2
+                    return 1
+                  fi
+                  served="$(tr -d '\r' < "${scratch}/headers" | awk 'tolower($1) == "docker-content-digest:" { print $2 }' | tail -n 1)"
+                  type="$(tr -d '\r' < "${scratch}/headers" | awk 'tolower($1) == "content-type:" { print $2 }' | tail -n 1)"
+                  declared="$(jq -r '.mediaType // ""' "${scratch}/manifest")"
+                  if [ "${served}" != "${digest}" ] || [ "sha256:$(sha256sum "${scratch}/manifest" | cut -d' ' -f1)" != "${digest}" ] \
+                    || { [ -n "${declared}" ] && [ "${declared}" != "${type}" ]; }; then
+                    echo "mirror: FAIL — ${target} is served as ${served:-no digest} and ${type:-no media type}, not as the manifest of ${source}" >&2
+                    return 1
+                  fi
+                  echo "mirror: ${target} ${type} read back"
+                done < "${list}"
+              }
+              mirror_read_back /workspace/packed/mirror.list /tmp/mirror
+{{- end }}
 {{- end }}

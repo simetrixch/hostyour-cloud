@@ -1,6 +1,9 @@
 image:
   repository: ""
   tag: ""
+  # The digest of the manifest the tag names, 64 hex digits without "sha256:". Set, the ref is
+  # <repository>:<tag>@sha256:<sha256>, and the node pulls that digest whatever the tag names now.
+  sha256: ""
   pullPolicy: IfNotPresent
 
 replicas: 1

@@ -65,6 +65,18 @@ export function withoutIgnored(object, namespace, ignored) {
   }
   return copy;
 }
+// A hook Job whose delete policies hold BeforeHookCreation is deleted and created again on every sync, so no
+// field of it is ever updated in place. Argo CD reads a Helm hook as one of its own: helm.sh/hook pre-install,
+// pre-upgrade, post-install or post-upgrade, with helm.sh/hook-delete-policy before-hook-creation
+// (gitops-engine/pkg/sync/hook/helm in Argo CD).
+const csv = (annotations, key) => (annotations[key] ?? '').split(',').map(p => p.trim());
+const HELM_HOOKS = ['pre-install', 'pre-upgrade', 'post-install', 'post-upgrade'];
+function isRecreatedHook(item) {
+  const annotations = item.metadata.annotations ?? {};
+  const hook = Boolean(annotations['argocd.argoproj.io/hook']) || csv(annotations, 'helm.sh/hook').some(type => HELM_HOOKS.includes(type));
+  return item.kind === 'Job' && hook && (csv(annotations, 'argocd.argoproj.io/hook-delete-policy').includes('BeforeHookCreation') ||
+    csv(annotations, 'helm.sh/hook-delete-policy').includes('before-hook-creation'));
+}
 function identities(documents, namespace, ignored) {
   const result = new Map();
   for (const rendered of documents.filter(Boolean)) {
@@ -78,10 +90,7 @@ function identities(documents, namespace, ignored) {
       const scope = ['ClusterRoleBinding'].includes(item.kind) ? '' : (item.metadata.namespace ?? namespace);
       const key = [group, item.kind, scope, item.metadata.name].join('/');
       const value = fields(item);
-      const annotations = item.metadata.annotations ?? {};
-      const recreated = item.kind === 'Job' && Boolean(annotations['argocd.argoproj.io/hook']) &&
-        (annotations['argocd.argoproj.io/hook-delete-policy'] ?? '').split(',').map(p => p.trim()).includes('BeforeHookCreation');
-      if (Object.keys(value).length) result.set(key, {fields: value, recreated});
+      if (Object.keys(value).length) result.set(key, {fields: value, recreated: isRecreatedHook(item)});
     }
   }
   return result;
@@ -120,6 +129,15 @@ export function probeImmutableChanges() {
   const changedHook = {...changedJob, metadata: {...changedJob.metadata, annotations}};
   assert.deepEqual(immutableChanges([hook], [changedHook]), []);
   assert.equal(immutableChanges([hook], [changedJob]).length, 1);
+  // The Helm spelling of the same hook, as kube-prometheus-stack renders its admission Jobs, and two that
+  // Argo CD does not recreate: one deleted only once it succeeded, one of a Helm hook type it does not run.
+  const helmHook = (hookType, policy) => (object) => ({...object, metadata: {...object.metadata,
+    annotations: {'helm.sh/hook': hookType, 'helm.sh/hook-delete-policy': policy}}});
+  const helmRecreated = helmHook('post-install,post-upgrade', 'before-hook-creation,hook-succeeded');
+  assert.deepEqual(immutableChanges([helmRecreated(job)], [helmRecreated(changedJob)]), []);
+  for (const kept of [helmHook('pre-install,pre-upgrade', 'hook-succeeded'), helmHook('test', 'before-hook-creation')]) {
+    assert.equal(immutableChanges([kept(job)], [kept(changedJob)]).length, 1);
+  }
   // plane-ce stamps a new timestamp into its migration Job's pod template on every render, and plane's
   // app.yaml has Argo CD keep the live one.
   const plane = {name: 'plane', respectIgnoreDifferences: 'true', ignoreDifferences: [
