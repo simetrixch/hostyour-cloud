@@ -105,6 +105,8 @@ if [ -s "${work}/items" ]; then
     "${work}/answer.json" >/dev/null 2>&1 || fail "Plane did not attach every work item to module ${TAG}"
 fi
 plane PATCH "${project}/modules/${module}/" '{"status":"completed"}'
+# Plane answers the PATCH with the fields it accepts, which hold no id, so the module is read back.
+plane GET "${project}/modules/${module}/"
 jq -e --arg module "$module" '.id == $module and .status == "completed"' "${work}/answer.json" >/dev/null 2>&1 \
   || fail "Plane did not complete module ${TAG}"
 echo "plane-update-status: module ${TAG} is completed, $(wc -l < "${work}/keys") work items are Released"
