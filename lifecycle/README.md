@@ -242,8 +242,10 @@ because at a machine's birth there is nothing to compare it against. A **changed
 
 ## Redeploy platform services with the Plane credential
 
-After the reviewed engine and programs release is installed on the master, run this action from
-its matching cloud release. It requires the existing operator SSH key and the owner-only config.
+After the reviewed engine release is installed on the master, run this action from its matching
+cloud release. It first fetches the branch `/srv/ansiwise-programs` stands on and resets that
+checkout to `origin/<branch>`, as the Manager's `cluster-redeploy` does, so the program it declares
+and runs is the one that landed. It requires the existing operator SSH key and the owner-only config.
 The config supplies the Plane API token named `plane-update-status` in `PLANE_API_TOKEN` and the
 caller's elevation password in `ELEVATION_PASSWORD`. It reads the config without sourcing it, so the
 caller's environment cannot stand in for a key, and refuses a missing or empty Plane token before

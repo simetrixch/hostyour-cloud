@@ -54,6 +54,11 @@ printf -v fqdn_arg '%q' "$FQDN"
 printf -v master_map_check '%q' 'import pathlib,re,sys; s=pathlib.Path(sys.argv[1]).read_text(); sys.exit(0 if re.search(r"(?m)^role:[ \t]*[\x22\x27]?master[\x22\x27]?[ \t]*(?:#.*)?$",s) else 1)'
 probe="python3 -c $master_map_check /srv/hostyour-cloud/clusters/active/$FQDN.yaml && test -x $ENGINE && test -r $CHECKOUT/ansiwise.yaml && test -r /srv/hostyour-cloud/clusters/active/$FQDN.yaml && test \"\$(git -C /srv/hostyour-cloud branch --show-current)\" = $fqdn_arg"
 ssh "${BASE[@]}" -n "$TARGET" "$probe" || fail 'the target is not the installed master on its own branch' 69
+# The programs checkout is brought to the head of the branch it stands on, as the Manager's
+# cluster-redeploy does before it reads a program (hostyour-manager machine-programs.ts
+# refreshPrograms): the declaration read below and the run after it are the programs that landed.
+printf -v refresh 'branch=$(git -C %q symbolic-ref --short HEAD) && git -C %q fetch --quiet origin "$branch" && git -C %q reset --quiet --hard "origin/$branch"' "$CHECKOUT" "$CHECKOUT" "$CHECKOUT"
+ssh "${BASE[@]}" -n "$TARGET" "$refresh" || fail 'the programs checkout could not be brought to the head of its branch' 69
 DECLARATION="$(ssh "${BASE[@]}" -n "$TARGET" "cat $CHECKOUT/ansiwise/programs/deploy-platform-services.yaml")" \
   || fail 'the installed deploy-platform-services program could not be read' 69
 printf '%s\n' "$DECLARATION" | grep -qE '^  - name: plane_api_token[[:space:]]*$' \
