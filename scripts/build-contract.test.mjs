@@ -1053,8 +1053,10 @@ test('build-binaries installs the fixed tools and the tools of ci-tools.json bef
 });
 
 // The platform tree on the owner's master publishes no package: its publish run copies the images its tag names on ghcr.io
-// into the mirror. The list runs the tree's own script, so it holds no secret; the push credential is in `copy` alone, whose
-// image runs no code of the repository; the read-back reads without a credential, as every cluster pulls.
+// into the mirror, then the tools and charts its tag names. The lists run the tree's own scripts, `list` for the images and
+// `fetch` for the tools and charts, so they hold no secret; the push credential is in `copy` and `copy-sources`, whose
+// scripts run no code of the repository, each on an image pinned by its digest; the read-backs read without a credential,
+// as every cluster pulls.
 const platformPublish = (registry) => renderChart('consumer-build', ['--set', `global.buildRegistry=${registry}`, '--set-json', 'unit=' +
   JSON.stringify({name: 'hostyour-cloud', repoURL: 'https://github.com/simetrixch/hostyour-cloud.git', buildsJson: '[]'})])
   .find((d) => d.kind === 'Pipeline' && d.metadata.name === 'hostyour-cloud-publish');
@@ -1063,13 +1065,18 @@ const mirrorProblems = (pipeline) => {
   const mirror = task('mirror');
   if (!mirror) return ['the publish pipeline of the platform tree has no mirror task'];
   const steps = mirror.taskSpec.steps, step = (name) => steps.find((s) => s.name === name);
-  if (steps.map((s) => s.name).join(' ') !== 'list copy read-back') problems.push(`the mirror runs ${steps.map((s) => s.name).join(', ')}, not list, copy and read-back`);
+  if (steps.map((s) => s.name).join(' ') !== 'list copy read-back fetch copy-sources read-back-sources') {
+    problems.push(`the mirror runs ${steps.map((s) => s.name).join(', ')}, not list, copy, read-back, fetch, copy-sources and read-back-sources`);
+  }
   const holding = pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('image-builder-registry-push')).map((t) => t.name);
   if (holding.join(' ') !== 'push mirror') problems.push(`the push credential is held by ${holding.join(', ')}, not by push and mirror`);
   const secretSteps = steps.filter((s) => JSON.stringify(s).includes('image-builder-registry-push')).map((s) => s.name);
-  if (secretSteps.join(' ') !== 'copy') problems.push(`the push credential stands in the mirror steps ${secretSteps.join(', ')}, not in copy alone`);
+  if (secretSteps.join(' ') !== 'copy copy-sources') problems.push(`the push credential stands in the mirror steps ${secretSteps.join(', ')}, not in copy and copy-sources alone`);
   if (!/^quay\.io\/skopeo\/stable:v[0-9.]+-immutable@sha256:[0-9a-f]{64}$/.test(step('copy')?.image ?? '')) problems.push(`copy runs ${step('copy')?.image}, not the immutable skopeo image by its digest`);
   if ((step('copy')?.script ?? '').includes('scripts/')) problems.push('copy runs a script of the repository');
+  if (!/^alpine\/k8s:[0-9.]+@sha256:[0-9a-f]{64}$/.test(step('copy-sources')?.image ?? '')) problems.push(`copy-sources runs ${step('copy-sources')?.image}, not alpine/k8s by its digest`);
+  if ((step('copy-sources')?.script ?? '').includes('scripts/')) problems.push('copy-sources runs a script of the repository');
+  if (!(step('fetch')?.script ?? '').includes('bash scripts/list-mirror-sources.sh')) problems.push('the fetch step never runs scripts/list-mirror-sources.sh');
   const fixed = readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd(), list = step('list')?.script ?? '';
   const fixedAt = list.indexOf(fixed), runAt = list.indexOf('bash scripts/list-mirror-images.sh');
   if (runAt < 0) problems.push('the list step never runs scripts/list-mirror-images.sh');
@@ -1081,20 +1088,32 @@ const mirrorProblems = (pipeline) => {
   return problems;
 };
 
-test('the publish run of the platform tree on the owner\'s master copies its images into the mirror, with the push credential in copy alone', () => {
+test('the publish run of the platform tree on the owner\'s master copies its images, tools and charts into the mirror, with the push credential in copy and copy-sources alone', () => {
   const pipeline = platformPublish('zot.check.example.invalid/simetrixch');
   assert.deepEqual(mirrorProblems(pipeline), [], 'PLANTED INNOCENT: the publish pipeline of the platform tree as rendered');
   const env = (step, key) => pipeline.spec.tasks.find((t) => t.name === step[0]).taskSpec.steps.find((s) => s.name === step[1]).env.find((e) => e.name === key).value;
   assert.equal(env(['scan', 'scan'], 'MIRRORS_IMAGES'), 'true');
   assert.deepEqual([env(['mirror', 'copy'], 'REGISTRY'), env(['mirror', 'copy'], 'OWNER'), env(['mirror', 'read-back'], 'REGISTRY')],
     ['zot.check.example.invalid', 'simetrixch', 'zot.check.example.invalid'], 'the mirror is the registry of global.buildRegistry');
+  for (const name of ['fetch', 'copy-sources', 'read-back-sources']) {
+    assert.deepEqual([env(['mirror', name], 'REGISTRY'), env(['mirror', name], 'OWNER')], ['zot.check.example.invalid', 'simetrixch'],
+      `${name} names its rows under the registry and owner of global.buildRegistry`);
+  }
   assert.equal(pipeline.spec.tasks.find((t) => t.name === 'push').when[0].values.includes('mirror'), false, 'the platform tree pushes no package');
   const plant = (change) => { const planted = structuredClone(pipeline); change(planted.spec.tasks.find((t) => t.name === 'mirror').taskSpec.steps); return mirrorProblems(planted); };
   assert.notDeepEqual(plant((steps) => { steps[0].envFrom = steps[1].envFrom; }), [], 'PLANTED DEFECT: the push credential beside the list the repository\'s script prints');
   assert.notDeepEqual(plant((steps) => { steps[0].script = steps[0].script.replace(readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd(), ''); }), [],
     'PLANTED DEFECT: the list step without the fixed tools');
   assert.notDeepEqual(plant((steps) => { steps[1].image = 'quay.io/skopeo/stable:v1.22.3'; }), [], 'PLANTED DEFECT: skopeo by a tag that is rebuilt every night');
-  assert.notDeepEqual(plant((steps) => { steps.pop(); }), [], 'PLANTED DEFECT: a mirror that is never read back');
+  assert.notDeepEqual(plant((steps) => { steps.pop(); }), [], 'PLANTED DEFECT: a mirror whose tools and charts are never read back');
+  const named = (steps, name) => steps.find((s) => s.name === name);
+  assert.notDeepEqual(plant((steps) => { named(steps, 'fetch').envFrom = steps[1].envFrom; }), [], 'PLANTED DEFECT: the push credential in fetch, which downloads from the upstreams');
+  assert.notDeepEqual(plant((steps) => { named(steps, 'read-back-sources').envFrom = steps[1].envFrom; }), [], 'PLANTED DEFECT: the push credential in read-back-sources');
+  assert.notDeepEqual(plant((steps) => { named(steps, 'copy-sources').script += '\nbash scripts/list-mirror-sources.sh\n'; }), [],
+    'PLANTED DEFECT: copy-sources runs the script of the repository');
+  assert.notDeepEqual(plant((steps) => { named(steps, 'copy-sources').image = 'alpine/k8s:1.35.6'; }), [], 'PLANTED DEFECT: copy-sources on alpine/k8s by a tag');
+  assert.notDeepEqual(plant((steps) => { steps.splice(steps.indexOf(named(steps, 'fetch')), 1); }), [], 'PLANTED DEFECT: a mirror without fetch');
+  assert.notDeepEqual(plant((steps) => { steps.splice(1, 0, ...steps.splice(steps.indexOf(named(steps, 'fetch')), 1)); }), [], 'PLANTED DEFECT: fetch before copy');
   // Only the platform tree on the owner's master mirrors: its trunk value of global.buildRegistry names another registry
   // than the stand-in cluster's, and every other unit's publish pipeline is the one the test above holds.
   const elsewhere = platformPublish('zot.elsewhere.example.invalid/simetrixch');

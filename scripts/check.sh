@@ -1083,6 +1083,16 @@ printf '%s/planted/image:1.0.0 planted\n' "$mirror_prefix" | bash scripts/list-m
   && fail "scripts/list-mirror-images.sh lists a ref under the mirror that names no digest"
 echo "check: the mirror holds $(printf '%s\n' "$mirror_entries" | wc -l | tr -d ' ') images, each at its digest; the list refuses a planted ref on ghcr.io and one under the mirror without it."
 
+# ── The tools and charts the owner's mirror holds ───────────────────────────────────────────────
+# scripts/list-mirror-sources.sh writes one line per row of clusters/platform/mirror-sources.table for the
+# steps fetch, copy-sources and read-back-sources of the mirror task, and refuses a row of another form by
+# its line number. The planted defect: a tool row without its url.
+mirror_sources="$(bash scripts/list-mirror-sources.sh)" || fail "scripts/list-mirror-sources.sh refuses clusters/platform/mirror-sources.table"
+printf 'tool %s\n' "$(printf '0%.0s' {1..64})" > "$work/planted-mirror-sources.table"
+bash scripts/list-mirror-sources.sh "$work/planted-mirror-sources.table" >/dev/null 2>&1 \
+  && fail "scripts/list-mirror-sources.sh lists a planted tool row without its url"
+echo "check: the mirror holds $(printf '%s\n' "$mirror_sources" | grep -c '^tool ') tools and $(printf '%s\n' "$mirror_sources" | grep -c '^chart ') charts of the $(printf '%s\n' "$mirror_sources" | grep -c .) rows of clusters/platform/mirror-sources.table, each at its sha256; the list refuses a planted tool row without its url."
+
 # A REF STAYS ON ghcr.io ONLY WHILE ITS WORKLOAD CAN START BEFORE THE MIRROR SERVES: the registry's own zot;
 # External Secrets, which writes zot's htpasswd Secret before zot starts; the Tekton images, which sync
 # before zot; and headscale, Authentik, Dex and Headlamp, which a cold master starts before Argo CD or zot.

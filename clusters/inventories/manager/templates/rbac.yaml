@@ -199,7 +199,12 @@ surface of the manager's onboarding adapters:
     instead of a missing Secret. Dropping patch breaks every release of a unit
     whose credential is the GitHub App an hour after its onboarding. The return
     is read off the ExternalSecrets' refreshTime through manager-smoke-reader's
-    list, so no get on Secrets is needed.
+    list, so no get on Secrets is needed. hostyour-manager's master redeploy
+    ends with refresh-external-secrets (server/domains/runs/defs/live-cluster.kit.ts),
+    which sets the same annotation on every ExternalSecret of the master, read
+    with manager-smoke-reader's cluster-wide list, so a Vault entry the run wrote
+    after its ExternalSecret, or changed, reaches its Secret. Dropping patch
+    fails every master redeploy at that step.
   * manager-workload-restarter (ClusterRole) — patch on deployments and
     statefulsets, cluster scope (unit namespaces are dynamic, the same reason
     manager-smoke-reader has it). It is the last of the three acts that put a
