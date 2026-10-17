@@ -25,7 +25,7 @@ import { spawn } from "node:child_process";
 
 const USAGE = [
   "usage: lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test",
-  "       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod> <alpha|beta|stable> <x.y.z> <commit>",
+  "       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit>",
 ].join("\n");
 /** Exit codes: a run that did not succeed, a usage error, a Manager that could not be reached, a watch that stopped. */
 const EXIT = { failed: 1, usage: 64, unavailable: 69, watchStopped: 75 };
@@ -168,11 +168,11 @@ const RETRIES = setting("RELEASE_UNIT_RETRIES", 30);
 let release;
 if (!PROD_TO_TEST) {
   const [, , stage, channel, version, commit] = args;
-  if (!["dev", "test", "prod"].includes(stage)) stop(`the stage must be dev, test or prod (got '${stage}')`, EXIT.usage);
+  if (!["dev", "test", "prod", "none"].includes(stage)) stop(`the stage must be dev, test, prod or none (got '${stage}')`, EXIT.usage);
   if (!["alpha", "beta", "stable"].includes(channel)) stop(`the channel must be alpha, beta or stable (got '${channel}')`, EXIT.usage);
   if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([0-9]{3}|0|[1-9][0-9]*)$/.test(version)) stop(`the version must be x.y.z (got '${version}')`, EXIT.usage);
   if (!/^[0-9a-f]{40}$/.test(commit)) stop(`the commit must be its full sha, 40 lowercase hex digits (got '${commit}')`, EXIT.usage);
-  release = { stage, channel, version, commit };
+  release = { stage: stage === "none" ? null : stage, channel, version, commit };
 }
 
 const minted = await exchange({ kind: "mint" });
