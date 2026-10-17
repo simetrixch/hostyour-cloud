@@ -33,6 +33,7 @@ registry="$(yq '.global.buildRegistry' "$root/clusters/platform/values-common.ya
 unknown_hex="$(printf '%064d' 0)"
 step_address="${tool_address//$tool_tag/<version>}"; step_address="${step_address//$tool_hex/<sha256>}"
 row_address="${tool_address//$tool_hex/<sha256>}"
+# shellcheck disable=SC2016
 shell_slot='${planted_sha256}' argument_slot='${PLANTED_SHA256}'
 variable_address="${tool_address//$tool_hex/$shell_slot}" argument_address="${tool_address//$tool_hex/$argument_slot}"
 
@@ -53,7 +54,7 @@ copy_tree() { # <from> <to>
 
 # A tree with an owned address at every kind of consumer place, each of which the table holds.
 consumers="$(new_tree consumers)"
-put "$consumers/ansiwise/programs/deploy-cluster.yaml" 'steps:' \
+put "$consumers/ansiwise/programs/deploy-cluster.yaml" 'answers:' '      - name: planted' 'steps:' \
   '  - step: install_pinned_tool' \
   "    tool: planted" \
   "    version: $tool_tag" \

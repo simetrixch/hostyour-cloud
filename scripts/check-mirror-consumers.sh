@@ -39,6 +39,8 @@
 #
 # UNREAD ROWS are listed and fail nothing: a bump adds its row before its consumer moves, and a row may
 # be read by a tree this run does not read.
+# The awk programs and the sh -c body are single-quoted on purpose: nothing in them is for this shell to expand.
+# shellcheck disable=SC2016
 set -uo pipefail
 export LC_ALL=C
 
@@ -90,17 +92,22 @@ awk '$1 == "chart" { print $7 }' "$work/rows" | sort -u > "$work/chart-repositor
 : > "$work/read-tools"; : > "$work/read-charts"
 : > "$work/shapes"; : > "$work/held"; : > "$work/notread"; : > "$work/refused"
 
-# The fields of the list item that holds a line, as <key> TAB <line> TAB <value> for each key at the
-# item's own indent. SECTION names the top-level key whose items count; with none, every item at the
-# indent of the first does.
+# The fields of the list item that holds line `want`, as <key> TAB <line> TAB <value> for each key at the
+# item's own indent. An item starts at a dash and a line whose first key is `item` (any key where it is
+# empty), and only items at the indent of the first such dash count. `section` names the top-level key whose
+# items count; with none, the items of every top-level key do.
 BLOCK_AWK='
 function flush(end,   k) {
   if (begin && want >= begin && want <= end) for (k = 1; k <= n; k++) print key[k] "\t" at[k] "\t" val[k]
   begin = 0; n = 0
 }
-BEGIN { section = ENVIRON["SECTION"]; inside = (section == ""); dash = -1 }
+BEGIN {
+  inside = (section == ""); dash = -1
+  if (item == "") item = "[A-Za-z_][A-Za-z0-9_-]*"
+  start = "^[[:space:]]*-[[:space:]]+" item ":"
+}
 section != "" && /^[^[:space:]#-]/ { flush(NR - 1); inside = ($0 ~ ("^" section ":")); next }
-inside && /^[[:space:]]*-[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*:/ {
+inside && $0 ~ start {
   match($0, /^[[:space:]]*/)
   if (dash < 0) dash = RLENGTH
   if (RLENGTH == dash) { flush(NR - 1); begin = NR; match($0, /^[[:space:]]*-[[:space:]]+/); keycol = RLENGTH }
@@ -179,7 +186,7 @@ classify() { # <tree directory>: the occurrence above, by the kind of file it st
   text="$(sed -n "${occurrence_line}p" "$file")"
   case "$occurrence_path" in
     ansiwise/programs/*.yaml)
-      block="$(SECTION="" awk -v want="$occurrence_line" "$BLOCK_AWK" "$file")"
+      block="$(awk -v want="$occurrence_line" -v item=step "$BLOCK_AWK" "$file")"
       key="$(block_key_at "$block" "$occurrence_line")"
       case "$(block_value "$block" step):$key" in
         install_pinned_tool:url)
@@ -191,7 +198,7 @@ classify() { # <tree directory>: the occurrence above, by the kind of file it st
         *) leave_unread ;;
       esac ;;
     Chart.yaml | */Chart.yaml)
-      block="$(SECTION=dependencies awk -v want="$occurrence_line" "$BLOCK_AWK" "$file")"
+      block="$(awk -v want="$occurrence_line" -v section=dependencies "$BLOCK_AWK" "$file")"
       if [ "$(block_key_at "$block" "$occurrence_line")" = repository ]; then
         hold_chart "$occurrence_token" "$(block_value "$block" name)" "$(block_value "$block" version)"
       else
@@ -224,7 +231,7 @@ classify() { # <tree directory>: the occurrence above, by the kind of file it st
     clusters/argocd/files/projects.yaml | clusters/units/reconciler/values.yaml | ansiwise/templates/slave-appproject.tpl)
       prefix='-'
       [ "$occurrence_path" != clusters/units/reconciler/values.yaml ] || prefix='exporterChartsUrl:'
-      entry="$(printf '%s\n' "$text" | sed -E "s/^[[:space:]]*$prefix[[:space:]]+//; s/[[:space:]]+#.*\$//; s/[[:space:]]+\$//; s/^[\"']//; s/[\"']\$//")"
+      entry="$(printf '%s\n' "$text" | sed -E "s/^[[:space:]]*${prefix}[[:space:]]+//; s/[[:space:]]+#.*\$//; s/[[:space:]]+\$//; s/^[\"']//; s/[\"']\$//")"
       if [ "$entry" = "$occurrence_token" ]; then hold_allowed "$occurrence_token"; else leave_unread; fi ;;
     *) leave_unread ;;
   esac
@@ -233,8 +240,9 @@ classify() { # <tree directory>: the occurrence above, by the kind of file it st
 # Every file of a tree, matched by xargs in batches. grep exits 1 for no match, which is no error here; 2 is.
 scan() { # <tree directory> <list of files> <regex>: path TAB line TAB match
   [ -s "$2" ] || return 0
-  ( cd "$1" && tr '\n' '\0' < "$2" | xargs -0 sh -c 'grep -I -n -H -o -E -e "$0" -- "$@" || [ $? -eq 1 ]' "$3" ) > "$work/grep-out"
-  [ $? -eq 0 ] || fail "a file of $1 could not be read by grep"
+  if ! ( cd "$1" && tr '\n' '\0' < "$2" | xargs -0 sh -c 'grep -I -n -H -o -E -e "$0" -- "$@" || [ $? -eq 1 ]' "$3" ) > "$work/grep-out"; then
+    fail "a file of $1 could not be read by grep"
+  fi
   awk '{ i = match($0, /:[0-9]+:/); printf "%s\t%s\t%s\n", substr($0, 1, i - 1), substr($0, i + 1, RLENGTH - 2), substr($0, i + RLENGTH) }' "$work/grep-out"
 }
 
@@ -254,7 +262,8 @@ for argument in "$@"; do
   excluded_text=""
   for row in "${EXCLUDED[@]}"; do
     IFS='|' read -r row_tree row_path row_reason <<< "$row"
-    [ "$row_tree" = "$label" ] && grep -qxF -- "$row_path" "$all" || continue
+    [ "$row_tree" = "$label" ] || continue
+    grep -qxF -- "$row_path" "$all" || continue
     printf '%s\n' "$row_path" >> "$work/excluded.$trees"
     excluded_text="$excluded_text"$'\n'"  excluded: $row_path ($row_reason)"
   done
