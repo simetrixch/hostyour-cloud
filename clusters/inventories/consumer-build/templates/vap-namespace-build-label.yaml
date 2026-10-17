@@ -15,10 +15,6 @@ seeded with the cluster:
     (templates/pipeline-release.yaml). That one is templated on nothing, so the
     label is the ONLY thing between a namespace and every unit's repo PAT.
 
-The third role of the build plane, build-recovery-export, binds no label: it admits recovery-export-eso
-in the build namespaces of the three writers of the recovery folder by name
-(templates/secretstore-recovery-export.yaml), so this label grants it nothing.
-
 A unit's chart renders Namespace objects of its own (the per-unit AppProject
 whitelists that cluster-scoped kind), so without this policy the label — and
 with it both roles — is a unit's to claim.

@@ -43,7 +43,6 @@ global:
   registryPullUser: check-pull
   registryPushUser: check-push
   nodeCidrs: [10.0.0.1/32]
-  storageBoxCidrs: [192.0.2.22/32]
   endpoints:
     registry:
       host: zot.check.example.invalid

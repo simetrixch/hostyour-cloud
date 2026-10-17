@@ -5,8 +5,8 @@ nothing. A push of a release tag runs it at that tag and publishes the
 repository's npm packages to this build plane's registry:
 
   gate → clone@tag → scan → reviewed → pack | build-binaries → push
-  (→ mirror → recovery-export, for the platform tree on the owner's master;
-   → recovery-export → tag, for the engine on the owner's master).
+  (→ mirror, for the platform tree on the owner's master;
+   → tag, for the engine on the owner's master).
 
 The run is created by the github-release-publish Trigger
 (clusters/inventories/image-builder), waiting, and the release queue starts it
@@ -33,10 +33,9 @@ WHAT IS PUBLISHED, read at the tag by `scan`:
     (clusters/inventories/registry values-common.yaml, accessControl).
     The engine (https://github.com/simetrixch/ansiwise-cli.git) on the owner's
     master is the one exception to "under its tag": `push` puts its manifest
-    under its digest, `recovery-export` writes it into the recovery folder of
-    the owner's master, and only then `tag` puts it under the tag. The tag is
-    what release/release.sh of ansiwise-cli waits for before it pins the
-    engine, so no pin names an engine that the folder lacks.
+    under its digest, and `tag` then puts it under the tag and reads it back.
+    The tag is what release/release.sh of ansiwise-cli waits for before it
+    pins the engine.
   - otherwise every tracked package.json that is not private and names
     publishConfig.registry; that registry must be https://<registry>/v2/npm/, so
     a package that still names another registry fails the run. `pack` builds
@@ -56,8 +55,6 @@ WHAT IS PUBLISHED, read at the tag by `scan`:
     that answers anything else fail the run and name the image. The release of
     the platform (lifecycle/release-platform.sh) pins no installation before
     the mirror serves every entry of its tag, so this run is what lets it go on.
-    Then `recovery-export` writes the recovery folder of the owner's master
-    (task 8 below).
 Nothing else is published: the one-time seed of npm-seed/ is over, and a tree
 that holds npm-seed/ is read like any other.
 
@@ -109,10 +106,7 @@ runs git alone; the push identity image-builder-registry-push is held by `push`,
 which runs no code of the repository and reads the packed tarballs or the built
 binaries and never the clone, and on the platform tree by `copy` and `copy-sources`
 of the mirror, which run no code of the repository either, and on the engine by `tag`,
-which runs no code of the repository. The steps `plan` and `check` of `recovery-export`
-run files/recovery-folder.sh, the tree's at the tag on the platform tree and this chart's
-on the engine, and hold no credential; its storage-box login recovery-box is held by
-`present` and `upload`, which run rclone alone and no code of the repository. The run's one volume
+which runs no code of the repository. The run's one volume
 holds the clone in its subPath repository and the tarballs, binaries and mirror
 lists in its subPath packed.
 */ -}}
@@ -134,7 +128,7 @@ lists in its subPath packed.
 {{- $mirrorsImages := eq (include "consumer-build.isPlatformMirror" .) "true" -}}
 {{- $reviewed := ternary "[\"source\", \"binaries\", \"mirror\"]" $published $mirrorsImages -}}
 {{- $skopeoImage := include "consumer-build.skopeoImage" . -}}
-{{- /* The engine on the owner's master is tagged only once the recovery folder holds it. */ -}}
+{{- /* The engine on the owner's master is put under its digest by `push` and under its tag by `tag`. */ -}}
 {{- $exportsEngine := eq (include "consumer-build.isPlatformEngine" .) "true" -}}
 {{- $packed := "[\"source\"]" -}}
 {{- /* The repository the binaries of a release are pushed to: <owner>/<repository name>, read off the repoURL like the owner. */ -}}
@@ -827,7 +821,7 @@ spec:
                       layers: $layers[0],
                       annotations: {"org.opencontainers.image.revision": $revision, "org.opencontainers.image.source": $source,
                         "org.opencontainers.image.version": $version}}' > "${tmp}/manifest.json" || return 1
-                  # UNDER ITS DIGEST ALONE where the tag waits for the recovery folder of the owner's master.
+                  # UNDER ITS DIGEST ALONE for the engine of the owner's master: `tag` puts it under the tag.
                   [ -z "${MANIFEST_DIGEST_RESULT:-}" ] || reference="sha256:$(sha256sum < "${tmp}/manifest.json" | cut -d' ' -f1)"
                   code="$(registry_call /dev/null -X PUT -H "Content-Type: ${accept}" --data-binary "@${tmp}/manifest.json" "${base}/manifests/${reference}")" || return 1
                   if [ "${code}" != 201 ]; then
@@ -1196,78 +1190,12 @@ spec:
                 [ "${served}" = "${rows}" ]
               }
               mirror_read_back_sources /workspace/packed/mirror-sources.list /tmp/mirror-sources
-
-    # ── 8. recovery-export — the recovery folder of the owner's master, written to the storage box
-    # A cold owner's master has no registry to pull from: its zot is one of the images it must start. So each
-    # release writes every image the tree pulls, the platform's own images at the builds of this stage, the
-    # released ansiwise pair and the skopeo the seed runs, into <fqdn>/recovery/ on the storage box, and
-    # lifecycle/driver.sh fetches, checks and imports them into a cold node. Each is one OCI archive, read
-    # from the owned mirror and never from ghcr.io. Which archives, under which path and name, and the test
-    # each passes are the tree's clusters/inventories/consumer-build/files/recovery-folder.sh, the same lines
-    # the driver runs. An archive that stands on the box is never written again and nothing is deleted, so a
-    # release adds only what changed, and the folder grows with every release. The folder is not sealed:
-    # everything in it is public, and the driver holds every archive to the digests the tree states in git,
-    # never to a list inside the folder. The login is the installation's storage box login (externalsecret-recovery-box.yaml),
-    # and the steps write below <fqdn>/recovery/ of its root alone; the pod reaches the box on port 22 through recovery-export-egress
-    # (networkpolicy.yaml) and nothing else does. The steps are the ones every writer of the folder runs
-    # (_helpers.tpl, consumer-build.recoveryExportSteps).
-    - name: recovery-export
-      runAfter: [mirror]
-      when:
-        - input: "$(tasks.scan.results.mode)"
-          operator: in
-          values: ["mirror"]
-      workspaces:
-        - { name: source, workspace: source, subPath: repository }
-        - { name: packed, workspace: source, subPath: packed }
-      taskSpec:
-        workspaces:
-          - name: source
-          - name: packed
-        steps:
-          {{- include "consumer-build.recoveryExportSteps" (dict "root" . "dir" "/workspace/packed" "tree" true
-                "digests" "clusters/platform/ansiwise.sha256"
-                "env" (list (dict "name" "STAGE" "value" .Values.global.env))
-                "plan" "recovery_archives . \"${STAGE}\" > /workspace/packed/recovery.plan") | nindent 10 }}
 {{- end }}
 {{- if $exportsEngine }}
 
-    # ── 8. recovery-export — the engine of this tag, in the recovery folder of the owner's master
-    # A cold owner's master fetches its engine from no registry: that registry is its own zot, which does not
-    # stand yet, and lifecycle/driver.sh takes the engine out of <fqdn>/recovery/ on the storage box. So the
-    # release's manifest, which `push` put under its digest alone, is written there, read from the registry by
-    # that digest without a login and held to it, before `tag` puts it under the tag that release/release.sh
-    # of ansiwise-cli waits for before it pins the engine: no pin names an engine the folder lacks. The steps,
-    # their login and their pinhole are the ones every writer of the folder has (_helpers.tpl
-    # consumer-build.recoveryExportSteps, externalsecret-recovery-box.yaml, networkpolicy.yaml), and the name is
-    # files/recovery-folder.sh's as this chart renders it.
-    - name: recovery-export
-      runAfter: [push]
-      when:
-        - input: "$(tasks.scan.results.mode)"
-          operator: in
-          values: ["binaries"]
-      params:
-        - { name: digest, value: "$(tasks.push.results.digest)" }
-        - { name: release-tag, value: "$(params.release-tag)" }
-      workspaces:
-        - { name: packed, workspace: source, subPath: packed }
-      taskSpec:
-        params:
-          - name: digest
-            type: string
-          - name: release-tag
-            type: string
-        workspaces:
-          - name: packed
-        steps:
-          {{- include "consumer-build.recoveryExportSteps" (dict "root" . "dir" "/workspace/packed" "digests" "-"
-                "env" (list (dict "name" "BUILD_REGISTRY" "value" (include "common.buildRegistry" .)) (dict "name" "RELEASE_TAG" "value" "$(params.release-tag)") (dict "name" "DIGEST" "value" "$(params.digest)"))
-                "plan" "recovery_engine_archive \"${BUILD_REGISTRY}\" \"${RELEASE_TAG}\" \"${DIGEST}\" > /workspace/packed/recovery.plan") | nindent 10 }}
-
-    # ── 9. tag — the engine's release under its tag, once the recovery folder holds it, and read back
+    # ── 8. tag — the engine's release under its tag, and read back
     - name: tag
-      runAfter: [recovery-export]
+      runAfter: [push]
       when:
         - input: "$(tasks.scan.results.mode)"
           operator: in
@@ -1321,7 +1249,7 @@ spec:
                   echo "publish: FAIL — ${BINARIES_REPOSITORY}:${RELEASE_TAG} reads back as ${code}, not at ${DIGEST}" >&2
                   return 1
                 fi
-                echo "publish: ${BINARIES_REPOSITORY}:${RELEASE_TAG} tagged at ${DIGEST}, which the recovery folder holds"
+                echo "publish: ${BINARIES_REPOSITORY}:${RELEASE_TAG} tagged at ${DIGEST}"
               }
               binaries_tag /tmp/publish
             computeResources:

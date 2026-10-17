@@ -16,7 +16,6 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `install-machine.sh` | installs a first master from zero: a machine, a branch, a cluster and the platform services on it |
 | `release-platform.sh` | with an fqdn, cuts a release of the platform tree and pins ONE installation to it; without one, cuts the release and pins nothing, which is what a first machine names as `PLATFORM_REF` |
 | `regenerate-install-branch.sh` | brings an installation onto the release its own map is pinned to |
-| `redeploy-platform-services.sh` | sends the declared inputs from an owner-only config to the installed master's platform-services program over stdin, in test, dry and run modes |
 | `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
 | `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
@@ -42,12 +41,7 @@ waits until the owner's mirror serves every image the tree at the tag lists (`sc
 copied there by the publish run the tag starts, read back by digest without a login) and every
 tool and chart its `clusters/platform/mirror-sources.table` lists (`scripts/list-mirror-sources.sh`, read back by
 the manifest of its tag, which must name one layer of the row's sha256), for `RELEASE_MIRROR_WAIT` seconds at
-most, 7200 unless set. Before it pins the owner's master, the installation whose zot is `global.buildRegistry`,
-it also waits in that time until the recovery folder `<fqdn>/recovery/` on the storage box holds every archive
-that `clusters/inventories/consumer-build/files/recovery-folder.sh` of the tree at the tag names. It lists the
-folder with `rclone` and the storage-box login of `lifecycle/config.<first label>.env` beside the tree, and
-refuses by name. Where the branch of that installation stands on a tree that writes no recovery folder yet, the
-publish run of the tag writes none either, so the release says so and pins it. Then it writes `release: <tag>` into
+most, 7200 unless set. Then it writes `release: <tag>` into
 `clusters/active/<fqdn>.yaml` on the installation's own branch — and stops. The installation still
 stands on the state before it: that line RECORDS which state it should stand on and carries none of
 it, because every source of every Application this platform generates targets the install branch.
@@ -192,20 +186,8 @@ say rather than what somebody's checkout happened to hold.
 **The owner's master is the one machine that cannot reach the release**, because the registry the
 release is served from is its own zot, which does not stand while it is installed, on a first
 installation as on a restore. Every image of the platform is pulled from that zot too, zot's own
-among them. So that machine reads `<fqdn>/recovery/` on the storage box, with the `STORAGE_BOX_HOST`,
-`STORAGE_BOX_USER` and `STORAGE_BOX_PASSWORD` of its config, which it then requires. The platform's
-publish run writes the folder at every release (`recovery-export`): one OCI archive per image the tree
-pulls, per own image at the builds of the stage, and the released engine. A pin that moves between two
-platform releases has its archive there before it moves: the release run of the platform's own builds
-writes them before its bump pins them, and the publish run of the engine writes it before it tags the
-release that ansiwise-cli's `release/release.sh` pins. And `release-platform` lists the folder before it
-pins the owner's master to a platform tag. Every one of these runs names and tests the
-archives with `clusters/inventories/consumer-build/files/recovery-folder.sh`. `driver.sh` takes the engine
-out of the folder by the digests `clusters/platform/ansiwise.sha256` states. After `deploy-cluster` it
-fetches every archive the installation's tree names, holds each to the digests the tree states, and
-only then imports them into the node's containerd, so External Secrets, Tekton and zot start without a
-registry. Once zot answers, it pushes every archive named under zot there, with the push identity of
-the Secret `registry/registry-seed-push` handed to skopeo by path, and reads each back.
+among them. `driver.sh` has no other source for the engine and the images of that machine, so a first
+installation or a restore of it stops at the fetch of the engine, and the message says so.
 
 ## Running it
 
@@ -264,37 +246,6 @@ launcher recognises that refusal and tells you the line that clears it:
 
 A host key that is simply **unknown** is accepted and recorded (`StrictHostKeyChecking=accept-new`),
 because at a machine's birth there is nothing to compare it against. A **changed** one never is.
-
-## Redeploy platform services with the Plane credential
-
-After the reviewed engine release is installed on the master, run this action from its matching
-cloud release. It first fetches the branch `/srv/ansiwise-programs` stands on and resets that
-checkout to `origin/<branch>`, as the Manager's `cluster-redeploy` does, so the program it declares
-and runs is the one that landed. It requires the existing operator SSH key and the owner-only config.
-The config supplies the Plane API token named `plane-update-status` in `PLANE_API_TOKEN` and the
-caller's elevation password in `ELEVATION_PASSWORD`. It reads the config without sourcing it, so the
-caller's environment cannot stand in for a key, and refuses a missing or empty Plane token before
-SSH. It projects only the answers the installed program declares and streams the password beside
-those answers through `--answers -`, straight from the file into the pipe: no shell variable and no
-shell trace holds a credential. It writes no config or answer copy on either machine.
-
-```bash
-bash lifecycle/redeploy-platform-services.sh lifecycle/config.master.env
-```
-
-It runs `deploy-platform-services` in `test`, `dry`, then `run` mode and stops at the first failure.
-The installed program provisions the restricted `forgejo-build` identity and writes the complete
-credential entry `<stage>/app/forgejo-build`. Later Manager redeploys hand that entry back to the
-program without reading the local config.
-`regenerate-install-branch.sh` regenerates the branch; it does not import this Plane token.
-
-**This run is a step of every installation whose master runs the books, the build plane and Plane**:
-once after the installation, again after a loss of Vault, and again for every rotation of the Plane
-key. A Manager redeploy carries no Plane key. On a master whose Vault holds no
-`<stage>/app/forgejo-build`, it stops at the forge credential row (`vault_kv_entry_from_command` in
-`deploy-platform-services`) with `plane-api-token is absent`, and only this run gets past that row.
-The forge Secrets form on the next Manager redeploy of the master: its last step,
-`refresh-external-secrets`, has ESO read the new entry.
 
 ## What it refuses, and why
 
@@ -388,7 +339,7 @@ bash lifecycle/install-machine.sh lifecycle/config.master.env                   
 The install branch, the registrations and the deploy repository stand on origin; the images are rebuilt by the
 release cycles; every certificate is issued again for the name. What lives on the master alone is its
 stores — Vault with every unit's secrets, the Manager's database, the IdP's accounts, Headscale's
-nodes, the master's own MongoDB, Redis, mail queue, registry and dbgate — and, beside them on the
+nodes, the master's own MongoDB, Redis, mail queue and dbgate — and, beside them on the
 host, `secrets/vault-<stage>.txt`, the file Vault's quorum was written to once. `master-backup` takes
 exactly that set: each store is stopped for its own copy and started again with the replicas it had
 (a database copied under a running process is a copy with a write in flight), every archive is
