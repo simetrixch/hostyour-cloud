@@ -1277,6 +1277,10 @@ const recoveryProblems = (docs, cidrs, unit) => {
   if (writer.pins && !(tasks.find((t) => t.name === writer.pins).runAfter ?? []).includes('recovery-export')) {
     problems.push(`${writer.pins} of ${writer.pipeline} does not wait for recovery-export, so a pin can name an archive the folder lacks`);
   }
+  const order = task.taskSpec.steps.map((s) => s.name).join(' ');
+  if (order !== 'plan present copy archive check upload') problems.push(`recovery-export runs the steps ${order}, not plan present copy archive check upload`);
+  const archive = task.taskSpec.steps.find((s) => s.name === 'archive');
+  if (!/^alpine\/k8s:[0-9.]+@sha256:[0-9a-f]{64}$/.test(archive?.image ?? '')) problems.push(`recovery-export/archive runs ${archive?.image}, not alpine/k8s by its digest`);
   const holding = task.taskSpec.steps.filter((s) => JSON.stringify(s).includes('"recovery-box"')).map((s) => s.name);
   if (holding.join(' ') !== 'present upload') problems.push(`the recovery login stands in the steps ${holding.join(', ')}, not in present and upload alone`);
   for (const s of task.taskSpec.steps) {
@@ -1320,10 +1324,12 @@ test('the recovery folder of the owner\'s master is written by recovery-export a
     assert.notDeepEqual(plant((d) => { policy(d, 'recovery-export-egress').spec.egress[0].to = [{ipBlock: {cidr: '0.0.0.0/0'}}]; }), [],
       `PLANTED DEFECT: the pinhole of ${unit} open to every address`);
     assert.notDeepEqual(plant((d) => { steps(d)[0].env.push(...steps(d)[1].env); }), [], `PLANTED DEFECT: the login beside the plan of ${unit}`);
-    assert.notDeepEqual(plant((d) => { steps(d)[4].script += '\nrclone sync /recovery box:\n'; }), [], `PLANTED DEFECT: a sync of ${unit} that deletes on the box`);
+    assert.notDeepEqual(plant((d) => { steps(d)[5].script += '\nrclone sync /recovery box:\n'; }), [], `PLANTED DEFECT: a sync of ${unit} that deletes on the box`);
+    assert.notDeepEqual(plant((d) => { steps(d).splice(3, 1); }), [], `PLANTED DEFECT: the export of ${unit} uploads the copies without writing them into archives`);
+    assert.notDeepEqual(plant((d) => { steps(d)[3].image = steps(d)[2].image; }), [], `PLANTED DEFECT: the archive step of ${unit} on the skopeo image`);
     assert.notDeepEqual(plant((d) => { tasks(d).find((t) => t.name === 'recovery-export').when = []; }), [], `PLANTED DEFECT: the export of ${unit} for every run`);
     for (const [name, outside] of [['the root', 'box:'], ['the installation\'s folder', `box:${RECOVERY_DOMAIN}`], ['a sibling folder', `box:${RECOVERY_FOLDER}-old`]]) {
-      assert.notDeepEqual(plant((d) => { steps(d)[4].script = steps(d)[4].script.replaceAll(`box:${RECOVERY_FOLDER}`, outside); }), [],
+      assert.notDeepEqual(plant((d) => { steps(d)[5].script = steps(d)[5].script.replaceAll(`box:${RECOVERY_FOLDER}`, outside); }), [],
         `PLANTED DEFECT: the upload of ${unit} into ${name}`);
     }
     assert.notDeepEqual(plant((d) => { steps(d)[1].script = steps(d)[1].script.replace(`rclone mkdir box:${RECOVERY_FOLDER}\n`, ''); }), [],

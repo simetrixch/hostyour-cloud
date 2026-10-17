@@ -20,6 +20,8 @@
 #       the line of one build of the platform's own images
 #   recovery_engine_archive <registry>/<owner> <release> [<manifest digest>]
 #       the line of one release of the engine
+#   recovery_archive_write <a folder skopeo's dir: transport wrote> <archive> <name:tag>
+#       the archive of the image in that folder, named by the media type of its top manifest, which it prints
 #   recovery_archive_digest <folder> <path in it> <name:tag> <manifest digest, or -> <ansiwise.sha256, or -> <a folder of its own>
 #       the digest of the one manifest the archive holds, or on standard error what is wrong with it
 #
@@ -94,6 +96,34 @@ recovery_engine_archive() {
     return 1
   fi
   echo "engine/$2.tar $1/ansiwise-cli:$2 ${3:--}"
+}
+
+# One OCI layout, whose index.json names the image's top manifest under its name: every manifest and blob of
+# the folder goes under blobs/sha256/ as its bytes, so a Docker manifest list stays as the mirror serves it,
+# and a file whose name is not its sha256 is refused. A manifest that carries no mediaType is named by its form.
+recovery_archive_write() {
+  local folder="$1" archive="$2" name="$3" file hex top="" media_type
+  [ -f "$folder/manifest.json" ] || { echo "$folder holds no manifest.json" >&2; return 1; }
+  mkdir -p "$folder/blobs/sha256" || return 1
+  for file in "$folder"/*; do
+    case "${file##*/}" in
+      blobs | version | signature-* | *.signature-*) continue ;;
+    esac
+    hex=$(sha256sum < "$file" | cut -d' ' -f1) || return 1
+    case "${file##*/}" in
+      manifest.json) top="$hex" ;;
+      "$hex" | "$hex.manifest.json") ;;
+      *) echo "$folder holds ${file##*/}, whose bytes have the digest sha256:$hex" >&2; return 1 ;;
+    esac
+    mv "$file" "$folder/blobs/sha256/$hex" || return 1
+  done
+  media_type=$(jq -r 'if (.mediaType | type) == "string" then .mediaType elif .manifests then "application/vnd.oci.image.index.v1+json" else "application/vnd.oci.image.manifest.v1+json" end' "$folder/blobs/sha256/$top") || { echo "$folder holds a manifest.json that is no JSON" >&2; return 1; }
+  printf '{"imageLayoutVersion":"1.0.0"}' > "$folder/oci-layout" || return 1
+  jq -n --arg type "$media_type" --arg digest "sha256:$top" --argjson size "$(wc -c < "$folder/blobs/sha256/$top")" --arg name "$name" \
+    '{schemaVersion: 2, mediaType: "application/vnd.oci.image.index.v1+json", manifests: [{mediaType: $type, digest: $digest, size: $size, annotations: {"org.opencontainers.image.ref.name": $name}}]}' \
+    > "$folder/index.json" || return 1
+  mkdir -p "$(dirname "$archive")" && tar -cf "$archive" -C "$folder" oci-layout index.json blobs && rm -rf "$folder" || return 1
+  echo "$media_type"
 }
 
 # A SUBSHELL, so the unpacked archive goes on every path out.
