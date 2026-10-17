@@ -48,11 +48,6 @@
 # is a pod that cannot pull. So the release reads each image back from the mirror,
 # by its digest and without a login, with curl, and the list of them is made by the
 # tree's own scripts/list-mirror-images.sh, which renders the tree with helm and yq.
-# The owner's master needs a third: its recovery folder on the storage box, which a
-# cold start of that machine reads instead of its own registry. The same run writes it
-# after the copy, and the release lists it through a short pod it starts on that machine,
-# through the operator door of its config beside the tree, before it pins that machine,
-# and never another.
 #
 # WHY THE PIN IS WRITTEN HERE. The line `release: <tag>` in
 # clusters/active/<fqdn>.yaml is what says which state an installation stands on,
@@ -168,9 +163,6 @@ write_config_value() { # file, KEY, value -> KEY='value' rewritten in place, app
   [ "$found" = '1' ] || lines+=("$key='$value'")
   : > "$file"
   for line in "${lines[@]}"; do printf '%s\n' "$line" >> "$file"; done
-}
-config_value() { # file, KEY -> the value of its last KEY='value' line, the one the shell sourcing the file keeps
-  sed -n "s/^$2='\([^']*\)'.*\$/\1/p" "$1" | tail -n 1
 }
 VERSION="${1:-}"
 CHANNEL="${2:-}"
@@ -428,183 +420,6 @@ else
   done
 fi
 CONFIG_DIR="$(git rev-parse --show-toplevel)/lifecycle"
-
-# NOTHING IS PINNED ON THE OWNER'S MASTER BEFORE ITS RECOVERY FOLDER HOLDS EVERY ARCHIVE OF THE TAG. That
-# machine pulls every image from its own zot and fetches its engine from it, so a cold start of it, a first
-# installation or a restore, reads them from <fqdn>/recovery/ on the storage box instead (lifecycle/driver.sh)
-# and stops at the first archive the folder lacks. The publish run of the tag writes the folder only after it
-# has filled the mirror (recovery-export), so a pin that waited for the mirror alone could name a tree whose
-# archives never arrived. The owner's master is the installation whose zot is the tree's global.buildRegistry,
-# and its archives are those files/recovery-folder.sh of the tree at the tag names for the stage of its map.
-# Each must stand in the folder under its name, which the run gives an archive only once it has held it to
-# the tree, and rclone only once the upload is whole (it writes to a .partial name until then). The folder is
-# listed by a short pod on that master, which the release starts through the operator door of that
-# installation's config beside this tree, the door master-backup knocks at. The pod runs the rclone image of
-# the tree at the tag with the storage-box login of the Secret recovery-box, the one the publish run writes
-# the folder with, so this machine needs no rclone and no value of that login ever reaches it. The wait is the
-# one the mirror already spent, and each attempt is bounded by what is left of it.
-#
-# TWO STATES READ NOTHING. A tree at the tag without files/recovery-folder.sh names no folder, and its driver
-# reads none. And the publish run of the tag runs the pipeline of the tree the owner's branch stands on: where
-# that tree writes no folder yet, nothing the tag starts writes one, and waiting for it would never pin the
-# tag that brings the writer. The release says so and pins, and the release after it reads the folder back.
-RECOVERY_LIB='clusters/inventories/consumer-build/files/recovery-folder.sh'
-RECOVERY_FQDN=''
-RECOVERY_STAGE=''
-if [ -f "$LISTED/tree/$RECOVERY_LIB" ]; then
-  # shellcheck disable=SC1090
-  . "$LISTED/tree/$RECOVERY_LIB"
-  RECOVERY_REGISTRY="$(recovery_registry "$LISTED/tree")" \
-    || die "the tree at $TAG names no registry its images are pulled from - the line above says why - and nothing was pinned"
-  case "$RECOVERY_REGISTRY" in
-    zot.*) RECOVERY_FQDN="${RECOVERY_REGISTRY%%/*}"; RECOVERY_FQDN="${RECOVERY_FQDN#zot.}" ;;
-  esac
-  for ENTRY in ${TARGETS[@]+"${TARGETS[@]}"}; do
-    case "$ENTRY" in "pin $RECOVERY_FQDN "*) RECOVERY_STAGE="${ENTRY##* }" ;; esac
-  done
-fi
-branch_carries() { # fqdn, path -> 0 where the tree its install branch stands on carries the path
-  if [ -n "$FQDN" ]; then [ -f "$WORK/$2" ]; else git cat-file -e "refs/remotes/origin/$1:$2" 2>/dev/null; fi
-}
-
-# THE POD THAT LISTS THE FOLDER, one per attempt. Its image and its login are the define blocks
-# consumer-build.rcloneImage, .recoveryBoxEnv and .recoveryBoxLogin of the tree at the tag, which the step present
-# of recovery-export runs with, so the digest and the login stand in one place. It carries the label the pinhole
-# recovery-export-egress selects, the only way out of the namespace to port 22, and runs as pipeline-sa with no
-# token. The namespace is the one this tree's publish run writes the folder from, which holds recovery-box.
-# rclone's standard error stays in the pod unless the listing fails; then it leaves with the values of the host
-# and the user replaced by the names of their keys, because an sftp line can carry both. So a pod that listed
-# the folder logs the listing alone, and no value of the login leaves the cluster.
-RECOVERY_NAMESPACE='hostyour-cloud-build'
-recovery_define() { # name -> the body of that define block of the tree's consumer-build/templates/_helpers.tpl
-  sed -n "/^{{- define \"consumer-build.$1\" -}}\$/,/^{{- end -}}\$/p" \
-    "$LISTED/tree/clusters/inventories/consumer-build/templates/_helpers.tpl" | sed '1d;$d'
-}
-recovery_listing_pod() { # pod name, its bound in seconds -> the manifest
-  cat <<POD
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $1
-  labels:
-    tekton.dev/pipelineTask: recovery-export
-spec:
-  restartPolicy: Never
-  serviceAccountName: pipeline-sa
-  automountServiceAccountToken: false
-  activeDeadlineSeconds: $2
-  containers:
-    - name: listing
-      image: $RECOVERY_IMAGE
-      env:
-$(printf '%s\n' "$RECOVERY_BOX_ENV" | sed 's/^/        /')
-      resources:
-        requests: { cpu: 50m, memory: 64Mi }
-        limits: { cpu: 500m, memory: 256Mi }
-      command:
-        - /bin/sh
-        - -c
-        - |
-          set -eu
-$(printf '%s\n' "$RECOVERY_BOX_LOGIN" | sed 's/^/          /')
-          rclone lsf --recursive --files-only box:$RECOVERY_FQDN/recovery/ > /tmp/listing 2> /tmp/rclone.err || {
-            status=\$?
-            awk 'function masked(line, value, word,  at, out) {
-                   if (value == "") return line
-                   while ((at = index(line, value)) > 0) { out = out substr(line, 1, at - 1) word; line = substr(line, at + length(value)) }
-                   return out line
-                 }
-                 { print masked(masked(\$0, ENVIRON["STORAGE_BOX_HOST"], "recovery-box.host"), ENVIRON["STORAGE_BOX_USER"], "recovery-box.user") }' /tmp/rclone.err >&2
-            exit "\$status"
-          }
-          cat /tmp/listing
-POD
-}
-# WHAT THE MASTER RUNS, read by bash -s from the session's standard input, which is why every command but the
-# create reads /dev/null. It creates the pod, deletes it on every way out, and reads its phase every 2 seconds
-# until the pod has Succeeded or Failed, or 60 seconds past its own bound, in which the cluster ends it. The phase
-# decides: the log of a pod that Succeeded is the listing, on the standard output; anything else ends with one
-# line on the standard error that names the pod, its phase, the reasons and its last line.
-recovery_listing_script() { # pod name, its bound in seconds -> the script
-  printf "namespace='%s' pod='%s' bound='%s'\n" "$RECOVERY_NAMESPACE" "$1" "$2"
-  cat <<'MASTER'
-set -u
-pod_api() { microk8s.kubectl -n "$namespace" "$@" < /dev/null; }
-microk8s.kubectl -n "$namespace" create -f - >&2 <<'POD' || exit
-MASTER
-  recovery_listing_pod "$1" "$2"
-  cat <<'MASTER'
-POD
-trap 'pod_api delete pod "$pod" --ignore-not-found > /dev/null' EXIT
-trap 'exit 1' HUP INT TERM PIPE
-state=''
-while :; do
-  state="$(pod_api get pod "$pod" -o 'jsonpath={.status.phase} {.status.reason} {.status.containerStatuses[*].state.waiting.reason}{.status.containerStatuses[*].state.terminated.reason}')"
-  case "$state" in
-    'Succeeded '*) pod_api logs "$pod"; exit ;;
-    'Failed '*) break ;;
-  esac
-  [ "$SECONDS" -lt $((bound + 60)) ] || break
-  sleep 2
-done
-read -r phase reasons <<< "$state"
-last="$(pod_api logs "$pod" --tail=1 2>&1 | tail -n 1)"
-echo "the pod $pod stands ${phase:-unread}${reasons:+ ($reasons)} after ${SECONDS}s: ${last:-it logged nothing}" >&2
-exit 1
-MASTER
-}
-# ONE ATTEMPT is one ssh session, key only, as master-backup opens it, kept alive as release-unit keeps its own.
-# The pod's bound is the wait that is left, and at least 120 seconds, which fit a pull of the image and one
-# listing, so the last attempt is a real one.
-recovery_listing() { # -> the files of the recovery folder, one per line; why not, on the standard error
-  local bound=$((MIRROR_DEADLINE - SECONDS))
-  [ "$bound" -ge 120 ] || bound=120
-  recovery_listing_script "recovery-folder-listing-$(date -u +%Y%m%d%H%M%S)" "$bound" \
-    | ssh -p 22 -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new \
-      -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$RECOVERY_DOOR" 'bash -s'
-}
-if [ -n "$RECOVERY_STAGE" ] && ! branch_carries "$RECOVERY_FQDN" "$RECOVERY_LIB"; then
-  say "release: the recovery folder of $RECOVERY_FQDN is not read: the publish run of $TAG runs the pipeline of the tree branch $RECOVERY_FQDN stands on, and that tree writes no recovery folder yet. Until a later release reads the folder back, a cold start of $RECOVERY_FQDN from its branch stops at the first archive the folder lacks"
-elif [ -n "$RECOVERY_STAGE" ]; then
-  RECOVERY_CONFIG="$CONFIG_DIR/config.${RECOVERY_FQDN%%.*}.env"
-  [ -r "$RECOVERY_CONFIG" ] \
-    || die "there is no config at $RECOVERY_CONFIG, and the operator door of $RECOVERY_FQDN in it is what the release starts the pod that lists its recovery folder through before it pins that installation. Nothing was pinned" 66
-  # shellcheck disable=SC1091
-  . "$(dirname "$0")/require-owner-only.sh" \
-    || die 'require-owner-only.sh is not beside this file. It is the guard every reader of a config puts on it' 66
-  require_owner_only "$RECOVERY_CONFIG" \
-    || die "$RECOVERY_CONFIG $REACH and carries credentials, the storage-box password among them. Run: $OWNER_ONLY_COMMAND" 77
-  RECOVERY_OPERATOR="$(config_value "$RECOVERY_CONFIG" OPERATOR_USER)"
-  [ -n "$RECOVERY_OPERATOR" ] \
-    || die "$RECOVERY_CONFIG states no OPERATOR_USER, and the operator door of $RECOVERY_FQDN is what the release starts the pod that lists its recovery folder through before it pins that installation. Nothing was pinned" 65
-  # The door is MACHINE_HOST where the config states one, and the owner's master where not, as every launcher knocks.
-  RECOVERY_MACHINE_HOST="$(config_value "$RECOVERY_CONFIG" MACHINE_HOST)"
-  RECOVERY_DOOR="$RECOVERY_OPERATOR@${RECOVERY_MACHINE_HOST:-$RECOVERY_FQDN}"
-  RECOVERY_IMAGE="$(recovery_define rcloneImage)"
-  RECOVERY_BOX_ENV="$(recovery_define recoveryBoxEnv)"
-  RECOVERY_BOX_LOGIN="$(recovery_define recoveryBoxLogin)"
-  [ -n "$RECOVERY_IMAGE" ] && [ -n "$RECOVERY_BOX_ENV" ] && [ -n "$RECOVERY_BOX_LOGIN" ] \
-    || die "the tree at $TAG states no consumer-build.rcloneImage, .recoveryBoxEnv or .recoveryBoxLogin in clusters/inventories/consumer-build/templates/_helpers.tpl, and the pod that lists the recovery folder of $RECOVERY_FQDN runs with them. Nothing was pinned"
-  recovery_archives "$LISTED/tree" "$RECOVERY_STAGE" > "$LISTED/recovery.plan" \
-    || die "the tree at $TAG names no archives for the recovery folder of $RECOVERY_FQDN - the line above says why - and nothing was pinned"
-  RECOVERY_COUNT="$(grep -c . "$LISTED/recovery.plan")"
-  while :; do
-    BOX_LISTED=1
-    recovery_listing > "$LISTED/recovery.present" 2> "$LISTED/recovery.err" \
-      || { BOX_LISTED=''; : > "$LISTED/recovery.present"; }
-    UNHELD="$(while read -r path name _; do
-      grep -qxF -- "$path" "$LISTED/recovery.present" || printf '%s (%s)\n' "$path" "$name"
-    done < "$LISTED/recovery.plan")"
-    [ -z "$UNHELD" ] && break
-    if [ "$SECONDS" -ge "$MIRROR_DEADLINE" ]; then
-      [ -n "$BOX_LISTED" ] \
-        || die "the pod that lists box:$RECOVERY_FQDN/recovery/, started on $RECOVERY_FQDN through $RECOVERY_DOOR, listed nothing after ${MIRROR_WAIT}s ($(tail -n 1 "$LISTED/recovery.err" | tr -d '\r')), so none of the $RECOVERY_COUNT archives of $TAG that a cold start of $RECOVERY_FQDN reads there was found. Nothing was pinned. Release again once it does: the tag is reused" 69
-      die "the recovery folder of $RECOVERY_FQDN holds $((RECOVERY_COUNT - $(printf '%s\n' "$UNHELD" | grep -c .))) of the $RECOVERY_COUNT archives of $TAG after ${MIRROR_WAIT}s: it lacks $(printf '%s\n' "$UNHELD" | sed 's/$/;/' | tr '\n' ' ')and a cold start of $RECOVERY_FQDN stops at the first of them. The recovery-export of the publish run of $TAG on the owner's master writes them. Nothing was pinned. Read that run, then release again: the tag is reused" 69
-    fi
-    sleep 30
-  done
-  say "release: the recovery folder of $RECOVERY_FQDN holds all $RECOVERY_COUNT archives of $TAG"
-fi
 
 pin_installation() { # fqdn -> the map on its branch records the tag; PINNED gains the name
   local fqdn="$1" work map held
