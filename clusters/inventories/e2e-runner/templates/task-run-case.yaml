@@ -35,7 +35,6 @@ result, so nothing hands them to another pod.
 The paths below are the E2E image's: digita-testkit docker/e2e.Containerfile puts the repository
 at /e2e and runs as the `node` user.
 */ -}}
-{{- $builds := dict "root" $ "builds" .Values.builds "name" "digita-testkit-e2e" }}
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
@@ -68,9 +67,7 @@ spec:
       description: The email of the account that held the dropped member's role, for cases/dropped-member-roles.spec.ts.
   steps:
     - name: run-case
-      # Built inside this installation by the release of digita-testkit and pushed to its own
-      # registry, so the ref is composed against common.registryHost, not common.buildRegistry.
-      image: {{ printf "%s/%s:%s" (include "common.registryHost" $) (include "common.buildImageName" $builds) (include "common.buildTag" $builds) | quote }}
+      image: {{ include "e2e-runner.image" $ }}
       workingDir: /e2e/packages/e2e
       env:
         - name: E2E_TARGET_HOST
@@ -128,28 +125,10 @@ spec:
         echo "run-case: ${E2E_CASE} against ${PLAYWRIGHT_BASE_URL}"
         exec node_modules/.bin/playwright test "${E2E_CASE}"
       securityContext:
-        runAsNonRoot: true
-        runAsUser: {{ .Values.run.runAsUser }}
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: RuntimeDefault
-        readOnlyRootFilesystem: true
+        {{- include "e2e-runner.stepSecurityContext" $ | nindent 8 }}
       volumeMounts:
-        - name: tmp
-          mountPath: /tmp
-        - name: signed-in-session
-          mountPath: /e2e/packages/e2e/.auth
-        - name: test-results
-          mountPath: /e2e/packages/e2e/test-results
+        {{- include "e2e-runner.stepVolumeMounts" $ | nindent 8 }}
       computeResources:
         {{- toYaml .Values.run.resources | nindent 8 }}
   volumes:
-    - name: tmp
-      emptyDir: {}
-    - name: signed-in-session
-      emptyDir:
-        medium: Memory
-    - name: test-results
-      emptyDir: {}
+    {{- include "e2e-runner.volumes" $ | nindent 4 }}
