@@ -302,8 +302,10 @@ done
 # host and does not exist yet while it is installed, on a first installation as on a
 # restore. Its registry is also where every image of the platform is pulled from, its own
 # image among them. So that machine reads its engine and its images from the RECOVERY
-# FOLDER, <fqdn>/recovery/ on the storage box, which the platform's publish run writes at
-# every release (recovery-export, lifecycle/recovery-folder.sh), and it reads the folder
+# FOLDER, <fqdn>/recovery/ on the storage box. The platform's publish run writes it at every
+# release, and the release of one of the platform's own builds or of the engine writes its
+# archive there before its pin moves (recovery-export,
+# clusters/inventories/consumer-build/files/recovery-folder.sh). The machine reads the folder
 # with the storage-box login of the operator's config, the one master-backup writes with.
 readonly RELEASES=https://zot.master.digitacloud.app/v2/simetrixch/ansiwise-cli/blobs
 releases_host="${RELEASES#https://}"; releases_host="${releases_host%%/*}"
@@ -928,20 +930,21 @@ compose_answers() {
 
 # THE RECOVERY FOLDER INTO THE NODE, on the owner's master alone, on a first installation and on a
 # restore. Its registry is one of the images it starts, so every image the installation's tree names
-# is fetched from the folder and held to that tree (lifecycle/recovery-folder.sh), and none is
+# is fetched from the folder and held to that tree (clusters/inventories/consumer-build/files/recovery-folder.sh), and none is
 # imported before all of them hold. Then they stand in the node's containerd under the names the pods
 # ask for, and nothing the master starts needs its registry for an image.
 fetch_recovery_archives() { # <checkout> <the folder to fetch into> — writes <folder>/held, one line per archive: <path> <name:tag> <digest>
   local checkout="$1" into="$2" path name digest held count=0
-  # shellcheck source=recovery-folder.sh
-  . "$checkout/lifecycle/recovery-folder.sh" || { bad "$checkout/lifecycle/recovery-folder.sh cannot be read, and it names what the recovery folder holds"; return 1; }
+  # shellcheck source=../clusters/inventories/consumer-build/files/recovery-folder.sh
+  . "$checkout/clusters/inventories/consumer-build/files/recovery-folder.sh" \
+    || { bad "$checkout/clusters/inventories/consumer-build/files/recovery-folder.sh cannot be read, and it names what the recovery folder holds"; return 1; }
   recovery_archives "$checkout" "$STAGE" > "$into/plan" || { bad "the tree at $checkout names no archives the recovery folder can hold; the line above says why"; return 1; }
   : > "$into/held"
   while read -r path name digest; do
     mkdir -p "$into/${path%/*}"
     rclone copyto "$RECOVERY/$path" "$into/$path" 2>/dev/null \
       || { bad "$RECOVERY holds no $path, the archive of $name, and nothing was imported"; return 1; }
-    held=$(recovery_archive_digest "$into" "$path" "$name" "$digest" "$checkout" "$into/unpacked") \
+    held=$(recovery_archive_digest "$into" "$path" "$name" "$digest" "$checkout/clusters/platform/ansiwise.sha256" "$into/unpacked") \
       || { bad "$RECOVERY/$path is not the archive of $name the tree names, and nothing was imported"; return 1; }
     printf '%s %s %s\n' "$path" "$name" "$held" >> "$into/held"
     count=$(( count + 1 ))

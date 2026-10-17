@@ -203,20 +203,21 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.ciFailureReport.alertmanager.port }}
-{{- if eq (include "consumer-build.isPlatformMirror" .) "true" }}
+{{- if eq (include "consumer-build.writesRecoveryFolder" .) "true" }}
 ---
 {{- /*
-SFTP pinhole for the `recovery-export` pod of the platform's publish run ONLY, rendered for the platform tree
-on the owner's master alone. Tekton stamps every TaskRun pod with tekton.dev/pipelineTask=<task name>, so this
-selects exactly that pod, which runs no code of the repository: it copies the recovery folder of the owner's
-master to the storage box with rclone's sftp backend, which dials port 22. build-egress keeps 443 and 80, so
+SFTP pinhole for the `recovery-export` pod ONLY, rendered for the three units that write the recovery folder of
+the owner's master, on the owner's master alone (consumer-build.writesRecoveryFolder): the platform tree, the
+platform's own builds and the engine. Tekton stamps every TaskRun pod with tekton.dev/pipelineTask=<task name>,
+so this selects exactly that pod, which runs no code of the repository: it copies the recovery folder of the
+owner's master to the storage box with rclone's sftp backend, which dials port 22. build-egress keeps 443 and 80, so
 no other pod of the namespace reaches port 22 anywhere. The addresses are global.storageBoxCidrs, the
 resolved addresses of the recovery sub-account's host, written into clusters/active/<fqdn>.yaml of the owner's
 master beside global.nodeCidrs.
 */}}
 {{- $storageBoxCidrs := .Values.global.storageBoxCidrs | default list -}}
 {{- if not $storageBoxCidrs }}
-{{- fail "global.storageBoxCidrs is empty, so the recovery-export task of the platform's publish run has no address to reach the storage box at, and the recovery folder of the owner's master would stand still at its last release. Write the resolved addresses of the recovery sub-account's host into clusters/active/<fqdn>.yaml (global.storageBoxCidrs) of the owner's master." }}
+{{- fail "global.storageBoxCidrs is empty, so the recovery-export task has no address to reach the storage box at, and the recovery folder of the owner's master would lack what the next release pins. Write the resolved addresses of the recovery sub-account's host into clusters/active/<fqdn>.yaml (global.storageBoxCidrs) of the owner's master." }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

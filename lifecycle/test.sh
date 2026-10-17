@@ -2744,6 +2744,26 @@ CODE=0; RECOVERY=box:machine.example.invalid/recovery placed "$D" "$PINNED_DIGES
   || fail "driver.sh: a recovery folder without the engine must end with 69, name it, place nothing and fetch nothing from its own registry, got $CODE: $(cat "$OUT/placed.out")"
 ok "driver.sh: a recovery folder with a swapped executable, another release under the pin, or no engine is refused, and nothing is placed"
 
+# AN ENGINE RELEASED AFTER THE LAST PLATFORM TAG: master pins it, and the tag wrote the folder with the engine it
+# pinned. The release's own publish run writes its archive before the tag release/release.sh waits for stands in
+# the registry (recovery-export of pipeline-publish.yaml, under the name recovery_engine_archive gives), so the
+# owner's master places it from the folder. The planted defect is the folder as the tag alone wrote it.
+RECOVERY_LIB="$HERE/../clusters/inventories/consumer-build/files/recovery-folder.sh"
+fresh_machine; engine_folder; mv "$BOX/engine/$ENGINE_PIN.tar" "$BOX/engine/0.8.306-stable-20260929191649.tar"
+CODE=0; RECOVERY=box:machine.example.invalid/recovery placed "$D" "$PINNED_DIGESTS" || CODE=$?
+[ "$CODE" = 69 ] && [ -z "$(ls -A "$SANDBOX/bin")" ] && grep -q "holds no engine/$ENGINE_PIN.tar" "$OUT/placed.out" \
+  || fail "driver.sh: a folder that holds only the engine of the last tag must refuse the pin of master with 69, by name, and place nothing, got $CODE: $(cat "$OUT/placed.out")"
+line=$(. "$RECOVERY_LIB" && recovery_engine_archive registry.example.invalid/acme "$ENGINE_PIN") \
+  || fail "recovery_engine_archive names no archive for the engine release $ENGINE_PIN: $line"
+read -r path name _ <<< "$line"
+oci_archive "$BOX/$path" "$name" "$ENGINE_WORK/empty-config" "$SERVED/ansiwise-$ENGINE_PIN-linux-x64" "$SERVED/ansiwise-rest-$ENGINE_PIN-linux-x64" > /dev/null
+fresh_machine
+RECOVERY=box:machine.example.invalid/recovery placed "$D" "$PINNED_DIGESTS" \
+  || fail "driver.sh: the engine master pins was refused, though its release wrote it into the folder: $(cat "$OUT/placed.out")"
+[ "$(carries ansiwise)" = "$(released ansiwise)" ] && [ "$(carries ansiwise-rest)" = "$(released ansiwise-rest)" ] && [ ! -s "$OUT/fetched.log" ] \
+  || fail "driver.sh: the engine its release wrote into the folder was not placed as that release built it: $(cat "$OUT/placed.out")"
+ok "driver.sh: the owner's master places the engine master pins from the archive its release wrote under the name recovery_engine_archive gives, and the folder of the last tag alone is refused by name"
+
 # WHICH MACHINE READS THE FOLDER is decided once, off the host of RELEASES, and that machine needs the three
 # storage-box values of its config. The block runs as the driver states it.
 recovery_of() { # <fqdn> [<storage-box user>] — prints RECOVERY, or the refusal
@@ -3445,7 +3465,7 @@ rm -rf "$PLANT"
 # TEN — the recovery folder of the owner's master, fetched, held, imported and seeded
 # ===========================================================================
 # driver.sh fetches every archive the installation's tree names out of the recovery folder, holds each to
-# that tree (lifecycle/recovery-folder.sh), imports them into the node's containerd only when all hold,
+# that tree (clusters/inventories/consumer-build/files/recovery-folder.sh), imports them into the node's containerd only when all hold,
 # and once the registry answers pushes every archive named under it there and reads it back. What runs is
 # the driver's own text: its three functions, its step after deploy-cluster and its seed. The tree, the
 # folder and the archives are fixtures; rclone copies out of a folder, and the node's microk8s is a
@@ -3466,8 +3486,8 @@ seed_login=$(printf 'fixture-push:%s' "$$" | base64)
 export SEED_AUTH="{\"auths\":{\"zot.machine.example.invalid\":{\"auth\":\"$seed_login\"}}}"
 rf_folder() { # the tree and the folder the release would have written for it
   rm -rf "$RF_TREE" "$RF_BOX"
-  mkdir -p "$RF_TREE/clusters/platform" "$RF_TREE/clusters/inventories/manager" "$RF_TREE/clusters/inventories/gate-runner" "$RF_TREE/lifecycle"
-  cp "$HERE/recovery-folder.sh" "$RF_TREE/lifecycle/"
+  mkdir -p "$RF_TREE/clusters/platform" "$RF_TREE/clusters/inventories/manager" "$RF_TREE/clusters/inventories/gate-runner" "$RF_TREE/clusters/inventories/consumer-build/files"
+  cp "$RECOVERY_LIB" "$RF_TREE/clusters/inventories/consumer-build/files/"
   printf 'global:\n  domain: example.invalid\n  buildRegistry: "zot.machine.example.invalid/acme"\nimages: {}\n' > "$RF_TREE/clusters/platform/values-common.yaml"
   printf 'images: {}\ncliTools:\n  ansiwise:\n    version: "%s"\n' "$ENGINE_PIN" > "$RF_TREE/clusters/platform/versions.yaml"
   printf '%s\n' "$PINNED_DIGESTS" > "$RF_TREE/clusters/platform/ansiwise.sha256"
@@ -3560,6 +3580,30 @@ CODE=0; SERVE_OTHER=zot.machine.example.invalid/acme/manager:1.0.0 recovered "$H
   || fail "driver.sh: a registry that serves another manifest than the seed pushed must end with 69 and name it, got $CODE: $(cat "$OUT/recovered.out")"
 ok 'driver.sh: a registry that serves another manifest after the seed is refused by name'
 
+# A RELEASE OF THE PLATFORM'S OWN BUILDS AFTER THE LAST PLATFORM TAG: the tag wrote the folder for the builds at
+# 1.0.0, and the release of 1.0.1 pins them on the installation branch. That release's run writes their archives
+# before it pins them (recovery-export of pipeline-release.yaml, under the names recovery_build_archive gives), so
+# a restore of the tree that pins 1.0.1 imports and seeds them. The planted defect is the folder as the tag alone
+# wrote it, refused by name before any import. The innocent case, both pins equal, is the full folder above.
+rf_folder
+sed -i 's/tag: "1\.0\.0"/tag: "1.0.1"/' "$RF_TREE/clusters/inventories/manager/values-prod.yaml" "$RF_TREE/clusters/inventories/gate-runner/values-prod.yaml"
+CODE=0; recovered "$HERE/driver.sh" || CODE=$?
+[ "$CODE" = 65 ] && imported_nothing \
+  && grep -qxF 'bad: box:machine.example.invalid/recovery holds no own/manager/1.0.1.tar, the archive of zot.machine.example.invalid/acme/manager:1.0.1, and nothing was imported' "$OUT/recovered.out" \
+  || fail "driver.sh: the folder of the last tag must refuse a tree that pins a later release of the builds with 65, by name, before any import, got $CODE: $(cat "$OUT/recovered.out")"
+for image in manager dbtools gate-runner; do
+  line=$(. "$RECOVERY_LIB" && recovery_build_archive zot.machine.example.invalid/acme "$image" 1.0.1) \
+    || fail "recovery_build_archive names no archive for the release of $image at 1.0.1: $line"
+  read -r path name _ <<< "$line"
+  oci_archive "$RF_BOX/$path" "$name" "$RF/files/config" "$RF/files/$image.layer" > /dev/null
+done
+recovered "$HERE/driver.sh" || fail "driver.sh: a restore of a tree that pins builds no platform tag wrote was refused, though their release wrote them into the folder: $(cat "$OUT/recovered.out")"
+for image in manager dbtools gate-runner; do
+  grep -qxF "zot.machine.example.invalid/acme/$image:1.0.1" "$OUT/pushed.log" \
+    || fail "driver.sh: the restore did not seed $image at 1.0.1 from the archive its release wrote: $(cat "$OUT/pushed.log")"
+done
+ok 'driver.sh: a restore of a tree that pins builds released after the last platform tag imports and seeds the archives that release wrote, and the folder of the tag alone is refused by name before any import'
+
 plant 'a refusal of a changed archive that does not stop the import' \
   's/^      || { bad "\$RECOVERY\/\$path is not the archive of \$name the tree names, and nothing was imported"; return 1; }$/      || true/' '^      || true$'
 rf_folder; swap_blob "$RF_BOX/own/manager/1.0.0.tar" "$(sha256sum < "$RF/files/manager.layer" | cut -d' ' -f1)" "$RF/files/changed.layer"
@@ -3573,8 +3617,8 @@ ok 'the planted defect was caught — a driver whose seed pushes every name push
 
 # THE LIST ITSELF, as the publish run writes the folder and the driver reads it. On this tree: one line per
 # image of recovery-images.list, per build of the owner master's stage, and the engine, each path once.
-# shellcheck source=recovery-folder.sh
-. "$HERE/recovery-folder.sh"
+# shellcheck source=../clusters/inventories/consumer-build/files/recovery-folder.sh
+. "$RECOVERY_LIB"
 recovery_archives "$HERE/.." prod > "$OUT/archives" 2>&1 || fail "recovery_archives refused this tree: $(cat "$OUT/archives")"
 expected=$(( $(grep -cvE '^(#|$)' "$HERE/../clusters/platform/recovery-images.list") + $(grep -c '^  - name:' "$HERE/../clusters/inventories/manager/values-prod.yaml") \
   + $(grep -c '^  - name:' "$HERE/../clusters/inventories/gate-runner/values-prod.yaml") + 1 ))
@@ -3593,7 +3637,7 @@ rf_folder; sed -i 's/@sha256:[0-9a-f]*$//' "$RF_TREE/clusters/platform/recovery-
 rf_folder; manager_layer=$(sha256sum < "$RF/files/manager.layer" | cut -d' ' -f1)
 mkdir -p "$RF/without"; tar -xf "$RF_BOX/own/manager/1.0.0.tar" -C "$RF/without"; rm "$RF/without/blobs/sha256/$manager_layer"
 tar -cf "$RF_BOX/own/manager/1.0.0.tar" -C "$RF/without" .; rm -rf "$RF/without"
-! recovery_archive_digest "$RF_BOX" own/manager/1.0.0.tar zot.machine.example.invalid/acme/manager:1.0.0 - "$RF_TREE" "$RF/unpacked" > /dev/null 2> "$OUT/archives.err" \
+! recovery_archive_digest "$RF_BOX" own/manager/1.0.0.tar zot.machine.example.invalid/acme/manager:1.0.0 - "$RF_TREE/clusters/platform/ansiwise.sha256" "$RF/unpacked" > /dev/null 2> "$OUT/archives.err" \
   && grep -qxF "own/manager/1.0.0.tar names the blob sha256:$manager_layer and does not hold it" "$OUT/archives.err" && [ ! -e "$RF/unpacked" ] \
   || fail "recovery_archive_digest did not refuse an archive without a layer by name, or left it unpacked: $(cat "$OUT/archives.err")"
 ok "recovery_archives names $expected archives of this tree, each once, and refuses a build without a tag and an image without a digest; recovery_archive_digest refuses an archive without a layer"

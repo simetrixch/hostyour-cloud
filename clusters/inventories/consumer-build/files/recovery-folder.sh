@@ -1,21 +1,30 @@
 # shellcheck shell=bash
 # =============================================================================
 # recovery-folder.sh — what the recovery folder of the owner's master holds, and the test each archive
-# of it passes. SOURCED, NEVER RUN: the `recovery-export` task of the platform's publish run reads it
-# from the tree at the release tag and writes the folder, and driver.sh reads it from the installation's
-# checkout and fetches the folder into a cold node. Both name every archive the same way because both
-# run these lines, and both refuse an archive for the same reasons.
+# of it passes. SOURCED, NEVER RUN. Three runs on the owner's master write the folder, each before the pin
+# its archives serve can be read: the release run of the platform's own builds before its bump pins them
+# (pipeline-release.yaml), the publish run of the engine before it tags the release that
+# release/release.sh of ansiwise-cli waits for, and the publish run of every platform tag for the whole
+# tree (both pipeline-publish.yaml). The two release runs include this file as the chart renders it; the
+# platform's publish run sources it from the tree at its tag. lifecycle/driver.sh sources it from the
+# installation's checkout and fetches the folder into a cold node. All of them name every archive the
+# same way because all of them run these lines, and all refuse an archive for the same reasons.
 #
 #   recovery_archives <tree> <stage>
 #       one line per archive the tree names: <path in the folder> <name:tag> <manifest digest, or ->
-#   recovery_archive_digest <folder> <path in it> <name:tag> <manifest digest, or -> <tree> <a folder of its own>
+#   recovery_build_archive <registry>/<owner> <image> <tag>
+#       the line of one build of the platform's own images
+#   recovery_engine_archive <registry>/<owner> <release> [<manifest digest>]
+#       the line of one release of the engine
+#   recovery_archive_digest <folder> <path in it> <name:tag> <manifest digest, or -> <ansiwise.sha256, or -> <a folder of its own>
 #       the digest of the one manifest the archive holds, or on standard error what is wrong with it
 #
 # THE DIGESTS ARE THE TREE'S, never the folder's. A pinned image is held to the digest the tree names for
 # it in clusters/platform/recovery-images.list, which scripts/check.sh holds to the render. The engine is
-# held to clusters/platform/ansiwise.sha256. The platform's own images are pinned by tag alone
-# (builds[] of the manager and gate-runner values-<stage>.yaml), so their manifest digest is the
-# archive's own, and each of their blobs is still held to its name. Needs bash, awk, tar, sha256sum and jq.
+# held to clusters/platform/ansiwise.sha256, and by its publish run, which writes that file's lines only
+# afterwards, to the manifest it pushed. The platform's own images are pinned by tag alone (builds[] of
+# the manager and gate-runner values-<stage>.yaml), so their manifest digest is the archive's own, and
+# each of their blobs is still held to its name. Needs bash, awk, tar, sha256sum and jq.
 # =============================================================================
 
 recovery_archives() {
@@ -40,11 +49,7 @@ recovery_archives() {
     values="clusters/inventories/$values/values-$stage.yaml"
     [ -r "$tree/$values" ] || { echo "$values cannot be read, and it pins the builds of stage $stage" >&2; return 1; }
     while read -r image tag; do
-      if ! [[ "$image" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ && "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then
-        echo "$values names a build '$image' at '$tag'" >&2
-        return 1
-      fi
-      echo "own/$image/$tag.tar $registry/$image:$tag -"
+      recovery_build_archive "$registry" "$image" "$tag" 2> /dev/null || { echo "$values names a build '$image' at '$tag'" >&2; return 1; }
     done < <(awk '
       /^builds:/ { on = 1; next }
       on && /^[^[:space:]#]/ { on = 0 }
@@ -62,16 +67,28 @@ recovery_archives() {
     tool && /^[ \t]*$/ { next }
     tool { if (match($0, /^[ \t]+version:[ \t]*"[^"]+"/)) { v = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", v); sub(/"$/, "", v); print v }; exit }
   ' "$tree/clusters/platform/versions.yaml")
-  if ! [[ "$pin" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[a-z]+-[0-9]{14}$ ]]; then
-    echo "clusters/platform/versions.yaml pins ansiwise at '$pin'" >&2
+  recovery_engine_archive "$registry" "$pin" 2> /dev/null || { echo "clusters/platform/versions.yaml pins ansiwise at '$pin'" >&2; return 1; }
+}
+
+recovery_build_archive() {
+  if ! [[ "$2" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ && "$3" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then
+    echo "a build '$2' at '$3' is no image a registry can carry under a tag" >&2
     return 1
   fi
-  echo "engine/$pin.tar $registry/ansiwise-cli:$pin -"
+  echo "own/$2/$3.tar $1/$2:$3 -"
+}
+
+recovery_engine_archive() {
+  if ! [[ "$2" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[a-z]+-[0-9]{14}$ && "${3:--}" =~ ^(-|sha256:[0-9a-f]{64})$ ]]; then
+    echo "'$2' at '${3:--}' is no release of the engine at the digest of its manifest" >&2
+    return 1
+  fi
+  echo "engine/$2.tar $1/ansiwise-cli:$2 ${3:--}"
 }
 
 # A SUBSHELL, so the unpacked archive goes on every path out.
 recovery_archive_digest() (
-  folder="$1" path="$2" name="$3" want="$4" tree="$5" unpacked="$6"
+  folder="$1" path="$2" name="$3" want="$4" digests="$5" unpacked="$6"
   trap 'rm -rf "$unpacked"' EXIT
   mkdir -p "$unpacked" || exit 1
   tar -xf "$folder/$path" -C "$unpacked" 2>/dev/null || { echo "$path is no tar archive" >&2; exit 1; }
@@ -87,7 +104,7 @@ recovery_archive_digest() (
     echo "$path holds '${held:-nothing}', not the one image $name" >&2
     exit 1
   fi
-  [ "$want" = - ] || [ "$digest" = "$want" ] || { echo "$path holds $name at $digest, and the tree names $want" >&2; exit 1; }
+  [ "$want" = - ] || [ "$digest" = "$want" ] || { echo "$path holds $name at $digest, and it is held to $want" >&2; exit 1; }
   # Every manifest the index reaches, and every blob such a manifest names, is in the archive.
   manifests="$digest"
   while [ -n "$manifests" ]; do
@@ -104,10 +121,12 @@ recovery_archive_digest() (
   done
   case "$path" in
     engine/*)
-      for tool in ansiwise ansiwise-rest; do
-        hex=$(awk -v asset="$tool-${name##*:}-linux-x64" '$2 == asset { print $1 }' "$tree/clusters/platform/ansiwise.sha256")
+      # Held to the release's digests where they are written, and else to the manifest digest alone.
+      [ "$digests" != - ] || [ "$want" != - ] || { echo "$path is held to no digest of the engine" >&2; exit 1; }
+      [ "$digests" = - ] || for tool in ansiwise ansiwise-rest; do
+        hex=$(awk -v asset="$tool-${name##*:}-linux-x64" '$2 == asset { print $1 }' "$digests")
         [[ "$hex" =~ ^[0-9a-f]{64}$ && -f "$unpacked/blobs/sha256/$hex" ]] \
-          || { echo "$path holds no $tool-${name##*:}-linux-x64 at the digest clusters/platform/ansiwise.sha256 states" >&2; exit 1; }
+          || { echo "$path holds no $tool-${name##*:}-linux-x64 at the digest $digests states" >&2; exit 1; }
       done
       ;;
   esac

@@ -174,7 +174,6 @@ by a script.
 |---|---|---|
 | `driver.sh` | **on the machine** | the whole installation: preconditions, engine, programs checkout, the six programs |
 | `install-machine.sh` | the operator's machine | checks the config, opens one session, keeps every line, fetches the records |
-| `recovery-folder.sh` | the machine, and the platform's publish run | names the archives of the owner master's recovery folder and the test each passes; sourced, never run |
 
 `install-machine.sh` asks whether the config is protected by its mode, read with `stat`: 600 or 400
 passes, and any other mode is refused with the `chmod` that closes it.
@@ -191,7 +190,11 @@ installation as on a restore. Every image of the platform is pulled from that zo
 among them. So that machine reads `<fqdn>/recovery/` on the storage box, with the `STORAGE_BOX_HOST`,
 `STORAGE_BOX_USER` and `STORAGE_BOX_PASSWORD` of its config, which it then requires. The platform's
 publish run writes the folder at every release (`recovery-export`): one OCI archive per image the tree
-pulls, per own image at the builds of the stage, and the released engine. `driver.sh` takes the engine
+pulls, per own image at the builds of the stage, and the released engine. A pin that moves between two
+platform releases has its archive there before it moves: the release run of the platform's own builds
+writes them before its bump pins them, and the publish run of the engine writes it before it tags the
+release that ansiwise-cli's `release/release.sh` pins. Every one of these runs names and tests the
+archives with `clusters/inventories/consumer-build/files/recovery-folder.sh`. `driver.sh` takes the engine
 out of the folder by the digests `clusters/platform/ansiwise.sha256` states. After `deploy-cluster` it
 fetches every archive the installation's tree names, holds each to the digests the tree states, and
 only then imports them into the node's containerd, so External Secrets, Tekton and zot start without a
