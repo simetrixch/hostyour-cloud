@@ -144,8 +144,11 @@ export RCLONE_CONFIG_BOX_PASS
      a path below it, and never the root, which holds the installation's other backups beside it. plan names
      the run's archives with files/recovery-folder.sh. present makes the folder where it is missing, which the
      first run on a box does, lists what it holds and fetches every engine archive among them again, because a
-     release built again under its tag has other bytes, and check then refuses it. copy reads every archive
-     the box lacks from the owned registry without a login. check holds every archive the run wrote or fetched
+     release built again under its tag has other bytes, and check then refuses it. copy reads every image whose
+     archive the box lacks from the owned registry without a login, into a folder of skopeo's dir: transport,
+     which keeps every manifest as its bytes, a Docker manifest list included: an OCI archive takes an OCI
+     index alone, and the kept digests forbid the conversion. archive writes each folder into its archive with
+     files/recovery-folder.sh. check holds every archive the run wrote or fetched
      to the test the driver puts it to, so a folder the driver would refuse is never written. upload copies
      what the box lacks, never over a file that stands and never with a sync, and reads the list back. The
      login recovery-box stands in present and upload alone, which run rclone and no code of a repository, and in
@@ -216,7 +219,7 @@ export RCLONE_CONFIG_BOX_PASS
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
-    recovery_copy() { # <plan> <the files the box holds> <the folder to write into>: every archive the box lacks, read without a login
+    recovery_copy() { # <plan> <the files the box holds> <the folder to copy each image into>: every archive the box lacks, read without a login
       local path name digest source written=0 kept=0
       while read -r path name digest; do
         if grep -qxF "${path}" "$2"; then
@@ -226,7 +229,7 @@ export RCLONE_CONFIG_BOX_PASS
         source="docker://${name}"
         [ "${digest}" = - ] || source="docker://${name%:*}@${digest}"
         mkdir -p "$3/$(dirname "${path}")"
-        if ! skopeo copy --quiet --all --preserve-digests --retry-times 3 --src-no-creds "${source}" "oci-archive:$3/${path}:${name}"; then
+        if ! skopeo copy --quiet --all --preserve-digests --retry-times 3 --src-no-creds "${source}" "dir:$3/${path%.tar}"; then
           echo "recovery: FAIL — ${source} could not be written to ${path}" >&2
           return 1
         fi
@@ -234,7 +237,30 @@ export RCLONE_CONFIG_BOX_PASS
       done < "$1"
       echo "recovery: ${written} archives written, ${kept} already on the storage box"
     }
-    recovery_copy {{ $dir }}/recovery.plan {{ $dir }}/recovery.present {{ $dir }}/recovery
+    recovery_copy {{ $dir }}/recovery.plan {{ $dir }}/recovery.present {{ $dir }}/recovery.copied
+- name: archive
+  image: {{ include "consumer-build.toolsImage" .root }}
+  {{- if .tree }}
+  workingDir: /workspace/source
+  {{- end }}
+  {{- if .volume }}
+  volumeMounts: [{ name: recovery, mountPath: {{ $dir }} }]
+  {{- end }}
+  computeResources:
+    requests: { cpu: 100m, memory: 64Mi }
+    limits: { cpu: "1", memory: 256Mi }
+  script: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+{{ $lib | indent 4 }}
+    while read -r path name digest; do
+      [ -d "{{ $dir }}/recovery.copied/${path%.tar}" ] || continue
+      if ! media_type="$(recovery_archive_write "{{ $dir }}/recovery.copied/${path%.tar}" "{{ $dir }}/recovery/${path}" "${name}")"; then
+        echo "recovery: FAIL — the copy of ${name} could not be written to ${path}" >&2
+        exit 1
+      fi
+      echo "recovery: ${path} written from ${name} as ${media_type}"
+    done < {{ $dir }}/recovery.plan
 - name: check
   image: {{ include "consumer-build.toolsImage" .root }}
   {{- if .tree }}

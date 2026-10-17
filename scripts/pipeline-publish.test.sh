@@ -474,9 +474,10 @@ ok 'another build under a published tag, an empty build, a tag the registry cann
 # the fixture registry, blobs first, as skopeo does: an index with every manifest under --all and
 # with its first only without, and every manifest as its bytes under --preserve-digests and written
 # again without, as a conversion would write it. It also writes an image of the mirror, by its tag or its
-# digest, into an OCI archive named after it, as the recovery folder holds it: the manifest and every
-# manifest and blob it reaches, read from the fixture registry without a login, and only with every
-# platform and every digest kept.
+# digest, as the manifest and every manifest and blob it reaches, read from the fixture registry without
+# a login, and only with every platform and every digest kept: into a folder as skopeo's dir: transport
+# lays it out, which keeps any list as it is, or into an OCI archive named after it, which refuses a
+# Docker manifest list as skopeo refuses it, because only a conversion it may not make could write it there.
 mkdir -p "$work/upstream/blobs"
 cat > "$work/standin-bin/skopeo" <<EOF
 #!/usr/bin/env bash
@@ -502,11 +503,10 @@ if [ "\$command" = inspect ]; then
     || { echo "skopeo: manifest unknown: \${refs[0]}" >&2; exit 1; }
   exec cat "\$up/blobs/\$(cat "\$up/\${BASH_REMATCH[1]}/tags/\${BASH_REMATCH[2]}")"
 fi
-if [[ "\$command" = copy && "\${refs[1]:-}" == oci-archive:* ]]; then
-  [ "\$all/\$preserve/\$nocreds" = yes/yes/yes ] || { echo "skopeo: an archive is written with every platform and every digest kept, and without a login: \$*" >&2; exit 1; }
-  [[ "\${refs[0]}" =~ ^docker://[^/]+/(simetrixch/[^@]+)(@sha256:[0-9a-f]{64}|:[^:/@]+)\$ ]] || { echo "skopeo: an archive is read from the mirror alone: \${refs[0]}" >&2; exit 1; }
+if [[ "\$command" = copy && "\${refs[1]:-}" =~ ^(oci-archive|dir): ]]; then
+  [ "\$all/\$preserve/\$nocreds" = yes/yes/yes ] || { echo "skopeo: an image is written with every platform and every digest kept, and without a login: \$*" >&2; exit 1; }
+  [[ "\${refs[0]}" =~ ^docker://[^/]+/(simetrixch/[^@]+)(@sha256:[0-9a-f]{64}|:[^:/@]+)\$ ]] || { echo "skopeo: an image is read from the mirror alone: \${refs[0]}" >&2; exit 1; }
   repository="\${BASH_REMATCH[1]}" reference="\${BASH_REMATCH[2]:1}"
-  target="\${refs[1]#oci-archive:}"; archive="\${target%%:*}" name="\${target#*:}"
   layout="\$(mktemp -d)" || exit 1
   trap 'rm -rf "\$layout"' EXIT
   mkdir -p "\$layout/blobs/sha256"
@@ -516,6 +516,7 @@ if [[ "\$command" = copy && "\${refs[1]:-}" == oci-archive:* ]]; then
     get "manifests/\$1" "\$layout/incoming" || { echo "skopeo: \$repository serves no manifest \$1" >&2; return 1; }
     digest="sha256:\$(sha256sum < "\$layout/incoming" | cut -d' ' -f1)"
     mv "\$layout/incoming" "\$layout/blobs/sha256/\${digest#sha256:}"
+    echo "\${digest#sha256:}" >> "\$layout/manifests"
     for child in \$(jq -r '.manifests[]?.digest' "\$layout/blobs/sha256/\${digest#sha256:}"); do take "\$child" > /dev/null || return 1; done
     for child in \$(jq -r '(.config.digest // empty), (.layers[]?.digest)' "\$layout/blobs/sha256/\${digest#sha256:}"); do
       get "blobs/\$child" "\$layout/blobs/sha256/\${child#sha256:}" || { echo "skopeo: \$repository serves no blob \$child" >&2; return 1; }
@@ -523,6 +524,25 @@ if [[ "\$command" = copy && "\${refs[1]:-}" == oci-archive:* ]]; then
     printf '%s' "\$digest"
   }
   top="\$(take "\$reference")" || exit 1
+  if [[ "\${refs[1]}" == dir:* ]]; then
+    # The folder's parent must stand, and the folder itself is made: the top manifest is manifest.json, every
+    # other manifest <hex>.manifest.json and every blob <hex>, beside the version file of the transport.
+    folder="\${refs[1]#dir:}"
+    [ -d "\$(dirname "\$folder")" ] || { echo "skopeo: \$(dirname "\$folder"): no such file or directory" >&2; exit 1; }
+    mkdir -p "\$folder" && printf 'Directory Transport Version: 1.1\n' > "\$folder/version" || exit 1
+    for file in "\$layout/blobs/sha256/"*; do
+      hex="\${file##*/}"
+      if [ "sha256:\$hex" = "\$top" ]; then mv "\$file" "\$folder/manifest.json"
+      elif grep -qxF "\$hex" "\$layout/manifests"; then mv "\$file" "\$folder/\$hex.manifest.json"
+      else mv "\$file" "\$folder/\$hex"; fi || exit 1
+    done
+    exit
+  fi
+  if [ "\$(jq -r .mediaType "\$layout/blobs/sha256/\${top#sha256:}")" = application/vnd.docker.distribution.manifest.list.v2+json ]; then
+    echo 'level=fatal msg="Manifest list must be converted to type \"application/vnd.oci.image.index.v1+json\" to be written to destination, but we cannot modify it: \"Instructed to preserve digests\""' >&2
+    exit 1
+  fi
+  target="\${refs[1]#oci-archive:}"; archive="\${target%%:*}" name="\${target#*:}"
   printf '{"imageLayoutVersion":"1.0.0"}' > "\$layout/oci-layout"
   jq -n --arg type "\$(jq -r .mediaType "\$layout/blobs/sha256/\${top#sha256:}")" --arg digest "\$top" \
     --argjson size "\$(wc -c < "\$layout/blobs/sha256/\${top#sha256:}")" --arg name "\$name" \
@@ -576,6 +596,12 @@ v2s2_list="$(jq -n --arg a "$v2s2_amd64" --arg b "$v2s2_arm64" '{schemaVersion: 
   manifests: [{mediaType: "application/vnd.docker.distribution.manifest.v2+json", digest: $a, size: 1, platform: {architecture: "amd64", os: "linux"}},
     {mediaType: "application/vnd.docker.distribution.manifest.v2+json", digest: $b, size: 1, platform: {architecture: "arm64", os: "linux"}}]}' | upstream_blob)"
 upstream_tag fixture/multi 2.0 "$v2s2_list"
+oci_amd64="$(upstream_image application/vnd.oci.image.manifest.v1+json application/vnd.oci.image.layer.v1.tar+gzip index-amd64)"
+oci_arm64="$(upstream_image application/vnd.oci.image.manifest.v1+json application/vnd.oci.image.layer.v1.tar+gzip index-arm64)"
+oci_index="$(jq -n --arg a "$oci_amd64" --arg b "$oci_arm64" '{schemaVersion: 2, mediaType: "application/vnd.oci.image.index.v1+json",
+  manifests: [{mediaType: "application/vnd.oci.image.manifest.v1+json", digest: $a, size: 1, platform: {architecture: "amd64", os: "linux"}},
+    {mediaType: "application/vnd.oci.image.manifest.v1+json", digest: $b, size: 1, platform: {architecture: "arm64", os: "linux"}}]}' | upstream_blob)"
+upstream_tag fixture/index 3.0 "$oci_index"
 entry() { printf 'ghcr.io/%s %s/%s/ghcr.io/%s\n' "$1" "${2:-registry.test}" "${3:-simetrixch}" "$1"; } # <path>:<tag>@<digest> [registry] [owner]
 mirror() { # $1 the list -> the exit status of mirror_copy and then mirror_read_back, their output in $work/mirror.out
   rm -rf "$work/mirror-tmp"
@@ -1217,7 +1243,8 @@ platform_tool_hex="$(upstream_file github.com/fixture/platform-tool/releases/dow
 platform_chart_hex="$(upstream_chart charts.example.invalid platform-chart 1.0.0)"
 platform_sources="$(REGISTRY="$rendered_registry" source_line tool "$platform_tool_url" "$platform_tool_hex")
 $(REGISTRY="$rendered_registry" source_line chart https://charts.example.invalid platform-chart 1.0.0 "$platform_chart_hex")"
-platform_tree "$work/e11" "$platform_sources" "$(entry "fixture/multi:2.0@$v2s2_list" "$rendered_registry")" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")"
+platform_tree "$work/e11" "$platform_sources" "$(entry "fixture/multi:2.0@$v2s2_list" "$rendered_registry")" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")" \
+  "$(entry "fixture/index:3.0@$oci_index" "$rendered_registry")"
 commit_tag "$work/e11" "0.5.000-stable-$STAMP"
 other_backups; outside="$(outside_files)"; : > "$work/skopeo.log"
 platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "PLANTED INNOCENT: the platform tree did not mirror its images: $(cat "$work/run.out")"
@@ -1226,27 +1253,46 @@ platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "PLANTED INNOCENT: the 
   || fail "the platform run took another course: $(tasks_ran)"
 grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/multi:2.0@$v2s2_list application/vnd.docker.distribution.manifest.list.v2+json read back" "$work/run.out" \
   && grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/one:1.0.0@$oci_image application/vnd.oci.image.manifest.v1+json read back" "$work/run.out" \
+  && grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/index:3.0@$oci_index application/vnd.oci.image.index.v1+json read back" "$work/run.out" \
   && ! grep -q '^publish:' "$work/run.out" || fail "the platform run did not read every image back, or published a package: $(cat "$work/run.out")"
 grep -qxF 'mirror: the tree at this tag names 2 tools and charts for the mirror: 2 fetched and held to their sha256, 0 already served' "$work/run.out" \
   && grep -qxF 'mirror: 2 tools and charts: 2 pushed, 0 kept' "$work/run.out" && grep -qxF 'mirror: 2 of 2 tools and charts served' "$work/run.out" \
   && [ "$(grep -n ' read back$' "$work/run.out" | tail -n 1 | cut -d: -f1)" -lt "$(grep -n ' fetched from ' "$work/run.out" | head -n 1 | cut -d: -f1)" ] \
   || fail "the platform run did not mirror its tools and charts after its images were read back: $(cat "$work/run.out")"
 one_name="${rendered_registry}/simetrixch/ghcr.io/fixture/one:1.0.0" multi_name="${rendered_registry}/simetrixch/ghcr.io/fixture/multi:2.0"
-[ "$(box_files)" = "$(printf '%s\n' "engine/$platform_pin.tar" "images/${oci_image#sha256:}.tar" "images/${v2s2_list#sha256:}.tar" "own/manager/$platform_build.tar" | sort)" ] \
+index_name="${rendered_registry}/simetrixch/ghcr.io/fixture/index:3.0"
+[ "$(box_files)" = "$(printf '%s\n' "engine/$platform_pin.tar" "images/${oci_image#sha256:}.tar" "images/${v2s2_list#sha256:}.tar" "images/${oci_index#sha256:}.tar" \
+  "own/manager/$platform_build.tar" | sort)" ] \
   || fail "the storage box does not hold one archive per image, own build and engine of the tree: $(box_files | tr '\n' ' ')"
 grep -qxF "recovery: images/${oci_image#sha256:}.tar holds $one_name at $oci_image" "$work/run.out" \
   && grep -qxF "recovery: images/${v2s2_list#sha256:}.tar holds $multi_name at $v2s2_list" "$work/run.out" \
+  && grep -qxF "recovery: images/${oci_index#sha256:}.tar holds $index_name at $oci_index" "$work/run.out" \
   && grep -qE "^recovery: own/manager/$platform_build\.tar holds ${rendered_registry}/simetrixch/manager:$platform_build at sha256:[0-9a-f]{64}\$" "$work/run.out" \
   && grep -qE "^recovery: engine/$platform_pin\.tar holds ${rendered_registry}/simetrixch/ansiwise-cli:$platform_pin at sha256:[0-9a-f]{64}\$" "$work/run.out" \
-  && grep -qxF 'recovery: 4 archives this run wrote or fetched hold their image' "$work/run.out" \
-  && grep -qxF 'recovery: the storage box holds all 4 archives of this run' "$work/run.out" \
+  && grep -qxF 'recovery: 5 archives this run wrote or fetched hold their image' "$work/run.out" \
+  && grep -qxF 'recovery: the storage box holds all 5 archives of this run' "$work/run.out" \
   || fail "the recovery folder was not written with every archive held to the tree before the upload: $(cat "$work/run.out")"
-[ "$(grep -c ' oci-archive:' "$work/skopeo.log")" = 4 ] && ! grep ' oci-archive:' "$work/skopeo.log" | grep -qv " docker://${rendered_registry}/simetrixch/" \
-  || fail "an archive of the recovery folder was not read from the mirror: $(grep ' oci-archive:' "$work/skopeo.log")"
+[ "$(grep -c ' dir:' "$work/skopeo.log")" = 5 ] && ! grep ' dir:' "$work/skopeo.log" | grep -qv " docker://${rendered_registry}/simetrixch/" \
+  && ! grep -q ' oci-archive:' "$work/skopeo.log" || fail "an image of the recovery folder was not copied from the mirror as it is: $(grep -e ' dir:' -e ' oci-archive:' "$work/skopeo.log")"
+# Every archive names its image by the media type the mirror serves it as, a Docker manifest list included,
+# because the copy keeps every manifest and the archive step writes the type of the bytes it took.
+grep -qxF "recovery: images/${v2s2_list#sha256:}.tar written from $multi_name as application/vnd.docker.distribution.manifest.list.v2+json" "$work/run.out" \
+  && grep -qxF "recovery: images/${oci_image#sha256:}.tar written from $one_name as application/vnd.oci.image.manifest.v1+json" "$work/run.out" \
+  && grep -qxF "recovery: images/${oci_index#sha256:}.tar written from $index_name as application/vnd.oci.image.index.v1+json" "$work/run.out" \
+  || fail "the archive step did not write every copy into its archive by the media type of its bytes: $(cat "$work/run.out")"
+archive_types() { # the media type the index.json of each image archive on the box names its image by, one line per fixture
+  local hex
+  for hex in "${v2s2_list#sha256:}" "${oci_image#sha256:}" "${oci_index#sha256:}"; do
+    printf '%s %s\n' "$hex" "$(tar -xOf "$recovery_dir/images/$hex.tar" index.json | jq -r '.manifests[0].mediaType')"
+  done
+}
+archive_types_expected="$(printf '%s %s\n' "${v2s2_list#sha256:}" application/vnd.docker.distribution.manifest.list.v2+json \
+  "${oci_image#sha256:}" application/vnd.oci.image.manifest.v1+json "${oci_index#sha256:}" application/vnd.oci.image.index.v1+json)"
+[ "$(archive_types)" = "$archive_types_expected" ] || fail "PLANTED INNOCENT: an archive on the box names its image by another media type: $(archive_types | tr '\n' ' ')"
 ! grep -qF "$box_password" "$work/rclone.log" "$work/skopeo.log" "$work/run.out" || fail 'the password of the storage box login reached an argument or the log'
 copied="$(grep -c ' copied$' "$work/rclone.log")"
 platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "a second run of the same tag failed: $(cat "$work/run.out")"
-grep -qxF 'recovery: 0 archives written, 4 already on the storage box' "$work/run.out" && [ "$(grep -c ' copied$' "$work/rclone.log")" = "$copied" ] \
+grep -qxF 'recovery: 0 archives written, 5 already on the storage box' "$work/run.out" && [ "$(grep -c ' copied$' "$work/rclone.log")" = "$copied" ] \
   && grep -qxF "rclone: $box_domain/recovery/engine/$platform_pin.tar fetched" "$work/rclone.log" && grep -qxF 'recovery: 1 archives this run wrote or fetched hold their image' "$work/run.out" \
   || fail "a second run wrote an archive the storage box holds, or did not hold the engine it holds to the tree: $(cat "$work/run.out")"
 [ -z "$(outside_problems "$outside")" ] || fail "a second run reached beyond $box_domain/recovery/: $(outside_problems "$outside")"
@@ -1265,6 +1311,52 @@ platform_run "$work/e11" "0.5.000-stable-$STAMP" "$work/platform-at-root.json"
 at_root="$(outside_problems "$outside")"
 [ -n "$at_root" ] || fail "PLANTED DEFECT: a writer without the prefix wrote at the login's root, and the check beyond the folder stayed green"
 echo "pipeline-publish.test: PLANTED DEFECT (b), red as it must be: $(printf '%s\n' "$at_root" | head -n 3 | tr '\n' ' ')"
+# The copy step as it stood, which wrote each image into an OCI archive under --preserve-digests: it cannot
+# write a Docker manifest list there without converting it, so the run stops at the copy of fixture/multi.
+jq --arg folder 'dir:$3/${path%.tar}' --arg archive 'oci-archive:$3/${path}:${name}' \
+  '(.spec.tasks[] | select(.name == "recovery-export") | .taskSpec.steps[] | select(.name == "copy") | .script) |= (split($folder) | join($archive) | split("/recovery.copied") | join("/recovery"))' \
+  "$work/platform-pipeline.json" > "$work/platform-oci-copy.json"
+grep -qF 'oci-archive:$3/${path}:${name}' "$work/platform-oci-copy.json" && ! grep -qF 'dir:$3' "$work/platform-oci-copy.json" || fail 'the planted Pipeline of the OCI archive copy was not made'
+other_backups
+platform_run "$work/e11" "0.5.000-stable-$STAMP" "$work/platform-oci-copy.json" \
+  && fail 'PLANTED DEFECT: the copy wrote a Docker manifest list into an OCI archive under --preserve-digests, and the run passed'
+grep -qxF 'run: recovery-export failed at copy' "$work/run.out" \
+  && grep -qF 'Manifest list must be converted to type \"application/vnd.oci.image.index.v1+json\" to be written to destination, but we cannot modify it: \"Instructed to preserve digests\"' "$work/run.out" \
+  && grep -qxF "recovery: FAIL — docker://${rendered_registry}/simetrixch/ghcr.io/fixture/multi@$v2s2_list could not be written to images/${v2s2_list#sha256:}.tar" "$work/run.out" \
+  && [ -z "$(box_files)" ] || fail "the copy into an OCI archive did not stop the run at the Docker manifest list: $(cat "$work/run.out")"
+echo "pipeline-publish.test: PLANTED DEFECT (c), red as it must be: $(grep -xF -e 'run: recovery-export failed at copy' "$work/run.out") $(grep -F 'recovery: FAIL' "$work/run.out")"
+platform_tree "$work/e17" "$platform_sources" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")" "$(entry "fixture/index:3.0@$oci_index" "$rendered_registry")"
+commit_tag "$work/e17" "0.5.000-stable-$STAMP"
+other_backups
+platform_run "$work/e17" "0.5.000-stable-$STAMP" "$work/platform-oci-copy.json" || fail "PLANTED INNOCENT: the copy into an OCI archive failed without a Docker manifest list: $(cat "$work/run.out")"
+grep -qxF "recovery: images/${oci_index#sha256:}.tar holds $index_name at $oci_index" "$work/run.out" \
+  && grep -qxF "recovery: images/${oci_image#sha256:}.tar holds $one_name at $oci_image" "$work/run.out" \
+  || fail "PLANTED INNOCENT: the copy into an OCI archive did not hold the OCI index and the OCI manifest to the tree: $(cat "$work/run.out")"
+# An archive step that names every archive an OCI index, as a conversion would, names the Docker manifest
+# list and the OCI manifest by a type their bytes are not, and only the OCI index by its own.
+platform_tree "$work/e16" "$platform_sources" "$(entry "fixture/multi:2.0@$v2s2_list" "$rendered_registry")" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")" \
+  "$(entry "fixture/index:3.0@$oci_index" "$rendered_registry")"
+planted_lib="$work/e16/clusters/inventories/consumer-build/files/recovery-folder.sh"
+sed 's/^\( *\)media_type=\$(jq .*$/\1media_type=application\/vnd.oci.image.index.v1+json/' "$planted_lib" > "$planted_lib.planted" && mv "$planted_lib.planted" "$planted_lib"
+grep -qxF '  media_type=application/vnd.oci.image.index.v1+json' "$planted_lib" && ! grep -qF 'media_type=$(jq' "$planted_lib" || fail 'the planted recovery_archive_write was not made'
+commit_tag "$work/e16" "0.5.000-stable-$STAMP"
+other_backups
+platform_run "$work/e16" "0.5.000-stable-$STAMP" || fail "the tree of the planted recovery_archive_write did not run: $(cat "$work/run.out")"
+planted_types="$(archive_types)"
+[ "$planted_types" != "$archive_types_expected" ] || fail 'PLANTED DEFECT: every archive was named an OCI index, and the media types stayed green'
+[ "$(printf '%s\n' "$planted_types" | grep -vxF -f <(printf '%s\n' "$archive_types_expected"))" = "$(printf '%s %s\n' "${v2s2_list#sha256:}" application/vnd.oci.image.index.v1+json \
+  "${oci_image#sha256:}" application/vnd.oci.image.index.v1+json)" ] || fail "PLANTED INNOCENT: the OCI index was named by another type, or the plant missed another fixture: $planted_types"
+echo "pipeline-publish.test: PLANTED DEFECT (d), red as it must be: $(printf '%s\n' "$planted_types" | grep -vxF -f <(printf '%s\n' "$archive_types_expected") | tr '\n' ' ')"
+other_backups
+# A copy holding a file that is not named by its sha256 holds no blob the mirror served under that name.
+renamed_hex="$(printf 'other' | sha256sum | cut -d' ' -f1)" layer_hex="$(printf 'layer' | sha256sum | cut -d' ' -f1)"
+mkdir -p "$work/renamed" && printf '{"schemaVersion":2}' > "$work/renamed/manifest.json" && printf 'layer' > "$work/renamed/$renamed_hex" || fail 'the planted copy could not be made'
+# shellcheck source=../clusters/inventories/consumer-build/files/recovery-folder.sh
+renamed="$(. "$root/clusters/inventories/consumer-build/files/recovery-folder.sh" && recovery_archive_write "$work/renamed" "$work/renamed.tar" fixture/renamed:1.0 2>&1)" \
+  && fail 'PLANTED DEFECT: a copy holding a file not named by its sha256 was written into an archive'
+[ "$renamed" = "$work/renamed holds $renamed_hex, whose bytes have the digest sha256:$layer_hex" ] && [ ! -e "$work/renamed.tar" ] \
+  || fail "a copy holding a file not named by its sha256 was not refused by that file: $renamed"
+echo "pipeline-publish.test: PLANTED DEFECT (e), red as it must be: $renamed"
 platform_tree "$work/e12" "$platform_sources" "$(entry "fixture/gone:1.0.0@$oci_image" "$rendered_registry")"
 commit_tag "$work/e12" "0.5.000-stable-$STAMP"
 platform_run "$work/e12" "0.5.000-stable-$STAMP" && fail 'PLANTED DEFECT: the platform tree passed with an image ghcr.io does not hold'
@@ -1298,7 +1390,7 @@ grep -qxF 'run: recovery-export failed at check' "$work/run.out" \
   && grep -qxF "recovery: FAIL — engine/$platform_pin.tar is not the archive of ${rendered_registry}/simetrixch/ansiwise-cli:$platform_pin this run names" "$work/run.out" \
   && [ -z "$(box_files)" ] && ! grep -q ' copied$' "$work/rclone.log" \
   || fail "an engine other than the tree's did not stop the run at the check before the upload: $(cat "$work/run.out")"
-ok 'end to end: after the mirror the platform tree writes its recovery folder, one archive per image, own build and engine, read from the mirror without a login and held to the tree, uploads what the box lacks and keeps it on the next run, holding the engine the box holds to the tree; an engine other than the tree states, written or on the box, stops the run at the check with nothing uploaded'
+ok 'end to end: after the mirror the platform tree writes its recovery folder, one archive per image, own build and engine, read from the mirror without a login, a Docker manifest list kept as it is and every archive named by the type of its bytes, and held to the tree, uploads what the box lacks and keeps it on the next run, holding the engine the box holds to the tree; an engine other than the tree states, written or on the box, stops the run at the check with nothing uploaded'
 # The engine on the owner's master: its publish run puts the release's manifest under its digest alone, writes
 # it into the recovery folder, and only then puts it under the tag that release/release.sh of ansiwise-cli waits
 # for before it pins the engine. A run that cannot write the folder, or finds other bytes there under the
