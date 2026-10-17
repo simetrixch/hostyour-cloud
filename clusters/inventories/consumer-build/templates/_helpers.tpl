@@ -120,8 +120,9 @@ rclone/rclone:1.75.2@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb8808
 {{- end -}}
 
 {{/* The login of the installation's storage box, from the Secret recovery-box (externalsecret-recovery-box.yaml),
-     as the environment of a step of `recovery-export`, and the rclone remote `box:` made of it, whose root is
-     the login's root. The password reaches `rclone obscure` on standard input, never as an argument. */}}
+     as the environment of a step of `recovery-export` and of the listing pod of lifecycle/release-platform.sh,
+     which carries the task's label and runs the same two lines of rclone, and the rclone remote `box:` made of
+     it, whose root is the login's root. The password reaches `rclone obscure` on standard input, never as an argument. */}}
 {{- define "consumer-build.recoveryBoxEnv" -}}
 - name: STORAGE_BOX_HOST
   valueFrom: { secretKeyRef: { name: recovery-box, key: host } }
@@ -147,7 +148,8 @@ export RCLONE_CONFIG_BOX_PASS
      the box lacks from the owned registry without a login. check holds every archive the run wrote or fetched
      to the test the driver puts it to, so a folder the driver would refuse is never written. upload copies
      what the box lacks, never over a file that stands and never with a sync, and reads the list back. The
-     login recovery-box stands in present and upload alone, which run rclone and no code of a repository.
+     login recovery-box stands in present and upload alone, which run rclone and no code of a repository, and in
+     the listing pod of release-platform, which carries the task's label and runs the same two lines of rclone.
      Keys: root, the chart's context; dir, the folder the run works in; volume, true where that folder is
      the task's volume `recovery` and not a workspace; tree, true where files/recovery-folder.sh is the
      tree's at /workspace/source and not this chart's; digests, the ansiwise.sha256 check holds an engine

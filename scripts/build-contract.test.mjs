@@ -1240,8 +1240,9 @@ test('the publish run of the platform tree on the owner\'s master copies its ima
 // run of the platform tree after its mirror, the release run of the platform's own builds before its bump pins them, and
 // the publish run of the engine before its `tag` puts the release under the tag that release/release.sh of ansiwise-cli
 // waits for. In each, the login, the Secret recovery-box, reaches the two rclone steps alone, which run no code of the
-// repository; the pod reaches the storage box on port 22 through recovery-export-egress, which selects that task's pod
-// alone and admits exactly global.storageBoxCidrs. build-egress, which every pod of the namespace falls under, opens no
+// repository, and the listing pod of lifecycle/release-platform.sh, which carries the task's label and runs the same
+// two lines of rclone; the pod reaches the storage box on port 22 through recovery-export-egress, which selects that
+// task's label alone and admits exactly global.storageBoxCidrs. build-egress, which every pod of the namespace falls under, opens no
 // port 22. The login is the installation's one storage box login, <env>/app/storage-box, read through a store of its own
 // under the Vault role build-recovery-export with the account recovery-export-eso, never through build-eso. Its root holds
 // the installation's other backups, so every call on the box names <global.domain>/recovery or a path below it, and

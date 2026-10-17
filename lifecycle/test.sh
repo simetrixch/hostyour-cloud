@@ -3730,42 +3730,138 @@ ok "recovery_archives names $expected archives of this tree, each once, and refu
 # THE OWNER'S MASTER is the installation whose zot is the tree's global.buildRegistry, here
 # master.example.invalid. A cold start of it reads every archive its tree names from <fqdn>/recovery/ on the
 # storage box, so a release pins it only once that folder holds every archive the tree at the tag names,
-# listed with the storage-box login of its config beside the tree; any other installation reads no folder.
-# The box is a stand-in rclone first on the path: it lists a folder of this fixture as `box:` and logs every
-# argument and the login it finds in its environment. The release runs as a copy of itself beside a
-# stand-in regeneration, which logs the installation it was asked to bring onto the pin, because the
-# owner's config stands beside the tree and a release regenerates each installation whose config does.
+# listed by a pod the release starts on that master through the operator door of its config beside the tree;
+# any other installation reads no folder. The door is a stand-in ssh first on the path: it logs its arguments
+# and the door they name, keeps the script it reads on its standard input, and runs that script as the master
+# would, against a stand-in microk8s.kubectl, which plays the API and the pod. That one records what the
+# manifest asks for and runs the pod's command with the login of a stand-in Secret recovery-box, the same login
+# as the config's, because the Secret on the master syncs the one login of the installation. The pod's rclone
+# is a stand-in too: it lists a folder of this fixture as `box:` and logs every argument and the login it
+# finds in its environment, and it reaches the box only through the pinhole, which admits the label of
+# recovery-export alone. The release runs as a copy of itself beside a stand-in regeneration, which logs the
+# installation it was asked to bring onto the pin, because the owner's config stands beside the tree and a
+# release regenerates each installation whose config does.
 RP="$WORK/recovery-pin"
 ORIGIN_R="$RP/origin.git"
 WORK_R="$RP/checkout"
 RP_SEED="$RP/seed"
 RP_FOLDER="$RP/box/master.example.invalid/recovery"
-mkdir -p "$RP/bin" "$RP/net" "$RP/box"
+mkdir -p "$RP/bin" "$RP/net" "$RP/master/pods" "$RP/pod" "$RP/box" "$RP/secret/recovery-box"
 cp "$HERE/release-platform.sh" "$HERE/require-owner-only.sh" "$RP/bin/"
 cat > "$RP/bin/regenerate-install-branch.sh" <<'STUB'
 #!/usr/bin/env bash
 echo "regenerate $1" >> "$(dirname "$0")/regenerated.log"
 STUB
-cat > "$RP/net/rclone" <<'STUB'
+cat > "$RP/net/ssh" <<'STUB'
 #!/usr/bin/env bash
-# `obscure -` turns the first line of standard input into a token that is not it, as rclone reads it;
-# `lsf --recursive --files-only box:<path>` lists the files under <path> of the folder ../box, relative,
-# and fails where there is no such folder.
+# The operator's door to the owner's master. It logs its arguments and the door they name, keeps the script it
+# reads on its standard input in remote.log, and runs it as the master would: with bash -s, in an environment of
+# its own, the stand-in microk8s.kubectl of ../master first on its path.
+here="$(cd "$(dirname "$0")" && pwd)"
+echo "argv: $*" >> "$here/ssh.log"
+while [ "$#" -gt 0 ]; do case "$1" in -p|-o) shift 2 ;; -*) shift ;; *) break ;; esac; done
+echo "door: $1" >> "$here/ssh.log"
+shift
+[ "$*" = 'bash -s' ] || { echo "the stand-in master runs bash -s alone, not: $*" >&2; exit 255; }
+script="$(cat)"
+printf '%s\n' "$script" >> "$here/remote.log"
+env -i "PATH=$here/../master:$PATH" "HOME=$here/../master" bash -s <<< "$script"
+STUB
+cat > "$RP/master/microk8s.kubectl" <<'STUB'
+#!/usr/bin/env bash
+# The API and the node of the owner's master, as the listing pod meets them. `-n <namespace> create -f -`
+# records in pod.record what the manifest asks for, and runs the pod at once: its command, with each variable
+# whose secretKeyRef names a key of recovery-box set from ../secret/recovery-box, the stand-in rclone of ../pod
+# first on its path, and RECOVERY_PINHOLE open where the pod carries the label recovery-export-egress selects and
+# closed where not. The command's merged output is the pod's log, and its status the phase. Where ../pull-fails
+# stands the image is not pulled and nothing runs: the first read finds the pod Pending in ImagePullBackOff, and
+# the next one finds it ended by its activeDeadlineSeconds, which on a cluster takes that long and here no time.
+# `get pod <name> -o jsonpath=<the one form the listing reads>` answers the phase and the reasons, `logs` the log,
+# and what it hands back is kept in logs.returned, because that is what left the pod; `delete pod` removes it.
+here="$(cd "$(dirname "$0")" && pwd)"
+echo "argv: $*" >> "$here/kubectl.log"
+[ "$1" = -n ] || { echo 'error: the stand-in API answers a namespace named with -n' >&2; exit 1; }
+namespace="$2"; shift 2
+form='jsonpath={.status.phase} {.status.reason} {.status.containerStatuses[*].state.waiting.reason}{.status.containerStatuses[*].state.terminated.reason}'
+case "$1" in
+  create)
+    [ "$2 $3" = '-f -' ] || { echo 'error: the stand-in API creates from standard input alone' >&2; exit 1; }
+    manifest="$(cat)"
+    pod="$here/pods/$(yq '.metadata.name' <<< "$manifest")"
+    [ ! -e "$pod" ] || { echo "Error from server (AlreadyExists): pods \"${pod##*/}\" already exists" >&2; exit 1; }
+    mkdir "$pod"
+    { echo "namespace: $namespace"
+      yq '"image: " + .spec.containers[0].image, "label: " + (.metadata.labels["tekton.dev/pipelineTask"] // ""),
+        "serviceAccountName: " + .spec.serviceAccountName, "automountServiceAccountToken: " + (.spec.automountServiceAccountToken | tostring),
+        "activeDeadlineSeconds: " + (.spec.activeDeadlineSeconds | tostring), "restartPolicy: " + .spec.restartPolicy,
+        (.spec.containers[0].env[] | "env: " + .name + " " + .valueFrom.secretKeyRef.name + " " + .valueFrom.secretKeyRef.key)' <<< "$manifest"
+    } > "$here/pod.record"
+    if [ -e "$here/../pull-fails" ]; then
+      echo 'Pending  ImagePullBackOff' > "$pod/state"
+    else
+      login=()
+      while read -r name secret key; do
+        [ "$secret" = recovery-box ] && login+=("$name=$(cat "$here/../secret/recovery-box/$key")")
+      done < <(yq '.spec.containers[0].env[] | .name + " " + .valueFrom.secretKeyRef.name + " " + .valueFrom.secretKeyRef.key' <<< "$manifest")
+      pinhole=closed
+      [ "$(yq '.metadata.labels["tekton.dev/pipelineTask"]' <<< "$manifest")" = recovery-export ] && pinhole=open
+      [ "$(yq '.spec.containers[0].command[0:2] | join(" ")' <<< "$manifest")" = '/bin/sh -c' ] \
+        || { echo 'error: the stand-in pod runs a command of /bin/sh -c alone' >&2; exit 1; }
+      if env -i "PATH=$here/../pod:$PATH" "RECOVERY_PINHOLE=$pinhole" "${login[@]}" \
+        /bin/sh -c "$(yq '.spec.containers[0].command[2]' <<< "$manifest")" > "$pod/log" 2>&1; then
+        echo 'Succeeded  Completed' > "$pod/state"
+      else
+        echo 'Failed  Error' > "$pod/state"
+      fi
+    fi
+    echo "pod/${pod##*/} created" ;;
+  get|logs|delete)
+    if [ "$1" = logs ]; then name="$2" asked="logs ${*:3}"; else name="$3" asked="$1 $2 ${*:4}"; fi
+    pod="$here/pods/$name"
+    if [ ! -d "$pod" ]; then
+      [ "$asked" = 'delete pod --ignore-not-found' ] && exit 0
+      echo "Error from server (NotFound): pods \"$name\" not found" >&2; exit 1
+    fi
+    case "$asked" in
+      "get pod -o $form")
+        printf '%s' "$(cat "$pod/state")"
+        [ "$(cat "$pod/state")" = 'Pending  ImagePullBackOff' ] && echo 'Failed DeadlineExceeded ImagePullBackOff' > "$pod/state" ;;
+      'logs '|'logs --tail=1')
+        [ -e "$pod/log" ] \
+          || { echo "Error from server (BadRequest): container \"listing\" in pod \"$name\" is waiting to start: trying and failing to pull image" >&2; exit 1; }
+        if [ "$asked" = 'logs --tail=1' ]; then tail -n 1 "$pod/log"; else cat "$pod/log"; fi | tee -a "$here/logs.returned" ;;
+      'delete pod --ignore-not-found') rm -rf "$pod"; echo "pod \"$name\" deleted" ;;
+      *) echo "error: the stand-in API does not answer: $*" >&2; exit 1 ;;
+    esac ;;
+  *) echo "error: the stand-in API does not answer: $*" >&2; exit 1 ;;
+esac
+STUB
+cat > "$RP/pod/rclone" <<'STUB'
+#!/usr/bin/env bash
+# The rclone of the listing pod. `obscure -` turns the first line of standard input into a token that is not it,
+# as rclone reads it; `lsf --recursive --files-only box:<path>` lists the files under <path> of the folder ../box,
+# relative, and fails where there is no such folder. It says on its standard error, as rclone does, that it found
+# no config file. Where the pinhole is closed to the pod or ../box-unreachable stands, the box is not reached: it
+# answers a dial timeout that names the host and the user it dialed, the most an sftp line of rclone can carry.
 log="$(dirname "$0")/rclone.log"
 echo "argv: $*" >> "$log"
 case "$1" in
-  obscure) [ "$2" = - ] && IFS= read -r line && printf 'obscured-%s' "$(printf '%s' "$line" | sha256sum | cut -c1-16)" ;;
+  obscure) [ "$2" = - ] && { IFS= read -r line || [ -n "$line" ]; } && printf 'obscured-%s' "$(printf '%s' "$line" | sha256sum | cut -c1-16)" ;;
   lsf)
     echo "login: ${RCLONE_CONFIG_BOX_TYPE:-} ${RCLONE_CONFIG_BOX_HOST:-} ${RCLONE_CONFIG_BOX_USER:-} ${RCLONE_CONFIG_BOX_PASS:-}" >> "$log"
+    echo 'NOTICE: Config file "/config/rclone/rclone.conf" not found - using defaults' >&2
     target="${*: -1}"
+    if [ "${RECOVERY_PINHOLE:-}" != open ] || [ -e "$(dirname "$0")/../box-unreachable" ]; then
+      echo "CRITICAL: Failed to create file system for \"$target\": NewFs: couldn't connect SSH: dial tcp ${RCLONE_CONFIG_BOX_USER:-}@${RCLONE_CONFIG_BOX_HOST:-}:22: i/o timeout" >&2
+      exit 1
+    fi
     folder="$(dirname "$0")/../box/${target#box:}"
     { [ "$2 $3" = '--recursive --files-only' ] && [ -d "$folder" ]; } || { echo 'directory not found' >&2; exit 3; }
     ( cd "$folder" && find . -type f | sed 's|^\./||' | sort ) ;;
   *) exit 2 ;;
 esac
 STUB
-chmod +x "$RP/net/rclone" "$RP/bin/regenerate-install-branch.sh"
-: > "$RP/net/rclone.log"
+chmod +x "$RP/net/ssh" "$RP/master/microk8s.kubectl" "$RP/pod/rclone" "$RP/bin/regenerate-install-branch.sh"
 : > "$RP/bin/regenerated.log"
 
 # The tree: zot in the mirror, and the archives files/recovery-folder.sh names for stage prod, which are zot and
@@ -3809,15 +3905,38 @@ for each in 'master.example.invalid prod' 'apps1.example.invalid dev'; do
   git -C "$RP_SEED" checkout --quiet master
 done
 cp "$HERE/../clusters/inventories/consumer-build/files/recovery-folder.sh" "$RP_SEED/clusters/inventories/consumer-build/files/"
+mkdir -p "$RP_SEED/clusters/inventories/consumer-build/templates"
+cp "$HERE/../clusters/inventories/consumer-build/templates/_helpers.tpl" "$RP_SEED/clusters/inventories/consumer-build/templates/"
 git -C "$RP_SEED" add -A
 git -C "$RP_SEED" commit --quiet -m 'Write the recovery folder at every tag'
 git -C "$RP_SEED" push --quiet origin master
 git clone --quiet "$ORIGIN_R" "$WORK_R"
 mkdir -p "$WORK_R/lifecycle"
+# The config keeps its storage-box login, because master-backup reads it there: the release must never send it.
 BOX_PASSWORD='the-storage-box-password-of-the-fixture'
-printf '%s\n' "FQDN='master.example.invalid'" "PLATFORM_REF=''" "STORAGE_BOX_HOST='box.example.invalid'" \
-  "STORAGE_BOX_USER='u1-sub1'" "STORAGE_BOX_PASSWORD='$BOX_PASSWORD'" > "$WORK_R/lifecycle/config.master.env"
+printf '%s\n' "FQDN='master.example.invalid'" "PLATFORM_REF=''" "OPERATOR_USER='operator'" "MACHINE_HOST=''" \
+  "STORAGE_BOX_HOST='box.example.invalid'" "STORAGE_BOX_USER='u1-sub1'" "STORAGE_BOX_PASSWORD='$BOX_PASSWORD'" \
+  > "$WORK_R/lifecycle/config.master.env"
 chmod 600 "$WORK_R/lifecycle/config.master.env"
+printf 'box.example.invalid' > "$RP/secret/recovery-box/host"
+printf 'u1-sub1' > "$RP/secret/recovery-box/user"
+printf '%s' "$BOX_PASSWORD" > "$RP/secret/recovery-box/password"
+RCLONE_IMAGE="$(sed -n '/^{{- define "consumer-build.rcloneImage" -}}$/{n;p;}' "$HERE/../clusters/inventories/consumer-build/templates/_helpers.tpl")"
+[[ "$RCLONE_IMAGE" =~ ^rclone/rclone:[^@]+@sha256:[0-9a-f]{64}$ ]] \
+  || fail "consumer-build.rcloneImage of _helpers.tpl is not one rclone image by its digest: '$RCLONE_IMAGE'"
+# What the pod of the last read asked for: the tree's rclone image by its digest, the namespace of the publish run,
+# the label the pinhole selects, the account of recovery-export with no token, a bound of 120 seconds, the floor
+# of one attempt where the release has no wait left, and the login of recovery-box.
+RP_POD="namespace: hostyour-cloud-build
+image: $RCLONE_IMAGE
+label: recovery-export
+serviceAccountName: pipeline-sa
+automountServiceAccountToken: false
+activeDeadlineSeconds: 120
+restartPolicy: Never
+env: STORAGE_BOX_HOST recovery-box host
+env: STORAGE_BOX_USER recovery-box user
+env: STORAGE_BOX_PASSWORD recovery-box password"
 
 rp_folder() { # the folder holds every archive of the tree, but the paths named
   local without
@@ -3827,9 +3946,23 @@ rp_folder() { # the folder holds every archive of the tree, but the paths named
     "$RP_FOLDER/own/gate-runner/1.0.0.tar" "$RP_FOLDER/engine/$ENGINE_R.tar"
   for without in "$@"; do rm "$RP_FOLDER/$without"; done
 }
-rp_release() { # the arguments of the release; RP_SCRIPT names another copy to run
+rp_release() { # the arguments of the release; RP_SCRIPT names another copy to run. Every log starts empty.
+  local log
+  for log in net/ssh.log net/remote.log master/kubectl.log master/pod.record master/logs.returned pod/rclone.log; do : > "$RP/$log"; done
   A_CODE=0
   ( cd "$WORK_R" && PATH="$RP/net:$MIRROR_NET:$PATH" bash "${RP_SCRIPT:-$RP/bin/release-platform.sh}" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  [ -n "${RP_SCRIPT:-}" ] || rp_login_kept \
+    || fail "a value of the storage-box login left the master: $(grep -lF -e "$BOX_PASSWORD" -e box.example.invalid -e u1-sub1 "$RP/net/ssh.log" "$RP/net/remote.log" "$RP/master/logs.returned" "$OUT/a.out" "$OUT/a.err" | tr '\n' ' ')"
+}
+rp_login_kept() { # -> 0 where no value of the storage-box login stands in what the release sent or got back, or printed
+  ! grep -qF -e "$BOX_PASSWORD" -e box.example.invalid -e u1-sub1 \
+    "$RP/net/ssh.log" "$RP/net/remote.log" "$RP/master/logs.returned" "$OUT/a.out" "$OUT/a.err"
+}
+rp_door() { # -> the doors the release knocked at, one per line
+  sed -n 's/^door: //p' "$RP/net/ssh.log" | sort -u
+}
+rp_pod_gone() { # -> 0 where every pod the release started was deleted again
+  [ -z "$(ls -A "$RP/master/pods")" ] && grep -qx 'argv: -n hostyour-cloud-build delete pod recovery-folder-listing-[0-9]\{14\} --ignore-not-found' "$RP/master/kubectl.log"
 }
 rp_pin() { # fqdn -> the release its map on origin records
   git --git-dir="$ORIGIN_R" show "$1:clusters/active/$1.yaml" | sed -n 's/^release: //p'
@@ -3846,7 +3979,7 @@ rp_release 1.0.0 stable master.example.invalid
 must "release: the recovery folder of master.example.invalid is not read: the publish run of 1.0.0-stable-" 'the release says it read no folder'
 must "and that tree writes no recovery folder yet" 'and why'
 must "release: pinned master.example.invalid to 1.0.0-stable-" 'and pins'
-[ ! -s "$RP/net/rclone.log" ] || fail "a release whose owner's branch writes no folder read the storage box: $(cat "$RP/net/rclone.log")"
+[ ! -s "$RP/net/ssh.log" ] || fail "a release whose owner's branch writes no folder started a pod on the master: $(cat "$RP/net/ssh.log")"
 [ "$(cat "$RP/bin/regenerated.log")" = 'regenerate master.example.invalid' ] || fail 'the owner was not regenerated, with its config beside the tree'
 ok "a release of the owner's master whose branch writes no recovery folder yet says so, reads no storage box and pins"
 PIN_R="$(rp_pin master.example.invalid)"
@@ -3857,15 +3990,25 @@ git -C "$RP/regenerated" merge --quiet --no-edit origin/master
 git -C "$RP/regenerated" push --quiet origin master.example.invalid
 rm -rf "$RP/regenerated"
 
-# ── no login, no read ──────────────────────────────────────────────────────
+# ── no door, no read ───────────────────────────────────────────────────────
 mv "$WORK_R/lifecycle/config.master.env" "$RP/config.master.away"
 rp_folder
 rp_release 1.1.0 stable master.example.invalid
 [ "$A_CODE" = 66 ] || fail "a release of the owner's master without its config ended with $A_CODE, not 66: $(cat "$OUT/a.err")"
-must "release: there is no config at $WORK_R/lifecycle/config.master.env, and the storage-box login of master.example.invalid in it" 'the missing config is named'
-[ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail 'a release without the login it reads the folder with pinned the owner'
+must "release: there is no config at $WORK_R/lifecycle/config.master.env, and the operator door of master.example.invalid in it" 'the missing config is named'
+[ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail 'a release without the door it reads the folder through pinned the owner'
+[ ! -s "$RP/net/ssh.log" ] || fail "a release without its config knocked at a door: $(cat "$RP/net/ssh.log")"
 mv "$RP/config.master.away" "$WORK_R/lifecycle/config.master.env"
 ok "a release of the owner's master without its config beside the tree is refused by name, and pins nothing"
+
+sed -i "s/^OPERATOR_USER='operator'\$/OPERATOR_USER=''/" "$WORK_R/lifecycle/config.master.env"
+rp_release 1.1.0 stable master.example.invalid
+[ "$A_CODE" = 65 ] || fail "a release of the owner's master whose config states no OPERATOR_USER ended with $A_CODE, not 65: $(cat "$OUT/a.err")"
+must "release: $WORK_R/lifecycle/config.master.env states no OPERATOR_USER, and the operator door of master.example.invalid" 'the missing key is named'
+[ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail 'a release without an operator pinned the owner'
+[ ! -s "$RP/net/ssh.log" ] || fail "a release without an operator knocked at a door: $(cat "$RP/net/ssh.log")"
+sed -i "s/^OPERATOR_USER=''\$/OPERATOR_USER='operator'/" "$WORK_R/lifecycle/config.master.env"
+ok "a release of the owner's master whose config states no OPERATOR_USER is refused by name, and pins nothing"
 
 # ── the folder lacks zot's archive: refused by name, nothing pinned ────────
 # The mirror serves every image of the tag; the folder holds every archive but zot's, and a .partial name of
@@ -3888,21 +4031,31 @@ RECORDED
 [ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail "a release whose folder lacks zot's archive pinned the owner to $(rp_pin master.example.invalid)"
 grep -qxF "PLATFORM_REF='$PIN_R'" "$WORK_R/lifecycle/config.master.env" || fail 'a refused release rewrote the config beside the tree'
 [ "$(cat "$RP/bin/regenerated.log")" = 'regenerate master.example.invalid' ] || fail 'a refused release regenerated the owner'
-grep -qxF "login: sftp box.example.invalid u1-sub1 obscured-$(printf '%s' "$BOX_PASSWORD" | sha256sum | cut -c1-16)" "$RP/net/rclone.log" \
-  || fail "the folder was not listed with the obscured storage-box login of the config, in rclone's environment: $(cat "$RP/net/rclone.log")"
-grep -qxF 'argv: lsf --recursive --files-only box:master.example.invalid/recovery/' "$RP/net/rclone.log" || fail "the folder listed is not the owner's"
-! grep -qF -- "$BOX_PASSWORD" "$RP/net/rclone.log" "$OUT/a.out" "$OUT/a.err" || fail 'the storage-box password stands in an argument or in the output'
-ok "a release of the owner's master whose recovery folder lacks zot's archive names it, pins nothing and rewrites nothing; the password reached rclone only on its standard input"
+[ "$(rp_door)" = 'operator@master.example.invalid' ] || fail "the release knocked at $(rp_door), not at the operator door of the owner's master"
+[ "$(cat "$RP/master/pod.record")" = "$RP_POD" ] \
+  || fail "the listing pod asked for other than the tree's rclone image by its digest, the pinhole's label, pipeline-sa and recovery-box: $(diff <(echo "$RP_POD") "$RP/master/pod.record")"
+grep -qxF "login: sftp box.example.invalid u1-sub1 obscured-$(printf '%s' "$BOX_PASSWORD" | sha256sum | cut -c1-16)" "$RP/pod/rclone.log" \
+  || fail "the pod did not list the folder with the obscured login of recovery-box, in rclone's environment: $(cat "$RP/pod/rclone.log")"
+grep -qxF 'argv: lsf --recursive --files-only box:master.example.invalid/recovery/' "$RP/pod/rclone.log" || fail "the folder the pod listed is not the owner's"
+rp_pod_gone || fail "the listing pod was not deleted: $(ls "$RP/master/pods") $(cat "$RP/master/kubectl.log")"
+ok "a release of the owner's master whose recovery folder lacks zot's archive names it, pins nothing and rewrites nothing; the pod that listed the folder ran the tree's rclone by its digest with the login of recovery-box, through the pinhole, and was deleted"
 
 # ── every archive stands: pinned ───────────────────────────────────────────
+# The config states a MACHINE_HOST, so the door is that machine, as every launcher knocks.
 rp_folder
+sed -i "s/^MACHINE_HOST=''\$/MACHINE_HOST='master1.example.invalid'/" "$WORK_R/lifecycle/config.master.env"
 rp_release 1.1.0 stable master.example.invalid
+sed -i "s/^MACHINE_HOST='master1.example.invalid'\$/MACHINE_HOST=''/" "$WORK_R/lifecycle/config.master.env"
+[ "$(rp_door)" = 'operator@master1.example.invalid' ] || fail "the release knocked at $(rp_door), not at the MACHINE_HOST of the owner's config"
 [ "$A_CODE" = 0 ] || fail "a release of the owner's master whose folder holds every archive ended with $A_CODE: $(cat "$OUT/a.err")"
 must "release: the recovery folder of master.example.invalid holds all 5 archives of 1.1.0-stable-" 'the read is reported'
 must "release: pinned master.example.invalid to 1.1.0-stable-" 'and the owner is pinned'
 [ "$(sed -n '$p' "$RP/bin/regenerated.log")" = 'regenerate master.example.invalid' ] && [ "$(grep -c . "$RP/bin/regenerated.log")" = 2 ] \
   || fail 'the pinned owner was not regenerated'
-ok "a release of the owner's master whose recovery folder holds every archive of the tag pins and regenerates it"
+[ "$(cat "$RP/master/logs.returned")" = "$(cd "$RP_FOLDER" && find . -type f | sed 's|^\./||' | sort)" ] \
+  || fail "what left the pod is not the listing alone: $(cat "$RP/master/logs.returned")"
+rp_pod_gone || fail "the listing pod was not deleted: $(ls "$RP/master/pods")"
+ok "a release of the owner's master whose recovery folder holds every archive of the tag pins and regenerates it; the listing alone left the pod, which was deleted"
 PIN_R="$(rp_pin master.example.invalid)"
 
 # ── a copy that never finds an archive missing pins all the same ───────────
@@ -3919,14 +4072,75 @@ esac
 ok "the planted defect was caught — a copy that never finds an archive missing pins the owner though its folder lacks zot's archive"
 PIN_R="$(rp_pin master.example.invalid)"
 
+rp_plant() { # what the copy is, then the arguments of sed that make it from release-platform.sh -> RP_SCRIPT
+  local what="$1"; shift
+  sed "$@" "$RP/bin/release-platform.sh" > "$RP/bin/planted-release.sh"
+  ! cmp -s "$RP/bin/release-platform.sh" "$RP/bin/planted-release.sh" || fail "the planted $what was not planted — the probe proves nothing"
+  RP_SCRIPT="$RP/bin/planted-release.sh"
+}
+
+# ── the box cannot be reached: refused by name, and the login stays in the cluster ──
+# rclone's line names the host and the user it dialed. The pod replaces both values with the names of their keys
+# before its error leaves it, so the refusal says what failed and carries neither.
+rp_folder
+touch "$RP/box-unreachable"
+rp_release 1.2.2 stable master.example.invalid
+[ "$A_CODE" = 69 ] || fail "a release of the owner's master whose box cannot be reached ended with $A_CODE, not 69: $(cat "$OUT/a.out" "$OUT/a.err")"
+must "release: the pod that lists box:master.example.invalid/recovery/, started on master.example.invalid through operator@master.example.invalid, listed nothing after 0s" 'the pod and its door are named'
+must "couldn't connect SSH: dial tcp recovery-box.user@recovery-box.host:22: i/o timeout" "rclone's line is quoted with the host and the user masked"
+must "so none of the 5 archives of 1.2.2-stable-" 'the count is named'
+[ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail 'a release whose box cannot be reached pinned the owner'
+rp_pod_gone || fail "the pod that could not reach the box was not deleted: $(ls "$RP/master/pods")"
+ok "a release of the owner's master whose storage box cannot be reached is refused by name with rclone's line, which carries no value of the login, and the pod was deleted"
+rp_plant 'masking' -e 's/"recovery-box\.host"/ENVIRON["STORAGE_BOX_HOST"]/' -e 's/"recovery-box\.user"/ENVIRON["STORAGE_BOX_USER"]/'
+rp_release 1.2.2 stable master.example.invalid
+RP_SCRIPT=''
+[ "$A_CODE" = 69 ] && ! rp_login_kept \
+  || fail "a copy whose pod sends rclone's line out unmasked kept the host and the user of the login in the cluster, so the check above proves nothing"
+ok "the planted defect was caught — a copy whose pod sends rclone's error out unmasked hands the host and the user of the login to the workstation"
+rm "$RP/box-unreachable"
+
+# ── the pod cannot start: refused by name ──────────────────────────────────
+touch "$RP/pull-fails"
+rp_release 1.2.2 stable master.example.invalid
+rm "$RP/pull-fails"
+[ "$A_CODE" = 69 ] || fail "a release of the owner's master whose pod cannot pull its image ended with $A_CODE, not 69: $(cat "$OUT/a.out" "$OUT/a.err")"
+must "stands Failed (DeadlineExceeded ImagePullBackOff)" 'the phase and the reasons are named'
+must "listed nothing after 0s" 'and that nothing was listed'
+[ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail 'a release whose pod cannot start pinned the owner'
+rp_pod_gone || fail "the pod that could not start was not deleted: $(ls "$RP/master/pods")"
+ok "a release of the owner's master whose listing pod cannot pull its image is refused by name, and the pod was deleted"
+
+# ── three more planted copies, each run where a case above ran ──────────────
+rp_plant 'label' '/tekton\.dev\/pipelineTask: recovery-export$/d'
+rp_release 1.2.2 stable master.example.invalid
+RP_SCRIPT=''
+[ "$A_CODE" = 69 ] && [ "$(rp_pin master.example.invalid)" = "$PIN_R" ] \
+  || fail "a copy whose pod lacks the label of recovery-export read the full folder through the pinhole, so the label is not held to it: $(cat "$OUT/a.err")"
+ok "the planted defect was caught — a copy whose pod lacks the label of recovery-export is shut out by the pinhole and pins nothing"
+
+rp_folder "images/$HEX_E.tar"
+rp_plant 'password' '/^recovery_listing_script() {/a\
+  printf "# %s\\n" "$(config_value "$RECOVERY_CONFIG" STORAGE_BOX_PASSWORD)"'
+rp_release 1.2.2 stable master.example.invalid
+RP_SCRIPT=''
+[ "$A_CODE" = 69 ] && ! rp_login_kept || fail "a copy that sends the config's storage-box password to the master was not seen sending it, so the check above proves nothing"
+ok "the planted defect was caught — a copy that sends the config's storage-box password in the script to the master is seen sending it"
+
+rp_plant 'digest' 's/recovery_define rcloneImage)/recovery_define rcloneImage | sed "s|@.*||")/'
+rp_release 1.2.2 stable master.example.invalid
+RP_SCRIPT=''
+[ "$A_CODE" = 69 ] && ! grep -qxF "image: $RCLONE_IMAGE" "$RP/master/pod.record" \
+  || fail "a copy whose pod runs rclone at its tag without the digest was held to the tree's line all the same, so the check above proves nothing"
+ok "the planted defect was caught — a copy whose pod runs rclone at its tag without the digest asks for another image than the tree names"
+
 # ── another installation reads no folder ───────────────────────────────────
 rm -rf "$RP/box/master.example.invalid"
-READS="$(grep -c . "$RP/net/rclone.log")"
 rp_release 1.2.1 stable apps1.example.invalid
 [ "$A_CODE" = 0 ] || fail "a release of another installation ended with $A_CODE while the owner's folder is gone: $(cat "$OUT/a.err")"
 must "release: pinned apps1.example.invalid to 1.2.1-stable-" 'the other installation is pinned'
 must_not "recovery folder" 'and no folder is named'
-[ "$(grep -c . "$RP/net/rclone.log")" = "$READS" ] || fail 'a release of another installation read the storage box'
+[ ! -s "$RP/net/ssh.log" ] || fail "a release of another installation started a pod on the owner's master: $(cat "$RP/net/ssh.log")"
 ok "a release of another installation reads no recovery folder and needs none"
 
 # ── the release that names no installation reads the owner's folder before any pin ──
@@ -3938,7 +4152,15 @@ case "$(rp_pin apps1.example.invalid) $(rp_pin master.example.invalid)" in
   1.2.1-stable-*" $PIN_R") ;;
   *) fail 'a release of every installation pinned one before it read the folder of the owner' ;;
 esac
-ok "a release that names no installation reads the owner's folder before it pins anything, and pins nothing when an archive is missing"
+[ "$(rp_door)" = 'operator@master.example.invalid' ] || fail "a release that names no installation knocked at $(rp_door), not at the operator door of the owner's master"
+rp_pod_gone || fail "the listing pod was not deleted: $(ls "$RP/master/pods")"
+ok "a release that names no installation reads the owner's folder through its door before it pins anything, and pins nothing when an archive is missing"
+rp_plant 'door' 's/:-\$RECOVERY_FQDN}"$/:-$FQDN}"/'
+rp_release 1.3.0 stable
+RP_SCRIPT=''
+[ "$(rp_door)" != 'operator@master.example.invalid' ] \
+  || fail "a copy whose door falls back to the fqdn argument knocked at the owner's master all the same, so the check above proves nothing"
+ok "the planted defect was caught — a copy whose door falls back to the fqdn argument knocks at $(rp_door) when the release names no installation"
 
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
@@ -4006,12 +4228,15 @@ echo "test:   and a stand-in containerd: a full folder fetched and held before t
 echo "test:   and seeded with the push identity by path and read back; a missing archive, a changed blob"
 echo "test:   and another image at a pinned path refused by name before any import; a registry serving"
 echo "test:   another manifest refused; two planted drivers caught; the list of this tree's archives."
-echo "test:   release-platform on the owner's master, against a stand-in storage box: the pin waits for every"
-echo "test:   archive of the tag in its recovery folder, listed with the login of its config, whose password"
-echo "test:   reaches rclone on its standard input alone; a folder without zot's archive, with or without the"
-echo "test:   release naming the owner, and a missing config are each refused before any pin; a copy that never"
-echo "test:   finds an archive missing is caught; a branch whose tree writes no folder yet is said and pinned;"
-echo "test:   another installation reads no folder."
+echo "test:   release-platform on the owner's master, against a stand-in door, API, pod and storage box: the"
+echo "test:   pin waits for every archive of the tag in its recovery folder, listed by a pod the release starts"
+echo "test:   on that master through the operator door of its config, with the tree's rclone by its digest, the"
+echo "test:   label of the pinhole and the login of recovery-box; the listing alone leaves the pod, every pod is"
+echo "test:   deleted, and no value of the login reaches the workstation. A folder without zot's archive, with or"
+echo "test:   without the release naming the owner, a missing config, a config without OPERATOR_USER, a box that"
+echo "test:   cannot be reached and a pod that cannot start are each refused before any pin; six planted copies"
+echo "test:   are caught; a branch whose tree writes no folder yet is said and pinned; another installation reads"
+echo "test:   no folder."
 echo "test: covered — a config of mode 644, refused in its recorded sentence by the"
 echo "test:   regeneration, the backup, the restore and install-machine, and a planted defect in"
 echo "test:   the guard beside the backup and beside the restore that proves the launcher reads it."
@@ -4024,6 +4249,9 @@ echo "test:   and a real browser, the two ten-minute bounds of the GitHub App ac
 echo "test:   and the restore themselves on a machine — the drill on two masters is what proves those."
 echo "test:   Nor a real containerd, skopeo or storage box under the recovery folder: a live cold start"
 echo "test:   of the owner's master from the folder with GHCR unavailable is declared, not proven."
+echo "test:   Nor a real master under the read-back of release-platform: the API, the pinhole, the pull and the"
+echo "test:   deadline of the listing pod are stand-ins, and the bound of its poll, which ends an attempt whose pod"
+echo "test:   the cluster never ends, is not reached; the release onto the owner's master proves the pod."
 
 node --test "$HERE/create-origin-pull-certificate.test.mjs" || fail 'origin pull certificate'
 node --test "$HERE/apply-cloudflare-zone-security.test.mjs" || fail 'Cloudflare zone security'

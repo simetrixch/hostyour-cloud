@@ -112,7 +112,9 @@ of the mirror, which run no code of the repository either, and on the engine by 
 which runs no code of the repository. The steps `plan` and `check` of `recovery-export`
 run files/recovery-folder.sh, the tree's at the tag on the platform tree and this chart's
 on the engine, and hold no credential; its storage-box login recovery-box is held by
-`present` and `upload`, which run rclone alone and no code of the repository. The run's one volume
+`present` and `upload`, which run rclone alone and no code of the repository, and by
+the listing pod of lifecycle/release-platform.sh, which carries the task's label and
+runs the same two lines of rclone. The run's one volume
 holds the clone in its subPath repository and the tarballs, binaries and mirror
 lists in its subPath packed.
 */ -}}
@@ -1209,7 +1211,8 @@ spec:
     # everything in it is public, and the driver holds every archive to the digests the tree states in git,
     # never to a list inside the folder. The login is the installation's storage box login (externalsecret-recovery-box.yaml),
     # and the steps write below <fqdn>/recovery/ of its root alone; the pod reaches the box on port 22 through recovery-export-egress
-    # (networkpolicy.yaml) and nothing else does. The steps are the ones every writer of the folder runs
+    # (networkpolicy.yaml), and so does the listing pod of lifecycle/release-platform.sh, which carries the task's label and runs
+    # the same two lines of rclone; nothing else does. The steps are the ones every writer of the folder runs
     # (_helpers.tpl, consumer-build.recoveryExportSteps).
     - name: recovery-export
       runAfter: [mirror]
