@@ -283,8 +283,9 @@ images:
 charts:
   # VENDORED: clusters/inventories/external-secrets/charts/<chart>-<version>.tgz, held by its line in
   # clusters/platform/charts.sha256. A bump stamps the version, and scripts/check.sh stays red until the
-  # archive of that version replaces the old one and its line is rewritten:
-  #   helm pull oci://ghcr.io/external-secrets/charts/external-secrets --version <version> -d clusters/inventories/external-secrets/charts/
+  # archive of that version replaces the old one and its line is rewritten. The chart is pulled from the registry
+  # ghcr.io/external-secrets/charts, as the oci address <registry>/external-secrets with the scheme in front:
+  #   helm pull oci://<registry>/external-secrets --version <version> -d clusters/inventories/external-secrets/charts/
   #   git rm clusters/inventories/external-secrets/charts/external-secrets-<old version>.tgz
   #   sha256sum clusters/inventories/external-secrets/charts/external-secrets-<version>.tgz
   # The new line is the sha256 of the chart layer of that tag's manifest on ghcr.io and of the release asset
@@ -294,7 +295,7 @@ charts:
     upstream:
       kind: git_tags
       project: external-secrets/external-secrets
-      # The chart is published to oci://ghcr.io/external-secrets/charts, which has no
+      # The chart is published to the registry ghcr.io/external-secrets/charts, which has no
       # index; its source repository tags every chart release helm-chart-<version>.
       matching: '^helm-chart-([0-9]+\.[0-9]+\.[0-9]+)$'
     stamps:

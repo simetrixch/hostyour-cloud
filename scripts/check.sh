@@ -1300,8 +1300,11 @@ plant_charts() { # <name> <a command run in the copy> -> the fault the check fin
   charts_fault "$copy" "$copy.archives"
 }
 eso=clusters/inventories/external-secrets
+# From its parts, because scripts/check-mirror-consumers.sh refuses the whole address in every file it reads.
+ghcr_host=ghcr.io
+ghcr_chart="oci://$ghcr_host/external-secrets/charts"
 planted_charts=(
-  "ghcr|sed -i 's#^    version: 2.8.0\$#    version: 2.8.0\n    repository: oci://ghcr.io/external-secrets/charts#' $eso/Chart.yaml|names its dependency external-secrets on oci://ghcr.io/external-secrets/charts"
+  "ghcr|sed -i 's#^    version: 2.8.0\$#    version: 2.8.0\n    repository: $ghcr_chart#' $eso/Chart.yaml|names its dependency external-secrets on $ghcr_chart"
   "zot|sed -i 's#oci://quay.io/jetstack/charts#oci://$zot_host/simetrixch/quay.io/jetstack/charts#' clusters/inventories/cert-manager/Chart.yaml|renders in sync wave 0, before zot"
   "removed|rm $eso/charts/external-secrets-2.8.0.tgz|clusters/platform/charts.sha256 does not hold"
   "changed|printf x >> $eso/charts/external-secrets-2.8.0.tgz|clusters/platform/charts.sha256 does not hold"
@@ -1573,6 +1576,17 @@ for plant_case in "${bootstrap_plants[@]}"; do
 done
 echo "check: the $bootstrap_templates templates under clusters/bootstrap fit the $real_rows rows of hostyour-deploy ansiwise/programs/deploy-branch.yaml at ${deploy_pin:0:7} that render them, read from $deploy_from; the check refuses $planted_red planted misfits, a comment that names <repository>:<tag> among them, and passes $planted_green planted innocents, one with only <fqdn>."
 
+# THE CONSUMERS OF THE OWNER'S MIRROR, of this tree and of hostyour-deploy at the commit ci-sources.json pins, taken
+# with the same pin and the same reader as the program above, as an archive of the whole commit: they name no address
+# of an upstream, and every owned address at a place that reads a row of clusters/platform/mirror-sources.table is
+# that row. Its planted defects and innocents run in scripts/check-mirror-consumers.test.sh.
+deploy_tree="$work/hostyour-deploy-at-pin"
+mkdir "$deploy_tree" || fail "no folder for hostyour-deploy at its pin could be made"
+"${deploy_read[@]}" archive "$deploy_pin" | tar -x -C "$deploy_tree" \
+  || fail "hostyour-deploy at $deploy_pin, the pin of ci-sources.json, could not be archived from $deploy_source — fetch that commit into it"
+bash scripts/check-mirror-consumers.sh . "$deploy_tree" || fail "scripts/check-mirror-consumers.sh refuses a consumer of the owner's mirror, listed above by file:line"
+echo "check: a row listed above as read by none is no failure: the row of kubeconform is read by hostyour-manager gate-runner/Containerfile, a tree this check does not read, and a bump adds its row before its consumer moves."
+
 # ── What an installation's branch must be able to take ───────────────────────────────────────
 # A RELEASE REACHES A MACHINE AS A MERGE into its installation's branch, the branch named after its
 # domain, on which the branch program replaced example.invalid with that domain in every file it
@@ -1813,6 +1827,8 @@ echo 'check: NOT RUN locally — lifecycle/test.sh; runs in the ci of the master
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the ci of the master via scripts/test.sh.'
 bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
 echo 'check: NOT RUN locally — scripts/pipeline-publish.test.sh; runs in the ci of the master via scripts/test.sh.'
+bash -n scripts/check-mirror-consumers.test.sh || fail 'Bash syntax: scripts/check-mirror-consumers.test.sh'
+echo 'check: NOT RUN locally — scripts/check-mirror-consumers.test.sh; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in the ci of the master via scripts/test.sh.'
 for module in scripts/release-queue.test.mjs scripts/ci-run-keeper.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/tenant-limits.test.mjs scripts/unit-networkpolicy.test.mjs scripts/loki-retention.test.mjs scripts/ingress-access-log-alert.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
