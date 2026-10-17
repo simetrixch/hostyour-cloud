@@ -119,9 +119,9 @@ quay.io/skopeo/stable:v1.22.3-immutable@sha256:c0ee1f4edca5c01cb8d5611124f92f3cc
 rclone/rclone:1.75.2@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5
 {{- end -}}
 
-{{/* The recovery sub-account's login, from the Secret recovery-box (externalsecret-recovery-box.yaml), as
-     the environment of a step of `recovery-export`, and the rclone remote `box:` made of it. The password
-     reaches `rclone obscure` on standard input, never as an argument. */}}
+{{/* The login of the installation's storage box, from the Secret recovery-box (externalsecret-recovery-box.yaml),
+     as the environment of a step of `recovery-export`, and the rclone remote `box:` made of it, whose root is
+     the login's root. The password reaches `rclone obscure` on standard input, never as an argument. */}}
 {{- define "consumer-build.recoveryBoxEnv" -}}
 - name: STORAGE_BOX_HOST
   valueFrom: { secretKeyRef: { name: recovery-box, key: host } }
@@ -139,19 +139,22 @@ export RCLONE_CONFIG_BOX_PASS
 {{- end -}}
 
 {{/* The steps of `recovery-export`, the task of every run that writes the recovery folder of the owner's
-     master. plan names the run's archives with files/recovery-folder.sh. present lists what the storage box
-     holds and fetches every engine archive among them again, because a release built again under its tag
-     has other bytes, and check then refuses it. copy reads every archive the box lacks from the owned
-     registry without a login. check holds every archive the run wrote or fetched to the test the driver
-     puts it to, so a folder the driver would refuse is never written. upload copies what the box lacks,
-     never over a file that stands and never with a sync, and reads the list back. The login recovery-box
-     stands in present and upload alone, which run rclone and no code of a repository.
+     master. Every call on the storage box names the folder <global.domain>/recovery below the login's root, or
+     a path below it, and never the root, which holds the installation's other backups beside it. plan names
+     the run's archives with files/recovery-folder.sh. present makes the folder where it is missing, which the
+     first run on a box does, lists what it holds and fetches every engine archive among them again, because a
+     release built again under its tag has other bytes, and check then refuses it. copy reads every archive
+     the box lacks from the owned registry without a login. check holds every archive the run wrote or fetched
+     to the test the driver puts it to, so a folder the driver would refuse is never written. upload copies
+     what the box lacks, never over a file that stands and never with a sync, and reads the list back. The
+     login recovery-box stands in present and upload alone, which run rclone and no code of a repository.
      Keys: root, the chart's context; dir, the folder the run works in; volume, true where that folder is
      the task's volume `recovery` and not a workspace; tree, true where files/recovery-folder.sh is the
      tree's at /workspace/source and not this chart's; digests, the ansiwise.sha256 check holds an engine
      to, or -; env, the environment of plan; plan, the lines that write <dir>/recovery.plan. */}}
 {{- define "consumer-build.recoveryExportSteps" -}}
 {{- $dir := .dir -}}
+{{- $box := printf "box:%s/recovery" (required "consumer-build: global.domain is required (clusters/active/<fqdn>.yaml, the fqdn of the cluster this build plane runs on — the recovery folder is <fqdn>/recovery/ below the storage box login's root)" .root.Values.global.domain) -}}
 {{- $lib := ". clusters/inventories/consumer-build/files/recovery-folder.sh" -}}
 {{- if not .tree }}{{ $lib = .root.Files.Get "files/recovery-folder.sh" }}{{ end -}}
 - name: plan
@@ -189,13 +192,14 @@ export RCLONE_CONFIG_BOX_PASS
     #!/bin/sh
     set -eu
 {{ include "consumer-build.recoveryBoxLogin" .root | indent 4 }}
-    rclone lsf --recursive --files-only box: > {{ $dir }}/recovery.present
+    rclone mkdir {{ $box }}
+    rclone lsf --recursive --files-only {{ $box }}/ > {{ $dir }}/recovery.present
     mkdir -p {{ $dir }}/recovery
     # An engine's archive that stands is fetched, so `check` holds it to this run's digests: an engine is named by
     # its release alone, and other bytes under that name stop the run. A build's tag names its commit, and the release run's probe holds it there.
     while read -r path name digest; do
       case "${path}" in
-        engine/*) if grep -qxF "${path}" {{ $dir }}/recovery.present; then rclone copyto "box:${path}" "{{ $dir }}/recovery/${path}"; fi ;;
+        engine/*) if grep -qxF "${path}" {{ $dir }}/recovery.present; then rclone copyto "{{ $box }}/${path}" "{{ $dir }}/recovery/${path}"; fi ;;
       esac
     done < {{ $dir }}/recovery.plan
     echo "recovery: the storage box holds $(wc -l < {{ $dir }}/recovery.present) files of the recovery folder"
@@ -271,8 +275,8 @@ export RCLONE_CONFIG_BOX_PASS
     set -eu
 {{ include "consumer-build.recoveryBoxLogin" .root | indent 4 }}
     # COPY, NEVER SYNC, AND NEVER OVER A FILE THAT STANDS: an archive is named after what it holds.
-    rclone copy --ignore-existing --quiet {{ $dir }}/recovery box:
-    rclone lsf --recursive --files-only box: > {{ $dir }}/recovery.present
+    rclone copy --ignore-existing --quiet {{ $dir }}/recovery {{ $box }}/
+    rclone lsf --recursive --files-only {{ $box }}/ > {{ $dir }}/recovery.present
     missing=0
     while read -r path name digest; do
       grep -qxF "${path}" {{ $dir }}/recovery.present || { echo "recovery: FAIL — ${path} is not on the storage box after the copy" >&2; missing=$((missing + 1)); }

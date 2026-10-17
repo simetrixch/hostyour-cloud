@@ -1242,8 +1242,11 @@ test('the publish run of the platform tree on the owner\'s master copies its ima
 // waits for. In each, the login, the Secret recovery-box, reaches the two rclone steps alone, which run no code of the
 // repository; the pod reaches the storage box on port 22 through recovery-export-egress, which selects that task's pod
 // alone and admits exactly global.storageBoxCidrs. build-egress, which every pod of the namespace falls under, opens no
-// port 22. No other unit renders the policy or the credential, and a writer's render stops by name while the address
-// list is empty.
+// port 22. The login is the installation's one storage box login, <env>/app/storage-box, read through a store of its own
+// under the Vault role build-recovery-export with the account recovery-export-eso, never through build-eso. Its root holds
+// the installation's other backups, so every call on the box names <global.domain>/recovery or a path below it, and
+// present makes that folder before it lists it. No other unit renders the policy, the credential or its store, and a
+// writer's render stops by name while the address list is empty.
 const ownerUnit = (name, builds, extra = []) => renderChart('consumer-build', ['--set', 'global.buildRegistry=zot.check.example.invalid/simetrixch',
   '--set-json', 'unit=' + JSON.stringify({name, repoURL: `https://github.com/simetrixch/${name}.git`, buildsJson: JSON.stringify(builds)}), ...extra]);
 const scanMode = (mode) => [{input: '$(tasks.scan.results.mode)', operator: 'in', values: [mode]}];
@@ -1253,6 +1256,8 @@ const RECOVERY_WRITERS = {
     when: [{input: '$(params.stage)', operator: 'in', values: ['prod']}], pins: 'bump'},
   'ansiwise-cli': {builds: [], pipeline: 'ansiwise-cli-publish', runAfter: ['push'], when: scanMode('binaries'), pins: 'tag'},
 };
+const RECOVERY_DOMAIN = execFileSync('yq', ['.global.domain', 'scripts/standin/cluster-map.yaml'], {encoding: 'utf8'}).trim();
+const RECOVERY_FOLDER = `${RECOVERY_DOMAIN}/recovery`;
 const recoveryProblems = (docs, cidrs, unit) => {
   const writer = RECOVERY_WRITERS[unit], problems = [], of = (kind, name) => docs.find((d) => d.kind === kind && d.metadata.name === name);
   const pinhole = of('NetworkPolicy', 'recovery-export-egress'), fence = of('NetworkPolicy', 'build-egress');
@@ -1278,6 +1283,14 @@ const recoveryProblems = (docs, cidrs, unit) => {
     if (holding.includes(s.name) && /scripts\/|bash |\.sh\b/.test(s.script)) problems.push(`recovery-export/${s.name} holds the login and runs a script of the repository`);
   }
   if (/\brclone (sync|delete|deletefile|purge|move|moveto)\b/m.test(task.taskSpec.steps.map((s) => s.script).join('\n'))) problems.push('recovery-export deletes on the storage box');
+  for (const s of task.taskSpec.steps) {
+    for (const [, target] of s.script.matchAll(/box:([^\s"']*)/g)) {
+      if (target !== RECOVERY_FOLDER && !target.startsWith(`${RECOVERY_FOLDER}/`)) problems.push(`recovery-export/${s.name} calls box:${target}, outside ${RECOVERY_FOLDER}`);
+    }
+  }
+  const present = task.taskSpec.steps.find((s) => s.name === 'present');
+  const [first] = [...(present?.script ?? '').matchAll(/\brclone (\w+)([^\n]*)/g)].filter(([, verb]) => verb !== 'obscure');
+  if (!first || first[1] !== 'mkdir' || first[2].trim() !== `box:${RECOVERY_FOLDER}`) problems.push(`present calls rclone ${first?.[1]}${first?.[2] ?? ''} first on the box, not rclone mkdir box:${RECOVERY_FOLDER}`);
   return problems;
 };
 
@@ -1288,7 +1301,14 @@ test('the recovery folder of the owner\'s master is written by recovery-export a
     assert.deepEqual(recoveryProblems(docs, cidrs, unit), [], `PLANTED INNOCENT: ${unit} as rendered`);
     const secret = docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'recovery-box');
     assert.deepEqual(secret.spec.data.map((d) => `${d.remoteRef.key}#${d.remoteRef.property}`),
-      ['host', 'user', 'password'].map((key) => `build/${unit}/recovery-box#${key}`));
+      ['host', 'user', 'password'].map((key) => `prod/app/storage-box#${key}`));
+    assert.deepEqual(secret.spec.secretStoreRef, {name: 'vault-backend-recovery-export', kind: 'SecretStore'}, `the recovery login of ${unit} is read through its own store`);
+    const store = docs.find((d) => d.kind === 'SecretStore' && d.metadata.name === 'vault-backend-recovery-export');
+    assert.deepEqual([store.metadata.namespace, store.spec.provider.vault.auth.kubernetes.role, store.spec.provider.vault.auth.kubernetes.serviceAccountRef.name],
+      [`${unit}-build`, 'build-recovery-export', 'recovery-export-eso'], `the recovery store of ${unit} logs in as build-recovery-export with recovery-export-eso`);
+    const account = docs.find((d) => d.kind === 'ServiceAccount' && d.metadata.name === 'recovery-export-eso');
+    assert.equal(account.metadata.namespace, `${unit}-build`);
+    assert.equal(account.metadata.annotations, undefined, `recovery-export-eso of ${unit} carries no alias metadata`);
     const plant = (change) => { const planted = structuredClone(docs); change(planted); return recoveryProblems(planted, cidrs, unit); };
     const policy = (d, name) => d.find((x) => x.kind === 'NetworkPolicy' && x.metadata.name === name);
     const tasks = (d) => d.find((x) => x.kind === 'Pipeline' && x.metadata.name === writer.pipeline).spec.tasks;
@@ -1301,6 +1321,12 @@ test('the recovery folder of the owner\'s master is written by recovery-export a
     assert.notDeepEqual(plant((d) => { steps(d)[0].env.push(...steps(d)[1].env); }), [], `PLANTED DEFECT: the login beside the plan of ${unit}`);
     assert.notDeepEqual(plant((d) => { steps(d)[4].script += '\nrclone sync /recovery box:\n'; }), [], `PLANTED DEFECT: a sync of ${unit} that deletes on the box`);
     assert.notDeepEqual(plant((d) => { tasks(d).find((t) => t.name === 'recovery-export').when = []; }), [], `PLANTED DEFECT: the export of ${unit} for every run`);
+    for (const [name, outside] of [['the root', 'box:'], ['the installation\'s folder', `box:${RECOVERY_DOMAIN}`], ['a sibling folder', `box:${RECOVERY_FOLDER}-old`]]) {
+      assert.notDeepEqual(plant((d) => { steps(d)[4].script = steps(d)[4].script.replaceAll(`box:${RECOVERY_FOLDER}`, outside); }), [],
+        `PLANTED DEFECT: the upload of ${unit} into ${name}`);
+    }
+    assert.notDeepEqual(plant((d) => { steps(d)[1].script = steps(d)[1].script.replace(`rclone mkdir box:${RECOVERY_FOLDER}\n`, ''); }), [],
+      `PLANTED DEFECT: the present of ${unit} lists a folder it never makes`);
     if (writer.pins) {
       assert.notDeepEqual(plant((d) => { const next = tasks(d).find((t) => t.name === writer.pins); next.runAfter = next.runAfter.filter((n) => n !== 'recovery-export'); }), [],
         `PLANTED DEFECT: ${writer.pins} of ${unit} before the recovery folder holds its archives`);
@@ -1317,7 +1343,8 @@ test('the recovery folder of the owner\'s master is written by recovery-export a
   const elsewhere = ['--set', 'global.buildRegistry=zot.elsewhere.example.invalid/simetrixch'];
   for (const other of [renderUnit('shop', []), renderUnit('shop'), renderUnit('hostyour-manager', ['manager']), ownerUnit('hostyour-deploy', []),
     ...Object.entries(RECOVERY_WRITERS).map(([unit, writer]) => ownerUnit(unit, writer.builds, elsewhere))]) {
-    assert.equal(other.some((d) => ['recovery-export-egress', 'recovery-box'].includes(d.metadata.name)), false, 'another unit or cluster renders the recovery pinhole or login');
+    assert.equal(other.some((d) => ['recovery-export-egress', 'recovery-box', 'recovery-export-eso', 'vault-backend-recovery-export'].includes(d.metadata.name)), false,
+      'another unit or cluster renders the recovery pinhole, login, account or store');
     assert.equal(other.some((d) => d.kind === 'Pipeline' && d.spec.tasks.some((t) => t.name === 'recovery-export')), false, 'another unit or cluster runs a recovery-export');
   }
 });
