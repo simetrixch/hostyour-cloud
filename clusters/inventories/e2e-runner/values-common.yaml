@@ -26,9 +26,10 @@ run:
 # The default SecretStore: vault-backend under the `external-secrets` role.
 secret-store: {}
 
-# The SecretStore the targets' ExternalSecrets read the E2E passwords through. Its role
-# reads `secret/data/+/tenants/+/e2e` and nothing else; it is installed by
-# hostyour-deploy's deploy-platform-services program and bound to exactly this
+# The SecretStore the targets' ExternalSecrets read the E2E passwords through, and
+# templates/externalsecret-test-mailbox.yaml the test mailbox key. Its role reads
+# `secret/data/+/tenants/+/e2e` and `secret/data/e2e/test-mailbox` and nothing else; it
+# is installed by hostyour-deploy's deploy-platform-services program and bound to exactly this
 # ServiceAccount in this namespace. The targets' Applications load this file, so the
 # store's name is written here once.
 e2e-password-store:
