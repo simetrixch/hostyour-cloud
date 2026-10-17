@@ -5,9 +5,10 @@ build-only alike:
 
   gate-stage → clone@tag (+verify: tag → commit, sha7) → builds (manifest vs
   attestation) → probe per build → build/push per missing build → engine-pin →
-  check-definitions (only where the manifest names an appsBundle) → bump (the
-  reach search, which pins that appsBundle and no other build as a tenant
-  bundle) → argo-sync.
+  check-definitions (only where the manifest names an appsBundle) →
+  recovery-export (only for the platform's own builds on the owner's master) →
+  bump (the reach search, which pins that appsBundle and no other build as a
+  tenant bundle) → argo-sync.
 
 The trust split:
 
@@ -88,7 +89,8 @@ namespace, so the credential Secrets they envFrom by name are rendered here
        moves. The pins keep the flat build name either way. */ -}}
 {{- $owner := include "consumer-build.repoOwner" . -}}
 {{- $pushPrefix := "" -}}
-{{- if and (eq $unit (required "consumer-build: global.buildRegistryUnit is required (platform values chain)" .Values.global.buildRegistryUnit)) (eq (printf "%s/%s" $registry $owner) (include "common.buildRegistry" .)) -}}
+{{- $platformBuilds := eq (include "consumer-build.isPlatformBuilds" .) "true" -}}
+{{- if $platformBuilds -}}
 {{- $pushPrefix = printf "%s/" $owner -}}
 {{- end -}}
 {{- $releaseTagRe := printf "^%s$" (required "consumer-build: global.releaseTagFilter is required (platform values chain)" .Values.global.releaseTagFilter) -}}
@@ -799,6 +801,52 @@ spec:
               requests: { cpu: 100m, memory: 256Mi }
               limits: { cpu: "1", memory: 1Gi }
 
+{{- if $platformBuilds }}
+{{- $plan := list ": > /recovery/recovery.plan" -}}
+{{- range $b := $builds }}
+{{- $plan = append $plan (printf "[ \"$(params.%s-declared)\" != true ] || recovery_build_archive \"${BUILD_REGISTRY}\" %s \"${IMAGE_TAG}\" >> /recovery/recovery.plan" $b ($b | quote)) -}}
+{{- end }}
+    # ── recovery-export — the builds of this release, in the recovery folder of the owner's master ───
+    # A cold owner's master pulls the platform's own images from no registry: its zot is one of the images it
+    # starts, and lifecycle/driver.sh imports them out of <fqdn>/recovery/ on the storage box. So a release of
+    # the stage the owner's master runs writes the archive of every build it declares there, read from the
+    # registry without a login, before the bump pins them; a run whose export fails pins nothing, so no pin
+    # names a build the folder lacks. A release for another stage pins nothing the owner's master runs and
+    # writes nothing. The steps, their login and their pinhole are the ones every writer of the folder has
+    # (_helpers.tpl consumer-build.recoveryExportSteps, externalsecret-recovery-box.yaml, networkpolicy.yaml),
+    # and the names are files/recovery-folder.sh's as this chart renders it.
+    - name: recovery-export
+      runAfter:
+        - builds
+        {{- range $b := $builds }}
+        - {{ printf "build-%s" $b }}
+        {{- end }}
+      when:
+        - input: "$(params.stage)"
+          operator: in
+          values: [{{ .Values.global.env | quote }}]
+      params:
+        - { name: image-tag, value: "$(tasks.verify.results.image-tag)" }
+        {{- range $b := $builds }}
+        - { name: {{ printf "%s-declared" $b }}, value: "$(tasks.builds.results.{{ $b }}-declared)" }
+        {{- end }}
+      taskSpec:
+        params:
+          - name: image-tag
+            type: string
+          {{- range $b := $builds }}
+          - name: {{ printf "%s-declared" $b }}
+            type: string
+          {{- end }}
+        volumes:
+          - name: recovery
+            emptyDir: {}
+        steps:
+          {{- include "consumer-build.recoveryExportSteps" (dict "root" . "dir" "/recovery" "volume" true "digests" "-"
+                "env" (list (dict "name" "BUILD_REGISTRY" "value" (include "common.buildRegistry" .)) (dict "name" "IMAGE_TAG" "value" "$(params.image-tag)"))
+                "plan" (join "\n" $plan)) | nindent 10 }}
+
+{{- end }}
     # ── bump — the reach search, then the sync ───────────────────────────────
     # Step 1 searches the three carrier classes for every declared image,
     # writes the pins and derives the Applications each hit reaches; step 2
@@ -828,6 +876,11 @@ spec:
         # and the bump pins no tenant bundle but apps-bundle, the build the
         # check's `when` read (pin_bundles).
         - check-definitions
+        {{- if $platformBuilds }}
+        # The archives of the platform's own builds stand in the recovery folder of the owner's master before
+        # a pin names them.
+        - recovery-export
+        {{- end }}
       params:
         - { name: release-tag, value: "$(params.release-tag)" }
         - { name: stage, value: "$(params.stage)" }

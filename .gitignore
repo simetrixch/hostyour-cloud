@@ -49,6 +49,9 @@ AGENTS.md
 # every depth, so nothing about where a chart lives can put it back in the index.
 *.lock
 *.tgz
+# The one exception: the External Secrets chart, which a cold owner's master renders before any registry
+# answers. It is vendored, and clusters/platform/charts.sha256 holds it to its upstream digest.
+!clusters/inventories/external-secrets/charts/*.tgz
 
 # The agent worktree container. Tooling state, never product — and a worktree committed into
 # the tree it is a worktree OF is a loop nobody unpicks.

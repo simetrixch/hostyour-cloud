@@ -1,0 +1,27 @@
+# The images the recovery folder of the owner's master holds, each at its digest: every image the platform
+# tree pulls from the owner's mirror, and the skopeo its publish run copies with. The `recovery-export` task of
+# that run writes each into the folder, and lifecycle/driver.sh fetches, checks and imports each into a cold
+# owner's master. scripts/check.sh holds this file to the render and prints it when it is stale.
+quay.io/skopeo/stable:v1.22.3-immutable@sha256:c0ee1f4edca5c01cb8d5611124f92f3cc47196ecab68aee5d0f90834e00574d5
+zot.master.digitacloud.app/simetrixch/ghcr.io/dexidp/dex:v2.45.1@sha256:8499afd690c437f52301efd2b05b2455da5bd2dfc20332cd697dc9937f808462
+zot.master.digitacloud.app/simetrixch/ghcr.io/external-secrets/external-secrets:v2.8.0@sha256:24c0dd3699e0988520afd2218612758cd97d1f702757b5b4fcf89adaa33ef679
+zot.master.digitacloud.app/simetrixch/ghcr.io/goauthentik/server:2026.5.6@sha256:ed120caf710ccf82ef0026f0bc74e51615bc95ebff228a7a2d6fc60c441c3868
+zot.master.digitacloud.app/simetrixch/ghcr.io/headlamp-k8s/headlamp:v0.42.0@sha256:c9754bae1d799220da0547e51ceee234f6e66ebadc138518ca73e33ecd331e59
+zot.master.digitacloud.app/simetrixch/ghcr.io/jkroepke/access-log-exporter:0.4.8@sha256:433b5013966b085ea3d0865ca4ba66fa50a4d7d1abe77f99106c31cf7a3a0e74
+zot.master.digitacloud.app/simetrixch/ghcr.io/jkroepke/kube-webhook-certgen:1.8.5@sha256:d0e80b2f62fe43bb5e1b96adc692132fb4522e802f4cf673c09b1f94722b8cb6
+zot.master.digitacloud.app/simetrixch/ghcr.io/juanfont/headscale:v0.29.2@sha256:d337f1be4a9155b330aa9077bf6c82d24ff0581b8e69390ebc6d7c623bb339ce
+zot.master.digitacloud.app/simetrixch/ghcr.io/project-zot/zot-linux-amd64:v2.1.18@sha256:34f18f783037f967dba10df02f9d4086c4d626f5643ef9f5e51e4a4547280a0b
+zot.master.digitacloud.app/simetrixch/ghcr.io/puppeteer/puppeteer:25.13.0@sha256:893118e0546f8cee371a0ae09c8489d1e9c40de28c45df9d811d4233203b81a3
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/dashboard/dashboard-9623576a202fe86c8b7d1bc489905f86:v0.69.0@sha256:48da982d5ec5d576be5508cf4ba97d8bbcaddcb7a285bad714e897490a4f1e40
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/pipeline/controller-10a3e32792f33651396d02b6855a6e36:v1.12.0@sha256:8d5f900677386b8fe5371429e9c1461b25de47e5e34736c7f99e82e2c279ebbc
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/pipeline/entrypoint-bff0a22da108bc2f16c818c97641a296:v1.12.0@sha256:3ec960b07abd85604242e146092e72f11be8787452c2a20d12a37fdee4a666e2
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/pipeline/events-a9042f7efb0cbade2a868a1ee5ddd52c:v1.12.0@sha256:d5d5869215a58fea01ce627d605786090949a324969102ab1fd25716adde10e9
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/pipeline/nop-8eac7c133edad5df719dc37b36b62482:v1.12.0@sha256:f89fb760b05fdef6895290e524d992b66ede72546622d5028b0406a9bea36d2f
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/pipeline/resolvers-ff86b24f130c42b88983d3c13993056d:v1.12.0@sha256:b1f06197342ed946b23efd1ce124d7c17d50678b461733a6cc0912b07a4943e7
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/pipeline/sidecarlogresults-7501c6a20d741631510a448b48ab098f:v1.12.0@sha256:8b61bdcad62a99e7b15f9dc92690ea39f49be2c5a1c9f428a0aac712f349543d
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/pipeline/webhook-d4749e605405422fd87700164e31b2d1:v1.12.0@sha256:1e4eded1773f6fa8ec67c9348f84bed0d39666a9698ebd1ffb4eaed88b38f7d4
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/pipeline/workingdirinit-0c558922ec6a1b739e550e349f2d5fc1:v1.12.0@sha256:11031cbed2b8ddbb5af0947a5e0c997ba7cd3da5f309ddfa76e58f5418868d71
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/triggers/controller-f656ca31de179ab913fa76abc255c315:v0.35.0@sha256:59addf5899cd2cf1e74001ddf7ad30e0492b8c80b80857c351e2deac545d9555
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/triggers/eventlistenersink-7ad1faa98cddbcb0c24990303b220bb8:v0.35.0@sha256:d4ddfc09a5389474452644826540973a53fea11be718abf7ab3d04159c29ed05
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/triggers/interceptors-3176d6a3f314c3655b30bfd36e421dd5:v0.35.0@sha256:5666d72e68d9138fc1919a6758ea990424aa17c27c34e53bc69bcfb81ad121ea
+zot.master.digitacloud.app/simetrixch/ghcr.io/tektoncd/triggers/webhook-dd1edc925ee1772a9f76e2c1bc291ef6:v0.35.0@sha256:bc97fb4dd2e55b5723e3f2ee7c5a9a5beea4a1362c0a4b2fa40a2cf638cbd9c7

@@ -106,9 +106,10 @@ render_chart() { # <chart> <stage> <extra helm arguments...> -> the refs of its 
 
 # UPDATE, AND EVERY TIME: a library chart under clusters/charts is packaged into charts/ at the version
 # its Chart.yaml states, and an edit of it keeps that version, so a copy packaged before the edit looks
-# current to `helm dependency list` and renders the old templates.
+# current to `helm dependency list` and renders the old templates. A chart whose dependencies name no
+# repository is vendored, and helm refuses to update it.
 dependencies_of() { # <chart>
-  grep -q '^dependencies:' "$1/Chart.yaml" || return 0
+  grep -qE '^[[:space:]]+repository:' "$1/Chart.yaml" || return 0
   helm dependency update "$1" > "$work/dependency.out" 2>&1 \
     || { cat "$work/dependency.out" >&2; fail "the dependencies of $1 could not be fetched"; }
 }

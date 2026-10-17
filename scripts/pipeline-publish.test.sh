@@ -14,7 +14,10 @@
 # tree's list of tools and charts refuses a row of another form by its line, that fetch downloads every
 # row the mirror does not serve and holds it to its sha256, that copy-sources pushes each as the one layer
 # under its tag, after every line is held to its row, to the mirror and to the file fetch staged, and
-# replaces nothing, and that read-back-sources reads each back without a login as its bytes; and that a
+# replaces nothing, and that read-back-sources reads each back without a login as its bytes; that the
+# platform tree then writes the recovery folder of the owner's master, one OCI archive per image, own
+# build and engine release of the tree, read from the mirror without a login, held to the tree before
+# anything is uploaded, and uploaded only where the storage box lacks it; and that a
 # binaries build reads the owned yq and jq of files/ci-fixed-tools.sh from the mirror and holds them to
 # their sha256. The functions
 # are read out of the template (clusters/inventories/consumer-build/templates/pipeline-publish.yaml) and
@@ -470,7 +473,10 @@ ok 'another build under a published tag, an empty build, a tag the registry cann
 # every tag as the digest it names. The stand-in reads a tag, and copies an image by its digest to
 # the fixture registry, blobs first, as skopeo does: an index with every manifest under --all and
 # with its first only without, and every manifest as its bytes under --preserve-digests and written
-# again without, as a conversion would write it.
+# again without, as a conversion would write it. It also writes an image of the mirror, by its tag or its
+# digest, into an OCI archive named after it, as the recovery folder holds it: the manifest and every
+# manifest and blob it reaches, read from the fixture registry without a login, and only with every
+# platform and every digest kept.
 mkdir -p "$work/upstream/blobs"
 cat > "$work/standin-bin/skopeo" <<EOF
 #!/usr/bin/env bash
@@ -478,11 +484,12 @@ set -uo pipefail
 echo "skopeo \$*" >> "$work/skopeo.log"
 up="$work/upstream"
 command="\$1"; shift
-all=no preserve=no auth="" refs=()
+all=no preserve=no nocreds=no auth="" refs=()
 while [ "\$#" -gt 0 ]; do
   case "\$1" in
     --all) all=yes ;;
     --preserve-digests) preserve=yes ;;
+    --src-no-creds) nocreds=yes ;;
     --dest-authfile) auth="\$2"; shift ;;
     --retry-times) shift ;;
     --*) ;;
@@ -494,6 +501,34 @@ if [ "\$command" = inspect ]; then
   [[ "\${refs[0]}" =~ ^docker://ghcr\.io/(.+):([^:/]+)\$ ]] && [ -f "\$up/\${BASH_REMATCH[1]}/tags/\${BASH_REMATCH[2]}" ] \
     || { echo "skopeo: manifest unknown: \${refs[0]}" >&2; exit 1; }
   exec cat "\$up/blobs/\$(cat "\$up/\${BASH_REMATCH[1]}/tags/\${BASH_REMATCH[2]}")"
+fi
+if [[ "\$command" = copy && "\${refs[1]:-}" == oci-archive:* ]]; then
+  [ "\$all/\$preserve/\$nocreds" = yes/yes/yes ] || { echo "skopeo: an archive is written with every platform and every digest kept, and without a login: \$*" >&2; exit 1; }
+  [[ "\${refs[0]}" =~ ^docker://[^/]+/(simetrixch/[^@]+)(@sha256:[0-9a-f]{64}|:[^:/@]+)\$ ]] || { echo "skopeo: an archive is read from the mirror alone: \${refs[0]}" >&2; exit 1; }
+  repository="\${BASH_REMATCH[1]}" reference="\${BASH_REMATCH[2]:1}"
+  target="\${refs[1]#oci-archive:}"; archive="\${target%%:*}" name="\${target#*:}"
+  layout="\$(mktemp -d)" || exit 1
+  trap 'rm -rf "\$layout"' EXIT
+  mkdir -p "\$layout/blobs/sha256"
+  get() { "${real_curl}" -fsS -o "\$2" "http://127.0.0.1:${PORT}/v2/\$repository/\$1"; } # <path under the repository> <file>
+  take() { # <reference> -> the digest of the manifest it names, which is in the layout with every manifest and blob it reaches
+    local digest child
+    get "manifests/\$1" "\$layout/incoming" || { echo "skopeo: \$repository serves no manifest \$1" >&2; return 1; }
+    digest="sha256:\$(sha256sum < "\$layout/incoming" | cut -d' ' -f1)"
+    mv "\$layout/incoming" "\$layout/blobs/sha256/\${digest#sha256:}"
+    for child in \$(jq -r '.manifests[]?.digest' "\$layout/blobs/sha256/\${digest#sha256:}"); do take "\$child" > /dev/null || return 1; done
+    for child in \$(jq -r '(.config.digest // empty), (.layers[]?.digest)' "\$layout/blobs/sha256/\${digest#sha256:}"); do
+      get "blobs/\$child" "\$layout/blobs/sha256/\${child#sha256:}" || { echo "skopeo: \$repository serves no blob \$child" >&2; return 1; }
+    done
+    printf '%s' "\$digest"
+  }
+  top="\$(take "\$reference")" || exit 1
+  printf '{"imageLayoutVersion":"1.0.0"}' > "\$layout/oci-layout"
+  jq -n --arg type "\$(jq -r .mediaType "\$layout/blobs/sha256/\${top#sha256:}")" --arg digest "\$top" \
+    --argjson size "\$(wc -c < "\$layout/blobs/sha256/\${top#sha256:}")" --arg name "\$name" \
+    '{schemaVersion: 2, manifests: [{mediaType: \$type, digest: \$digest, size: \$size, annotations: {"org.opencontainers.image.ref.name": \$name}}]}' > "\$layout/index.json"
+  tar -cf "\$archive" -C "\$layout" oci-layout index.json blobs
+  exit
 fi
 [ "\$command" = copy ] && [[ "\${refs[0]}" =~ ^docker://ghcr\.io/.+@(sha256:[0-9a-f]{64})\$ ]] || { echo "skopeo: no copy of an image by its digest: \$*" >&2; exit 1; }
 source="\${BASH_REMATCH[1]}"
@@ -847,7 +882,8 @@ rendered_npm="https://${rendered_registry}/v2/npm/"
 # Tekton's part, as much of it as this Pipeline uses: the tasks in the order runAfter gives them, one at a
 # time, as each works on what the one before left (a runAfter that lets two run at once fails the run), a
 # task whose when does not hold skipped, the steps of a task in order, each script a file that runs by its
-# own shebang with its env and envFrom, and the run failed at the first step that fails. A path the pod
+# own shebang with its env, an env taken from a key of a Secret, which the pod does not start without, and
+# its envFrom, and the run failed at the first step that fails. A path the pod
 # mounts (a workspace by its subPath, a volume, a step's own /tmp) is a folder of the run, written into
 # the script and the environment of the step. The clone task, resolved from the cluster, is a git clone
 # of the fixture origin at the revision it names, and only of the pinned repoURL.
@@ -868,6 +904,10 @@ const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mount = (text, mounts) => text.replace(new RegExp(`(^|[\\s"'=:(])(${Object.keys(mounts).sort((a, b) => b.length - a.length).map(escape).join('|')})(?=/|$|[\\s"';)])`, 'gm'),
   (_, before, path) => before + mounts[path]);
 const git = (...args) => spawnSync('git', args, {encoding: 'utf8'});
+const secretKey = ({name, key}) => {
+  if (secrets[name]?.[key] === undefined) throw new Error(`the Secret ${name} holds no key ${key}, so the pod does not start`);
+  return secrets[name][key];
+};
 const done = new Set();
 while (done.size < tasks.length) {
   const ready = tasks.filter((t) => !done.has(t.name) && (t.runAfter ?? []).every((n) => done.has(n)));
@@ -909,7 +949,7 @@ while (done.size < tasks.length) {
     Object.values(mounts).forEach((dir) => mkdirSync(dir, {recursive: true}));
     const env = {PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1',
       ...Object.assign({}, ...(step.envFrom ?? []).map((e) => secrets[e.secretRef.name] ?? {})),
-      ...Object.fromEntries((step.env ?? []).map((e) => [e.name, fill(mount(e.value, mounts), values)]))};
+      ...Object.fromEntries((step.env ?? []).map((e) => [e.name, e.valueFrom ? secretKey(e.valueFrom.secretKeyRef) : fill(mount(e.value, mounts), values)]))};
     const script = join(home, 'script');
     writeFileSync(script, fill(mount(step.script, mounts), values));
     chmodSync(script, 0o755);
@@ -934,8 +974,10 @@ cat > "$work/standin-bin/chown" <<EOF
 echo "chown \$*" >> "$work/chown.log"
 EOF
 chmod +x "$work/standin-bin/chown"
-secrets="$(jq -nc --arg user "$REGISTRY_USERNAME" --arg password "$REGISTRY_PASSWORD" '{"build-git-https": {GITCREDENTIALS: "https://github.invalid"},
-  "image-builder-registry-push": {REGISTRY_USERNAME: $user, REGISTRY_PASSWORD: $password}}')"
+box_password=fixture-box-password
+secrets="$(jq -nc --arg user "$REGISTRY_USERNAME" --arg password "$REGISTRY_PASSWORD" --arg box "$box_password" '{"build-git-https": {GITCREDENTIALS: "https://github.invalid"},
+  "image-builder-registry-push": {REGISTRY_USERNAME: $user, REGISTRY_PASSWORD: $password},
+  "recovery-box": {host: "box.example.invalid", user: "fixture-recovery", password: $box}}')"
 pipeline_run() { # $1 the fixture origin, $2 the release tag, [$3 the webhook's git-url] -> the run's status, its log in $work/run.out
   rm -rf "${work:?}/run" "${work:?}/corepack.log" "${work:?}/chown.log"; mkdir -p "$work/run"
   node "$work/run-pipeline.mjs" "$work/pipeline.json" "$work/run" "$1" "$REPO_URL" \
@@ -1077,7 +1119,8 @@ ok 'end to end: other bytes under the owned address of yq, or of jq, fail the bu
 # The platform tree on the owner's master: its publish run copies the images its list names into the mirror,
 # then the tools and charts its other list names, pushes no package, fails at the copy when an image is
 # gone upstream, before any tool or chart is fetched, and at fetch when a tool is gone, with every image
-# already read back.
+# already read back. After the mirror it writes the recovery folder of the owner's master to a stand-in
+# storage box, and stops before the upload when an archive is not what the tree names.
 helm template consumer-build "$root/clusters/inventories/consumer-build" --namespace argocd \
   -f "$root/clusters/platform/values-common.yaml" -f "$root/clusters/platform/values-prod.yaml" \
   -f "$root/clusters/inventories/consumer-build/values-common.yaml" \
@@ -1091,13 +1134,54 @@ platform_run() { # $1 the fixture origin, $2 the release tag -> the run's status
   node "$work/run-pipeline.mjs" "$work/platform-pipeline.json" "$work/run" "$1" https://github.com/simetrixch/hostyour-cloud.git \
     "$(jq -nc --arg tag "$2" '{"release-tag": $tag, "git-url": "https://github.com/simetrixch/hostyour-cloud.git"}')" "$secrets" > "$work/run.out" 2>&1
 }
+# The engine of the platform tree is the release binaries_push published above from b1, and its own build is
+# one more manifest of the fixture registry, under simetrixch/manager.
+platform_pin=1.0.000-stable-20261014000000 platform_build=0.9.000-stable-20261014000000
+mkdir -p "$work/own"; printf 'the manager of the platform tree' > "$work/own/manager"
+(BINARIES_REPOSITORY=simetrixch/manager RELEASE_TAG="$platform_build" binaries_push "$work/own" "$work/own-tmp") > "$work/own.out" 2>&1 \
+  || fail "the platform's own build was not published for its recovery archive: $(cat "$work/own.out")"
 platform_tree() { # $1 folder, $2 the lines its list of tools and charts prints, then the entries its list of images prints -> a fixture platform tree whose two list scripts print them
-  local dir="$1" lines="$2"; shift 2
-  origin "$dir"; mkdir -p "$dir/scripts"
+  local dir="$1" lines="$2" entry; shift 2
+  origin "$dir"; mkdir -p "$dir/scripts" "$dir/clusters/inventories/consumer-build/files" "$dir/clusters/platform" "$dir/clusters/inventories/manager" "$dir/clusters/inventories/gate-runner"
   printf '#!/usr/bin/env bash\nprintf "%%s\\n"%s\n' "$(printf " '%s'" "$@")" > "$dir/scripts/list-mirror-images.sh"
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" %s\n' "'$lines'" > "$dir/scripts/list-mirror-sources.sh"
+  # What recovery-export reads at the tag: the tree's own recovery-folder.sh, the registry of the platform's
+  # builds, its images under their mirror names, the builds of the stage and the engine with its digests.
+  cp "$root/clusters/inventories/consumer-build/files/recovery-folder.sh" "$dir/clusters/inventories/consumer-build/files/"
+  printf 'global:\n  buildRegistry: %s/simetrixch\n' "$rendered_registry" > "$dir/clusters/platform/values-common.yaml"
+  for entry in "$@"; do printf '%s\n' "${entry#* }"; done > "$dir/clusters/platform/recovery-images.list"
+  printf 'builds:\n  - image: manager\n    tag: "%s"\n' "$platform_build" > "$dir/clusters/inventories/manager/values-prod.yaml"
+  printf 'builds: []\n' > "$dir/clusters/inventories/gate-runner/values-prod.yaml"
+  printf 'cliTools:\n  ansiwise:\n    version: "%s"\n' "$platform_pin" > "$dir/clusters/platform/versions.yaml"
+  (cd "$work/b1" && sha256sum "ansiwise-$platform_pin-linux-x64" "ansiwise-rest-$platform_pin-linux-x64") > "$dir/clusters/platform/ansiwise.sha256"
   manifest @digitaplatform/e2e-platform > "$dir/package.json"
 }
+# The storage box as the recovery sub-account sees it: a folder, listed, copied into and fetched from by the
+# three calls the task makes, and only under the sftp login of that sub-account with its password obscured;
+# every call is logged.
+cat > "$work/standin-bin/rclone" <<EOF
+#!/usr/bin/env bash
+set -uo pipefail
+echo "rclone \$*" >> "$work/rclone.log"
+box="$work/box"
+if [ "\$*" = 'obscure -' ]; then printf 'obscured-'; sha256sum | cut -d' ' -f1; exit; fi
+[ "\${RCLONE_CONFIG_BOX_TYPE:-}/\${RCLONE_CONFIG_BOX_HOST:-}/\${RCLONE_CONFIG_BOX_USER:-}" = sftp/box.example.invalid/fixture-recovery ] \
+  && [ "\${RCLONE_CONFIG_BOX_PASS:-}" = "obscured-$(printf '%s' "$box_password" | sha256sum | cut -d' ' -f1)" ] \
+  || { echo "rclone: box: no sftp login of the recovery sub-account" >&2; exit 1; }
+mkdir -p "\$box"
+case "\$*" in
+  'lsf --recursive --files-only box:') cd "\$box" && find . -type f | sed 's|^\./||' | sort ;;
+  'copy --ignore-existing --quiet '*' box:')
+    (cd "\$4" && find . -type f | sed 's|^\./||') | while read -r file; do
+      [ ! -e "\$box/\$file" ] || continue
+      mkdir -p "\$box/\$(dirname "\$file")" && cp "\$4/\$file" "\$box/\$file" && echo "rclone: \$file copied" >> "$work/rclone.log" || exit 1
+    done ;;
+  'copyto box:'*' '*) [ -f "\$box/\${2#box:}" ] && mkdir -p "\$(dirname "\$3")" && cp "\$box/\${2#box:}" "\$3" && echo "rclone: \${2#box:} fetched" >> "$work/rclone.log" ;;
+  *) echo "rclone: no call of this pipeline: \$*" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "$work/standin-bin/rclone"
+box_files() { [ ! -d "$work/box" ] || (cd "$work/box" && find . -type f | sed 's|^\./||' | sort); }
 # The fixture registry keeps a repository by its path whatever host names it, so the run mirrors a tool and a
 # chart of its own, which the cases above never pushed.
 platform_tool_url=https://github.com/fixture/platform-tool/releases/download/v1.0.0/platform-tool-linux-amd64
@@ -1107,8 +1191,9 @@ platform_sources="$(REGISTRY="$rendered_registry" source_line tool "$platform_to
 $(REGISTRY="$rendered_registry" source_line chart https://charts.example.invalid platform-chart 1.0.0 "$platform_chart_hex")"
 platform_tree "$work/e11" "$platform_sources" "$(entry "fixture/multi:2.0@$v2s2_list" "$rendered_registry")" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")"
 commit_tag "$work/e11" "0.5.000-stable-$STAMP"
+rm -rf "$work/box" "$work/rclone.log"; : > "$work/skopeo.log"
 platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "PLANTED INNOCENT: the platform tree did not mirror its images: $(cat "$work/run.out")"
-[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack skipped|run: build-binaries skipped|run: push skipped|run: mirror ran|run: SUCCEEDED|' ] \
+[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack skipped|run: build-binaries skipped|run: push skipped|run: mirror ran|run: recovery-export ran|run: SUCCEEDED|' ] \
   || fail "the platform run took another course: $(tasks_ran)"
 grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/multi:2.0@$v2s2_list application/vnd.docker.distribution.manifest.list.v2+json read back" "$work/run.out" \
   && grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/one:1.0.0@$oci_image application/vnd.oci.image.manifest.v1+json read back" "$work/run.out" \
@@ -1117,6 +1202,24 @@ grep -qxF 'mirror: the tree at this tag names 2 tools and charts for the mirror:
   && grep -qxF 'mirror: 2 tools and charts: 2 pushed, 0 kept' "$work/run.out" && grep -qxF 'mirror: 2 of 2 tools and charts served' "$work/run.out" \
   && [ "$(grep -n ' read back$' "$work/run.out" | tail -n 1 | cut -d: -f1)" -lt "$(grep -n ' fetched from ' "$work/run.out" | head -n 1 | cut -d: -f1)" ] \
   || fail "the platform run did not mirror its tools and charts after its images were read back: $(cat "$work/run.out")"
+one_name="${rendered_registry}/simetrixch/ghcr.io/fixture/one:1.0.0" multi_name="${rendered_registry}/simetrixch/ghcr.io/fixture/multi:2.0"
+[ "$(box_files)" = "$(printf '%s\n' "engine/$platform_pin.tar" "images/${oci_image#sha256:}.tar" "images/${v2s2_list#sha256:}.tar" "own/manager/$platform_build.tar" | sort)" ] \
+  || fail "the storage box does not hold one archive per image, own build and engine of the tree: $(box_files | tr '\n' ' ')"
+grep -qxF "recovery: images/${oci_image#sha256:}.tar holds $one_name at $oci_image" "$work/run.out" \
+  && grep -qxF "recovery: images/${v2s2_list#sha256:}.tar holds $multi_name at $v2s2_list" "$work/run.out" \
+  && grep -qE "^recovery: own/manager/$platform_build\.tar holds ${rendered_registry}/simetrixch/manager:$platform_build at sha256:[0-9a-f]{64}\$" "$work/run.out" \
+  && grep -qE "^recovery: engine/$platform_pin\.tar holds ${rendered_registry}/simetrixch/ansiwise-cli:$platform_pin at sha256:[0-9a-f]{64}\$" "$work/run.out" \
+  && grep -qxF 'recovery: 4 archives this run wrote or fetched hold their image' "$work/run.out" \
+  && grep -qxF 'recovery: the storage box holds all 4 archives of this run' "$work/run.out" \
+  || fail "the recovery folder was not written with every archive held to the tree before the upload: $(cat "$work/run.out")"
+[ "$(grep -c ' oci-archive:' "$work/skopeo.log")" = 4 ] && ! grep ' oci-archive:' "$work/skopeo.log" | grep -qv " docker://${rendered_registry}/simetrixch/" \
+  || fail "an archive of the recovery folder was not read from the mirror: $(grep ' oci-archive:' "$work/skopeo.log")"
+! grep -qF "$box_password" "$work/rclone.log" "$work/skopeo.log" "$work/run.out" || fail 'the password of the recovery sub-account reached an argument or the log'
+copied="$(grep -c ' copied$' "$work/rclone.log")"
+platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "a second run of the same tag failed: $(cat "$work/run.out")"
+grep -qxF 'recovery: 0 archives written, 4 already on the storage box' "$work/run.out" && [ "$(grep -c ' copied$' "$work/rclone.log")" = "$copied" ] \
+  && grep -qxF "rclone: engine/$platform_pin.tar fetched" "$work/rclone.log" && grep -qxF 'recovery: 1 archives this run wrote or fetched hold their image' "$work/run.out" \
+  || fail "a second run wrote an archive the storage box holds, or did not hold the engine it holds to the tree: $(cat "$work/run.out")"
 platform_tree "$work/e12" "$platform_sources" "$(entry "fixture/gone:1.0.0@$oci_image" "$rendered_registry")"
 commit_tag "$work/e12" "0.5.000-stable-$STAMP"
 platform_run "$work/e12" "0.5.000-stable-$STAMP" && fail 'PLANTED DEFECT: the platform tree passed with an image ghcr.io does not hold'
@@ -1132,4 +1235,85 @@ grep -qxF 'run: mirror failed at fetch' "$work/run.out" \
   && grep -qF "mirror: FAIL — row $(owned_reference "$gone_line"): $gone_url could not be fetched" "$work/run.out" \
   || fail "a tool its upstream does not hold did not fail the run at fetch by its row, after the images were read back: $(cat "$work/run.out")"
 ok 'end to end: the platform tree mirrors every image its list names and reads it back, then every tool and chart, publishes no package; an image gone upstream fails the run before a tool or chart is fetched, and a tool gone upstream fails it at fetch with the images read back'
+# The engine the mirror holds under the pin is not the release ansiwise.sha256 states: the archive is written,
+# and the check the driver would refuse it by stops the run before the upload.
+platform_tree "$work/e14" "$platform_sources" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")"
+printf '%s  ansiwise-%s-linux-x64\n%s  ansiwise-rest-%s-linux-x64\n' "$(printf 'another' | sha256sum | cut -d' ' -f1)" "$platform_pin" \
+  "$(printf two | sha256sum | cut -d' ' -f1)" "$platform_pin" > "$work/e14/clusters/platform/ansiwise.sha256"
+commit_tag "$work/e14" "0.5.000-stable-$STAMP"
+held="$(box_files)"
+platform_run "$work/e14" "0.5.000-stable-$STAMP" && fail 'PLANTED DEFECT: the platform tree passed with an engine on the storage box other than the release its ansiwise.sha256 states'
+grep -qxF 'run: recovery-export failed at check' "$work/run.out" \
+  && grep -qxF "engine/$platform_pin.tar holds no ansiwise-$platform_pin-linux-x64 at the digest clusters/platform/ansiwise.sha256 states" "$work/run.out" \
+  && [ "$(box_files)" = "$held" ] || fail "an engine on the storage box other than the tree's did not stop the run at the check: $(cat "$work/run.out")"
+rm -rf "$work/box" "$work/rclone.log"
+platform_run "$work/e14" "0.5.000-stable-$STAMP" && fail 'PLANTED DEFECT: the platform tree uploaded an engine other than the release its ansiwise.sha256 states'
+grep -qxF 'run: recovery-export failed at check' "$work/run.out" \
+  && grep -qxF "engine/$platform_pin.tar holds no ansiwise-$platform_pin-linux-x64 at the digest clusters/platform/ansiwise.sha256 states" "$work/run.out" \
+  && grep -qxF "recovery: FAIL — engine/$platform_pin.tar is not the archive of ${rendered_registry}/simetrixch/ansiwise-cli:$platform_pin this run names" "$work/run.out" \
+  && [ -z "$(box_files)" ] && ! grep -q ' copied$' "$work/rclone.log" \
+  || fail "an engine other than the tree's did not stop the run at the check before the upload: $(cat "$work/run.out")"
+ok 'end to end: after the mirror the platform tree writes its recovery folder, one archive per image, own build and engine, read from the mirror without a login and held to the tree, uploads what the box lacks and keeps it on the next run, holding the engine the box holds to the tree; an engine other than the tree states, written or on the box, stops the run at the check with nothing uploaded'
+# The engine on the owner's master: its publish run puts the release's manifest under its digest alone, writes
+# it into the recovery folder, and only then puts it under the tag that release/release.sh of ansiwise-cli waits
+# for before it pins the engine. A run that cannot write the folder, or finds other bytes there under the
+# release's name, tags nothing.
+helm template consumer-build "$root/clusters/inventories/consumer-build" --namespace argocd \
+  -f "$root/clusters/platform/values-common.yaml" -f "$root/clusters/platform/values-prod.yaml" \
+  -f "$root/clusters/inventories/consumer-build/values-common.yaml" \
+  -f "$root/scripts/standin/cluster-map.yaml" -f "$root/scripts/standin/registration.yaml" \
+  --set "global.buildRegistry=${rendered_registry}/simetrixch" \
+  --set-json 'unit={"name":"ansiwise-cli","repoURL":"https://github.com/simetrixch/ansiwise-cli.git","buildsJson":"[]"}' \
+  | yq -o=json 'select(.kind == "Pipeline" and .metadata.name == "ansiwise-cli-publish")' > "$work/engine-pipeline.json" \
+  && [ -s "$work/engine-pipeline.json" ] || fail 'the chart renders no ansiwise-cli-publish Pipeline for the engine'
+engine_run() { # $1 the fixture origin, $2 the release tag, [$3 the Secrets of the run] -> the run's status, its log in $work/run.out
+  rm -rf "${work:?}/run"; mkdir -p "$work/run"
+  node "$work/run-pipeline.mjs" "$work/engine-pipeline.json" "$work/run" "$1" https://github.com/simetrixch/ansiwise-cli.git \
+    "$(jq -nc --arg tag "$2" '{"release-tag": $tag, "git-url": "https://github.com/simetrixch/ansiwise-cli.git"}')" "${3:-$secrets}" > "$work/run.out" 2>&1
+}
+engine_manifest() { # $1 a tag or a digest -> the status the registry answers for the engine's manifest under it, its bytes in $work/engine-manifest.json
+  command curl -sS -o "$work/engine-manifest.json" -w '%{http_code}' "http://127.0.0.1:$PORT/v2/simetrixch/ansiwise-cli/manifests/$1"
+}
+engine_tag="1.0.010-stable-$STAMP" engine_name="${rendered_registry}/simetrixch/ansiwise-cli:1.0.010-stable-$STAMP"
+origin "$work/e15"; mkdir -p "$work/e15/release"
+printf '%s\n' 'printf "%s" "a-$1" > "$2/ansiwise-$1-linux-x64"' 'printf "%s" "b-$1" > "$2/ansiwise-rest-$1-linux-x64"' > "$work/e15/release/build.sh"
+commit_tag "$work/e15" "$engine_tag"
+rm -rf "$work/box" "$work/rclone.log"
+engine_run "$work/e15" "$engine_tag" "$(jq -c '."recovery-box".password = "another-password"' <<< "$secrets")" \
+  && fail 'PLANTED DEFECT: the engine was tagged though its recovery folder could not be written'
+pushed="$(cat "$work/run/push/results/digest" 2>/dev/null)"
+grep -qxF 'run: recovery-export failed at present' "$work/run.out" && ! grep -q '^run: tag ' "$work/run.out" && [ -z "$(box_files)" ] \
+  && [ "$(engine_manifest "$engine_tag")" = 404 ] && [[ "$pushed" =~ ^sha256:[0-9a-f]{64}$ ]] && [ "$(engine_manifest "$pushed")" = 200 ] \
+  || fail "a run that could not write the recovery folder tagged the engine, or pushed it under no digest: $(cat "$work/run.out")"
+engine_run "$work/e15" "$engine_tag" || fail "PLANTED INNOCENT: the engine was not tagged once its recovery folder was written: $(cat "$work/run.out")"
+[ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack skipped|run: build-binaries ran|run: push ran|run: recovery-export ran|run: tag ran|run: SUCCEEDED|' ] \
+  || fail "the engine's run took another course: $(tasks_ran)"
+[ "$(cat "$work/run/push/results/digest")" = "$pushed" ] && [ "$(box_files)" = "engine/$engine_tag.tar" ] \
+  && grep -qxF "recovery: engine/$engine_tag.tar holds $engine_name at $pushed" "$work/run.out" \
+  && grep -qxF "publish: simetrixch/ansiwise-cli:$engine_tag tagged at $pushed, which the recovery folder holds" "$work/run.out" \
+  && [ "$(engine_manifest "$engine_tag")" = 200 ] && [ "sha256:$(sha256sum < "$work/engine-manifest.json" | cut -d' ' -f1)" = "$pushed" ] \
+  || fail "the engine was not tagged at the digest its recovery archive holds: $(cat "$work/run.out")"
+# The archive is the one the driver takes: held to the release's digests as ansiwise.sha256 states them.
+printf '%s  ansiwise-%s-linux-x64\n%s  ansiwise-rest-%s-linux-x64\n' "$(printf '%s' "a-$engine_tag" | sha256sum | cut -d' ' -f1)" "$engine_tag" \
+  "$(printf '%s' "b-$engine_tag" | sha256sum | cut -d' ' -f1)" "$engine_tag" > "$work/engine.sha256"
+# shellcheck source=../clusters/inventories/consumer-build/files/recovery-folder.sh
+[ "$(. "$root/clusters/inventories/consumer-build/files/recovery-folder.sh" \
+  && recovery_archive_digest "$work/box" "engine/$engine_tag.tar" "$engine_name" - "$work/engine.sha256" "$work/engine-unpacked")" = "$pushed" ] \
+  || fail 'the recovery archive the engine run wrote is not one the driver takes for the release'
+engine_run "$work/e15" "$engine_tag" || fail "a second run of the same engine release failed: $(cat "$work/run.out")"
+grep -qxF "rclone: engine/$engine_tag.tar fetched" "$work/rclone.log" && grep -qxF "recovery: engine/$engine_tag.tar holds $engine_name at $pushed" "$work/run.out" \
+  && grep -qxF "publish: simetrixch/ansiwise-cli:$engine_tag tagged at $pushed, which the recovery folder holds" "$work/run.out" \
+  || fail "a second run did not hold the archive the storage box holds to the release: $(cat "$work/run.out")"
+# The folder holds another release's bytes under the name of the next one: they are no archive of it.
+other_tag="1.0.011-stable-$STAMP"
+printf 'next\n' > "$work/e15/NEXT"; commit_tag "$work/e15" "$other_tag"
+mkdir -p "$work/other-engine" && tar -xf "$work/box/engine/$engine_tag.tar" -C "$work/other-engine" \
+  && jq --arg name "${rendered_registry}/simetrixch/ansiwise-cli:$other_tag" '.manifests[0].annotations["org.opencontainers.image.ref.name"] = $name' \
+    "$work/other-engine/index.json" > "$work/other-engine/index.next" && mv "$work/other-engine/index.next" "$work/other-engine/index.json" \
+  && tar -cf "$work/box/engine/$other_tag.tar" -C "$work/other-engine" oci-layout index.json blobs || fail 'the archive of another release could not be planted'
+engine_run "$work/e15" "$other_tag" && fail 'PLANTED DEFECT: the engine was tagged though the recovery folder holds other bytes under its name'
+grep -qxF 'run: recovery-export failed at check' "$work/run.out" && ! grep -q '^run: tag ' "$work/run.out" \
+  && grep -qxF "engine/$other_tag.tar holds ${rendered_registry}/simetrixch/ansiwise-cli:$other_tag at $pushed, and it is held to $(cat "$work/run/push/results/digest")" "$work/run.out" \
+  && [ "$(engine_manifest "$other_tag")" = 404 ] || fail "other bytes under the release's name in the recovery folder did not stop the tag: $(cat "$work/run.out")"
+ok 'end to end: the engine is pushed under its digest, written into the recovery folder as the driver takes it, and only then tagged at that digest; a run that cannot write the folder, or finds other bytes there under the release, tags nothing, and a second run holds the archive the box holds'
 echo "pipeline-publish.test: OK"

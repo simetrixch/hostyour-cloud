@@ -1,0 +1,44 @@
+{{- /*
+THE NODE PULLS ZOT'S NEXT IMAGE WHILE THE OLD ZOT STILL SERVES IT. zot's image is pulled from the owner's
+mirror, which is this very zot, and its Deployment recreates the pod (strategy Recreate, for the volume's
+lock): a new ref that the node does not hold yet would be pulled from a registry that is gone. Argo CD runs
+this Job before it applies the Deployment, so the node pulls the new image under its mirror name from the
+zot that still runs, and the new pod then starts from the node's copy (pullPolicy IfNotPresent). A pull
+that fails fails the Job, and the sync stops before the Recreate with the old zot serving.
+
+The image is app.image exactly, repository, tag and digest, and the command is the zot binary asking its
+own version, which exits 0 without a config. The Job mounts nothing. BeforeHookCreation keeps the last pod
+readable until the next sync. On a cold node the driver has imported the image already, and nothing is
+pulled. The master is one node; a master of more than one would need this pod placed on the volume's node.
+scripts/check.sh refuses a hook whose image is not the Deployment's, a missing hook, and a pull Always.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: zot-image
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "common.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: zot
+          image: "{{ .Values.app.image.repository }}:{{ .Values.app.image.tag }}@sha256:{{ .Values.app.image.sha256 }}"
+          imagePullPolicy: {{ .Values.app.image.pullPolicy }}
+          args: ["--version"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

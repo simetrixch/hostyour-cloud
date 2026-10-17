@@ -7,10 +7,12 @@ external-secrets:
   # cluster-scoped variants, PushSecret) stays out.
   installCRDs: false
 
-  # THE CHART'S OWN CONTROLLER, AT ITS DIGEST. The chart composes <repository>:<tag> and has no field for
-  # a digest, so the digest rides on the tag. scripts/check.sh holds the tag before the @ to the one the
-  # chart itself names, so a bump of the chart cannot leave the image behind.
+  # THE CHART'S OWN CONTROLLER, AT ITS DIGEST, FROM THE OWNER'S MIRROR. The chart composes
+  # <repository>:<tag> and has no field for a digest, so the digest rides on the tag. scripts/check.sh
+  # holds the tag before the @ to the one the chart itself names, so a bump of the chart cannot leave the
+  # image behind. A cold owner's master starts it from the image the driver imported into the node.
   image:
+    repository: zot.master.digitacloud.app/simetrixch/ghcr.io/external-secrets/external-secrets
     tag: "v2.8.0@sha256:24c0dd3699e0988520afd2218612758cd97d1f702757b5b4fcf89adaa33ef679"
 
   # The actual controller Deployment. ONE controller per cluster — it

@@ -5,7 +5,8 @@ nothing. A push of a release tag runs it at that tag and publishes the
 repository's npm packages to this build plane's registry:
 
   gate → clone@tag → scan → reviewed → pack | build-binaries → push
-  (→ mirror, for the platform tree on the owner's master).
+  (→ mirror → recovery-export, for the platform tree on the owner's master;
+   → recovery-export → tag, for the engine on the owner's master).
 
 The run is created by the github-release-publish Trigger
 (clusters/inventories/image-builder), waiting, and the release queue starts it
@@ -30,6 +31,12 @@ WHAT IS PUBLISHED, read at the tag by `scan`:
     https://<registry>/v2/<owner>/<repository>/blobs/sha256:<hex>, which the
     owner's prefix serves without a credential on the owner's master
     (clusters/inventories/registry values-common.yaml, accessControl).
+    The engine (https://github.com/simetrixch/ansiwise-cli.git) on the owner's
+    master is the one exception to "under its tag": `push` puts its manifest
+    under its digest, `recovery-export` writes it into the recovery folder of
+    the owner's master, and only then `tag` puts it under the tag. The tag is
+    what release/release.sh of ansiwise-cli waits for before it pins the
+    engine, so no pin names an engine that the folder lacks.
   - otherwise every tracked package.json that is not private and names
     publishConfig.registry; that registry must be https://<registry>/v2/npm/, so
     a package that still names another registry fails the run. `pack` builds
@@ -49,6 +56,8 @@ WHAT IS PUBLISHED, read at the tag by `scan`:
     that answers anything else fail the run and name the image. The release of
     the platform (lifecycle/release-platform.sh) pins no installation before
     the mirror serves every entry of its tag, so this run is what lets it go on.
+    Then `recovery-export` writes the recovery folder of the owner's master
+    (task 8 below).
 Nothing else is published: the one-time seed of npm-seed/ is over, and a tree
 that holds npm-seed/ is read like any other.
 
@@ -99,7 +108,11 @@ clone and by the one step of `reviewed` that fetches the default branch, which
 runs git alone; the push identity image-builder-registry-push is held by `push`,
 which runs no code of the repository and reads the packed tarballs or the built
 binaries and never the clone, and on the platform tree by `copy` and `copy-sources`
-of the mirror, which run no code of the repository either. The run's one volume
+of the mirror, which run no code of the repository either, and on the engine by `tag`,
+which runs no code of the repository. The steps `plan` and `check` of `recovery-export`
+run files/recovery-folder.sh, the tree's at the tag on the platform tree and this chart's
+on the engine, and hold no credential; its storage-box login recovery-box is held by
+`present` and `upload`, which run rclone alone and no code of the repository. The run's one volume
 holds the clone in its subPath repository and the tarballs, binaries and mirror
 lists in its subPath packed.
 */ -}}
@@ -113,15 +126,16 @@ lists in its subPath packed.
 {{- /* The images of the ci pipeline: git for the gate and the fetch, bash, jq and git for the scan, the decision
        and the push, Node 24 with pnpm for the pack, and the gitleaks of the shared credential-scan Task. */ -}}
 {{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
-{{- $toolsImage := "alpine/k8s:1.35.6@sha256:b7a12c5ddf261994c33d2eaaa06fd69a0803ff6b38683bfa3d30a76dcdf92807" -}}
+{{- $toolsImage := include "consumer-build.toolsImage" . -}}
 {{- $nodeImage := include "consumer-build.nodeImage" . -}}
 {{- $gitleaksImage := "zricethezav/gitleaks:v8.21.2@sha256:0e99e8821643ea5b235718642b93bb32486af9c8162c8b8731f7cbdc951a7f46" -}}
 {{- $published := "[\"source\", \"binaries\"]" -}}
 {{- /* The platform tree on the owner's master fills the mirror the platform's images are pulled from. */ -}}
-{{- $mirrorsImages := and (eq $repoURL "https://github.com/simetrixch/hostyour-cloud.git") (eq (printf "%s/%s" $registry $owner) (include "common.buildRegistry" .)) -}}
+{{- $mirrorsImages := eq (include "consumer-build.isPlatformMirror" .) "true" -}}
 {{- $reviewed := ternary "[\"source\", \"binaries\", \"mirror\"]" $published $mirrorsImages -}}
-{{- /* skopeo for the copy, its -immutable tag: the plain tag is rebuilt every night. */ -}}
-{{- $skopeoImage := "quay.io/skopeo/stable:v1.22.3-immutable@sha256:c0ee1f4edca5c01cb8d5611124f92f3cc47196ecab68aee5d0f90834e00574d5" -}}
+{{- $skopeoImage := include "consumer-build.skopeoImage" . -}}
+{{- /* The engine on the owner's master is tagged only once the recovery folder holds it. */ -}}
+{{- $exportsEngine := eq (include "consumer-build.isPlatformEngine" .) "true" -}}
 {{- $packed := "[\"source\"]" -}}
 {{- /* The repository the binaries of a release are pushed to: <owner>/<repository name>, read off the repoURL like the owner. */ -}}
 {{- $binariesRepository := printf "%s/%s" $owner (regexReplaceAll "^https://github\\.com/[^/]+/([^/]+?)(\\.git)?$" $repoURL "${1}" | lower) -}}
@@ -638,6 +652,11 @@ spec:
         workspaces:
           - name: packed
             readOnly: true
+        {{- if $exportsEngine }}
+        results:
+          - name: digest
+            description: The digest the engine's manifest stands under, untagged until `tag`.
+        {{- end }}
         steps:
           - name: push
             image: {{ $toolsImage }}
@@ -645,6 +664,11 @@ spec:
               - secretRef:
                   name: image-builder-registry-push
             env:
+              {{- if $exportsEngine }}
+              # The engine's manifest is put under its digest and written to this file; `tag` puts it under the tag.
+              - name: MANIFEST_DIGEST_RESULT
+                value: "$(results.digest.path)"
+              {{- end }}
               - name: REGISTRY
                 value: {{ $registry | quote }}
               - name: OWNER
@@ -752,7 +776,7 @@ spec:
                 done
               }
               binaries_push() { # <folder of the built binaries> <scratch folder>: one manifest <owner>/<repository>:<tag>, a layer per binary
-                local dir="$1" tmp="$2" file hex want held code state
+                local dir="$1" tmp="$2" file hex want held code state reference="${RELEASE_TAG}"
                 local accept='application/vnd.oci.image.manifest.v1+json'
                 local empty_digest='sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'
                 local base="https://${REGISTRY}/v2/${BINARIES_REPOSITORY}" files=()
@@ -803,18 +827,21 @@ spec:
                       layers: $layers[0],
                       annotations: {"org.opencontainers.image.revision": $revision, "org.opencontainers.image.source": $source,
                         "org.opencontainers.image.version": $version}}' > "${tmp}/manifest.json" || return 1
-                  code="$(registry_call /dev/null -X PUT -H "Content-Type: ${accept}" --data-binary "@${tmp}/manifest.json" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                  # UNDER ITS DIGEST ALONE where the tag waits for the recovery folder of the owner's master.
+                  [ -z "${MANIFEST_DIGEST_RESULT:-}" ] || reference="sha256:$(sha256sum < "${tmp}/manifest.json" | cut -d' ' -f1)"
+                  code="$(registry_call /dev/null -X PUT -H "Content-Type: ${accept}" --data-binary "@${tmp}/manifest.json" "${base}/manifests/${reference}")" || return 1
                   if [ "${code}" != 201 ]; then
-                    echo "publish: FAIL — the manifest ${BINARIES_REPOSITORY}:${RELEASE_TAG} was answered ${code}" >&2
+                    echo "publish: FAIL — the manifest ${BINARIES_REPOSITORY}:${reference} was answered ${code}" >&2
                     return 1
                   fi
                 fi
-                code="$(registry_call "${tmp}/manifest.json" -H "Accept: ${accept}" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                code="$(registry_call "${tmp}/manifest.json" -H "Accept: ${accept}" "${base}/manifests/${reference}")" || return 1
                 held="$(jq -c '[.layers[] | .digest + " " + (.annotations["org.opencontainers.image.title"] // "")] | sort' "${tmp}/manifest.json" 2>/dev/null)" || held=""
                 if [ "${code}" != 200 ] || [ "${held}" != "${want}" ]; then
-                  echo "publish: FAIL — ${BINARIES_REPOSITORY}:${RELEASE_TAG} reads back as ${code} with ${held:-no layers}, not ${want}" >&2
+                  echo "publish: FAIL — ${BINARIES_REPOSITORY}:${reference} reads back as ${code} with ${held:-no layers}, not ${want}" >&2
                   return 1
                 fi
+                [ -z "${MANIFEST_DIGEST_RESULT:-}" ] || printf 'sha256:%s' "$(sha256sum < "${tmp}/manifest.json" | cut -d' ' -f1)" > "${MANIFEST_DIGEST_RESULT}"
                 for file in "${files[@]}"; do
                   hex="$(sha256sum "${file}" | cut -d' ' -f1)"
                   code="$(registry_call "${tmp}/blob" "${base}/blobs/sha256:${hex}")" || return 1
@@ -1169,5 +1196,136 @@ spec:
                 [ "${served}" = "${rows}" ]
               }
               mirror_read_back_sources /workspace/packed/mirror-sources.list /tmp/mirror-sources
+
+    # ── 8. recovery-export — the recovery folder of the owner's master, written to the storage box
+    # A cold owner's master has no registry to pull from: its zot is one of the images it must start. So each
+    # release writes every image the tree pulls, the platform's own images at the builds of this stage, the
+    # released ansiwise pair and the skopeo the seed runs, into <fqdn>/recovery/ on the storage box, and
+    # lifecycle/driver.sh fetches, checks and imports them into a cold node. Each is one OCI archive, read
+    # from the owned mirror and never from ghcr.io. Which archives, under which path and name, and the test
+    # each passes are the tree's clusters/inventories/consumer-build/files/recovery-folder.sh, the same lines
+    # the driver runs. An archive that stands on the box is never written again and nothing is deleted, so a
+    # release adds only what changed, and the folder grows with every release. The folder is not sealed:
+    # everything in it is public, and the driver holds every archive to the digests the tree states in git,
+    # never to a list inside the folder. The login is the recovery sub-account (externalsecret-recovery-box.yaml),
+    # whose base directory is that folder; the pod reaches the box on port 22 through recovery-export-egress
+    # (networkpolicy.yaml) and nothing else does. The steps are the ones every writer of the folder runs
+    # (_helpers.tpl, consumer-build.recoveryExportSteps).
+    - name: recovery-export
+      runAfter: [mirror]
+      when:
+        - input: "$(tasks.scan.results.mode)"
+          operator: in
+          values: ["mirror"]
+      workspaces:
+        - { name: source, workspace: source, subPath: repository }
+        - { name: packed, workspace: source, subPath: packed }
+      taskSpec:
+        workspaces:
+          - name: source
+          - name: packed
+        steps:
+          {{- include "consumer-build.recoveryExportSteps" (dict "root" . "dir" "/workspace/packed" "tree" true
+                "digests" "clusters/platform/ansiwise.sha256"
+                "env" (list (dict "name" "STAGE" "value" .Values.global.env))
+                "plan" "recovery_archives . \"${STAGE}\" > /workspace/packed/recovery.plan") | nindent 10 }}
+{{- end }}
+{{- if $exportsEngine }}
+
+    # ── 8. recovery-export — the engine of this tag, in the recovery folder of the owner's master
+    # A cold owner's master fetches its engine from no registry: that registry is its own zot, which does not
+    # stand yet, and lifecycle/driver.sh takes the engine out of <fqdn>/recovery/ on the storage box. So the
+    # release's manifest, which `push` put under its digest alone, is written there, read from the registry by
+    # that digest without a login and held to it, before `tag` puts it under the tag that release/release.sh
+    # of ansiwise-cli waits for before it pins the engine: no pin names an engine the folder lacks. The steps,
+    # their login and their pinhole are the ones every writer of the folder has (_helpers.tpl
+    # consumer-build.recoveryExportSteps, externalsecret-recovery-box.yaml, networkpolicy.yaml), and the name is
+    # files/recovery-folder.sh's as this chart renders it.
+    - name: recovery-export
+      runAfter: [push]
+      when:
+        - input: "$(tasks.scan.results.mode)"
+          operator: in
+          values: ["binaries"]
+      params:
+        - { name: digest, value: "$(tasks.push.results.digest)" }
+        - { name: release-tag, value: "$(params.release-tag)" }
+      workspaces:
+        - { name: packed, workspace: source, subPath: packed }
+      taskSpec:
+        params:
+          - name: digest
+            type: string
+          - name: release-tag
+            type: string
+        workspaces:
+          - name: packed
+        steps:
+          {{- include "consumer-build.recoveryExportSteps" (dict "root" . "dir" "/workspace/packed" "digests" "-"
+                "env" (list (dict "name" "BUILD_REGISTRY" "value" (include "common.buildRegistry" .)) (dict "name" "RELEASE_TAG" "value" "$(params.release-tag)") (dict "name" "DIGEST" "value" "$(params.digest)"))
+                "plan" "recovery_engine_archive \"${BUILD_REGISTRY}\" \"${RELEASE_TAG}\" \"${DIGEST}\" > /workspace/packed/recovery.plan") | nindent 10 }}
+
+    # ── 9. tag — the engine's release under its tag, once the recovery folder holds it, and read back
+    - name: tag
+      runAfter: [recovery-export]
+      when:
+        - input: "$(tasks.scan.results.mode)"
+          operator: in
+          values: ["binaries"]
+      params:
+        - { name: digest, value: "$(tasks.push.results.digest)" }
+        - { name: release-tag, value: "$(params.release-tag)" }
+      taskSpec:
+        params:
+          - name: digest
+            type: string
+          - name: release-tag
+            type: string
+        steps:
+          - name: tag
+            image: {{ $toolsImage }}
+            envFrom:
+              - secretRef:
+                  name: image-builder-registry-push
+            env:
+              - name: REGISTRY
+                value: {{ $registry | quote }}
+              - name: BINARIES_REPOSITORY
+                value: {{ $binariesRepository | quote }}
+              - name: RELEASE_TAG
+                value: "$(params.release-tag)"
+              - name: DIGEST
+                value: "$(params.digest)"
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+{{ .Files.Get "files/registry-push.sh" | indent 14 }}
+
+              binaries_tag() { # <scratch folder>: the manifest at DIGEST, put under RELEASE_TAG and read back
+                local tmp="$1" code accept='application/vnd.oci.image.manifest.v1+json'
+                local base="https://${REGISTRY}/v2/${BINARIES_REPOSITORY}"
+                mkdir -p "${tmp}" || return 1
+                code="$(registry_call "${tmp}/manifest.json" -H "Accept: ${accept}" "${base}/manifests/${DIGEST}")" || return 1
+                if [ "${code}" != 200 ] || [ "sha256:$(sha256sum < "${tmp}/manifest.json" | cut -d' ' -f1)" != "${DIGEST}" ]; then
+                  echo "publish: FAIL — ${BINARIES_REPOSITORY}@${DIGEST} reads as ${code} with other bytes, and nothing is tagged" >&2
+                  return 1
+                fi
+                code="$(registry_call /dev/null -X PUT -H "Content-Type: ${accept}" --data-binary "@${tmp}/manifest.json" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                if [ "${code}" != 201 ]; then
+                  echo "publish: FAIL — the tag ${BINARIES_REPOSITORY}:${RELEASE_TAG} was answered ${code}" >&2
+                  return 1
+                fi
+                code="$(registry_call "${tmp}/tagged.json" -H "Accept: ${accept}" "${base}/manifests/${RELEASE_TAG}")" || return 1
+                if [ "${code}" != 200 ] || [ "sha256:$(sha256sum < "${tmp}/tagged.json" | cut -d' ' -f1)" != "${DIGEST}" ]; then
+                  echo "publish: FAIL — ${BINARIES_REPOSITORY}:${RELEASE_TAG} reads back as ${code}, not at ${DIGEST}" >&2
+                  return 1
+                fi
+                echo "publish: ${BINARIES_REPOSITORY}:${RELEASE_TAG} tagged at ${DIGEST}, which the recovery folder holds"
+              }
+              binaries_tag /tmp/publish
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 500m, memory: 256Mi }
 {{- end }}
 {{- end }}

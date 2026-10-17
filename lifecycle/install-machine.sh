@@ -27,12 +27,6 @@
 # MACHINE — nothing else is carried from this disk, so what stands on the machine
 # afterwards is what the repositories say rather than what this checkout happened
 # to hold.
-#
-# ONE EXCEPTION, the engine of the owner's master. Every machine fetches its engine
-# from the owner's registry (RELEASES in driver.sh), and the owner's master IS that
-# registry, which does not stand while it is installed. For that machine alone the
-# engine is built here, from its tag in Git, and carried in the same session; it is
-# built for linux-x64, so that one installation runs from a Linux x86_64 machine.
 # =============================================================================
 
 set -uo pipefail
@@ -89,55 +83,6 @@ done
 # Secret that Vault, the secret store and Argo CD deliver, none of which stands on a first master:
 # the run would wait on its own end. Its value is never shown.
 [ -z "${ACME_CREDENTIALS_JSON:-}" ] || fail "$FILE states ACME_CREDENTIALS_JSON, and an installation is born on platform-local, because its ACME account is delivered through a Vault that does not stand yet: install it with ACME_CREDENTIALS_JSON empty or commented out, ACME_EMAIL and ACME_SERVER still stated, and CLUSTER_ISSUER='platform-local', then state it, set CLUSTER_ISSUER='platform-acme', run regenerate-install-branch.sh $FQDN $FILE and the Manager's cluster-redeploy of this machine" 65
-
-# ------------------------------------------------- the engine of the owner's master
-# BUILT HERE ONLY WHERE THE MACHINE IS THE REGISTRY ITS ENGINE COMES FROM: the host of
-# RELEASES in driver.sh, read there and never restated, is zot.<FQDN>. The pin is the
-# one driver.sh reads, cliTools.ansiwise.version on master of the platform repository,
-# read through Git; the engine is ansiwise-cli at that tag, built by its own
-# release/build.sh, which refuses any host but Linux x86_64 and any Dart but the one it
-# is pinned to, and runs the gate of every part of the engine before it builds. Both binaries
-# go into the session ahead of driver.sh, which places them from $HOME/.aw-engine and
-# fetches nothing. Every other installation builds nothing here.
-carry_engine() { # <file> — writes the lines of the session that put the built engine under $HOME/.aw-engine, or nothing
-  local releases host pin tool
-  : > "$1"
-  releases=$(sed -n 's/^readonly RELEASES=//p' "$DRIVER")
-  [ -n "$releases" ] || fail 'driver.sh states no RELEASES, so where its engine comes from cannot be told' 66
-  host="${releases#https://}"; host="${host%%/*}"
-  [ "$host" = "zot.$FQDN" ] || return 0
-  ENGINE_WORK=$(mktemp -d) || fail 'no directory could be made to build the engine in' 73
-  printf '\n  %s is the registry its own engine comes from: building ansiwise here\n' "$FQDN" >&2
-  git clone -q --depth 1 --branch master "https://github.com/$PLATFORM_REPO.git" "$ENGINE_WORK/platform" >&2 \
-    || fail "https://github.com/$PLATFORM_REPO.git could not be cloned, and it pins the engine of this machine" 69
-  pin=$(awk '
-    /^cliTools:[ \t]*$/ { block = 1; next }
-    block && /^[^ \t#]/ { exit }
-    block && /^  ansiwise:[ \t]*$/ { tool = 1; next }
-    tool && /^[ \t]*$/ { next }
-    tool { if (match($0, /^[ \t]+version:[ \t]*"[^"]+"/)) { v = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", v); sub(/"$/, "", v); print v }; exit }
-  ' "$ENGINE_WORK/platform/clusters/platform/versions.yaml")
-  [ -n "$pin" ] || fail "$PLATFORM_REPO says nothing under cliTools.ansiwise.version, and nothing here may choose an engine" 65
-  git clone -q --depth 1 --branch "$pin" https://github.com/simetrixch/ansiwise-cli.git "$ENGINE_WORK/cli" >&2 \
-    || fail "ansiwise-cli could not be cloned at its tag $pin" 69
-  bash "$ENGINE_WORK/cli/release/build.sh" "$pin" "$ENGINE_WORK/engine" >&2 \
-    || fail "release/build.sh of ansiwise-cli $pin did not build the engine of this machine; the lines above say why" 65
-  printf 'mkdir -p "$HOME/.aw-engine"\n' > "$1"
-  for tool in ansiwise ansiwise-rest; do
-    [ -s "$ENGINE_WORK/engine/$tool-$pin-linux-x64" ] || fail "release/build.sh of ansiwise-cli $pin left no $tool" 65
-    {
-      printf 'base64 -d > "$HOME/.aw-engine/%s" <<%sAW_ENGINE_END%s\n' "$tool" "'" "'"
-      base64 < "$ENGINE_WORK/engine/$tool-$pin-linux-x64"
-      printf 'AW_ENGINE_END\nchmod 700 "$HOME/.aw-engine/%s"\n' "$tool"
-    } >> "$1"
-  done
-  printf '  built ansiwise and ansiwise-rest %s, carried in the session\n' "$pin" >&2
-}
-ENGINE_WORK=""
-trap 'rm -rf "${ENGINE_WORK:-}"' EXIT
-ENGINE_STREAM=$(mktemp) || fail 'no file could be made for the session' 73
-trap 'rm -rf "${ENGINE_WORK:-}" "$ENGINE_STREAM"' EXIT
-carry_engine "$ENGINE_STREAM"
 
 # A MACHINE IS ADDRESSED BY ITS NAME, and by nothing else. The name in the config is
 # the one the certificate will carry and the one the cluster is reached by, so a
@@ -220,7 +165,6 @@ fi
   printf 'umask 077\ncat > "$1" <<%sAW_CONFIG_END%s\n' "'" "'"
   tr -d $'\r' < "$FILE"
   printf 'AW_CONFIG_END\n'
-  cat "$ENGINE_STREAM"
   tr -d $'\r' < "$DRIVER"
 } | ssh "${BASE[@]}" "${DOOR[@]}" "$TARGET" 'bash -s -- "$HOME/.aw-config.env"' 2>&1 | tee "$TRANSCRIPT"
 INSTALLED=${PIPESTATUS[1]}

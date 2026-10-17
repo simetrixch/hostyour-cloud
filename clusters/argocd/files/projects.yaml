@@ -61,7 +61,6 @@ spec:
   description: Cluster foundation — External-Secrets operator, CoreDNS, the plain-http redirect to https and the cert-manager family. Privileged (CRDs, kube-system).
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
-    - oci://zot.master.digitacloud.app/simetrixch/ghcr.io/external-secrets/charts
   destinations:
     - name: __CLUSTER_NAME__
       namespace: external-secrets

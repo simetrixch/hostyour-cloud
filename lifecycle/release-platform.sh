@@ -48,6 +48,10 @@
 # is a pod that cannot pull. So the release reads each image back from the mirror,
 # by its digest and without a login, with curl, and the list of them is made by the
 # tree's own scripts/list-mirror-images.sh, which renders the tree with helm and yq.
+# The owner's master needs a third: its recovery folder on the storage box, which a
+# cold start of that machine reads instead of its own registry. The same run writes it
+# after the copy, and the release lists it with rclone and the storage-box login of
+# that machine's config beside the tree before it pins that machine, and never another.
 #
 # WHY THE PIN IS WRITTEN HERE. The line `release: <tag>` in
 # clusters/active/<fqdn>.yaml is what says which state an installation stands on,
@@ -163,6 +167,9 @@ write_config_value() { # file, KEY, value -> KEY='value' rewritten in place, app
   [ "$found" = '1' ] || lines+=("$key='$value'")
   : > "$file"
   for line in "${lines[@]}"; do printf '%s\n' "$line" >> "$file"; done
+}
+config_value() { # file, KEY -> the value of its last KEY='value' line, the one the shell sourcing the file keeps
+  sed -n "s/^$2='\([^']*\)'.*\$/\1/p" "$1" | tail -n 1
 }
 VERSION="${1:-}"
 CHANNEL="${2:-}"
@@ -400,7 +407,105 @@ say "release: the mirror serves all $SOURCES_COUNT tools and charts of $TAG"
 # installation is a branch carrying its own map, clusters/active/<branch>.yaml; the
 # ceiling is measured against each map's stage, and an installation the channel does
 # not admit is left as it stands and said so. A first machine, whose branch does not
-# exist yet, takes the tag as PLATFORM_REF and cuts its branch from it.
+# exist yet, takes the tag as PLATFORM_REF and cuts its branch from it. Every installation
+# is put in TARGETS first, in the order origin lists them, because the owner's master
+# below is read before anything is pinned.
+TARGETS=() # one entry per installation: `pin <fqdn> <stage>` or `leave <fqdn> <stage>`
+if [ -n "$FQDN" ]; then
+  TARGETS=("pin $FQDN $STAGE")
+else
+  URL="$(git remote get-url origin)"
+  [ -n "$URL" ] || die 'this checkout has no origin to clone, so there is no branch to pin' 69
+  for BRANCH in $(git ls-remote --heads origin | sed 's|.*refs/heads/||' | sort); do
+    [ "$BRANCH" = 'master' ] && continue
+    git cat-file -e "refs/remotes/origin/${BRANCH}:clusters/active/${BRANCH}.yaml" 2>/dev/null || continue
+    STAGE="$(git show "refs/remotes/origin/${BRANCH}:clusters/active/${BRANCH}.yaml" | value_in_text stage)"
+    case " $ADMITS " in
+      *" $STAGE "*) TARGETS+=("pin $BRANCH $STAGE") ;;
+      *) TARGETS+=("leave $BRANCH ${STAGE:-unstated}") ;;
+    esac
+  done
+fi
+CONFIG_DIR="$(git rev-parse --show-toplevel)/lifecycle"
+
+# NOTHING IS PINNED ON THE OWNER'S MASTER BEFORE ITS RECOVERY FOLDER HOLDS EVERY ARCHIVE OF THE TAG. That
+# machine pulls every image from its own zot and fetches its engine from it, so a cold start of it, a first
+# installation or a restore, reads them from <fqdn>/recovery/ on the storage box instead (lifecycle/driver.sh)
+# and stops at the first archive the folder lacks. The publish run of the tag writes the folder only after it
+# has filled the mirror (recovery-export), so a pin that waited for the mirror alone could name a tree whose
+# archives never arrived. The owner's master is the installation whose zot is the tree's global.buildRegistry,
+# and its archives are those files/recovery-folder.sh of the tree at the tag names for the stage of its map.
+# Each must stand in the folder under its name, which the run gives an archive only once it has held it to
+# the tree, and rclone only once the upload is whole (it writes to a .partial name until then). The folder is
+# listed with the storage-box login of that installation's config beside this tree, the one master-backup
+# writes with; the password reaches rclone on its standard input and in its environment, never an argument.
+# The wait is the one the mirror already spent.
+#
+# TWO STATES READ NOTHING. A tree at the tag without files/recovery-folder.sh names no folder, and its driver
+# reads none. And the publish run of the tag runs the pipeline of the tree the owner's branch stands on: where
+# that tree writes no folder yet, nothing the tag starts writes one, and waiting for it would never pin the
+# tag that brings the writer. The release says so and pins, and the release after it reads the folder back.
+RECOVERY_LIB='clusters/inventories/consumer-build/files/recovery-folder.sh'
+RECOVERY_FQDN=''
+RECOVERY_STAGE=''
+if [ -f "$LISTED/tree/$RECOVERY_LIB" ]; then
+  # shellcheck disable=SC1090
+  . "$LISTED/tree/$RECOVERY_LIB"
+  RECOVERY_REGISTRY="$(recovery_registry "$LISTED/tree")" \
+    || die "the tree at $TAG names no registry its images are pulled from - the line above says why - and nothing was pinned"
+  case "$RECOVERY_REGISTRY" in
+    zot.*) RECOVERY_FQDN="${RECOVERY_REGISTRY%%/*}"; RECOVERY_FQDN="${RECOVERY_FQDN#zot.}" ;;
+  esac
+  for ENTRY in ${TARGETS[@]+"${TARGETS[@]}"}; do
+    case "$ENTRY" in "pin $RECOVERY_FQDN "*) RECOVERY_STAGE="${ENTRY##* }" ;; esac
+  done
+fi
+branch_carries() { # fqdn, path -> 0 where the tree its install branch stands on carries the path
+  if [ -n "$FQDN" ]; then [ -f "$WORK/$2" ]; else git cat-file -e "refs/remotes/origin/$1:$2" 2>/dev/null; fi
+}
+if [ -n "$RECOVERY_STAGE" ] && ! branch_carries "$RECOVERY_FQDN" "$RECOVERY_LIB"; then
+  say "release: the recovery folder of $RECOVERY_FQDN is not read: the publish run of $TAG runs the pipeline of the tree branch $RECOVERY_FQDN stands on, and that tree writes no recovery folder yet. Until a later release reads the folder back, a cold start of $RECOVERY_FQDN from its branch stops at the first archive the folder lacks"
+elif [ -n "$RECOVERY_STAGE" ]; then
+  command -v rclone >/dev/null 2>&1 \
+    || die "rclone is not on this path, and the release lists the recovery folder of $RECOVERY_FQDN on the storage box with it before it pins that installation. Nothing was pinned"
+  RECOVERY_CONFIG="$CONFIG_DIR/config.${RECOVERY_FQDN%%.*}.env"
+  [ -r "$RECOVERY_CONFIG" ] \
+    || die "there is no config at $RECOVERY_CONFIG, and the storage-box login of $RECOVERY_FQDN in it is what the release lists its recovery folder with before it pins that installation. Nothing was pinned" 66
+  # shellcheck disable=SC1091
+  . "$(dirname "$0")/require-owner-only.sh" \
+    || die 'require-owner-only.sh is not beside this file. It is the guard every reader of a config puts on it' 66
+  require_owner_only "$RECOVERY_CONFIG" \
+    || die "$RECOVERY_CONFIG $REACH and carries credentials, the storage-box password among them. Run: $OWNER_ONLY_COMMAND" 77
+  for named in STORAGE_BOX_HOST STORAGE_BOX_USER STORAGE_BOX_PASSWORD; do
+    [ -n "$(config_value "$RECOVERY_CONFIG" "$named")" ] \
+      || die "$RECOVERY_CONFIG states no $named, and that login is what the release lists the recovery folder of $RECOVERY_FQDN with before it pins that installation. Nothing was pinned" 65
+  done
+  BOX_HOST="$(config_value "$RECOVERY_CONFIG" STORAGE_BOX_HOST)"
+  BOX_USER="$(config_value "$RECOVERY_CONFIG" STORAGE_BOX_USER)"
+  BOX_PASS="$(config_value "$RECOVERY_CONFIG" STORAGE_BOX_PASSWORD | rclone obscure -)" \
+    || die 'rclone could not take the storage-box password, and nothing was pinned' 70
+  recovery_archives "$LISTED/tree" "$RECOVERY_STAGE" > "$LISTED/recovery.plan" \
+    || die "the tree at $TAG names no archives for the recovery folder of $RECOVERY_FQDN - the line above says why - and nothing was pinned"
+  RECOVERY_COUNT="$(grep -c . "$LISTED/recovery.plan")"
+  while :; do
+    BOX_LISTED=1
+    RCLONE_CONFIG_BOX_TYPE=sftp RCLONE_CONFIG_BOX_HOST="$BOX_HOST" RCLONE_CONFIG_BOX_USER="$BOX_USER" RCLONE_CONFIG_BOX_PASS="$BOX_PASS" \
+      rclone lsf --recursive --files-only "box:$RECOVERY_FQDN/recovery/" > "$LISTED/recovery.present" 2>/dev/null \
+      || { BOX_LISTED=''; : > "$LISTED/recovery.present"; }
+    UNHELD="$(while read -r path name _; do
+      grep -qxF -- "$path" "$LISTED/recovery.present" || printf '%s (%s)\n' "$path" "$name"
+    done < "$LISTED/recovery.plan")"
+    [ -z "$UNHELD" ] && break
+    if [ "$SECONDS" -ge "$MIRROR_DEADLINE" ]; then
+      [ -n "$BOX_LISTED" ] \
+        || die "the storage box $BOX_HOST does not list box:$RECOVERY_FQDN/recovery/ to $BOX_USER after ${MIRROR_WAIT}s, so none of the $RECOVERY_COUNT archives of $TAG that a cold start of $RECOVERY_FQDN reads there was found. Nothing was pinned. Release again once it does: the tag is reused" 69
+      die "the recovery folder of $RECOVERY_FQDN holds $((RECOVERY_COUNT - $(printf '%s\n' "$UNHELD" | grep -c .))) of the $RECOVERY_COUNT archives of $TAG after ${MIRROR_WAIT}s: it lacks $(printf '%s\n' "$UNHELD" | sed 's/$/;/' | tr '\n' ' ')and a cold start of $RECOVERY_FQDN stops at the first of them. The recovery-export of the publish run of $TAG on the owner's master writes them. Nothing was pinned. Read that run, then release again: the tag is reused" 69
+    fi
+    sleep 30
+  done
+  say "release: the recovery folder of $RECOVERY_FQDN holds all $RECOVERY_COUNT archives of $TAG, listed with the storage-box login of $(basename "$RECOVERY_CONFIG")"
+fi
+
 pin_installation() { # fqdn -> the map on its branch records the tag; PINNED gains the name
   local fqdn="$1" work map held
   work="$(mktemp -d)"
@@ -434,31 +539,20 @@ pin_installation() { # fqdn -> the map on its branch records the tag; PINNED gai
   PINNED+=("$fqdn")
 }
 PINNED=()
-if [ -n "$FQDN" ]; then
-  rm -rf "$WORK"
-  pin_installation "$FQDN"
-else
-  URL="$(git remote get-url origin)"
-  [ -n "$URL" ] || die 'this checkout has no origin to clone, so there is no branch to pin' 69
-  FOUND=0
-  for BRANCH in $(git ls-remote --heads origin | sed 's|.*refs/heads/||' | sort); do
-    [ "$BRANCH" = 'master' ] && continue
-    git cat-file -e "refs/remotes/origin/${BRANCH}:clusters/active/${BRANCH}.yaml" 2>/dev/null || continue
-    FOUND=1
-    STAGE="$(git show "refs/remotes/origin/${BRANCH}:clusters/active/${BRANCH}.yaml" | value_in_text stage)"
-    case " $ADMITS " in
-      *" $STAGE "*) pin_installation "$BRANCH" ;;
-      *) say "release: $BRANCH is stage ${STAGE:-unstated} and channel $CHANNEL admits only: $ADMITS - left as it stands" ;;
-    esac
-  done
-  [ "$FOUND" = '1' ] \
-    || say "release: origin carries no installation yet, so nothing is pinned. A first machine names $TAG as PLATFORM_REF in its config and cuts its branch from it"
-fi
+[ -z "$FQDN" ] || rm -rf "$WORK"
+for ENTRY in ${TARGETS[@]+"${TARGETS[@]}"}; do
+  read -r ACT BRANCH STAGE <<< "$ENTRY"
+  case "$ACT" in
+    pin) pin_installation "$BRANCH" ;;
+    *) say "release: $BRANCH is stage $STAGE and channel $CHANNEL admits only: $ADMITS - left as it stands" ;;
+  esac
+done
+[ "${#TARGETS[@]}" -gt 0 ] \
+  || say "release: origin carries no installation yet, so nothing is pinned. A first machine names $TAG as PLATFORM_REF in its config and cuts its branch from it"
 # THE CONFIGS OF THIS CHECKOUT NAME THE RELEASE A FIRST MACHINE IS CUT FROM. Every
 # lifecycle/config.*.env beside the tree this runs in, the example excepted, has its
 # PLATFORM_REF rewritten in place — the file keeps its identity and with it the
 # owner-only rights the launcher demands.
-CONFIG_DIR="$(git rev-parse --show-toplevel)/lifecycle"
 WRITTEN=0
 for CONFIG in "$CONFIG_DIR"/config.*.env; do
   [ -f "$CONFIG" ] || continue
