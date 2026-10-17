@@ -18,7 +18,11 @@ description: |
     use from templates/. The Application's sync option ServerSideApply=true
     avoids the annotation limit on the SecretStore CRD.
 type: application
+# THE CHART IS VENDORED, AS charts/external-secrets-2.8.0.tgz, and the dependency names no repository.
+# A cold owner's master renders this Application in sync wave 1, long before zot answers in wave 7, and
+# without it zot's htpasswd Secret is never written, so a chart fetched from zot would never arrive. Argo
+# CD's repo-server renders the archive from the checkout and fetches nothing. clusters/platform/charts.sha256
+# holds the archive to the upstream release's digest, and scripts/check.sh holds the archive to this version.
 dependencies:
   - name: external-secrets
     version: 2.8.0
-    repository: oci://zot.master.digitacloud.app/simetrixch/ghcr.io/external-secrets/charts

@@ -65,12 +65,12 @@ images:
         tree: platform
         file: clusters/inventories/registry/values-common.yaml
         key: tag
-        anchor: 'repository: ghcr.io/project-zot/zot-linux-amd64'
+        anchor: 'repository: zot.master.digitacloud.app/simetrixch/ghcr.io/project-zot/zot-linux-amd64'
       - kind: yaml_value
         tree: platform
         file: clusters/inventories/registry/values-common.yaml
         key: sha256
-        anchor: 'repository: ghcr.io/project-zot/zot-linux-amd64'
+        anchor: 'repository: zot.master.digitacloud.app/simetrixch/ghcr.io/project-zot/zot-linux-amd64'
         writes: sha256
       - kind: yaml_value
         tree: platform
@@ -111,12 +111,12 @@ images:
         tree: platform
         file: clusters/inventories/headscale/values-common.yaml
         key: tag
-        anchor: 'repository: ghcr.io/juanfont/headscale'
+        anchor: 'repository: zot.master.digitacloud.app/simetrixch/ghcr.io/juanfont/headscale'
       - kind: yaml_value
         tree: platform
         file: clusters/inventories/headscale/values-common.yaml
         key: sha256
-        anchor: 'repository: ghcr.io/juanfont/headscale'
+        anchor: 'repository: zot.master.digitacloud.app/simetrixch/ghcr.io/juanfont/headscale'
         writes: sha256
       - kind: yaml_value
         tree: platform
@@ -281,12 +281,21 @@ images:
 # repository out of the very Chart.yaml the stamp writes (oci://code.forgejo.org),
 # named exactly once, where Helm itself reads it.
 charts:
+  # VENDORED: clusters/inventories/external-secrets/charts/<chart>-<version>.tgz, held by its line in
+  # clusters/platform/charts.sha256. A bump stamps the version, and scripts/check.sh stays red until the
+  # archive of that version replaces the old one and its line is rewritten. The chart is pulled from the registry
+  # ghcr.io/external-secrets/charts, as the oci address <registry>/external-secrets with the scheme in front:
+  #   helm pull oci://<registry>/external-secrets --version <version> -d clusters/inventories/external-secrets/charts/
+  #   git rm clusters/inventories/external-secrets/charts/external-secrets-<old version>.tgz
+  #   sha256sum clusters/inventories/external-secrets/charts/external-secrets-<version>.tgz
+  # The new line is the sha256 of the chart layer of that tag's manifest on ghcr.io and of the release asset
+  # helm-chart-<version>/external-secrets-<version>.tgz; both are read before the line is committed.
   external-secrets:
     version: "2.8.0"
     upstream:
       kind: git_tags
       project: external-secrets/external-secrets
-      # The chart is published to oci://ghcr.io/external-secrets/charts, which has no
+      # The chart is published to the registry ghcr.io/external-secrets/charts, which has no
       # index; its source repository tags every chart release helm-chart-<version>.
       matching: '^helm-chart-([0-9]+\.[0-9]+\.[0-9]+)$'
     stamps:

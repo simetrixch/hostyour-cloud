@@ -2575,7 +2575,7 @@ placed() { # <driver file> <served digests> [<the asset served in place of ansiw
   local driver="$1"
   ( SERVED_DIGESTS="$2" SWAPPED="${3:-}"
     ENGINE="$SANDBOX/bin/ansiwise" PIN="$ENGINE_PIN" CONFIG="$ENGINE_WORK/no-config"
-    FQDN='machine.example.invalid' CARRIED="$SANDBOX/carried"
+    FQDN='machine.example.invalid' RECOVERY="${RECOVERY:-}"
     RELEASES="https://${RELEASES_HOST:-registry.example.invalid}/v2/acme/ansiwise-cli/blobs" DIGESTS_URL='https://pins.example.invalid/ansiwise.sha256'
     say() { echo "say: $*"; }; good() { echo "good: $*"; }; summary() { echo 'summary'; }
     die() { echo "die: $1" >&2; exit "${2:-1}"; }
@@ -2598,12 +2598,17 @@ placed() { # <driver file> <served digests> [<the asset served in place of ansiw
         *) return 22 ;;
       esac
     }
+    rclone() { # copyto box:machine.example.invalid/recovery/<path> <file> — the storage box is the folder $BOX
+      [ "$1" = copyto ] || return 1
+      echo "$2" >> "$OUT/box.log"
+      cp "$BOX/${2#box:machine.example.invalid/recovery/}" "$3" 2>/dev/null
+    }
     eval "$(guard_of "$driver")"
     eval "$(check_of "$driver")"
     eval "$(sed -n '/^ENGINE_ANSWERS=\$("\$ENGINE" --version/,/^fi$/p' "$driver" | sed "s#/usr/local/bin/#$SANDBOX/bin/#g")"
   ) > "$OUT/placed.out" 2>&1
 }
-fresh_machine() { rm -rf "$SANDBOX" "$OUT/fetched.log"; mkdir -p "$SANDBOX/bin"; }
+fresh_machine() { rm -rf "$SANDBOX" "$OUT/fetched.log" "$OUT/box.log"; mkdir -p "$SANDBOX/bin"; }
 blob_of() { printf 'https://registry.example.invalid/v2/acme/ansiwise-cli/blobs/sha256:%s\n' "$(sha256sum < "$SERVED/$1-$ENGINE_PIN-linux-x64" | cut -d' ' -f1)"; } # <tool>
 carries() { cat "$SANDBOX/bin/$1" 2>/dev/null; } # <tool> — what the machine holds under that name
 released() { cat "$SERVED/$1-$ENGINE_PIN-linux-x64"; } # <tool> — what the release built
@@ -2675,63 +2680,105 @@ for engine_driver in driver.sh regenerate-driver.sh; do
   ok "$engine_driver: a TERM ends the run where it stands, and the next run places what is missing"
 done
 
-# THE ENGINE OF THE OWNER'S MASTER is built by install-machine from its tag and carried in the session,
-# because that machine IS the registry the others fetch from. driver.sh places what it carries, asks it
-# for the pin, and fetches nothing; regenerate-driver.sh runs where the registry stands, and carries none.
-D="$HERE/driver.sh"
-carry() { mkdir -p "$SANDBOX/carried"; asset_text ansiwise "$1" > "$SANDBOX/carried/ansiwise"; asset_text ansiwise-rest "$2" > "$SANDBOX/carried/ansiwise-rest"; chmod 700 "$SANDBOX/carried"/*; }
-fresh_machine; carry "$ENGINE_PIN" "$ENGINE_PIN"
-RELEASES_HOST=zot.machine.example.invalid placed "$D" "$PINNED_DIGESTS" || fail "driver.sh: a carried engine at the pin was refused: $(cat "$OUT/placed.out")"
-[ "$(carries ansiwise-rest)" = "$(asset_text ansiwise-rest "$ENGINE_PIN")" ] && [ ! -e "$SANDBOX/carried" ] && [ ! -s "$OUT/fetched.log" ] \
-  || fail "driver.sh: a carried engine was not placed as carried, left behind, or fetched as well"
-grep -q 'not held against ansiwise.sha256' "$OUT/placed.out" || fail "driver.sh: the placement of a carried engine does not say it is not held against the digests: $(cat "$OUT/placed.out")"
-ok 'driver.sh: the engine install-machine carries is placed at the pin, removed, and nothing is fetched'
-fresh_machine; carry "$ENGINE_PIN" '0.8.306-stable-20260929191649'
-CODE=0; RELEASES_HOST=zot.machine.example.invalid placed "$D" "$PINNED_DIGESTS" || CODE=$?
-[ "$CODE" = 65 ] && [ -z "$(ls -A "$SANDBOX/bin")" ] || fail "driver.sh: a carried ansiwise-rest of another version must end with 65 and place nothing, got $CODE: $(ls "$SANDBOX/bin")"
-fresh_machine
-CODE=0; RELEASES_HOST=zot.machine.example.invalid placed "$D" "$PINNED_DIGESTS" || CODE=$?
-[ "$CODE" = 65 ] && [ ! -s "$OUT/fetched.log" ] || fail "driver.sh: the owner's master with no carried engine must end with 65 and fetch nothing from itself, got $CODE"
-grep -q 'is the registry of this very machine' "$OUT/placed.out" || fail "driver.sh: the refusal does not say the registry is this machine: $(cat "$OUT/placed.out")"
-ok "driver.sh: a carried engine off the pin is refused, and the owner's master fetches nothing from its own registry"
-
-# install-machine builds that engine only where the host of driver.sh's RELEASES is zot.<FQDN>, out of Git
-# (stand-in clones here) with ansiwise-cli's own release/build.sh, and writes both files into the stream.
-carry_engine_of() { sed -n '/^carry_engine() {/,/^}/p' "$HERE/install-machine.sh"; }
-carried_stream() { # <RELEASES host of the stand-in driver> — runs carry_engine, the stream in $OUT/stream, the clones in $OUT/git.log
-  rm -f "$OUT/stream" "$OUT/git.log"
-  printf 'readonly RELEASES=https://%s/v2/acme/ansiwise-cli/blobs\n' "$1" > "$ENGINE_WORK/driver.sh"
-  ( DRIVER="$ENGINE_WORK/driver.sh" FQDN='machine.example.invalid' PLATFORM_REPO='acme/platform'
-    fail() { echo "fail: $1" >&2; exit "${2:-1}"; }
-    git() { # clone -q --depth 1 --branch <ref> <url> <dir>
-      local dir="${*: -1}" url="${*: -2:1}"
-      echo "$*" >> "$OUT/git.log"
-      case "$url" in
-        */acme/platform.git) mkdir -p "$dir/clusters/platform"
-          printf 'cliTools:\n  ansiwise:\n    version: "%s"\n  yq:\n    version: "v4"\n' "$ENGINE_PIN" > "$dir/clusters/platform/versions.yaml" ;;
-        */ansiwise-cli.git) mkdir -p "$dir/release"
-          printf '%s\n' 'mkdir -p "$2"; for t in ansiwise ansiwise-rest; do printf "#!/bin/sh\necho %s\n" "$1" > "$2/$t-$1-linux-x64"; done' > "$dir/release/build.sh" ;;
-        *) return 128 ;;
-      esac
-    }
-    eval "$(carry_engine_of)"
-    ENGINE_WORK='' # carry_engine's own, as install-machine starts it; the fixture's folder of that name stays
-    carry_engine "$OUT/stream"
-    rm -rf "${ENGINE_WORK:-}"
-  ) > "$OUT/carry.out" 2>&1
+# THE ENGINE OF THE OWNER'S MASTER comes from its recovery folder, because that machine IS the registry the
+# others fetch from. The folder holds the release's one manifest as an OCI archive, written by the publish
+# run, whose executables are blobs named by their digests; driver.sh takes each by the digest
+# ansiwise.sha256 states and holds it like a fetched one. The stand-in box is a folder, and its rclone a copy.
+# An OCI archive of one manifest: the first file is its config, every further file a layer. It prints the
+# manifest's digest. The sections below build the folder's images with it too.
+oci_archive() { # <archive> <ref.name> <config file> <layer file>...
+  local archive="$1" name="$2" layout hex file manifest descriptors=()
+  shift 2
+  layout=$(mktemp -d "$WORK/layout.XXXXXX")
+  mkdir -p "$layout/blobs/sha256" "${archive%/*}"
+  for file in "$@"; do
+    hex=$(sha256sum < "$file" | cut -d' ' -f1)
+    cp "$file" "$layout/blobs/sha256/$hex"
+    descriptors+=("{\"mediaType\":\"application/octet-stream\",\"digest\":\"sha256:$hex\",\"size\":$(wc -c < "$file" | tr -d ' ')}")
+  done
+  manifest="$layout/manifest.json"
+  jq -n -c '$ARGS.positional | map(fromjson) | {schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json", config: .[0], layers: .[1:]}' \
+    --args "${descriptors[@]}" > "$manifest"
+  hex=$(sha256sum < "$manifest" | cut -d' ' -f1)
+  jq -n -c --arg digest "sha256:$hex" --arg name "$name" --argjson size "$(wc -c < "$manifest" | tr -d ' ')" \
+    '{schemaVersion: 2, manifests: [{mediaType: "application/vnd.oci.image.manifest.v1+json", digest: $digest, size: $size, annotations: {"org.opencontainers.image.ref.name": $name}}]}' \
+    > "$layout/index.json"
+  mv "$manifest" "$layout/blobs/sha256/$hex"
+  printf '{"imageLayoutVersion":"1.0.0"}' > "$layout/oci-layout"
+  tar -cf "$archive" -C "$layout" .
+  rm -rf "$layout"
+  echo "sha256:$hex"
 }
-carried_stream zot.machine.example.invalid || fail "install-machine: the engine of the owner's master was not built: $(cat "$OUT/carry.out")"
-grep -q -- "--branch $ENGINE_PIN https://github.com/simetrixch/ansiwise-cli.git" "$OUT/git.log" \
-  || fail "install-machine: ansiwise-cli was not cloned at the pin: $(cat "$OUT/git.log")"
-STREAM_HOME="$ENGINE_WORK/stream-home"; rm -rf "$STREAM_HOME"; mkdir -p "$STREAM_HOME"
-HOME="$STREAM_HOME" bash "$OUT/stream" || fail 'install-machine: the stream it carries does not run'
-for tool in ansiwise ansiwise-rest; do
-  [ "$(sh "$STREAM_HOME/.aw-engine/$tool")" = "$ENGINE_PIN" ] || fail "install-machine: the stream does not leave $tool answering the pin under \$HOME/.aw-engine"
-done
-ok "install-machine: for the owner's master the engine is built from its tag and both files arrive under \$HOME/.aw-engine"
-carried_stream registry.example.invalid || fail "install-machine: an installation that fetches its engine failed: $(cat "$OUT/carry.out")"
-[ ! -s "$OUT/stream" ] && [ ! -s "$OUT/git.log" ] || fail 'install-machine: an installation that fetches its engine still built or carried one'
-ok 'install-machine: every other installation builds and carries nothing'
+# The archive with the bytes of one blob replaced, its name kept. <archive> <blob hex> <file>
+swap_blob() {
+  local layout; layout=$(mktemp -d "$WORK/layout.XXXXXX")
+  tar -xf "$1" -C "$layout" && cp "$3" "$layout/blobs/sha256/$2" && tar -cf "$1" -C "$layout" . && rm -rf "$layout"
+}
+BOX="$ENGINE_WORK/box"
+printf '{}' > "$ENGINE_WORK/empty-config"
+engine_folder() { # [<a release whose assets the archive holds in place of the pin's>] — the folder holds the engine at the pin
+  local release="${1:-$ENGINE_PIN}" tool
+  rm -rf "$BOX" "$ENGINE_WORK/assets"; mkdir -p "$ENGINE_WORK/assets"
+  for tool in ansiwise ansiwise-rest; do asset_text "$tool" "$release" > "$ENGINE_WORK/assets/$tool-$release-linux-x64"; done
+  oci_archive "$BOX/engine/$ENGINE_PIN.tar" "registry.example.invalid/acme/ansiwise-cli:$ENGINE_PIN" "$ENGINE_WORK/empty-config" \
+    "$ENGINE_WORK/assets/ansiwise-$release-linux-x64" "$ENGINE_WORK/assets/ansiwise-rest-$release-linux-x64" > /dev/null
+}
+D="$HERE/driver.sh"
+fresh_machine; engine_folder
+RECOVERY=box:machine.example.invalid/recovery placed "$D" "$PINNED_DIGESTS" || fail "driver.sh: the engine of the recovery folder at the pin was refused: $(cat "$OUT/placed.out")"
+[ "$(carries ansiwise)" = "$(released ansiwise)" ] && [ "$(carries ansiwise-rest)" = "$(released ansiwise-rest)" ] && [ ! -s "$OUT/fetched.log" ] \
+  && [ "$(cat "$OUT/box.log")" = "box:machine.example.invalid/recovery/engine/$ENGINE_PIN.tar" ] \
+  || fail "driver.sh: the engine of the recovery folder was not placed as the release built it, was fetched from the registry as well, or was read from another path: $(cat "$OUT/box.log" "$OUT/fetched.log" 2>/dev/null)"
+ok "driver.sh: the owner's master takes both executables out of engine/<pin>.tar in its recovery folder, each by the digest ansiwise.sha256 states, and fetches nothing from its own registry"
+fresh_machine; engine_folder
+swap_blob "$BOX/engine/$ENGINE_PIN.tar" "$(sha256sum < "$SERVED/ansiwise-rest-$ENGINE_PIN-linux-x64" | cut -d' ' -f1)" "$SWAPPED_ASSET"
+CODE=0; RECOVERY=box:machine.example.invalid/recovery placed "$D" "$PINNED_DIGESTS" || CODE=$?
+[ "$CODE" = 65 ] && [ -z "$(ls -A "$SANDBOX/bin")" ] || fail "driver.sh: a recovery folder whose ansiwise-rest was swapped must end with 65 and place nothing, got $CODE: $(ls "$SANDBOX/bin")"
+fresh_machine; engine_folder '0.8.306-stable-20260929191649'
+CODE=0; RECOVERY=box:machine.example.invalid/recovery placed "$D" "$PINNED_DIGESTS" || CODE=$?
+[ "$CODE" = 65 ] && [ -z "$(ls -A "$SANDBOX/bin")" ] && grep -q "holds no blob at the digest https://pins.example.invalid/ansiwise.sha256 states for ansiwise-$ENGINE_PIN-linux-x64" "$OUT/placed.out" \
+  || fail "driver.sh: a recovery folder holding another release under the pin must end with 65, name the missing blob and place nothing, got $CODE: $(cat "$OUT/placed.out")"
+fresh_machine; rm -rf "$BOX"; mkdir -p "$BOX"
+CODE=0; RECOVERY=box:machine.example.invalid/recovery placed "$D" "$PINNED_DIGESTS" || CODE=$?
+[ "$CODE" = 69 ] && [ -z "$(ls -A "$SANDBOX/bin")" ] && [ ! -s "$OUT/fetched.log" ] && grep -q "holds no engine/$ENGINE_PIN.tar" "$OUT/placed.out" \
+  || fail "driver.sh: a recovery folder without the engine must end with 69, name it, place nothing and fetch nothing from its own registry, got $CODE: $(cat "$OUT/placed.out")"
+ok "driver.sh: a recovery folder with a swapped executable, another release under the pin, or no engine is refused, and nothing is placed"
+
+# AN ENGINE RELEASED AFTER THE LAST PLATFORM TAG: master pins it, and the tag wrote the folder with the engine it
+# pinned. The release's own publish run writes its archive before the tag release/release.sh waits for stands in
+# the registry (recovery-export of pipeline-publish.yaml, under the name recovery_engine_archive gives), so the
+# owner's master places it from the folder. The planted defect is the folder as the tag alone wrote it.
+RECOVERY_LIB="$HERE/../clusters/inventories/consumer-build/files/recovery-folder.sh"
+fresh_machine; engine_folder; mv "$BOX/engine/$ENGINE_PIN.tar" "$BOX/engine/0.8.306-stable-20260929191649.tar"
+CODE=0; RECOVERY=box:machine.example.invalid/recovery placed "$D" "$PINNED_DIGESTS" || CODE=$?
+[ "$CODE" = 69 ] && [ -z "$(ls -A "$SANDBOX/bin")" ] && grep -q "holds no engine/$ENGINE_PIN.tar" "$OUT/placed.out" \
+  || fail "driver.sh: a folder that holds only the engine of the last tag must refuse the pin of master with 69, by name, and place nothing, got $CODE: $(cat "$OUT/placed.out")"
+line=$(. "$RECOVERY_LIB" && recovery_engine_archive registry.example.invalid/acme "$ENGINE_PIN") \
+  || fail "recovery_engine_archive names no archive for the engine release $ENGINE_PIN: $line"
+read -r path name _ <<< "$line"
+oci_archive "$BOX/$path" "$name" "$ENGINE_WORK/empty-config" "$SERVED/ansiwise-$ENGINE_PIN-linux-x64" "$SERVED/ansiwise-rest-$ENGINE_PIN-linux-x64" > /dev/null
+fresh_machine
+RECOVERY=box:machine.example.invalid/recovery placed "$D" "$PINNED_DIGESTS" \
+  || fail "driver.sh: the engine master pins was refused, though its release wrote it into the folder: $(cat "$OUT/placed.out")"
+[ "$(carries ansiwise)" = "$(released ansiwise)" ] && [ "$(carries ansiwise-rest)" = "$(released ansiwise-rest)" ] && [ ! -s "$OUT/fetched.log" ] \
+  || fail "driver.sh: the engine its release wrote into the folder was not placed as that release built it: $(cat "$OUT/placed.out")"
+ok "driver.sh: the owner's master places the engine master pins from the archive its release wrote under the name recovery_engine_archive gives, and the folder of the last tag alone is refused by name"
+
+# WHICH MACHINE READS THE FOLDER is decided once, off the host of RELEASES, and that machine needs the three
+# storage-box values of its config. The block runs as the driver states it.
+recovery_of() { # <fqdn> [<storage-box user>] — prints RECOVERY, or the refusal
+  # shellcheck disable=SC2034 # read by the driver's text the eval below runs
+  ( FQDN="$1" STORAGE_BOX_HOST=box.example.invalid STORAGE_BOX_USER="${2-u1}" STORAGE_BOX_PASSWORD=secret
+    die() { echo "die: $1"; exit "${2:-1}"; }
+    eval "$(sed -n '/^readonly RELEASES=/,/^fi$/p' "$D")"
+    echo "recovery: $RECOVERY" ) 2>&1
+}
+[ "$(recovery_of master.digitacloud.app)" = 'recovery: box:master.digitacloud.app/recovery' ] \
+  && [ "$(recovery_of machine.example.invalid '')" = 'recovery: ' ] \
+  || fail "driver.sh: the owner's master does not read box:<fqdn>/recovery, or another machine does: $(recovery_of master.digitacloud.app) / $(recovery_of machine.example.invalid '')"
+[ "$(recovery_of master.digitacloud.app '')" = "die: the config says nothing under STORAGE_BOX_USER, and master.digitacloud.app reads its engine and its images from box:master.digitacloud.app/recovery on the storage box" ] \
+  || fail "driver.sh: the owner's master without STORAGE_BOX_USER was not refused by name: $(recovery_of master.digitacloud.app '')"
+ok "driver.sh: the owner's master alone reads its recovery folder, and it is refused by name without a storage-box value of its config"
 
 # The planted defects, each through the probe that measures the real driver.
 plant() { sed "$2" "$HERE/driver.sh" > "$ENGINE_WORK/planted-driver.sh"; grep -q "$3" "$ENGINE_WORK/planted-driver.sh" \
@@ -2746,7 +2793,7 @@ fresh_machine
 CODE=0; TERM_AFTER_FIRST_INSTALL=1 placed "$ENGINE_WORK/planted-driver.sh" "$PINNED_DIGESTS" || CODE=$?
 [ "$CODE" != 143 ] || fail 'a driver that resumes after a TERM ended with 143 all the same — the probe proves nothing'
 ok "the planted defect was caught — a driver that resumes after a TERM ends with $CODE, not 143"
-plant 'a skip that asks ansiwise alone' 's/^elif \[ "\$ENGINE_ANSWERS" = "\$PIN" \] && \[ "\$SERVING_ANSWERS" = "\$PIN" \]; then$/elif [ "$ENGINE_ANSWERS" = "$PIN" ]; then/' '^elif \[ "\$ENGINE_ANSWERS" = "\$PIN" \]; then$'
+plant 'a skip that asks ansiwise alone' 's/^if \[ "\$ENGINE_ANSWERS" = "\$PIN" \] && \[ "\$SERVING_ANSWERS" = "\$PIN" \]; then$/if [ "$ENGINE_ANSWERS" = "$PIN" ]; then/' '^if \[ "\$ENGINE_ANSWERS" = "\$PIN" \]; then$'
 fresh_machine
 released ansiwise > "$SANDBOX/bin/ansiwise"; asset_text ansiwise-rest '0.8.306-stable-20260929191649' > "$SANDBOX/bin/ansiwise-rest"
 chmod +x "$SANDBOX/bin/ansiwise" "$SANDBOX/bin/ansiwise-rest"
@@ -3377,11 +3424,93 @@ run_release_unit success manager@master.example.invalid shop
 expect 'a run naming a unit and nothing else' 64 <<'RECORDED'
 ~~~ standard error ~~~
 release-unit: usage: lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test
-       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod> <alpha|beta|stable> <x.y.z> <commit>
+       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit>
 RECORDED
 calls 'a run naming a unit and nothing else' <<'RECORDED'
 RECORDED
 no_session 'a run naming a unit and nothing else'
+
+# THE STAGE WORD none is the release of a library: the Manager plans only its tag and the publish of
+# its package, and takes no stage, so the request carries a JSON null. A stage word that is none of
+# the four is refused before the door is even called.
+run_release_unit success manager@master.example.invalid digita-plugins-free none stable 0.6.025 $B
+expect 'the release of a library, which has no stage' 0 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+~~~ standard error ~~~
+RECORDED
+LIBRARY_CALLS="$OUT/library-calls"
+cat > "$LIBRARY_CALLS" <<'RECORDED'
+MINT
+POST /api/units/digita-plugins-free/release cookie=current origin=ok
+  body {"stage":null,"channel":"stable","version":"0.6.025","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+calls 'the release of a library, which has no stage' < "$LIBRARY_CALLS"
+no_session 'the release of a library, which has no stage'
+
+run_release_unit success manager@master.example.invalid shop staging stable 0.3.004 $B
+expect 'a stage word that is none of dev, test, prod and none' 64 <<'RECORDED'
+~~~ standard error ~~~
+release-unit: the stage must be dev, test, prod or none (got 'staging')
+RECORDED
+calls 'a stage word that is none of dev, test, prod and none' <<'RECORDED'
+RECORDED
+no_session 'a stage word that is none of dev, test, prod and none'
+
+# PLANTED: a copy of the act that sends the word none as the string "none", and one that lets any
+# stage word through to the Manager. The first must send other bytes than the library case recorded,
+# in the body's stage alone; the second must call the Manager where the refusal recorded no call. The
+# innocent beside them is the same first copy given prod, which sends what the act itself sends.
+PLANT="$WORK/release-unit-stage"
+mkdir -p "$PLANT"
+cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
+RELEASE_UNIT="$PLANT/release-unit.sh"
+sed 's/release = { stage: stage === "none" ? null : stage, channel, version, commit };/release = { stage, channel, version, commit };/' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail 'the plant that sends none as a string changed nothing in release-unit.mjs'
+run_release_unit success manager@master.example.invalid digita-plugins-free none stable 0.6.025 $B
+if diff "$LIBRARY_CALLS" "$RU/calls" > "$OUT/planted.diff"; then
+  fail 'a copy of release-unit that sends none as the string "none" sent the calls the library case recorded — the check proves nothing'
+fi
+if grep '^[<>] ' "$OUT/planted.diff" | grep -vqF '"stage":'; then
+  fail "a copy of release-unit that sends none as a string differs in a line that is not the stage: $(cat "$OUT/planted.diff")"
+fi
+grep -qF '> ' "$OUT/planted.diff" && grep -qF '"stage":"none"' "$OUT/planted.diff" \
+  || fail "a copy of release-unit that sends none as a string did not send the string: $(cat "$OUT/planted.diff")"
+ok 'the planted defect was caught — a copy of release-unit that sends none as the string "none" differs from the recorded calls in the stage of the body alone'
+run_release_unit success manager@master.example.invalid shop prod stable 0.3.004 $B
+calls 'the copy that sends none as a string, given prod' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"prod","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+ok 'the innocent beside it stayed green — the same copy given prod sends the stage prod, as the act does'
+sed '/the stage must be dev, test, prod or none/d' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail 'the plant that drops the refusal of a stage word changed nothing in release-unit.mjs'
+run_release_unit success manager@master.example.invalid shop staging stable 0.3.004 $B
+[ -s "$RU/calls" ] || fail 'a copy of release-unit with no refusal of a stage word called nothing where the act refuses before any call — the check proves nothing'
+[ "$A_CODE" != 64 ] || fail 'a copy of release-unit with no refusal of a stage word still ended with 64 — the check proves nothing'
+ok 'the planted defect was caught — a copy of release-unit that lets any stage word through calls the Manager with it and does not end with 64'
+RELEASE_UNIT="$HERE/release-unit.sh"
+rm -rf "$PLANT"
 
 # PLANTED: a copy of the act that prints its session once, right where the mint lands, one that
 # hands it to ssh in an environment variable, and three that write it to a file: in the temporary
@@ -3413,6 +3542,403 @@ done
 trap 'rm -rf "$WORK"' EXIT
 RELEASE_UNIT="$HERE/release-unit.sh"
 rm -rf "$PLANT"
+
+# ===========================================================================
+# TEN — the recovery folder of the owner's master, fetched, held, imported and seeded
+# ===========================================================================
+# driver.sh fetches every archive the installation's tree names out of the recovery folder, holds each to
+# that tree (clusters/inventories/consumer-build/files/recovery-folder.sh), imports them into the node's containerd only when all hold,
+# and once the registry answers pushes every archive named under it there and reads it back. What runs is
+# the driver's own text: its three functions, its step after deploy-cluster and its seed. The tree, the
+# folder and the archives are fixtures; rclone copies out of a folder, and the node's microk8s is a
+# stand-in on the path that answers the two Secrets, records every call, and runs a skopeo that pushes
+# into and reads from a folder standing in for the registry. The cases: a full folder, which imports and
+# seeds; an archive missing, an archive with one blob changed, and an archive of another image at a pinned
+# image's path, each refused by name before any import; and a registry that serves another manifest than
+# was pushed. Two planted drivers are caught: one whose refusal of a changed archive does not stop the
+# import, and one whose seed pushes a name of another registry.
+RF="$WORK/recovery"
+RF_TREE="$RF/tree"
+RF_BOX="$RF/box"
+mkdir -p "$RF/bin" "$RF/files"
+printf '{"architecture":"amd64","os":"linux"}' > "$RF/files/config"
+for image in skopeo one manager dbtools gate-runner; do printf 'the layer of %s\n' "$image" > "$RF/files/$image.layer"; done
+printf 'another layer\n' > "$RF/files/changed.layer"
+seed_login=$(printf 'fixture-push:%s' "$$" | base64)
+export SEED_AUTH="{\"auths\":{\"zot.machine.example.invalid\":{\"auth\":\"$seed_login\"}}}"
+rf_folder() { # the tree and the folder the release would have written for it
+  rm -rf "$RF_TREE" "$RF_BOX"
+  mkdir -p "$RF_TREE/clusters/platform" "$RF_TREE/clusters/inventories/manager" "$RF_TREE/clusters/inventories/gate-runner" "$RF_TREE/clusters/inventories/consumer-build/files"
+  cp "$RECOVERY_LIB" "$RF_TREE/clusters/inventories/consumer-build/files/"
+  printf 'global:\n  domain: example.invalid\n  buildRegistry: "zot.machine.example.invalid/acme"\nimages: {}\n' > "$RF_TREE/clusters/platform/values-common.yaml"
+  printf 'images: {}\ncliTools:\n  ansiwise:\n    version: "%s"\n' "$ENGINE_PIN" > "$RF_TREE/clusters/platform/versions.yaml"
+  printf '%s\n' "$PINNED_DIGESTS" > "$RF_TREE/clusters/platform/ansiwise.sha256"
+  printf 'builds:\n  - name: manager\n    image: manager\n    tag: "1.0.0"\n  # the job image\n  - name: dbtools\n    image: dbtools\n    tag: "1.0.0"\nother: {}\n' \
+    > "$RF_TREE/clusters/inventories/manager/values-prod.yaml"
+  printf 'builds:\n  - name: gate-runner\n    image: gate-runner\n    tag: "1.0.0"\n' > "$RF_TREE/clusters/inventories/gate-runner/values-prod.yaml"
+  SKOPEO_DIGEST=$(oci_archive "$RF/staged/skopeo.tar" 'quay.io/skopeo/stable:v1' "$RF/files/config" "$RF/files/skopeo.layer")
+  ONE_DIGEST=$(oci_archive "$RF/staged/one.tar" 'zot.machine.example.invalid/acme/ghcr.io/fixture/one:1.0' "$RF/files/config" "$RF/files/one.layer")
+  mkdir -p "$RF_BOX/images"
+  mv "$RF/staged/skopeo.tar" "$RF_BOX/images/${SKOPEO_DIGEST#sha256:}.tar"
+  mv "$RF/staged/one.tar" "$RF_BOX/images/${ONE_DIGEST#sha256:}.tar"
+  printf '# the images\nquay.io/skopeo/stable:v1@%s\nzot.machine.example.invalid/acme/ghcr.io/fixture/one:1.0@%s\n' "$SKOPEO_DIGEST" "$ONE_DIGEST" \
+    > "$RF_TREE/clusters/platform/recovery-images.list"
+  for image in manager dbtools gate-runner; do
+    oci_archive "$RF_BOX/own/$image/1.0.0.tar" "zot.machine.example.invalid/acme/$image:1.0.0" "$RF/files/config" "$RF/files/$image.layer" > /dev/null
+  done
+  oci_archive "$RF_BOX/engine/$ENGINE_PIN.tar" "zot.machine.example.invalid/acme/ansiwise-cli:$ENGINE_PIN" "$ENGINE_WORK/empty-config" \
+    "$SERVED/ansiwise-$ENGINE_PIN-linux-x64" "$SERVED/ansiwise-rest-$ENGINE_PIN-linux-x64" > /dev/null
+}
+cp "$HERE/../scripts/standin/recovery-microk8s.sh" "$RF/bin/microk8s"
+recovered() { # <driver file> — runs the driver's step after deploy-cluster and its seed against $RF_BOX and $RF_TREE; answers its exit code
+  local driver="$1"
+  rm -f "$OUT/node.log" "$OUT/pushed.log"; rm -rf "$RF/registry" "$RF/fetched" "$RF/tmp"; mkdir -p "$RF/registry" "$RF/fetched" "$RF/tmp"
+  ( export PATH="$RF/bin:$PATH" TMPDIR="$RF/tmp" RF OUT
+    # shellcheck disable=SC2034 # read by the driver's text the evals below run
+    FQDN='machine.example.invalid' STAGE=prod RECOVERY='box:machine.example.invalid/recovery' PLATFORM_CHECKOUT="$RF_TREE"
+    # shellcheck disable=SC2034
+    PROGRAMS=(deploy-host deploy-branch deploy-cluster) program=deploy-cluster step=3 ARCHIVES='' SEED_DIR=''
+    say() { echo "say: $*"; }; good() { echo "good: $*"; }; bad() { echo "bad: $*" >&2; }; phase() { echo "phase: $*"; }
+    die() { echo "die: $1" >&2; exit "${2:-1}"; }
+    root() { "$@"; }
+    sleep() { :; }
+    rclone() { [ "$1" = copyto ] || return 1; echo "rclone $*" >> "$OUT/node.log"; cp "$RF_BOX/${2#box:machine.example.invalid/recovery/}" "$3" 2>/dev/null; }
+    curl() { [ "${*: -1}" = 'https://zot.machine.example.invalid/v2/' ]; }
+    eval "$(sed -n '/^fetch_recovery_archives() {/,/^}/p; /^import_recovery_archives() {/,/^}/p; /^readonly SEED_WAIT=/p; /^seed_registry() {/,/^}/p' "$driver")"
+    eval "$(sed -n '/^  if \[ "\$program" = deploy-cluster \] && \[ -n "\$RECOVERY" \]; then$/,/^  fi$/p' "$driver" | sed "s#-p /var/tmp#-p $RF/fetched#")"
+    eval "$(awk '/^if \[ -n "\$RECOVERY" \]; then$/ { on = 1; block = "" } on { block = block $0 "\n" } on && /^fi$/ { if (block ~ /seed_registry/) { printf "%s", block; exit } on = 0 }' "$driver")"
+  ) > "$OUT/recovered.out" 2>&1
+}
+imported_nothing() { ! grep -q '^microk8s ctr' "$OUT/node.log" 2>/dev/null; }
+for fn in fetch_recovery_archives import_recovery_archives seed_registry; do
+  grep -q "^$fn() {" "$HERE/driver.sh" || fail "driver.sh carries no $fn — nothing below measures it"
+done
+
+rf_folder
+recovered "$HERE/driver.sh" || fail "driver.sh: a full recovery folder was not imported and seeded: $(cat "$OUT/recovered.out")"
+last_fetch=$(grep -n '^rclone ' "$OUT/node.log" | tail -n 1 | cut -d: -f1)
+first_import=$(grep -n '^microk8s ctr --namespace k8s.io images import ' "$OUT/node.log" | head -n 1 | cut -d: -f1)
+[ "$(grep -c '^rclone copyto ' "$OUT/node.log")" = 6 ] && [ -n "$first_import" ] && [ "$last_fetch" -lt "$first_import" ] \
+  || fail "driver.sh: the six archives were not all fetched before the first import: $(cat "$OUT/node.log")"
+[ "$(grep -c '^microk8s ctr --namespace k8s.io images import ' "$OUT/node.log")" = 5 ] && ! grep -q 'images import .*/engine/' "$OUT/node.log" \
+  && grep -qxF "microk8s ctr --namespace k8s.io images tag --force quay.io/skopeo/stable:v1 quay.io/skopeo/stable@$SKOPEO_DIGEST" "$OUT/node.log" \
+  && grep -qxF "microk8s ctr --namespace k8s.io images tag --force zot.machine.example.invalid/acme/ghcr.io/fixture/one:1.0 zot.machine.example.invalid/acme/ghcr.io/fixture/one@$ONE_DIGEST" "$OUT/node.log" \
+  && [ "$(grep -c ' images tag ' "$OUT/node.log")" = 2 ] \
+  || fail "driver.sh: the images were not imported each once, the engine with them, or a pinned image was not named by its digest: $(grep ' images ' "$OUT/node.log")"
+[ "$(cat "$OUT/pushed.log")" = "zot.machine.example.invalid/acme/ghcr.io/fixture/one:1.0
+zot.machine.example.invalid/acme/manager:1.0.0
+zot.machine.example.invalid/acme/dbtools:1.0.0
+zot.machine.example.invalid/acme/gate-runner:1.0.0
+zot.machine.example.invalid/acme/ansiwise-cli:$ENGINE_PIN" ] \
+  || fail "driver.sh: the seed did not push every archive named under the machine's registry, and nothing else: $(cat "$OUT/pushed.log")"
+grep -q -- '--dest-authfile /seed/auth.json --dest-cert-dir /seed/certs oci-archive:/recovery/' "$OUT/node.log" \
+  && [ "$(grep -c ' run --rm --net-host .* quay.io/skopeo/stable:v1 recovery-read-.* skopeo inspect --raw --no-creds ' "$OUT/node.log")" = 5 ] \
+  || fail "driver.sh: the seed did not push with the push identity and the authority by path, or did not read every archive back anonymously: $(grep ' run ' "$OUT/node.log")"
+! grep -rqF -e "$seed_login" -e "$(printf '%s' "$SEED_AUTH" | base64 | tr -d '\n' | cut -c1-40)" "$OUT/recovered.out" "$OUT/node.log" \
+  && [ -z "$(ls -A "$RF/tmp")" ] && [ -z "$(ls -A "$RF/fetched")" ] \
+  || fail "driver.sh: the push identity reached the output or a call, or the seed's directory or the archives were left on the machine"
+ok 'driver.sh: a full recovery folder is fetched and held whole before the first import, its images imported each under the names their pods ask for and the engine not, every archive named under the registry pushed with the push identity by path and read back, and nothing of the identity printed or left behind'
+
+rf_folder; rm "$RF_BOX/images/${ONE_DIGEST#sha256:}.tar"
+CODE=0; recovered "$HERE/driver.sh" || CODE=$?
+[ "$CODE" = 65 ] && imported_nothing \
+  && grep -qxF "bad: box:machine.example.invalid/recovery holds no images/${ONE_DIGEST#sha256:}.tar, the archive of zot.machine.example.invalid/acme/ghcr.io/fixture/one:1.0, and nothing was imported" "$OUT/recovered.out" \
+  || fail "driver.sh: a recovery folder missing an archive must end with 65, name it and import nothing, got $CODE: $(cat "$OUT/recovered.out")"
+rf_folder; swap_blob "$RF_BOX/own/manager/1.0.0.tar" "$(sha256sum < "$RF/files/manager.layer" | cut -d' ' -f1)" "$RF/files/changed.layer"
+CODE=0; recovered "$HERE/driver.sh" || CODE=$?
+[ "$CODE" = 65 ] && imported_nothing \
+  && grep -qF "own/manager/1.0.0.tar holds a blob named sha256:$(sha256sum < "$RF/files/manager.layer" | cut -d' ' -f1) whose bytes have another digest" "$OUT/recovered.out" \
+  && grep -qxF 'bad: box:machine.example.invalid/recovery/own/manager/1.0.0.tar is not the archive of zot.machine.example.invalid/acme/manager:1.0.0 the tree names, and nothing was imported' "$OUT/recovered.out" \
+  || fail "driver.sh: a recovery folder with one blob changed must end with 65, name the archive and the blob, and import nothing, got $CODE: $(cat "$OUT/recovered.out")"
+rf_folder; cp "$RF_BOX/images/${SKOPEO_DIGEST#sha256:}.tar" "$RF_BOX/images/${ONE_DIGEST#sha256:}.tar"
+CODE=0; recovered "$HERE/driver.sh" || CODE=$?
+[ "$CODE" = 65 ] && imported_nothing \
+  && grep -qF "images/${ONE_DIGEST#sha256:}.tar holds '$SKOPEO_DIGEST quay.io/skopeo/stable:v1', not the one image zot.machine.example.invalid/acme/ghcr.io/fixture/one:1.0" "$OUT/recovered.out" \
+  || fail "driver.sh: a recovery folder with another image at a pinned image's path must end with 65, name both and import nothing, got $CODE: $(cat "$OUT/recovered.out")"
+ok 'driver.sh: a recovery folder missing an archive, with one blob changed, or with another image at a pinned path is refused by name, and nothing is imported'
+rf_folder
+CODE=0; SERVE_OTHER=zot.machine.example.invalid/acme/manager:1.0.0 recovered "$HERE/driver.sh" || CODE=$?
+[ "$CODE" = 69 ] && grep -qF "bad: zot.machine.example.invalid serves zot.machine.example.invalid/acme/manager:1.0.0 at sha256:$(printf 'another manifest' | sha256sum | cut -d' ' -f1) after the seed, not at sha256:" "$OUT/recovered.out" \
+  || fail "driver.sh: a registry that serves another manifest than the seed pushed must end with 69 and name it, got $CODE: $(cat "$OUT/recovered.out")"
+ok 'driver.sh: a registry that serves another manifest after the seed is refused by name'
+
+# A RELEASE OF THE PLATFORM'S OWN BUILDS AFTER THE LAST PLATFORM TAG: the tag wrote the folder for the builds at
+# 1.0.0, and the release of 1.0.1 pins them on the installation branch. That release's run writes their archives
+# before it pins them (recovery-export of pipeline-release.yaml, under the names recovery_build_archive gives), so
+# a restore of the tree that pins 1.0.1 imports and seeds them. The planted defect is the folder as the tag alone
+# wrote it, refused by name before any import. The innocent case, both pins equal, is the full folder above.
+rf_folder
+sed -i 's/tag: "1\.0\.0"/tag: "1.0.1"/' "$RF_TREE/clusters/inventories/manager/values-prod.yaml" "$RF_TREE/clusters/inventories/gate-runner/values-prod.yaml"
+CODE=0; recovered "$HERE/driver.sh" || CODE=$?
+[ "$CODE" = 65 ] && imported_nothing \
+  && grep -qxF 'bad: box:machine.example.invalid/recovery holds no own/manager/1.0.1.tar, the archive of zot.machine.example.invalid/acme/manager:1.0.1, and nothing was imported' "$OUT/recovered.out" \
+  || fail "driver.sh: the folder of the last tag must refuse a tree that pins a later release of the builds with 65, by name, before any import, got $CODE: $(cat "$OUT/recovered.out")"
+for image in manager dbtools gate-runner; do
+  line=$(. "$RECOVERY_LIB" && recovery_build_archive zot.machine.example.invalid/acme "$image" 1.0.1) \
+    || fail "recovery_build_archive names no archive for the release of $image at 1.0.1: $line"
+  read -r path name _ <<< "$line"
+  oci_archive "$RF_BOX/$path" "$name" "$RF/files/config" "$RF/files/$image.layer" > /dev/null
+done
+recovered "$HERE/driver.sh" || fail "driver.sh: a restore of a tree that pins builds no platform tag wrote was refused, though their release wrote them into the folder: $(cat "$OUT/recovered.out")"
+for image in manager dbtools gate-runner; do
+  grep -qxF "zot.machine.example.invalid/acme/$image:1.0.1" "$OUT/pushed.log" \
+    || fail "driver.sh: the restore did not seed $image at 1.0.1 from the archive its release wrote: $(cat "$OUT/pushed.log")"
+done
+ok 'driver.sh: a restore of a tree that pins builds released after the last platform tag imports and seeds the archives that release wrote, and the folder of the tag alone is refused by name before any import'
+
+plant 'a refusal of a changed archive that does not stop the import' \
+  's/^      || { bad "\$RECOVERY\/\$path is not the archive of \$name the tree names, and nothing was imported"; return 1; }$/      || true/' '^      || true$'
+rf_folder; swap_blob "$RF_BOX/own/manager/1.0.0.tar" "$(sha256sum < "$RF/files/manager.layer" | cut -d' ' -f1)" "$RF/files/changed.layer"
+recovered "$ENGINE_WORK/planted-driver.sh" || true
+! imported_nothing || fail 'a driver whose refusal of a changed archive does not stop the import imported nothing all the same — the probe proves nothing'
+ok 'the planted defect was caught — a driver whose refusal of a changed archive does not stop the import imports it'
+plant 'a seed that pushes every name' 's/^    \[ "\${name%%\/\*}" = "\$registry" \] || continue$/    :/' '^    :$'
+rf_folder; recovered "$ENGINE_WORK/planted-driver.sh" || true
+grep -q '^quay\.io/' "$OUT/pushed.log" || fail 'a driver whose seed pushes every name pushed nothing to quay.io all the same — the probe proves nothing'
+ok 'the planted defect was caught — a driver whose seed pushes every name pushes the skopeo image back to quay.io'
+
+# THE LIST ITSELF, as the publish run writes the folder and the driver reads it. On this tree: one line per
+# image of recovery-images.list, per build of the owner master's stage, and the engine, each path once.
+# shellcheck source=../clusters/inventories/consumer-build/files/recovery-folder.sh
+. "$RECOVERY_LIB"
+recovery_archives "$HERE/.." prod > "$OUT/archives" 2>&1 || fail "recovery_archives refused this tree: $(cat "$OUT/archives")"
+expected=$(( $(grep -cvE '^(#|$)' "$HERE/../clusters/platform/recovery-images.list") + $(grep -c '^  - name:' "$HERE/../clusters/inventories/manager/values-prod.yaml") \
+  + $(grep -c '^  - name:' "$HERE/../clusters/inventories/gate-runner/values-prod.yaml") + 1 ))
+[ "$(wc -l < "$OUT/archives")" = "$expected" ] && [ "$(cut -d' ' -f1 "$OUT/archives" | sort -u | wc -l)" = "$expected" ] \
+  && grep -q '^images/[0-9a-f]\{64\}\.tar [^ ]*:[^ ]* sha256:[0-9a-f]\{64\}$' "$OUT/archives" \
+  && grep -q '^engine/[^ ]*\.tar [^ ]*/ansiwise-cli:[^ ]* -$' "$OUT/archives" \
+  || fail "recovery_archives does not name $expected archives of this tree, each once: $(cat "$OUT/archives")"
+rf_folder; sed -i '/tag: "1.0.0"/d' "$RF_TREE/clusters/inventories/gate-runner/values-prod.yaml"
+! recovery_archives "$RF_TREE" prod > /dev/null 2> "$OUT/archives.err" \
+  && grep -qxF "clusters/inventories/gate-runner/values-prod.yaml names a build 'gate-runner' at ''" "$OUT/archives.err" \
+  || fail "recovery_archives did not refuse a build without a tag by name: $(cat "$OUT/archives.err")"
+rf_folder; sed -i 's/@sha256:[0-9a-f]*$//' "$RF_TREE/clusters/platform/recovery-images.list"
+! recovery_archives "$RF_TREE" prod > /dev/null 2> "$OUT/archives.err" \
+  && grep -qxF "clusters/platform/recovery-images.list names quay.io/skopeo/stable:v1, which is no image named by tag and digest" "$OUT/archives.err" \
+  || fail "recovery_archives did not refuse an image without a digest by name: $(cat "$OUT/archives.err")"
+rf_folder; manager_layer=$(sha256sum < "$RF/files/manager.layer" | cut -d' ' -f1)
+mkdir -p "$RF/without"; tar -xf "$RF_BOX/own/manager/1.0.0.tar" -C "$RF/without"; rm "$RF/without/blobs/sha256/$manager_layer"
+tar -cf "$RF_BOX/own/manager/1.0.0.tar" -C "$RF/without" .; rm -rf "$RF/without"
+! recovery_archive_digest "$RF_BOX" own/manager/1.0.0.tar zot.machine.example.invalid/acme/manager:1.0.0 - "$RF_TREE/clusters/platform/ansiwise.sha256" "$RF/unpacked" > /dev/null 2> "$OUT/archives.err" \
+  && grep -qxF "own/manager/1.0.0.tar names the blob sha256:$manager_layer and does not hold it" "$OUT/archives.err" && [ ! -e "$RF/unpacked" ] \
+  || fail "recovery_archive_digest did not refuse an archive without a layer by name, or left it unpacked: $(cat "$OUT/archives.err")"
+ok "recovery_archives names $expected archives of this tree, each once, and refuses a build without a tag and an image without a digest; recovery_archive_digest refuses an archive without a layer"
+
+# ===========================================================================
+# ELEVEN — release-platform on the owner's master, held to its recovery folder
+# ===========================================================================
+# THE OWNER'S MASTER is the installation whose zot is the tree's global.buildRegistry, here
+# master.example.invalid. A cold start of it reads every archive its tree names from <fqdn>/recovery/ on the
+# storage box, so a release pins it only once that folder holds every archive the tree at the tag names,
+# listed with the storage-box login of its config beside the tree; any other installation reads no folder.
+# The box is a stand-in rclone first on the path: it lists a folder of this fixture as `box:` and logs every
+# argument and the login it finds in its environment. The release runs as a copy of itself beside a
+# stand-in regeneration, which logs the installation it was asked to bring onto the pin, because the
+# owner's config stands beside the tree and a release regenerates each installation whose config does.
+RP="$WORK/recovery-pin"
+ORIGIN_R="$RP/origin.git"
+WORK_R="$RP/checkout"
+RP_SEED="$RP/seed"
+RP_FOLDER="$RP/box/master.example.invalid/recovery"
+mkdir -p "$RP/bin" "$RP/net" "$RP/box"
+cp "$HERE/release-platform.sh" "$HERE/require-owner-only.sh" "$RP/bin/"
+cat > "$RP/bin/regenerate-install-branch.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "regenerate $1" >> "$(dirname "$0")/regenerated.log"
+STUB
+cat > "$RP/net/rclone" <<'STUB'
+#!/usr/bin/env bash
+# `obscure -` turns the first line of standard input into a token that is not it, as rclone reads it;
+# `lsf --recursive --files-only box:<path>` lists the files under <path> of the folder ../box, relative,
+# and fails where there is no such folder.
+log="$(dirname "$0")/rclone.log"
+echo "argv: $*" >> "$log"
+case "$1" in
+  obscure) [ "$2" = - ] && IFS= read -r line && printf 'obscured-%s' "$(printf '%s' "$line" | sha256sum | cut -c1-16)" ;;
+  lsf)
+    echo "login: ${RCLONE_CONFIG_BOX_TYPE:-} ${RCLONE_CONFIG_BOX_HOST:-} ${RCLONE_CONFIG_BOX_USER:-} ${RCLONE_CONFIG_BOX_PASS:-}" >> "$log"
+    target="${*: -1}"
+    folder="$(dirname "$0")/../box/${target#box:}"
+    { [ "$2 $3" = '--recursive --files-only' ] && [ -d "$folder" ]; } || { echo 'directory not found' >&2; exit 3; }
+    ( cd "$folder" && find . -type f | sed 's|^\./||' | sort ) ;;
+  *) exit 2 ;;
+esac
+STUB
+chmod +x "$RP/net/rclone" "$RP/bin/regenerate-install-branch.sh"
+: > "$RP/net/rclone.log"
+: > "$RP/bin/regenerated.log"
+
+# The tree: zot in the mirror, and the archives files/recovery-folder.sh names for stage prod, which are zot and
+# skopeo, the builds manager and gate-runner at 1.0.0, and the engine. The trunk gains that file in a second
+# commit, after both installations were cut, so their branches stand on a tree that writes no folder yet.
+HEX_E="$(printf 'e%.0s' $(seq 64))"
+HEX_F="$(printf 'f%.0s' $(seq 64))"
+ENGINE_R='1.0.0-stable-20260101000000'
+git init --quiet --bare --initial-branch=master "$ORIGIN_R"
+git init --quiet --initial-branch=master "$RP_SEED"
+git -C "$RP_SEED" remote add origin "$ORIGIN_R"
+mkdir -p "$RP_SEED/scripts" "$RP_SEED/clusters/active" "$RP_SEED/clusters/platform" "$RP_SEED/clusters/inventories/consumer-build/files" \
+  "$RP_SEED/clusters/inventories/manager" "$RP_SEED/clusters/inventories/gate-runner"
+echo "* text=auto eol=lf" > "$RP_SEED/.gitattributes"
+touch "$RP_SEED/clusters/active/.gitkeep"
+cat > "$RP_SEED/scripts/list-mirror-images.sh" <<STUB
+#!/usr/bin/env bash
+# The images of the fixture tree: zot, beside its name in the mirror.
+printf '%s\n' 'ghcr.io/project-zot/zot-linux-amd64:v2.1.18@sha256:$HEX_E zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64:v2.1.18@sha256:$HEX_E'
+STUB
+echo "zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64@sha256:$HEX_E" >> "$MIRROR_NET/serves"
+cp "$SEED/scripts/list-mirror-sources.sh" "$RP_SEED/scripts/"
+cp "$HERE/../clusters/inventories/consumer-build/files/mirror-sources.sh" "$RP_SEED/clusters/inventories/consumer-build/files/"
+printf 'global:\n  buildRegistry: "zot.master.example.invalid/owner"\n' > "$RP_SEED/clusters/platform/values-common.yaml"
+printf '%s\n' "zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64:v2.1.18@sha256:$HEX_E" \
+  "quay.io/skopeo/stable:v1.22.3-immutable@sha256:$HEX_F" > "$RP_SEED/clusters/platform/recovery-images.list"
+printf 'cliTools:\n  ansiwise:\n    version: "%s"\n' "$ENGINE_R" > "$RP_SEED/clusters/platform/versions.yaml"
+for build in manager gate-runner; do
+  printf 'builds:\n  - name: %s\n    image: %s\n    tag: "1.0.0"\n' "$build" "$build" > "$RP_SEED/clusters/inventories/$build/values-prod.yaml"
+done
+git -C "$RP_SEED" add -A
+git -C "$RP_SEED" commit --quiet -m 'Seed the trunk, which writes no recovery folder yet'
+git -C "$RP_SEED" push --quiet origin master
+for each in 'master.example.invalid prod' 'apps1.example.invalid dev'; do
+  read -r fqdn stage <<< "$each"
+  git -C "$RP_SEED" checkout --quiet -b "$fqdn" master
+  printf 'stage: %s\nrole: master\n\nglobal:\n  domain: %s\n' "$stage" "$fqdn" > "$RP_SEED/clusters/active/$fqdn.yaml"
+  git -C "$RP_SEED" add -- "clusters/active/$fqdn.yaml"
+  git -C "$RP_SEED" commit --quiet -m "Generate the branch of $fqdn"
+  git -C "$RP_SEED" push --quiet origin "$fqdn"
+  git -C "$RP_SEED" checkout --quiet master
+done
+cp "$HERE/../clusters/inventories/consumer-build/files/recovery-folder.sh" "$RP_SEED/clusters/inventories/consumer-build/files/"
+git -C "$RP_SEED" add -A
+git -C "$RP_SEED" commit --quiet -m 'Write the recovery folder at every tag'
+git -C "$RP_SEED" push --quiet origin master
+git clone --quiet "$ORIGIN_R" "$WORK_R"
+mkdir -p "$WORK_R/lifecycle"
+BOX_PASSWORD='the-storage-box-password-of-the-fixture'
+printf '%s\n' "FQDN='master.example.invalid'" "PLATFORM_REF=''" "STORAGE_BOX_HOST='box.example.invalid'" \
+  "STORAGE_BOX_USER='u1-sub1'" "STORAGE_BOX_PASSWORD='$BOX_PASSWORD'" > "$WORK_R/lifecycle/config.master.env"
+chmod 600 "$WORK_R/lifecycle/config.master.env"
+
+rp_folder() { # the folder holds every archive of the tree, but the paths named
+  local without
+  rm -rf "$RP/box/master.example.invalid"
+  mkdir -p "$RP_FOLDER/images" "$RP_FOLDER/own/manager" "$RP_FOLDER/own/gate-runner" "$RP_FOLDER/engine"
+  touch "$RP_FOLDER/images/$HEX_E.tar" "$RP_FOLDER/images/$HEX_F.tar" "$RP_FOLDER/own/manager/1.0.0.tar" \
+    "$RP_FOLDER/own/gate-runner/1.0.0.tar" "$RP_FOLDER/engine/$ENGINE_R.tar"
+  for without in "$@"; do rm "$RP_FOLDER/$without"; done
+}
+rp_release() { # the arguments of the release; RP_SCRIPT names another copy to run
+  A_CODE=0
+  ( cd "$WORK_R" && PATH="$RP/net:$MIRROR_NET:$PATH" bash "${RP_SCRIPT:-$RP/bin/release-platform.sh}" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+rp_pin() { # fqdn -> the release its map on origin records
+  git --git-dir="$ORIGIN_R" show "$1:clusters/active/$1.yaml" | sed -n 's/^release: //p'
+}
+ok 'fixture built — the owner master.example.invalid and apps1.example.invalid, cut before the trunk writes a recovery folder'
+
+# ── the branch writes no folder yet: said, and pinned ──────────────────────
+# THE PUBLISH RUN OF A TAG RUNS THE PIPELINE OF THE BRANCH THE OWNER'S MASTER STANDS ON. Where that tree writes
+# no folder, nothing the tag starts writes one, and a release that waited for it would never pin the tag that
+# brings the writer. So the release reads nothing, says so, and pins.
+rp_folder "images/$HEX_E.tar"
+rp_release 1.0.0 stable master.example.invalid
+[ "$A_CODE" = 0 ] || fail "the first release of the owner's master ended with $A_CODE: $(cat "$OUT/a.err")"
+must "release: the recovery folder of master.example.invalid is not read: the publish run of 1.0.0-stable-" 'the release says it read no folder'
+must "and that tree writes no recovery folder yet" 'and why'
+must "release: pinned master.example.invalid to 1.0.0-stable-" 'and pins'
+[ ! -s "$RP/net/rclone.log" ] || fail "a release whose owner's branch writes no folder read the storage box: $(cat "$RP/net/rclone.log")"
+[ "$(cat "$RP/bin/regenerated.log")" = 'regenerate master.example.invalid' ] || fail 'the owner was not regenerated, with its config beside the tree'
+ok "a release of the owner's master whose branch writes no recovery folder yet says so, reads no storage box and pins"
+PIN_R="$(rp_pin master.example.invalid)"
+
+# The regeneration merges the tag into the branch, which from now on writes the folder.
+git clone --quiet --branch master.example.invalid "$ORIGIN_R" "$RP/regenerated"
+git -C "$RP/regenerated" merge --quiet --no-edit origin/master
+git -C "$RP/regenerated" push --quiet origin master.example.invalid
+rm -rf "$RP/regenerated"
+
+# ── no login, no read ──────────────────────────────────────────────────────
+mv "$WORK_R/lifecycle/config.master.env" "$RP/config.master.away"
+rp_folder
+rp_release 1.1.0 stable master.example.invalid
+[ "$A_CODE" = 66 ] || fail "a release of the owner's master without its config ended with $A_CODE, not 66: $(cat "$OUT/a.err")"
+must "release: there is no config at $WORK_R/lifecycle/config.master.env, and the storage-box login of master.example.invalid in it" 'the missing config is named'
+[ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail 'a release without the login it reads the folder with pinned the owner'
+mv "$RP/config.master.away" "$WORK_R/lifecycle/config.master.env"
+ok "a release of the owner's master without its config beside the tree is refused by name, and pins nothing"
+
+# ── the folder lacks zot's archive: refused by name, nothing pinned ────────
+# The mirror serves every image of the tag; the folder holds every archive but zot's, and a .partial name of
+# it, which is where rclone writes an upload until it is whole.
+rp_folder "images/$HEX_E.tar"
+touch "$RP_FOLDER/images/$HEX_E.tar.0123456789abcdef.partial"
+rp_release 1.1.0 stable master.example.invalid
+[ "$A_CODE" = 69 ] || fail "a release of the owner's master whose folder lacks zot ended with $A_CODE, not 69: $(cat "$OUT/a.out" "$OUT/a.err")"
+must "release: the recovery folder of master.example.invalid holds 4 of the 5 archives of 1.1.0-stable-" 'the count is named with its denominator'
+must "it lacks images/$HEX_E.tar (zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64:v2.1.18);" 'the missing archive is named with its image'
+must "Nothing was pinned" 'and the refusal says nothing was pinned'
+expect "a release of the owner's master whose recovery folder lacks zot's archive" 69 <<RECORDED
+release: reusing 1.1.0-stable-TS14. One release per version and channel, so putting it on master.example.invalid cuts nothing new
+release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 1 images of 1.1.0-stable-TS14 at their digests, read without a login
+release: the mirror serves all 2 tools and charts of 1.1.0-stable-TS14
+~~~ standard error ~~~
+release: the recovery folder of master.example.invalid holds 4 of the 5 archives of 1.1.0-stable-TS14 after 0s: it lacks images/$HEX_E.tar (zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64:v2.1.18); and a cold start of master.example.invalid stops at the first of them. The recovery-export of the publish run of 1.1.0-stable-TS14 on the owner's master writes them. Nothing was pinned. Read that run, then release again: the tag is reused
+RECORDED
+[ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail "a release whose folder lacks zot's archive pinned the owner to $(rp_pin master.example.invalid)"
+grep -qxF "PLATFORM_REF='$PIN_R'" "$WORK_R/lifecycle/config.master.env" || fail 'a refused release rewrote the config beside the tree'
+[ "$(cat "$RP/bin/regenerated.log")" = 'regenerate master.example.invalid' ] || fail 'a refused release regenerated the owner'
+grep -qxF "login: sftp box.example.invalid u1-sub1 obscured-$(printf '%s' "$BOX_PASSWORD" | sha256sum | cut -c1-16)" "$RP/net/rclone.log" \
+  || fail "the folder was not listed with the obscured storage-box login of the config, in rclone's environment: $(cat "$RP/net/rclone.log")"
+grep -qxF 'argv: lsf --recursive --files-only box:master.example.invalid/recovery/' "$RP/net/rclone.log" || fail "the folder listed is not the owner's"
+! grep -qF -- "$BOX_PASSWORD" "$RP/net/rclone.log" "$OUT/a.out" "$OUT/a.err" || fail 'the storage-box password stands in an argument or in the output'
+ok "a release of the owner's master whose recovery folder lacks zot's archive names it, pins nothing and rewrites nothing; the password reached rclone only on its standard input"
+
+# ── every archive stands: pinned ───────────────────────────────────────────
+rp_folder
+rp_release 1.1.0 stable master.example.invalid
+[ "$A_CODE" = 0 ] || fail "a release of the owner's master whose folder holds every archive ended with $A_CODE: $(cat "$OUT/a.err")"
+must "release: the recovery folder of master.example.invalid holds all 5 archives of 1.1.0-stable-" 'the read is reported'
+must "release: pinned master.example.invalid to 1.1.0-stable-" 'and the owner is pinned'
+[ "$(sed -n '$p' "$RP/bin/regenerated.log")" = 'regenerate master.example.invalid' ] && [ "$(grep -c . "$RP/bin/regenerated.log")" = 2 ] \
+  || fail 'the pinned owner was not regenerated'
+ok "a release of the owner's master whose recovery folder holds every archive of the tag pins and regenerates it"
+PIN_R="$(rp_pin master.example.invalid)"
+
+# ── a copy that never finds an archive missing pins all the same ───────────
+rp_folder "images/$HEX_E.tar"
+rp_release 1.2.0 stable master.example.invalid
+[ "$A_CODE" = 69 ] && [ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail "a release whose folder lacks zot's archive was not refused, or pinned: $(cat "$OUT/a.err")"
+sed 's/grep -qxF -- "\$path" "\$LISTED\/recovery.present" ||/true ||/' "$RP/bin/release-platform.sh" > "$RP/bin/planted-release.sh"
+! cmp -s "$RP/bin/release-platform.sh" "$RP/bin/planted-release.sh" || fail 'the planted read was not planted — the probe proves nothing'
+RP_SCRIPT="$RP/bin/planted-release.sh" rp_release 1.2.0 stable master.example.invalid
+case "$(rp_pin master.example.invalid)" in
+  1.2.0-stable-*) ;;
+  *) fail "a copy of release-platform.sh that never finds an archive missing did not pin the owner either, so the refusal above proves nothing: $(cat "$OUT/a.err")" ;;
+esac
+ok "the planted defect was caught — a copy that never finds an archive missing pins the owner though its folder lacks zot's archive"
+PIN_R="$(rp_pin master.example.invalid)"
+
+# ── another installation reads no folder ───────────────────────────────────
+rm -rf "$RP/box/master.example.invalid"
+READS="$(grep -c . "$RP/net/rclone.log")"
+rp_release 1.2.1 stable apps1.example.invalid
+[ "$A_CODE" = 0 ] || fail "a release of another installation ended with $A_CODE while the owner's folder is gone: $(cat "$OUT/a.err")"
+must "release: pinned apps1.example.invalid to 1.2.1-stable-" 'the other installation is pinned'
+must_not "recovery folder" 'and no folder is named'
+[ "$(grep -c . "$RP/net/rclone.log")" = "$READS" ] || fail 'a release of another installation read the storage box'
+ok "a release of another installation reads no recovery folder and needs none"
+
+# ── the release that names no installation reads the owner's folder before any pin ──
+rp_folder "own/gate-runner/1.0.0.tar"
+rp_release 1.3.0 stable
+[ "$A_CODE" = 69 ] || fail "a release of every installation whose owner's folder lacks an archive ended with $A_CODE, not 69: $(cat "$OUT/a.out" "$OUT/a.err")"
+must "it lacks own/gate-runner/1.0.0.tar (zot.master.example.invalid/owner/gate-runner:1.0.0);" 'the missing build is named'
+case "$(rp_pin apps1.example.invalid) $(rp_pin master.example.invalid)" in
+  1.2.1-stable-*" $PIN_R") ;;
+  *) fail 'a release of every installation pinned one before it read the folder of the owner' ;;
+esac
+ok "a release that names no installation reads the owner's folder before it pins anything, and pins nothing when an archive is missing"
 
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
@@ -3468,10 +3994,24 @@ echo "test:   the committed pin; both drivers blank the names they remove before
 echo "test:   stops its heartbeat ticker on a signal. A refusal that does not stop the install, a handler"
 echo "test:   that resumes after a TERM, a skip that asks ansiwise alone, a FETCHED left as the environment"
 echo "test:   set it, a check that takes any digest and a cleanup that leaves the ticker running are each"
-echo "test:   planted, and each is caught."
+echo "test:   planted, and each is caught. On the owner's master, driver.sh takes the engine out of its"
+echo "test:   recovery folder by the pinned digests, and refuses a swapped executable, another release"
+echo "test:   and a folder without the engine; that master alone reads the folder, and not without the"
+echo "test:   storage-box values of its config."
 echo "test:   Both drivers' composition of the answers, run from their own text: the owner's ACME block"
 echo "test:   alone and the binding's two halves out of its JSON, six bindings refused by"
 echo "test:   name without their value, the LETSENCRYPT lines read by nothing, and three planted composers."
+echo "test:   The recovery folder into the node, run from driver.sh's own text against a stand-in folder"
+echo "test:   and a stand-in containerd: a full folder fetched and held before the first import, imported"
+echo "test:   and seeded with the push identity by path and read back; a missing archive, a changed blob"
+echo "test:   and another image at a pinned path refused by name before any import; a registry serving"
+echo "test:   another manifest refused; two planted drivers caught; the list of this tree's archives."
+echo "test:   release-platform on the owner's master, against a stand-in storage box: the pin waits for every"
+echo "test:   archive of the tag in its recovery folder, listed with the login of its config, whose password"
+echo "test:   reaches rclone on its standard input alone; a folder without zot's archive, with or without the"
+echo "test:   release naming the owner, and a missing config are each refused before any pin; a copy that never"
+echo "test:   finds an archive missing is caught; a branch whose tree writes no folder yet is said and pinned;"
+echo "test:   another installation reads no folder."
 echo "test: covered — a config of mode 644, refused in its recorded sentence by the"
 echo "test:   regeneration, the backup, the restore and install-machine, and a planted defect in"
 echo "test:   the guard beside the backup and beside the restore that proves the launcher reads it."
@@ -3482,6 +4022,8 @@ echo "test:   deletion a remote refuses (a directory origin refuses none), a DNS
 echo "test:   that fails in the middle of the abandonment, GitHub's own answers to a manifest"
 echo "test:   and a real browser, the two ten-minute bounds of the GitHub App act, and the backup"
 echo "test:   and the restore themselves on a machine — the drill on two masters is what proves those."
+echo "test:   Nor a real containerd, skopeo or storage box under the recovery folder: a live cold start"
+echo "test:   of the owner's master from the folder with GHCR unavailable is declared, not proven."
 
 node --test "$HERE/redeploy-platform-services.test.mjs" || fail 'config-fed platform services redeploy'
 node --test "$HERE/create-origin-pull-certificate.test.mjs" || fail 'origin pull certificate'

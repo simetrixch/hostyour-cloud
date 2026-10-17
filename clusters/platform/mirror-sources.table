@@ -12,6 +12,19 @@
 #                            <sha256> is that of the packaged chart: the digest of the version in the
 #                            repository index, or the digest of the chart layer of its oci manifest.
 # <sha256> is 64 lower-case hex digits. A tool or a chart at one version has one row, whatever reads it.
+#
+# A BUMP is two releases. First add the row of the new version, with its sha256 from the checksum file of the
+# upstream release or, for a chart, from the digest field of its version in the repository index, then land
+# and release: the publish run of that tag mirrors the row, and the release gate waits for it. Second, move the
+# consumer, by hand or by a sync-versions stamp, and delete the old row once no consumer reads it. A consumer
+# moved before its row is red at check time, in scripts/check-mirror-consumers.sh and in the helm dependency
+# update of scripts/check.sh. A row no consumer reads yet is listed by that check and fails nothing. The
+# version report keeps showing newer upstream versions through the Git tags of the project.
+#
+# This is the one file of the platform tree that may name an upstream address. A consumer names the owned
+# address of its row, scripts/check-mirror-consumers.sh refuses the upstream address in every other file of
+# the platform, hostyour-deploy and hostyour-manager trees except the tests that plant it, and holds the
+# version and the sha256 of an owned address to its row.
 tool https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64 c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385
 tool https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_amd64 fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4
 tool https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64 b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f
@@ -21,7 +34,6 @@ tool https://github.com/prometheus/prometheus/releases/download/v3.13.1/promethe
 tool https://github.com/traefik/traefik/releases/download/v3.6.2/traefik_v3.6.2_linux_amd64.tar.gz edc04e863795d741bdba8d70fbc1fd721b16edace829f8f25b0e13a9a34cb134
 tool https://github.com/grafana/loki/releases/download/v3.7.4/loki-linux-amd64.zip 4b4f17fc9416bd2099dac815ede1aac15aa0f8d1a21225e08909796b99aaad59
 tool https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
-chart oci://ghcr.io/external-secrets/charts external-secrets 2.8.0 251e4615013c6d2f9ade5cedf1cd8615613f286bfc381e44fb005f197e611ecd
 chart https://prometheus-community.github.io/helm-charts kube-prometheus-stack 87.21.0 05eae98df0ff6c21877a26a4400780e4bbff248bc3b88694ef8d08b273ed6815
 chart https://prometheus-community.github.io/helm-charts kube-state-metrics 8.0.0 e9a119672c0764580ff8739c11a88dad5a9822607ea10b7e2475b207f8c39f41
 chart https://prometheus-community.github.io/helm-charts prometheus-mongodb-exporter 3.20.0 260da83dad29bae6d232c19b4183b2c3322cff700d6ced2d0c99bb9dcfd72eb6

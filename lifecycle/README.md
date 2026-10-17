@@ -22,7 +22,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
-| `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test |
+| `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test; the stage `none` releases a library, which has no stage |
 | `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network, in a clone whose origin carries the install branch (exit 69 otherwise). `status.sh` calls it as one `forgejo-ssh:` row of every installation whose branch runs Forgejo, and `install-machine.sh` at its end after an installation that ended well: green on a banner, RED on none, `not asked` where it could not ask; 66 (no Forgejo on the branch) is no row. Tekton does not call it: it runs inside the network |
 | `create-origin-pull-certificate.sh` | makes the CA and the client certificate Cloudflare presents to the origins of proxied hosts, and writes `CLOUDFLARE_ORIGIN_PULL_CA`, `CLOUDFLARE_ORIGIN_PULL_CERTIFICATE` and `CLOUDFLARE_ORIGIN_PULL_PRIVATE_KEY` into the config; a second run is a rotation |
 | `apply-cloudflare-zone-security.sh` | previews or applies, and reads back, the Cloudflare Free controls of the installation's two zones |
@@ -42,7 +42,12 @@ waits until the owner's mirror serves every image the tree at the tag lists (`sc
 copied there by the publish run the tag starts, read back by digest without a login) and every
 tool and chart its `clusters/platform/mirror-sources.table` lists (`scripts/list-mirror-sources.sh`, read back by
 the manifest of its tag, which must name one layer of the row's sha256), for `RELEASE_MIRROR_WAIT` seconds at
-most, 7200 unless set, and writes `release: <tag>` into
+most, 7200 unless set. Before it pins the owner's master, the installation whose zot is `global.buildRegistry`,
+it also waits in that time until the recovery folder `<fqdn>/recovery/` on the storage box holds every archive
+that `clusters/inventories/consumer-build/files/recovery-folder.sh` of the tree at the tag names. It lists the
+folder with `rclone` and the storage-box login of `lifecycle/config.<first label>.env` beside the tree, and
+refuses by name. Where the branch of that installation stands on a tree that writes no recovery folder yet, the
+publish run of the tag writes none either, so the release says so and pins it. Then it writes `release: <tag>` into
 `clusters/active/<fqdn>.yaml` on the installation's own branch — and stops. The installation still
 stands on the state before it: that line RECORDS which state it should stand on and carries none of
 it, because every source of every Application this platform generates targets the install branch.
@@ -92,7 +97,7 @@ after each write, with the same guard every launcher applies.
 
 ```
 bash lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test
-bash lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod> <alpha|beta|stable> <x.y.z> <commit>
+bash lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit>
 ```
 
 The first form reads the release prod runs (`GET /api/units/<unit>/release?stage=prod`: its tag,
@@ -183,6 +188,24 @@ are public**: the pin out of the platform repository, the two executables out of
 programs checkout out of `hostyour-deploy`, the repository the deployment programs stand in. Nothing is
 carried from the operator's disk, so what stands on the machine afterwards is what the repositories
 say rather than what somebody's checkout happened to hold.
+
+**The owner's master is the one machine that cannot reach the release**, because the registry the
+release is served from is its own zot, which does not stand while it is installed, on a first
+installation as on a restore. Every image of the platform is pulled from that zot too, zot's own
+among them. So that machine reads `<fqdn>/recovery/` on the storage box, with the `STORAGE_BOX_HOST`,
+`STORAGE_BOX_USER` and `STORAGE_BOX_PASSWORD` of its config, which it then requires. The platform's
+publish run writes the folder at every release (`recovery-export`): one OCI archive per image the tree
+pulls, per own image at the builds of the stage, and the released engine. A pin that moves between two
+platform releases has its archive there before it moves: the release run of the platform's own builds
+writes them before its bump pins them, and the publish run of the engine writes it before it tags the
+release that ansiwise-cli's `release/release.sh` pins. And `release-platform` lists the folder before it
+pins the owner's master to a platform tag. Every one of these runs names and tests the
+archives with `clusters/inventories/consumer-build/files/recovery-folder.sh`. `driver.sh` takes the engine
+out of the folder by the digests `clusters/platform/ansiwise.sha256` states. After `deploy-cluster` it
+fetches every archive the installation's tree names, holds each to the digests the tree states, and
+only then imports them into the node's containerd, so External Secrets, Tekton and zot start without a
+registry. Once zot answers, it pushes every archive named under zot there, with the push identity of
+the Secret `registry/registry-seed-push` handed to skopeo by path, and reads each back.
 
 ## Running it
 

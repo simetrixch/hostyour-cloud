@@ -19,7 +19,9 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/secret-store
   # A second SecretStore under its own Vault role, which may read the E2E
-  # password entries and nothing else. The targets' ExternalSecrets name it.
+  # password entries and the test mailbox key and nothing else. The targets'
+  # ExternalSecrets and e2e-test-mailbox
+  # (templates/externalsecret-test-mailbox.yaml) name it.
   - name: secret-store
     alias: e2e-password-store
     version: 1.0.0
