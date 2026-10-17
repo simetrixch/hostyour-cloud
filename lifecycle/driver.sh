@@ -30,17 +30,14 @@
 # platform repository, the two executables out of the release, the programs checkout out of
 # the repository the deployment programs stand in. Nothing is carried from the
 # operator's own disk, so what stands here afterwards is what the repositories say
-# and not what somebody's checkout happened to hold. The owner's master is the one
-# machine that cannot reach the release: it reads the engine and every image from
-# the recovery folder on the storage box instead, held to the same digests (RECOVERY).
+# and not what somebody's checkout happened to hold.
 #
 # THE ONE THING IT DOES THAT NO PROGRAM DOES: it
 # installs `git`, `curl` and `python3` when they are missing. deploy-host's
 # install_packages row installs all three — and the programs checkout those programs are
 # READ FROM cannot be cloned without git, so the first of them cannot run without
-# it. It is reported before it happens, and a machine that already carries all three is
-# not touched. The owner's master also gets rclone the same way, the one thing that reaches
-# its recovery folder, and that is the whole of the exception.
+# it. It is reported before it happens, a machine that already carries all three is
+# not touched, and that is the whole of the exception.
 #
 # WHAT IT NEVER DOES. It composes no shell for a program, it edits no file a
 # program owns, and it makes no decision an answer should make. Every value it
@@ -237,16 +234,12 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 # EMPTY UNTIL THIS SCRIPT SETS THEM, so a name the environment happens to carry is never removed.
 ANSWERS_DIR=''
 FETCHED=''
-ARCHIVES=''
-SEED_DIR=''
 TICKER=''
 cleanup() {
   [ -z "${TICKER:-}" ] || kill "$TICKER" 2>/dev/null || true
   rm -f "$CONFIG" 2>/dev/null || true
   rm -rf "${ANSWERS_DIR:-}" 2>/dev/null || true
   rm -rf "${FETCHED:-}" 2>/dev/null || true
-  rm -rf "${ARCHIVES:-}" 2>/dev/null || true
-  [ -z "${SEED_DIR:-}" ] || root rm -rf "$SEED_DIR" 2>/dev/null || true
 }
 # A SIGNAL ENDS THE RUN, and EXIT then cleans up. A handler that only cleaned up would let bash
 # resume the script after it, into a step whose files the handler has just taken away: the engine
@@ -300,26 +293,16 @@ done
 #
 # ONE MACHINE CANNOT FETCH FROM IT: the owner's master itself, whose registry is this
 # host and does not exist yet while it is installed, on a first installation as on a
-# restore. Its registry is also where every image of the platform is pulled from, its own
-# image among them. So that machine reads its engine and its images from the RECOVERY
-# FOLDER, <fqdn>/recovery/ on the storage box. The platform's publish run writes it at every
-# release, and the release of one of the platform's own builds or of the engine writes its
-# archive there before its pin moves (recovery-export,
-# clusters/inventories/consumer-build/files/recovery-folder.sh). The machine reads the folder
-# with the storage-box login of the operator's config, the one master-backup writes with.
+# restore. Nothing here stands in for that registry: the fetch fails, and its message
+# says that this machine has no source for its engine.
 readonly RELEASES=https://zot.master.digitacloud.app/v2/simetrixch/ansiwise-cli/blobs
 releases_host="${RELEASES#https://}"; releases_host="${releases_host%%/*}"
-RECOVERY=''
-[ "$releases_host" != "zot.$FQDN" ] || RECOVERY="box:$FQDN/recovery"
-readonly RECOVERY
-if [ -n "$RECOVERY" ]; then
-  for named in STORAGE_BOX_HOST STORAGE_BOX_USER STORAGE_BOX_PASSWORD; do
-    [ -n "${!named:-}" ] || die "the config says nothing under ${named}, and $FQDN reads its engine and its images from $RECOVERY on the storage box" 64
-  done
-fi
+UNSERVED='the registry holds no blob of that digest'
+[ "$releases_host" != "zot.$FQDN" ] \
+  || UNSERVED="$releases_host is the registry of this machine, which serves nothing before this machine is installed, so a first installation or a restore of $FQDN has no source for its engine"
+readonly UNSERVED
 
 readonly PROGRAMS_CHECKOUT=/srv/ansiwise-programs
-readonly PLATFORM_CHECKOUT=/srv/hostyour-cloud
 readonly ENGINE=/usr/local/bin/ansiwise
 readonly RUNS=/var/lib/ansiwise/runs
 readonly ANSWERS_DIR=/home/$OPERATOR/.installer-answers
@@ -682,24 +665,6 @@ else
   good 'git, curl and python3 are already here — nothing installed'
 fi
 
-# THE RECOVERY FOLDER OPENS BEFORE ANYTHING IS READ FROM IT, on the owner's master alone. rclone is
-# the one more package that machine needs here, because nothing else reaches the storage box. The
-# password reaches rclone on standard input and its environment, never an argument.
-if [ -n "$RECOVERY" ]; then
-  if ! command -v rclone >/dev/null 2>&1; then
-    say "$FQDN reads its engine and its images from $RECOVERY, and this machine carries no rclone"
-    root env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -qq rclone \
-      || die 'apt-get would not install rclone, and nothing else here reaches the storage box' 70
-    good 'installed rclone'
-  fi
-  export RCLONE_CONFIG_BOX_TYPE=sftp RCLONE_CONFIG_BOX_HOST="$STORAGE_BOX_HOST" RCLONE_CONFIG_BOX_USER="$STORAGE_BOX_USER"
-  RCLONE_CONFIG_BOX_PASS=$(printf '%s' "$STORAGE_BOX_PASSWORD" | rclone obscure -) || die 'rclone could not take the storage-box password' 70
-  export RCLONE_CONFIG_BOX_PASS
-  rclone lsf "$RECOVERY/engine/" >/dev/null 2>&1 \
-    || die "the storage box $STORAGE_BOX_HOST does not open $RECOVERY/engine/ to $STORAGE_BOX_USER, and $FQDN reads its engine and its images there" 69
-  good "the storage box $STORAGE_BOX_HOST opens $RECOVERY"
-fi
-
 # =============================================================================
 phase '1 / 4   the engine, at the version the platform repository pins'
 # =============================================================================
@@ -748,27 +713,12 @@ else
   # A DIRECTORY OF ITS OWN, readable by this account alone, and not a fixed name under /tmp: the
   # bytes that are hashed are the bytes that are placed, and nobody else can write between the two.
   FETCHED=$(mktemp -d) || die "no directory could be made to fetch the engine into" 73
-  if [ -n "$RECOVERY" ]; then
-    # THE ARCHIVE THE PUBLISH RUN READ FROM THAT REGISTRY: the release's one manifest, whose every
-    # executable is a blob named by its digest, so each is taken by the digest its line states.
-    say "fetching the engine of $PIN from $RECOVERY/engine/$PIN.tar"
-    rclone copyto "$RECOVERY/engine/$PIN.tar" "$FETCHED/engine.tar" 2>/dev/null \
-      || die "$RECOVERY holds no engine/$PIN.tar, and this machine is the registry its engine would otherwise come from" 69
-    mkdir "$FETCHED/engine" && tar -xf "$FETCHED/engine.tar" -C "$FETCHED/engine" 2>/dev/null \
-      || die "$RECOVERY/engine/$PIN.tar is no tar archive" 65
-    for tool in ansiwise ansiwise-rest; do
-      hex_name="HEX_${tool//-/_}"
-      cp "$FETCHED/engine/blobs/sha256/${!hex_name}" "$FETCHED/$tool-$PIN-linux-x64" 2>/dev/null \
-        || die "$RECOVERY/engine/$PIN.tar holds no blob at the digest $DIGESTS_URL states for $tool-$PIN-linux-x64" 65
-    done
-  else
-    for tool in ansiwise ansiwise-rest; do
-      hex_name="HEX_${tool//-/_}"; url="$RELEASES/sha256:${!hex_name}"
-      say "fetching $tool from $url"
-      curl -fsSL -o "$FETCHED/$tool-$PIN-linux-x64" "$url" || die "$url served nothing — the registry holds no blob of that digest" 69
-      [ -s "$FETCHED/$tool-$PIN-linux-x64" ] || die "$url served an empty file, and an empty executable answers every command with a shell error" 69
-    done
-  fi
+  for tool in ansiwise ansiwise-rest; do
+    hex_name="HEX_${tool//-/_}"; url="$RELEASES/sha256:${!hex_name}"
+    say "fetching $tool from $url"
+    curl -fsSL -o "$FETCHED/$tool-$PIN-linux-x64" "$url" || die "$url served nothing — $UNSERVED" 69
+    [ -s "$FETCHED/$tool-$PIN-linux-x64" ] || die "$url served an empty file, and an empty executable answers every command with a shell error" 69
+  done
   if ! hold_engine_against_digests "$FETCHED" "$DIGESTS" "$PIN"; then
     die "the engine fetched for $PIN does not hold what $DIGESTS_URL states for it, and nothing was placed. The line above names the asset and why. Where it says the digests name no asset of $PIN, versions.yaml and ansiwise.sha256 were read at different moments: run again" 65
   fi
@@ -926,98 +876,6 @@ compose_answers() {
   chmod 600 "$ANSWERS" || { bad "could not close $ANSWERS to this account alone"; return 1; }
   say "$program is told $counted"
   return 0
-}
-
-# THE RECOVERY FOLDER INTO THE NODE, on the owner's master alone, on a first installation and on a
-# restore. Its registry is one of the images it starts, so every image the installation's tree names
-# is fetched from the folder and held to that tree (clusters/inventories/consumer-build/files/recovery-folder.sh), and none is
-# imported before all of them hold. Then they stand in the node's containerd under the names the pods
-# ask for, and nothing the master starts needs its registry for an image.
-fetch_recovery_archives() { # <checkout> <the folder to fetch into> — writes <folder>/held, one line per archive: <path> <name:tag> <digest>
-  local checkout="$1" into="$2" path name digest held count=0
-  # shellcheck source=../clusters/inventories/consumer-build/files/recovery-folder.sh
-  . "$checkout/clusters/inventories/consumer-build/files/recovery-folder.sh" \
-    || { bad "$checkout/clusters/inventories/consumer-build/files/recovery-folder.sh cannot be read, and it names what the recovery folder holds"; return 1; }
-  recovery_archives "$checkout" "$STAGE" > "$into/plan" || { bad "the tree at $checkout names no archives the recovery folder can hold; the line above says why"; return 1; }
-  : > "$into/held"
-  while read -r path name digest; do
-    mkdir -p "$into/${path%/*}"
-    rclone copyto "$RECOVERY/$path" "$into/$path" 2>/dev/null \
-      || { bad "$RECOVERY holds no $path, the archive of $name, and nothing was imported"; return 1; }
-    held=$(recovery_archive_digest "$into" "$path" "$name" "$digest" "$checkout/clusters/platform/ansiwise.sha256" "$into/unpacked") \
-      || { bad "$RECOVERY/$path is not the archive of $name the tree names, and nothing was imported"; return 1; }
-    printf '%s %s %s\n' "$path" "$name" "$held" >> "$into/held"
-    count=$(( count + 1 ))
-  done < "$into/plan"
-  good "$count archives of $RECOVERY hold what the tree at $checkout names"
-}
-
-# THE ENGINE IS NO IMAGE: its archive holds the two executables as layers, which containerd cannot
-# unpack, and the seed alone reads it. A pod names a pinned image name:tag@sha256:<digest>, and the
-# kubelet asks containerd for name@sha256:<digest>, so a pinned image is given that name too.
-import_recovery_archives() { # <the folder fetched into>
-  local path name digest count=0
-  while read -r path name digest; do
-    [ "${path%%/*}" != engine ] || continue
-    root microk8s ctr --namespace k8s.io images import "$1/$path" >/dev/null \
-      || { bad "the node's containerd would not import $path, the archive of $name"; return 1; }
-    if [ "${path%%/*}" = images ]; then
-      root microk8s ctr --namespace k8s.io images tag --force "$name" "${name%:*}@$digest" >/dev/null \
-        || { bad "the node's containerd would not name $name as ${name%:*}@$digest"; return 1; }
-    fi
-    count=$(( count + 1 ))
-  done < "$1/held"
-  good "$count images stand in the node's containerd, each under the name its pods ask for"
-}
-
-# THE SEED. Once this machine's registry answers, every archive named under it is pushed there under
-# its name, by the skopeo the folder carries, run from the node's containerd: a first installation
-# starts with an empty registry, and a restored one may predate the release, while every other
-# installation pulls from it. A name of any other registry is never pushed. The push identity is the
-# Secret registry-seed-push, decoded into a file of a root-only directory and handed to skopeo by
-# path, so it is never an argument and never printed. The platform's own authority goes beside it,
-# because a first installation's certificates are issued by platform-local. Every archive is read
-# back by its name, anonymously, and its manifest digest held to the archive's.
-readonly SEED_WAIT=1800
-seed_registry() { # <the folder fetched into>
-  local into="$1" registry="zot.$FQDN" skopeo path name digest served waited=0 count=0
-  skopeo=$(awk '$2 ~ /^quay\.io\/skopeo\/stable:/ { print $2 }' "$into/held")
-  case "$skopeo" in
-    ''|*$'\n'*) bad "the recovery folder holds no one skopeo to seed with"; return 1 ;;
-  esac
-  # ANSWERING IS ALL THIS ASKS, so the certificate is not checked here; skopeo checks it below.
-  until root microk8s kubectl --namespace registry get secret registry-seed-push >/dev/null 2>&1 \
-      && curl -ksS -o /dev/null --max-time 10 "https://$registry/v2/" 2>/dev/null; do
-    [ "$waited" -lt "$SEED_WAIT" ] || { bad "https://$registry/v2/ did not answer, or the Secret registry/registry-seed-push did not stand, within ${SEED_WAIT}s"; return 1; }
-    [ $(( waited % 120 )) -ne 0 ] || say "waiting for https://$registry/v2/ and the Secret registry/registry-seed-push; waited ${waited}s"
-    sleep 10
-    waited=$(( waited + 10 ))
-  done
-  good "https://$registry/v2/ answers and the Secret registry/registry-seed-push stands"
-  SEED_DIR=$(root mktemp -d) || { bad 'no root-only directory could be made for the push identity'; return 1; }
-  root bash -c 'set -o pipefail; umask 077; mkdir "$1/certs" \
-      && microk8s kubectl --namespace registry get secret registry-seed-push --output "jsonpath={.data.\.dockerconfigjson}" | base64 -d > "$1/auth.json" \
-      && test -s "$1/auth.json" \
-      && { microk8s kubectl --namespace cert-manager get secret platform-ca --output "jsonpath={.data.ca\.crt}" | base64 -d > "$1/certs/ca.crt" || rm -f "$1/certs/ca.crt"; }' \
-    _ "$SEED_DIR" || { bad 'the push identity of registry/registry-seed-push could not be written for the seed'; return 1; }
-  while read -r path name digest; do
-    [ "${name%%/*}" = "$registry" ] || continue
-    count=$(( count + 1 ))
-    root microk8s ctr --namespace k8s.io run --rm --net-host \
-      --mount "type=bind,src=$into,dst=/recovery,options=rbind:ro" --mount "type=bind,src=$SEED_DIR,dst=/seed,options=rbind:ro" \
-      "$skopeo" "recovery-seed-$$-$count" \
-      skopeo copy --quiet --all --preserve-digests --retry-times 3 --dest-authfile /seed/auth.json --dest-cert-dir /seed/certs \
-      "oci-archive:/recovery/$path" "docker://$name" \
-      || { bad "the seed could not push $path into $registry as $name"; return 1; }
-    served=$(root microk8s ctr --namespace k8s.io run --rm --net-host \
-      --mount "type=bind,src=$SEED_DIR,dst=/seed,options=rbind:ro" \
-      "$skopeo" "recovery-read-$$-$count" \
-      skopeo inspect --raw --no-creds --cert-dir /seed/certs "docker://$name" | sha256sum | cut -d' ' -f1)
-    [ "sha256:$served" = "$digest" ] || { bad "$registry serves $name at sha256:$served after the seed, not at $digest"; return 1; }
-    say "seeded $name at $digest"
-  done < "$into/held"
-  root rm -rf "$SEED_DIR" && SEED_DIR=''
-  good "$count archives are served by $registry, each at the digest the archive holds"
 }
 
 # =============================================================================
@@ -1217,21 +1075,7 @@ for program in "${PROGRAMS[@]}"; do
       die 'the staged backup could not be placed; nothing after deploy-cluster was started, and the mark stands so a second run tries again' 1
     fi
   fi
-
-  if [ "$program" = deploy-cluster ] && [ -n "$RECOVERY" ]; then
-    phase "$step / ${#PROGRAMS[@]}   the images of $RECOVERY, into the node"
-    # BESIDE /var/tmp AND NOT /tmp, which may be memory: the archives are gigabytes.
-    ARCHIVES=$(mktemp -d -p /var/tmp) || die 'no directory could be made to fetch the recovery folder into' 73
-    fetch_recovery_archives "$PLATFORM_CHECKOUT" "$ARCHIVES" || die "the recovery folder does not hold what the tree names; nothing after deploy-cluster was started" 65
-    import_recovery_archives "$ARCHIVES" || die "the images of the recovery folder could not all be imported; nothing after deploy-cluster was started" 70
-  fi
 done
-
-if [ -n "$RECOVERY" ]; then
-  phase "the registry of $FQDN, seeded from $RECOVERY"
-  seed_registry "$ARCHIVES" || die "the registry of $FQDN is not seeded; every program ran green, and a second run seeds what is missing" 69
-  rm -rf "$ARCHIVES" && ARCHIVES=''
-fi
 
 phase 'done'
 # COUNTED, never stated. A sentence naming the numbers goes wrong the moment the sequence changes,

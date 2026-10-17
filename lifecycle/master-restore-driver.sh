@@ -71,7 +71,6 @@ STORES=(
   "mongodb|data-mongodb-${STAGE}-1|20Gi"
   "mongodb|data-mongodb-${STAGE}-2|20Gi"
   "redis|redis-data|10Gi"
-  "registry|zot-data|50Gi"
   "postfix|postfix-${STAGE}-postfix-${STAGE}-0|1Gi"
   "dbgate|dbgate-data|1Gi"
 )

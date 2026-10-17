@@ -187,14 +187,6 @@ global:
   # /32 when the node is added.
   nodeCidrs: []
 
-  # THE ADDRESSES OF THE STORAGE BOX THE RECOVERY FOLDER OF THE OWNER'S MASTER IS WRITTEN TO, a /32 per
-  # resolved address of the host of the installation's storage box. Read by the recovery-export-egress pinhole of
-  # clusters/inventories/consumer-build, which admits the recovery-export pod of every run that writes the
-  # folder, and the pod lifecycle/release-platform.sh lists it with, to them on port 22 and nothing else.
-  # Empty on the trunk and on every installation but the owner's master; there it is written into
-  # clusters/active/<fqdn>.yaml beside nodeCidrs, and that render stops while it is empty.
-  storageBoxCidrs: []
-
   # Whether a shared service is deployed LOCALLY on this cluster — gates the
   # CoreDNS hairpin rewrites (a chart can't see the deploy toggle). All false
   # on the trunk; the branch program writes each key from the cluster map's

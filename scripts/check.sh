@@ -1084,31 +1084,6 @@ printf '%s/planted/image:1.0.0 planted\n' "$mirror_prefix" | bash scripts/list-m
   && fail "scripts/list-mirror-images.sh lists a ref under the mirror that names no digest"
 echo "check: the mirror holds $(printf '%s\n' "$mirror_entries" | wc -l | tr -d ' ') images, each at its digest; the list refuses a planted ref on ghcr.io and one under the mirror without it."
 
-# ── The images the recovery folder of the owner's master holds ──────────────────────────────────
-# clusters/platform/recovery-images.list names, at its digest, every image the `recovery-export` task of the
-# platform's publish run writes into the recovery folder and lifecycle/driver.sh imports into a cold owner's
-# master: every mirror name of the list above, and the skopeo the publish run copies with, which the seed of a
-# first owner's master runs. The driver reads the file from git and renders nothing, because a cold master has
-# no registry to fetch a chart from, so it is held here to the render and to the chart's skopeo
-# (consumer-build.skopeoImage). The planted defects: the list without zot, and the list with skopeo at another digest.
-recovery_images_expected() {
-  { printf '%s\n' "$mirror_entries" | awk '{print $2}'
-    sed -n '/^{{- define "consumer-build.skopeoImage" -}}$/{n;p;q;}' clusters/inventories/consumer-build/templates/_helpers.tpl
-  } | sort
-}
-recovery_images_fault() { # <a list file> -> what differs from the render, or nothing
-  [ "$(grep -v '^#' "$1" | grep .)" = "$(recovery_images_expected)" ] && return
-  echo "$1 does not name the images the tree renders at their digests; it reads, after its comment:"
-  recovery_images_expected
-}
-fault="$(recovery_images_fault clusters/platform/recovery-images.list)"
-[ -z "$fault" ] || { echo "$fault"; fail "clusters/platform/recovery-images.list is stale"; }
-grep -v '/project-zot/' clusters/platform/recovery-images.list > "$work/recovery-images-planted"
-[ -n "$(recovery_images_fault "$work/recovery-images-planted")" ] || fail "recovery_images_fault takes a list without zot"
-sed 's|^\(quay.io/skopeo/[^@]*\)@sha256:.*|\1@sha256:'"$(printf '0%.0s' {1..64})"'|' clusters/platform/recovery-images.list > "$work/recovery-images-planted"
-[ -n "$(recovery_images_fault "$work/recovery-images-planted")" ] || fail "recovery_images_fault takes skopeo at another digest"
-echo "check: clusters/platform/recovery-images.list names the $(recovery_images_expected | wc -l | tr -d ' ') images the tree renders and the publish run's skopeo, each at its digest; the check refuses a planted list without zot and one with skopeo at another digest."
-
 # ── The tools and charts the owner's mirror holds ───────────────────────────────────────────────
 # scripts/list-mirror-sources.sh writes one line per row of clusters/platform/mirror-sources.table for the
 # steps fetch, copy-sources and read-back-sources of the mirror task, and refuses a row of another form by
@@ -1856,8 +1831,6 @@ bash -n lifecycle/check-forgejo-ssh.sh || fail 'Forgejo SSH check Bash syntax'
 bash -n lifecycle/create-origin-pull-certificate.sh || fail 'origin pull certificate Bash syntax'
 bash -n lifecycle/apply-cloudflare-zone-security.sh || fail 'Cloudflare zone security Bash syntax'
 bash -n lifecycle/release-unit.sh || fail 'release-unit Bash syntax'
-bash -n clusters/inventories/consumer-build/files/recovery-folder.sh || fail 'recovery folder Bash syntax'
-bash -n scripts/standin/recovery-microk8s.sh || fail 'recovery folder stand-in Bash syntax'
 for module in lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
