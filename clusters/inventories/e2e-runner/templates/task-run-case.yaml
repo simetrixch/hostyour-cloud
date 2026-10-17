@@ -24,7 +24,11 @@ refused unless it starts with `/` and holds only path characters, because `https
 by anything else could name another authority.
 
 THE PASSWORD TRAVELS ONLY AS THE STEP'S ENVIRONMENT, through secretKeyRef, and never as a param,
-which the TaskRun's spec would print. The run's log holds no value of it because the testkit's
+which the TaskRun's spec would print. So do the three values of the test mailbox key,
+E2E_TEST_MAILBOX_CLIENT_ID, E2E_TEST_MAILBOX_CLIENT_SECRET and E2E_TEST_MAILBOX_REFRESH_TOKEN, from
+the Secret e2e-test-mailbox (templates/externalsecret-test-mailbox.yaml). Each of the three is
+optional, so every case starts while that Secret is absent, and a case that reads the mailbox stops
+there, naming the setting it misses. The run's log holds no value of them because the testkit's
 Playwright config allows only the `list` reporter and keeps traces off, and this step sets no
 PLAYWRIGHT_LIST_PRINT_STEPS and adds no reporter: a step title quotes what a fill typed.
 
@@ -83,6 +87,24 @@ spec:
             secretKeyRef:
               name: e2e-$(params.target)
               key: password
+        - name: E2E_TEST_MAILBOX_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: e2e-test-mailbox
+              key: client-id
+              optional: true
+        - name: E2E_TEST_MAILBOX_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: e2e-test-mailbox
+              key: client-secret
+              optional: true
+        - name: E2E_TEST_MAILBOX_REFRESH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: e2e-test-mailbox
+              key: refresh-token
+              optional: true
         - name: E2E_APP_PATH
           value: $(params.path)
         - name: E2E_CASE
