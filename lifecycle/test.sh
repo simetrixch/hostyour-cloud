@@ -4025,6 +4025,5 @@ echo "test:   and the restore themselves on a machine — the drill on two maste
 echo "test:   Nor a real containerd, skopeo or storage box under the recovery folder: a live cold start"
 echo "test:   of the owner's master from the folder with GHCR unavailable is declared, not proven."
 
-node --test "$HERE/redeploy-platform-services.test.mjs" || fail 'config-fed platform services redeploy'
 node --test "$HERE/create-origin-pull-certificate.test.mjs" || fail 'origin pull certificate'
 node --test "$HERE/apply-cloudflare-zone-security.test.mjs" || fail 'Cloudflare zone security'

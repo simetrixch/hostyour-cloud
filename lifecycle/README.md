@@ -16,7 +16,6 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `install-machine.sh` | installs a first master from zero: a machine, a branch, a cluster and the platform services on it |
 | `release-platform.sh` | with an fqdn, cuts a release of the platform tree and pins ONE installation to it; without one, cuts the release and pins nothing, which is what a first machine names as `PLATFORM_REF` |
 | `regenerate-install-branch.sh` | brings an installation onto the release its own map is pinned to |
-| `redeploy-platform-services.sh` | sends the declared inputs from an owner-only config to the installed master's platform-services program over stdin, in test, dry and run modes |
 | `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
 | `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
@@ -264,37 +263,6 @@ launcher recognises that refusal and tells you the line that clears it:
 
 A host key that is simply **unknown** is accepted and recorded (`StrictHostKeyChecking=accept-new`),
 because at a machine's birth there is nothing to compare it against. A **changed** one never is.
-
-## Redeploy platform services with the Plane credential
-
-After the reviewed engine release is installed on the master, run this action from its matching
-cloud release. It first fetches the branch `/srv/ansiwise-programs` stands on and resets that
-checkout to `origin/<branch>`, as the Manager's `cluster-redeploy` does, so the program it declares
-and runs is the one that landed. It requires the existing operator SSH key and the owner-only config.
-The config supplies the Plane API token named `plane-update-status` in `PLANE_API_TOKEN` and the
-caller's elevation password in `ELEVATION_PASSWORD`. It reads the config without sourcing it, so the
-caller's environment cannot stand in for a key, and refuses a missing or empty Plane token before
-SSH. It projects only the answers the installed program declares and streams the password beside
-those answers through `--answers -`, straight from the file into the pipe: no shell variable and no
-shell trace holds a credential. It writes no config or answer copy on either machine.
-
-```bash
-bash lifecycle/redeploy-platform-services.sh lifecycle/config.master.env
-```
-
-It runs `deploy-platform-services` in `test`, `dry`, then `run` mode and stops at the first failure.
-The installed program provisions the restricted `forgejo-build` identity and writes the complete
-credential entry `<stage>/app/forgejo-build`. Later Manager redeploys hand that entry back to the
-program without reading the local config.
-`regenerate-install-branch.sh` regenerates the branch; it does not import this Plane token.
-
-**This run is a step of every installation whose master runs the books, the build plane and Plane**:
-once after the installation, again after a loss of Vault, and again for every rotation of the Plane
-key. A Manager redeploy carries no Plane key. On a master whose Vault holds no
-`<stage>/app/forgejo-build`, it stops at the forge credential row (`vault_kv_entry_from_command` in
-`deploy-platform-services`) with `plane-api-token is absent`, and only this run gets past that row.
-The forge Secrets form on the next Manager redeploy of the master: its last step,
-`refresh-external-secrets`, has ESO read the new entry.
 
 ## What it refuses, and why
 

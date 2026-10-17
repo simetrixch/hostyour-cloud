@@ -8,9 +8,9 @@ plane-ce:
     ingressClass: public
     ingress_annotations:
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
-      # Every page waits for the identity provider first, then Plane's own sign-in. Then /god-mode
-      # gets its slash here, not from plane-admin's nginx, which redirects to its own port
-      # (templates/middleware-god-mode.yaml, in the namespace plane of app.yaml).
+      # Every page waits for the identity provider first, then Plane's sign-in through Forgejo.
+      # Then /god-mode gets its slash here, not from plane-admin's nginx, which redirects to its
+      # own port (templates/middleware-god-mode.yaml, in the namespace plane of app.yaml).
       traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd,plane-god-mode-trailing-slash@kubernetescrd
   # The chart writes the TLS block with this Secret, and cert-manager fills it from the issuer
   # annotation; Plane is told it is served over https.

@@ -2,8 +2,9 @@
 # Authentik blueprint — Forward-Auth ProxyProvider + Application for Plane.
 # Mirrors 99-proxy-tekton.yaml: the embedded Outpost gates Plane's Ingress
 # through Traefik's forwardAuth Middleware (clusters/bootstrap/idp/
-# middleware-forwardauth.yaml), and Plane's own sign-in follows. Plane's
-# API-key API, /api/v1, has an Ingress of its own outside the gate
+# middleware-forwardauth.yaml), and Plane's sign-in through Forgejo
+# follows. Plane's API-key API, /api/v1, has an Ingress of its own outside
+# the gate
 # (clusters/inventories/plane/templates/ingress-api-v1.yaml).
 #
 # mode: forward_domain → the session cookie is scoped to the env apex

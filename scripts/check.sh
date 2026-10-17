@@ -1821,8 +1821,6 @@ if [ -n "$drifts" ]; then
 fi
 echo "check: every yaml_value stamp site of this tree holds its pin from clusters/platform/versions.yaml, $(yq e '[.. | select(tag == "!!map" and has("stamps")) | .stamps[] | select(.kind == "yaml_value" and .tree == "platform")] | length' clusters/platform/versions.yaml) of them."
 
-bash -n lifecycle/redeploy-platform-services.sh || fail 'config-fed platform services redeploy syntax'
-node --check lifecycle/redeploy-platform-services.test.mjs || fail 'config-fed platform services redeploy fixture syntax'
 echo 'check: NOT RUN locally — lifecycle/test.sh; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the ci of the master via scripts/test.sh.'
 bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
