@@ -3642,6 +3642,222 @@ tar -cf "$RF_BOX/own/manager/1.0.0.tar" -C "$RF/without" .; rm -rf "$RF/without"
   || fail "recovery_archive_digest did not refuse an archive without a layer by name, or left it unpacked: $(cat "$OUT/archives.err")"
 ok "recovery_archives names $expected archives of this tree, each once, and refuses a build without a tag and an image without a digest; recovery_archive_digest refuses an archive without a layer"
 
+# ===========================================================================
+# ELEVEN — release-platform on the owner's master, held to its recovery folder
+# ===========================================================================
+# THE OWNER'S MASTER is the installation whose zot is the tree's global.buildRegistry, here
+# master.example.invalid. A cold start of it reads every archive its tree names from <fqdn>/recovery/ on the
+# storage box, so a release pins it only once that folder holds every archive the tree at the tag names,
+# listed with the storage-box login of its config beside the tree; any other installation reads no folder.
+# The box is a stand-in rclone first on the path: it lists a folder of this fixture as `box:` and logs every
+# argument and the login it finds in its environment. The release runs as a copy of itself beside a
+# stand-in regeneration, which logs the installation it was asked to bring onto the pin, because the
+# owner's config stands beside the tree and a release regenerates each installation whose config does.
+RP="$WORK/recovery-pin"
+ORIGIN_R="$RP/origin.git"
+WORK_R="$RP/checkout"
+RP_SEED="$RP/seed"
+RP_FOLDER="$RP/box/master.example.invalid/recovery"
+mkdir -p "$RP/bin" "$RP/net" "$RP/box"
+cp "$HERE/release-platform.sh" "$HERE/require-owner-only.sh" "$RP/bin/"
+cat > "$RP/bin/regenerate-install-branch.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "regenerate $1" >> "$(dirname "$0")/regenerated.log"
+STUB
+cat > "$RP/net/rclone" <<'STUB'
+#!/usr/bin/env bash
+# `obscure -` turns the first line of standard input into a token that is not it, as rclone reads it;
+# `lsf --recursive --files-only box:<path>` lists the files under <path> of the folder ../box, relative,
+# and fails where there is no such folder.
+log="$(dirname "$0")/rclone.log"
+echo "argv: $*" >> "$log"
+case "$1" in
+  obscure) [ "$2" = - ] && IFS= read -r line && printf 'obscured-%s' "$(printf '%s' "$line" | sha256sum | cut -c1-16)" ;;
+  lsf)
+    echo "login: ${RCLONE_CONFIG_BOX_TYPE:-} ${RCLONE_CONFIG_BOX_HOST:-} ${RCLONE_CONFIG_BOX_USER:-} ${RCLONE_CONFIG_BOX_PASS:-}" >> "$log"
+    target="${*: -1}"
+    folder="$(dirname "$0")/../box/${target#box:}"
+    { [ "$2 $3" = '--recursive --files-only' ] && [ -d "$folder" ]; } || { echo 'directory not found' >&2; exit 3; }
+    ( cd "$folder" && find . -type f | sed 's|^\./||' | sort ) ;;
+  *) exit 2 ;;
+esac
+STUB
+chmod +x "$RP/net/rclone" "$RP/bin/regenerate-install-branch.sh"
+: > "$RP/net/rclone.log"
+: > "$RP/bin/regenerated.log"
+
+# The tree: zot in the mirror, and the archives files/recovery-folder.sh names for stage prod, which are zot and
+# skopeo, the builds manager and gate-runner at 1.0.0, and the engine. The trunk gains that file in a second
+# commit, after both installations were cut, so their branches stand on a tree that writes no folder yet.
+HEX_E="$(printf 'e%.0s' $(seq 64))"
+HEX_F="$(printf 'f%.0s' $(seq 64))"
+ENGINE_R='1.0.0-stable-20260101000000'
+git init --quiet --bare --initial-branch=master "$ORIGIN_R"
+git init --quiet --initial-branch=master "$RP_SEED"
+git -C "$RP_SEED" remote add origin "$ORIGIN_R"
+mkdir -p "$RP_SEED/scripts" "$RP_SEED/clusters/active" "$RP_SEED/clusters/platform" "$RP_SEED/clusters/inventories/consumer-build/files" \
+  "$RP_SEED/clusters/inventories/manager" "$RP_SEED/clusters/inventories/gate-runner"
+echo "* text=auto eol=lf" > "$RP_SEED/.gitattributes"
+touch "$RP_SEED/clusters/active/.gitkeep"
+cat > "$RP_SEED/scripts/list-mirror-images.sh" <<STUB
+#!/usr/bin/env bash
+# The images of the fixture tree: zot, beside its name in the mirror.
+printf '%s\n' 'ghcr.io/project-zot/zot-linux-amd64:v2.1.18@sha256:$HEX_E zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64:v2.1.18@sha256:$HEX_E'
+STUB
+echo "zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64@sha256:$HEX_E" >> "$MIRROR_NET/serves"
+cp "$SEED/scripts/list-mirror-sources.sh" "$RP_SEED/scripts/"
+cp "$HERE/../clusters/inventories/consumer-build/files/mirror-sources.sh" "$RP_SEED/clusters/inventories/consumer-build/files/"
+printf 'global:\n  buildRegistry: "zot.master.example.invalid/owner"\n' > "$RP_SEED/clusters/platform/values-common.yaml"
+printf '%s\n' "zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64:v2.1.18@sha256:$HEX_E" \
+  "quay.io/skopeo/stable:v1.22.3-immutable@sha256:$HEX_F" > "$RP_SEED/clusters/platform/recovery-images.list"
+printf 'cliTools:\n  ansiwise:\n    version: "%s"\n' "$ENGINE_R" > "$RP_SEED/clusters/platform/versions.yaml"
+for build in manager gate-runner; do
+  printf 'builds:\n  - name: %s\n    image: %s\n    tag: "1.0.0"\n' "$build" "$build" > "$RP_SEED/clusters/inventories/$build/values-prod.yaml"
+done
+git -C "$RP_SEED" add -A
+git -C "$RP_SEED" commit --quiet -m 'Seed the trunk, which writes no recovery folder yet'
+git -C "$RP_SEED" push --quiet origin master
+for each in 'master.example.invalid prod' 'apps1.example.invalid dev'; do
+  read -r fqdn stage <<< "$each"
+  git -C "$RP_SEED" checkout --quiet -b "$fqdn" master
+  printf 'stage: %s\nrole: master\n\nglobal:\n  domain: %s\n' "$stage" "$fqdn" > "$RP_SEED/clusters/active/$fqdn.yaml"
+  git -C "$RP_SEED" add -- "clusters/active/$fqdn.yaml"
+  git -C "$RP_SEED" commit --quiet -m "Generate the branch of $fqdn"
+  git -C "$RP_SEED" push --quiet origin "$fqdn"
+  git -C "$RP_SEED" checkout --quiet master
+done
+cp "$HERE/../clusters/inventories/consumer-build/files/recovery-folder.sh" "$RP_SEED/clusters/inventories/consumer-build/files/"
+git -C "$RP_SEED" add -A
+git -C "$RP_SEED" commit --quiet -m 'Write the recovery folder at every tag'
+git -C "$RP_SEED" push --quiet origin master
+git clone --quiet "$ORIGIN_R" "$WORK_R"
+mkdir -p "$WORK_R/lifecycle"
+BOX_PASSWORD='the-storage-box-password-of-the-fixture'
+printf '%s\n' "FQDN='master.example.invalid'" "PLATFORM_REF=''" "STORAGE_BOX_HOST='box.example.invalid'" \
+  "STORAGE_BOX_USER='u1-sub1'" "STORAGE_BOX_PASSWORD='$BOX_PASSWORD'" > "$WORK_R/lifecycle/config.master.env"
+chmod 600 "$WORK_R/lifecycle/config.master.env"
+
+rp_folder() { # the folder holds every archive of the tree, but the paths named
+  local without
+  rm -rf "$RP/box/master.example.invalid"
+  mkdir -p "$RP_FOLDER/images" "$RP_FOLDER/own/manager" "$RP_FOLDER/own/gate-runner" "$RP_FOLDER/engine"
+  touch "$RP_FOLDER/images/$HEX_E.tar" "$RP_FOLDER/images/$HEX_F.tar" "$RP_FOLDER/own/manager/1.0.0.tar" \
+    "$RP_FOLDER/own/gate-runner/1.0.0.tar" "$RP_FOLDER/engine/$ENGINE_R.tar"
+  for without in "$@"; do rm "$RP_FOLDER/$without"; done
+}
+rp_release() { # the arguments of the release; RP_SCRIPT names another copy to run
+  A_CODE=0
+  ( cd "$WORK_R" && PATH="$RP/net:$MIRROR_NET:$PATH" bash "${RP_SCRIPT:-$RP/bin/release-platform.sh}" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+rp_pin() { # fqdn -> the release its map on origin records
+  git --git-dir="$ORIGIN_R" show "$1:clusters/active/$1.yaml" | sed -n 's/^release: //p'
+}
+ok 'fixture built — the owner master.example.invalid and apps1.example.invalid, cut before the trunk writes a recovery folder'
+
+# ── the branch writes no folder yet: said, and pinned ──────────────────────
+# THE PUBLISH RUN OF A TAG RUNS THE PIPELINE OF THE BRANCH THE OWNER'S MASTER STANDS ON. Where that tree writes
+# no folder, nothing the tag starts writes one, and a release that waited for it would never pin the tag that
+# brings the writer. So the release reads nothing, says so, and pins.
+rp_folder "images/$HEX_E.tar"
+rp_release 1.0.0 stable master.example.invalid
+[ "$A_CODE" = 0 ] || fail "the first release of the owner's master ended with $A_CODE: $(cat "$OUT/a.err")"
+must "release: the recovery folder of master.example.invalid is not read: the publish run of 1.0.0-stable-" 'the release says it read no folder'
+must "and that tree writes no recovery folder yet" 'and why'
+must "release: pinned master.example.invalid to 1.0.0-stable-" 'and pins'
+[ ! -s "$RP/net/rclone.log" ] || fail "a release whose owner's branch writes no folder read the storage box: $(cat "$RP/net/rclone.log")"
+[ "$(cat "$RP/bin/regenerated.log")" = 'regenerate master.example.invalid' ] || fail 'the owner was not regenerated, with its config beside the tree'
+ok "a release of the owner's master whose branch writes no recovery folder yet says so, reads no storage box and pins"
+PIN_R="$(rp_pin master.example.invalid)"
+
+# The regeneration merges the tag into the branch, which from now on writes the folder.
+git clone --quiet --branch master.example.invalid "$ORIGIN_R" "$RP/regenerated"
+git -C "$RP/regenerated" merge --quiet --no-edit origin/master
+git -C "$RP/regenerated" push --quiet origin master.example.invalid
+rm -rf "$RP/regenerated"
+
+# ── no login, no read ──────────────────────────────────────────────────────
+mv "$WORK_R/lifecycle/config.master.env" "$RP/config.master.away"
+rp_folder
+rp_release 1.1.0 stable master.example.invalid
+[ "$A_CODE" = 66 ] || fail "a release of the owner's master without its config ended with $A_CODE, not 66: $(cat "$OUT/a.err")"
+must "release: there is no config at $WORK_R/lifecycle/config.master.env, and the storage-box login of master.example.invalid in it" 'the missing config is named'
+[ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail 'a release without the login it reads the folder with pinned the owner'
+mv "$RP/config.master.away" "$WORK_R/lifecycle/config.master.env"
+ok "a release of the owner's master without its config beside the tree is refused by name, and pins nothing"
+
+# ── the folder lacks zot's archive: refused by name, nothing pinned ────────
+# The mirror serves every image of the tag; the folder holds every archive but zot's, and a .partial name of
+# it, which is where rclone writes an upload until it is whole.
+rp_folder "images/$HEX_E.tar"
+touch "$RP_FOLDER/images/$HEX_E.tar.0123456789abcdef.partial"
+rp_release 1.1.0 stable master.example.invalid
+[ "$A_CODE" = 69 ] || fail "a release of the owner's master whose folder lacks zot ended with $A_CODE, not 69: $(cat "$OUT/a.out" "$OUT/a.err")"
+must "release: the recovery folder of master.example.invalid holds 4 of the 5 archives of 1.1.0-stable-" 'the count is named with its denominator'
+must "it lacks images/$HEX_E.tar (zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64:v2.1.18);" 'the missing archive is named with its image'
+must "Nothing was pinned" 'and the refusal says nothing was pinned'
+expect "a release of the owner's master whose recovery folder lacks zot's archive" 69 <<RECORDED
+release: reusing 1.1.0-stable-TS14. One release per version and channel, so putting it on master.example.invalid cuts nothing new
+release: the tag stands on the remote, so a machine that fetches origin can resolve it
+release: the mirror serves all 1 images of 1.1.0-stable-TS14 at their digests, read without a login
+release: the mirror serves all 2 tools and charts of 1.1.0-stable-TS14
+~~~ standard error ~~~
+release: the recovery folder of master.example.invalid holds 4 of the 5 archives of 1.1.0-stable-TS14 after 0s: it lacks images/$HEX_E.tar (zot.master.example.invalid/owner/ghcr.io/project-zot/zot-linux-amd64:v2.1.18); and a cold start of master.example.invalid stops at the first of them. The recovery-export of the publish run of 1.1.0-stable-TS14 on the owner's master writes them. Nothing was pinned. Read that run, then release again: the tag is reused
+RECORDED
+[ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail "a release whose folder lacks zot's archive pinned the owner to $(rp_pin master.example.invalid)"
+grep -qxF "PLATFORM_REF='$PIN_R'" "$WORK_R/lifecycle/config.master.env" || fail 'a refused release rewrote the config beside the tree'
+[ "$(cat "$RP/bin/regenerated.log")" = 'regenerate master.example.invalid' ] || fail 'a refused release regenerated the owner'
+grep -qxF "login: sftp box.example.invalid u1-sub1 obscured-$(printf '%s' "$BOX_PASSWORD" | sha256sum | cut -c1-16)" "$RP/net/rclone.log" \
+  || fail "the folder was not listed with the obscured storage-box login of the config, in rclone's environment: $(cat "$RP/net/rclone.log")"
+grep -qxF 'argv: lsf --recursive --files-only box:master.example.invalid/recovery/' "$RP/net/rclone.log" || fail "the folder listed is not the owner's"
+! grep -qF -- "$BOX_PASSWORD" "$RP/net/rclone.log" "$OUT/a.out" "$OUT/a.err" || fail 'the storage-box password stands in an argument or in the output'
+ok "a release of the owner's master whose recovery folder lacks zot's archive names it, pins nothing and rewrites nothing; the password reached rclone only on its standard input"
+
+# ── every archive stands: pinned ───────────────────────────────────────────
+rp_folder
+rp_release 1.1.0 stable master.example.invalid
+[ "$A_CODE" = 0 ] || fail "a release of the owner's master whose folder holds every archive ended with $A_CODE: $(cat "$OUT/a.err")"
+must "release: the recovery folder of master.example.invalid holds all 5 archives of 1.1.0-stable-" 'the read is reported'
+must "release: pinned master.example.invalid to 1.1.0-stable-" 'and the owner is pinned'
+[ "$(sed -n '$p' "$RP/bin/regenerated.log")" = 'regenerate master.example.invalid' ] && [ "$(grep -c . "$RP/bin/regenerated.log")" = 2 ] \
+  || fail 'the pinned owner was not regenerated'
+ok "a release of the owner's master whose recovery folder holds every archive of the tag pins and regenerates it"
+PIN_R="$(rp_pin master.example.invalid)"
+
+# ── a copy that never finds an archive missing pins all the same ───────────
+rp_folder "images/$HEX_E.tar"
+rp_release 1.2.0 stable master.example.invalid
+[ "$A_CODE" = 69 ] && [ "$(rp_pin master.example.invalid)" = "$PIN_R" ] || fail "a release whose folder lacks zot's archive was not refused, or pinned: $(cat "$OUT/a.err")"
+sed 's/grep -qxF -- "\$path" "\$LISTED\/recovery.present" ||/true ||/' "$RP/bin/release-platform.sh" > "$RP/bin/planted-release.sh"
+! cmp -s "$RP/bin/release-platform.sh" "$RP/bin/planted-release.sh" || fail 'the planted read was not planted — the probe proves nothing'
+RP_SCRIPT="$RP/bin/planted-release.sh" rp_release 1.2.0 stable master.example.invalid
+case "$(rp_pin master.example.invalid)" in
+  1.2.0-stable-*) ;;
+  *) fail "a copy of release-platform.sh that never finds an archive missing did not pin the owner either, so the refusal above proves nothing: $(cat "$OUT/a.err")" ;;
+esac
+ok "the planted defect was caught — a copy that never finds an archive missing pins the owner though its folder lacks zot's archive"
+PIN_R="$(rp_pin master.example.invalid)"
+
+# ── another installation reads no folder ───────────────────────────────────
+rm -rf "$RP/box/master.example.invalid"
+READS="$(grep -c . "$RP/net/rclone.log")"
+rp_release 1.2.1 stable apps1.example.invalid
+[ "$A_CODE" = 0 ] || fail "a release of another installation ended with $A_CODE while the owner's folder is gone: $(cat "$OUT/a.err")"
+must "release: pinned apps1.example.invalid to 1.2.1-stable-" 'the other installation is pinned'
+must_not "recovery folder" 'and no folder is named'
+[ "$(grep -c . "$RP/net/rclone.log")" = "$READS" ] || fail 'a release of another installation read the storage box'
+ok "a release of another installation reads no recovery folder and needs none"
+
+# ── the release that names no installation reads the owner's folder before any pin ──
+rp_folder "own/gate-runner/1.0.0.tar"
+rp_release 1.3.0 stable
+[ "$A_CODE" = 69 ] || fail "a release of every installation whose owner's folder lacks an archive ended with $A_CODE, not 69: $(cat "$OUT/a.out" "$OUT/a.err")"
+must "it lacks own/gate-runner/1.0.0.tar (zot.master.example.invalid/owner/gate-runner:1.0.0);" 'the missing build is named'
+case "$(rp_pin apps1.example.invalid) $(rp_pin master.example.invalid)" in
+  1.2.1-stable-*" $PIN_R") ;;
+  *) fail 'a release of every installation pinned one before it read the folder of the owner' ;;
+esac
+ok "a release that names no installation reads the owner's folder before it pins anything, and pins nothing when an archive is missing"
+
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
 echo "test:   reason for a host name it cannot resolve normalised, in the C locale."
@@ -3708,6 +3924,12 @@ echo "test:   and a stand-in containerd: a full folder fetched and held before t
 echo "test:   and seeded with the push identity by path and read back; a missing archive, a changed blob"
 echo "test:   and another image at a pinned path refused by name before any import; a registry serving"
 echo "test:   another manifest refused; two planted drivers caught; the list of this tree's archives."
+echo "test:   release-platform on the owner's master, against a stand-in storage box: the pin waits for every"
+echo "test:   archive of the tag in its recovery folder, listed with the login of its config, whose password"
+echo "test:   reaches rclone on its standard input alone; a folder without zot's archive, with or without the"
+echo "test:   release naming the owner, and a missing config are each refused before any pin; a copy that never"
+echo "test:   finds an archive missing is caught; a branch whose tree writes no folder yet is said and pinned;"
+echo "test:   another installation reads no folder."
 echo "test: covered — a config of mode 644, refused in its recorded sentence by the"
 echo "test:   regeneration, the backup, the restore and install-machine, and a planted defect in"
 echo "test:   the guard beside the backup and beside the restore that proves the launcher reads it."

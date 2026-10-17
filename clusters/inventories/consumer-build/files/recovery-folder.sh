@@ -7,9 +7,13 @@
 # release/release.sh of ansiwise-cli waits for, and the publish run of every platform tag for the whole
 # tree (both pipeline-publish.yaml). The two release runs include this file as the chart renders it; the
 # platform's publish run sources it from the tree at its tag. lifecycle/driver.sh sources it from the
-# installation's checkout and fetches the folder into a cold node. All of them name every archive the
-# same way because all of them run these lines, and all refuse an archive for the same reasons.
+# installation's checkout and fetches the folder into a cold node, and lifecycle/release-platform.sh
+# sources it from the tree at a tag and lists the folder before it pins the owner's master to that tag.
+# All of them name every archive the same way because all of them run these lines, and all refuse an
+# archive for the same reasons.
 #
+#   recovery_registry <tree>
+#       <host>/<owner> of the registry the tree's images are pulled from, its global.buildRegistry
 #   recovery_archives <tree> <stage>
 #       one line per archive the tree names: <path in the folder> <name:tag> <manifest digest, or ->
 #   recovery_build_archive <registry>/<owner> <image> <tag>
@@ -27,14 +31,20 @@
 # each of their blobs is still held to its name. Needs bash, awk, tar, sha256sum and jq.
 # =============================================================================
 
-recovery_archives() {
-  local tree="$1" stage="$2" registry ref name tag hex values image pin
+recovery_registry() {
+  local registry
   registry=$(awk '/^global:/ { on = 1; next } on && /^[^[:space:]#]/ { exit } on && /^  buildRegistry:/ { v = $2; gsub(/["\047]/, "", v); print v; exit }' \
-    "$tree/clusters/platform/values-common.yaml")
+    "$1/clusters/platform/values-common.yaml")
   if ! [[ "$registry" =~ ^[a-z0-9.-]+/[a-z0-9._-]+$ ]]; then
     echo "clusters/platform/values-common.yaml names no global.buildRegistry of the form <host>/<owner>: '$registry'" >&2
     return 1
   fi
+  echo "$registry"
+}
+
+recovery_archives() {
+  local tree="$1" stage="$2" registry ref name tag hex values image pin
+  registry=$(recovery_registry "$tree") || return 1
   while read -r ref; do
     case "$ref" in ''|'#'*) continue ;; esac
     if ! [[ "$ref" =~ ^([a-z0-9.-]+(/[a-z0-9._-]+)+):([A-Za-z0-9_][A-Za-z0-9._-]*)@sha256:([0-9a-f]{64})$ ]]; then

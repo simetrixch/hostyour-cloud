@@ -42,7 +42,12 @@ waits until the owner's mirror serves every image the tree at the tag lists (`sc
 copied there by the publish run the tag starts, read back by digest without a login) and every
 tool and chart its `clusters/platform/mirror-sources.table` lists (`scripts/list-mirror-sources.sh`, read back by
 the manifest of its tag, which must name one layer of the row's sha256), for `RELEASE_MIRROR_WAIT` seconds at
-most, 7200 unless set, and writes `release: <tag>` into
+most, 7200 unless set. Before it pins the owner's master, the installation whose zot is `global.buildRegistry`,
+it also waits in that time until the recovery folder `<fqdn>/recovery/` on the storage box holds every archive
+that `clusters/inventories/consumer-build/files/recovery-folder.sh` of the tree at the tag names. It lists the
+folder with `rclone` and the storage-box login of `lifecycle/config.<first label>.env` beside the tree, and
+refuses by name. Where the branch of that installation stands on a tree that writes no recovery folder yet, the
+publish run of the tag writes none either, so the release says so and pins it. Then it writes `release: <tag>` into
 `clusters/active/<fqdn>.yaml` on the installation's own branch — and stops. The installation still
 stands on the state before it: that line RECORDS which state it should stand on and carries none of
 it, because every source of every Application this platform generates targets the install branch.
@@ -193,7 +198,8 @@ publish run writes the folder at every release (`recovery-export`): one OCI arch
 pulls, per own image at the builds of the stage, and the released engine. A pin that moves between two
 platform releases has its archive there before it moves: the release run of the platform's own builds
 writes them before its bump pins them, and the publish run of the engine writes it before it tags the
-release that ansiwise-cli's `release/release.sh` pins. Every one of these runs names and tests the
+release that ansiwise-cli's `release/release.sh` pins. And `release-platform` lists the folder before it
+pins the owner's master to a platform tag. Every one of these runs names and tests the
 archives with `clusters/inventories/consumer-build/files/recovery-folder.sh`. `driver.sh` takes the engine
 out of the folder by the digests `clusters/platform/ansiwise.sha256` states. After `deploy-cluster` it
 fetches every archive the installation's tree names, holds each to the digests the tree states, and
