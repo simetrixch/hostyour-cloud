@@ -44,9 +44,11 @@ the manifest of its tag, which must name one layer of the row's sha256), for `RE
 most, 7200 unless set. Before it pins the owner's master, the installation whose zot is `global.buildRegistry`,
 it also waits in that time until the recovery folder `<fqdn>/recovery/` on the storage box holds every archive
 that `clusters/inventories/consumer-build/files/recovery-folder.sh` of the tree at the tag names. It lists the
-folder with `rclone` and the storage-box login of `lifecycle/config.<first label>.env` beside the tree, and
-refuses by name. Where the branch of that installation stands on a tree that writes no recovery folder yet, the
-publish run of the tag writes none either, so the release says so and pins it. Then it writes `release: <tag>` into
+folder through a short pod it starts on that master over the operator door of `lifecycle/config.<first label>.env`
+beside the tree (`OPERATOR_USER` at `MACHINE_HOST`, or at the fqdn where that is empty), with the rclone image and the
+storage-box login the publish run writes the folder with, so the operator's machine needs no `rclone` and holds no
+value of that login, and it refuses by name. Where the branch of that installation stands on a tree that writes no
+recovery folder yet, the publish run of the tag writes none either, so the release says so and pins it. Then it writes `release: <tag>` into
 `clusters/active/<fqdn>.yaml` on the installation's own branch — and stops. The installation still
 stands on the state before it: that line RECORDS which state it should stand on and carries none of
 it, because every source of every Application this platform generates targets the install branch.
