@@ -188,7 +188,7 @@ global:
   nodeCidrs: []
 
   # THE ADDRESSES OF THE STORAGE BOX THE RECOVERY FOLDER OF THE OWNER'S MASTER IS WRITTEN TO, a /32 per
-  # resolved address of the recovery sub-account's host. Read by the recovery-export-egress pinhole of
+  # resolved address of the host of the installation's storage box. Read by the recovery-export-egress pinhole of
   # clusters/inventories/consumer-build, which admits the recovery-export pod of every run that writes the
   # folder to them on port 22 and nothing else. Empty on the trunk and on every installation but the owner's master;
   # there it is written into clusters/active/<fqdn>.yaml beside nodeCidrs, and that render stops while it

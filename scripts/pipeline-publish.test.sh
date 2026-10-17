@@ -977,7 +977,7 @@ chmod +x "$work/standin-bin/chown"
 box_password=fixture-box-password
 secrets="$(jq -nc --arg user "$REGISTRY_USERNAME" --arg password "$REGISTRY_PASSWORD" --arg box "$box_password" '{"build-git-https": {GITCREDENTIALS: "https://github.invalid"},
   "image-builder-registry-push": {REGISTRY_USERNAME: $user, REGISTRY_PASSWORD: $password},
-  "recovery-box": {host: "box.example.invalid", user: "fixture-recovery", password: $box}}')"
+  "recovery-box": {host: "box.example.invalid", user: "fixture-box-user", password: $box}}')"
 pipeline_run() { # $1 the fixture origin, $2 the release tag, [$3 the webhook's git-url] -> the run's status, its log in $work/run.out
   rm -rf "${work:?}/run" "${work:?}/corepack.log" "${work:?}/chown.log"; mkdir -p "$work/run"
   node "$work/run-pipeline.mjs" "$work/pipeline.json" "$work/run" "$1" "$REPO_URL" \
@@ -1129,9 +1129,9 @@ helm template consumer-build "$root/clusters/inventories/consumer-build" --names
   --set-json 'unit={"name":"hostyour-cloud","repoURL":"https://github.com/simetrixch/hostyour-cloud.git","buildsJson":"[]"}' \
   | yq -o=json 'select(.kind == "Pipeline" and .metadata.name == "hostyour-cloud-publish")' > "$work/platform-pipeline.json" \
   && [ -s "$work/platform-pipeline.json" ] || fail 'the chart renders no hostyour-cloud-publish Pipeline for the platform tree'
-platform_run() { # $1 the fixture origin, $2 the release tag -> the run's status, its log in $work/run.out
+platform_run() { # $1 the fixture origin, $2 the release tag, [$3 the Pipeline file] -> the run's status, its log in $work/run.out
   rm -rf "${work:?}/run"; mkdir -p "$work/run"
-  node "$work/run-pipeline.mjs" "$work/platform-pipeline.json" "$work/run" "$1" https://github.com/simetrixch/hostyour-cloud.git \
+  node "$work/run-pipeline.mjs" "${3:-$work/platform-pipeline.json}" "$work/run" "$1" https://github.com/simetrixch/hostyour-cloud.git \
     "$(jq -nc --arg tag "$2" '{"release-tag": $tag, "git-url": "https://github.com/simetrixch/hostyour-cloud.git"}')" "$secrets" > "$work/run.out" 2>&1
 }
 # The engine of the platform tree is the release binaries_push published above from b1, and its own build is
@@ -1156,32 +1156,60 @@ platform_tree() { # $1 folder, $2 the lines its list of tools and charts prints,
   (cd "$work/b1" && sha256sum "ansiwise-$platform_pin-linux-x64" "ansiwise-rest-$platform_pin-linux-x64") > "$dir/clusters/platform/ansiwise.sha256"
   manifest @digitaplatform/e2e-platform > "$dir/package.json"
 }
-# The storage box as the recovery sub-account sees it: a folder, listed, copied into and fetched from by the
-# three calls the task makes, and only under the sftp login of that sub-account with its password obscured;
-# every call is logged.
+# The storage box as the installation's one login sees it: its root, which holds the installation's other backups
+# beside the recovery folder, made into, listed, copied into and fetched from by the four calls the task makes,
+# and only under the sftp login of that box with its password obscured; every call is logged. A listing of a
+# folder that does not stand fails as rclone 1.75.2 fails it, with exit 3.
 cat > "$work/standin-bin/rclone" <<EOF
 #!/usr/bin/env bash
 set -uo pipefail
 echo "rclone \$*" >> "$work/rclone.log"
 box="$work/box"
 if [ "\$*" = 'obscure -' ]; then printf 'obscured-'; sha256sum | cut -d' ' -f1; exit; fi
-[ "\${RCLONE_CONFIG_BOX_TYPE:-}/\${RCLONE_CONFIG_BOX_HOST:-}/\${RCLONE_CONFIG_BOX_USER:-}" = sftp/box.example.invalid/fixture-recovery ] \
+[ "\${RCLONE_CONFIG_BOX_TYPE:-}/\${RCLONE_CONFIG_BOX_HOST:-}/\${RCLONE_CONFIG_BOX_USER:-}" = sftp/box.example.invalid/fixture-box-user ] \
   && [ "\${RCLONE_CONFIG_BOX_PASS:-}" = "obscured-$(printf '%s' "$box_password" | sha256sum | cut -d' ' -f1)" ] \
-  || { echo "rclone: box: no sftp login of the recovery sub-account" >&2; exit 1; }
+  || { echo "rclone: box: no sftp login of the installation's storage box" >&2; exit 1; }
 mkdir -p "\$box"
-case "\$*" in
-  'lsf --recursive --files-only box:') cd "\$box" && find . -type f | sed 's|^\./||' | sort ;;
-  'copy --ignore-existing --quiet '*' box:')
+folder() { local path="\${1#box:}"; printf '%s' "\$box/\${path%/}"; } # box:<path> -> the folder it names below the root
+case "\$#/\$*" in
+  '2/mkdir box:'*) mkdir -p "\$(folder "\$2")" ;;
+  '4/lsf --recursive --files-only box:'*)
+    [ -d "\$(folder "\$4")" ] || { echo 'rclone: directory not found' >&2; exit 3; }
+    cd "\$(folder "\$4")" && find . -type f | sed 's|^\./||' | sort ;;
+  '5/copy --ignore-existing --quiet '*' box:'*)
     (cd "\$4" && find . -type f | sed 's|^\./||') | while read -r file; do
-      [ ! -e "\$box/\$file" ] || continue
-      mkdir -p "\$box/\$(dirname "\$file")" && cp "\$4/\$file" "\$box/\$file" && echo "rclone: \$file copied" >> "$work/rclone.log" || exit 1
+      target="\$(folder "\$5")/\$file"
+      [ ! -e "\$target" ] || continue
+      mkdir -p "\$(dirname "\$target")" && cp "\$4/\$file" "\$target" && echo "rclone: \$file copied" >> "$work/rclone.log" || exit 1
     done ;;
-  'copyto box:'*' '*) [ -f "\$box/\${2#box:}" ] && mkdir -p "\$(dirname "\$3")" && cp "\$box/\${2#box:}" "\$3" && echo "rclone: \${2#box:} fetched" >> "$work/rclone.log" ;;
+  '3/copyto box:'*) [ -f "\$(folder "\$2")" ] && mkdir -p "\$(dirname "\$3")" && cp "\$(folder "\$2")" "\$3" && echo "rclone: \${2#box:} fetched" >> "$work/rclone.log" ;;
   *) echo "rclone: no call of this pipeline: \$*" >&2; exit 1 ;;
 esac
 EOF
 chmod +x "$work/standin-bin/rclone"
-box_files() { [ ! -d "$work/box" ] || (cd "$work/box" && find . -type f | sed 's|^\./||' | sort); }
+# The recovery folder below the login's root, at the domain of the map both renders take.
+box_domain="$(yq '.global.domain' "$root/scripts/standin/cluster-map.yaml")"
+recovery_dir="$work/box/$box_domain/recovery"
+box_files() { [ ! -d "$recovery_dir" ] || (cd "$recovery_dir" && find . -type f | sed 's|^\./||' | sort); }
+outside_files() { # every file of the box outside the recovery folder, with its sha256
+  [ ! -d "$work/box" ] || (cd "$work/box" && find . -path "./$box_domain/recovery" -prune -o -type f -print | sort | while read -r file; do sha256sum "$file"; done)
+}
+other_backups() { # a box whose root holds the installation's other backups and another installation's recovery folder, and no recovery folder of this one
+  rm -rf "${work:?}/box" "${work:?}/rclone.log"
+  mkdir -p "$work/box/$box_domain/master/20261017T000000Z" "$work/box/$box_domain/prod/tenants/shop/1" "$work/box/other.example.invalid/recovery/engine"
+  printf 'sealed master backup' > "$work/box/$box_domain/master/20261017T000000Z/backup.age"
+  printf 'tenant dump' > "$work/box/$box_domain/prod/tenants/shop/1/dump.gz"
+  printf 'another installation' > "$work/box/other.example.invalid/recovery/engine/x.tar"
+}
+outside_problems() { # $1 the files outside the folder before the run -> what the run did outside the recovery folder, one line each
+  [ "$(outside_files)" = "$1" ] || echo "the files outside $box_domain/recovery/ changed: $(diff <(printf '%s\n' "$1") <(outside_files) | grep '^[<>]' | tr '\n' ' ')"
+  grep '^rclone [^:]' "$work/rclone.log" | grep -vxF 'rclone obscure -' | while read -r call; do
+    case "$call" in
+      *" box:$box_domain/recovery" | *" box:$box_domain/recovery/"* | *" box:$box_domain/recovery "*) ;;
+      *) echo "a call outside $box_domain/recovery/: $call" ;;
+    esac
+  done
+}
 # The fixture registry keeps a repository by its path whatever host names it, so the run mirrors a tool and a
 # chart of its own, which the cases above never pushed.
 platform_tool_url=https://github.com/fixture/platform-tool/releases/download/v1.0.0/platform-tool-linux-amd64
@@ -1191,8 +1219,9 @@ platform_sources="$(REGISTRY="$rendered_registry" source_line tool "$platform_to
 $(REGISTRY="$rendered_registry" source_line chart https://charts.example.invalid platform-chart 1.0.0 "$platform_chart_hex")"
 platform_tree "$work/e11" "$platform_sources" "$(entry "fixture/multi:2.0@$v2s2_list" "$rendered_registry")" "$(entry "fixture/one:1.0.0@$oci_image" "$rendered_registry")"
 commit_tag "$work/e11" "0.5.000-stable-$STAMP"
-rm -rf "$work/box" "$work/rclone.log"; : > "$work/skopeo.log"
+other_backups; outside="$(outside_files)"; : > "$work/skopeo.log"
 platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "PLANTED INNOCENT: the platform tree did not mirror its images: $(cat "$work/run.out")"
+[ -z "$(outside_problems "$outside")" ] || fail "PLANTED INNOCENT: the recovery export reached beyond $box_domain/recovery/: $(outside_problems "$outside")"
 [ "$(tasks_ran)" = 'run: gate ran|run: clone ran|run: scan ran|run: reviewed ran|run: pack skipped|run: build-binaries skipped|run: push skipped|run: mirror ran|run: recovery-export ran|run: SUCCEEDED|' ] \
   || fail "the platform run took another course: $(tasks_ran)"
 grep -qxF "mirror: ${rendered_registry}/simetrixch/ghcr.io/fixture/multi:2.0@$v2s2_list application/vnd.docker.distribution.manifest.list.v2+json read back" "$work/run.out" \
@@ -1214,12 +1243,28 @@ grep -qxF "recovery: images/${oci_image#sha256:}.tar holds $one_name at $oci_ima
   || fail "the recovery folder was not written with every archive held to the tree before the upload: $(cat "$work/run.out")"
 [ "$(grep -c ' oci-archive:' "$work/skopeo.log")" = 4 ] && ! grep ' oci-archive:' "$work/skopeo.log" | grep -qv " docker://${rendered_registry}/simetrixch/" \
   || fail "an archive of the recovery folder was not read from the mirror: $(grep ' oci-archive:' "$work/skopeo.log")"
-! grep -qF "$box_password" "$work/rclone.log" "$work/skopeo.log" "$work/run.out" || fail 'the password of the recovery sub-account reached an argument or the log'
+! grep -qF "$box_password" "$work/rclone.log" "$work/skopeo.log" "$work/run.out" || fail 'the password of the storage box login reached an argument or the log'
 copied="$(grep -c ' copied$' "$work/rclone.log")"
 platform_run "$work/e11" "0.5.000-stable-$STAMP" || fail "a second run of the same tag failed: $(cat "$work/run.out")"
 grep -qxF 'recovery: 0 archives written, 4 already on the storage box' "$work/run.out" && [ "$(grep -c ' copied$' "$work/rclone.log")" = "$copied" ] \
-  && grep -qxF "rclone: engine/$platform_pin.tar fetched" "$work/rclone.log" && grep -qxF 'recovery: 1 archives this run wrote or fetched hold their image' "$work/run.out" \
+  && grep -qxF "rclone: $box_domain/recovery/engine/$platform_pin.tar fetched" "$work/rclone.log" && grep -qxF 'recovery: 1 archives this run wrote or fetched hold their image' "$work/run.out" \
   || fail "a second run wrote an archive the storage box holds, or did not hold the engine it holds to the tree: $(cat "$work/run.out")"
+[ -z "$(outside_problems "$outside")" ] || fail "a second run reached beyond $box_domain/recovery/: $(outside_problems "$outside")"
+# The two shapes of a writer that reaches beyond its folder, each on the same box: present without the mkdir lists a
+# folder the first run on a box does not find, and a writer without the prefix lists and writes the login's root.
+jq 'walk(if type == "string" then gsub("\nrclone mkdir box:[^\n]*"; "") else . end)' "$work/platform-pipeline.json" > "$work/platform-no-mkdir.json"
+jq --arg folder "box:$box_domain/recovery" 'walk(if type == "string" then split($folder) | join("box:") else . end)' "$work/platform-pipeline.json" > "$work/platform-at-root.json"
+! grep -qF 'rclone mkdir' "$work/platform-no-mkdir.json" && ! grep -qF "box:$box_domain" "$work/platform-at-root.json" || fail 'the planted Pipelines were not made'
+other_backups
+platform_run "$work/e11" "0.5.000-stable-$STAMP" "$work/platform-no-mkdir.json" && fail 'PLANTED DEFECT: present listed a recovery folder it never made, and the run passed'
+grep -qxF 'run: recovery-export failed at present' "$work/run.out" && grep -qxF 'rclone: directory not found' "$work/run.out" \
+  || fail "present without the mkdir did not stop the run at the listing of a missing folder: $(cat "$work/run.out")"
+echo "pipeline-publish.test: PLANTED DEFECT (a), red as it must be: $(grep -xF -e 'rclone: directory not found' -e 'run: recovery-export failed at present' "$work/run.out" | tr '\n' ' ')"
+other_backups; outside="$(outside_files)"
+platform_run "$work/e11" "0.5.000-stable-$STAMP" "$work/platform-at-root.json"
+at_root="$(outside_problems "$outside")"
+[ -n "$at_root" ] || fail "PLANTED DEFECT: a writer without the prefix wrote at the login's root, and the check beyond the folder stayed green"
+echo "pipeline-publish.test: PLANTED DEFECT (b), red as it must be: $(printf '%s\n' "$at_root" | head -n 3 | tr '\n' ' ')"
 platform_tree "$work/e12" "$platform_sources" "$(entry "fixture/gone:1.0.0@$oci_image" "$rendered_registry")"
 commit_tag "$work/e12" "0.5.000-stable-$STAMP"
 platform_run "$work/e12" "0.5.000-stable-$STAMP" && fail 'PLANTED DEFECT: the platform tree passed with an image ghcr.io does not hold'
@@ -1298,19 +1343,19 @@ printf '%s  ansiwise-%s-linux-x64\n%s  ansiwise-rest-%s-linux-x64\n' "$(printf '
   "$(printf '%s' "b-$engine_tag" | sha256sum | cut -d' ' -f1)" "$engine_tag" > "$work/engine.sha256"
 # shellcheck source=../clusters/inventories/consumer-build/files/recovery-folder.sh
 [ "$(. "$root/clusters/inventories/consumer-build/files/recovery-folder.sh" \
-  && recovery_archive_digest "$work/box" "engine/$engine_tag.tar" "$engine_name" - "$work/engine.sha256" "$work/engine-unpacked")" = "$pushed" ] \
+  && recovery_archive_digest "$recovery_dir" "engine/$engine_tag.tar" "$engine_name" - "$work/engine.sha256" "$work/engine-unpacked")" = "$pushed" ] \
   || fail 'the recovery archive the engine run wrote is not one the driver takes for the release'
 engine_run "$work/e15" "$engine_tag" || fail "a second run of the same engine release failed: $(cat "$work/run.out")"
-grep -qxF "rclone: engine/$engine_tag.tar fetched" "$work/rclone.log" && grep -qxF "recovery: engine/$engine_tag.tar holds $engine_name at $pushed" "$work/run.out" \
+grep -qxF "rclone: $box_domain/recovery/engine/$engine_tag.tar fetched" "$work/rclone.log" && grep -qxF "recovery: engine/$engine_tag.tar holds $engine_name at $pushed" "$work/run.out" \
   && grep -qxF "publish: simetrixch/ansiwise-cli:$engine_tag tagged at $pushed, which the recovery folder holds" "$work/run.out" \
   || fail "a second run did not hold the archive the storage box holds to the release: $(cat "$work/run.out")"
 # The folder holds another release's bytes under the name of the next one: they are no archive of it.
 other_tag="1.0.011-stable-$STAMP"
 printf 'next\n' > "$work/e15/NEXT"; commit_tag "$work/e15" "$other_tag"
-mkdir -p "$work/other-engine" && tar -xf "$work/box/engine/$engine_tag.tar" -C "$work/other-engine" \
+mkdir -p "$work/other-engine" && tar -xf "$recovery_dir/engine/$engine_tag.tar" -C "$work/other-engine" \
   && jq --arg name "${rendered_registry}/simetrixch/ansiwise-cli:$other_tag" '.manifests[0].annotations["org.opencontainers.image.ref.name"] = $name' \
     "$work/other-engine/index.json" > "$work/other-engine/index.next" && mv "$work/other-engine/index.next" "$work/other-engine/index.json" \
-  && tar -cf "$work/box/engine/$other_tag.tar" -C "$work/other-engine" oci-layout index.json blobs || fail 'the archive of another release could not be planted'
+  && tar -cf "$recovery_dir/engine/$other_tag.tar" -C "$work/other-engine" oci-layout index.json blobs || fail 'the archive of another release could not be planted'
 engine_run "$work/e15" "$other_tag" && fail 'PLANTED DEFECT: the engine was tagged though the recovery folder holds other bytes under its name'
 grep -qxF 'run: recovery-export failed at check' "$work/run.out" && ! grep -q '^run: tag ' "$work/run.out" \
   && grep -qxF "engine/$other_tag.tar holds ${rendered_registry}/simetrixch/ansiwise-cli:$other_tag at $pushed, and it is held to $(cat "$work/run/push/results/digest")" "$work/run.out" \

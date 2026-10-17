@@ -1207,8 +1207,8 @@ spec:
     # the driver runs. An archive that stands on the box is never written again and nothing is deleted, so a
     # release adds only what changed, and the folder grows with every release. The folder is not sealed:
     # everything in it is public, and the driver holds every archive to the digests the tree states in git,
-    # never to a list inside the folder. The login is the recovery sub-account (externalsecret-recovery-box.yaml),
-    # whose base directory is that folder; the pod reaches the box on port 22 through recovery-export-egress
+    # never to a list inside the folder. The login is the installation's storage box login (externalsecret-recovery-box.yaml),
+    # and the steps write below <fqdn>/recovery/ of its root alone; the pod reaches the box on port 22 through recovery-export-egress
     # (networkpolicy.yaml) and nothing else does. The steps are the ones every writer of the folder runs
     # (_helpers.tpl, consumer-build.recoveryExportSteps).
     - name: recovery-export
