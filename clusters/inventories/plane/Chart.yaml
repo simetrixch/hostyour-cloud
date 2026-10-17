@@ -5,9 +5,10 @@ description: |
   Plane, the platform's own project tracker, on the master in its own namespace.
 
   Its PostgreSQL, Redis, RabbitMQ and MinIO run beside it in the same namespace, so nothing beside
-  it holds its data. Every page sits behind the identity provider's forward auth, and Plane's own
-  sign-in follows; only /api/v1, Plane's API-key API, is reached without it. The installation's own
-  address and certificate issuer stand in installation/values/plane.yaml on the install branch.
+  it holds its data. Every page sits behind the identity provider's forward auth, and Plane's
+  sign-in through Forgejo follows; only /api/v1, Plane's API-key API, is reached without it. The
+  installation's own address and certificate issuer stand in installation/values/plane.yaml on
+  the install branch.
 type: application
 dependencies:
   - name: plane-ce
