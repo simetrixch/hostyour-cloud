@@ -49,4 +49,5 @@ chart https://bokysan.github.io/docker-postfix mail 5.1.0 202c9e211dd313990e0cf0
 chart https://argoproj.github.io/argo-helm argo-cd 10.2.1 27e930e366d22c999002008ad5ec7961bda00410a84287210d0fffbee8150885
 chart https://argoproj.github.io/argo-helm argo-cd 10.10.5 ba6447eeed42bc41d1f0527721047b236304e97669a7b6286d02be4a1644ba7a
 chart https://kubernetes-sigs.github.io/headlamp headlamp 0.42.0 1014bc96c7696000645d29bb70336d863d951b2b130683220db1973438b76c40
+chart https://kubernetes-sigs.github.io/headlamp headlamp 0.46.0 faa471a8c5c55125b3dceed1cf73000e1ced18f07e2088e5e12e75292fb9ae62
 chart https://charts.goauthentik.io authentik 2026.5.6 c14732299b5f54910ac40ff0f9a4b47a2905924b1381ab68b1f20c4eddc40eba
