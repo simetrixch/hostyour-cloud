@@ -46,7 +46,8 @@ step() { printf '\n%s══ %s%s\n' "$C_BLD" "$*" "$C_OFF"; }
 
 readonly CONFIG="${1:?the config's path is this script's first argument}"
 ID="${2:-}"
-cleanup() { rm -f "$CONFIG" 2>/dev/null || true; }
+SECRETS=''
+cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
 BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
@@ -98,10 +99,22 @@ if ! command -v rclone >/dev/null 2>&1; then
   say 'rclone is not on this machine; it is what fetches the archives from the storage box, so it is installed now'
   root apt-get install -y -q rclone >/dev/null 2>&1 || die 'rclone could not be installed, and nothing else here reaches the storage box' 69
 fi
-export RCLONE_CONFIG_BOX_TYPE=sftp
-export RCLONE_CONFIG_BOX_HOST="$STORAGE_BOX_HOST"
-export RCLONE_CONFIG_BOX_USER="$STORAGE_BOX_USER"
-RCLONE_CONFIG_BOX_PASS="$(rclone obscure "$STORAGE_BOX_PASSWORD")"; export RCLONE_CONFIG_BOX_PASS
+# A SECRET AN ELEVATED COMMAND NEEDS IS A FILE, never an argument: sudo writes every command it runs, with
+# its arguments, to the system log, and any local account reads an argument in the process list. This
+# shell's own printf is no process, so it writes each secret to a file of mode 600 in a folder in memory
+# that cleanup removes, and the elevated command is given the file's path: gpg the passphrase's, rclone the
+# storage box's, git the file whose extraheader carries the read token.
+SECRETS="$(mktemp -d /dev/shm/aw-restore.XXXXXX)" || die 'no folder in memory could be made for the secrets an elevated command needs, and none of them may stand on its command line' 78
+PASSPHRASE_FILE="$SECRETS/passphrase"
+RCLONE_CONF="$SECRETS/rclone.conf"
+GIT_CONF="$SECRETS/git.conf"
+(
+  umask 077
+  printf '%s' "$BACKUP_PASSPHRASE" > "$PASSPHRASE_FILE"
+  printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF"
+  printf '[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic %s\n' "$(printf 'x-access-token:%s' "$PLATFORM_REPO_READ_PAT" | base64 | tr -d '\n')" > "$GIT_CONF"
+) || die 'the secrets could not be written to files in memory' 78
+export RCLONE_CONFIG="$RCLONE_CONF"
 rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was placed" 69
 good "the storage box $STORAGE_BOX_HOST opens"
 
@@ -120,8 +133,7 @@ rclone lsf "$BACKUPS/$ID/manifest.txt" >/dev/null 2>&1 \
 root install -d -m 700 -o root -g root "$STAGING" "$STAGING/$ID" || die "could not make $STAGING/$ID" 78
 FETCH="$STAGING/$ID/sealed"
 root install -d -m 700 "$FETCH"
-root env RCLONE_CONFIG_BOX_TYPE="$RCLONE_CONFIG_BOX_TYPE" RCLONE_CONFIG_BOX_HOST="$RCLONE_CONFIG_BOX_HOST" RCLONE_CONFIG_BOX_USER="$RCLONE_CONFIG_BOX_USER" RCLONE_CONFIG_BOX_PASS="$RCLONE_CONFIG_BOX_PASS" \
-  rclone copy "$BACKUPS/$ID/" "$FETCH/" --quiet || die "the backup $ID could not be fetched" 69
+root rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$FETCH/" --quiet || die "the backup $ID could not be fetched" 69
 root sh -c "cd '$FETCH' && grep -E '^[0-9a-f]{64}  ' manifest.txt | sha256sum -c --quiet" \
   || die "the checksums in manifest.txt of backup $ID do not hold — the archives are not what was written, and nothing of them is placed" 65
 BACKED_FQDN=$(root grep -E '^FQDN=' "$FETCH/manifest.txt" | cut -d= -f2-)
@@ -138,23 +150,18 @@ step "the platform checkout, standing where deploy-host would put it, with the i
 if root test -d "$CHECKOUT/.git"; then
   say "$CHECKOUT already stands here; the installation's branch is fetched into it"
 else
-  AUTH="$(printf 'x-access-token:%s' "$PLATFORM_REPO_READ_PAT" | base64 | tr -d '\n')"
-  root git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" clone --quiet --branch "$PLATFORM_BRANCH" "https://github.com/$PLATFORM_REPO.git" "$CHECKOUT" \
+  root env GIT_CONFIG_GLOBAL="$GIT_CONF" git clone --quiet --branch "$PLATFORM_BRANCH" "https://github.com/$PLATFORM_REPO.git" "$CHECKOUT" \
     || die "could not clone https://github.com/$PLATFORM_REPO.git ($PLATFORM_BRANCH) to $CHECKOUT" 69
   root chown -R "$OPERATOR_USER:$OPERATOR_USER" "$CHECKOUT"
   good "$CHECKOUT cloned on $PLATFORM_BRANCH, owned by $OPERATOR_USER"
 fi
-AUTH="$(printf 'x-access-token:%s' "$PLATFORM_REPO_READ_PAT" | base64 | tr -d '\n')"
-root -u "$OPERATOR_USER" git -C "$CHECKOUT" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" fetch --quiet origin "refs/heads/$FQDN:refs/heads/$FQDN" \
+root -u "$OPERATOR_USER" env GIT_CONFIG_GLOBAL="$GIT_CONF" git -C "$CHECKOUT" fetch --quiet origin "refs/heads/$FQDN:refs/heads/$FQDN" \
   || die "origin carries no branch $FQDN, or it could not be fetched — the installation's branch is what a restore stands on, and without it this is a first installation, not a restore" 66
 good "branch $FQDN stands in $CHECKOUT at $(root -u "$OPERATOR_USER" git -C "$CHECKOUT" rev-parse --short "refs/heads/$FQDN") — driver.sh finds a checkout that wrote it"
 
 step "the quorum, back beside the checkout"
 root install -d -m 700 -o "$OPERATOR_USER" -g "$OPERATOR_USER" "$CHECKOUT/secrets"
-root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" sh -c 'exec gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 3 -o "$1" -d "$2" 3<<EOF
-$BACKUP_PASSPHRASE
-EOF
-' _ "$CHECKOUT/secrets/vault-${STAGE}.txt" "$FETCH/host--vault-${STAGE}.txt.gpg" \
+root gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$PASSPHRASE_FILE" -o "$CHECKOUT/secrets/vault-${STAGE}.txt" -d "$FETCH/host--vault-${STAGE}.txt.gpg" \
   || die "the quorum could not be opened — the BACKUP_PASSPHRASE in this config is not the one backup $ID was sealed with, and nothing of it is placed" 65
 root chown "$OPERATOR_USER:$OPERATOR_USER" "$CHECKOUT/secrets/vault-${STAGE}.txt"
 root chmod 600 "$CHECKOUT/secrets/vault-${STAGE}.txt"
@@ -168,10 +175,7 @@ for row in "${STORES[@]}"; do
   sealed="$FETCH/${ns}--${pvc}.tar.gpg"
   root test -f "$sealed" || die "backup $ID carries no archive for ${ns}/${pvc} — a backup missing a store is not one this places" 66
   root install -d -m 700 "$PLAIN/${ns}--${pvc}"
-  root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" sh -c 'gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 3 -d "$1" 3<<EOF | tar --numeric-owner -C "$2" -xf -
-$BACKUP_PASSPHRASE
-EOF
-' _ "$sealed" "$PLAIN/${ns}--${pvc}" || die "the archive of ${ns}/${pvc} could not be opened" 65
+  root sh -c 'gpg --batch --quiet --pinentry-mode loopback --passphrase-file "$1" -d "$2" | tar --numeric-owner -C "$3" -xf -' _ "$PASSPHRASE_FILE" "$sealed" "$PLAIN/${ns}--${pvc}" || die "the archive of ${ns}/${pvc} could not be opened" 65
   say "${ns}/${pvc} opened ($(root du -sh "$PLAIN/${ns}--${pvc}" | cut -f1))"
 done
 root rm -rf "$FETCH"

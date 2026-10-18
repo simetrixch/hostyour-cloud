@@ -2751,17 +2751,29 @@ rm -rf "$QUORUM_DIR"
 # one elevated bash that makes or takes them. The cases run each driver's own root(), seal() and
 # placement text against a stand-in of each kind of sudo, with gpg, tar and microk8s stand-ins that
 # record what they are handed, and hold the password out of every file and every line.
+# And no secret is an argument. sudo-rs writes every command it runs, with its arguments, to the system
+# log before it runs it, and any local account reads an argument in the process list. So the stand-ins
+# write their arguments to argv.log, and the cases hold the passphrase, the storage box password and the
+# read token out of every line of it, for the store seal, the quorum seal and the restore's fetch,
+# clone, fetch, quorum opening and store openings, and hold the folder of secret files to mode 700 in
+# /dev/shm, its files to 600, and the folder gone when the driver ends.
 PLANTED_PASSWORD='planted-elevation-password-9c41'
 PLANTED_PASSPHRASE='planted-backup-passphrase-5d27'
+PLANTED_BOX_PASSWORD='planted-box-password-71e8'
+PLANTED_PAT='ghp_planted-read-token-3b6a'
+PLANTED_PAT_BASE64="$(printf 'x-access-token:%s' "$PLANTED_PAT" | base64 | tr -d '\n')"
 STANDIN="$WORK/standin"
 mkdir -p "$STANDIN"
 cat > "$STANDIN/sudo" <<'STANDIN_SUDO'
 #!/usr/bin/env bash
-# sudo as root() calls it: sudo -S -p '' COMMAND... SUDO_STANDIN=nopasswd reads nothing, as a NOPASSWD
-# rule does; SUDO_STANDIN=password reads the first line of standard input as the password and passes on
-# the rest. The command runs with the environment cleared, as sudo's env_reset does.
+# sudo as root() calls it: sudo -S -p '' [-u USER] COMMAND... SUDO_STANDIN=nopasswd reads nothing, as a
+# NOPASSWD rule does; SUDO_STANDIN=password reads the first line of standard input as the password and
+# passes on the rest. The command runs with the environment cleared, as sudo's env_reset does. Every call
+# writes its arguments to argv.log beside it first, as sudo-rs writes them to the system log.
+printf 'sudo %s\n' "$*" >> "$(dirname "$0")/argv.log"
 [ "$#" -ge 4 ] && [ "$1" = -S ] && [ "$2" = -p ] && [ -z "$3" ] || { echo 'sudo stand-in: not called as root() calls it' >&2; exit 2; }
 shift 3
+[ "$1" != -u ] || shift 2
 if [ "$SUDO_STANDIN" = password ]; then
   IFS= read -r given
   [ "$given" = "$SUDO_STANDIN_PASSWORD" ] || { echo 'sudo stand-in: a wrong password' >&2; exit 1; }
@@ -2770,37 +2782,60 @@ exec env -i PATH="$PATH" "$@"
 STANDIN_SUDO
 cat > "$STANDIN/gpg" <<'STANDIN_GPG'
 #!/usr/bin/env bash
-# gpg as seal() calls it: the passphrase on descriptor 3, the data on standard input. The "sealed" file
-# is the passphrase line, then the data, so a case reads both back.
-out=''; fd=''
+# gpg as the drivers call it. The passphrase comes from descriptor 3 (--passphrase-fd 3) or from the first
+# line of a file (--passphrase-file FILE), whose folder and mode it records in secrets.seen beside it.
+# Sealing (--symmetric, the data on standard input): the "sealed" file is the passphrase line, then the
+# data, so a case reads both back. Opening (-d FILE): ends 2 unless the file was sealed with the
+# passphrase it is given; writes the data to -o, or to standard output.
+printf 'gpg %s\n' "$*" >> "$(dirname "$0")/argv.log"
+out=''; fd=''; file=''; open=''; src=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --batch|--yes|--quiet|--symmetric) shift ;;
     --pinentry-mode) [ "$2" = loopback ] || exit 2; shift 2 ;;
     --cipher-algo) [ "$2" = AES256 ] || exit 2; shift 2 ;;
     --passphrase-fd) fd="$2"; shift 2 ;;
+    --passphrase-file) file="$2"; shift 2 ;;
     -o) out="$2"; shift 2 ;;
-    *) echo "gpg stand-in: an argument seal() does not pass: $1" >&2; exit 2 ;;
+    -d) open=1; src="$2"; shift 2 ;;
+    *) echo "gpg stand-in: an argument the drivers do not pass: $1" >&2; exit 2 ;;
   esac
 done
-[ "$fd" = 3 ] && [ -n "$out" ] || exit 2
-IFS= read -r pass <&3 || exit 2
-{ printf 'sealed with: %s\n' "$pass"; cat; } > "$out"
+pass=''
+if [ -n "$file" ] && [ -z "$fd" ]; then
+  printf '%s %s %s\n' "$(stat -c %a "$(dirname "$file")")" "$(stat -c %a "$file")" "$(dirname "$file")" >> "$(dirname "$0")/secrets.seen"
+  IFS= read -r pass < "$file" || [ -n "$pass" ] || exit 2
+elif [ "$fd" = 3 ] && [ -z "$file" ]; then
+  IFS= read -r pass <&3 || exit 2
+else
+  exit 2
+fi
+if [ -n "$open" ]; then
+  IFS= read -r first < "$src"
+  [ "$first" = "sealed with: $pass" ] || { echo 'gpg: decryption failed: Bad session key' >&2; exit 2; }
+  if [ -n "$out" ]; then tail -n +2 "$src" > "$out"; else tail -n +2 "$src"; fi
+else
+  [ -n "$out" ] || exit 2
+  { printf 'sealed with: %s\n' "$pass"; cat; } > "$out"
+fi
 STANDIN_GPG
 cat > "$STANDIN/tar" <<'STANDIN_TAR'
 #!/usr/bin/env bash
-# tar as the store loop calls it: tar --numeric-owner -C DIR -cf - . It writes DIR/payload, and ends 70
-# half way where DIR/fails stands.
-dir=''; stream=''
+# tar as the drivers call it: tar --numeric-owner -C DIR -cf - . writes DIR/payload to standard output, and
+# ends 70 half way where DIR/fails stands; tar --numeric-owner -C DIR -xf - writes standard input to DIR/payload.
+printf 'tar %s\n' "$*" >> "$(dirname "$0")/argv.log"
+dir=''; stream=''; extract=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --numeric-owner|.) shift ;;
     -C) dir="$2"; shift 2 ;;
     -cf) stream="$2"; shift 2 ;;
-    *) echo "tar stand-in: an argument the store loop does not pass: $1" >&2; exit 2 ;;
+    -xf) stream="$2"; extract=1; shift 2 ;;
+    *) echo "tar stand-in: an argument the drivers do not pass: $1" >&2; exit 2 ;;
   esac
 done
 [ "$stream" = - ] && [ -n "$dir" ] || exit 2
+if [ -n "$extract" ]; then cat > "$dir/payload"; exit 0; fi
 if [ -e "$dir/fails" ]; then head -c 1000 "$dir/payload"; exit 70; fi
 cat "$dir/payload"
 STANDIN_TAR
@@ -2808,28 +2843,133 @@ printf '%s\n' '#!/usr/bin/env bash' \
   '# microk8s kubectl apply -f - as the placement script calls it: it records what it is handed.' \
   '[ "$1 $2 $3 $4" = "kubectl apply -f -" ] || exit 2' \
   "cat >> '$STANDIN/kubectl.log'" > "$STANDIN/microk8s"
-chmod 700 "$STANDIN/sudo" "$STANDIN/gpg" "$STANDIN/tar" "$STANDIN/microk8s"
+cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
+#!/usr/bin/env bash
+# rclone as the drivers call it. obscure takes the password on standard input (obscure -) or as an argument
+# and answers obscured-of-<it>. Every other call needs the remote box defined, as rclone reads it: by the
+# file --config or RCLONE_CONFIG names, or by RCLONE_CONFIG_BOX_* variables, with the host, the user and
+# the obscured password box.expected holds; it ends 1 otherwise. copy puts box-backup/ into its destination.
+here="$(dirname "$0")"
+printf 'rclone %s\n' "$*" >> "$here/argv.log"
+conf="${RCLONE_CONFIG:-}"
+args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --config) conf="$2"; shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]}"
+if [ "$1" = obscure ]; then
+  if [ "$2" = - ]; then IFS= read -r given; else given="$2"; fi
+  printf 'obscured-of-%s\n' "$given"
+  exit 0
+fi
+{ IFS= read -r host; IFS= read -r user; IFS= read -r pass; } < "$here/box.expected"
+if [ -n "$conf" ] && [ -f "$conf" ]; then
+  [ "$(sed -E 's/^([a-z]+) *= */\1=/' "$conf")" = "$(printf '[box]\ntype=sftp\nhost=%s\nuser=%s\npass=%s' "$host" "$user" "$pass")" ] \
+    || { echo 'rclone stand-in: the config does not define the remote box' >&2; exit 1; }
+elif [ "${RCLONE_CONFIG_BOX_TYPE:-}" = sftp ] && [ "${RCLONE_CONFIG_BOX_HOST:-}" = "$host" ] && [ "${RCLONE_CONFIG_BOX_USER:-}" = "$user" ] && [ "${RCLONE_CONFIG_BOX_PASS:-}" = "$pass" ]; then
+  :
+else
+  echo 'rclone stand-in: the remote box is not defined' >&2; exit 1
+fi
+case "$1" in
+  lsd|lsf) exit 0 ;;
+  copy) cp -R "$here/box-backup/." "$3" ;;
+  *) echo "rclone stand-in: a call the drivers do not make: $1" >&2; exit 2 ;;
+esac
+STANDIN_RCLONE
+cat > "$STANDIN/git" <<'STANDIN_GIT'
+#!/usr/bin/env bash
+# git as the restore calls it: git [-C DIR] [-c KEY=VALUE] clone|fetch|rev-parse ... clone and fetch need the
+# header git.expected holds for https://github.com/, read the way git reads it: from -c, and from the file
+# GIT_CONFIG_GLOBAL names. Without it they end 128. clone makes its destination's .git; rev-parse answers a hash.
+here="$(dirname "$0")"
+printf 'git %s\n' "$*" >> "$here/argv.log"
+real="$(PATH="${PATH#"$here:"}" command -v git)"
+globals=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -C) shift 2 ;;
+    -c) globals+=(-c "$2"); shift 2 ;;
+    *) break ;;
+  esac
+done
+cmd="$1"; shift
+case "$cmd" in
+  rev-parse) echo abc1234; exit 0 ;;
+  clone|fetch) ;;
+  *) echo "git stand-in: a command the restore does not run: $cmd" >&2; exit 2 ;;
+esac
+header="$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-/dev/null}" "$real" "${globals[@]}" config --get-urlmatch http.extraheader https://github.com/ 2>/dev/null)"
+[ "$header" = "$(cat "$here/git.expected")" ] || { echo 'fatal: could not read Username for https://github.com: terminal prompts disabled' >&2; exit 128; }
+if [ "$cmd" = clone ]; then for last; do :; done; mkdir -p "$last/.git"; fi
+STANDIN_GIT
+cat > "$STANDIN/install" <<'STANDIN_INSTALL'
+#!/usr/bin/env bash
+# install as the restore calls it as root. An account that is not root cannot give a folder away, so -o and -g go.
+real="$(PATH="${PATH#"$(dirname "$0"):"}" command -v install)"
+args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|-g) shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+exec "$real" "${args[@]}"
+STANDIN_INSTALL
+printf '%s\n' '#!/usr/bin/env bash' '# chown as the restore calls it as root: an account that is not root cannot give a file away.' 'exit 0' > "$STANDIN/chown"
+chmod 700 "$STANDIN/sudo" "$STANDIN/gpg" "$STANDIN/tar" "$STANDIN/microk8s" "$STANDIN/rclone" "$STANDIN/git" "$STANDIN/install" "$STANDIN/chown"
 
 BACKUP_ROOT="$(grep '^root() ' "$HERE/master-backup-driver.sh")"
 BACKUP_SEAL="$(sed -n '/^seal() {/,/^}/p' "$HERE/master-backup-driver.sh")"
 RESTORE_ROOT="$(grep '^root() ' "$HERE/master-restore-driver.sh")"
 RESTORE_STORES="$(sed -n '/^STORES=($/,/^)$/p' "$HERE/master-restore-driver.sh")"
 RESTORE_PLACEMENT="$(sed -n '/^PLACE=/,/^root chmod 700 "\$PLACE"$/p' "$HERE/master-restore-driver.sh")"
-for lifted in BACKUP_ROOT BACKUP_SEAL RESTORE_ROOT RESTORE_STORES RESTORE_PLACEMENT; do
+BACKUP_CLEANUP="$(sed -n "/^SECRETS=''/,/^trap cleanup/p" "$HERE/master-backup-driver.sh")"
+BACKUP_SECRETS="$(sed -n '/^SECRETS="\$(mktemp/,/^( umask 077/p' "$HERE/master-backup-driver.sh")"
+BACKUP_OBSCURE="$(grep '^RCLONE_CONFIG_BOX_PASS=' "$HERE/master-backup-driver.sh")"
+RESTORE_CLEANUP="$(sed -n "/^SECRETS=''/,/^trap cleanup/p" "$HERE/master-restore-driver.sh")"
+RESTORE_SECRETS="$(sed -n '/^SECRETS="\$(mktemp/,/^export RCLONE_CONFIG=/p' "$HERE/master-restore-driver.sh")"
+RESTORE_FETCHED="$(sed -n '/^step "the backup \$ID, fetched and checked"/,/^good "\${#STORES\[@\]} store(s) stand opened/p' "$HERE/master-restore-driver.sh")"
+for lifted in BACKUP_ROOT BACKUP_SEAL BACKUP_CLEANUP BACKUP_SECRETS BACKUP_OBSCURE RESTORE_ROOT RESTORE_STORES RESTORE_PLACEMENT RESTORE_CLEANUP RESTORE_SECRETS RESTORE_FETCHED; do
   [ -n "${!lifted}" ] || fail "the drivers carry no text for $lifted — nothing below measures what reaches an elevated command"
 done
-BACKUP_TEXT="$BACKUP_ROOT"$'\n'"$BACKUP_SEAL"
+BACKUP_TEXT="$BACKUP_CLEANUP"$'\n'"$BACKUP_SECRETS"$'\n'"$BACKUP_ROOT"$'\n'"$BACKUP_OBSCURE"$'\n'"$BACKUP_SEAL"
 
-# shellcheck disable=SC2034 # the passphrase is read by the lifted seal()
-sealed_by() { # <sudo kind> <the text lifted first> <command line...> — its code is the command line's; what it printed stands in $OUT/sealed.out and $OUT/sealed.err
+commands_wrong() { # says which planted secret stands in a line of $STANDIN/argv.log, which every stand-in writes its arguments to; ends 0
+  grep -qF "$PLANTED_PASSPHRASE" "$STANDIN/argv.log" && echo 'the backup passphrase stands on a command line'
+  grep -qF "$PLANTED_BOX_PASSWORD" "$STANDIN/argv.log" && echo 'the storage box password stands on a command line'
+  grep -qF "$PLANTED_PAT" "$STANDIN/argv.log" && echo 'the read token stands on a command line'
+  grep -qF "$PLANTED_PAT_BASE64" "$STANDIN/argv.log" && echo 'the read token stands on a command line, in base64'
+  grep -qF "$PLANTED_PASSWORD" "$STANDIN/argv.log" && echo 'the elevation password stands on a command line'
+  return 0
+}
+secrets_wrong() { # <secrets.seen> — says what is wrong with the folders the gpg stand-in was handed its passphrase file in, and removes them; ends 0
+  local mode_folder mode_file folder
+  if [ ! -s "$1" ]; then echo 'no passphrase reached gpg through a file'; return 0; fi
+  while read -r mode_folder mode_file folder; do
+    [ "$mode_folder $mode_file" = '700 600' ] || echo "the folder of secrets stood at mode $mode_folder and its file at $mode_file, not at 700 and 600"
+    case "$folder" in /dev/shm/*) ;; *) echo "the folder of secrets stood in $folder, not in /dev/shm" ;; esac
+    if [ -e "$folder" ]; then echo "the folder of secrets $folder stands after the driver ended"; rm -rf "$folder"; fi
+  done < "$1"
+  return 0
+}
+# shellcheck disable=SC2034 # the lifted text reads these
+sealed_by() { # <sudo kind> <the text lifted first> <command line...> — its code is the command line's; what it printed stands in $OUT/sealed.out and $OUT/sealed.err, what every stand-in was handed in $STANDIN/argv.log
   local kind="$1" text="$2"; shift 2
+  rm -f "$STANDIN/secrets.seen"; : > "$STANDIN/argv.log"
   ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
+    umask 022
     set -uo pipefail
-    ELEVATION_PASSWORD="$PLANTED_PASSWORD"; BACKUP_PASSPHRASE="$PLANTED_PASSPHRASE"
+    die() { echo "die: $1" >&2; exit "${2:-1}"; }
+    CONFIG="$WORK/seal-config"; : > "$CONFIG"
+    ELEVATION_PASSWORD="$PLANTED_PASSWORD"; BACKUP_PASSPHRASE="$PLANTED_PASSPHRASE"; STORAGE_BOX_PASSWORD="$PLANTED_BOX_PASSWORD"
     eval "$text"
     "$@" ) < /dev/null > "$OUT/sealed.out" 2> "$OUT/sealed.err"
 }
-seal_holds() { # <sudo kind> <text> <sealed file> <the bytes it must hold> <command line...> — ends 0 when the sealed file is the passphrase line and those bytes, and the password stands nowhere; what is wrong stands in $OUT/verdict
+seal_holds() { # <sudo kind> <text> <sealed file> <the bytes it must hold> <command line...> — ends 0 when the sealed file is the passphrase line and those bytes, no secret stands on a command line, and the folder of secrets was right and is gone; what is wrong stands in $OUT/verdict
   local kind="$1" text="$2" sealed="$3" expected="$4"; shift 4
   local code=0
   : > "$OUT/verdict"
@@ -2844,6 +2984,8 @@ seal_holds() { # <sudo kind> <text> <sealed file> <the bytes it must hold> <comm
   if [ -f "$sealed" ] && grep -qF "$PLANTED_PASSWORD" "$sealed" "$OUT/sealed.out" "$OUT/sealed.err"; then
     echo 'the elevation password stands in the sealed file or in what the seal printed' >> "$OUT/verdict"
   fi
+  commands_wrong >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
 }
 
@@ -2892,7 +3034,7 @@ ok 'the planted old sealing is caught for a store and for the quorum, under each
 # planted defect: a seal that does not fail when its tar does
 NO_PIPEFAIL="$(printf '%s\n' "$BACKUP_SEAL" | sed 's/set -o pipefail//')"
 [ "$NO_PIPEFAIL" != "$BACKUP_SEAL" ] || fail 'the planted seal without pipefail was not planted — the probe proves nothing'
-S_CODE=0; sealed_by nopasswd "$BACKUP_ROOT"$'\n'"$NO_PIPEFAIL" seal "$SEAL_DIR/failing.gpg" tar --numeric-owner -C "$SEAL_DIR/store-failing" -cf - . || S_CODE=$?
+S_CODE=0; sealed_by nopasswd "${BACKUP_TEXT/"$BACKUP_SEAL"/"$NO_PIPEFAIL"}" seal "$SEAL_DIR/failing.gpg" tar --numeric-owner -C "$SEAL_DIR/store-failing" -cf - . || S_CODE=$?
 [ "$S_CODE" = 0 ] || fail "the planted seal without pipefail was not the defect it is: it ended with $S_CODE"
 ok 'the planted seal without pipefail ends 0 on a tar that failed, where the real one ends 70'
 
@@ -2952,6 +3094,177 @@ placement_holds nopasswd "$OLD_PLACEMENT" || true
 grep -qF 'the elevation password stands in restore-data.sh' "$OUT/verdict" \
   || fail "the planted old placement under a sudo that asks no password did not write the password into restore-data.sh: $(cat "$OUT/verdict")"
 ok 'the planted old placement is caught under each sudo: where none asks, restore-data.sh holds the password line and driver.sh prints it'
+
+# ── no secret is an argument of any command, and the files that carry them are right and gone ─
+# The backup: its seal of a store and of the quorum, and the line that obscures the storage box password.
+plant() { # <text> <the line it carries> <the line to put in its place> — the text so changed stands in $PLANTED_TEXT; a line the text does not carry fails the run
+  PLANTED_TEXT="${1/"$2"/"$3"}"
+  [ "$PLANTED_TEXT" != "$1" ] || fail "a planted defect was not planted — the probe proves nothing: $2"
+}
+caught_for() { # <the name of the planted defect> <what the verdict must say> [<what else it may say>...] — the case just run was refused for the first, and for nothing but those
+  local name="$1" line fragment said=''
+  shift
+  while IFS= read -r line; do
+    said=''
+    for fragment in "$@"; do case "$line" in *"$fragment"*) said=1 ;; esac; done
+    [ -n "$said" ] || fail "the planted $name was refused for more than it is: $line"
+  done < "$OUT/verdict"
+  grep -qF "$1" "$OUT/verdict" || fail "the planted $name was not refused for what it is: $(cat "$OUT/verdict")"
+}
+for kind in nopasswd password; do
+  seal_holds "$kind" "$BACKUP_TEXT" "$SEAL_DIR/store.gpg" "$SEAL_DIR/store/payload" \
+    seal "$SEAL_DIR/store.gpg" tar --numeric-owner -C "$SEAL_DIR/store" -cf - . \
+    || fail "backup: a store was sealed with a secret on a command line, or its secrets were not kept right, under a sudo that reads $kind: $(cat "$OUT/verdict")"
+  grep -qF -- '--passphrase-file' "$STANDIN/argv.log" || fail 'backup: the seal did not give gpg its passphrase as a file'
+  seal_holds "$kind" "$BACKUP_TEXT" "$SEAL_DIR/quorum.gpg" "$SEAL_DIR/quorum.txt" \
+    seal "$SEAL_DIR/quorum.gpg" cat "$SEAL_DIR/quorum.txt" \
+    || fail "backup: the quorum was sealed with a secret on a command line, or its secrets were not kept right, under a sudo that reads $kind: $(cat "$OUT/verdict")"
+done
+ok 'backup: no secret stands on a command line for a store or the quorum, the passphrase file is at 600 in a folder at 700 in /dev/shm, and the folder is gone when the driver ends'
+
+# planted defects, one line each: the seal as it was (the passphrase handed to root through env), the obscure
+# of the box password on the operator's own command line, a clean-up that leaves the folder, a file written
+# under an open umask
+IFS= read -r -d '' PRIOR_SEAL <<'PRIOR' || true
+seal() {
+  root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" bash -c 'set -o pipefail
+out=$1; shift
+"$@" | gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 -o "$out" 3<<EOF
+$BACKUP_PASSPHRASE
+EOF
+' _ "$@"
+}
+PRIOR
+plant "$BACKUP_TEXT" "$BACKUP_SEAL" "${PRIOR_SEAL%$'\n'}"; PLANTED_PRIOR_SEAL="$PLANTED_TEXT"
+plant "$BACKUP_TEXT" "$(printf '%s\n' "$BACKUP_OBSCURE")" "RCLONE_CONFIG_BOX_PASS=\"\$(rclone obscure \"\$STORAGE_BOX_PASSWORD\")\"; export RCLONE_CONFIG_BOX_PASS"; PLANTED_OBSCURE="$PLANTED_TEXT"
+plant "$BACKUP_TEXT" 'rm -rf "$SECRETS" 2>/dev/null || true' 'true'; PLANTED_KEPT="$PLANTED_TEXT"
+plant "$BACKUP_TEXT" '( umask 077; printf' '( printf'; PLANTED_OPEN_UMASK="$PLANTED_TEXT"
+for kind in nopasswd password; do
+  ! seal_holds "$kind" "$PLANTED_PRIOR_SEAL" "$SEAL_DIR/prior.gpg" "$SEAL_DIR/store/payload" seal "$SEAL_DIR/prior.gpg" tar --numeric-owner -C "$SEAL_DIR/store" -cf - . \
+    || fail "the planted seal that hands the passphrase to root through env was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'seal with the passphrase in env' 'the backup passphrase stands on a command line' 'no passphrase reached gpg through a file'
+  ! seal_holds "$kind" "$PLANTED_OBSCURE" "$SEAL_DIR/obscure.gpg" "$SEAL_DIR/store/payload" seal "$SEAL_DIR/obscure.gpg" tar --numeric-owner -C "$SEAL_DIR/store" -cf - . \
+    || fail "the planted obscure of the box password as an argument was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'obscure of the box password as an argument' 'the storage box password stands on a command line'
+  ! seal_holds "$kind" "$PLANTED_KEPT" "$SEAL_DIR/kept.gpg" "$SEAL_DIR/store/payload" seal "$SEAL_DIR/kept.gpg" tar --numeric-owner -C "$SEAL_DIR/store" -cf - . \
+    || fail "the planted clean-up that leaves the folder was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'clean-up that leaves the folder' 'stands after the driver ended'
+  ! seal_holds "$kind" "$PLANTED_OPEN_UMASK" "$SEAL_DIR/umask.gpg" "$SEAL_DIR/store/payload" seal "$SEAL_DIR/umask.gpg" tar --numeric-owner -C "$SEAL_DIR/store" -cf - . \
+    || fail "the planted passphrase file written under an open umask was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'passphrase file written under an open umask' 'its file at 644'
+done
+ok 'the planted seals are caught under each sudo: the passphrase in env, the box password as an argument, a folder left behind, a file under an open umask'
+
+# The restore: the fetch, the clone, the fetch of the branch, the opening of the quorum and of every store,
+# as the driver's own text runs them against a backup the rclone stand-in serves.
+restore_rows() { ( STAGE=prod; eval "$RESTORE_STORES"; printf '%s\n' "${STORES[@]}" ); } # the restore's store rows, resolved for stage prod
+RESTORED_ID=20261018T000001Z
+BOX_HOST='box.example.invalid'
+BOX_USER='boxuser'
+printf '%s\n' "$BOX_HOST" "$BOX_USER" "obscured-of-$PLANTED_BOX_PASSWORD" > "$STANDIN/box.expected"
+printf 'AUTHORIZATION: basic %s\n' "$PLANTED_PAT_BASE64" > "$STANDIN/git.expected"
+mkdir -p "$STANDIN/box-backup"
+( cd "$STANDIN/box-backup"
+  while IFS='|' read -r ns pvc size; do
+    { printf 'sealed with: %s\n' "$PLANTED_PASSPHRASE"; cat "$SEAL_DIR/store/payload"; } > "${ns}--${pvc}.tar.gpg"
+  done < <(restore_rows)
+  { printf 'sealed with: %s\n' "$PLANTED_PASSPHRASE"; cat "$SEAL_DIR/quorum.txt"; } > host--vault-prod.txt.gpg
+  { printf 'FQDN=master.example.invalid\nSTAGE=prod\nID=%s\nRELEASE=\nSTORES=%s\n' "$RESTORED_ID" "$(restore_rows | wc -l | tr -d ' ')"; sha256sum -- *.gpg; } > manifest.txt )
+# shellcheck disable=SC2034 # the lifted text reads these
+restore_holds() { # <sudo kind> <the secrets text> <the fetch text> — ends 0 when the text ran to its end, placed every store and the quorum whole, no secret stood on a command line or in what it printed, and the folder of secrets was right and is gone; what is wrong stands in $OUT/verdict
+  local kind="$1" secrets_text="$2" fetched_text="$3" dir="$WORK/restore-$1" code=0 row ns pvc size stores
+  : > "$OUT/verdict"
+  rm -rf "$dir"; mkdir -p "$dir/staging" "$dir/checkout"
+  rm -f "$STANDIN/secrets.seen"; : > "$STANDIN/argv.log"
+  ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
+    umask 022
+    set -uo pipefail
+    die() { echo "die: $1" >&2; exit "${2:-1}"; }; say() { echo "say: $*"; }; good() { echo "good: $*"; }
+    warn() { echo "warn: $*"; }; step() { echo "step: $*"; }
+    CONFIG="$dir/config"; : > "$CONFIG"
+    FQDN=master.example.invalid STAGE=prod OPERATOR_USER=op ID="$RESTORED_ID"
+    PLATFORM_REPO=acme/cloud PLATFORM_BRANCH=master PLATFORM_REPO_READ_PAT="$PLANTED_PAT"
+    STORAGE_BOX_HOST="$BOX_HOST" STORAGE_BOX_USER="$BOX_USER" STORAGE_BOX_PASSWORD="$PLANTED_BOX_PASSWORD"
+    BACKUP_PASSPHRASE="$PLANTED_PASSPHRASE" ELEVATION_PASSWORD="$PLANTED_PASSWORD"
+    STAGING="$dir/staging" CHECKOUT="$dir/checkout/platform" BACKUPS="box:$FQDN/master"
+    eval "$RESTORE_CLEANUP"
+    eval "$RESTORE_ROOT"
+    eval "$RESTORE_STORES"
+    eval "$secrets_text"
+    eval "$fetched_text" ) < /dev/null > "$OUT/restore.out" 2> "$OUT/restore.err" || code=$?
+  [ "$code" = 0 ] || echo "the restore's text ended with $code: $(tail -n 2 "$OUT/restore.err" | tr '\n' ' ')" >> "$OUT/verdict"
+  stores="$(restore_rows | wc -l | tr -d ' ')"
+  grep -qF "good: $stores store(s) stand opened" "$OUT/restore.out" || echo 'the restore did not open every store' >> "$OUT/verdict"
+  cmp -s "$dir/checkout/platform/secrets/vault-prod.txt" "$SEAL_DIR/quorum.txt" || echo 'the quorum did not arrive whole beside the checkout' >> "$OUT/verdict"
+  while IFS='|' read -r ns pvc size; do
+    cmp -s "$dir/staging/$RESTORED_ID/stores/${ns}--${pvc}/payload" "$SEAL_DIR/store/payload" || echo "the store ${ns}/${pvc} did not arrive whole" >> "$OUT/verdict"
+  done < <(restore_rows)
+  commands_wrong >> "$OUT/verdict"
+  if grep -qF -e "$PLANTED_PASSPHRASE" -e "$PLANTED_BOX_PASSWORD" -e "$PLANTED_PAT" -e "$PLANTED_PASSWORD" "$OUT/restore.out" "$OUT/restore.err"; then
+    echo 'a secret stands in what the restore printed' >> "$OUT/verdict"
+  fi
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+for kind in nopasswd password; do
+  restore_holds "$kind" "$RESTORE_SECRETS" "$RESTORE_FETCHED" \
+    || fail "restore: a secret stood on a command line, or a store did not arrive, or the secrets were not kept right, under a sudo that reads $kind: $(cat "$OUT/verdict")"
+done
+ok 'restore: the fetch, the clone, the fetch of the branch and every opening carry no secret on a command line, the quorum and every store arrive whole, and the folder of secrets is at 700 in /dev/shm with its files at 600 and gone at the end'
+
+# planted defects, each the line as it was before it carried the secret by path
+FETCH_LINE='root rclone --config "$RCLONE_CONF" copy'
+FETCH_PRIOR='root env RCLONE_CONFIG_BOX_TYPE=sftp RCLONE_CONFIG_BOX_HOST="$STORAGE_BOX_HOST" RCLONE_CONFIG_BOX_USER="$STORAGE_BOX_USER" RCLONE_CONFIG_BOX_PASS="$(printf '"'%s\\n'"' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" rclone copy'
+CLONE_LINE='root env GIT_CONFIG_GLOBAL="$GIT_CONF" git clone'
+CLONE_PRIOR='root git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf '"'x-access-token:%s'"' "$PLATFORM_REPO_READ_PAT" | base64 | tr -d '"'\\n'"')" clone'
+BRANCH_LINE='root -u "$OPERATOR_USER" env GIT_CONFIG_GLOBAL="$GIT_CONF" git -C "$CHECKOUT" fetch'
+BRANCH_PRIOR='root -u "$OPERATOR_USER" git -C "$CHECKOUT" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf '"'x-access-token:%s'"' "$PLATFORM_REPO_READ_PAT" | base64 | tr -d '"'\\n'"')" fetch'
+QUORUM_LINE='root gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$PASSPHRASE_FILE" -o "$CHECKOUT/secrets/vault-${STAGE}.txt" -d "$FETCH/host--vault-${STAGE}.txt.gpg" \'
+IFS= read -r -d '' QUORUM_PRIOR <<'PRIOR' || true
+root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" sh -c 'exec gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 3 -o "$1" -d "$2" 3<<EOF
+$BACKUP_PASSPHRASE
+EOF
+' _ "$CHECKOUT/secrets/vault-${STAGE}.txt" "$FETCH/host--vault-${STAGE}.txt.gpg" \
+PRIOR
+STORE_LINE='  root sh -c '"'"'gpg --batch --quiet --pinentry-mode loopback --passphrase-file "$1" -d "$2" | tar --numeric-owner -C "$3" -xf -'"'"' _ "$PASSPHRASE_FILE" "$sealed" "$PLAIN/${ns}--${pvc}" || die "the archive of ${ns}/${pvc} could not be opened" 65'
+IFS= read -r -d '' STORE_PRIOR <<'PRIOR' || true
+  root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" sh -c 'gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 3 -d "$1" 3<<EOF | tar --numeric-owner -C "$2" -xf -
+$BACKUP_PASSPHRASE
+EOF
+' _ "$sealed" "$PLAIN/${ns}--${pvc}" || die "the archive of ${ns}/${pvc} could not be opened" 65
+PRIOR
+OBSCURE_LINE='"$(printf '"'%s\\n'"' "$STORAGE_BOX_PASSWORD" | rclone obscure -)"'
+for kind in nopasswd password; do
+  plant "$RESTORE_FETCHED" "$FETCH_LINE" "$FETCH_PRIOR"
+  ! restore_holds "$kind" "$RESTORE_SECRETS" "$PLANTED_TEXT" || fail "the planted fetch with the box password in env was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'fetch with the box password in env' 'the storage box password stands on a command line'
+  plant "$RESTORE_FETCHED" "$CLONE_LINE" "$CLONE_PRIOR"
+  ! restore_holds "$kind" "$RESTORE_SECRETS" "$PLANTED_TEXT" || fail "the planted clone with the token in -c was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'clone with the token in -c' 'the read token stands on a command line'
+  plant "$RESTORE_FETCHED" "$BRANCH_LINE" "$BRANCH_PRIOR"
+  ! restore_holds "$kind" "$RESTORE_SECRETS" "$PLANTED_TEXT" || fail "the planted fetch of the branch with the token in -c was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'fetch of the branch with the token in -c' 'the read token stands on a command line'
+  plant "$RESTORE_FETCHED" "$QUORUM_LINE" "${QUORUM_PRIOR%$'\n'}"
+  ! restore_holds "$kind" "$RESTORE_SECRETS" "$PLANTED_TEXT" || fail "the planted opening of the quorum with the passphrase in env was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'opening of the quorum with the passphrase in env' 'the backup passphrase stands on a command line'
+  plant "$RESTORE_FETCHED" "$STORE_LINE" "${STORE_PRIOR%$'\n'}"
+  ! restore_holds "$kind" "$RESTORE_SECRETS" "$PLANTED_TEXT" || fail "the planted opening of a store with the passphrase in env was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'opening of a store with the passphrase in env' 'the backup passphrase stands on a command line'
+  plant "$RESTORE_SECRETS" "$OBSCURE_LINE" '"$(rclone obscure "$STORAGE_BOX_PASSWORD")"'
+  ! restore_holds "$kind" "$PLANTED_TEXT" "$RESTORE_FETCHED" || fail "the planted obscure of the box password as an argument was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'obscure of the box password as an argument' 'the storage box password stands on a command line'
+  plant "$RESTORE_SECRETS" 'umask 077' 'true'
+  ! restore_holds "$kind" "$PLANTED_TEXT" "$RESTORE_FETCHED" || fail "the planted secret files written under an open umask were not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'secret files written under an open umask' 'its file at 644'
+done
+# a clean-up that leaves the folder: the text lifted first is the one that changes
+plant "$RESTORE_CLEANUP" 'rm -rf "$SECRETS" 2>/dev/null || true' 'true'
+RESTORE_KEPT="$PLANTED_TEXT"
+RESTORE_CLEANUP_CLEAN="$RESTORE_CLEANUP"; RESTORE_CLEANUP="$RESTORE_KEPT"
+! restore_holds nopasswd "$RESTORE_SECRETS" "$RESTORE_FETCHED" || fail 'the planted clean-up that leaves the folder was not caught — the probe proves nothing'
+caught_for 'clean-up that leaves the folder' 'stands after the driver ended'
+RESTORE_CLEANUP="$RESTORE_CLEANUP_CLEAN"
+ok 'the planted restore lines are caught under each sudo: the box password in env or as an argument, the token in -c, the passphrase in env for the quorum and for a store, files under an open umask, a folder left behind'
 rm -rf "$STANDIN" "$SEAL_DIR" "$WORK"/placement-*
 
 # ===========================================================================

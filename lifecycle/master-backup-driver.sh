@@ -22,8 +22,9 @@
 #
 # SEALED BEFORE IT LEAVES. Every archive is passed through gpg with the config's BACKUP_PASSPHRASE
 # before it is written, so the storage box holds the installation's every credential and can open
-# none of it. The passphrase reaches this machine on the session's standard input, is read into the
-# environment and never lands in a file.
+# none of it. The passphrase reaches this machine on the session's standard input, and gpg is given
+# it by the path of a file of mode 600 in a folder in memory (/dev/shm) that is removed when this ends.
+# Never as an argument: sudo writes the arguments of every command it runs to the system log.
 #
 # WHERE IT GOES. box:<fqdn>/master/<id>/ on the storage box. Everything of one installation lives
 # under its FQDN: the unit backups the Manager writes stand beside this, under box:<fqdn>/<stage>/.
@@ -42,7 +43,8 @@ die()  { printf '%s   ✗ %s%s\n' "$C_RED" "$1" "$C_OFF" >&2; exit "${2:-1}"; }
 step() { printf '\n%s══ %s%s\n' "$C_BLD" "$*" "$C_OFF"; }
 
 readonly CONFIG="${1:?the config's path is this script's only argument}"
-cleanup() { rm -f "$CONFIG" 2>/dev/null || true; }
+SECRETS=''
+cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
 BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
@@ -52,6 +54,13 @@ for named in FQDN OPERATOR_USER STAGE ELEVATION_PASSWORD STORAGE_BOX_HOST STORAG
   [ -n "${!named:-}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
 
+# A SECRET AN ELEVATED COMMAND NEEDS IS A FILE, never an argument: sudo writes every command it runs, with
+# its arguments, to the system log, and any local account reads an argument in the process list. This
+# shell's own printf is no process, so it writes the secret to a file of mode 600 in a folder in memory
+# that cleanup removes, and the elevated command is given the file's path.
+SECRETS="$(mktemp -d /dev/shm/aw-backup.XXXXXX)" || die 'no folder in memory could be made for the secrets an elevated command needs, and none of them may stand on its command line' 78
+PASSPHRASE_FILE="$SECRETS/passphrase"
+( umask 077; printf '%s' "$BACKUP_PASSPHRASE" > "$PASSPHRASE_FILE" ) || die 'the passphrase could not be written to a file in memory' 78
 root() { printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 K() { microk8s kubectl "$@"; }
 
@@ -100,7 +109,7 @@ fi
 export RCLONE_CONFIG_BOX_TYPE=sftp
 export RCLONE_CONFIG_BOX_HOST="$STORAGE_BOX_HOST"
 export RCLONE_CONFIG_BOX_USER="$STORAGE_BOX_USER"
-RCLONE_CONFIG_BOX_PASS="$(rclone obscure "$STORAGE_BOX_PASSWORD")"; export RCLONE_CONFIG_BOX_PASS
+RCLONE_CONFIG_BOX_PASS="$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)"; export RCLONE_CONFIG_BOX_PASS
 rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was stopped" 69
 good "the storage box $STORAGE_BOX_HOST opens"
 
@@ -111,14 +120,13 @@ root install -d -m 700 -o root -g root /var/lib/master-backup "$WORK" || die "co
 # seal OUT COMMAND...: what COMMAND writes, sealed to OUT. Both run as root inside one bash, because
 # root() hands sudo the password on standard input: nothing piped or redirected into a command it
 # starts reaches it, and under a NOPASSWD rule the command reads the password line as its data.
-# pipefail makes a COMMAND that fails fail the seal, so the copy is not taken for whole.
+# pipefail makes a COMMAND that fails fail the seal, so the copy is not taken for whole. gpg reads the
+# passphrase from its file by path.
 seal() {
-  root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" bash -c 'set -o pipefail
-out=$1; shift
-"$@" | gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 -o "$out" 3<<EOF
-$BACKUP_PASSPHRASE
-EOF
-' _ "$@"
+  root bash -c 'set -o pipefail
+passfile=$1; out=$2; shift 2
+"$@" | gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$passfile" --symmetric --cipher-algo AES256 -o "$out"
+' _ "$PASSPHRASE_FILE" "$@"
 }
 replicas_of() { K -n "$1" get "$3/$2" -o jsonpath='{.spec.replicas}' 2>/dev/null; }
 
