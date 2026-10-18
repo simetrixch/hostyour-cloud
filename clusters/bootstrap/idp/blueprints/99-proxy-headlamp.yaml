@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — Forward-Auth ProxyProvider + Application for the gate in front of Headlamp
+# (clusters/bootstrap/headlamp/ingressroute.tpl). Headlamp's own login is the OIDC client of
+# 99-headlamp.yaml; this provider is the forward auth that stands before it, because Headlamp answers
+# /config with the name and tailnet address of every cluster before anybody has logged in.
+#
+# WHY THE HOST HAS A PROVIDER OF ITS OWN. The embedded outpost looks a host up by the external host of
+# a provider first; only a host nobody claims falls back to every forward_domain provider whose cookie
+# domain ends the host, and then it takes one of equal matches at random, per request
+# (internal/outpost/proxyv2/handlers.go lookupApp). A host left to that fallback is answered by the
+# Tekton Dashboard's provider (admins) or by Plane's (admins and plane-users), so a member of
+# plane-users could pass this gate. This provider claims the host, and the only group bound to its
+# application is `admins`. scripts/forward-auth-gate.test.mjs holds every gated host to that.
+#
+# mode: forward_domain, the way 99-proxy-tekton.yaml and 99-proxy-plane.yaml are, so the session cookie
+# is scoped to the env apex (.<DOMAIN>). The application is hidden from the launcher: Headlamp's own
+# application, 99-headlamp.yaml, is the one an operator opens.
+version: 1
+metadata:
+  name: Headlamp Forward Auth
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+conditions:
+  - !Find [authentik_core.group, [name, admins]]
+entries:
+  - id: headlamp-proxy-provider
+    model: authentik_providers_proxy.proxyprovider
+    identifiers:
+      name: Headlamp Forward Auth
+    attrs:
+      name: Headlamp Forward Auth
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      external_host: !Format ["https://kube.%s", !Env IDP_DOMAIN]
+      mode: forward_domain
+      cookie_domain: !Format [".%s", !Env IDP_DOMAIN]
+      # The gate ends Headlamp's own session with its validity (scripts/operator-sign-in-length.test.mjs).
+      access_token_validity: hours=24
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+  - id: headlamp-forward-auth-app
+    model: authentik_core.application
+    identifiers:
+      slug: headlamp-forward-auth
+    attrs:
+      name: Headlamp Forward Auth
+      slug: headlamp-forward-auth
+      provider: !Find [authentik_providers_proxy.proxyprovider, [name, Headlamp Forward Auth]]
+      meta_launch_url: !Format ["https://kube.%s/", !Env IDP_DOMAIN]
+      meta_hide: true
+      group: Platform
+  - id: headlamp-forward-auth-admins-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, headlamp-forward-auth]]
+      group: !Find [authentik_core.group, [name, admins]]
+      order: 0
+    attrs:
+      enabled: true

@@ -1,10 +1,10 @@
 # yaml-language-server: $schema=
-# Authentik blueprint — binds the ProxyProviders of the Tekton dashboard and of
-# Plane to Authentik's built-in `authentik Embedded Outpost`. Without this, the
+# Authentik blueprint — binds the ProxyProviders of the Tekton dashboard, of
+# Plane and of the gate in front of Headlamp to Authentik's built-in `authentik Embedded Outpost`. Without this, the
 # Outpost's
 # `/outpost.goauthentik.io/auth/traefik` endpoint that Traefik's forwardauth
 # middleware hits has NO providers registered → it doesn't know how to
-# authenticate requests to tekton.<domain> or plane.<domain> → returns a redirect to a generic
+# authenticate requests to tekton.<domain>, plane.<domain> or kube.<domain> → returns a redirect to a generic
 # login but the session cookie doesn't bind to a specific app → forwardauth loop
 # / 404 / etc.
 #
@@ -26,6 +26,7 @@ metadata:
 conditions:
   - !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]
   - !Find [authentik_providers_proxy.proxyprovider, [name, Plane]]
+  - !Find [authentik_providers_proxy.proxyprovider, [name, Headlamp Forward Auth]]
 entries:
   - model: authentik_outposts.outpost
     identifiers:
@@ -46,3 +47,4 @@ entries:
       providers:
         - !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]
         - !Find [authentik_providers_proxy.proxyprovider, [name, Plane]]
+        - !Find [authentik_providers_proxy.proxyprovider, [name, Headlamp Forward Auth]]

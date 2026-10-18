@@ -57,6 +57,10 @@ global:
   # release then rolls both deployments.
   podAnnotations:
     platform/oidc-clients: "argocd manager grafana headlamp vault post forgejo"
+    # The passwords of the Plane sign-in test accounts arrive the same way and are read at start too, so
+    # an account added to 20-plane-test-accounts.yaml is named here, and the release rolls both
+    # deployments onto the Secret that holds its password.
+    platform/test-accounts: "plane-sign-in plane-sign-in-uninvited"
 
 authentik:
   error_reporting:
@@ -108,7 +112,8 @@ server:
   replicas: 1
   # The chart auto-creates an internal Secret from the `authentik.*` values above and envFroms it
   # into the pod. These two are ours, and they carry what the blueprints read with !Env:
-  #   - idp-bootstrap-secrets: IDP_{ARGOCD,MANAGER,GRAFANA,HEADLAMP,VAULT,POST,FORGEJO}_CLIENT_SECRET
+  #   - idp-bootstrap-secrets: IDP_{ARGOCD,MANAGER,GRAFANA,HEADLAMP,VAULT,POST,FORGEJO}_CLIENT_SECRET and
+  #     IDP_PLANE_TEST_{ACCOUNT,UNINVITED}_PASSWORD
   #   - idp-bootstrap-env: IDP_DOMAIN, which every blueprint builds its addresses on with !Format,
   #     and IDP_UNIT_APEX, which post's addresses stand below.
   envFrom:

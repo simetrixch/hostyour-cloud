@@ -18,6 +18,8 @@ metadata:
   name: Tekton Dashboard Forward Auth
   labels:
     blueprints.goauthentik.io/instantiate: "true"
+conditions:
+  - !Find [authentik_core.group, [name, admins]]
 entries:
   - id: tekton-proxy-provider
     model: authentik_providers_proxy.proxyprovider
@@ -46,3 +48,11 @@ entries:
       meta_launch_url: !Format ["https://tekton.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Build
+  - id: tekton-admins-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, tekton-dashboard]]
+      group: !Find [authentik_core.group, [name, admins]]
+      order: 0
+    attrs:
+      enabled: true

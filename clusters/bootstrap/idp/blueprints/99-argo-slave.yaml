@@ -22,6 +22,7 @@ metadata:
 # Same gate as 99-argocd.yaml: wait for the `groups` scope mapping to exist.
 conditions:
   - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
+  - !Find [authentik_core.group, [name, admins]]
 entries:
   - id: argo-slave-provider
     model: authentik_providers_oauth2.oauth2provider
@@ -67,3 +68,11 @@ entries:
       meta_launch_url: ""
       open_in_new_tab: true
       group: Platform
+  - id: argo-slave-admins-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, argo-slave]]
+      group: !Find [authentik_core.group, [name, admins]]
+      order: 0
+    attrs:
+      enabled: true

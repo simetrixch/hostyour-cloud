@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — the two accounts of the Plane sign-in proof, and the group `plane-users` they
+# are in. A worker that proves "a person signs in to Plane through Forgejo and Authentik" cannot type
+# the owner's password, so it signs in as `plane-sign-in`, which Plane holds a workspace invitation
+# for, and expects `plane-sign-in-uninvited`, which it does not, to be refused.
+#
+# WHY A GROUP OF THEIR OWN. An account in `admins` would be an administrator of Authentik. The group
+# `plane-users` grants no right anywhere: it only lets its members through to the two applications
+# Plane's sign-in passes through, the forward auth of Plane (99-proxy-plane.yaml) and Forgejo
+# (99-forgejo.yaml), which makes them restricted accounts there and, with the limits the deployment
+# sets on them, accounts that can create no repository. Every other application of the identity
+# provider is bound to `admins` alone, because an application without a binding admits every account,
+# and so is the provider that answers for every other host behind the forward auth: the outpost
+# answers a host with the provider of that external host, and scripts/forward-auth-gate.test.mjs holds
+# each gated host to a provider of its own whose application admits `admins` alone.
+#
+# THE PASSWORDS ARE NOT IN THIS FILE. Each arrives as one key of the Secret idp-bootstrap-secrets,
+# which the deployment writes out of the secret store (<stage>/idp/bootstrap) and the chart hands to
+# both authentik deployments through envFrom. The provider sets the password at every reconcile, so a
+# password someone changed by hand does not outlive the next one. The e2e runner reads the same two
+# values from <stage>/app/plane-test-account.
+#
+# THE ADDRESSES are the project's test mailbox with the case's name after a `+`, the way
+# digita-testkit packages/e2e/settings.ts spells them for the case plane-sign-in.spec.ts; the invited
+# address is the one the deployment writes the Plane invitation for (the plane-sign-in row of
+# deploy-platform-services.yaml in hostyour-deploy).
+#
+# state: created on the group is LOAD-BEARING for the same reason as in 15-group-admins.yaml: the
+# default would re-assert the group at every reconcile. The members come from the accounts below,
+# which are re-asserted with this group alone.
+version: 1
+metadata:
+  name: Plane sign-in test accounts
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - id: plane-users-group
+    model: authentik_core.group
+    state: created
+    identifiers:
+      name: plane-users
+    attrs:
+      name: plane-users
+  - id: plane-sign-in-account
+    model: authentik_core.user
+    identifiers:
+      username: plane-sign-in
+    attrs:
+      username: plane-sign-in
+      name: Plane sign-in test account
+      email: simplidigita.ai+plane-sign-in@gmail.com
+      is_active: true
+      password: !Env IDP_PLANE_TEST_ACCOUNT_PASSWORD
+      groups:
+        - !KeyOf plane-users-group
+  - id: plane-sign-in-uninvited-account
+    model: authentik_core.user
+    identifiers:
+      username: plane-sign-in-uninvited
+    attrs:
+      username: plane-sign-in-uninvited
+      name: Plane sign-in test account without an invitation
+      email: simplidigita.ai+plane-sign-in-uninvited@gmail.com
+      is_active: true
+      password: !Env IDP_PLANE_TEST_UNINVITED_PASSWORD
+      groups:
+        - !KeyOf plane-users-group

@@ -1834,7 +1834,7 @@ bash -n lifecycle/release-unit.sh || fail 'release-unit Bash syntax'
 for module in lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
-for module in scripts/forgejo.test.mjs scripts/plane.test.mjs scripts/forgejo-release.test.mjs scripts/forgejo-ssh.test.mjs; do
+for module in scripts/forgejo.test.mjs scripts/plane-test-accounts.test.mjs scripts/forward-auth-gate.test.mjs scripts/plane.test.mjs scripts/forgejo-release.test.mjs scripts/forgejo-ssh.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
   echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
 done

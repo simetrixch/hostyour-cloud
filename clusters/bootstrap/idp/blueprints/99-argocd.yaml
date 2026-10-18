@@ -24,6 +24,7 @@ metadata:
 # convergence is guaranteed.
 conditions:
   - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
+  - !Find [authentik_core.group, [name, admins]]
 entries:
   - id: argocd-provider
     model: authentik_providers_oauth2.oauth2provider
@@ -70,3 +71,11 @@ entries:
       meta_launch_url: !Format ["https://argo.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Platform
+  - id: argocd-admins-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, argocd]]
+      group: !Find [authentik_core.group, [name, admins]]
+      order: 0
+    attrs:
+      enabled: true
