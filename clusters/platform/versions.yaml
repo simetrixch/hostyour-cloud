@@ -571,7 +571,7 @@ bootstrap:
         anchor: 'release: idp'
   # The cluster UI the bootstrap installs beside the reconciler.
   headlamp:
-    version: "0.42.0"
+    version: "0.46.0"
     upstream:
       kind: git_tags
       project: kubernetes-sigs/headlamp

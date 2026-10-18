@@ -46,6 +46,5 @@ chart https://grafana-community.github.io/helm-charts tempo 2.2.3 14c52efe5d0cad
 chart https://helm.plane.so plane-ce 1.8.5 9d68ae1eb2d9e1a6181d1779063fa7feb949fcd48de31b2df4d847ea1eece755
 chart https://bokysan.github.io/docker-postfix mail 5.1.0 202c9e211dd313990e0cf08a8ac2dacb31c2d6b85a3e2ab3f299a51e8fa0c271
 chart https://argoproj.github.io/argo-helm argo-cd 10.10.5 ba6447eeed42bc41d1f0527721047b236304e97669a7b6286d02be4a1644ba7a
-chart https://kubernetes-sigs.github.io/headlamp headlamp 0.42.0 1014bc96c7696000645d29bb70336d863d951b2b130683220db1973438b76c40
 chart https://kubernetes-sigs.github.io/headlamp headlamp 0.46.0 faa471a8c5c55125b3dceed1cf73000e1ced18f07e2088e5e12e75292fb9ae62
 chart https://charts.goauthentik.io authentik 2026.5.6 c14732299b5f54910ac40ff0f9a4b47a2905924b1381ab68b1f20c4eddc40eba
