@@ -28,7 +28,6 @@
 tool https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64 c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385
 tool https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_amd64 fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4
 tool https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64 b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f
-tool https://github.com/argoproj/argo-cd/releases/download/v3.4.5/argocd-linux-amd64 23303f05a58c1e041324d5645b0f9d6ea338b16bbf32f4a24508f388fcf9f9c0
 tool https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-linux-amd64 c3ddfa606fc3e89ab14f55bda6600b207c355b028f8eaabe69b817a4c4621aba
 tool https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 tool https://github.com/prometheus/prometheus/releases/download/v3.13.1/prometheus-3.13.1.linux-amd64.tar.gz 962b812371aff838d152b6ff2d56fdb7a6396f5542f48ebf73421b9721f0d103
@@ -46,7 +45,6 @@ chart https://grafana-community.github.io/helm-charts loki 18.7.0 066756e9541507
 chart https://grafana-community.github.io/helm-charts tempo 2.2.3 14c52efe5d0cad5456ffa5a8be1e5107be47d184be3e209f748be51a7b0316fe
 chart https://helm.plane.so plane-ce 1.8.5 9d68ae1eb2d9e1a6181d1779063fa7feb949fcd48de31b2df4d847ea1eece755
 chart https://bokysan.github.io/docker-postfix mail 5.1.0 202c9e211dd313990e0cf08a8ac2dacb31c2d6b85a3e2ab3f299a51e8fa0c271
-chart https://argoproj.github.io/argo-helm argo-cd 10.2.1 27e930e366d22c999002008ad5ec7961bda00410a84287210d0fffbee8150885
 chart https://argoproj.github.io/argo-helm argo-cd 10.10.5 ba6447eeed42bc41d1f0527721047b236304e97669a7b6286d02be4a1644ba7a
 chart https://kubernetes-sigs.github.io/headlamp headlamp 0.42.0 1014bc96c7696000645d29bb70336d863d951b2b130683220db1973438b76c40
 chart https://kubernetes-sigs.github.io/headlamp headlamp 0.46.0 faa471a8c5c55125b3dceed1cf73000e1ced18f07e2088e5e12e75292fb9ae62
