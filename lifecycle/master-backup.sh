@@ -6,7 +6,8 @@
 #
 # WHAT IT TAKES, AND WHY THIS EXISTS. A master is the one machine of an installation that holds
 # state nothing else holds: Vault with every unit's secrets, the Manager's database, the IdP's
-# accounts, Headscale's nodes, its own MongoDB, Redis, mail queue and dbgate — and the file
+# accounts, Headscale's nodes, its own MongoDB, Redis, mail queue, dbgate and Forgejo's Git
+# repositories — and the file
 # Vault's quorum was written to once, secrets/vault-<stage>.txt. Lose the machine and every one of
 # them is gone; the install branch, the registrations and the deploy repository on origin describe an
 # installation that can no longer be opened. This takes that set, sealed with BACKUP_PASSPHRASE, to

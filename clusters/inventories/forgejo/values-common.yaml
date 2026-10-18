@@ -8,6 +8,7 @@ forgejo:
 
   image:
     rootless: true
+    tag: "17.0.0"
 
   # SQLite and the repositories share this one volume, on global.storageClass, which the chart
   # falls back to. The chart carries no database and no cache of its own.

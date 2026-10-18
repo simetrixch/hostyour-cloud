@@ -73,6 +73,7 @@ STORES=(
   "redis|redis-data|10Gi"
   "postfix|postfix-${STAGE}-postfix-${STAGE}-0|1Gi"
   "dbgate|dbgate-data|1Gi"
+  "forgejo|gitea-shared-storage|10Gi"
 )
 readonly CHECKOUT=/srv/hostyour-cloud
 readonly STAGING=/var/lib/master-restore
