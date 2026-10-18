@@ -13,14 +13,14 @@ eventListener:
 forgejo:
   url: http://forgejo-http.forgejo.svc:3000
 
-# The HTTP/API workloads of the releases forgejo-prod and plane in their app.yaml namespaces.
+# Forgejo follows the ApplicationSet's stage suffix; Plane fixes its release name in app.yaml.
 egress:
   forgejo:
     namespace: forgejo
     port: 3000
     podLabels:
       app.kubernetes.io/name: forgejo
-      app.kubernetes.io/instance: forgejo-prod
+      app.kubernetes.io/instance: 'forgejo-{{ required "forgejo-build: stage is required (clusters/active/<fqdn>.yaml)" .Values.stage }}'
   plane:
     namespace: plane
     port: 8000

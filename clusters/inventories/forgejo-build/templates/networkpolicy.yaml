@@ -69,7 +69,9 @@ spec:
               kubernetes.io/metadata.name: {{ required "egress.forgejo.namespace is required" .Values.egress.forgejo.namespace | quote }}
           podSelector:
             matchLabels:
-              {{- toYaml (required "egress.forgejo.podLabels is required" .Values.egress.forgejo.podLabels) | nindent 14 }}
+              {{- range $label, $value := (required "egress.forgejo.podLabels is required" .Values.egress.forgejo.podLabels) }}
+              {{ $label }}: {{ tpl $value $ | quote }}
+              {{- end }}
       ports:
         - protocol: TCP
           port: {{ required "egress.forgejo.port is required" .Values.egress.forgejo.port }}

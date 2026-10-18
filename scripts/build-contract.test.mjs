@@ -2140,19 +2140,22 @@ test('the Forgejo build fence preserves the build baseline and limits each inter
   const yaml = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', '-I=0', ...args], {input, encoding: 'utf8'}));
   const releaseTemplate = yaml(['.spec.template.spec.sources[1].helm.releaseName', 'clusters/argocd/files/platform-apps-appset.yaml']);
   assert.equal(releaseTemplate, '{{ dig "releaseName" (printf "%s-__STAGE__" .name) . }}');
-  const production = name => {
+  const deployed = (name, stage) => {
     const app = yaml(['.', `clusters/inventories/${name}/app.yaml`]);
-    const release = app.releaseName ?? `${app.name}-prod`;
+    const release = app.releaseName ?? `${app.name}-${stage}`;
     const rendered = execFileSync('helm', ['template', release, `clusters/inventories/${name}`, '--namespace', app.namespace,
-      '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml',
-      '-f', `clusters/inventories/${name}/values-common.yaml`, '-f', `clusters/inventories/${name}/values-prod.yaml`,
-      '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml'], {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
+      '-f', 'clusters/platform/values-common.yaml', '-f', `clusters/platform/values-${stage}.yaml`,
+      '-f', `clusters/inventories/${name}/values-common.yaml`,
+      ...(existsSync(`clusters/inventories/${name}/values-${stage}.yaml`) ? ['-f', `clusters/inventories/${name}/values-${stage}.yaml`] : []),
+      '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', '--set-string', `stage=${stage}`],
+    {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
     return {app, release, docs: yaml(['eval-all', '[.]', '-'], rendered).filter(Boolean)};
   };
   const builder = imageBuilder();
-  const destination = (name, task, variable) => {
-    const rendered = production(name);
-    assert.equal(rendered.release, name === 'forgejo' ? 'forgejo-prod' : 'plane');
+  const destination = (name, task, variable, stage) => {
+    const rendered = deployed(name, stage);
+    assert.equal(rendered.release, name === 'forgejo' ? `forgejo-${stage}` : 'plane');
+    assert.equal(rendered.app.namespace, name);
     const api = new URL(builder.find(d => d.kind === 'Task' && d.metadata.name === task).spec.steps[0].env.find(e => e.name === variable).value);
     assert.equal(api.pathname, '/api/v1');
     const [serviceName, namespace] = api.hostname.split('.');
@@ -2170,23 +2173,25 @@ test('the Forgejo build fence preserves the build baseline and limits each inter
     return {to: [{namespaceSelector: {matchLabels: {'kubernetes.io/metadata.name': namespace}}, podSelector: {matchLabels: podLabels}}],
       ports: [{protocol: 'TCP', port}]};
   };
-  const forgejo = destination('forgejo', 'forgejo-set-status', 'FORGEJO_API');
-  const plane = destination('plane', 'plane-update-status', 'PLANE_API');
+  const baseline = renderUnit('shop').find(d => d.kind === 'NetworkPolicy' && d.metadata.name === 'build-egress').spec;
+  const forgejoTasks = ['clone', 'status-pending', 'release', 'status'];
+  const expectedByStage = Object.fromEntries(['prod', 'test', 'dev'].map(stage => [stage, {
+    'build-egress': baseline,
+    'forgejo-http-egress': {podSelector: {matchExpressions: [{key: 'tekton.dev/pipelineTask', operator: 'In', values: forgejoTasks}]},
+      policyTypes: ['Egress'], egress: [destination('forgejo', 'forgejo-set-status', 'FORGEJO_API', stage)]},
+    'plane-api-egress': {podSelector: {matchLabels: {'tekton.dev/pipelineTask': 'plane'}},
+      policyTypes: ['Egress'], egress: [destination('plane', 'plane-update-status', 'PLANE_API', stage)]}
+  }]));
+  const forgejo = expectedByStage.prod['forgejo-http-egress'].egress[0];
+  const plane = expectedByStage.prod['plane-api-egress'].egress[0];
   const fixtureForgejo = renderChart('forgejo').find(d => d.kind === 'Service' && d.metadata.name === 'forgejo-http').spec.selector;
   const fixturePlane = renderChart('plane').find(d => d.kind === 'Service' && d.metadata.name === 'plane-api').spec.selector;
   assert.notDeepEqual(fixtureForgejo, forgejo.to[0].podSelector.matchLabels);
   assert.notDeepEqual(fixturePlane, plane.to[0].podSelector.matchLabels);
-  const baseline = renderUnit('shop').find(d => d.kind === 'NetworkPolicy' && d.metadata.name === 'build-egress').spec;
-  const forgejoTasks = ['clone', 'status-pending', 'release', 'status'];
-  const expected = {
-    'build-egress': baseline,
-    'forgejo-http-egress': {podSelector: {matchExpressions: [{key: 'tekton.dev/pipelineTask', operator: 'In', values: forgejoTasks}]},
-      policyTypes: ['Egress'], egress: [forgejo]},
-    'plane-api-egress': {podSelector: {matchLabels: {'tekton.dev/pipelineTask': 'plane'}}, policyTypes: ['Egress'], egress: [plane]}
-  };
-  const docs = renderChart('forgejo-build', ['--namespace', 'forgejo-build']);
+  const docs = deployed('forgejo-build', 'prod').docs;
   const policies = docs => docs.filter(d => d.kind === 'NetworkPolicy');
-  const assertFence = docs => {
+  const assertFence = (docs, stage = 'prod') => {
+    const expected = expectedByStage[stage];
     assert.deepEqual(policies(docs).map(p => p.metadata.name).sort(), Object.keys(expected).sort());
     for (const policy of policies(docs)) {
       assert.equal(policy.metadata.namespace, 'forgejo-build');
@@ -2250,6 +2255,21 @@ test('the Forgejo build fence preserves the build baseline and limits each inter
     const copy = structuredClone(docs);
     for (const p of policies(copy)) p.metadata.annotations = {description: 'build egress'};
     assertFence(copy);
+  });
+  for (const stage of ['prod', 'test', 'dev']) {
+    const docs = deployed('forgejo-build', stage).docs;
+    await t.test(`PLANTED INNOCENT: ${stage} fence matches its deployed Forgejo and Plane workloads`, () => {
+      assertFence(docs, stage);
+    });
+    if (stage !== 'prod') await t.test(`PLANTED DEFECT: ${stage} Forgejo instance fixed to forgejo-prod`, () => {
+      const copy = structuredClone(docs);
+      policy(copy, 'forgejo-http-egress').spec.egress[0].to[0].podSelector.matchLabels['app.kubernetes.io/instance'] = 'forgejo-prod';
+      assert.throws(() => assertFence(copy, stage), assert.AssertionError);
+    });
+  }
+  await t.test('PLANTED DEFECT: missing stage for the Forgejo instance', () => {
+    assert.throws(() => renderChart('forgejo-build', ['--set-json', 'stage=null']),
+      error => error.message.includes('forgejo-build: stage is required'));
   });
   for (const destination of ['forgejo', 'plane']) for (const field of ['namespace', 'podLabels', 'port']) {
     const key = `egress.${destination}.${field}`;
