@@ -5,7 +5,7 @@ import test from 'node:test';
 import {applicationOf, driftFindings, renderChart, renderTwice} from './render-chart.mjs';
 
 // Forgejo on the master. A person signs in through the identity provider alone, and only as a member
-// of `admins`: no password form, no local administrator, an account made at the first sign-in. It
+// of `admins` or of `plane-users`, the group of the Plane sign-in test accounts: no password form, no local administrator, an account made at the first sign-in. It
 // keeps its data in SQLite in its one volume, serves no package registry, takes Git over SSH on the
 // master's port 2222, and may send a webhook to the build plane's EventListener and nowhere else. The
 // keys it signs and encrypts with it makes itself, in app.ini on the same volume.
@@ -81,7 +81,12 @@ function blueprintFindings(text, values) {
   if (!provider?.attrs.property_mappings?.some(m => JSON.stringify(m) === JSON.stringify(['authentik_providers_oauth2.scopemapping', ['scope_name', 'groups']]))) found.push('the groups scope is not handed out, so adminGroup reads nothing');
   const bindings = blueprint.entries.filter(e => e.model === 'authentik_policies.policybinding');
   const admits = JSON.stringify(bindings.map(b => [b.identifiers.target, b.identifiers.group]));
-  if (admits !== JSON.stringify([[['authentik_core.application', ['slug', 'forgejo']], ['authentik_core.group', ['name', 'admins']]]])) found.push(`sign-in is admitted by ${admits}, not by the group admins alone`);
+  const forgejoApp = ['authentik_core.application', ['slug', 'forgejo']];
+  if (admits !== JSON.stringify(['admins', 'plane-users'].map(name => [forgejoApp, ['authentik_core.group', ['name', name]]]))) found.push(`sign-in is admitted by ${admits}, not by the groups admins and plane-users alone`);
+  const waitsFor = JSON.stringify(blueprint.conditions);
+  for (const name of ['admins', 'plane-users']) {
+    if (!waitsFor.includes(JSON.stringify(['authentik_core.group', ['name', name]]))) found.push(`the blueprint does not wait for the group ${name}, so a binding on it fails at a first start`);
+  }
   if (!values.global.podAnnotations['platform/oidc-clients'].split(' ').includes('forgejo')) found.push('platform/oidc-clients does not list forgejo, so the provider never restarts onto the new secret');
   return found;
 }
@@ -90,7 +95,7 @@ test('Forgejo renders the sign-in, storage, SSH, Ingress and secret rules', () =
   assert.deepEqual(renderFindings(renderChart('forgejo')), []);
 });
 
-test('the identity provider admits the group admins alone to Forgejo', () => {
+test('the identity provider admits the groups admins and plane-users alone to Forgejo', () => {
   assert.deepEqual(blueprintFindings(blueprintText, idpValues), []);
 });
 
@@ -107,12 +112,18 @@ test('PLANTED DEFECT: a password form, a local administrator, a package registry
   }
 });
 
-test('PLANTED DEFECT: a blueprint without the admins binding, or with a second binding beside it, is found', () => {
+test('PLANTED DEFECT: a blueprint without either binding, or with a third binding beside them, is found', () => {
   const unbound = blueprintText.replace(/  - id: forgejo-admins-binding[\s\S]*$/, '');
   assert.notEqual(unbound, blueprintText);
-  assert.deepEqual(blueprintFindings(unbound, idpValues), ['sign-in is admitted by [], not by the group admins alone']);
-  const widened = `${blueprintText}  - id: planted-everyone\n    model: authentik_policies.policybinding\n    identifiers:\n      target: !Find [authentik_core.application, [slug, forgejo]]\n      group: !Find [authentik_core.group, [name, everyone]]\n      order: 1\n`;
+  assert.deepEqual(blueprintFindings(unbound, idpValues), ['sign-in is admitted by [], not by the groups admins and plane-users alone']);
+  const adminsOnly = blueprintText.replace(/  - id: forgejo-plane-users-binding[\s\S]*$/, '');
+  assert.notEqual(adminsOnly, blueprintText);
+  assert.equal(blueprintFindings(adminsOnly, idpValues).length, 1, 'the group plane-users is not admitted');
+  const widened = `${blueprintText}  - id: planted-everyone\n    model: authentik_policies.policybinding\n    identifiers:\n      target: !Find [authentik_core.application, [slug, forgejo]]\n      group: !Find [authentik_core.group, [name, everyone]]\n      order: 2\n`;
   assert.equal(blueprintFindings(widened, idpValues).length, 1);
+  const unawaited = blueprintText.replace(/  - !Find \[authentik_core.group, \[name, plane-users\]\]\n/, '');
+  assert.notEqual(unawaited, blueprintText);
+  assert.equal(blueprintFindings(unawaited, idpValues).length, 1, 'the blueprint does not wait for the group plane-users');
 });
 
 test('PLANTED INNOCENT: another application name or another image tag changes nothing the rules hold', () => {

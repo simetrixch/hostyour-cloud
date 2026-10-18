@@ -23,7 +23,8 @@ run:
       cpu: "2"
       memory: 2Gi
 
-# The default SecretStore: vault-backend under the `external-secrets` role.
+# The default SecretStore: vault-backend under the `external-secrets` role. It reads the registry pull
+# credential and the Plane sign-in test accounts' passwords, which the E2E password store below must not.
 secret-store: {}
 
 # The SecretStore the targets' ExternalSecrets read the E2E passwords through. Its role reads

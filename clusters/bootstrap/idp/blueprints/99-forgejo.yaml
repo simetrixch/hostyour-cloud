@@ -2,15 +2,25 @@
 # Authentik blueprint — the Forgejo OIDC client, Forgejo's one sign-in source
 # (named `authentik` on the Forgejo side, so its callback is
 # /user/oauth2/authentik/callback). Mirrors 99-grafana.yaml and adds the
-# access rule of 99-manager.yaml: ONE group PolicyBinding, on the platform's
-# `admins` group.
+# access rule of 99-manager.yaml: a group PolicyBinding on the platform's
+# `admins` group, and one on `plane-users`, the group of the Plane sign-in
+# test accounts (20-plane-test-accounts.yaml).
 #
-# WHY THE BINDING. Forgejo makes an account at the first sign-in
+# WHY THE BINDINGS. Forgejo makes an account at the first sign-in
 # (ENABLE_AUTO_REGISTRATION), and an account may create repositories whose
 # pushes the build plane builds, privileged, on the master. Without the
-# binding every account of this identity provider could do that; with it, a
-# person outside `admins` is refused here and never reaches Forgejo.
-# Waits for the groups scope mapping AND the admins group to exist first.
+# bindings every account of this identity provider could do that; with them, a
+# person outside `admins` and `plane-users` is refused here and never reaches
+# Forgejo.
+#
+# WHY plane-users IS NOT A WEAKER ADMINS. Plane's sign-in goes through
+# Forgejo, so an account that proves it must be admitted there, and `admins`
+# would make that account an administrator of Authentik. Forgejo makes a
+# member of `plane-users` a restricted account (restrictedGroup in
+# ansiwise/templates/forgejo-values.tpl of hostyour-deploy), and the
+# deployment's plane-sign-in step sets max_repo_creation 0 and no creation of
+# organizations on the test accounts, so none of them can create a repository.
+# Waits for the groups scope mapping AND both groups to exist first.
 version: 1
 metadata:
   name: Forgejo OIDC client
@@ -19,6 +29,7 @@ metadata:
 conditions:
   - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
   - !Find [authentik_core.group, [name, admins]]
+  - !Find [authentik_core.group, [name, plane-users]]
 entries:
   - id: forgejo-provider
     model: authentik_providers_oauth2.oauth2provider
@@ -65,5 +76,13 @@ entries:
       target: !Find [authentik_core.application, [slug, forgejo]]
       group: !Find [authentik_core.group, [name, admins]]
       order: 0
+    attrs:
+      enabled: true
+  - id: forgejo-plane-users-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, forgejo]]
+      group: !Find [authentik_core.group, [name, plane-users]]
+      order: 1
     attrs:
       enabled: true
