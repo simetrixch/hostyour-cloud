@@ -7,12 +7,14 @@ const readBlueprint = file => JSON.parse(execFileSync('yq', ['-o=json', '.',
   fileURLToPath(new URL(`../clusters/bootstrap/idp/blueprints/${file}`, import.meta.url))], {encoding: 'utf8'}));
 
 // The ID token lives as long as the access token, and Argo CD and Headlamp keep it as the
-// operator's session; the forward-auth gate in front of kube.<fqdn> ends Headlamp with its own.
+// operator's session; the forward-auth gate in front of kube.<fqdn> ends Headlamp with its own, the provider
+// whose external host that is.
 const operatorSignIns = [
   ['99-argocd.yaml', 'ArgoCD'],
   ['99-argo-slave.yaml', 'ArgoCD Slave'],
   ['99-headlamp.yaml', 'Headlamp'],
   ['99-proxy-tekton.yaml', 'Tekton Dashboard'],
+  ['99-proxy-headlamp.yaml', 'Headlamp Forward Auth'],
 ];
 const day = 86400;
 // The keys of Authentik's timedelta_from_string (authentik/lib/utils/time.py), in seconds.

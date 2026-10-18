@@ -111,6 +111,8 @@ helm dependency update clusters/inventories/forgejo
 node --test scripts/forgejo.test.mjs || fail 'scripts/forgejo.test.mjs'
 echo 'test: forge — the Plane sign-in test accounts are in the group plane-users alone, with passwords from the environment, the provider restarts onto them, and every application admits admins, only Plane and Forgejo plane-users beside them.'
 node --test scripts/plane-test-accounts.test.mjs || fail 'scripts/plane-test-accounts.test.mjs'
+echo 'test: forge — every host behind the forward auth is answered, in the embedded outpost, by providers whose applications admit admins alone, and plane-users at plane alone.'
+node --test scripts/forward-auth-gate.test.mjs || fail 'scripts/forward-auth-gate.test.mjs'
 echo 'test: forge — Plane waits for the forward auth on every page but /api/v1, keeps its data beside it, and renders no public default.'
 helm dependency update clusters/inventories/plane
 node --test scripts/plane.test.mjs || fail 'scripts/plane.test.mjs'
