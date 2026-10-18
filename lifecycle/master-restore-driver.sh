@@ -182,7 +182,10 @@ good "${#STORES[@]} store(s) stand opened under $PLAIN, root only"
 # the storage root, holding the store, and a PersistentVolume with a claimRef to it: the claim the
 # services create then binds to it, and the provisioner leaves it alone.
 PLACE="$STAGING/restore-data.sh"
-root sh -c "cat > '$PLACE'" <<EOF
+# The script is made here and handed to root through the environment: root() hands sudo the password
+# on standard input, so a heredoc given to it never reaches the command, and under a NOPASSWD rule the
+# command writes the password line instead.
+IFS= read -r -d '' PLACEMENT <<EOF
 #!/usr/bin/env bash
 # Written by master-restore-driver.sh for backup $ID; run by driver.sh after deploy-cluster.
 set -uo pipefail
@@ -223,6 +226,7 @@ ROWS
 mv '$STAGING/pending' "$STAGING/placed-$ID"
 echo "   \$placed store(s) placed from backup $ID"
 EOF
+root env PLACEMENT="$PLACEMENT" bash -c 'printf "%s" "$PLACEMENT" > "$1"' _ "$PLACE"
 root chmod 700 "$PLACE"
 root sh -c "printf '%s\n' '$ID' > '$STAGING/pending'"
 good "the placement is written and the mark stands — driver.sh runs it after deploy-cluster"

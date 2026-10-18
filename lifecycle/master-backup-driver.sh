@@ -73,10 +73,10 @@ STORES=(
   "forgejo|gitea-shared-storage|forgejo|deployment"
 )
 readonly QUORUM="/srv/hostyour-cloud/secrets/vault-${STAGE}.txt"
-# THE QUORUM IS THE OPERATOR'S OWN FILE, and this runs as the operator: it is checked and read as that
-# account, as the unseal service reads it, never through root. An elevated test -r is no check of it:
-# where the OS's test is uutils, it judges root by the mode bits and answers no for a 0600 file root
-# does not own, which would be reported here as a file that is not on the host.
+# THE QUORUM IS THE OPERATOR'S OWN FILE, and this runs as the operator: it is checked as that account,
+# as the unseal service reads it, never through root. An elevated test -r is no check of it: where the
+# OS's test is uutils, it judges root by the mode bits and answers no for a 0600 file root does not
+# own, which would be reported here as a file that is not on the host.
 require_quorum() {
   [ -f "$QUORUM" ] || die "$QUORUM is not on this host — a master keeps Vault's quorum there, and a backup without it could never be opened" 66
   [ -r "$QUORUM" ] || die "$QUORUM stands on this host, but $(id -un), who runs this backup, cannot read it — a master keeps Vault's quorum as the operator's own file at mode 600" 66
@@ -108,11 +108,17 @@ ID="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUPS="box:$FQDN/master"
 WORK="/var/lib/master-backup/$ID"
 root install -d -m 700 -o root -g root /var/lib/master-backup "$WORK" || die "could not make $WORK" 78
-seal() { # a file on stdin, sealed to $1 as root
-  root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" sh -c 'exec gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 -o "$1" 3<<EOF
+# seal OUT COMMAND...: what COMMAND writes, sealed to OUT. Both run as root inside one bash, because
+# root() hands sudo the password on standard input: nothing piped or redirected into a command it
+# starts reaches it, and under a NOPASSWD rule the command reads the password line as its data.
+# pipefail makes a COMMAND that fails fail the seal, so the copy is not taken for whole.
+seal() {
+  root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" bash -c 'set -o pipefail
+out=$1; shift
+"$@" | gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 -o "$out" 3<<EOF
 $BACKUP_PASSPHRASE
 EOF
-' _ "$1"
+' _ "$@"
 }
 replicas_of() { K -n "$1" get "$3/$2" -o jsonpath='{.spec.replicas}' 2>/dev/null; }
 
@@ -131,7 +137,7 @@ for row in "${STORES[@]}"; do
     sleep 2
   done
   out="$WORK/${ns}--${pvc}.tar.gpg"
-  if root tar --numeric-owner -C "$dir" -cf - . | seal "$out"; then
+  if seal "$out" tar --numeric-owner -C "$dir" -cf - .; then
     good "${ns}/${pvc} taken from $(basename "$dir") — $(root du -sh "$out" | cut -f1)"
   else
     K -n "$ns" scale "$kind/$workload" --replicas="$before" >/dev/null
@@ -143,7 +149,7 @@ for row in "${STORES[@]}"; do
 done
 
 step "the host's own file"
-cat "$QUORUM" | seal "$WORK/host--vault-${STAGE}.txt.gpg" || die "the quorum file could not be sealed" 70
+seal "$WORK/host--vault-${STAGE}.txt.gpg" cat "$QUORUM" || die "the quorum file could not be sealed" 70
 good "vault-${STAGE}.txt taken — the quorum this backup is opened with"
 
 step "the manifest, and the way out"

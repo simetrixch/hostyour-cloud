@@ -2637,13 +2637,14 @@ folder_of() { grep -E '^BACKUPS=' "$1"; }
   || fail 'a driver still names the old folder box:master/'
 ok 'the two drivers write and read one folder, box:$FQDN/master'
 
-# ── the quorum, checked and read by the account that owns it ─────────────────
+# ── the quorum, checked by the account that owns it ──────────────────────────
 # Vault's quorum is the operator's own file at mode 600, and the backup runs as the operator. Its
 # check is the backup driver's own function, lifted and run against files this account plants, with
 # root a stand-in that fails the run on any call. Where the OS's test is uutils, an elevated
 # test -r judges root by the mode bits and answers no for a 0600 file root does not own, which the
 # driver then reports as a file that is not on the host.
 quorum_check_of() { sed -n '/^require_quorum() {/,/^}/p' "$1"; }
+# shellcheck disable=SC2034 # QUORUM is read by the lifted require_quorum
 quorum_checked() { # <the check's text> <the quorum's path> — ends with the code the check dies with, 0 when it passes; what it printed stands in $OUT/quorum.err
   ( QUORUM="$2"
     die() { echo "die: $1" >&2; exit "${2:-1}"; }
@@ -2695,13 +2696,13 @@ Q_CODE=0; quorum_checked "$PLANTED_ELEVATED" "$QUORUM_DIR/own.txt" || Q_CODE=$?
   || fail "the planted elevated check was not caught: it ended with $Q_CODE and printed: $(cat "$OUT/quorum.err")"
 ok 'the planted elevated check is caught: root is called for a file the runner owns'
 
-# Neither driver asks root for a file's mode, and the backup does not read the quorum through root.
-elevated_reads_in() { grep -vE '^[[:space:]]*#' "$1" | grep -E 'root (test|\[) -[rwx]( |$)|root cat "\$QUORUM"'; }
+# Neither driver asks root for a file's mode.
+elevated_reads_in() { grep -vE '^[[:space:]]*#' "$1" | grep -E 'root (test|\[) -[rwx]( |$)'; }
 for driver in master-backup-driver.sh master-restore-driver.sh; do
   ! elevated_reads_in "$HERE/$driver" > "$OUT/elevated.out" \
-    || fail "$driver asks root for a file's mode or reads the quorum through root: $(cat "$OUT/elevated.out")"
+    || fail "$driver asks root for a file's mode: $(cat "$OUT/elevated.out")"
 done
-for planted_line in 'root test -r "$QUORUM" || die gone 66' 'root test -x "$sealed" || die gone 66' 'root [ -w "$sealed" ] || die gone 66' 'root cat "$QUORUM" | seal "$WORK/x"'; do
+for planted_line in 'root test -r "$QUORUM" || die gone 66' 'root test -x "$sealed" || die gone 66' 'root [ -w "$sealed" ] || die gone 66'; do
   { cat "$HERE/master-backup-driver.sh"; echo "$planted_line"; } > "$OUT/planted-elevated.sh"
   elevated_reads_in "$OUT/planted-elevated.sh" > /dev/null \
     || fail "the guard did not catch a driver carrying: $planted_line"
@@ -2713,10 +2714,245 @@ done
   echo 'root test -d "$sealed" || die gone 66'
   echo 'root cat "$sealed" > /dev/null'; } > "$OUT/innocent-elevated.sh"
 ! elevated_reads_in "$OUT/innocent-elevated.sh" > "$OUT/elevated.out" \
-  || fail "the guard caught a comment and the tests of existence, kind and a read of a file that is not the quorum: $(cat "$OUT/elevated.out")"
-ok 'neither driver asks root for a file'"'"'s mode or reads the quorum through root; the guard catches each planted form and passes the innocent lines'
+  || fail "the guard caught a comment and the tests of existence and kind: $(cat "$OUT/elevated.out")"
+ok 'neither driver asks root for a file'"'"'s mode; the guard catches each planted form and passes the innocent lines'
+
+# Neither driver pipes or redirects anything into an elevated command: root() replaces its standard input
+# with the password line. A heredoc on a descriptor of its own inside a quoted script (3<<EOF) is no
+# input of root, and stays.
+piped_into_root_in() { grep -vE '^[[:space:]]*#' "$1" | grep -E '\| *(root|seal)( |$)|(root|seal) .* <<'; }
+for driver in master-backup-driver.sh master-restore-driver.sh; do
+  ! piped_into_root_in "$HERE/$driver" > "$OUT/piped.out" \
+    || fail "$driver pipes or redirects into an elevated command, which reads root()'s password line instead: $(cat "$OUT/piped.out")"
+done
+for planted_line in 'root tar -cf - . | seal "$out"' 'cat "$QUORUM" | seal "$out"' 'cat "$x" | root tee "$y" > /dev/null' 'root sh -c "cat > $PLACE" <<EOF' 'root sh -c "cat > $PLACE" <<<"$PLACEMENT"'; do
+  { cat "$HERE/master-restore-driver.sh"; echo "$planted_line"; } > "$OUT/planted-piped.sh"
+  piped_into_root_in "$OUT/planted-piped.sh" > /dev/null \
+    || fail "the guard did not catch a driver carrying: $planted_line"
+done
+{ cat "$HERE/master-backup-driver.sh"
+  echo '# root tar -cf - . | seal "$out" lost its data'
+  echo 'seal "$out" tar -cf - .'
+  echo 'seal "$out" cat "$QUORUM"'
+  echo "root env X=1 sh -c 'gpg -d \"\$1\" 3<<EOF | tar -xf -'"
+  echo 'root cat "$sealed" | wc -c'; } > "$OUT/innocent-piped.sh"
+! piped_into_root_in "$OUT/innocent-piped.sh" > "$OUT/piped.out" \
+  || fail "the guard caught a comment, a seal that takes its command, a heredoc on a descriptor of its own and the output of root piped on: $(cat "$OUT/piped.out")"
+ok 'neither driver pipes or redirects into an elevated command; the guard catches each planted form and passes the innocent lines'
 # The file of mode 000 is removed here: the recursive greps over $WORK further down (no_session) cannot read it.
 rm -rf "$QUORUM_DIR"
+
+# ── the data handed to an elevated command arrives, whatever the sudo does with its standard input ─
+# root() hands sudo the elevation password on standard input: printf pw | sudo -S -p '' "$@". What a
+# caller pipes or redirects into root() is replaced by that line. A sudo that asks for no password, as
+# the operator's NOPASSWD rule on a master does, never reads the line, so the command reads it as its
+# data; a sudo that asks reads the line, so the command reads nothing. Either way the data is lost.
+# That is why a store, the quorum and the placement script reach their elevated command inside the
+# one elevated bash that makes or takes them. The cases run each driver's own root(), seal() and
+# placement text against a stand-in of each kind of sudo, with gpg, tar and microk8s stand-ins that
+# record what they are handed, and hold the password out of every file and every line.
+PLANTED_PASSWORD='planted-elevation-password-9c41'
+PLANTED_PASSPHRASE='planted-backup-passphrase-5d27'
+STANDIN="$WORK/standin"
+mkdir -p "$STANDIN"
+cat > "$STANDIN/sudo" <<'STANDIN_SUDO'
+#!/usr/bin/env bash
+# sudo as root() calls it: sudo -S -p '' COMMAND... SUDO_STANDIN=nopasswd reads nothing, as a NOPASSWD
+# rule does; SUDO_STANDIN=password reads the first line of standard input as the password and passes on
+# the rest. The command runs with the environment cleared, as sudo's env_reset does.
+[ "$#" -ge 4 ] && [ "$1" = -S ] && [ "$2" = -p ] && [ -z "$3" ] || { echo 'sudo stand-in: not called as root() calls it' >&2; exit 2; }
+shift 3
+if [ "$SUDO_STANDIN" = password ]; then
+  IFS= read -r given
+  [ "$given" = "$SUDO_STANDIN_PASSWORD" ] || { echo 'sudo stand-in: a wrong password' >&2; exit 1; }
+fi
+exec env -i PATH="$PATH" "$@"
+STANDIN_SUDO
+cat > "$STANDIN/gpg" <<'STANDIN_GPG'
+#!/usr/bin/env bash
+# gpg as seal() calls it: the passphrase on descriptor 3, the data on standard input. The "sealed" file
+# is the passphrase line, then the data, so a case reads both back.
+out=''; fd=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --batch|--yes|--quiet|--symmetric) shift ;;
+    --pinentry-mode) [ "$2" = loopback ] || exit 2; shift 2 ;;
+    --cipher-algo) [ "$2" = AES256 ] || exit 2; shift 2 ;;
+    --passphrase-fd) fd="$2"; shift 2 ;;
+    -o) out="$2"; shift 2 ;;
+    *) echo "gpg stand-in: an argument seal() does not pass: $1" >&2; exit 2 ;;
+  esac
+done
+[ "$fd" = 3 ] && [ -n "$out" ] || exit 2
+IFS= read -r pass <&3 || exit 2
+{ printf 'sealed with: %s\n' "$pass"; cat; } > "$out"
+STANDIN_GPG
+cat > "$STANDIN/tar" <<'STANDIN_TAR'
+#!/usr/bin/env bash
+# tar as the store loop calls it: tar --numeric-owner -C DIR -cf - . It writes DIR/payload, and ends 70
+# half way where DIR/fails stands.
+dir=''; stream=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --numeric-owner|.) shift ;;
+    -C) dir="$2"; shift 2 ;;
+    -cf) stream="$2"; shift 2 ;;
+    *) echo "tar stand-in: an argument the store loop does not pass: $1" >&2; exit 2 ;;
+  esac
+done
+[ "$stream" = - ] && [ -n "$dir" ] || exit 2
+if [ -e "$dir/fails" ]; then head -c 1000 "$dir/payload"; exit 70; fi
+cat "$dir/payload"
+STANDIN_TAR
+printf '%s\n' '#!/usr/bin/env bash' \
+  '# microk8s kubectl apply -f - as the placement script calls it: it records what it is handed.' \
+  '[ "$1 $2 $3 $4" = "kubectl apply -f -" ] || exit 2' \
+  "cat >> '$STANDIN/kubectl.log'" > "$STANDIN/microk8s"
+chmod 700 "$STANDIN/sudo" "$STANDIN/gpg" "$STANDIN/tar" "$STANDIN/microk8s"
+
+BACKUP_ROOT="$(grep '^root() ' "$HERE/master-backup-driver.sh")"
+BACKUP_SEAL="$(sed -n '/^seal() {/,/^}/p' "$HERE/master-backup-driver.sh")"
+RESTORE_ROOT="$(grep '^root() ' "$HERE/master-restore-driver.sh")"
+RESTORE_STORES="$(sed -n '/^STORES=($/,/^)$/p' "$HERE/master-restore-driver.sh")"
+RESTORE_PLACEMENT="$(sed -n '/^PLACE=/,/^root chmod 700 "\$PLACE"$/p' "$HERE/master-restore-driver.sh")"
+for lifted in BACKUP_ROOT BACKUP_SEAL RESTORE_ROOT RESTORE_STORES RESTORE_PLACEMENT; do
+  [ -n "${!lifted}" ] || fail "the drivers carry no text for $lifted — nothing below measures what reaches an elevated command"
+done
+BACKUP_TEXT="$BACKUP_ROOT"$'\n'"$BACKUP_SEAL"
+
+# shellcheck disable=SC2034 # the passphrase is read by the lifted seal()
+sealed_by() { # <sudo kind> <the text lifted first> <command line...> — its code is the command line's; what it printed stands in $OUT/sealed.out and $OUT/sealed.err
+  local kind="$1" text="$2"; shift 2
+  ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
+    set -uo pipefail
+    ELEVATION_PASSWORD="$PLANTED_PASSWORD"; BACKUP_PASSPHRASE="$PLANTED_PASSPHRASE"
+    eval "$text"
+    "$@" ) < /dev/null > "$OUT/sealed.out" 2> "$OUT/sealed.err"
+}
+seal_holds() { # <sudo kind> <text> <sealed file> <the bytes it must hold> <command line...> — ends 0 when the sealed file is the passphrase line and those bytes, and the password stands nowhere; what is wrong stands in $OUT/verdict
+  local kind="$1" text="$2" sealed="$3" expected="$4"; shift 4
+  local code=0
+  : > "$OUT/verdict"
+  rm -f "$sealed"
+  sealed_by "$kind" "$text" "$@" || code=$?
+  [ "$code" = 0 ] || echo "the seal ended with $code" >> "$OUT/verdict"
+  if [ ! -f "$sealed" ]; then
+    echo 'no sealed file was written' >> "$OUT/verdict"
+  elif ! { printf 'sealed with: %s\n' "$PLANTED_PASSPHRASE"; cat "$expected"; } | cmp -s - "$sealed"; then
+    echo "the sealed file holds other bytes than the passphrase line and the planted ones ($(wc -c < "$sealed" | tr -d ' ') bytes, $(wc -c < "$expected" | tr -d ' ') planted)" >> "$OUT/verdict"
+  fi
+  if [ -f "$sealed" ] && grep -qF "$PLANTED_PASSWORD" "$sealed" "$OUT/sealed.out" "$OUT/sealed.err"; then
+    echo 'the elevation password stands in the sealed file or in what the seal printed' >> "$OUT/verdict"
+  fi
+  [ ! -s "$OUT/verdict" ]
+}
+
+SEAL_DIR="$WORK/seal"
+mkdir -p "$SEAL_DIR/store" "$SEAL_DIR/store-failing"
+seq 1 20000 > "$SEAL_DIR/store/payload" # more than a pipe holds, so the stream is read to its end
+cp "$SEAL_DIR/store/payload" "$SEAL_DIR/store-failing/payload"
+: > "$SEAL_DIR/store-failing/fails"
+printf 'planted-unseal-key-1\nplanted-unseal-key-2\n' > "$SEAL_DIR/quorum.txt"
+chmod 600 "$SEAL_DIR/quorum.txt"
+
+for kind in nopasswd password; do
+  seal_holds "$kind" "$BACKUP_TEXT" "$SEAL_DIR/store.gpg" "$SEAL_DIR/store/payload" \
+    seal "$SEAL_DIR/store.gpg" tar --numeric-owner -C "$SEAL_DIR/store" -cf - . \
+    || fail "backup: a store is not sealed whole under a sudo that reads $kind: $(cat "$OUT/verdict")"
+  seal_holds "$kind" "$BACKUP_TEXT" "$SEAL_DIR/quorum.gpg" "$SEAL_DIR/quorum.txt" \
+    seal "$SEAL_DIR/quorum.gpg" cat "$SEAL_DIR/quorum.txt" \
+    || fail "backup: the quorum is not sealed whole under a sudo that reads $kind: $(cat "$OUT/verdict")"
+  S_CODE=0; sealed_by "$kind" "$BACKUP_TEXT" seal "$SEAL_DIR/failing.gpg" tar --numeric-owner -C "$SEAL_DIR/store-failing" -cf - . || S_CODE=$?
+  [ "$S_CODE" = 70 ] || fail "backup: a tar that fails half way did not fail the seal with its code under a sudo that reads $kind: got $S_CODE"
+done
+ok 'backup: a store and the quorum are sealed whole, and a tar that fails fails the seal, under a sudo that asks no password and under one that does'
+
+# planted defects: the seal as it was, whose data came on a standard input that root() replaces
+IFS= read -r -d '' OLD_SEAL <<'OLD' || true
+seal() { # a file on stdin, sealed to $1 as root
+  root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" sh -c 'exec gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 -o "$1" 3<<EOF
+$BACKUP_PASSPHRASE
+EOF
+' _ "$1"
+}
+old_store() { root tar --numeric-owner -C "$1" -cf - . | seal "$2"; }
+old_quorum() { cat "$1" | seal "$2"; }
+OLD
+OLD_TEXT="$BACKUP_ROOT"$'\n'"$OLD_SEAL"
+for kind in nopasswd password; do
+  ! seal_holds "$kind" "$OLD_TEXT" "$SEAL_DIR/old-store.gpg" "$SEAL_DIR/store/payload" old_store "$SEAL_DIR/store" "$SEAL_DIR/old-store.gpg" \
+    || fail "the planted old store sealing was not caught under a sudo that reads $kind — the probe proves nothing"
+  ! seal_holds "$kind" "$OLD_TEXT" "$SEAL_DIR/old-quorum.gpg" "$SEAL_DIR/quorum.txt" old_quorum "$SEAL_DIR/quorum.txt" "$SEAL_DIR/old-quorum.gpg" \
+    || fail "the planted old quorum sealing was not caught under a sudo that reads $kind — the probe proves nothing"
+done
+seal_holds nopasswd "$OLD_TEXT" "$SEAL_DIR/old-store.gpg" "$SEAL_DIR/store/payload" old_store "$SEAL_DIR/store" "$SEAL_DIR/old-store.gpg" || true
+grep -qF 'the elevation password stands in the sealed file' "$OUT/verdict" \
+  || fail "the planted old store sealing under a sudo that asks no password did not seal the password line: $(cat "$OUT/verdict")"
+ok 'the planted old sealing is caught for a store and for the quorum, under each sudo: where none asks, it seals the password line'
+# planted defect: a seal that does not fail when its tar does
+NO_PIPEFAIL="$(printf '%s\n' "$BACKUP_SEAL" | sed 's/set -o pipefail//')"
+[ "$NO_PIPEFAIL" != "$BACKUP_SEAL" ] || fail 'the planted seal without pipefail was not planted — the probe proves nothing'
+S_CODE=0; sealed_by nopasswd "$BACKUP_ROOT"$'\n'"$NO_PIPEFAIL" seal "$SEAL_DIR/failing.gpg" tar --numeric-owner -C "$SEAL_DIR/store-failing" -cf - . || S_CODE=$?
+[ "$S_CODE" = 0 ] || fail "the planted seal without pipefail was not the defect it is: it ended with $S_CODE"
+ok 'the planted seal without pipefail ends 0 on a tar that failed, where the real one ends 70'
+
+# The placement: written by root, then run as driver.sh runs it. The written script is the heredoc's lines.
+PLACEMENT_ID=20261018T000000Z
+# shellcheck disable=SC2034 # the lifted placement text reads these
+placement_holds() { # <sudo kind> <the placement text> — fresh staging, the placement written, then run; ends 0 when it was written whole, ran, and the password stands nowhere; what is wrong stands in $OUT/verdict
+  local kind="$1" text="$2" dir="$WORK/placement-$1" code=0 stores
+  stores="$(printf '%s\n' "$RESTORE_STORES" | grep -c '^  "')"
+  : > "$OUT/verdict"
+  rm -rf "$dir"; mkdir -p "$dir/storage" "$dir/staging"
+  : > "$STANDIN/kubectl.log"
+  ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
+    set -uo pipefail
+    ELEVATION_PASSWORD="$PLANTED_PASSWORD"
+    ID="$PLACEMENT_ID" STAGE=prod STAGING="$dir/staging" STORAGE_ROOT="$dir/storage"
+    PLAIN="$STAGING/$ID/stores"
+    eval "$RESTORE_ROOT"
+    eval "$RESTORE_STORES"
+    for row in "${STORES[@]}"; do
+      IFS='|' read -r ns pvc size <<< "$row"
+      mkdir -p "$PLAIN/${ns}--${pvc}"; echo planted > "$PLAIN/${ns}--${pvc}/data"
+    done
+    eval "$text" > "$OUT/place.out" 2> "$OUT/place.err"
+    printf '%s\n' "$ID" > "$STAGING/pending"
+    root bash "$STAGING/restore-data.sh" > "$OUT/placed.out" 2> "$OUT/placed.err" ) < /dev/null || code=$?
+  [ "$code" = 0 ] || echo "the placement script ended with $code when run as driver.sh runs it" >> "$OUT/verdict"
+  [ "$(head -n 1 "$dir/staging/restore-data.sh" 2> /dev/null)" = '#!/usr/bin/env bash' ] \
+    || echo 'the written restore-data.sh does not begin with the heredoc'"'"'s first line' >> "$OUT/verdict"
+  [ "$(grep -c "store(s) placed from backup $PLACEMENT_ID" "$OUT/placed.out" 2> /dev/null)" = 1 ] \
+    || echo 'the placement script did not report its stores placed' >> "$OUT/verdict"
+  [ "$(grep -c '^kind: PersistentVolume$' "$STANDIN/kubectl.log")" = "$stores" ] \
+    || echo "the placement script did not declare $stores volumes" >> "$OUT/verdict"
+  [ "$(find "$dir/storage" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" = "$stores" ] \
+    || echo "the placement script did not place $stores store directories" >> "$OUT/verdict"
+  if grep -rqF "$PLANTED_PASSWORD" "$dir" "$OUT/place.out" "$OUT/place.err" "$OUT/placed.out" "$OUT/placed.err" "$STANDIN/kubectl.log"; then
+    echo 'the elevation password stands in restore-data.sh or in a line the restore or driver.sh prints' >> "$OUT/verdict"
+  fi
+  [ ! -s "$OUT/verdict" ]
+}
+for kind in nopasswd password; do
+  placement_holds "$kind" "$RESTORE_PLACEMENT" \
+    || fail "restore: the placement script is not written whole and run clean under a sudo that reads $kind: $(cat "$OUT/verdict")"
+done
+ok 'restore: restore-data.sh holds the heredoc'"'"'s lines, runs as driver.sh runs it, and carries the password nowhere, under a sudo that asks no password and under one that does'
+# planted defect: the placement handed to root as a heredoc, as it was
+WRITE_LINE="$(printf '%s\n' "$RESTORE_PLACEMENT" | grep '^root env PLACEMENT=')"
+[ -n "$WRITE_LINE" ] || fail 'the placement carries no root env PLACEMENT= line — the planted old placement cannot be built'
+OLD_WRITE='root sh -c "cat > $PLACE" <<<"$PLACEMENT"'
+OLD_PLACEMENT="${RESTORE_PLACEMENT/"$WRITE_LINE"/"$OLD_WRITE"}"
+[ "$OLD_PLACEMENT" != "$RESTORE_PLACEMENT" ] || fail 'the planted old placement was not planted — the probe proves nothing'
+for kind in nopasswd password; do
+  ! placement_holds "$kind" "$OLD_PLACEMENT" \
+    || fail "the planted old placement was not caught under a sudo that reads $kind — the probe proves nothing"
+done
+placement_holds nopasswd "$OLD_PLACEMENT" || true
+grep -qF 'the elevation password stands in restore-data.sh' "$OUT/verdict" \
+  || fail "the planted old placement under a sudo that asks no password did not write the password into restore-data.sh: $(cat "$OUT/verdict")"
+ok 'the planted old placement is caught under each sudo: where none asks, restore-data.sh holds the password line and driver.sh prints it'
+rm -rf "$STANDIN" "$SEAL_DIR" "$WORK"/placement-*
 
 # ===========================================================================
 # EIGHT — the engine held against its digests, as both drivers place it on a machine
