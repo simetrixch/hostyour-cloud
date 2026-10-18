@@ -117,16 +117,20 @@ script then reads the release the stage runs, lists the active tenants of the st
 releases, and waits until each one that renders the unit runs that release. It prints one line per
 tenant. A tenant has landed when every version of its part of the unit is the release's image tag and
 its newest Versions run ended `succeeded` after the release run started; the Manager ends that run
-only once ArgoCD rendered the versions. Where no Versions run followed, the tenant already runs the
-tag when its newest Versions run, if there is one, ended `succeeded` and its live Application is
-`Synced` and `Healthy`. Only the newest Versions run of a tenant counts, so a failed run that a later
-one superseded blocks nothing. A tenant on another version line than the release is named with its
+only once ArgoCD rendered the versions. The record of the versions alone proves nothing, because it
+turns when the pin is written, so a tenant without such a run is not landed and is named when the wait
+runs out. The release the stage pins must be the one the run put there (with `--prod-to-test` prod's
+tag, else the version and channel given), or the script ends with exit 1 and names what the stage pins.
+Only the newest Versions run of a tenant counts, so a failed run that a later one superseded blocks
+nothing. A tenant on another version line than the release is named with its
 line and left to `Move to line` on `/tenants/<id>`; it is not waited for. When no following tenant
 renders the unit the script prints `no following tenant at <stage> renders <unit>`.
 
 With `--prod-to-test` the same rule is read before the release request: a tenant that records the
 tag while its newest Versions run failed ends the script with exit 1 and that run's `/runs/<id>`,
-and nothing is planned, because planning the release again would change nothing for it.
+and nothing is planned, because planning the release again would change nothing for it. A tenant
+that records the tag, whose newest Versions run succeeded or that has none, and whose live Application
+is `Synced` and `Healthy`, already runs the tag: it is printed there and not waited for.
 
 | exit | what it means |
 |---|---|

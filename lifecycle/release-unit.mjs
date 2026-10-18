@@ -25,14 +25,19 @@
 // that follow releases move afterwards, each in its own Versions run (tenant-refresh-members), and
 // that run may fail. So after `run succeeded` the script waits for every active tenant at the stage
 // that follows releases and renders the unit, and exits 0 only when each runs the stage's release tag.
-// A tenant counts as landed when the part's running versions are all `<tag>-<sha7>` AND its newest
-// Versions run ended succeeded after this release run started (the Manager ends that run only when
-// ArgoCD rendered the versions), or, where no Versions run followed, when the newest one ended
-// succeeded and the live Application is Synced and Healthy. Only the newest Versions run counts: an
-// older failed one that a later run superseded never blocks. A tenant on another version line than
-// the release is left to Move to line and not waited for. With --prod-to-test the same rule is read
-// before the release request, and a tenant that records the tag while its newest Versions run failed
-// ends the script there, because planning the release again would change nothing for it.
+// The tag is the one the stage pins after the run, and it must be the release this run put there: with
+// --prod-to-test prod's tag, else the version and channel of the arguments. A tenant counts as landed
+// when the part's running versions are all `<tag>-<sha7>` AND its newest Versions run ended succeeded
+// after this release run started (the Manager ends that run only when ArgoCD rendered the versions).
+// The record of the running versions turns at the pin write, and one look at the live Application may
+// still show the revision from before it, so neither proves a tenant without that run. Only the newest
+// Versions run counts: an older failed one that a later run superseded never blocks. A tenant on
+// another version line than the release is left to Move to line and not waited for. With
+// --prod-to-test the same rule is read before the release request, where nothing is in flight: a
+// tenant that records the tag while its newest Versions run failed ends the script there, because
+// planning the release again would change nothing for it, and one whose newest Versions run succeeded
+// (or that has none) and whose live Application is Synced and Healthy already runs the tag and is not
+// waited for.
 import { spawn } from "node:child_process";
 
 const USAGE = [
@@ -187,14 +192,17 @@ async function read(path, what, code, ending) {
 
 /** The x.y of a release or image tag: its version line. */
 const lineOf = (tag) => /^(\d+\.\d+)\./.exec(tag)?.[1];
+/** A text as a pattern that matches only itself. */
+const literal = (text) => text.replace(/[^A-Za-z0-9]/g, "\\$&");
 
 /** One look at the following tenants in `pending`: each is landed, failed, still waited for, left to
  *  Move to line, or renders no part of the unit. `since` is when the release run started, and absent
- *  before the release request, where no Versions run can follow it yet. */
+ *  before the release request, where no Versions run can follow it yet and the live Application is
+ *  the proof for a tenant without one; after the request only a Versions run proves a tenant. */
 async function look(pending, unit, tag, since, on) {
   const seen = { landed: [], failed: [], waiting: [], left: [], unrelated: [] };
   if (pending.length === 0) return seen;
-  const imageOfTag = new RegExp(`^${tag.replace(/[^A-Za-z0-9]/g, "\\$&")}-[0-9a-f]{7}$`);
+  const imageOfTag = new RegExp(`^${literal(tag)}-[0-9a-f]{7}$`);
   const runs = await read("/api/runs", "the runs could not be read", on.code, on.ending);
   if (!Array.isArray(runs)) stop(`the runs could not be read: the Manager answered no list${on.ending}`, on.code);
   for (const tenant of pending) {
@@ -219,6 +227,8 @@ async function look(pending, unit, tag, since, on) {
       seen.waiting.push({ ...note, why: `it runs ${running.join(", ") || "no release"}${after ? "" : ", and no Versions run followed this release"}` });
     } else if (after) {
       seen.landed.push({ ...note, line: `runs ${tag} (Versions run ${newest.id} succeeded)` });
+    } else if (since !== undefined) {
+      seen.waiting.push({ ...note, why: "it records the release, and no Versions run followed this release to prove it" });
     } else {
       const live = await read(`/api/tenants/${encodeURIComponent(tenant.id)}/live`, `the live state of tenant ${tenant.id} could not be read`, on.code, on.ending);
       if (live.argo?.ok === true && live.argo.sync === "Synced" && live.argo.health === "Healthy") seen.landed.push({ ...note, line: `already runs ${tag}` });
@@ -237,24 +247,31 @@ async function followingTenants(stage, on) {
 
 const failedLine = (f) => `tenant ${f.tenant.id}: its Versions run ${f.run} ${f.status}: open /runs/${f.run}`;
 
-/** Before the release request: a tenant that records the tag while its newest Versions run failed. */
+/** Before the release request: a tenant that records the tag while its newest Versions run failed ends
+ *  the script. The tenants that already run the tag are printed and returned, because the follower plans
+ *  no Versions run for them and the wait after the release would never see one. */
 async function refuseHeldTenants(stage, unit, tag) {
   const on = { code: EXIT.unavailable, ending: "; nothing was planned" };
   const seen = await look(await followingTenants(stage, on), unit, tag, undefined, on);
   if (seen.failed.length > 0) stop(`${seen.failed.map(failedLine).join("; ")}; the release would change nothing for it, so nothing was planned`, EXIT.failed);
+  for (const l of seen.landed) say(`tenant ${l.tenant.id}: ${l.line}`);
+  return seen.landed.map((l) => l.tenant.id);
 }
 
-/** After the run succeeded: wait until every following tenant at `stage` that renders `unit` runs the
- *  stage's release tag, and print one line for each. */
-async function waitForFollowing(stage, unit, since, runId) {
+/** After the run succeeded: wait until every following tenant at `stage` that renders `unit`, except
+ *  those in `alreadyRunning`, runs the stage's release tag, and print one line for each. The tag the
+ *  stage pins must be the release `wanted` describes, or another release reached the stage and the
+ *  tenants would be waited for under this run's name. */
+async function waitForFollowing(stage, unit, since, runId, wanted, alreadyRunning) {
   const on = { code: EXIT.watchStopped, ending: `. The run ${runId} succeeded; whether the following tenants run it is not known: open /runs` };
   if (typeof since !== "number") stop(`run ${runId} succeeded, but the Manager names no time it started, so the Versions runs that followed it cannot be told: open /runs`, on.code);
   const standing = (await read(`/api/units/${unit}/release?stage=${stage}`, `the release ${stage} runs of ${unit} could not be read`, on.code, on.ending)).standing;
   if (typeof standing?.tag !== "string") stop(`the Manager names no release that ${stage} runs of ${unit}${on.ending}`, on.code);
   const tag = standing.tag;
-  let pending = await followingTenants(stage, on);
+  if (!wanted.pattern.test(tag)) stop(`run ${runId} succeeded, but ${stage} pins ${unit} at ${tag}, and this release is ${wanted.text}: another release of ${unit} reached ${stage}, so the tenants are not waited for. Open /runs`, EXIT.failed);
+  let pending = (await followingTenants(stage, on)).filter((t) => !alreadyRunning.includes(t.id));
   const deadline = Date.now() + FOLLOW_SECONDS * 1000;
-  let rendering = false;
+  let rendering = alreadyRunning.length > 0;
   let announced = false;
   for (;;) {
     const seen = await look(pending, unit, tag, since, on);
@@ -285,6 +302,9 @@ const RETRIES = setting("RELEASE_UNIT_RETRIES", 30);
 /** How long the following tenants may take to run the tag after the release run succeeded. */
 const FOLLOW_SECONDS = setting("RELEASE_UNIT_FOLLOW_SECONDS", 1800);
 let release;
+/** The release tag this run puts on the stage, as a pattern and as the words that name it. */
+let wanted;
+let alreadyRunning = [];
 if (!PROD_TO_TEST) {
   const [, , stage, channel, version, commit] = args;
   if (!["dev", "test", "prod", "none"].includes(stage)) stop(`the stage must be dev, test, prod or none (got '${stage}')`, EXIT.usage);
@@ -292,6 +312,7 @@ if (!PROD_TO_TEST) {
   if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([0-9]{3}|0|[1-9][0-9]*)$/.test(version)) stop(`the version must be x.y.z (got '${version}')`, EXIT.usage);
   if (!/^[0-9a-f]{40}$/.test(commit)) stop(`the commit must be its full sha, 40 lowercase hex digits (got '${commit}')`, EXIT.usage);
   release = { stage: stage === "none" ? null : stage, channel, version, commit };
+  wanted = { pattern: new RegExp(`^${literal(`${version}-${channel}-`)}[0-9]{14}$`), text: `${version}-${channel}-<14 digits>` };
 }
 
 const minted = await exchange({ kind: "mint" });
@@ -307,7 +328,8 @@ if (PROD_TO_TEST) {
   if (!standing) stop(`the release prod runs of ${UNIT} could not be read: the Manager answered ${refusal(offer)}; nothing was planned`, EXIT.failed);
   say(`source: prod runs ${standing.tag} of ${UNIT} on ${standing.commit}`);
   release = { stage: "test", channel: standing.channel, version: standing.version, commit: standing.commit, sourceStage: "prod", sourceTag: standing.tag };
-  await refuseHeldTenants("test", UNIT, standing.tag);
+  wanted = { pattern: new RegExp(`^${literal(standing.tag)}$`), text: standing.tag };
+  alreadyRunning = await refuseHeldTenants("test", UNIT, standing.tag);
 }
 
 const planned = await call("POST", `/api/units/${UNIT}/release`, release);
@@ -330,4 +352,4 @@ const ended = await watch(runId, (status) => TERMINAL.has(status) || (status ===
 if (ended.status === "planned") stop(`run ${runId} stands planned: the approval did not reach it, and it is not sent again. Approve it on /runs/${runId}`, EXIT.failed);
 if (ended.status !== "succeeded") stop(`run ${runId} ${ended.status}: open /runs/${runId}`, EXIT.failed);
 say(`run ${runId} succeeded`);
-if (release.stage !== null) await waitForFollowing(release.stage, UNIT, ended.startedAt, runId);
+if (release.stage !== null) await waitForFollowing(release.stage, UNIT, ended.startedAt, runId, wanted, alreadyRunning);

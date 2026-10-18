@@ -3758,6 +3758,7 @@ no_session 'a tenant that records the tag while its newest Versions run failed'
 run_release_unit follow-held-superseded manager@master.example.invalid shop --prod-to-test
 expect 'the same tenant after a newer Versions run succeeded' 0 <<'RECORDED'
 source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+tenant tnt_1: already runs 0.3.004-stable-TS14
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -3765,7 +3766,6 @@ run run_1: queued (put-release pending)
 run run_1: running (put-release running)
 run run_1: succeeded (put-release ok)
 run run_1 succeeded
-tenant tnt_1: already runs 0.3.004-stable-TS14
 ~~~ standard error ~~~
 RECORDED
 calls 'the same tenant after a newer Versions run succeeded' <<'RECORDED'
@@ -3786,9 +3786,6 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
-GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
-GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
 no_session 'the same tenant after a newer Versions run succeeded'
 
@@ -3804,7 +3801,7 @@ run run_1: succeeded (put-release ok)
 run run_1 succeeded
 waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
 ~~~ standard error ~~~
-release-unit: tnt_1 (it records the release, and its Application is not Synced and Healthy) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
+release-unit: tnt_1 (it records the release, and no Versions run followed this release to prove it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
 RECORDED
 calls 'a tenant that records the tag while its Application is not Synced' <<'RECORDED'
 MINT
@@ -3826,7 +3823,6 @@ GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
-GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
 no_session 'a tenant that records the tag while its Application is not Synced'
 
