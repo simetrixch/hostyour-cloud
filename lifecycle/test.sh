@@ -912,7 +912,7 @@ RECORDED
 # ── the planted defect for this act ─────────────────────────────────────────
 PLANTED_R="$WORK/planted-regenerate.sh"
 # The planted copy looks beside itself for its driver and for the guard it reads.
-cp "$HERE/regenerate-driver.sh" "$HERE/require-owner-only.sh" "$WORK/"
+cp "$HERE/regenerate-driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$WORK/"
 sed 's/is pinned to/is pinned at/' "$HERE/regenerate-install-branch.sh" > "$PLANTED_R"
 grep -q 'is pinned at' "$PLANTED_R" || fail 'the planted line was not planted — the probe proves nothing'
 A_CODE=0
@@ -1265,7 +1265,7 @@ RECORDED
 # driver and the guard it reads, must print other bytes than its case recorded.
 PLANTED_IM="$WORK/planted-install-machine"
 mkdir -p "$PLANTED_IM"
-cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$PLANTED_IM/"
+cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$PLANTED_IM/"
 sed 's/make it readable by you alone/make it readable by you only/' "$HERE/install-machine.sh" > "$PLANTED_IM/install-machine.sh"
 grep -q 'readable by you only' "$PLANTED_IM/install-machine.sh" \
   || fail 'the planted line was not planted in install-machine.sh — the probe proves nothing'
@@ -1326,6 +1326,9 @@ PROGRAMS_REPO='https://example.invalid/programs.git'
 PLATFORM_REPO='https://example.invalid/platform.git'
 PLATFORM_REF='master'
 ELEVATION_PASSWORD='elevation-test'
+FORGEJO_PLATFORM_REPOSITORY='platform-team/platform'
+FORGEJO_DEPLOY_REPOSITORY='deploy-team/deploy'
+FORGEJO_ORGANISATIONS='platform-team,deploy-team'
 CLUSTER_ISSUER='platform-acme'
 ACME_CREDENTIALS_JSON='{"keyId":"kid-shown-nowhere","b64MacKey":"mac-shown-nowhere"}'
 CONFIG
@@ -1346,7 +1349,7 @@ RECORDED
 # The planted defect: a copy without the refusal, beside the driver and the guard, reaches the session.
 PLANTED_ACME="$WORK/planted-install-machine-acme"
 mkdir -p "$PLANTED_ACME"
-cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$PLANTED_ACME/"
+cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$PLANTED_ACME/"
 grep -vF '[ -z "${ACME_CREDENTIALS_JSON:-}" ] ||' "$HERE/install-machine.sh" > "$PLANTED_ACME/install-machine.sh"
 cmp -s "$HERE/install-machine.sh" "$PLANTED_ACME/install-machine.sh" \
   && fail 'the refusal was not taken out of the planted install-machine.sh — the probe proves nothing'
@@ -1355,6 +1358,91 @@ run_acme "$PLANTED_ACME/install-machine.sh" "$IMACME"
 [ "$A_CODE" = '69' ] || fail "the planted install-machine must end at the recording ssh with 69, got $A_CODE"
 rm -f "$ACMESSH/called"
 ok 'the planted defect was caught — a copy without the refusal opens a session with the ACME config'
+
+# ── both launchers refuse Forgejo destinations that omit a repository owner ──
+# THE OWNER OF EACH DESTINATION REPOSITORY MUST BE ONE OF THE ORGANISATIONS, and no step of a program
+# reads two answers, so the launchers refuse it where the config is read, before the first session.
+# The recording ssh stands first on PATH: a refusal leaves it uncalled, and a launcher without the
+# check calls it.
+forgejo_destinations_config() { # file, fqdn, platform repository, deploy repository, organisations
+  cat > "$1" <<CONFIG
+FQDN='$2'
+OPERATOR_USER='operator'
+STAGE='prod'
+DEPLOY_REPO='https://example.invalid/deploy.git'
+PROGRAMS_REPO='https://example.invalid/programs.git'
+PLATFORM_REPO='https://example.invalid/platform.git'
+PLATFORM_REF='master'
+ELEVATION_PASSWORD='elevation-test'
+FORGEJO_PLATFORM_REPOSITORY='$3'
+FORGEJO_DEPLOY_REPOSITORY='$4'
+FORGEJO_ORGANISATIONS='$5'
+CONFIG
+  chmod 600 "$1"
+}
+run_destinations() { # the launcher, then its arguments
+  A_CODE=0
+  ( cd "$WORK_A" && PATH="$ACMESSH:$PATH" bash "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+launch_destinations() { # the directory of the launcher, the launcher, then the config
+  local dir="$1" launcher="$2" config="$3"
+  case "$launcher" in
+    install-machine) run_destinations "$dir/install-machine.sh" "$config" ;;
+    regenerate-install-branch) run_destinations "$dir/regenerate-install-branch.sh" apps3.example.invalid "$config" ;;
+  esac
+}
+FDEST="$WORK/forgejo-destinations"
+mkdir -p "$FDEST"
+FD_FQDN_install_machine='master.example.invalid'
+FD_FQDN_regenerate_install_branch='apps3.example.invalid'
+for launcher in install-machine regenerate-install-branch; do
+  fqdn_of="FD_FQDN_${launcher//-/_}"
+  config="$FDEST/$launcher.env"
+  # PLANTED: the case of the finding, organisations that name neither owner, and each owner alone.
+  for organisations in foreign-team platform-team deploy-team; do
+    forgejo_destinations_config "$config" "${!fqdn_of}" platform-team/platform deploy-team/deploy "$organisations"
+    rm -f "$ACMESSH/called"
+    launch_destinations "$HERE" "$launcher" "$config"
+    [ ! -e "$ACMESSH/called" ] || fail "$launcher: organisations $organisations opened a session: $(cat "$ACMESSH/called")"
+    [ "$A_CODE" = '65' ] || fail "$launcher: organisations $organisations must end with 65, got $A_CODE"
+    must 'FORGEJO_ORGANISATIONS' "$launcher: the refusal names the answer"
+    case "$organisations" in
+      foreign-team) must 'platform-team' "$launcher: the refusal names an owner it misses" ;;
+      platform-team) must 'deploy-team' "$launcher: the refusal names the owner it misses" ;;
+      deploy-team) must 'platform-team' "$launcher: the refusal names the owner it misses" ;;
+    esac
+  done
+  # PLANTED: each destination answer left empty is refused by its name.
+  for name in FORGEJO_PLATFORM_REPOSITORY FORGEJO_DEPLOY_REPOSITORY FORGEJO_ORGANISATIONS; do
+    forgejo_destinations_config "$config" "${!fqdn_of}" platform-team/platform deploy-team/deploy platform-team,deploy-team
+    sed -i "s/^$name='.*'/$name=''/" "$config"
+    rm -f "$ACMESSH/called"
+    launch_destinations "$HERE" "$launcher" "$config"
+    [ ! -e "$ACMESSH/called" ] || fail "$launcher: an empty $name opened a session"
+    [ "$A_CODE" = '65' ] || fail "$launcher: an empty $name must end with 65, got $A_CODE"
+    must "states no $name" "$launcher: the refusal names $name"
+  done
+  # INNOCENT: the owners listed among more organisations, in another letter case, go on to the session.
+  for organisations in platform-team,deploy-team Deploy-Team,PLATFORM-team,other-team; do
+    forgejo_destinations_config "$config" "${!fqdn_of}" platform-team/platform deploy-team/deploy "$organisations"
+    rm -f "$ACMESSH/called"
+    launch_destinations "$HERE" "$launcher" "$config"
+    [ -e "$ACMESSH/called" ] || fail "$launcher: organisations $organisations that cover both owners were refused: $(cat "$OUT/a.err")"
+  done
+  # PLANTED LAUNCHER: a copy without the call reaches the session with the finding's organisations.
+  planted="$FDEST/planted-$launcher"
+  mkdir -p "$planted"
+  cp "$HERE/$launcher.sh" "$HERE/driver.sh" "$HERE/regenerate-driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$planted/"
+  grep -vF 'require_forgejo_destinations ||' "$HERE/$launcher.sh" > "$planted/$launcher.sh"
+  cmp -s "$HERE/$launcher.sh" "$planted/$launcher.sh" \
+    && fail "the call was not taken out of the planted $launcher.sh — the probe proves nothing"
+  forgejo_destinations_config "$config" "${!fqdn_of}" platform-team/platform deploy-team/deploy foreign-team
+  rm -f "$ACMESSH/called"
+  launch_destinations "$planted" "$launcher" "$config"
+  [ -e "$ACMESSH/called" ] || fail "the planted $launcher without the check opened no session either — the case cannot go red"
+  rm -f "$ACMESSH/called"
+done
+ok 'both launchers refuse destinations that omit an owner or leave an answer empty before any session, and let covered owners through; a launcher without the check is caught'
 
 # ── the Forgejo SSH row: status and install-machine ask the port an install branch announces ──
 # check-forgejo-ssh.sh is called where a person meets it, on the operator's machine: one row of
@@ -1439,7 +1527,7 @@ rm -f "$FORGEJO_NET/asked"
 # install-machine: the same two rows at its end, and none after an installation that failed.
 FORGEJO_IM="$WORK/forgejo-install-machine"
 mkdir -p "$FORGEJO_IM"
-cp "$HERE/install-machine.sh" "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/check-forgejo-ssh.sh" "$FORGEJO_IM/"
+cp "$HERE/install-machine.sh" "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$HERE/check-forgejo-ssh.sh" "$FORGEJO_IM/"
 cat > "$FORGEJO_NET/ssh" <<'STUB'
 #!/usr/bin/env bash
 case "$*" in *' true') exit 0 ;; esac
@@ -1458,6 +1546,9 @@ PROGRAMS_REPO='https://example.invalid/programs.git'
 PLATFORM_REPO='https://example.invalid/platform.git'
 PLATFORM_REF='master'
 ELEVATION_PASSWORD='elevation-test'
+FORGEJO_PLATFORM_REPOSITORY='platform-team/platform'
+FORGEJO_DEPLOY_REPOSITORY='deploy-team/deploy'
+FORGEJO_ORGANISATIONS='platform-team,deploy-team'
 CONFIG
   chmod 600 "$file"
   printf '%s\n' "$file"
@@ -2866,6 +2957,45 @@ for planted in planted-server planted-fallback planted-print; do
   if acme_cases "$ACME_WORK/$planted.py" 2>/dev/null; then fail "a composer with the plant $planted passed every ACME case"; fi
 done
 ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config with only the LETSENCRYPT lines composes none of the four, and three planted composers are caught"
+
+# The destination inputs use each driver's declared-answer projection unchanged.
+FORGEJO_ANSWERS_WORK="$WORK/forgejo-answers"
+mkdir -p "$FORGEJO_ANSWERS_WORK"
+forgejo_answers_cases() { # <composer> <example config>
+  python3 - "$1" "$2" "$FORGEJO_ANSWERS_WORK" <<'FORGEJO_ANSWERS_TEST'
+import json, pathlib, subprocess, sys
+composer, example, work = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+names = ['forgejo_platform_repository', 'forgejo_deploy_repository', 'forgejo_organisations']
+expected = dict(zip(names, ['platform-team/platform', 'deploy-team/deploy', 'platform-team,deploy-team']))
+for name in names:
+    assert name.upper() + "=''" in example.read_text(), name + ' is missing from config.example.env'
+declares = work / 'declares.yaml'
+declares.write_text('answers:\n' + ''.join('  - name: ' + name + '\n    kind: text\n' for name in names))
+config, output = work / 'config.env', work / 'answers.json'
+config.write_text("PLATFORM_REPO_URL='https://github.com/current/platform.git'\nDEPLOY_REPO_URL='https://github.com/current/deploy.git'\n" +
+                  ''.join(name.upper() + "='" + value + "'\n" for name, value in expected.items()))
+subprocess.run([sys.executable, composer, str(config), str(declares), str(output)], check=True, stdout=subprocess.DEVNULL)
+assert json.loads(output.read_text()) == {'answers': expected}, 'Forgejo destinations changed or were inferred from clone URLs'
+# Innocent: unrelated configuration does not become an answer.
+config.write_text(config.read_text() + "UNRELATED='innocent'\n")
+subprocess.run([sys.executable, composer, str(config), str(declares), str(output)], check=True, stdout=subprocess.DEVNULL)
+assert json.loads(output.read_text()) == {'answers': expected}
+FORGEJO_ANSWERS_TEST
+}
+for driver in driver.sh regenerate-driver.sh; do
+  composer_of "$HERE/$driver" > "$FORGEJO_ANSWERS_WORK/$driver.py"
+  forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/$driver.py" "$HERE/config.example.env" || fail "$driver lost the Forgejo destinations"
+  sed "s/name in stated and name != BESIDE/name in stated and name != BESIDE and name != 'forgejo_platform_repository'/" \
+    "$FORGEJO_ANSWERS_WORK/$driver.py" > "$FORGEJO_ANSWERS_WORK/planted.py"
+  if forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/planted.py" "$HERE/config.example.env" 2>/dev/null; then
+    fail "$driver's projection passed with forgejo_platform_repository removed"
+  fi
+done
+sed '/^FORGEJO_DEPLOY_REPOSITORY=/d' "$HERE/config.example.env" > "$FORGEJO_ANSWERS_WORK/planted.env"
+if forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/driver.sh.py" "$FORGEJO_ANSWERS_WORK/planted.env" 2>/dev/null; then
+  fail 'an example config without the deploy destination passed'
+fi
+ok 'both drivers retain the three configured Forgejo destinations with GitHub clone URLs; missing config keys and a dropped destination are caught'
 
 # ===========================================================================
 # NINE — release-unit, against a stand-in Manager behind a stand-in ssh and kubectl

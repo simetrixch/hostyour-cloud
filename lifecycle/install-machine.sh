@@ -40,6 +40,8 @@ fail() { printf '\n  %s\n\n' "$1" >&2; exit "${2:-65}"; }
 [ -r "$DRIVER" ] || fail 'driver.sh is not beside this file — it IS the installation, and this only starts it' 66
 # shellcheck disable=SC1091
 . "$HERE/require-owner-only.sh" || fail 'require-owner-only.sh is not beside this file — it is the guard every launcher puts on a config' 66
+# shellcheck disable=SC1091
+. "$HERE/require-forgejo-destinations.sh" || fail 'require-forgejo-destinations.sh is not beside this file — it is the guard that asks the Forgejo destinations of a config' 66
 [ -r "$FILE" ]   || fail "there is no config at $FILE. Copy config.example.env, fill it in, and make it readable by you alone" 66
 
 # ------------------------------------------------------- the file, and its guards
@@ -77,6 +79,7 @@ for named in FQDN OPERATOR_USER STAGE DEPLOY_REPO PROGRAMS_REPO PLATFORM_REPO PL
   [ -n "${!named:-}" ] || fail "$FILE states no $named, and nothing here may choose one" 65
 done
 [ -n "${ELEVATION_PASSWORD:-}" ]   || fail "$FILE states no ELEVATION_PASSWORD, and every program of this sequence is run elevated" 65
+require_forgejo_destinations || fail "$FILE $REFUSAL" 65
 
 # BORN ON platform-local, refused before anything is mutated. ACME_CREDENTIALS_JSON is the one source
 # of acmeEabKeyId in the master's map, and an issuer bound to that account reads its key from a
