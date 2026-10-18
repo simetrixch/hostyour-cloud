@@ -7,10 +7,12 @@ import {applicationOf, driftFindings, renderChart, renderTwice} from './render-c
 // Plane on the master. Every page waits for the identity provider's forward auth, and only /api/v1,
 // Plane's API-key API, is reached without it. Its PostgreSQL, Redis, RabbitMQ and MinIO run beside
 // it on the platform's StorageClass, and every secret it holds comes from <stage>/app/plane: the
-// chart's public default keys and passwords never render.
+// chart's public default keys and passwords never render. The four images of the data services run at
+// the versions versions.yaml pins, which values-common.yaml states by hand.
 
 const yq = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', ...args], {encoding: 'utf8', ...(input ? {input} : {})}));
 const platform = yq(['.global', 'clusters/platform/values-common.yaml']);
+const pins = yq(['.images', 'clusters/platform/versions.yaml']);
 const app = yq(['.', 'clusters/inventories/plane/app.yaml']);
 const FORWARD_AUTH = 'idp-forwardauth@kubernetescrd';
 const MIDDLEWARES = 'traefik.ingress.kubernetes.io/router.middlewares';
@@ -57,6 +59,15 @@ function renderFindings(objects) {
     const classes = (set?.spec.volumeClaimTemplates ?? []).map(t => t.spec.storageClassName);
     if (classes.length !== 1 || classes[0] !== platform.storageClass) found.push(`${name} keeps its data on ${classes.join(', ') || 'nothing'}`);
   }
+  for (const [name, pin] of [['pgdb', 'plane-postgres'], ['redis', 'plane-redis'], ['rabbitmq', 'plane-rabbitmq']]) {
+    const set = objects.find(o => o.kind === 'StatefulSet' && o.metadata.name === `plane-${name}-wl`);
+    const wanted = `${pins[pin].upstream.image.replace(/^library\//, '')}:${pins[pin].version}`;
+    const images = (set?.spec.template.spec.containers ?? []).map(c => c.image);
+    if (images.length !== 1 || images[0] !== wanted) found.push(`${name} runs ${images.join(', ') || 'nothing'}, not ${wanted} of versions.yaml`);
+  }
+  const silo = pins['plane-silo'];
+  const store = objects.find(o => o.kind === 'StatefulSet' && o.metadata.name === 'plane-minio-wl')?.spec.template.spec.containers.map(c => c.image);
+  if (JSON.stringify(store) !== JSON.stringify([`docker.io/${silo.upstream.image}:${silo.version}`])) found.push(`minio runs ${store?.join(', ') ?? 'nothing'}, not docker.io/${silo.upstream.image}:${silo.version} of versions.yaml`);
 
   const text = JSON.stringify(objects);
   for (const value of PUBLIC_DEFAULTS) if (text.includes(value)) found.push(`a public default of the chart renders: ${value}`);
@@ -127,16 +138,26 @@ test('the embedded outpost gates plane.<domain>', () => {
   assert.deepEqual(blueprintFindings(proxyText, bindingsText), []);
 });
 
-test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class, a missing outpost binding, the chart\'s own /god-mode, a redirect to a port, a worker forking per core and a limit too small for it are found', () => {
+test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class, a missing outpost binding, the chart\'s own /god-mode, a redirect to a port, a worker forking per core, a limit too small for it and an image off its pin are found', () => {
   const planted = {
     'the pages without the gate': ['--set-string', 'plane-ce.ingress.ingress_annotations.traefik\\.ingress\\.kubernetes\\.io/router\\.middlewares='],
     'the public default keys': ['--set', 'plane-ce.external_secrets.app_keys_existingSecret=', '--set', 'plane-ce.env.requireExplicitSecrets=false'],
     'the public database password': ['--set', 'plane-ce.external_secrets.app_env_existingSecret='],
     'a volume on no named class': ['--set', 'plane-ce.minio.storageClass='],
+    'the chart\'s own database image': ['--set', 'plane-ce.postgres.image=postgres:15.7-alpine'],
+    'the chart\'s own queue image': ['--set', 'plane-ce.rabbitmq.image=rabbitmq:3.13.6-management-alpine'],
+    'the chart\'s own cache image': ['--set', 'plane-ce.redis.image=valkey/valkey:7.2.11-alpine'],
+    'a database one release behind its pin': ['--set', 'plane-ce.postgres.image=postgres:18.5-alpine'],
+    'a queue on another repository': ['--set', 'plane-ce.rabbitmq.image=bitnami/rabbitmq:4.3.6-management-alpine'],
+    'the chart\'s own object store image': ['--set', 'plane-ce.minio.image=docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z'],
   };
   for (const [name, args] of Object.entries(planted)) {
     assert.notDeepEqual(renderFindings(renderChart('plane', args)), [], name);
   }
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.postgres.image=postgres:15.7-alpine'])),
+    ['pgdb runs postgres:15.7-alpine, not postgres:18.6-alpine of versions.yaml']);
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.minio.image=docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z'])),
+    ['minio runs docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z, not docker.io/pgsty/silo:RELEASE.2026-10-18T00-00-00Z of versions.yaml']);
   const widened = renderChart('plane');
   widened.find(o => o.metadata?.name === 'plane-api-v1').spec.rules[0].http.paths.push({path: '/api', pathType: 'Prefix', backend: {service: {name: 'plane-api', port: {number: 8000}}}});
   assert.deepEqual(renderFindings(widened), ['plane-api-v1 serves /api/v1, /api without the forward auth']);
@@ -163,6 +184,7 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
 test('PLANTED INNOCENT: more replicas of the web app and a larger upload limit change nothing the rules hold', () => {
   assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.web.replicas=2', '--set', 'plane-ce.env.doc_upload_size_limit=10485760'])), []);
   assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.worker.memoryRequest=300Mi', '--set', 'plane-ce.worker.cpuRequest=100m'])), []);
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.minio.init_image=busybox:1.37', '--set', 'plane-ce.minio.image_mc=docker.io/pgsty/mc:RELEASE.2026-10-18T00-00-00Z'])), []);
 });
 
 // plane-ce stamps the render time into the pod template of its seven Deployments and of its migration
