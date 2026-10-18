@@ -858,11 +858,15 @@ cliTools:
       # every release of ansiwise-cli is published there by the master's Tekton as one
       # manifest simetrixch/ansiwise-cli:<tag> (hostyour-cloud clusters/inventories/
       # consumer-build templates/pipeline-publish.yaml), and GitHub carries no release
-      # of it. The image IS the repository, <owner>/<repository>, which is what
-      # hostyour-manager reads for the release line (inventory/ansiwise-pin.ts).
+      # of it. The image is the path of the binaries in that registry; `repository` is the engine's
+      # own repository on the platform's forge, <owner>/<repository>, which hostyour-manager reads for
+      # the release line (inventory/ansiwise-pin.ts) and composes the engine's URL from, with the host
+      # of global.platformUrl. The two name different things, and an upstream without `repository` is
+      # refused by name.
       kind: oci_tags
       host: zot.master.digitacloud.app
       image: simetrixch/ansiwise-cli
+      repository: ansiwise/ansiwise-cli
       # ALL THREE CHANNELS, and that is the decision this pin carries.
       # Every release of this project is cut under one grammar,
       # <major>.<minor>.<patch>-<channel>-<ts14> with channel one of alpha, beta

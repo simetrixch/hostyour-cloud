@@ -250,27 +250,29 @@ spec:
             # pins + seals WITHOUT a pod restart.
             - name: MASTER_SSH_HOST_KEY_FP_FILE
               value: /etc/manager/master-key/host-key-fp
-            {{- if .Values.github.repo }}
-            # Branches view + Reset wizard (config.ts GITHUB_REPO + GITHUB_WRITE_PAT,
-            # both-or-neither). GITHUB_REPO is the "owner/repo" of this monorepo (public,
-            # a plain value). GITHUB_WRITE_PAT carries the write-capable GITOPS_REPO_PAT,
-            # placed on the isolated manager-host tier (manager-github ExternalSecret)
-            # so the manager's own SA can read it — it cannot reach the system tier where
-            # ArgoCD's copy lives. Rendered only on the control host (master.sshUser) with
-            # repo set; a blank repo leaves both unset and the routes answer 501.
+            {{- if include "manager.platformRepo" . }}
+            # Branches view + Reset wizard (config.ts PLATFORM_REPO_URL + GITHUB_REPO + GITHUB_WRITE_PAT).
+            # PLATFORM_REPO_URL is the platform repository whole (global.platformUrl); the forge is the
+            # host of that address. GITHUB_REPO is its "owner/repo", derived from the same value
+            # (manager.platformRepo) so the two cannot disagree. GITHUB_WRITE_PAT carries the
+            # write-capable token of the platform repository, placed on the isolated manager-host tier
+            # (manager-github ExternalSecret) so the manager's own SA can read it — it cannot reach the
+            # system tier where ArgoCD's copy lives. Rendered only on the control host (master.sshUser).
+            - name: PLATFORM_REPO_URL
+              value: {{ required "manager: global.platformUrl is required (clusters/platform/values-common.yaml)" .Values.global.platformUrl | quote }}
             - name: GITHUB_REPO
-              value: {{ .Values.github.repo | quote }}
+              value: {{ include "manager.platformRepo" . | quote }}
             - name: GITHUB_WRITE_PAT
               valueFrom:
                 secretKeyRef:
                   name: manager-github
                   key: write-pat
-            # DEPLOY_REPO: the deploy repository is the INSTALLATION's own repository and there is no
-            # default that could name it; the Manager reads and writes it with the App's own token,
-            # minted at every open (hostyour-manager#194). The address is trimmed off the same value
-            # the reaper reads, so one installation still names its deploy repository once.
-            - name: DEPLOY_REPO
-              value: {{ .Values.github.deployRepo | default (required "manager: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.deployUrl | trimPrefix "https://github.com/" | trimSuffix ".git") | quote }}
+            # DEPLOY_REPO_URL: the deploy repository is the INSTALLATION's own repository and there is no
+            # default that could name it; it is passed whole, as global.deployUrl states it, and the host
+            # of the address says which forge holds it. The Manager reads and writes it with the App's own
+            # token on GitHub and with the deploy-bump machine user on Forgejo.
+            - name: DEPLOY_REPO_URL
+              value: {{ required "manager: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.deployUrl | quote }}
             {{- if and .Values.reaper.enabled .Values.master.sshUser }}
             # The registry reaper inside the manager (hostyour-manager server/boot/registry-reap.ts):
             # once a day it prunes the central registry named here. The hour it runs at and whether it
@@ -392,6 +394,24 @@ spec:
                   name: manager-webhook
                   key: github-webhook-secret
                   optional: true
+            # The same for a repository on the installation's Forgejo: the hook the Manager sets there is
+            # signed with the key the Forgejo Triggers validate (image-builder-forgejo-webhook-secret),
+            # read from the same Vault entry, <stage>/app/forgejo-webhook. Its own ExternalSecret
+            # (externalsecret-forgejo-webhook.yaml), because that entry waits for a later act.
+            - name: FORGEJO_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: manager-forgejo-webhook
+                  key: forgejo-webhook-secret
+                  optional: true
+            # The one Forgejo host a unit's repository URL may name besides github.com (config.ts
+            # FORGEJO_HOST), and the npm scope each Forgejo organisation's units publish under
+            # (FORGEJO_PACKAGE_SCOPES, organisation=scope pairs): a unit onboarded or moved onto an
+            # organisation without a pair is refused by the Manager.
+            - name: FORGEJO_HOST
+              value: {{ printf "forgejo.%s" (required "manager: global.domain is required (clusters/active/<fqdn>.yaml)" .Values.global.domain) | quote }}
+            - name: FORGEJO_PACKAGE_SCOPES
+              value: {{ include "manager.forgejoPackageScopes" . | quote }}
             {{- end }}
             # The provision-dns onboard step writes one record per unit through the
             # Cloudflare API — <label>.<stage apex> for a consumer, a wildcard under the
@@ -576,7 +596,7 @@ spec:
               mountPath: /etc/manager/master-key
               readOnly: true
             {{- end }}
-            {{- if and .Values.reaper.enabled .Values.master.sshUser .Values.github.repo }}
+            {{- if and .Values.reaper.enabled .Values.master.sshUser (include "manager.platformRepo" .) }}
             # The zot PUSH credential (delete rights) the registry reaper prunes with. A plain directory
             # mount, never subPath, so an ESO resync refreshes it without a restart.
             - name: registry-push
@@ -657,7 +677,7 @@ spec:
             optional: true
             defaultMode: 0440
         {{- end }}
-        {{- if and .Values.reaper.enabled .Values.master.sshUser .Values.github.repo }}
+        {{- if and .Values.reaper.enabled .Values.master.sshUser (include "manager.platformRepo" .) }}
         - name: registry-push
           secret:
             secretName: registry-reaper-push
