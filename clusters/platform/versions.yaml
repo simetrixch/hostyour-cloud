@@ -233,6 +233,23 @@ images:
         file: plugins/unit/docker/dbtools.Dockerfile
         argument: REDIS_SERIES
         segments: 2
+  # The Git server on the master. The chart (charts.forgejo below) runs its own appVersion when the
+  # values name no tag, so the image is pinned here and written beside `rootless: true`, which makes
+  # the chart append -rootless to the tag. The pin is the tag alone: the chart's image.digest needs
+  # the sha256: form, which `writes: sha256` does not write.
+  forgejo:
+    version: "17.0.0"
+    upstream:
+      kind: oci_tags
+      host: code.forgejo.org
+      image: forgejo/forgejo
+      matching: '^17\.0\.[0-9]+$'
+    stamps:
+      - kind: yaml_value
+        tree: platform
+        file: clusters/inventories/forgejo/values-common.yaml
+        key: tag
+        anchor: 'rootless: true'
   # A consumer's own MariaDB (clusters/units/mariadb) and the Manager's dump and restore client
   # beside it, on the long-term-support line mariadb.org names (12.3 on 2026-10-05). The upstream
   # report also lists the newer rolling lines; moving to one is a decision, not a sync.
