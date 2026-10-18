@@ -36,7 +36,7 @@ replicas: 1
 # the release bump writes, every plugin's pins and every image a tenant holds. The hour it runs at
 # and whether it deletes or only logs are Manager settings, edited on the Manager's Settings page,
 # so this inventory carries neither. Rendered only on the control/build host: gated on
-# master.sshUser AND github.repo, like the push credential it deletes with
+# master.sshUser AND the platform repository (manager.platformRepo), like the push credential it deletes with
 # (externalsecret-registry-push.yaml). zot's own retention never touches the single-segment repos
 # (the ["*"] keep-all policy in clusters/inventories/registry/values-common.yaml) — the reaper is the
 # sole cleaner there.
@@ -111,37 +111,29 @@ adminSocket:
   # the socket.
   mode: "0770"
 
-# GitHub access for the Branches view + the Reset wizard (config.ts GITHUB_REPO +
-# GITHUB_WRITE_PAT). `repo` is the "owner/repo" of THIS GitOps monorepo — the same
-# repo clusters/slaves/slave/values-common.yaml `repo.url` points at, just in owner/repo form
-# (not a secret). The write-capable token is GITOPS_REPO_PAT (Contents:RW), placed on the
-# isolated manager-host Vault tier and materialized by externalsecret-github.yaml as
-# the pod env GITHUB_WRITE_PAT — NEVER a Helm value. Both render only where master.sshUser
-# is set (the control host,
-# the only place the manager runs) AND repo is non-empty. Blank `repo` ⇒ the feature
-# is off and the routes answer 501 (no half-enabled state). Both-or-neither is enforced
-# in config.ts: when repo is set the deployment injects BOTH env vars.
+# Access to the platform repository for the Branches view + the Reset wizard (config.ts
+# PLATFORM_REPO_URL + GITHUB_REPO + GITHUB_WRITE_PAT). The platform repository is global.platformUrl
+# (clusters/platform/values-common.yaml), whole; the forge is the host of that address. `repo` is
+# EMPTY here on purpose: GITHUB_REPO is the "owner/repo" of that address (templates/_plugins.tpl
+# manager.platformRepo), and a value here that names another repository fails the render. The
+# write-capable token is placed on the isolated manager-host Vault tier and materialized by
+# externalsecret-github.yaml as the pod env GITHUB_WRITE_PAT — NEVER a Helm value. Everything renders
+# only where master.sshUser is set (the control host, the only place the manager runs).
 github:
-  repo: "simetrixch/hostyour-cloud"
-  # The DEPLOY REPOSITORY the manager reads, and the registry reaper's floor also searches
-  # (deployment.yaml DEPLOY_REPO). EMPTY here on purpose: which
-  # repository it is, is installation state — clusters/active/<fqdn>.yaml carries it as
-  # global.deployUrl and loads LAST, and the template falls back to that with a
-  # `required` on it and trims the owner/name off the address, so a branch naming no
-  # deploy repository fails its render instead of starting a reaper whose floor cannot see the
-  # deploy repository's pins.
-  # NOTHING HOLDS THIS KEY IN PLACE. `default` reads an absent key and an empty
-  # string alike, so removing the line renders the identical CronJob, and the
-  # render check never reaches the line at all: the CronJob stands behind
-  # master.sshUser, which is on an install branch only. What the key states is
-  # where the override goes — an installation pointing THIS app at another
-  # deploy repository sets deployRepo in installation/values/manager.yaml, which
-  # clusters/argocd/files/platform-apps-appset.yaml loads after this file.
-  deployRepo: ""
+  repo: ""
   # programsRepo — the repository a machine's deployment programs are cloned from (config.ts
   # DEPLOY_PROGRAMS_REPO) — is NOT here: it is the installation's own programs_repo answer, which
   # deploy-branch writes into installation/values/manager.yaml, and the chart's `required` refuses
   # a render without it.
+
+# The GitHub owners whose units the Manager's move run may take to the installation's Forgejo (config.ts
+# FORGEJO_MOVE_GITHUB_OWNERS). EMPTY here on purpose: which owners move is installation state, set in
+# installation/values/manager.yaml by the install branch that moves them. A moved unit keeps publishing
+# under the scope of the GitHub owner it leaves; a unit of an owner not named here stays on GitHub.
+forgejo:
+  # Forgejo organisations may differ from their units' npm scopes. Each installation supplies its map.
+  packageScopes: {}
+  moveGitHubOwners: []
 
 # The platform's GitHub App — installed with the owner of the deploy repository and of every tenant
 # repository, required of every installation (hostyour-cloud#237) — travels like every platform
@@ -286,7 +278,7 @@ ansiwise:
 # install branch; this address crosses nothing and has a correct value on the
 # trunk. An installation that runs its query API somewhere else overrides the
 # key in installation/values/manager.yaml, which the ApplicationSet loads after
-# this file, the same override path github.deployRepo above states.
+# this file, the same override path installation/values/manager.yaml states for any key.
 #
 # TWO CHARTS SPELL ONE SERVICE NAME AND NOTHING HOLDS THEM EQUAL. A Helm release
 # cannot read another release's values, so a changed fullnameOverride in

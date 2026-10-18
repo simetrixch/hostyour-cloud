@@ -117,6 +117,9 @@ spec:
               unit:
                 name: "{{ .name }}"
                 repoURL: "{{ .repoURL }}"
+                # The npm scope the registration states (Forgejo units; hostyour-manager shared/consumer.ts
+                # packageScope), empty for a unit that states none, whose scope is the owner of its repoURL.
+                packageScope: '{{ dig "packageScope" "" . }}'
                 buildsJson: "{{ .builds | toJson }}"
       destination:
         # THE CLUSTER, NEVER A SERVER URL — the same rule projects.yaml states. The `builds` project
