@@ -35,6 +35,14 @@ global:
   # resolves exactly as before — the value simply comes from the installation's
   # own file instead of the product's.
 
+  # The PLATFORM REPOSITORY, whole: https://<host>/<owner>/<repository>.git. The one place the platform
+  # names the repository it is built from; a reader takes the forge from the host of this address and the
+  # owner and name from its path, so a platform that moves forge changes this line and no template.
+  # The Manager chart passes it as PLATFORM_REPO_URL (clusters/inventories/manager/templates/deployment.yaml).
+  # The deploy repository is installation state and has no value here: global.deployUrl comes from
+  # clusters/active/<fqdn>.yaml, required, so a branch naming none fails its render.
+  platformUrl: https://github.com/simetrixch/hostyour-cloud.git
+
   # Timezone applied to MongoDB, PostgreSQL, and Postfix containers via their
   # respective TZ env vars. Single source of truth — flipping this here flips
   # the timezone everywhere. Resolves the prior Europe/Amsterdam vs
