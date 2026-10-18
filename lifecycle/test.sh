@@ -2867,6 +2867,45 @@ for planted in planted-server planted-fallback planted-print; do
 done
 ok "both drivers compose letsencrypt_server and letsencrypt_email from ACME_SERVER and ACME_EMAIL, and acme_eab_key_id and acme_eab_mac_key from ACME_CREDENTIALS_JSON; a malformed or incomplete binding is refused by its key's name without its value, a config with only the LETSENCRYPT lines composes none of the four, and three planted composers are caught"
 
+# The destination inputs use each driver's declared-answer projection unchanged.
+FORGEJO_ANSWERS_WORK="$WORK/forgejo-answers"
+mkdir -p "$FORGEJO_ANSWERS_WORK"
+forgejo_answers_cases() { # <composer> <example config>
+  python3 - "$1" "$2" "$FORGEJO_ANSWERS_WORK" <<'FORGEJO_ANSWERS_TEST'
+import json, pathlib, subprocess, sys
+composer, example, work = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+names = ['forgejo_platform_repository', 'forgejo_deploy_repository', 'forgejo_organisations']
+expected = dict(zip(names, ['platform-team/platform', 'deploy-team/deploy', 'platform-team,deploy-team']))
+for name in names:
+    assert name.upper() + "=''" in example.read_text(), name + ' is missing from config.example.env'
+declares = work / 'declares.yaml'
+declares.write_text('answers:\n' + ''.join('  - name: ' + name + '\n    kind: text\n' for name in names))
+config, output = work / 'config.env', work / 'answers.json'
+config.write_text("PLATFORM_REPO_URL='https://github.com/current/platform.git'\nDEPLOY_REPO_URL='https://github.com/current/deploy.git'\n" +
+                  ''.join(name.upper() + "='" + value + "'\n" for name, value in expected.items()))
+subprocess.run([sys.executable, composer, str(config), str(declares), str(output)], check=True, stdout=subprocess.DEVNULL)
+assert json.loads(output.read_text()) == {'answers': expected}, 'Forgejo destinations changed or were inferred from clone URLs'
+# Innocent: unrelated configuration does not become an answer.
+config.write_text(config.read_text() + "UNRELATED='innocent'\n")
+subprocess.run([sys.executable, composer, str(config), str(declares), str(output)], check=True, stdout=subprocess.DEVNULL)
+assert json.loads(output.read_text()) == {'answers': expected}
+FORGEJO_ANSWERS_TEST
+}
+for driver in driver.sh regenerate-driver.sh; do
+  composer_of "$HERE/$driver" > "$FORGEJO_ANSWERS_WORK/$driver.py"
+  forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/$driver.py" "$HERE/config.example.env" || fail "$driver lost the Forgejo destinations"
+  sed "s/name in stated and name != BESIDE/name in stated and name != BESIDE and name != 'forgejo_platform_repository'/" \
+    "$FORGEJO_ANSWERS_WORK/$driver.py" > "$FORGEJO_ANSWERS_WORK/planted.py"
+  if forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/planted.py" "$HERE/config.example.env" 2>/dev/null; then
+    fail "$driver's projection passed with forgejo_platform_repository removed"
+  fi
+done
+sed '/^FORGEJO_DEPLOY_REPOSITORY=/d' "$HERE/config.example.env" > "$FORGEJO_ANSWERS_WORK/planted.env"
+if forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/driver.sh.py" "$FORGEJO_ANSWERS_WORK/planted.env" 2>/dev/null; then
+  fail 'an example config without the deploy destination passed'
+fi
+ok 'both drivers retain the three configured Forgejo destinations with GitHub clone URLs; missing config keys and a dropped destination are caught'
+
 # ===========================================================================
 # NINE — release-unit, against a stand-in Manager behind a stand-in ssh and kubectl
 # ===========================================================================
