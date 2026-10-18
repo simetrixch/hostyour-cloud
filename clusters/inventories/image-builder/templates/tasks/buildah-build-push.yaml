@@ -276,7 +276,7 @@ spec:
           memory: 1Gi
         limits:
           cpu: "2"
-          memory: 2560Mi
+          memory: 2752Mi
 
     # ── step 2: PUSH — carries the push credential, runs NO consumer code ──────
     - name: push
@@ -335,7 +335,7 @@ spec:
       computeResources:
         requests:
           cpu: 100m
-          memory: 512Mi
+          memory: 256Mi
         limits:
           cpu: "1"
-          memory: 512Mi
+          memory: 320Mi
