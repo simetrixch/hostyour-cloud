@@ -1813,16 +1813,20 @@ echo "check: every yaml_value stamp site of this tree holds its pin from cluster
 # (report-versions). A dry run can still fail on a site of the `deploy` or `manager` tree that this
 # tree cannot see.
 declaration_records() { # <tree root> — "<label> <what> <kind> <keys>" per component, upstream and stamp, tab separated
-  yq e '.. | select(tag == "!!map" and has("version")) | (path | join("/")) as $l | (
-          ([$l, "component", "~", (keys | join(","))] | @tsv),
-          (select(has("upstream")) | .upstream | [$l, "upstream", (.kind // "~"), (keys | join(","))] | @tsv),
-          (select(has("stamps")) | .stamps[] | [$l, "stamp", (.kind // "~"), (keys | join(","))] | @tsv))' \
+  # A component is a top-level map with a `version`, or an entry of a top-level map that has none; an
+  # entry that is no map or has no `version` is still a component record, which lacks its `version`.
+  yq e '[ (to_entries | .[] | select(.value | tag == "!!map") | select(.value | has("version")) | {"label": .key, "body": .value}),
+          (to_entries | .[] | select(.value | tag == "!!map") | select(.value | has("version") | not) | .key as $g | .value | to_entries | .[] | {"label": ($g + "/" + .key), "body": .value}),
+          (to_entries | .[] | select(.value | tag != "!!map") | {"label": .key, "body": .value}) ]
+        | .[] | .label as $l | .body as $b | (
+          ([$l, "component", "~", (($b | select(tag == "!!map") | keys | join(",")) // "")] | @tsv),
+          ($b | select(tag == "!!map") | select(has("upstream")) | .upstream | [$l, "upstream", (.kind // "~"), (keys | join(","))] | @tsv),
+          ($b | select(tag == "!!map") | select(has("stamps")) | .stamps[] | [$l, "stamp", (.kind // "~"), (keys | join(","))] | @tsv))' \
     "$1/clusters/platform/versions.yaml"
 }
 declaration_faults() { # <records on stdin> — one line per key a kind does not take and per key it needs and lacks
   local label what kind keys needs takes key
   while IFS=$'\t' read -r label what kind keys; do
-    # yq prints an empty line for every component the filter leaves no upstream or stamps of.
     [ -n "$label" ] || continue
     case "$what:$kind" in
       component:*) needs='version'; takes='sha256 note upstream stamps' ;;
@@ -1851,9 +1855,10 @@ declaration_faults() { # <records on stdin> — one line per key a kind does not
 }
 # The planted defects and the planted innocents beside them: an oci_tags upstream carrying a
 # `repository`, a yaml_value stamp carrying a key its kind does not take, and a list_pin stamp lacking
-# a key it needs; a helm_index upstream carrying a `repository`, an oci_tags upstream with its three
-# fields and a note on the component, and a top-level component with a version and a note and nothing
-# else. The probe has to name the three and stay silent on the rest.
+# a key it needs, a group member without a `version` (a typo) and a component nested one level too
+# deep; a helm_index upstream carrying a `repository`, an oci_tags upstream with its three fields and a
+# note on the component, and a top-level component with a version and a note and nothing else. The
+# probe has to name the planted faults and stay silent on the rest.
 probe="$work/declaration-probe"
 mkdir -p "$probe/clusters/platform"
 cat > "$probe/clusters/platform/versions.yaml" <<'PROBE'
@@ -1892,18 +1897,28 @@ images:
       host: registry.example.invalid
       image: example/engine
       matching: '.*'
+  planted-typo:
+    verison: "5.0.0"
 innocent-top-level:
   version: "26.04"
   note: a component at the top level, which is no group
+planted-nested:
+  sub:
+    deep:
+      version: "6.0.0"
 PROBE
 probed="$(declaration_records "$probe" | declaration_faults)"
 expected="$(printf '%s\n' \
   'images/planted-upstream: the upstream of kind oci_tags carries "repository", which it does not take' \
   'images/planted-stamp: the stamp of kind yaml_value carries "column", which it does not take' \
-  'images/planted-stamp: the stamp of kind list_pin lacks "entry", which it needs')"
+  'images/planted-stamp: the stamp of kind list_pin lacks "entry", which it needs' \
+  'images/planted-typo: the component carries "verison", which it does not take' \
+  'images/planted-typo: the component lacks "version", which it needs' \
+  'planted-nested/sub: the component carries "deep", which it does not take' \
+  'planted-nested/sub: the component lacks "version", which it needs')"
 [ "$probed" = "$expected" ] \
   || fail "the declaration probe did not report exactly the planted faults and nothing else: ${probed:-nothing}"
-echo "check: the declaration probe reports the three planted faults and not the planted innocents."
+echo "check: the declaration probe reports the planted faults and not the planted innocents."
 records="$(declaration_records .)"
 faults="$(printf '%s\n' "$records" | declaration_faults)"
 if [ -n "$faults" ]; then
