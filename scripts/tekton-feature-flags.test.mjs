@@ -8,7 +8,7 @@ import {readFileSync} from 'node:fs';
 
 const MANIFEST = 'clusters/inventories/tekton/templates/release-pipelines.yaml';
 const VALUES = 'clusters/inventories/tekton/values-common.yaml';
-const WANTED = {coschedule: 'disabled', 'enable-api-fields': 'beta'};
+const WANTED = {coschedule: 'disabled', 'enable-api-fields': 'beta', 'set-security-context': 'false'};
 
 const featureFlags = (manifest) =>
   JSON.parse(execFileSync('yq', ['ea', '-o=json', 'select(.kind == "ConfigMap" and .metadata.name == "feature-flags") | .data'], {encoding: 'utf8', input: manifest}));
@@ -22,6 +22,16 @@ test('the vendored feature-flags carry the values the platform depends on', () =
 test('planted defect: a refresh that brings back the default coschedule is caught', () => {
   const refreshed = readFileSync(MANIFEST, 'utf8').replace(/^  coschedule: "disabled"$/m, '  coschedule: "workspaces"');
   assert.deepEqual(drift(featureFlags(refreshed)), ['coschedule']);
+});
+
+test('planted defect: a refresh that brings back the default security contexts is caught', () => {
+  const refreshed = readFileSync(MANIFEST, 'utf8').replace(/^  set-security-context: "false"$/m, '  set-security-context: "true"');
+  assert.deepEqual(drift(featureFlags(refreshed)), ['set-security-context']);
+});
+
+test('planted innocent: the read-only root filesystem flag moving changes nothing the platform depends on', () => {
+  const refreshed = readFileSync(MANIFEST, 'utf8').replace(/^  set-security-context-read-only-root-filesystem: "false"$/m, '  set-security-context-read-only-root-filesystem: "true"');
+  assert.deepEqual(drift(featureFlags(refreshed)), []);
 });
 
 test('the build plane alert stands with its expression', () => {
