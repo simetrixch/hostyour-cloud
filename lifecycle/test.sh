@@ -2637,6 +2637,85 @@ folder_of() { grep -E '^BACKUPS=' "$1"; }
   || fail 'a driver still names the old folder box:master/'
 ok 'the two drivers write and read one folder, box:$FQDN/master'
 
+# ── the quorum, checked and read by the account that owns it ─────────────────
+# Vault's quorum is the operator's own file at mode 600, and the backup runs as the operator. Its
+# check is the backup driver's own function, lifted and run against files this account plants, with
+# root a stand-in that fails the run on any call. Where the OS's test is uutils, an elevated
+# test -r judges root by the mode bits and answers no for a 0600 file root does not own, which the
+# driver then reports as a file that is not on the host.
+quorum_check_of() { sed -n '/^require_quorum() {/,/^}/p' "$1"; }
+quorum_checked() { # <the check's text> <the quorum's path> — ends with the code the check dies with, 0 when it passes; what it printed stands in $OUT/quorum.err
+  ( QUORUM="$2"
+    die() { echo "die: $1" >&2; exit "${2:-1}"; }
+    root() { echo 'the quorum was read elevated' >&2; exit 99; }
+    eval "$1"
+    require_quorum ) > /dev/null 2> "$OUT/quorum.err"
+}
+QUORUM_DIR="$WORK/quorum"
+mkdir -p "$QUORUM_DIR"
+echo probe > "$QUORUM_DIR/own.txt"; chmod 600 "$QUORUM_DIR/own.txt"
+echo probe > "$QUORUM_DIR/closed.txt"; chmod 000 "$QUORUM_DIR/closed.txt"
+BACKUP_CHECK="$(quorum_check_of "$HERE/master-backup-driver.sh")"
+[ -n "$BACKUP_CHECK" ] || fail 'master-backup-driver.sh carries no require_quorum — nothing below measures its check of the quorum'
+
+Q_CODE=0; quorum_checked "$BACKUP_CHECK" "$QUORUM_DIR/own.txt" || Q_CODE=$?
+[ "$Q_CODE" = 0 ] || fail "backup: the runner's own quorum file at mode 600 was refused with $Q_CODE: $(cat "$OUT/quorum.err")"
+[ ! -s "$OUT/quorum.err" ] || fail "backup: a quorum file the runner reads printed words: $(cat "$OUT/quorum.err")"
+ok "backup: the runner's own quorum file at mode 600 passes, without root and without a word"
+
+Q_CODE=0; quorum_checked "$BACKUP_CHECK" "$QUORUM_DIR/absent.txt" || Q_CODE=$?
+[ "$Q_CODE" = 66 ] || fail "backup: no quorum file must end with 66, got $Q_CODE: $(cat "$OUT/quorum.err")"
+grep -qF "$QUORUM_DIR/absent.txt is not on this host — a master keeps Vault's quorum there" "$OUT/quorum.err" \
+  || fail "backup: no quorum file was not refused as such: $(cat "$OUT/quorum.err")"
+ok 'backup: no quorum file ends with 66 and says it is not on this host'
+
+RUNNER="$(id -un 2>/dev/null || true)"
+if [ "$(id -u)" = 0 ] || [ -z "$RUNNER" ]; then
+  echo 'test: NOT RUN — the quorum file the runner cannot read: uid 0 reads a file of mode 000, and an account without a name cannot be named, so this run plants and names nothing; the ci check step runs as a named user that is not root'
+else
+  Q_CODE=0; quorum_checked "$BACKUP_CHECK" "$QUORUM_DIR/closed.txt" || Q_CODE=$?
+  [ "$Q_CODE" = 66 ] || fail "backup: a quorum file the runner cannot read must end with 66, got $Q_CODE: $(cat "$OUT/quorum.err")"
+  grep -qF "$QUORUM_DIR/closed.txt stands on this host, but $RUNNER, who runs this backup, cannot read it" "$OUT/quorum.err" \
+    || fail "backup: a quorum file the runner cannot read was not refused naming $RUNNER: $(cat "$OUT/quorum.err")"
+  ok "backup: a quorum file the runner cannot read ends with 66 and names $RUNNER"
+
+  # planted defect: a check that lets any file that stands there through
+  PLANTED_OPEN="$(printf '%s\n' "$BACKUP_CHECK" | sed 's/\[ -r "\$QUORUM" \]/true/')"
+  [ "$PLANTED_OPEN" != "$BACKUP_CHECK" ] || fail 'the planted open check was not planted — the probe proves nothing'
+  Q_CODE=0; quorum_checked "$PLANTED_OPEN" "$QUORUM_DIR/closed.txt" || Q_CODE=$?
+  [ "$Q_CODE" = 0 ] || fail "the planted open check was not the defect it is: it ended with $Q_CODE"
+  ok 'the planted open check lets the unreadable quorum through, where the real one ends with 66'
+fi
+
+# planted defect: the check as it was asked through root
+PLANTED_ELEVATED="$(printf '%s\n' "$BACKUP_CHECK" | sed 's/\[ -r "\$QUORUM" \]/root test -r "$QUORUM"/')"
+[ "$PLANTED_ELEVATED" != "$BACKUP_CHECK" ] || fail 'the planted elevated check was not planted — the probe proves nothing'
+Q_CODE=0; quorum_checked "$PLANTED_ELEVATED" "$QUORUM_DIR/own.txt" || Q_CODE=$?
+[ "$Q_CODE" = 99 ] && grep -qF 'the quorum was read elevated' "$OUT/quorum.err" \
+  || fail "the planted elevated check was not caught: it ended with $Q_CODE and printed: $(cat "$OUT/quorum.err")"
+ok 'the planted elevated check is caught: root is called for a file the runner owns'
+
+# Neither driver asks root for a file's mode, and the backup does not read the quorum through root.
+elevated_reads_in() { grep -vE '^[[:space:]]*#' "$1" | grep -E 'root (test|\[) -[rwx]( |$)|root cat "\$QUORUM"'; }
+for driver in master-backup-driver.sh master-restore-driver.sh; do
+  ! elevated_reads_in "$HERE/$driver" > "$OUT/elevated.out" \
+    || fail "$driver asks root for a file's mode or reads the quorum through root: $(cat "$OUT/elevated.out")"
+done
+for planted_line in 'root test -r "$QUORUM" || die gone 66' 'root test -x "$sealed" || die gone 66' 'root [ -w "$sealed" ] || die gone 66' 'root cat "$QUORUM" | seal "$WORK/x"'; do
+  { cat "$HERE/master-backup-driver.sh"; echo "$planted_line"; } > "$OUT/planted-elevated.sh"
+  elevated_reads_in "$OUT/planted-elevated.sh" > /dev/null \
+    || fail "the guard did not catch a driver carrying: $planted_line"
+done
+{ cat "$HERE/master-restore-driver.sh"
+  echo '# root test -r "$sealed" was wrong: root is judged by the mode bits'
+  echo 'root test -f "$sealed" || die gone 66'
+  echo 'root test -e "$sealed" || die gone 66'
+  echo 'root test -d "$sealed" || die gone 66'
+  echo 'root cat "$sealed" > /dev/null'; } > "$OUT/innocent-elevated.sh"
+! elevated_reads_in "$OUT/innocent-elevated.sh" > "$OUT/elevated.out" \
+  || fail "the guard caught a comment and the tests of existence, kind and a read of a file that is not the quorum: $(cat "$OUT/elevated.out")"
+ok 'neither driver asks root for a file'"'"'s mode or reads the quorum through root; the guard catches each planted form and passes the innocent lines'
+
 # ===========================================================================
 # EIGHT — the engine held against its digests, as both drivers place it on a machine
 # ===========================================================================

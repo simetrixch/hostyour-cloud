@@ -73,6 +73,14 @@ STORES=(
   "forgejo|gitea-shared-storage|forgejo|deployment"
 )
 readonly QUORUM="/srv/hostyour-cloud/secrets/vault-${STAGE}.txt"
+# THE QUORUM IS THE OPERATOR'S OWN FILE, and this runs as the operator: it is checked and read as that
+# account, as the unseal service reads it, never through root. An elevated test -r is no check of it:
+# where the OS's test is uutils, it judges root by the mode bits and answers no for a 0600 file root
+# does not own, which would be reported here as a file that is not on the host.
+require_quorum() {
+  [ -f "$QUORUM" ] || die "$QUORUM is not on this host — a master keeps Vault's quorum there, and a backup without it could never be opened" 66
+  [ -r "$QUORUM" ] || die "$QUORUM stands on this host, but $(id -un), who runs this backup, cannot read it — a master keeps Vault's quorum as the operator's own file at mode 600" 66
+}
 readonly STORAGE_ROOT=/var/snap/microk8s/common/default-storage
 
 step "what this machine is, before anything is stopped"
@@ -80,7 +88,7 @@ say "asked as $(id -un) on $(hostname), for $FQDN, stage $STAGE"
 printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' true 2>/dev/null || die 'the ELEVATION_PASSWORD in the config does not raise a command on this machine' 77
 command -v microk8s >/dev/null 2>&1 || die 'microk8s is not on this machine, so there is no cluster whose stores could be taken' 69
 K get nodes >/dev/null 2>&1 || die 'the cluster does not answer, and a store copied while it cannot be stopped is a store with a write in flight' 69
-root test -r "$QUORUM" || die "$QUORUM is not on this host — a master keeps Vault's quorum there, and a backup without it could never be opened" 66
+require_quorum
 ROOT_DIR="$(readlink -f "$STORAGE_ROOT")"
 [ -d "$ROOT_DIR" ] || die "$STORAGE_ROOT does not lead to a directory, so the stores' volumes cannot be found" 69
 good "the stores' volumes stand under $ROOT_DIR"
@@ -135,7 +143,7 @@ for row in "${STORES[@]}"; do
 done
 
 step "the host's own file"
-root cat "$QUORUM" | seal "$WORK/host--vault-${STAGE}.txt.gpg" || die "the quorum file could not be sealed" 70
+cat "$QUORUM" | seal "$WORK/host--vault-${STAGE}.txt.gpg" || die "the quorum file could not be sealed" 70
 good "vault-${STAGE}.txt taken — the quorum this backup is opened with"
 
 step "the manifest, and the way out"

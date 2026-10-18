@@ -166,7 +166,7 @@ root install -d -m 700 "$PLAIN"
 for row in "${STORES[@]}"; do
   IFS='|' read -r ns pvc size <<< "$row"
   sealed="$FETCH/${ns}--${pvc}.tar.gpg"
-  root test -r "$sealed" || die "backup $ID carries no archive for ${ns}/${pvc} — a backup missing a store is not one this places" 66
+  root test -f "$sealed" || die "backup $ID carries no archive for ${ns}/${pvc} — a backup missing a store is not one this places" 66
   root install -d -m 700 "$PLAIN/${ns}--${pvc}"
   root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" sh -c 'gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 3 -d "$1" 3<<EOF | tar --numeric-owner -C "$2" -xf -
 $BACKUP_PASSPHRASE
