@@ -118,7 +118,7 @@ test('PLANTED DEFECT: the product ships no organisation of any installation, and
 });
 
 test('PLANTED DEFECT: the engine repository stands in the platform repository organisation until a forge move splits them', () => {
-  const engine = select(readFileSync('clusters/platform/versions.yaml', 'utf8'), '.cliTools.ansiwise.upstream.repository');
+  const engine = select(readFileSync('clusters/platform/versions.yaml', 'utf8'), '.cliTools.ansiwise.upstream.image');
   const platformUrl = select(readFileSync('clusters/platform/values-common.yaml', 'utf8'), '.global.platformUrl');
   assert.equal(engine.split('/')[0], new URL(platformUrl).pathname.split('/')[1], `versions.yaml names ${engine} as the engine, whose release line the platform repository ${platformUrl} does not share`);
   assert.equal(engine, 'simetrixch/ansiwise-cli');

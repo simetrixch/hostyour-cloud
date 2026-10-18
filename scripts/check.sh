@@ -1796,6 +1796,124 @@ if [ -n "$drifts" ]; then
 fi
 echo "check: every yaml_value stamp site of this tree holds its pin from clusters/platform/versions.yaml, $(yq e '[.. | select(tag == "!!map" and has("stamps")) | .stamps[] | select(.kind == "yaml_value" and .tree == "platform")] | length' clusters/platform/versions.yaml) of them."
 
+# ── The keys of clusters/platform/versions.yaml, held to what the versions grammar takes ──────
+# `ansiwise --program sync-versions --mode dry` refuses the whole file for one key its kind does not
+# take, before it plans anything, and nothing here ran that program: a reader of the file in another
+# repository (hostyour-manager's engine repository once) had a key added that the pinned ansiwise
+# then refused on every release. Each component, upstream and stamp is read here the way the loader
+# reads it (a top-level map with a `version` is a component, any other top-level map a group of them).
+#
+# THE RULE IS THE ENGINE'S, COPIED ONCE: the key sets are ansiwise-plugins ansiwise-versions
+# lib/src/declaration.dart at aef0ade, the ref of the ansiwise 0.8.321-stable-20261017151629 that
+# versions.yaml pins: a component :449-450, the upstream kinds :544-591, the stamp kinds :594-682, and
+# the refusal of a key its kind does not take :739-745. A key the engine adds later is not known here
+# until the table below is copied again from the commit the pin then names.
+# Coverage: the keys of every component, upstream and stamp of this file. Not covered: the sites of the
+# `deploy` and `manager` trees (those repositories' to hold, above), and the answers of an upstream
+# (report-versions). A dry run can still fail on a site of the `deploy` or `manager` tree that this
+# tree cannot see.
+declaration_records() { # <tree root> — "<label> <what> <kind> <keys>" per component, upstream and stamp, tab separated
+  yq e '.. | select(tag == "!!map" and has("version")) | (path | join("/")) as $l | (
+          ([$l, "component", "~", (keys | join(","))] | @tsv),
+          (select(has("upstream")) | .upstream | [$l, "upstream", (.kind // "~"), (keys | join(","))] | @tsv),
+          (select(has("stamps")) | .stamps[] | [$l, "stamp", (.kind // "~"), (keys | join(","))] | @tsv))' \
+    "$1/clusters/platform/versions.yaml"
+}
+declaration_faults() { # <records on stdin> — one line per key a kind does not take and per key it needs and lacks
+  local label what kind keys needs takes key
+  while IFS=$'\t' read -r label what kind keys; do
+    # yq prints an empty line for every component the filter leaves no upstream or stamps of.
+    [ -n "$label" ] || continue
+    case "$what:$kind" in
+      component:*) needs='version'; takes='sha256 note upstream stamps' ;;
+      upstream:git_tags) needs='kind project matching'; takes='' ;;
+      upstream:docker_hub) needs='kind image matching'; takes='' ;;
+      upstream:oci_tags) needs='kind host image matching'; takes='' ;;
+      upstream:chart_repository) needs='kind'; takes='' ;;
+      upstream:helm_index) needs='kind repository chart'; takes='' ;;
+      upstream:snap_channel) needs='kind snap'; takes='' ;;
+      upstream:hashicorp_release) needs='kind product'; takes='' ;;
+      stamp:yaml_value) needs='kind tree file key'; takes='anchor segments writes' ;;
+      stamp:chart_dependency) needs='kind tree file dependency'; takes='' ;;
+      stamp:list_pin) needs='kind tree file anchor entry'; takes='segments' ;;
+      stamp:dockerfile_from) needs='kind tree file image'; takes='' ;;
+      stamp:dockerfile_arg) needs='kind tree file argument'; takes='segments' ;;
+      *) echo "$label: the $what of kind $kind is no kind the versions grammar knows"; continue ;;
+    esac
+    [ "$kind" = '~' ] && kind='' || kind=" of kind $kind"
+    for key in ${keys//,/ }; do
+      case " $needs $takes " in *" $key "*) ;; *) echo "$label: the $what$kind carries \"$key\", which it does not take" ;; esac
+    done
+    for key in $needs; do
+      case ",$keys," in *",$key,"*) ;; *) echo "$label: the $what$kind lacks \"$key\", which it needs" ;; esac
+    done
+  done
+}
+# The planted defects and the planted innocents beside them: an oci_tags upstream carrying a
+# `repository`, a yaml_value stamp carrying a key its kind does not take, and a list_pin stamp lacking
+# a key it needs; a helm_index upstream carrying a `repository`, an oci_tags upstream with its three
+# fields and a note on the component, and a top-level component with a version and a note and nothing
+# else. The probe has to name the three and stay silent on the rest.
+probe="$work/declaration-probe"
+mkdir -p "$probe/clusters/platform"
+cat > "$probe/clusters/platform/versions.yaml" <<'PROBE'
+images:
+  planted-upstream:
+    version: "1.0.0"
+    upstream:
+      kind: oci_tags
+      host: registry.example.invalid
+      image: example/engine
+      repository: example/engine
+      matching: '.*'
+  planted-stamp:
+    version: "2.0.0"
+    stamps:
+      - kind: yaml_value
+        tree: platform
+        file: parts/values.yaml
+        key: tag
+        column: 4
+      - kind: list_pin
+        tree: platform
+        file: parts/values.yaml
+        anchor: 'tools:'
+  innocent-helm:
+    version: "3.0.0"
+    upstream:
+      kind: helm_index
+      repository: https://charts.example.invalid
+      chart: example
+  innocent-oci:
+    version: "4.0.0"
+    note: a note on the component
+    upstream:
+      kind: oci_tags
+      host: registry.example.invalid
+      image: example/engine
+      matching: '.*'
+innocent-top-level:
+  version: "26.04"
+  note: a component at the top level, which is no group
+PROBE
+probed="$(declaration_records "$probe" | declaration_faults)"
+expected="$(printf '%s\n' \
+  'images/planted-upstream: the upstream of kind oci_tags carries "repository", which it does not take' \
+  'images/planted-stamp: the stamp of kind yaml_value carries "column", which it does not take' \
+  'images/planted-stamp: the stamp of kind list_pin lacks "entry", which it needs')"
+[ "$probed" = "$expected" ] \
+  || fail "the declaration probe did not report exactly the planted faults and nothing else: ${probed:-nothing}"
+echo "check: the declaration probe reports the three planted faults and not the planted innocents."
+records="$(declaration_records .)"
+faults="$(printf '%s\n' "$records" | declaration_faults)"
+if [ -n "$faults" ]; then
+  printf '%s\n' "$faults" | sed 's/^/  /'
+  fail "clusters/platform/versions.yaml holds a key the versions grammar refuses, and the dry run of the sync would stop at it — delete the key, or the engine that reads it takes it from the pin"
+fi
+printf '%s\n' "$records" | awk -F'\t' '
+  { n[$2]++; keys += split($4, k, ",") }
+  END { printf "check: every key of clusters/platform/versions.yaml is one its kind takes — %d components, %d upstreams, %d stamps, %d keys; not the sites of the deploy and manager trees, nor the answers of an upstream, so a dry run can still fail on a site this tree cannot see.\n", n["component"], n["upstream"], n["stamp"], keys }'
+
 echo 'check: NOT RUN locally — lifecycle/test.sh; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the ci of the master via scripts/test.sh.'
 bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
