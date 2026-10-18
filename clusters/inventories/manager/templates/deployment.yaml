@@ -273,6 +273,16 @@ spec:
             # token on GitHub and with the deploy-bump machine user on Forgejo.
             - name: DEPLOY_REPO_URL
               value: {{ required "manager: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.deployUrl | quote }}
+            # The one Forgejo host a repository URL above, or a unit's, may name besides github.com (config.ts
+            # FORGEJO_HOST). It renders with the repository URLs and not with consumer onboarding: the
+            # platform and deploy repositories can stand on it where no unit is onboarded.
+            - name: FORGEJO_HOST
+              value: {{ printf "forgejo.%s" (required "manager: global.domain is required (clusters/active/<fqdn>.yaml)" .Values.global.domain) | quote }}
+            # The GitHub owners whose units the Manager's move run may take to that Forgejo (config.ts
+            # FORGEJO_MOVE_GITHUB_OWNERS, comma separated). Empty unless the installation names owners
+            # (forgejo.moveGitHubOwners): a unit of any other owner stays on GitHub.
+            - name: FORGEJO_MOVE_GITHUB_OWNERS
+              value: {{ join "," (.Values.forgejo.moveGitHubOwners | default list) | quote }}
             {{- if and .Values.reaper.enabled .Values.master.sshUser }}
             # The registry reaper inside the manager (hostyour-manager server/boot/registry-reap.ts):
             # once a day it prunes the central registry named here. The hour it runs at and whether it
@@ -404,14 +414,6 @@ spec:
                   name: manager-forgejo-webhook
                   key: forgejo-webhook-secret
                   optional: true
-            # The one Forgejo host a unit's repository URL may name besides github.com (config.ts
-            # FORGEJO_HOST), and the npm scope each Forgejo organisation's units publish under
-            # (FORGEJO_PACKAGE_SCOPES, organisation=scope pairs): a unit onboarded or moved onto an
-            # organisation without a pair is refused by the Manager.
-            - name: FORGEJO_HOST
-              value: {{ printf "forgejo.%s" (required "manager: global.domain is required (clusters/active/<fqdn>.yaml)" .Values.global.domain) | quote }}
-            - name: FORGEJO_PACKAGE_SCOPES
-              value: {{ include "manager.forgejoPackageScopes" . | quote }}
             {{- end }}
             # The provision-dns onboard step writes one record per unit through the
             # Cloudflare API — <label>.<stage apex> for a consumer, a wildcard under the

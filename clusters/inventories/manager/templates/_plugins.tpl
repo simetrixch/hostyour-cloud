@@ -9,20 +9,15 @@ no PLUGINS key, and the core then runs alone.
 {{- end }}
 
 {{/*
-The "owner/repo" of the platform repository, for the env GITHUB_REPO: `github.repo` where an installation
-sets it, else the owner and name in global.platformUrl, so the platform repository is named once and
-GITHUB_REPO and PLATFORM_REPO_URL cannot disagree. Empty only where the platform URL is.
+The "owner/repo" of the platform repository, for the env GITHUB_REPO: the owner and name in
+global.platformUrl, which is where the platform repository is named. `github.repo` is no second name
+for it: where an installation still sets it, it must name the same repository, or the render fails
+here, because a Manager given two repositories refuses to start. Empty only where the platform URL is.
 */}}
 {{- define "manager.platformRepo" -}}
-{{- .Values.github.repo | default (regexReplaceAll "^https://[^/]+/" (.Values.global.platformUrl | default "") "" | trimSuffix ".git") -}}
-{{- end }}
-
-{{/*
-FORGEJO_PACKAGE_SCOPES: the organisation=scope pairs of forgejo.packageScopes, comma separated, in the
-order of the organisations' names.
-*/}}
-{{- define "manager.forgejoPackageScopes" -}}
-{{- $pairs := list -}}
-{{- range $organisation, $scope := .Values.forgejo.packageScopes }}{{- $pairs = append $pairs (printf "%s=%s" $organisation $scope) -}}{{- end -}}
-{{- join "," $pairs -}}
+{{- $derived := regexReplaceAll "^https://[^/]+/" (.Values.global.platformUrl | default "") "" | trimSuffix ".git" -}}
+{{- if and .Values.github.repo (ne .Values.github.repo $derived) -}}
+{{- fail (printf "manager: github.repo (%s) names another repository than global.platformUrl (%s): the platform repository is named once, in global.platformUrl — set that and remove github.repo" .Values.github.repo $derived) -}}
+{{- end -}}
+{{- $derived -}}
 {{- end }}

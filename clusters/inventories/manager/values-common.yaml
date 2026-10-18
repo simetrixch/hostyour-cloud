@@ -36,7 +36,7 @@ replicas: 1
 # the release bump writes, every plugin's pins and every image a tenant holds. The hour it runs at
 # and whether it deletes or only logs are Manager settings, edited on the Manager's Settings page,
 # so this inventory carries neither. Rendered only on the control/build host: gated on
-# master.sshUser AND github.repo, like the push credential it deletes with
+# master.sshUser AND the platform repository (manager.platformRepo), like the push credential it deletes with
 # (externalsecret-registry-push.yaml). zot's own retention never touches the single-segment repos
 # (the ["*"] keep-all policy in clusters/inventories/registry/values-common.yaml) — the reaper is the
 # sole cleaner there.
@@ -115,10 +115,10 @@ adminSocket:
 # PLATFORM_REPO_URL + GITHUB_REPO + GITHUB_WRITE_PAT). The platform repository is global.platformUrl
 # (clusters/platform/values-common.yaml), whole; the forge is the host of that address. `repo` is
 # EMPTY here on purpose: GITHUB_REPO is the "owner/repo" of that address (templates/_plugins.tpl
-# manager.platformRepo), and a value here overrides it. The write-capable token is placed on the
-# isolated manager-host Vault tier and materialized by externalsecret-github.yaml as the pod env
-# GITHUB_WRITE_PAT — NEVER a Helm value. Everything renders only where master.sshUser is set (the
-# control host, the only place the manager runs).
+# manager.platformRepo), and a value here that names another repository fails the render. The
+# write-capable token is placed on the isolated manager-host Vault tier and materialized by
+# externalsecret-github.yaml as the pod env GITHUB_WRITE_PAT — NEVER a Helm value. Everything renders
+# only where master.sshUser is set (the control host, the only place the manager runs).
 github:
   repo: ""
   # programsRepo — the repository a machine's deployment programs are cloned from (config.ts
@@ -126,15 +126,12 @@ github:
   # deploy-branch writes into installation/values/manager.yaml, and the chart's `required` refuses
   # a render without it.
 
-# The Forgejo organisations whose units the Manager builds and releases (config.ts FORGEJO_PACKAGE_SCOPES),
-# each with the npm scope its units publish under; a unit keeps the scope its GitHub owner gave it. A unit
-# on a Forgejo organisation without a pair is refused at its onboarding and at its move; a unit on
-# github.com needs none, its scope is the owner of its URL.
+# The GitHub owners whose units the Manager's move run may take to the installation's Forgejo (config.ts
+# FORGEJO_MOVE_GITHUB_OWNERS). EMPTY here on purpose: which owners move is installation state, set in
+# installation/values/manager.yaml by the install branch that moves them. A moved unit keeps publishing
+# under the scope of the GitHub owner it leaves; a unit of an owner not named here stays on GitHub.
 forgejo:
-  packageScopes:
-    ansiwise: simetrixch
-    hostyour: simetrixch
-    simplidigita: digitaplatform
+  moveGitHubOwners: []
 
 # The platform's GitHub App — installed with the owner of the deploy repository and of every tenant
 # repository, required of every installation (hostyour-cloud#237) — travels like every platform
