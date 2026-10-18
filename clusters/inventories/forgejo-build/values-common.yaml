@@ -13,6 +13,20 @@ eventListener:
 forgejo:
   url: http://forgejo-http.forgejo.svc:3000
 
+# Forgejo follows the ApplicationSet's stage suffix; Plane fixes its release name in app.yaml.
+egress:
+  forgejo:
+    namespace: forgejo
+    port: 3000
+    podLabels:
+      app.kubernetes.io/name: forgejo
+      app.kubernetes.io/instance: 'forgejo-{{ required "forgejo-build: stage is required (clusters/active/<fqdn>.yaml)" .Values.stage }}'
+  plane:
+    namespace: plane
+    port: 8000
+    podLabels:
+      app.name: plane-plane-api
+
 plane:
   workspace: simplidigita
   projects:
