@@ -288,6 +288,20 @@ function namespaceFindings(docs) {
   return found;
 }
 
+function egressFindings(docs) {
+  const policies = docs.filter(d => d.kind === 'NetworkPolicy');
+  const baseline = policies.find(p => p.metadata.name === 'build-egress');
+  if (!baseline || JSON.stringify(baseline.spec.podSelector) !== '{}' ||
+      JSON.stringify(baseline.spec.policyTypes) !== '["Egress"]') return ['forgejo-build renders no egress fence'];
+  const ingress = JSON.parse(execFileSync('yq', ['-o=json', '.global.ingressNamespace', 'clusters/platform/values-common.yaml'], {encoding: 'utf8'}));
+  const allowed = ['kube-system', 'registry', ingress, 'forgejo', 'plane'];
+  return policies.flatMap(policy => (policy.spec.egress ?? []).flatMap(rule => (rule.to ?? []).flatMap(peer => {
+    if (!peer.namespaceSelector) return [];
+    const namespace = peer.namespaceSelector.matchLabels?.['kubernetes.io/metadata.name'];
+    return allowed.includes(namespace) ? [] : [`${policy.metadata.name} admits unrelated namespace ${namespace}`];
+  })));
+}
+
 /** Every way the Pipeline breaks the rules above, named. */
 function pipelineFindings(docs) {
   const found = [];
@@ -322,6 +336,17 @@ function pipelineFindings(docs) {
 
 test('forgejo-build holds the run namespace, its one grant and the credentials a missing entry does not turn into an error', () => {
   assert.deepEqual(namespaceFindings(build), []);
+});
+
+test('forgejo-build renders an egress fence and admits no unrelated namespace', () => {
+  assert.deepEqual(egressFindings(build), [], 'PLANTED INNOCENT: the rendered build fence and its two internal services');
+  assert.deepEqual(egressFindings(build.filter(d => d.kind !== 'NetworkPolicy')), ['forgejo-build renders no egress fence'],
+    'PLANTED DEFECT: removing the policies reproduces the unfenced namespace');
+  const widened = structuredClone(build);
+  byKind(widened, 'NetworkPolicy', 'build-egress').spec.egress.push({
+    to: [{namespaceSelector: {matchLabels: {'kubernetes.io/metadata.name': 'unrelated'}}}], ports: [{protocol: 'TCP', port: 443}]});
+  assert.deepEqual(egressFindings(widened), ['build-egress admits unrelated namespace unrelated'],
+    'PLANTED DEFECT: an unrelated namespace is rejected');
 });
 
 test('forgejo-release hands the API tokens to the three API Tasks alone and releases on a tag only', () => {
