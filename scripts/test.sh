@@ -22,8 +22,9 @@ echo 'test: ci report — a failed ci run posts one alert with the last 60 lines
 node --test scripts/ci-report-failure.test.mjs || fail 'scripts/ci-report-failure.test.mjs'
 echo 'test: ci commit status — tekton/ci is pending while a run runs, then success, failure or error, and the token travels only in a header file.'
 node --test scripts/ci-commit-status.test.mjs || fail 'scripts/ci-commit-status.test.mjs'
-echo 'test: ci failure mail — the alert reaches its own route once, and becomes a mail that carries the error and escapes it.'
+echo 'test: ci failure mail — the alert reaches its own route once, and becomes a mail that carries the error and escapes it; every alert mail is sent from a domain the relay holds a key for.'
 helm dependency update clusters/inventories/observability
+helm dependency update clusters/inventories/postfix
 node --test scripts/ci-failure-mail.test.mjs || fail 'scripts/ci-failure-mail.test.mjs'
 echo 'test: manager-generator-refresh — approved grant only.'
 helm dependency build clusters/inventories/manager

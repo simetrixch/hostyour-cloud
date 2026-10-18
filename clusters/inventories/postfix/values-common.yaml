@@ -104,12 +104,11 @@ postfix:
     - name: dkim-keys-secret
       secret:
         secretName: postfix-dkim-key
-        # OPTIONAL, so the relay starts before the store has delivered the key. The key pair exists
-        # from the first install (deploy-platform-services mints it where the store is seeded), and
-        # the ExternalSecret below delivers it; between the two the pod must not sit in
-        # ContainerCreating for a volume that is on its way. Mail sent in that window is unsigned,
-        # which is the honest state of a relay whose key has not arrived yet.
-        optional: true
+        # REQUIRED: a relay without its key would send unsigned mail, which the receiver fails. The
+        # key pair exists from the first install (deploy-platform-services mints it where the store
+        # is seeded) and the ExternalSecret below delivers it ahead of the relay by sync wave, so
+        # the pod waits in ContainerCreating for a volume that is on its way, and sends nothing
+        # until the key is there.
         defaultMode: 0400
         # THE PATH IS REQUIRED HERE. A secret volume without `items` does land each key
         # under its own name — but the moment `items` is written, Kubernetes requires a
@@ -150,9 +149,10 @@ postfix:
         - sh
         - -c
         - |
-          # The key may not be there yet: the volume is mounted optional so the relay starts
-          # before the store has delivered it. Without it the relay's mail is unsigned.
-          if [ -f /dkim-source/dkim-private-key ]; then
+          # Any failed step ends the init container, so the relay never starts with a key it could
+          # not prepare; an empty key file is the one failure the volume mount does not catch.
+          set -eu
+          [ -s /dkim-source/dkim-private-key ] || { echo "fix-dkim-permissions: dkim-private-key is missing or empty" >&2; exit 1; }
           for domain in "{{ .Values.global.platformDomain }}" "{{ .Values.global.unitApex }}"; do
           cp /dkim-source/dkim-private-key "/dkim-keys/$domain.private"
           chown 101:104 "/dkim-keys/$domain.private"
@@ -160,7 +160,6 @@ postfix:
           done
           chown 101:104 /dkim-keys
           chmod 700 /dkim-keys
-          fi
       volumeMounts:
         - name: dkim-keys-secret
           mountPath: /dkim-source
