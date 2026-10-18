@@ -1,18 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {cpSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {join} from 'node:path';
 
 // What the Manager chart tells the Manager about the forges: the platform and deploy repositories whole, the
 // installation's Forgejo host with the webhook key its hooks are signed with, and the GitHub owners whose units
 // may move to it. The control host's gates (master.sshUser, onboarding.gatemanagerAddr) are set here because the
 // stand-in installation is no control host.
-const render = (...set) => execFileSync('helm', ['template', 'manager', 'clusters/inventories/manager', '--namespace', 'manager',
+const renderChart = (chart, ...set) => execFileSync('helm', ['template', 'manager', chart, '--namespace', 'manager',
   '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml',
   '-f', 'clusters/inventories/manager/values-common.yaml', '-f', 'clusters/inventories/manager/values-prod.yaml',
   '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/installation-values.yaml',
   '--set', 'master.sshUser=ops', '--set', 'master.lanHost=10.0.0.1', '--set', 'onboarding.gatemanagerAddr=10.0.0.1',
   ...set.flatMap(value => ['--set', value])], {encoding: 'utf8'});
+const render = (...set) => renderChart('clusters/inventories/manager', ...set);
 const select = (rendered, expression) => JSON.parse(execFileSync('yq', ['-o=json', '-I=0', expression, '-'], {input: rendered, encoding: 'utf8'}));
 const environment = rendered => {
   const text = execFileSync('yq', ['-o=json', '-I=0', 'select(.kind == "Deployment" and .metadata.name == "manager") | .spec.template.spec.containers[0].env[]', '-'], {input: rendered, encoding: 'utf8'});
@@ -20,20 +22,65 @@ const environment = rendered => {
 };
 
 // The contract the Manager reads, as a function so a chart that drops an env can be shown to go red.
-const FORGE_ENV = ['PLATFORM_REPO_URL', 'GITHUB_REPO', 'DEPLOY_REPO_URL', 'FORGEJO_HOST', 'FORGEJO_MOVE_GITHUB_OWNERS', 'FORGEJO_WEBHOOK_SECRET'];
+const FORGE_ENV = ['PLATFORM_REPO_URL', 'GITHUB_REPO', 'DEPLOY_REPO_URL', 'FORGEJO_HOST', 'FORGEJO_PACKAGE_SCOPES', 'FORGEJO_MOVE_GITHUB_OWNERS', 'FORGEJO_WEBHOOK_SECRET'];
 function assertForgeEnv(env, expected) {
   for (const name of FORGE_ENV) assert.ok(env[name], `the Manager chart passes no ${name}`);
   assert.equal(env.PLATFORM_REPO_URL.value, expected.platformUrl);
   assert.equal(env.GITHUB_REPO.value, expected.platformRepo);
   assert.equal(env.DEPLOY_REPO_URL.value, expected.deployUrl);
   assert.equal(env.FORGEJO_HOST.value, expected.forgejoHost);
+  assert.deepEqual(parsePackageScopes(env.FORGEJO_PACKAGE_SCOPES.value), expected.packageScopes ?? {});
   assert.equal(env.FORGEJO_MOVE_GITHUB_OWNERS.value, expected.moveGitHubOwners ?? '');
   assert.deepEqual(env.FORGEJO_WEBHOOK_SECRET.valueFrom.secretKeyRef, {name: 'manager-forgejo-webhook', key: 'forgejo-webhook-secret', optional: true});
+}
+
+function parsePackageScopes(value) {
+  assert.equal(typeof value, 'string', 'FORGEJO_PACKAGE_SCOPES must be a string');
+  return Object.fromEntries(value.split(',').filter(Boolean).map(pair => {
+    assert.match(pair, /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?=[A-Za-z0-9][A-Za-z0-9._-]*$/, 'FORGEJO_PACKAGE_SCOPES must contain organisation=scope pairs separated by commas');
+    const [organisation, scope] = pair.split('=');
+    return [organisation.toLowerCase(), scope];
+  }));
 }
 
 const rendered = render();
 const today = {platformUrl: 'https://github.com/simetrixch/hostyour-cloud.git', platformRepo: 'simetrixch/hostyour-cloud',
   deployUrl: 'https://github.com/check/check.git', forgejoHost: 'forgejo.check.example.invalid'};
+
+test('the empty package scope default renders an empty string accepted as an empty map', () => {
+  assert.deepEqual(select(readFileSync('clusters/inventories/manager/values-common.yaml', 'utf8'), '.forgejo.packageScopes'), {});
+  const value = environment(rendered).FORGEJO_PACKAGE_SCOPES?.value;
+  assert.equal(value, '');
+  assert.deepEqual(parsePackageScopes(value), {});
+});
+
+test('PLANTED INNOCENT: a configured organisation scope map renders as comma-separated organisation=scope pairs and parses back', () => {
+  const env = environment(render('forgejo.packageScopes.Org-A=scope-one', 'forgejo.packageScopes.org-b=scope.two'));
+  assert.equal(env.FORGEJO_PACKAGE_SCOPES?.value, 'Org-A=scope-one,org-b=scope.two');
+  assertForgeEnv(env, {...today, packageScopes: {'org-a': 'scope-one', 'org-b': 'scope.two'}});
+});
+
+test('PLANTED DEFECT: a chart dropping the package scopes env or using the wrong pair format goes red', () => {
+  const work = execFileSync('mktemp', ['-d'], {encoding: 'utf8'}).trim();
+  try {
+    const chart = join(work, 'manager');
+    cpSync('clusters/inventories/manager', chart, {recursive: true});
+    const template = join(chart, 'templates/deployment.yaml');
+    const source = readFileSync(template, 'utf8');
+    const mutations = [
+      [source.replace(/\n\s*- name: FORGEJO_PACKAGE_SCOPES\n\s+value: [^\n]*/, ''), /passes no FORGEJO_PACKAGE_SCOPES/],
+      [source.replace('printf "%s=%s"', 'printf "%s:%s"'), /FORGEJO_PACKAGE_SCOPES must contain/],
+    ];
+    for (const [mutant, message] of mutations) {
+      assert.ok(mutant !== source, 'the planted defect must change the chart');
+      writeFileSync(template, mutant);
+      const env = environment(renderChart(chart, 'forgejo.packageScopes.org-a=scope-one'));
+      assert.throws(() => assertForgeEnv(env, {...today, packageScopes: {'org-a': 'scope-one'}}), message);
+    }
+  } finally {
+    rmSync(work, {recursive: true, force: true});
+  }
+});
 
 test('the chart hands the Manager the platform and deploy repositories whole, the Forgejo host, its webhook key and no owner that moves', () => {
   assertForgeEnv(environment(rendered), today);
@@ -50,7 +97,7 @@ test('a platform and a deploy repository on the Forgejo host are passed whole, a
 test('PLANTED DEFECT: the Forgejo host and the repositories render without consumer onboarding, which is a different switch', () => {
   const env = environment(render('onboarding.gatemanagerAddr='));
   assert.equal(env.ONBOARD_GATE_MANAGER_ADDR, undefined, 'the stand-in has no consumer onboarding in this render');
-  for (const name of ['PLATFORM_REPO_URL', 'DEPLOY_REPO_URL', 'FORGEJO_HOST', 'FORGEJO_MOVE_GITHUB_OWNERS']) assert.ok(env[name], `without consumer onboarding the Manager chart passes no ${name}`);
+  for (const name of ['PLATFORM_REPO_URL', 'DEPLOY_REPO_URL', 'FORGEJO_HOST', 'FORGEJO_PACKAGE_SCOPES', 'FORGEJO_MOVE_GITHUB_OWNERS']) assert.ok(env[name], `without consumer onboarding the Manager chart passes no ${name}`);
 });
 
 test('PLANTED DEFECT: a github.repo that names another repository than global.platformUrl fails the render, naming both', () => {

@@ -278,6 +278,12 @@ spec:
             # platform and deploy repositories can stand on it where no unit is onboarded.
             - name: FORGEJO_HOST
               value: {{ printf "forgejo.%s" (required "manager: global.domain is required (clusters/active/<fqdn>.yaml)" .Values.global.domain) | quote }}
+            {{- $packageScopes := list }}
+            {{- range $organisation, $scope := .Values.forgejo.packageScopes }}
+            {{- $packageScopes = append $packageScopes (printf "%s=%s" $organisation $scope) }}
+            {{- end }}
+            - name: FORGEJO_PACKAGE_SCOPES
+              value: {{ join "," $packageScopes | quote }}
             # The GitHub owners whose units the Manager's move run may take to that Forgejo (config.ts
             # FORGEJO_MOVE_GITHUB_OWNERS, comma separated). Empty unless the installation names owners
             # (forgejo.moveGitHubOwners): a unit of any other owner stays on GitHub.

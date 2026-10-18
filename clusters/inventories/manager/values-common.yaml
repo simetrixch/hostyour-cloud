@@ -131,6 +131,8 @@ github:
 # installation/values/manager.yaml by the install branch that moves them. A moved unit keeps publishing
 # under the scope of the GitHub owner it leaves; a unit of an owner not named here stays on GitHub.
 forgejo:
+  # Forgejo organisations may differ from their units' npm scopes. Each installation supplies its map.
+  packageScopes: {}
   moveGitHubOwners: []
 
 # The platform's GitHub App — installed with the owner of the deploy repository and of every tenant
