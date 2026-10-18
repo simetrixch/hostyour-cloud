@@ -70,7 +70,7 @@ spec:
           podSelector:
             matchLabels:
               {{- range $label, $value := (required "egress.forgejo.podLabels is required" .Values.egress.forgejo.podLabels) }}
-              {{ $label }}: {{ tpl $value $ | quote }}
+              {{ $label | quote }}: {{ tpl $value $ | quote }}
               {{- end }}
       ports:
         - protocol: TCP

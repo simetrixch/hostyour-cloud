@@ -2140,16 +2140,16 @@ test('the Forgejo build fence preserves the build baseline and limits each inter
   const yaml = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', '-I=0', ...args], {input, encoding: 'utf8'}));
   const releaseTemplate = yaml(['.spec.template.spec.sources[1].helm.releaseName', 'clusters/argocd/files/platform-apps-appset.yaml']);
   assert.equal(releaseTemplate, '{{ dig "releaseName" (printf "%s-__STAGE__" .name) . }}');
-  const deployed = (name, stage) => {
+  const deployed = (name, stage, extra = []) => {
     const app = yaml(['.', `clusters/inventories/${name}/app.yaml`]);
     const release = app.releaseName ?? `${app.name}-${stage}`;
     const rendered = execFileSync('helm', ['template', release, `clusters/inventories/${name}`, '--namespace', app.namespace,
       '-f', 'clusters/platform/values-common.yaml', '-f', `clusters/platform/values-${stage}.yaml`,
       '-f', `clusters/inventories/${name}/values-common.yaml`,
       ...(existsSync(`clusters/inventories/${name}/values-${stage}.yaml`) ? ['-f', `clusters/inventories/${name}/values-${stage}.yaml`] : []),
-      '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', '--set-string', `stage=${stage}`],
+      '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', '--set-string', `stage=${stage}`, ...extra],
     {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
-    return {app, release, docs: yaml(['eval-all', '[.]', '-'], rendered).filter(Boolean)};
+    return {app, release, rendered, docs: yaml(['eval-all', '[.]', '-'], rendered).filter(Boolean)};
   };
   const builder = imageBuilder();
   const destination = (name, task, variable, stage) => {
@@ -2255,6 +2255,52 @@ test('the Forgejo build fence preserves the build baseline and limits each inter
     const copy = structuredClone(docs);
     for (const p of policies(copy)) p.metadata.annotations = {description: 'build egress'};
     assertFence(copy);
+  });
+  await t.test('configured Forgejo label keys and values survive Kubernetes YAML decoding', async t => {
+    const root = mkdtempSync(join(tmpdir(), 'forgejo-labels-'));
+    t.after(() => rmSync(root, {recursive: true, force: true}));
+    const source = join(root, 'decode.go'), decoder = join(root, 'decode');
+    writeFileSync(source, `package main
+import (
+  "encoding/json"
+  "os"
+  "sigs.k8s.io/yaml"
+)
+func main() {
+  var documents []string
+  if err := json.NewDecoder(os.Stdin).Decode(&documents); err != nil { panic(err) }
+  decoded := make([]json.RawMessage, len(documents))
+  for i, document := range documents {
+    data, err := yaml.YAMLToJSON([]byte(document))
+    if err != nil { panic(err) }
+    decoded[i] = data
+  }
+  if err := json.NewEncoder(os.Stdout).Encode(decoded); err != nil { panic(err) }
+}
+`);
+    execFileSync('go', ['build', '-o', decoder, source], {cwd: 'scripts/appset-render'});
+    const decode = rendered => JSON.parse(execFileSync(decoder, [], {
+      input: JSON.stringify(rendered.split(/^---[ \t]*$/m).filter(document => document.trim())), encoding: 'utf8'}));
+    const labels = {on: 'release', yes: 'true', '0123': '0123', 'example.com/role': 'builder'};
+    const rendered = deployed('forgejo-build', 'prod', ['--set-json', `egress.forgejo.podLabels=${JSON.stringify(labels)}`]).rendered;
+    const forgejo = decode(deployed('forgejo', 'prod', ['--set-json', `forgejo.deployment.labels=${JSON.stringify(labels)}`]).rendered);
+    const service = forgejo.find(d => d.kind === 'Service' && d.metadata.name === 'forgejo-http');
+    const workloads = forgejo.filter(d => ['Deployment', 'StatefulSet'].includes(d.kind) &&
+      Object.entries(service.spec.selector).every(([key, value]) => d.spec.template.metadata.labels[key] === value));
+    assert.equal(workloads.length, 1);
+    const podLabels = workloads[0].spec.template.metadata.labels;
+    for (const [key, value] of Object.entries(labels)) assert.equal(podLabels[key], value, `Forgejo preserves ${key}`);
+    const assertLabels = docs => {
+      const selector = policy(docs, 'forgejo-http-egress').spec.egress[0].to[0].podSelector.matchLabels;
+      for (const [key, value] of Object.entries(labels)) assert.equal(selector[key], value, `policy preserves ${key}`);
+      for (const [key, value] of Object.entries(selector)) assert.equal(podLabels[key], value, `selector matches Forgejo's ${key}`);
+    };
+    await t.test('PLANTED INNOCENT: configured keys and string values match Forgejo pods', () => assertLabels(decode(rendered)));
+    for (const key of ['on', 'yes', '0123']) await t.test(`PLANTED DEFECT: configured key ${key} emitted unquoted`, () => {
+      const planted = rendered.replace(new RegExp(`^(\\s*)"${key}":`, 'm'), `$1${key}:`);
+      assert.notEqual(planted, rendered);
+      assert.throws(() => assertLabels(decode(planted)), assert.AssertionError);
+    });
   });
   for (const stage of ['prod', 'test', 'dev']) {
     const docs = deployed('forgejo-build', stage).docs;
