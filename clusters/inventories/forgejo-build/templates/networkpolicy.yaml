@@ -1,0 +1,101 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: build-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: forgejo-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: registry
+      ports:
+        - { protocol: TCP, port: 5000 }
+        - { protocol: TCP, port: 443 }
+    # Calico evaluates egress after DNAT: Traefik's Service 443 targets pod port 8443.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace | quote }}
+      ports:
+        - { protocol: TCP, port: 8443 }
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: forgejo-http-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: forgejo-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: tekton.dev/pipelineTask
+        operator: In
+        values: [clone, status-pending, release, status]
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "egress.forgejo.namespace is required" .Values.egress.forgejo.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml (required "egress.forgejo.podLabels is required" .Values.egress.forgejo.podLabels) | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ required "egress.forgejo.port is required" .Values.egress.forgejo.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: plane-api-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: forgejo-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: plane
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "egress.plane.namespace is required" .Values.egress.plane.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml (required "egress.plane.podLabels is required" .Values.egress.plane.podLabels) | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ required "egress.plane.port is required" .Values.egress.plane.port }}

@@ -13,6 +13,20 @@ eventListener:
 forgejo:
   url: http://forgejo-http.forgejo.svc:3000
 
+# The HTTP/API workloads of the releases forgejo-prod and plane in their app.yaml namespaces.
+egress:
+  forgejo:
+    namespace: forgejo
+    port: 3000
+    podLabels:
+      app.kubernetes.io/name: forgejo
+      app.kubernetes.io/instance: forgejo-prod
+  plane:
+    namespace: plane
+    port: 8000
+    podLabels:
+      app.name: plane-plane-api
+
 plane:
   workspace: simplidigita
   projects:

@@ -1717,11 +1717,15 @@ test('the ci check prints the free space of its workspace, /tmp and /dev/shm, an
 
 test('the egress policy of a build namespace selects every pod of it', () => {
   const policy = (docs) => docs.find((d) => d.kind === 'NetworkPolicy' && d.metadata.name === 'build-egress');
-  const exempts = (doc) => Object.keys(doc.spec.podSelector ?? {}).length > 0;
-  assert.ok(!exempts(policy(renderUnit('shop'))), 'build-egress selects the whole namespace');
+  const exempts = (doc) => !doc || !Object.hasOwn(doc.spec, 'podSelector') || Object.keys(doc.spec.podSelector).length > 0;
+  for (const docs of [renderUnit('shop'), renderChart('forgejo-build', ['--namespace', 'forgejo-build'])]) {
+    assert.ok(!exempts(policy(docs)), 'build-egress selects the whole namespace');
+  }
   const planted = structuredClone(policy(renderUnit('shop')));
   planted.spec.podSelector = {matchExpressions: [{key: 'tekton.dev/pipelineTask', operator: 'NotIn', values: ['tests']}]};
   assert.ok(exempts(planted), 'PLANTED DEFECT: a selector that exempts a task is caught');
+  delete planted.spec.podSelector;
+  assert.ok(exempts(planted), 'PLANTED DEFECT: a missing selector is caught');
 });
 
 test('the ci run keeper runs every minute, reads runs cluster-wide, and may patch and delete only inside a build namespace', () => {
@@ -2130,6 +2134,131 @@ test('only the report pod of a ci run reaches the API server and Alertmanager, a
   assert.ok(!holds(planted((policy, copy) => { buildEgress(copy).spec.egress.push(structuredClone(rulesOfReport(policy)[1])); })), 'PLANTED DEFECT: 9093 placed in build-egress reaches every pod');
   assert.ok(!holds(planted((policy, copy) => { buildEgress(copy).spec.egress.push(structuredClone(rulesOfReport(policy)[0])); })), 'PLANTED DEFECT: the API server placed in build-egress reaches every pod');
   assert.ok(!holds(planted((policy) => { rulesOfReport(policy)[0].ports = [{protocol: 'TCP', port: 22}]; })), 'PLANTED DEFECT: the API server rule on the wrong port reaches nothing');
+});
+
+test('the Forgejo build fence preserves the build baseline and limits each internal API to its own tasks and deployed pods', async t => {
+  const yaml = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', '-I=0', ...args], {input, encoding: 'utf8'}));
+  const releaseTemplate = yaml(['.spec.template.spec.sources[1].helm.releaseName', 'clusters/argocd/files/platform-apps-appset.yaml']);
+  assert.equal(releaseTemplate, '{{ dig "releaseName" (printf "%s-__STAGE__" .name) . }}');
+  const production = name => {
+    const app = yaml(['.', `clusters/inventories/${name}/app.yaml`]);
+    const release = app.releaseName ?? `${app.name}-prod`;
+    const rendered = execFileSync('helm', ['template', release, `clusters/inventories/${name}`, '--namespace', app.namespace,
+      '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml',
+      '-f', `clusters/inventories/${name}/values-common.yaml`, '-f', `clusters/inventories/${name}/values-prod.yaml`,
+      '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml'], {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
+    return {app, release, docs: yaml(['eval-all', '[.]', '-'], rendered).filter(Boolean)};
+  };
+  const builder = imageBuilder();
+  const destination = (name, task, variable) => {
+    const rendered = production(name);
+    assert.equal(rendered.release, name === 'forgejo' ? 'forgejo-prod' : 'plane');
+    const api = new URL(builder.find(d => d.kind === 'Task' && d.metadata.name === task).spec.steps[0].env.find(e => e.name === variable).value);
+    assert.equal(api.pathname, '/api/v1');
+    const [serviceName, namespace] = api.hostname.split('.');
+    assert.equal(namespace, rendered.app.namespace);
+    const service = rendered.docs.find(d => d.kind === 'Service' && d.metadata.name === serviceName);
+    assert.equal(service.metadata.namespace, namespace);
+    const servicePort = service.spec.ports.find(p => p.port === Number(api.port));
+    const workloads = rendered.docs.filter(d => ['Deployment', 'StatefulSet'].includes(d.kind) && d.metadata.namespace === namespace &&
+      Object.entries(service.spec.selector).every(([key, value]) => d.spec.template.metadata.labels[key] === value));
+    assert.equal(workloads.length, 1, `${serviceName} selects exactly its API workload`);
+    const podLabels = workloads[0].spec.selector.matchLabels;
+    assert.deepEqual(podLabels, service.spec.selector);
+    const ports = workloads[0].spec.template.spec.containers.flatMap(c => c.ports ?? []);
+    const port = typeof servicePort.targetPort === 'number' ? servicePort.targetPort : ports.find(p => p.name === servicePort.targetPort).containerPort;
+    assert.ok(ports.some(p => p.containerPort === port));
+    return {to: [{namespaceSelector: {matchLabels: {'kubernetes.io/metadata.name': namespace}}, podSelector: {matchLabels: podLabels}}],
+      ports: [{protocol: 'TCP', port}]};
+  };
+  const forgejo = destination('forgejo', 'forgejo-set-status', 'FORGEJO_API');
+  const plane = destination('plane', 'plane-update-status', 'PLANE_API');
+  const fixtureForgejo = renderChart('forgejo').find(d => d.kind === 'Service' && d.metadata.name === 'forgejo-http').spec.selector;
+  const fixturePlane = renderChart('plane').find(d => d.kind === 'Service' && d.metadata.name === 'plane-api').spec.selector;
+  assert.notDeepEqual(fixtureForgejo, forgejo.to[0].podSelector.matchLabels);
+  assert.notDeepEqual(fixturePlane, plane.to[0].podSelector.matchLabels);
+  const baseline = renderUnit('shop').find(d => d.kind === 'NetworkPolicy' && d.metadata.name === 'build-egress').spec;
+  const forgejoTasks = ['clone', 'status-pending', 'release', 'status'];
+  const expected = {
+    'build-egress': baseline,
+    'forgejo-http-egress': {podSelector: {matchExpressions: [{key: 'tekton.dev/pipelineTask', operator: 'In', values: forgejoTasks}]},
+      policyTypes: ['Egress'], egress: [forgejo]},
+    'plane-api-egress': {podSelector: {matchLabels: {'tekton.dev/pipelineTask': 'plane'}}, policyTypes: ['Egress'], egress: [plane]}
+  };
+  const docs = renderChart('forgejo-build', ['--namespace', 'forgejo-build']);
+  const policies = docs => docs.filter(d => d.kind === 'NetworkPolicy');
+  const assertFence = docs => {
+    assert.deepEqual(policies(docs).map(p => p.metadata.name).sort(), Object.keys(expected).sort());
+    for (const policy of policies(docs)) {
+      assert.equal(policy.metadata.namespace, 'forgejo-build');
+      assert.deepEqual(policy.spec, expected[policy.metadata.name], policy.metadata.name);
+    }
+  };
+  assertFence(docs);
+  const selects = (policy, task) => Object.entries(policy.spec.podSelector.matchLabels ?? {}).every(([key, value]) =>
+    key === 'tekton.dev/pipelineTask' && value === task) && (policy.spec.podSelector.matchExpressions ?? []).every(expression =>
+    expression.key === 'tekton.dev/pipelineTask' && expression.operator === 'In' && expression.values.includes(task));
+  const pipeline = docs.find(d => d.kind === 'Pipeline' && d.metadata.name === 'forgejo-release');
+  const tasks = [...pipeline.spec.tasks, ...pipeline.spec.finally].map(task => task.name);
+  assert.deepEqual(tasks, ['status-pending', 'clone', 'check', 'build', 'release', 'plane', 'status']);
+  for (const task of [...tasks, 'unrelated']) {
+    const rules = policies(docs).filter(policy => selects(policy, task)).flatMap(policy => policy.spec.egress);
+    const internal = rules.filter(rule => rule.to.some(peer => ['forgejo', 'plane'].includes(peer.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'])));
+    assert.deepEqual(internal, forgejoTasks.includes(task) ? [forgejo] : task === 'plane' ? [plane] : [], `${task}'s complete internal allowance`);
+  }
+  const policy = (copy, name) => policies(copy).find(p => p.metadata.name === name);
+  const cases = [
+    ['missing fence', copy => copy.splice(copy.indexOf(policy(copy, 'build-egress')), 1)],
+    ['missing baseline selector', copy => { delete policy(copy, 'build-egress').spec.podSelector; }],
+    ['narrowed baseline selector', copy => { policy(copy, 'build-egress').spec.podSelector = {matchLabels: {'tekton.dev/pipelineTask': 'build'}}; }],
+    ['missing public exclusions', copy => { delete policy(copy, 'build-egress').spec.egress[1].to[0].ipBlock.except; }],
+    ['additional broad policy', copy => copy.push({kind: 'NetworkPolicy', metadata: {name: 'allow-all', namespace: 'forgejo-build'}, spec: {podSelector: {}, policyTypes: ['Egress'], egress: [{}]}})],
+    ['API server copied into baseline', copy => policy(copy, 'build-egress').spec.egress.push(structuredClone(
+      renderUnit('shop').find(d => d.kind === 'NetworkPolicy' && d.metadata.name === 'bump-apiserver').spec.egress[0]))]
+  ];
+  for (const name of ['forgejo-http-egress', 'plane-api-egress']) {
+    cases.push(...[
+      ['missing task selector', p => { delete p.spec.podSelector; }],
+      ['empty task selector', p => { p.spec.podSelector = {}; }],
+      ['build task selected', p => { p.spec.podSelector = {matchLabels: {'tekton.dev/pipelineTask': 'build'}}; }],
+      ['check task selected', p => { p.spec.podSelector = {matchLabels: {'tekton.dev/pipelineTask': 'check'}}; }],
+      ['missing namespace selector', p => { delete p.spec.egress[0].to[0].namespaceSelector; }],
+      ['empty namespace selector', p => { p.spec.egress[0].to[0].namespaceSelector = {}; }],
+      ['unrelated namespace', p => { p.spec.egress[0].to[0].namespaceSelector.matchLabels['kubernetes.io/metadata.name'] = 'unrelated'; }],
+      ['missing destination pod selector', p => { delete p.spec.egress[0].to[0].podSelector; }],
+      ['empty destination pod selector', p => { p.spec.egress[0].to[0].podSelector = {}; }],
+      ['wrong port', p => { p.spec.egress[0].ports[0].port = 22; }],
+      ['additional port', p => { p.spec.egress[0].ports.push({protocol: 'TCP', port: 22}); }],
+      ['missing ports', p => { delete p.spec.egress[0].ports; }],
+      ['empty ports', p => { p.spec.egress[0].ports = []; }],
+      ['UDP instead of TCP', p => { p.spec.egress[0].ports[0].protocol = 'UDP'; }],
+      ['namespace and pod selectors split into alternative peers', p => { const peer = p.spec.egress[0].to[0]; p.spec.egress[0].to =
+        [{namespaceSelector: peer.namespaceSelector}, {podSelector: peer.podSelector}]; }]
+    ].map(([defect, edit]) => [`${name}: ${defect}`, copy => edit(policy(copy, name))]));
+    cases.push([`${name}: exception copied into baseline`, copy => policy(copy, 'build-egress').spec.egress.push(structuredClone(policy(copy, name).spec.egress[0]))]);
+  }
+  cases.push(
+    ['Plane opened to Forgejo API tasks', copy => { policy(copy, 'plane-api-egress').spec.podSelector = structuredClone(policy(copy, 'forgejo-http-egress').spec.podSelector); }],
+    ['Forgejo instance matches only the default fixture release', copy => { policy(copy, 'forgejo-http-egress').spec.egress[0].to[0].podSelector.matchLabels = fixtureForgejo; }],
+    ['Plane API matches only the default fixture namespace', copy => { policy(copy, 'plane-api-egress').spec.egress[0].to[0].podSelector.matchLabels = fixturePlane; }]
+  );
+  for (const [name, edit] of cases) await t.test(`PLANTED DEFECT: ${name}`, () => {
+    const copy = structuredClone(docs);
+    edit(copy);
+    assert.throws(() => assertFence(copy), assert.AssertionError);
+  });
+  await t.test('PLANTED INNOCENT: deployed selectors and harmless metadata', () => {
+    const copy = structuredClone(docs);
+    for (const p of policies(copy)) p.metadata.annotations = {description: 'build egress'};
+    assertFence(copy);
+  });
+  for (const destination of ['forgejo', 'plane']) for (const field of ['namespace', 'podLabels', 'port']) {
+    const key = `egress.${destination}.${field}`;
+    await t.test(`PLANTED DEFECT: missing configuration ${key}`, () => {
+      assert.throws(() => renderChart('forgejo-build', ['--set-json', `${key}=null`]),
+        error => error.message.includes(`${key} is required`));
+    });
+  }
 });
 
 test('no step of the ci pipeline or of the clone traces its commands', () => {
