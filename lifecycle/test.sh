@@ -2619,6 +2619,11 @@ stores_of "$HERE/master-restore-driver.sh" > "$OUT/stores-restore"
 diff -u "$OUT/stores-backup" "$OUT/stores-restore" \
   || fail 'the two drivers name different stores — a store taken by one and unknown to the other is backed up and never placed'
 ok "the two drivers name the same $(wc -l < "$OUT/stores-backup" | tr -d ' ') stores, in the same order"
+# Forgejo's SQLite and its repositories share this one claim, and the equal lists above hold a
+# store that both drivers lack just as green.
+grep -qx 'forgejo|gitea-shared-storage' "$OUT/stores-backup" \
+  || fail 'the drivers do not name the claim gitea-shared-storage of the namespace forgejo — Forgejo'"'"'s database and repositories are backed up by nobody'
+ok "the drivers name Forgejo's claim gitea-shared-storage"
 
 # ── one folder in both drivers ───────────────────────────────────────────────
 # A backup written where the restore does not look never comes back, so both drivers name the
@@ -3043,7 +3048,7 @@ STANDIN
 chmod +x "$RU/bin/ssh" "$RU/bin/microk8s.kubectl"
 
 RELEASE_UNIT="$HERE/release-unit.sh"
-run_release_unit() { # the scenario the stand-in Manager plays, then the act's arguments
+run_release_unit() { # the scenario the stand-in Manager plays, then the act's arguments; FOLLOW_SECONDS bounds the wait for the following tenants
   local scenario="$1" fake i
   shift
   rm -f "$RU/port" "$RU/sock" "$RU/relay-fails" "$RU/relay-hangs"
@@ -3053,7 +3058,7 @@ run_release_unit() { # the scenario the stand-in Manager plays, then the act's a
   for i in $(seq 100); do [ -s "$RU/port" ] && [ -S "$RU/sock" ] && break; sleep 0.05; done
   [ -s "$RU/port" ] || fail "the stand-in Manager of '$scenario' did not start"
   A_CODE=0
-  ( PATH="$RU/bin:$PATH" RU="$RU" HOME="$RU/home" TMPDIR="$RU/tmp" RELEASE_UNIT_POLL_SECONDS=0 RELEASE_UNIT_RETRIES=4 RELEASE_UNIT_EXCHANGE_SECONDS=3 timeout 15 bash "$RELEASE_UNIT" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  ( PATH="$RU/bin:$PATH" RU="$RU" HOME="$RU/home" TMPDIR="$RU/tmp" RELEASE_UNIT_POLL_SECONDS=0 RELEASE_UNIT_RETRIES=4 RELEASE_UNIT_EXCHANGE_SECONDS=3 RELEASE_UNIT_FOLLOW_SECONDS="${FOLLOW_SECONDS:-60}" timeout 15 bash "$RELEASE_UNIT" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
   kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null || true
 }
 # The calls the stand-in Manager saw, in order, held to the case's own list.
@@ -3083,11 +3088,13 @@ run run_1: queued (put-release pending)
 run run_1: running (put-release running)
 run run_1: succeeded (put-release ok)
 run run_1 succeeded
+no following tenant at test renders shop
 ~~~ standard error ~~~
 RECORDED
 calls 'the release prod runs, put on test as its one put-release' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3097,6 +3104,8 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 RECORDED
 no_session 'the release prod runs, put on test as its one put-release'
 
@@ -3109,6 +3118,7 @@ run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
 run run_1 succeeded
+no following tenant at test renders shop
 ~~~ standard error ~~~
 RECORDED
 calls 'an explicit release of a commit, its plan approved as it stands' <<'RECORDED'
@@ -3122,6 +3132,8 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 RECORDED
 no_session 'an explicit release of a commit, its plan approved as it stands'
 
@@ -3210,6 +3222,7 @@ RECORDED
 calls 'a prod-to-test plan that is more than the one put-release' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3249,6 +3262,7 @@ RECORDED
 calls 'a release run that fails' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3275,6 +3289,7 @@ RECORDED
 calls 'a release run that is cancelled' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3296,11 +3311,13 @@ run run_1: queued (put-release pending)
 run run_1: running (put-release running)
 run run_1: succeeded (put-release ok)
 run run_1 succeeded
+no following tenant at test renders shop
 ~~~ standard error ~~~
 RECORDED
 calls 'three relays lost to a rollout while the run goes on' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3310,6 +3327,8 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 RECORDED
 no_session 'three relays lost to a rollout while the run goes on'
 [ "$(cat "$RU/relay-fails")" = '0' ] || fail 'three relays lost to a rollout — the stand-in kubectl did not fail the three exchanges it was told to'
@@ -3325,11 +3344,13 @@ run run_1: queued (put-release pending)
 run run_1: running (put-release running)
 run run_1: succeeded (put-release ok)
 run run_1 succeeded
+no following tenant at test renders shop
 ~~~ standard error ~~~
 RECORDED
 calls 'two relays that hang past the bound of an exchange' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3339,6 +3360,8 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 RECORDED
 no_session 'two relays that hang past the bound of an exchange'
 [ "$(cat "$RU/relay-hangs")" = '0' ] || fail 'two relays that hang — the stand-in kubectl did not hang the two exchanges it was told to'
@@ -3369,6 +3392,7 @@ RECORDED
 calls 'relays lost for longer than the watch waits' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3390,6 +3414,7 @@ RECORDED
 calls 'a session that expires while the run goes on' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3409,6 +3434,7 @@ RECORDED
 calls 'a release request whose answer is lost' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 RECORDED
@@ -3425,11 +3451,13 @@ run run_1: queued (put-release pending)
 run run_1: running (put-release running)
 run run_1: succeeded (put-release ok)
 run run_1 succeeded
+no following tenant at test renders shop
 ~~~ standard error ~~~
 RECORDED
 calls 'an approval whose answer is lost after it took' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3439,6 +3467,8 @@ GET /api/runs/run_1 cookie=stale origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 RECORDED
 no_session 'an approval whose answer is lost after it took'
 
@@ -3456,6 +3486,7 @@ RECORDED
 calls 'an approval that never reached the Manager' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
 GET /api/runs/run_1 cookie=current origin=n/a
@@ -3474,6 +3505,438 @@ RECORDED
 calls 'a run naming a unit and nothing else' <<'RECORDED'
 RECORDED
 no_session 'a run naming a unit and nothing else'
+
+# THE TENANTS THAT FOLLOW RELEASES. A succeeded release run proves only that the stage pin stands; the
+# act then waits until every active following tenant at the stage that renders the unit runs the
+# stage's release tag, and prints one line for each. The stand-in plays a world of tenants per
+# scenario named follow-*: each look of the act at GET /api/runs moves it one round on, and the
+# decoys (suspended, not following, on another stage, not active, rendering no part of the unit)
+# stay in the call lists as the calls the act must not make for them. A wait that may not take
+# longer than FOLLOW_SECONDS=0 is one look, which is how a tenant that never moves is told apart
+# from one that is late without a clock in a recorded block.
+FOLLOW_ARGS=(manager@master.example.invalid shop test stable 0.3.004 "$B")
+run_release_unit follow-moves "${FOLLOW_ARGS[@]}"
+expect 'a following tenant that moves after the release, beside the tenants that are not waited for' 0 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v1 succeeded)
+~~~ standard error ~~~
+RECORDED
+calls 'a following tenant that moves after the release, beside the tenants that are not waited for' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_other/versions?offered=false cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a following tenant that moves after the release, beside the tenants that are not waited for'
+
+FOLLOW_SECONDS=0 run_release_unit follow-never "${FOLLOW_ARGS[@]}"
+expect 'a following tenant that never moves' 75 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+~~~ standard error ~~~
+release-unit: tnt_1 (it runs 0.3.003-stable-TS14-1111111, and no Versions run followed this release) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
+RECORDED
+calls 'a following tenant that never moves' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a following tenant that never moves'
+
+run_release_unit follow-failed "${FOLLOW_ARGS[@]}"
+expect 'a following tenant whose Versions run failed, beside one that landed' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+tenant tnt_2: runs 0.3.004-stable-TS14 (Versions run run_v2 succeeded)
+~~~ standard error ~~~
+release-unit: tenant tnt_1: its Versions run run_v1 failed: open /runs/run_v1
+RECORDED
+calls 'a following tenant whose Versions run failed, beside one that landed' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_2/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a following tenant whose Versions run failed, beside one that landed'
+
+run_release_unit follow-superseded "${FOLLOW_ARGS[@]}"
+expect 'a failed Versions run that a newer one superseded' 0 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v2 succeeded)
+~~~ standard error ~~~
+RECORDED
+calls 'a failed Versions run that a newer one superseded' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a failed Versions run that a newer one superseded'
+
+run_release_unit follow-line "${FOLLOW_ARGS[@]}"
+expect 'a following tenant on another version line than the release' 0 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+tenant tnt_1: stays on line 0.2, and 0.3.004-stable-TS14 is on line 0.3; Move to line on /tenants/tnt_1, not waited for
+~~~ standard error ~~~
+RECORDED
+calls 'a following tenant on another version line than the release' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a following tenant on another version line than the release'
+
+run_release_unit follow-unrelated "${FOLLOW_ARGS[@]}"
+expect 'a unit that no following tenant renders' 0 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+no following tenant at test renders shop
+~~~ standard error ~~~
+RECORDED
+calls 'a unit that no following tenant renders' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_other/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a unit that no following tenant renders'
+
+run_release_unit follow-relay-lost "${FOLLOW_ARGS[@]}"
+expect 'three relays lost while the following tenants are read' 0 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v1 succeeded)
+~~~ standard error ~~~
+RECORDED
+calls 'three relays lost while the following tenants are read' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'three relays lost while the following tenants are read'
+[ "$(cat "$RU/relay-fails")" = '0' ] || fail 'three relays lost while the following tenants are read — the stand-in kubectl did not fail the three exchanges it was told to'
+ok 'three relays lost while the following tenants are read — the reads were repeated on the one session'
+
+# THE COPY FROM PROD TO TEST reads the same rule before the release request: a tenant that records the
+# tag while its newest Versions run failed is the retry after a red copy, which the Manager's put-release
+# would end green without changing anything for it.
+run_release_unit follow-held manager@master.example.invalid shop --prod-to-test
+expect 'a tenant that records the tag while its newest Versions run failed' 1 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+~~~ standard error ~~~
+release-unit: tenant tnt_1: its Versions run run_v1 failed: open /runs/run_v1; the release would change nothing for it, so nothing was planned
+RECORDED
+calls 'a tenant that records the tag while its newest Versions run failed' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a tenant that records the tag while its newest Versions run failed'
+
+run_release_unit follow-held-superseded manager@master.example.invalid shop --prod-to-test
+expect 'the same tenant after a newer Versions run succeeded' 0 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+tenant tnt_1: already runs 0.3.004-stable-TS14
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: succeeded (put-release ok)
+run run_1 succeeded
+~~~ standard error ~~~
+RECORDED
+calls 'the same tenant after a newer Versions run succeeded' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_1/live cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+RECORDED
+no_session 'the same tenant after a newer Versions run succeeded'
+
+FOLLOW_SECONDS=0 run_release_unit follow-unsynced manager@master.example.invalid shop --prod-to-test
+expect 'a tenant that records the tag while its Application is not Synced' 75 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: succeeded (put-release ok)
+run run_1 succeeded
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+~~~ standard error ~~~
+release-unit: tnt_1 (it records the release, and no Versions run followed this release to prove it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
+RECORDED
+calls 'a tenant that records the tag while its Application is not Synced' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_1/live cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a tenant that records the tag while its Application is not Synced'
+
+# THE TAG THE STAGE PINS must be the release this run put there. Another release of the unit that reaches
+# the stage between the run's `succeeded` and the read of the stage would otherwise be waited for and
+# reported as this one: the act ends 1 and names what the stage pins.
+FOLLOW_SECONDS=0 run_release_unit follow-raced "${FOLLOW_ARGS[@]}"
+expect 'a stage that pins another release than the one this run put there' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+~~~ standard error ~~~
+release-unit: run run_1 succeeded, but test pins shop at 0.3.005-stable-TS14, and this release is 0.3.004-stable-<14 digits>: another release of shop reached test, so the tenants are not waited for. Open /runs
+RECORDED
+calls 'a stage that pins another release than the one this run put there' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+RECORDED
+no_session 'a stage that pins another release than the one this run put there'
+
+FOLLOW_SECONDS=0 run_release_unit follow-raced manager@master.example.invalid shop --prod-to-test
+expect 'the copy from prod, where test pins another release than prod runs' 1 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: succeeded (put-release ok)
+run run_1 succeeded
+~~~ standard error ~~~
+release-unit: run run_1 succeeded, but test pins shop at 0.3.005-stable-TS14, and this release is 0.3.004-stable-TS14: another release of shop reached test, so the tenants are not waited for. Open /runs
+RECORDED
+calls 'the copy from prod, where test pins another release than prod runs' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+RECORDED
+no_session 'the copy from prod, where test pins another release than prod runs'
+
+# A RECORD IS NOT A RUN. After `run succeeded`, a tenant whose part already records the tag but whose
+# Versions run did not follow this release is not proven by the record, which turns at the pin write, nor
+# by one look at a live Application that may still show the revision from before the write: the act
+# waits for the run, and names the tenant when none comes.
+FOLLOW_SECONDS=0 run_release_unit follow-recorded "${FOLLOW_ARGS[@]}"
+expect 'a tenant that records the tag after the release, with no Versions run after it' 75 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+~~~ standard error ~~~
+release-unit: tnt_1 (it records the release, and no Versions run followed this release to prove it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
+RECORDED
+calls 'a tenant that records the tag after the release, with no Versions run after it' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a tenant that records the tag after the release, with no Versions run after it'
+
+# PLANTED: a copy of the act that ends at `run succeeded`, as it did before, must end 0 where the
+# tenant that never moves is recorded to end 75, and print none of the tenant lines.
+PLANT="$WORK/release-unit-no-follow"
+mkdir -p "$PLANT"
+cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
+sed '/^if (release.stage !== null) await waitForFollowing/d' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail 'the plant that drops the wait for the following tenants changed nothing in release-unit.mjs'
+RELEASE_UNIT="$PLANT/release-unit.sh"
+FOLLOW_SECONDS=0 run_release_unit follow-never "${FOLLOW_ARGS[@]}"
+RELEASE_UNIT="$HERE/release-unit.sh"
+[ "$A_CODE" = '0' ] || fail "a copy of release-unit that ends at run succeeded ended with $A_CODE, and the green it reports is the defect"
+! grep -q '^tenant ' "$OUT/a.out" || fail 'a copy of release-unit that ends at run succeeded printed a tenant line'
+ok 'the planted defect was caught — a copy of release-unit that ends at run succeeded reports green with a tenant that never moved'
+rm -rf "$PLANT"
 
 # THE STAGE WORD none is the release of a library: the Manager plans only its tag and the publish of
 # its package, and takes no stage, so the request carries a JSON null. A stage word that is none of
@@ -3525,7 +3988,9 @@ RELEASE_UNIT="$PLANT/release-unit.sh"
 sed 's/release = { stage: stage === "none" ? null : stage, channel, version, commit };/release = { stage, channel, version, commit };/' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
 ! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail 'the plant that sends none as a string changed nothing in release-unit.mjs'
 run_release_unit success manager@master.example.invalid digita-plugins-free none stable 0.6.025 $B
-if diff "$LIBRARY_CALLS" "$RU/calls" > "$OUT/planted.diff"; then
+# The copy goes on to wait for the following tenants of a stage named "none", which the act never does; only
+# the request is compared.
+if diff <(sed -n '1,3p' "$LIBRARY_CALLS") <(sed -n '1,3p' "$RU/calls") > "$OUT/planted.diff"; then
   fail 'a copy of release-unit that sends none as the string "none" sent the calls the library case recorded — the check proves nothing'
 fi
 if grep '^[<>] ' "$OUT/planted.diff" | grep -vqF '"stage":'; then
@@ -3546,6 +4011,8 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
 RECORDED
 ok 'the innocent beside it stayed green — the same copy given prod sends the stage prod, as the act does'
 sed '/the stage must be dev, test, prod or none/d' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
@@ -3596,7 +4063,10 @@ echo "test:   prod's release put on test as its one put-release, an explicit rel
 echo "test:   refusals of the plan and two of the source read, a plan that is more than the put-release,"
 echo "test:   a failed and a cancelled run, relays lost to a rollout or hanging on one session, a watch that"
 echo "test:   stops, an expired session, a lost release request and approve never sent again, a plan"
-echo "test:   that asks for a secret left unapproved, each release request held to the body it sent, and"
+echo "test:   that asks for a secret left unapproved, the following tenants of the stage waited for until they"
+echo "test:   run the tag (one that moves, one that never moves, one whose Versions run failed, a failed run that a"
+echo "test:   newer one superseded, another version line, a unit no tenant renders, relays lost while they are"
+echo "test:   read, and the retry after a red copy read before the release request), each release request held to the body it sent, and"
 echo "test:   no session in any output, argument, environment or file, its home and temporary folders and"
 echo "test:   /tmp included; copies that print it, pass it on or write it to any of those are caught."
 echo "test: covered — a fixture's commit and push start no background maintenance, at either end,"

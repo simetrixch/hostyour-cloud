@@ -9,7 +9,7 @@
 # stand on origin; the images are rebuilt by the release cycles; every certificate is issued again
 # for the name. What lives on this machine alone is the platform's stores — Vault with every secret
 # of every unit, the Manager's database, the IdP's accounts, Headscale's nodes, the master's own
-# MongoDB, Redis, mail queue and dbgate — and, beside them on the host, the file Vault's
+# MongoDB, Redis, mail queue, dbgate and Forgejo's Git repositories — and, beside them on the host, the file Vault's
 # quorum is written to once and kept nowhere else: secrets/vault-<stage>.txt. That is the set this
 # takes, and nothing beside it: the observability volumes and the build workspaces are left, because
 # they are measurements and scratch, and the next installation makes its own.
@@ -70,6 +70,7 @@ STORES=(
   "redis|redis-data|redis-${STAGE}|deployment"
   "postfix|postfix-${STAGE}-postfix-${STAGE}-0|postfix-${STAGE}|statefulset"
   "dbgate|dbgate-data|dbgate-${STAGE}-app|deployment"
+  "forgejo|gitea-shared-storage|forgejo|deployment"
 )
 readonly QUORUM="/srv/hostyour-cloud/secrets/vault-${STAGE}.txt"
 readonly STORAGE_ROOT=/var/snap/microk8s/common/default-storage

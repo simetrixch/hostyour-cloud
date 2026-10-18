@@ -233,6 +233,23 @@ images:
         file: plugins/unit/docker/dbtools.Dockerfile
         argument: REDIS_SERIES
         segments: 2
+  # The Git server on the master. The chart (charts.forgejo below) runs its own appVersion when the
+  # values name no tag, so the image is pinned here and written beside `rootless: true`, which makes
+  # the chart append -rootless to the tag. The pin is the tag alone: the chart's image.digest needs
+  # the sha256: form, which `writes: sha256` does not write.
+  forgejo:
+    version: "17.0.0"
+    upstream:
+      kind: oci_tags
+      host: code.forgejo.org
+      image: forgejo/forgejo
+      matching: '^17\.0\.[0-9]+$'
+    stamps:
+      - kind: yaml_value
+        tree: platform
+        file: clusters/inventories/forgejo/values-common.yaml
+        key: tag
+        anchor: 'rootless: true'
   # A consumer's own MariaDB (clusters/units/mariadb) and the Manager's dump and restore client
   # beside it, on the long-term-support line mariadb.org names (12.3 on 2026-10-05). The upstream
   # report also lists the newer rolling lines; moving to one is a decision, not a sync.
@@ -858,16 +875,15 @@ cliTools:
       # every release of ansiwise-cli is published there by the master's Tekton as one
       # manifest simetrixch/ansiwise-cli:<tag> (hostyour-cloud clusters/inventories/
       # consumer-build templates/pipeline-publish.yaml), and GitHub carries no release
-      # of it. The image is the path of the binaries in that registry; `repository` is the engine's
-      # own repository on the platform's forge, <owner>/<repository>, which hostyour-manager reads for
-      # the release line (inventory/ansiwise-pin.ts) and composes the engine's URL from, with the host
-      # of global.platformUrl. It stands in the platform repository's organisation until the engine is
-      # moved to the forge, and moves with it. The two name different things, and an upstream without
-      # `repository` is refused by name.
+      # of it. The image is the path of the binaries in that registry, and the publish pipeline
+      # derives it from the engine repository's owner and name (pipeline-publish.yaml), so it is also
+      # the engine's own <owner>/<repository> on the platform's forge. hostyour-manager reads the
+      # release line over it (inventory/ansiwise-pin.ts) and composes the engine's URL from it, with
+      # the host of global.platformUrl. It stands in the platform repository's organisation until the
+      # engine is moved to the forge. The versions grammar takes no other key on an oci_tags upstream.
       kind: oci_tags
       host: zot.master.digitacloud.app
       image: simetrixch/ansiwise-cli
-      repository: simetrixch/ansiwise-cli
       # ALL THREE CHANNELS, and that is the decision this pin carries.
       # Every release of this project is cut under one grammar,
       # <major>.<minor>.<patch>-<channel>-<ts14> with channel one of alpha, beta
