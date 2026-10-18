@@ -100,6 +100,9 @@ DRIVER="$HERE/regenerate-driver.sh"
 # shellcheck disable=SC1091
 . "$HERE/require-owner-only.sh" \
   || die 'require-owner-only.sh is not beside this file. It is the guard every launcher puts on a config' 66
+# shellcheck disable=SC1091
+. "$HERE/require-forgejo-destinations.sh" \
+  || die 'require-forgejo-destinations.sh is not beside this file. It is the guard that asks the Forgejo destinations of a config' 66
 
 command -v git >/dev/null 2>&1 \
   || die 'git is not on this path, and everything read below is read out of git'
@@ -193,6 +196,7 @@ for named in FQDN OPERATOR_USER STAGE; do
 done
 [ -n "${ELEVATION_PASSWORD:-}" ] \
   || die "$CONFIG states no ELEVATION_PASSWORD, and a regeneration is run elevated" 65
+require_forgejo_destinations || die "$CONFIG $REFUSAL" 65
 
 # ONE CONFIG STATES ONE INSTALLATION. The answers in it land in this cluster's own
 # map and in its own credential files, so a config naming another installation
