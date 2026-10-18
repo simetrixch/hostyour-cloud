@@ -266,13 +266,17 @@ spec:
         # Hygiene only (this container is torn down with the pod anyway, and the
         # untrusted code above has already run): drop the cached pull credential.
         buildah --root /var/lib/containers/storage --storage-driver=vfs logout "$(params.registry)" || true
+      # The limits of the two steps add up to the memory limit of one pod that clusters/inventories/
+      # consumer-build ciCapacity counts for every image a release builds at once, and the requests to its
+      # CPU request; scripts/build-contract.test.mjs holds both to the budgets and the limits to the
+      # measured peaks.
       computeResources:
         requests:
-          cpu: 500m
+          cpu: 450m
           memory: 1Gi
         limits:
           cpu: "2"
-          memory: 4Gi
+          memory: 2560Mi
 
     # ── step 2: PUSH — carries the push credential, runs NO consumer code ──────
     - name: push
@@ -330,8 +334,8 @@ spec:
         buildah --root /var/lib/containers/storage --storage-driver=vfs logout "$(params.registry)" || true
       computeResources:
         requests:
-          cpu: 250m
+          cpu: 100m
           memory: 512Mi
         limits:
           cpu: "1"
-          memory: 2Gi
+          memory: 512Mi

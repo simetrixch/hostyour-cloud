@@ -552,7 +552,7 @@ spec:
                 mountPath: /dev/shm
             # The memory request and limit come from ciCheckMemory in values-common.yaml.
             # The limits of the largest six distinct ci units count against
-            # ciCapacity.limitsMemoryBudget alongside two releases.
+            # ciCapacity.limitsMemoryBudget alongside four releases.
             # The CPU limit is 12 of the cores of the build node, and the request
             # is the largest whole number of cores for which the requests of all
             # ci pods, of the releases the queue runs at once and of the pods that
