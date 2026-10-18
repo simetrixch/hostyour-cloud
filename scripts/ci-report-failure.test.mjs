@@ -26,7 +26,7 @@ test('a cancelled run posts nothing', () => {
 });
 
 // The message Tekton writes to a TaskRun it cancels because the PipelineRun's time budget ran out, and the
-// one for a PipelineRun that was cancelled (pkg/apis/pipeline/v1/taskrun_types.go in Tekton v1.12.0).
+// one for a PipelineRun that was cancelled (pkg/apis/pipeline/v1/taskrun_types.go in Tekton v1.17.0).
 const CANCELLED_BY_TIMEOUT = 'TaskRun cancelled as the PipelineRun it belongs to has timed out.';
 const CANCELLED_BY_PIPELINE = 'TaskRun cancelled as the PipelineRun it belongs to has been cancelled.';
 const cancelled = (statusMessage) => withFailure('check', {reason: 'TaskRunCancelled', statusMessage, steps: [{name: 'check', container: 'step-check'}],
