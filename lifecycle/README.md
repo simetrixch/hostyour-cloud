@@ -111,18 +111,36 @@ sent again; a read is repeated, so a rollout of the Manager does not end the wat
 It prints the run id as soon as the Manager names it, then each change of the run's status and
 steps. The run is the one `/runs/<run-id>` shows in the Manager.
 
+A succeeded run proves only that the stage pin stands. The tenants that follow releases move
+afterwards, each in its own Versions run, and that run can fail. So at a stage (not `none`) the
+script then reads the release the stage runs, lists the active tenants of the stage that follow
+releases, and waits until each one that renders the unit runs that release. It prints one line per
+tenant. A tenant has landed when every version of its part of the unit is the release's image tag and
+its newest Versions run ended `succeeded` after the release run started; the Manager ends that run
+only once ArgoCD rendered the versions. Where no Versions run followed, the tenant already runs the
+tag when its newest Versions run, if there is one, ended `succeeded` and its live Application is
+`Synced` and `Healthy`. Only the newest Versions run of a tenant counts, so a failed run that a later
+one superseded blocks nothing. A tenant on another version line than the release is named with its
+line and left to `Move to line` on `/tenants/<id>`; it is not waited for. When no following tenant
+renders the unit the script prints `no following tenant at <stage> renders <unit>`.
+
+With `--prod-to-test` the same rule is read before the release request: a tenant that records the
+tag while its newest Versions run failed ends the script with exit 1 and that run's `/runs/<id>`,
+and nothing is planned, because planning the release again would change nothing for it.
+
 | exit | what it means |
 |---|---|
 | 0 | the run succeeded |
-| 1 | the plan was refused, or the run failed or was cancelled, or a plan or an approval did not take; the run, where there is one, is named |
+| 1 | the plan was refused, or the run failed or was cancelled, or a plan or an approval did not take, or the Versions run of a following tenant failed or was cancelled; the run, where there is one, is named |
 | 64 | the arguments are not one of the two forms, or a setting below is not a whole number |
-| 69 | `node` or `ssh` is missing, or no session could be minted over the admin socket; nothing was planned |
-| 75 | the watch stopped while the run may go on: the session expired or was revoked, the relay gave no answer too often in a row, or a release request got no answer; the run, where there is one, is named |
+| 69 | `node` or `ssh` is missing, no session could be minted over the admin socket, or the following tenants could not be read before the release request; nothing was planned |
+| 75 | the watch stopped while the run may go on: the session expired or was revoked, the relay gave no answer too often in a row, or a release request got no answer; or the run succeeded and a following tenant did not run the tag within `RELEASE_UNIT_FOLLOW_SECONDS`, or could not be read; the run, where there is one, is named |
 
 `RELEASE_UNIT_POLL_SECONDS` (10) is the pause between two reads of the run, and
 `RELEASE_UNIT_RETRIES` (30) the number of reads in a row that may get no answer before the watch
 stops, and `RELEASE_UNIT_EXCHANGE_SECONDS` (120) how long one exchange may take before it counts as
-one with no answer.
+one with no answer. `RELEASE_UNIT_FOLLOW_SECONDS` (1800) is how long the following tenants may take
+to run the tag after the run succeeded; `0` is one look.
 
 # Installing a first master
 
