@@ -54,8 +54,8 @@
 # tag is source and no image is known to be served for it.
 images:
   zot:
-    version: "v2.1.18"
-    sha256: "34f18f783037f967dba10df02f9d4086c4d626f5643ef9f5e51e4a4547280a0b"
+    version: "v2.1.22"
+    sha256: "46f688dc26315a35a247e1784368829e66a67bf91de94c7d8d1645044fac1d5b"
     upstream:
       kind: git_tags
       project: project-zot/zot

@@ -18,8 +18,8 @@ app:
     # imports into the node, and a running one pulls a new digest through templates/zot-image-hook.yaml
     # while the old zot still serves.
     repository: zot.master.digitacloud.app/simetrixch/ghcr.io/project-zot/zot-linux-amd64
-    tag: "v2.1.18"
-    sha256: "34f18f783037f967dba10df02f9d4086c4d626f5643ef9f5e51e4a4547280a0b"
+    tag: "v2.1.22"
+    sha256: "46f688dc26315a35a247e1784368829e66a67bf91de94c7d8d1645044fac1d5b"
     pullPolicy: IfNotPresent
   replicas: 1
   podAnnotations:
@@ -208,7 +208,7 @@ ingress:
 # that is merely slow not at all. So the bound below is not tuning; it is the thing that decides
 # whether an operator ever sees a red field.
 #
-# WITHOUT THIS KEY THE BOUND IS THREE HOURS PER ENTRY. Read in zot v2.1.18, the version
+# WITHOUT THIS KEY THE BOUND IS THREE HOURS PER ENTRY. Read in zot v2.1.22, the version
 # clusters/platform/versions.yaml pins: pkg/extensions/config/sync/config.go declares SyncTimeout,
 # pkg/cli/server/root.go fills an unset one with syncConstants.DefaultSyncTimeout, and
 # pkg/extensions/sync/constants/constants.go sets that to 3 * time.Hour. The value is used twice —
@@ -244,7 +244,7 @@ ingress:
 # kill the fetch it was waiting on, and a first installation, which pulls every image cold, is
 # exactly where it would fire hardest and loop.
 #
-# WHY THERE IS NO ALERT HERE THAT NAMES A STUCK FETCH. zot v2.1.18 publishes no sync metric at
+# WHY THERE IS NO ALERT HERE THAT NAMES A STUCK FETCH. zot v2.1.22 publishes no sync metric at
 # all: pkg/extensions/monitoring/extension.go registers http_*, repo_*, storage_lock_*,
 # scheduler_* and gc_* under the zot namespace and nothing for sync, so neither a fetch in flight
 # nor a fetch that failed is a number Prometheus can read. Correlating from the consuming pod
@@ -314,7 +314,7 @@ configmap:
       # the next bump of images.zot with nothing to move it, because the version
       # is a property of the BINARY and no upstream kind of
       # clusters/platform/versions.yaml can ask it. Measured against the pinned
-      # binary (v2.1.18, distribution-spec 1.1.1): with the key absent
+      # binary (v2.1.22, distribution-spec 1.1.1): with the key absent
       # `zot verify` answers "config file is valid" and prints no warning.
       config.json: |-
         {{- if eq .Values.global.registryPullUser .Values.global.registryPushUser }}

@@ -221,8 +221,8 @@ spec:
           ? object.spec.taskRunSpecs.filter(s, has(s.serviceAccountName)).map(s, s.serviceAccountName)
           : []
   validations:
-    # Native exactly-one validation: Tekton v1.12.0
-    # pkg/apis/pipeline/v1/pipelinerun_validation.go:56-62.
+    # Native exactly-one validation: Tekton v1.17.0
+    # pkg/apis/pipeline/v1/pipelinerun_validation.go:62-68.
     # Inline-only fails this required reference; inline + reference fails Tekton.
     - expression: "request.operation == 'DELETE' || (has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0)"
       message: "spec.pipelineRef.name is required (a bare Pipeline name)."

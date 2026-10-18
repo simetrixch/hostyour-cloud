@@ -99,7 +99,7 @@ test('admission guard selects typed Tekton fields and keeps native inline refusa
     "request.operation == 'DELETE' || (has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name) && size(object.spec.pipelineRef.name) > 0)"));
   const webhook = tekton.find(d => d.kind === 'ValidatingWebhookConfiguration' &&
     d.metadata.name === 'validation.webhook.pipeline.tekton.dev');
-  assert.equal(webhook.metadata.labels['pipeline.tekton.dev/release'], 'v1.12.0');
+  assert.equal(webhook.metadata.labels['pipeline.tekton.dev/release'], 'v1.17.0');
   assert.ok(webhook.webhooks.every(h => h.failurePolicy === 'Fail'));
 });
 
