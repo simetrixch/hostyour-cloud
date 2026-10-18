@@ -11,7 +11,8 @@
 // its next round (the last round repeats), and the versions, runs and live reads answer from the round
 // they stand in. Every other scenario has no tenant at all. The decoy tenants are suspended, not
 // following, on another stage, not active, or render no part of the unit, and run an old version: a
-// call that names one is a defect of the act, and the call list shows it.
+// call that names one is a defect of the act, and the call list shows it. A world with a stageTag
+// answers the release read of the stage test with that tag, as another release would have left it.
 import { createServer } from "node:http";
 import { appendFileSync, writeFileSync } from "node:fs";
 
@@ -30,6 +31,8 @@ const BEFORE = -1000;
 const SOURCE = { stage: "prod", tag: "0.3.004-stable-20261010101010", version: "0.3.004", channel: "stable", commit: "b".repeat(40) };
 const OLD = "0.3.003-stable-20261001101010-1111111";
 const NEW = `${SOURCE.tag}-abc1234`;
+/** The tag another release of the unit put on the stage between this run and the act's read of it. */
+const RACED = "0.3.005-stable-20261011101010";
 const tenant = (id, over = {}) => ({ id, guid: `guid-${id}`, subdomain: id, stage: "test", status: "active", suspended: false, followReleases: true, members: ["auth"], ...over });
 const versionsRun = (id, tenantId, status, when) => ({ id, kind: "tenant-refresh-members", targetKind: "tenant", targetId: tenantId, status, creation: START + when });
 const part = (running, name = "shop") => ({ name, builds: [name], running, versions: [] });
@@ -62,6 +65,10 @@ const WORLDS = {
   "follow-held-superseded": { tenants: [tenant("tnt_1")], live: SYNCED, rounds: [
     { runs: [versionsRun("run_v2", "tnt_1", "succeeded", BEFORE + 500), versionsRun("run_v1", "tnt_1", "failed", BEFORE)], parts: { tnt_1: [part([NEW])] } },
   ] },
+  "follow-raced": { tenants: [tenant("tnt_1")], stageTag: RACED, rounds: [
+    { runs: [versionsRun("run_v1", "tnt_1", "succeeded", AFTER)], parts: { tnt_1: [part([`${RACED}-abc1234`])] } },
+  ] },
+  "follow-recorded": { tenants: [tenant("tnt_1")], rounds: [{ runs: [], parts: { tnt_1: [part([NEW])] } }] },
   "follow-unsynced": { tenants: [tenant("tnt_1")], live: { argo: { ok: true, sync: "OutOfSync", health: "Healthy", syncRevision: "r" } }, rounds: [
     { runs: [versionsRun("run_v1", "tnt_1", "succeeded", BEFORE)], parts: { tnt_1: [part([NEW])] } },
   ] },
@@ -110,7 +117,8 @@ const api = createServer((req, res) => {
     if (release && req.method === "GET") {
       if (release[1] === "ghost") return json(res, 404, { code: "NOT_FOUND", message: 'no unit "ghost" is registered, so there is nothing to release' }, refresh);
       if (SCENARIO === "mixed") return json(res, 400, { code: "VALIDATION", message: 'the release "shop" runs at prod cannot be read: its pins name 2 image tags, and one release is one image tag' }, refresh);
-      return json(res, 200, { unit: release[1], version: "0.3.006", standing: SOURCE }, refresh);
+      const standing = url.searchParams.get("stage") === "test" && world?.stageTag ? { ...SOURCE, tag: world.stageTag } : SOURCE;
+      return json(res, 200, { unit: release[1], version: "0.3.006", standing }, refresh);
     }
     if (release && req.method === "POST") {
       log(`  body ${body}`);

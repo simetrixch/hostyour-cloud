@@ -3830,6 +3830,103 @@ GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
 no_session 'a tenant that records the tag while its Application is not Synced'
 
+# THE TAG THE STAGE PINS must be the release this run put there. Another release of the unit that reaches
+# the stage between the run's `succeeded` and the read of the stage would otherwise be waited for and
+# reported as this one: the act ends 1 and names what the stage pins.
+FOLLOW_SECONDS=0 run_release_unit follow-raced "${FOLLOW_ARGS[@]}"
+expect 'a stage that pins another release than the one this run put there' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+~~~ standard error ~~~
+release-unit: run run_1 succeeded, but test pins shop at 0.3.005-stable-TS14, and this release is 0.3.004-stable-<14 digits>: another release of shop reached test, so the tenants are not waited for. Open /runs
+RECORDED
+calls 'a stage that pins another release than the one this run put there' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+RECORDED
+no_session 'a stage that pins another release than the one this run put there'
+
+FOLLOW_SECONDS=0 run_release_unit follow-raced manager@master.example.invalid shop --prod-to-test
+expect 'the copy from prod, where test pins another release than prod runs' 1 <<'RECORDED'
+source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (put-release pending)
+run run_1: planned (put-release pending)
+run run_1: queued (put-release pending)
+run run_1: running (put-release running)
+run run_1: succeeded (put-release ok)
+run run_1 succeeded
+~~~ standard error ~~~
+release-unit: run run_1 succeeded, but test pins shop at 0.3.005-stable-TS14, and this release is 0.3.004-stable-TS14: another release of shop reached test, so the tenants are not waited for. Open /runs
+RECORDED
+calls 'the copy from prod, where test pins another release than prod runs' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+RECORDED
+no_session 'the copy from prod, where test pins another release than prod runs'
+
+# A RECORD IS NOT A RUN. After `run succeeded`, a tenant whose part already records the tag but whose
+# Versions run did not follow this release is not proven by the record, which turns at the pin write, nor
+# by one look at a live Application that may still show the revision from before the write: the act
+# waits for the run, and names the tenant when none comes.
+FOLLOW_SECONDS=0 run_release_unit follow-recorded "${FOLLOW_ARGS[@]}"
+expect 'a tenant that records the tag after the release, with no Versions run after it' 75 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+~~~ standard error ~~~
+release-unit: tnt_1 (it records the release, and no Versions run followed this release to prove it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
+RECORDED
+calls 'a tenant that records the tag after the release, with no Versions run after it' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a tenant that records the tag after the release, with no Versions run after it'
+
 # PLANTED: a copy of the act that ends at `run succeeded`, as it did before, must end 0 where the
 # tenant that never moves is recorded to end 75, and print none of the tenant lines.
 PLANT="$WORK/release-unit-no-follow"
