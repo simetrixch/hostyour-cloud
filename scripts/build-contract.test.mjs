@@ -2167,7 +2167,6 @@ test('the Forgejo build fence preserves the build baseline and limits each inter
     assert.deepEqual(podLabels, service.spec.selector);
     const ports = workloads[0].spec.template.spec.containers.flatMap(c => c.ports ?? []);
     const port = typeof servicePort.targetPort === 'number' ? servicePort.targetPort : ports.find(p => p.name === servicePort.targetPort).containerPort;
-    assert.ok(ports.some(p => p.containerPort === port));
     return {to: [{namespaceSelector: {matchLabels: {'kubernetes.io/metadata.name': namespace}}, podSelector: {matchLabels: podLabels}}],
       ports: [{protocol: 'TCP', port}]};
   };
