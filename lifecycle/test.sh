@@ -2619,6 +2619,11 @@ stores_of "$HERE/master-restore-driver.sh" > "$OUT/stores-restore"
 diff -u "$OUT/stores-backup" "$OUT/stores-restore" \
   || fail 'the two drivers name different stores — a store taken by one and unknown to the other is backed up and never placed'
 ok "the two drivers name the same $(wc -l < "$OUT/stores-backup" | tr -d ' ') stores, in the same order"
+# Forgejo's SQLite and its repositories share this one claim, and the equal lists above hold a
+# store that both drivers lack just as green.
+grep -qx 'forgejo|gitea-shared-storage' "$OUT/stores-backup" \
+  || fail 'the drivers do not name the claim gitea-shared-storage of the namespace forgejo — Forgejo'"'"'s database and repositories are backed up by nobody'
+ok "the drivers name Forgejo's claim gitea-shared-storage"
 
 # ── one folder in both drivers ───────────────────────────────────────────────
 # A backup written where the restore does not look never comes back, so both drivers name the

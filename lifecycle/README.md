@@ -357,7 +357,7 @@ bash lifecycle/install-machine.sh lifecycle/config.master.env                   
 The install branch, the registrations and the deploy repository stand on origin; the images are rebuilt by the
 release cycles; every certificate is issued again for the name. What lives on the master alone is its
 stores — Vault with every unit's secrets, the Manager's database, the IdP's accounts, Headscale's
-nodes, the master's own MongoDB, Redis, mail queue and dbgate — and, beside them on the
+nodes, the master's own MongoDB, Redis, mail queue, dbgate and Forgejo's Git repositories — and, beside them on the
 host, `secrets/vault-<stage>.txt`, the file Vault's quorum was written to once. `master-backup` takes
 exactly that set: each store is stopped for its own copy and started again with the replicas it had
 (a database copied under a running process is a copy with a write in flight), every archive is
