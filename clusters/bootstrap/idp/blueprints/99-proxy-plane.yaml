@@ -15,6 +15,9 @@ metadata:
   name: Plane Forward Auth
   labels:
     blueprints.goauthentik.io/instantiate: "true"
+conditions:
+  - !Find [authentik_core.group, [name, admins]]
+  - !Find [authentik_core.group, [name, plane-users]]
 entries:
   - id: plane-proxy-provider
     model: authentik_providers_proxy.proxyprovider
@@ -43,3 +46,21 @@ entries:
       meta_launch_url: !Format ["https://plane.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Build
+      # The OR across the bindings, pinned for the reason 99-manager.yaml gives.
+      policy_engine_mode: any
+  - id: plane-admins-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, plane]]
+      group: !Find [authentik_core.group, [name, admins]]
+      order: 0
+    attrs:
+      enabled: true
+  - id: plane-plane-users-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, plane]]
+      group: !Find [authentik_core.group, [name, plane-users]]
+      order: 1
+    attrs:
+      enabled: true

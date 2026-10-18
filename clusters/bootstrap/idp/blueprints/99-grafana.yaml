@@ -13,6 +13,7 @@ metadata:
 # parallel-apply race fix; see 99-argocd.yaml comment for details.
 conditions:
   - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
+  - !Find [authentik_core.group, [name, admins]]
 entries:
   - id: grafana-provider
     model: authentik_providers_oauth2.oauth2provider
@@ -52,3 +53,11 @@ entries:
       meta_launch_url: !Format ["https://grafana.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Observability
+  - id: grafana-admins-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, grafana]]
+      group: !Find [authentik_core.group, [name, admins]]
+      order: 0
+    attrs:
+      enabled: true

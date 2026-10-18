@@ -4,10 +4,12 @@
 # the owner's password, so it signs in as `plane-sign-in`, which Plane holds a workspace invitation
 # for, and expects `plane-sign-in-uninvited`, which it does not, to be refused.
 #
-# WHY A GROUP OF THEIR OWN. Forgejo is bound to `admins` alone (99-forgejo.yaml), and an account in
-# `admins` would be an administrator of Authentik. The group `plane-users` grants no right anywhere:
-# it only lets its members through to Forgejo, which makes them restricted accounts there and, with
-# the limits the deployment sets on them, accounts that can create no repository.
+# WHY A GROUP OF THEIR OWN. An account in `admins` would be an administrator of Authentik. The group
+# `plane-users` grants no right anywhere: it only lets its members through to the two applications
+# Plane's sign-in passes through, the forward auth of Plane (99-proxy-plane.yaml) and Forgejo
+# (99-forgejo.yaml), which makes them restricted accounts there and, with the limits the deployment
+# sets on them, accounts that can create no repository. Every other application of the identity
+# provider is bound to `admins` alone, because an application without a binding admits every account.
 #
 # THE PASSWORDS ARE NOT IN THIS FILE. Each arrives as one key of the Secret idp-bootstrap-secrets,
 # which the deployment writes out of the secret store (<stage>/idp/bootstrap) and the chart hands to
