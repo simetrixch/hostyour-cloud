@@ -2,8 +2,7 @@
 # Authentik blueprint — Forward-Auth ProxyProvider + Application for the gate in front of Headlamp
 # (clusters/bootstrap/headlamp/ingressroute.tpl). Headlamp's own login is the OIDC client of
 # 99-headlamp.yaml; this provider is the forward auth that stands before it, because Headlamp answers
-# /config with the name and tailnet address of every cluster before anybody has logged in
-# (hostyour-cloud#264).
+# /config with the name and tailnet address of every cluster before anybody has logged in.
 #
 # WHY THE HOST HAS A PROVIDER OF ITS OWN. The embedded outpost looks a host up by the external host of
 # a provider first; only a host nobody claims falls back to every forward_domain provider whose cookie
