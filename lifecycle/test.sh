@@ -2715,6 +2715,8 @@ done
 ! elevated_reads_in "$OUT/innocent-elevated.sh" > "$OUT/elevated.out" \
   || fail "the guard caught a comment and the tests of existence, kind and a read of a file that is not the quorum: $(cat "$OUT/elevated.out")"
 ok 'neither driver asks root for a file'"'"'s mode or reads the quorum through root; the guard catches each planted form and passes the innocent lines'
+# The file of mode 000 is removed here: the recursive greps over $WORK further down (no_session) cannot read it.
+rm -rf "$QUORUM_DIR"
 
 # ===========================================================================
 # EIGHT — the engine held against its digests, as both drivers place it on a machine
