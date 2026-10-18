@@ -22,16 +22,17 @@
 #
 # SEALED BEFORE IT LEAVES. Every archive is passed through gpg with the config's BACKUP_PASSPHRASE
 # before it is written, so the storage box holds the installation's every credential and can open
-# none of it. The passphrase reaches this machine on the session's standard input, and gpg is given
-# it by the path of a file of mode 600 in a folder in memory (/dev/shm) that is removed when this ends.
-# Never as an argument: sudo writes the arguments of every command it runs to the system log.
+# none of it. The passphrase and the storage box's password reach this machine on the session's
+# standard input, and gpg and rclone are given them by the path of a file of mode 600 in a folder in
+# memory (/dev/shm) that is removed when this ends. Never as an argument: sudo writes the arguments of
+# every command it runs to the system log.
 #
 # WHERE IT GOES. box:<fqdn>/master/<id>/ on the storage box. Everything of one installation lives
 # under its FQDN: the unit backups the Manager writes stand beside this, under box:<fqdn>/<stage>/.
 # It goes through the same rclone remote the Manager's relocations use (hostyour-manager
 # relocation-jobs.ts BOX_REMOTE), one directory per backup, named by the moment it was taken, with a
-# manifest of checksums beside the archives. The last line this prints is that id, which is what
-# master-restore asks for.
+# manifest of checksums beside the archives. Root made the archives in a folder that is root's alone,
+# so root carries them. The last line this prints is that id, which is what master-restore asks for.
 # ===========================================================================
 set -uo pipefail
 
@@ -106,10 +107,10 @@ if ! command -v rclone >/dev/null 2>&1; then
   say 'rclone is not on this machine; it is what carries the archives to the storage box, so it is installed now'
   root apt-get install -y -q rclone >/dev/null 2>&1 || die 'rclone could not be installed, and nothing else here reaches the storage box' 69
 fi
-export RCLONE_CONFIG_BOX_TYPE=sftp
-export RCLONE_CONFIG_BOX_HOST="$STORAGE_BOX_HOST"
-export RCLONE_CONFIG_BOX_USER="$STORAGE_BOX_USER"
-RCLONE_CONFIG_BOX_PASS="$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)"; export RCLONE_CONFIG_BOX_PASS
+RCLONE_CONF="$SECRETS/rclone.conf"
+( umask 077; printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF" ) \
+  || die 'the storage box config could not be written to a file in memory' 78
+export RCLONE_CONFIG="$RCLONE_CONF"
 rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was stopped" 69
 good "the storage box $STORAGE_BOX_HOST opens"
 
@@ -164,7 +165,7 @@ step "the manifest, and the way out"
 RELEASE=$(grep -E '^release:' "/srv/hostyour-cloud/clusters/active/${FQDN}.yaml" 2>/dev/null | head -1 | sed 's/^release:[[:space:]]*//' | tr -d '"'"'")
 root sh -c "cd '$WORK' && { printf 'FQDN=%s\nSTAGE=%s\nID=%s\nRELEASE=%s\nSTORES=%s\n' '$FQDN' '$STAGE' '$ID' '$RELEASE' '$TAKEN'; sha256sum *.gpg; } > manifest.txt" || die 'the manifest could not be written' 70
 say "release on this machine: ${RELEASE:-unknown}"
-rclone copy "$WORK" "$BACKUPS/$ID/" --quiet || die "the archives could not be carried to $BACKUPS/$ID/ — they stand in $WORK on this machine" 69
+root rclone --config "$RCLONE_CONF" copy "$WORK" "$BACKUPS/$ID/" --quiet || die "the archives could not be carried to $BACKUPS/$ID/ — they stand in $WORK on this machine" 69
 LISTED=$(rclone lsf "$BACKUPS/$ID/" 2>/dev/null | wc -l | tr -d ' ')
 EXPECTED=$(( TAKEN + 2 ))
 [ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under $BACKUPS/$ID/ and $EXPECTED were sent" 69

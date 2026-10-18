@@ -2764,11 +2764,16 @@ PLANTED_PAT='ghp_planted-read-token-3b6a'
 PLANTED_PAT_BASE64="$(printf 'x-access-token:%s' "$PLANTED_PAT" | base64 | tr -d '\n')"
 STANDIN="$WORK/standin"
 mkdir -p "$STANDIN"
+BOX_HOST='box.example.invalid'
+BOX_USER='boxuser'
+printf '%s\n' "$BOX_HOST" "$BOX_USER" "obscured-of-$PLANTED_BOX_PASSWORD" > "$STANDIN/box.expected"
+printf 'AUTHORIZATION: basic %s\n' "$PLANTED_PAT_BASE64" > "$STANDIN/git.expected"
 cat > "$STANDIN/sudo" <<'STANDIN_SUDO'
 #!/usr/bin/env bash
 # sudo as root() calls it: sudo -S -p '' [-u USER] COMMAND... SUDO_STANDIN=nopasswd reads nothing, as a
 # NOPASSWD rule does; SUDO_STANDIN=password reads the first line of standard input as the password and
-# passes on the rest. The command runs with the environment cleared, as sudo's env_reset does. Every call
+# passes on the rest. The command runs with the environment cleared, as sudo's env_reset does, and with
+# STANDIN_ELEVATED=1, the one thing that tells the rclone stand-in a command was raised. Every call
 # writes its arguments to argv.log beside it first, as sudo-rs writes them to the system log.
 printf 'sudo %s\n' "$*" >> "$(dirname "$0")/argv.log"
 [ "$#" -ge 4 ] && [ "$1" = -S ] && [ "$2" = -p ] && [ -z "$3" ] || { echo 'sudo stand-in: not called as root() calls it' >&2; exit 2; }
@@ -2778,7 +2783,7 @@ if [ "$SUDO_STANDIN" = password ]; then
   IFS= read -r given
   [ "$given" = "$SUDO_STANDIN_PASSWORD" ] || { echo 'sudo stand-in: a wrong password' >&2; exit 1; }
 fi
-exec env -i PATH="$PATH" "$@"
+exec env -i PATH="$PATH" STANDIN_ELEVATED=1 "$@"
 STANDIN_SUDO
 cat > "$STANDIN/gpg" <<'STANDIN_GPG'
 #!/usr/bin/env bash
@@ -2848,7 +2853,11 @@ cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 # rclone as the drivers call it. obscure takes the password on standard input (obscure -) or as an argument
 # and answers obscured-of-<it>. Every other call needs the remote box defined, as rclone reads it: by the
 # file --config or RCLONE_CONFIG names, or by RCLONE_CONFIG_BOX_* variables, with the host, the user and
-# the obscured password box.expected holds; it ends 1 otherwise. copy puts box-backup/ into its destination.
+# the obscured password box.expected holds; it ends 1 otherwise. The folder and the mode of a config file it
+# reads go to secrets.seen, as the gpg stand-in's passphrase file does. copy from the box puts box-backup/
+# into its destination; copy to the box puts its source into box-uploaded/ under the remote path, and ends 1
+# on a source that rootonly names unless sudo raised the caller (STANDIN_ELEVATED), as a folder of root's at
+# mode 700 is refused to any other account. lsf of a remote path that was copied to lists what it holds.
 here="$(dirname "$0")"
 printf 'rclone %s\n' "$*" >> "$here/argv.log"
 conf="${RCLONE_CONFIG:-}"
@@ -2869,14 +2878,24 @@ fi
 if [ -n "$conf" ] && [ -f "$conf" ]; then
   [ "$(sed -E 's/^([a-z]+) *= */\1=/' "$conf")" = "$(printf '[box]\ntype=sftp\nhost=%s\nuser=%s\npass=%s' "$host" "$user" "$pass")" ] \
     || { echo 'rclone stand-in: the config does not define the remote box' >&2; exit 1; }
+  printf '%s %s %s\n' "$(stat -c %a "$(dirname "$conf")")" "$(stat -c %a "$conf")" "$(dirname "$conf")" >> "$here/secrets.seen"
 elif [ "${RCLONE_CONFIG_BOX_TYPE:-}" = sftp ] && [ "${RCLONE_CONFIG_BOX_HOST:-}" = "$host" ] && [ "${RCLONE_CONFIG_BOX_USER:-}" = "$user" ] && [ "${RCLONE_CONFIG_BOX_PASS:-}" = "$pass" ]; then
   :
 else
   echo 'rclone stand-in: the remote box is not defined' >&2; exit 1
 fi
 case "$1" in
-  lsd|lsf) exit 0 ;;
-  copy) cp -R "$here/box-backup/." "$3" ;;
+  lsd) exit 0 ;;
+  lsf) if [ -d "$here/box-uploaded/${2#box:}" ]; then ls "$here/box-uploaded/${2#box:}"; fi; exit 0 ;;
+  copy)
+    case "$2" in
+      box:*) cp -R "$here/box-backup/." "$3" ;;
+      *)
+        if grep -qxF "$2" "$here/rootonly" 2> /dev/null && [ -z "${STANDIN_ELEVATED:-}" ]; then
+          echo "rclone stand-in: open $2: permission denied" >&2; exit 1
+        fi
+        mkdir -p "$here/box-uploaded/${3#box:}" && cp -R "$2/." "$here/box-uploaded/${3#box:}" ;;
+    esac ;;
   *) echo "rclone stand-in: a call the drivers do not make: $1" >&2; exit 2 ;;
 esac
 STANDIN_RCLONE
@@ -2908,15 +2927,22 @@ if [ "$cmd" = clone ]; then for last; do :; done; mkdir -p "$last/.git"; fi
 STANDIN_GIT
 cat > "$STANDIN/install" <<'STANDIN_INSTALL'
 #!/usr/bin/env bash
-# install as the restore calls it as root. An account that is not root cannot give a folder away, so -o and -g go.
+# install as the drivers call it as root. An account that is not root cannot give a folder away, so -o and -g
+# go. A folder it was asked to make root's is written to rootonly beside it, one path a line: the rclone
+# stand-in reads that file to refuse the folder to a caller that sudo did not raise, as the kernel refuses a
+# mode-700 folder to an account that does not own it.
 real="$(PATH="${PATH#"$(dirname "$0"):"}" command -v install)"
-args=()
+args=(); paths=(); owner=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -o|-g) shift 2 ;;
-    *) args+=("$1"); shift ;;
+    -o) owner="$2"; shift 2 ;;
+    -g) shift 2 ;;
+    -m) args+=(-m "$2"); shift 2 ;;
+    -*) args+=("$1"); shift ;;
+    *) args+=("$1"); paths+=("$1"); shift ;;
   esac
 done
+[ "$owner" != root ] || printf '%s\n' "${paths[@]}" >> "$(dirname "$0")/rootonly"
 exec "$real" "${args[@]}"
 STANDIN_INSTALL
 printf '%s\n' '#!/usr/bin/env bash' '# chown as the restore calls it as root: an account that is not root cannot give a file away.' 'exit 0' > "$STANDIN/chown"
@@ -2929,14 +2955,16 @@ RESTORE_STORES="$(sed -n '/^STORES=($/,/^)$/p' "$HERE/master-restore-driver.sh")
 RESTORE_PLACEMENT="$(sed -n '/^PLACE=/,/^root chmod 700 "\$PLACE"$/p' "$HERE/master-restore-driver.sh")"
 BACKUP_CLEANUP="$(sed -n "/^SECRETS=''/,/^trap cleanup/p" "$HERE/master-backup-driver.sh")"
 BACKUP_SECRETS="$(sed -n '/^SECRETS="\$(mktemp/,/^( umask 077/p' "$HERE/master-backup-driver.sh")"
-BACKUP_OBSCURE="$(grep '^RCLONE_CONFIG_BOX_PASS=' "$HERE/master-backup-driver.sh")"
+BACKUP_RCLONE_CONF="$(sed -n '/^RCLONE_CONF=/,/^export RCLONE_CONFIG=/p' "$HERE/master-backup-driver.sh")"
+BACKUP_WORK="$(sed -n '/^ID=/,/^root install -d -m 700/p' "$HERE/master-backup-driver.sh")"
+BACKUP_WAY_OUT="$(sed -n '/^step "the manifest, and the way out"/,/^printf .BACKUP %s/p' "$HERE/master-backup-driver.sh")"
 RESTORE_CLEANUP="$(sed -n "/^SECRETS=''/,/^trap cleanup/p" "$HERE/master-restore-driver.sh")"
 RESTORE_SECRETS="$(sed -n '/^SECRETS="\$(mktemp/,/^export RCLONE_CONFIG=/p' "$HERE/master-restore-driver.sh")"
 RESTORE_FETCHED="$(sed -n '/^step "the backup \$ID, fetched and checked"/,/^good "\${#STORES\[@\]} store(s) stand opened/p' "$HERE/master-restore-driver.sh")"
-for lifted in BACKUP_ROOT BACKUP_SEAL BACKUP_CLEANUP BACKUP_SECRETS BACKUP_OBSCURE RESTORE_ROOT RESTORE_STORES RESTORE_PLACEMENT RESTORE_CLEANUP RESTORE_SECRETS RESTORE_FETCHED; do
+for lifted in BACKUP_ROOT BACKUP_SEAL BACKUP_CLEANUP BACKUP_SECRETS BACKUP_RCLONE_CONF BACKUP_WORK BACKUP_WAY_OUT RESTORE_ROOT RESTORE_STORES RESTORE_PLACEMENT RESTORE_CLEANUP RESTORE_SECRETS RESTORE_FETCHED; do
   [ -n "${!lifted}" ] || fail "the drivers carry no text for $lifted — nothing below measures what reaches an elevated command"
 done
-BACKUP_TEXT="$BACKUP_CLEANUP"$'\n'"$BACKUP_SECRETS"$'\n'"$BACKUP_ROOT"$'\n'"$BACKUP_OBSCURE"$'\n'"$BACKUP_SEAL"
+BACKUP_TEXT="$BACKUP_CLEANUP"$'\n'"$BACKUP_SECRETS"$'\n'"$BACKUP_ROOT"$'\n'"$BACKUP_RCLONE_CONF"$'\n'"$BACKUP_SEAL"
 
 commands_wrong() { # says which planted secret stands in a line of $STANDIN/argv.log, which every stand-in writes its arguments to; ends 0
   grep -qF "$PLANTED_PASSPHRASE" "$STANDIN/argv.log" && echo 'the backup passphrase stands on a command line'
@@ -2959,13 +2987,14 @@ secrets_wrong() { # <secrets.seen> — says what is wrong with the folders the g
 # shellcheck disable=SC2034 # the lifted text reads these
 sealed_by() { # <sudo kind> <the text lifted first> <command line...> — its code is the command line's; what it printed stands in $OUT/sealed.out and $OUT/sealed.err, what every stand-in was handed in $STANDIN/argv.log
   local kind="$1" text="$2"; shift 2
-  rm -f "$STANDIN/secrets.seen"; : > "$STANDIN/argv.log"
+  rm -rf "$STANDIN/secrets.seen" "$STANDIN/rootonly" "$STANDIN/box-uploaded"; : > "$STANDIN/argv.log"
   ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 022
     set -uo pipefail
     die() { echo "die: $1" >&2; exit "${2:-1}"; }
     CONFIG="$WORK/seal-config"; : > "$CONFIG"
     ELEVATION_PASSWORD="$PLANTED_PASSWORD"; BACKUP_PASSPHRASE="$PLANTED_PASSPHRASE"; STORAGE_BOX_PASSWORD="$PLANTED_BOX_PASSWORD"
+    STORAGE_BOX_HOST="$BOX_HOST"; STORAGE_BOX_USER="$BOX_USER"
     eval "$text"
     "$@" ) < /dev/null > "$OUT/sealed.out" 2> "$OUT/sealed.err"
 }
@@ -3136,7 +3165,8 @@ EOF
 }
 PRIOR
 plant "$BACKUP_TEXT" "$BACKUP_SEAL" "${PRIOR_SEAL%$'\n'}"; PLANTED_PRIOR_SEAL="$PLANTED_TEXT"
-plant "$BACKUP_TEXT" "$(printf '%s\n' "$BACKUP_OBSCURE")" "RCLONE_CONFIG_BOX_PASS=\"\$(rclone obscure \"\$STORAGE_BOX_PASSWORD\")\"; export RCLONE_CONFIG_BOX_PASS"; PLANTED_OBSCURE="$PLANTED_TEXT"
+OBSCURE_LINE='"$(printf '"'%s\\n'"' "$STORAGE_BOX_PASSWORD" | rclone obscure -)"'
+plant "$BACKUP_TEXT" "$OBSCURE_LINE" '"$(rclone obscure "$STORAGE_BOX_PASSWORD")"'; PLANTED_OBSCURE="$PLANTED_TEXT"
 plant "$BACKUP_TEXT" 'rm -rf "$SECRETS" 2>/dev/null || true' 'true'; PLANTED_KEPT="$PLANTED_TEXT"
 plant "$BACKUP_TEXT" '( umask 077; printf' '( printf'; PLANTED_OPEN_UMASK="$PLANTED_TEXT"
 for kind in nopasswd password; do
@@ -3155,14 +3185,77 @@ for kind in nopasswd password; do
 done
 ok 'the planted seals are caught under each sudo: the passphrase in env, the box password as an argument, a folder left behind, a file under an open umask'
 
+# ── root carries what root made ─────────────────────────────────────────────────────────────────────
+# The work folder is root's at mode 700, and so is every archive and the manifest in it. The operator, who
+# runs this driver, cannot read it, so a copy run by the operator carries nothing and ends 69. The stand-ins
+# model that: install records a folder made root's, and the rclone stand-in refuses it to a caller sudo did
+# not raise. The cases run the driver's own text for the work folder, the seals and the way out against a
+# box the stand-in serves, then read what reached the box. The model is declared by the stand-ins; the
+# account that runs this suite owns every file in it. The real folder is the one on a master.
+CARRY_FQDN=master.example.invalid
+# shellcheck disable=SC2034 # the lifted text reads these
+carry_run() { # the driver's own lines: the work folder made, one store and the quorum sealed into it, then the way out
+  FQDN="$CARRY_FQDN" STAGE=prod TAKEN=1
+  eval "$CARRY_WORK"
+  seal "$WORK/ns--pvc.tar.gpg" tar --numeric-owner -C "$SEAL_DIR/store" -cf - .
+  seal "$WORK/host--vault-${STAGE}.txt.gpg" cat "$SEAL_DIR/quorum.txt"
+  eval "$CARRY_WAY_OUT"
+}
+carry_holds() { # <sudo kind> <the text lifted first> <the way out> — ends 0 when the way out ran to its end and the box holds the sealed archives and a manifest that holds them, and the work folder is gone; what is wrong stands in $OUT/verdict
+  local kind="$1" text="$2" code=0 landed
+  CARRY_WAY_OUT="$3"
+  : > "$OUT/verdict"
+  sealed_by "$kind" "$text" carry_run || code=$?
+  if [ "$code" != 0 ]; then
+    echo "the way out ended with $code: $(tail -n 2 "$OUT/sealed.err" | tr '\n' ' ')" >> "$OUT/verdict"
+    return 1
+  fi
+  landed="$(find "$STANDIN/box-uploaded/$CARRY_FQDN/master" -mindepth 1 -maxdepth 1 -type d 2> /dev/null)"
+  if [ "$(printf '%s\n' "$landed" | grep -c .)" != 1 ]; then
+    echo 'the box holds no one backup folder' >> "$OUT/verdict"
+  else
+    [ "$(ls "$landed" | tr '\n' ' ')" = 'host--vault-prod.txt.gpg manifest.txt ns--pvc.tar.gpg ' ] || echo "the box holds other files than the two archives and the manifest: $(ls "$landed" | tr '\n' ' ')" >> "$OUT/verdict"
+    ( cd "$landed" && grep -E '^[0-9a-f]{64}  ' manifest.txt | sha256sum -c --quiet ) > /dev/null 2>&1 || echo 'the checksums in the manifest on the box do not hold' >> "$OUT/verdict"
+    grep -qx 'STORES=1' "$landed/manifest.txt" || echo 'the manifest on the box does not count the one store' >> "$OUT/verdict"
+    { printf 'sealed with: %s\n' "$PLANTED_PASSPHRASE"; cat "$SEAL_DIR/store/payload"; } | cmp -s - "$landed/ns--pvc.tar.gpg" || echo 'the archive on the box is not the sealed store' >> "$OUT/verdict"
+    { printf 'sealed with: %s\n' "$PLANTED_PASSPHRASE"; cat "$SEAL_DIR/quorum.txt"; } | cmp -s - "$landed/host--vault-prod.txt.gpg" || echo 'the archive on the box is not the sealed quorum' >> "$OUT/verdict"
+    [ "$(tail -n 1 "$OUT/sealed.out")" = "BACKUP $(basename "$landed")" ] || echo 'the last line is not BACKUP and the id the box holds' >> "$OUT/verdict"
+    [ ! -e "$SEAL_DIR/backups/$(basename "$landed")" ] || echo 'the work folder stands after the way out' >> "$OUT/verdict"
+  fi
+  commands_wrong >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+CARRY_WORK="${BACKUP_WORK//\/var\/lib\/master-backup/$SEAL_DIR/backups}"
+[ "$CARRY_WORK" != "$BACKUP_WORK" ] || fail 'the work folder of the driver is not moved into the sandbox — the carry cases would reach /var/lib'
+for kind in nopasswd password; do
+  carry_holds "$kind" "$BACKUP_TEXT" "$BACKUP_WAY_OUT" \
+    || fail "backup: the archives and the manifest of a work folder only root reads did not reach the box under a sudo that reads $kind: $(cat "$OUT/verdict")"
+done
+ok 'backup: a work folder only root reads is carried to the box by root, whole, with its manifest, and removed, under a sudo that asks no password and under one that does'
+
+# planted defects: the copy as the operator runs it (the work folder is refused to it), and root's copy
+# without the config by path (sudo resets the environment, so the box is not defined for root)
+COPY_LINE='root rclone --config "$RCLONE_CONF" copy "$WORK"'
+plant "$BACKUP_WAY_OUT" "$COPY_LINE" 'rclone copy "$WORK"'; BY_OPERATOR="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" "$COPY_LINE" 'root rclone copy "$WORK"'; WITHOUT_CONFIG="$PLANTED_TEXT"
+plant "$BACKUP_TEXT" "( umask 077; printf '[box]" "( printf '[box]"; OPEN_CONFIG_UMASK="$PLANTED_TEXT"
+for kind in nopasswd password; do
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$BY_OPERATOR" || fail "the planted copy run by the operator was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'copy run by the operator' 'the way out ended with 69' 'permission denied'
+  grep -qF 'permission denied' "$OUT/verdict" || fail "the planted copy run by the operator was not refused for the folder it cannot read: $(cat "$OUT/verdict")"
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$WITHOUT_CONFIG" || fail "the planted root copy without the config by path was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'root copy without the config by path' 'the way out ended with 69' 'the remote box is not defined'
+  grep -qF 'the remote box is not defined' "$OUT/verdict" || fail "the planted root copy without the config by path was not refused for the box it does not know: $(cat "$OUT/verdict")"
+  ! carry_holds "$kind" "$OPEN_CONFIG_UMASK" "$BACKUP_WAY_OUT" || fail "the planted box config written under an open umask was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'box config written under an open umask' 'its file at 644'
+done
+ok 'the planted copies are caught under each sudo: the operator refused the work folder, root without the config by path refused the box, the box config under an open umask'
+
 # The restore: the fetch, the clone, the fetch of the branch, the opening of the quorum and of every store,
 # as the driver's own text runs them against a backup the rclone stand-in serves.
 restore_rows() { ( STAGE=prod; eval "$RESTORE_STORES"; printf '%s\n' "${STORES[@]}" ); } # the restore's store rows, resolved for stage prod
 RESTORED_ID=20261018T000001Z
-BOX_HOST='box.example.invalid'
-BOX_USER='boxuser'
-printf '%s\n' "$BOX_HOST" "$BOX_USER" "obscured-of-$PLANTED_BOX_PASSWORD" > "$STANDIN/box.expected"
-printf 'AUTHORIZATION: basic %s\n' "$PLANTED_PAT_BASE64" > "$STANDIN/git.expected"
 mkdir -p "$STANDIN/box-backup"
 ( cd "$STANDIN/box-backup"
   while IFS='|' read -r ns pvc size; do
@@ -3233,7 +3326,6 @@ $BACKUP_PASSPHRASE
 EOF
 ' _ "$sealed" "$PLAIN/${ns}--${pvc}" || die "the archive of ${ns}/${pvc} could not be opened" 65
 PRIOR
-OBSCURE_LINE='"$(printf '"'%s\\n'"' "$STORAGE_BOX_PASSWORD" | rclone obscure -)"'
 for kind in nopasswd password; do
   plant "$RESTORE_FETCHED" "$FETCH_LINE" "$FETCH_PRIOR"
   ! restore_holds "$kind" "$RESTORE_SECRETS" "$PLANTED_TEXT" || fail "the planted fetch with the box password in env was not caught under a sudo that reads $kind — the probe proves nothing"
