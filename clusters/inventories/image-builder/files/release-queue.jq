@@ -1,16 +1,16 @@
 # Decides, from the PipelineRuns that carry image-builder.io/consumer or image-builder.io/publish (the
 # labels their TriggerTemplates give them), which waiting release and publish runs start now and which
-# wait, and emits one patch per run that has to change. The caller passes the number of releases that run
-# at once as --argjson max (releaseQueue.maxRunning, 2). The build plane is one node, and releases beyond
-# what its memory and its pod limit hold filled it until no task pod could start.
-# A release is one release tag in one build namespace; its stages run together. A publish run (the npm
-# packages of a release tag, consumer-build pipeline-publish.yaml) is a release of its own key,
-# `<namespace>/<tag> publish`. A release starts when fewer than max releases run and no release of its
-# unit, which is its build namespace, runs or starts: two releases of one unit, a publish run among them,
-# never build side by side, and a third unit waits for a free slot. The waiting runs are taken oldest
-# first, so a unit whose release waits for its own unit's release does not hold a slot back from a younger
-# release of another unit. A waiting run of a release that already runs starts at once, because a release
-# has one run per stage. Starts come first, so a note that cannot be written never holds a start back.
+# wait, and emits one patch per run that has to change. The caller passes the number of runs that run at
+# once as --argjson max (releaseQueue.maxRunning, 4). The build plane is one node, and runs beyond what its
+# memory and its pod limit hold filled it until no task pod could start.
+# Every release run (one per stage of a release tag) and every publish run (the npm packages of a release
+# tag, consumer-build pipeline-publish.yaml) takes one slot and is counted on its own, whatever its tag. A
+# run starts when fewer than max runs run and no run of its unit, which is its build namespace, runs or
+# starts: of one unit only one run builds at a time, whether it is another stage of the same tag, a retry,
+# another tag or a publish run, so the stage runs of a release never build side by side and the capacity
+# test of consumer-build counts one run's pods per unit. The waiting runs are taken oldest first, so a
+# run that waits for its own unit does not hold a slot back from a younger run of another unit. Starts
+# come first, so a note that cannot be written never holds a start back.
 # It also deletes, in each build namespace, every finished release run but the newest 20, and every
 # finished publish run but the newest 20, last: every run holds a workspace claim until it is deleted,
 # and the newest twenty keep recent runs readable in the Tekton Dashboard. A run that waits or runs is
@@ -39,17 +39,16 @@ def inOrder: reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end
 | ($live | map(select(isPending | not)) | sort_by(.metadata.creationTimestamp)) as $running
 | ($live | map(select(isPending)) | sort_by(.metadata.creationTimestamp)) as $waiting
 | (reduce $waiting[] as $run (
-    {open: ($running | map(releaseKey) | inOrder),
+    {active: ($running | length),
+     open: ($running | map(releaseKey) | inOrder),
      holder: ($running | map({key: unitOf, value: releaseKey}) | from_entries),
      decisions: []};
     ($run | releaseKey) as $key | ($run | unitOf) as $unit
-    | if any(.open[]; . == $key) then
-        .decisions += [{run: $run, key: $key}]
-      elif (.open | length) < $max and (.holder | has($unit) | not) then
-        .open += [$key] | .holder[$unit] = $key | .decisions += [{run: $run, key: $key}]
-      else
+    | if (.holder | has($unit)) or .active >= $max then
         .decisions += [{run: $run, key: $key,
           behind: (if .holder | has($unit) then .holder[$unit] else (.open | join(" and ")) end)}]
+      else
+        .active += 1 | .open = (.open + [$key] | inOrder) | .holder[$unit] = $key | .decisions += [{run: $run, key: $key}]
       end)).decisions as $decisions
 | [$decisions[]
 | .run as $run | .key as $key | .behind as $behind

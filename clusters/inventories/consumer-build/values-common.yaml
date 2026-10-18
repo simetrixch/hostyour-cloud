@@ -39,7 +39,7 @@ eventListener:
   namespace: image-builder
 
 # WHO STARTS A WAITING RELEASE RUN. Release runs are created waiting, and the release queue of
-# clusters/inventories/image-builder starts them two releases at a time. Its grant is `patch` on
+# clusters/inventories/image-builder starts them four runs at a time. Its grant is `patch` on
 # pipelineruns in the unit's build namespace, rendered per unit by templates/rbac-release-queue.yaml;
 # the admission policy of image-builder lets that identity change nothing but the waiting flag and
 # the note of what a run waits for.
@@ -65,16 +65,15 @@ releaseQueue:
 #
 #   the limits of the maxRunning largest distinct ci pods (the sum of each pod's steps)
 #   + the report pod of each of those ci runs (the finally task of the ci pipeline)
-#   + releaseSlots x max(releaseBuildPods x the memory limit of a buildah pod (the sum of its steps),
-#                        the largest memory limit of a pod of the publish pipeline)
+#   + the releaseSlots largest distinct units, each max(the memory limits of the pods that its release run has alive at once,
+#                                                        the memory limits of the pods that its publish run has alive at once)
 #   <= limitsMemoryBudget
 #
-# The budget is NOT the free memory of the node. With two releases the worst case, every pod at its limit, is
-# 56 GiB (3.5 + 5 x 3 + 1.5 + 2 x 18) on a node of 59.4 GiB of which about 23 GiB were in use on 2026-10-14, so it
-# exceeds what is free. The owner accepted that for two releases at once (decision of 2026-10-15: the platform
-# has no customer data and production may be down); the pods use far less than their limits, and a
-# third release at once, or a larger limit, raises the sum past the budget and fails the test until the owner
-# raises the budget again.
+# The budget is NOT the free memory of the node. With four releases the worst case, every pod at its limit, is
+# 56 GiB (3.5 + 5 x 3 + 1.5 + 12 x 3) on a node of 59.4 GiB of which about 23 GiB were in use on 2026-10-14, so it
+# exceeds what is free. The owner accepted that (decision of 2026-10-15: the platform has no customer data and
+# production may be down); the pods use far less than their limits, and a fifth release at once, or a larger
+# limit, raises the sum past the budget and fails the test until the owner raises the budget again.
 #
 # maxRunning is ciRunKeeper.maxRunning in clusters/inventories/image-builder: the ci run keeper starts a
 # waiting ci run only while fewer ci runs than that have started and not finished, whatever the number of
@@ -91,29 +90,36 @@ releaseQueue:
 # reports at once even while the next check of its unit holds the slot. Each running run has at most one,
 # so the term is bounded by the same cap.
 #
-# The third term is the releases the queue runs at once (releaseSlots is releaseQueue.maxRunning in
-# clusters/inventories/image-builder, 2), of two different units, because the build pods of a release are not
-# counted by the quota (they carry no ci class). Only the first stage run of a release builds; the later stage
-# runs find the image in the registry. A slot holds a release or a publish run, whichever has the larger pods.
+# The third term is the runs the queue runs at once (releaseSlots is releaseQueue.maxRunning in
+# clusters/inventories/image-builder, 4). The queue runs one run of a unit at a time, so the runs in the slots belong to
+# different units and the stage runs of a release never add up. A slot holds the larger of the release run and the publish
+# run of its unit, and the worst case fills the slots with the largest units: the test sorts the units by that size and
+# adds the releaseSlots largest. A run holds the pods that none of its tasks waits for, which the test reads from the
+# rendered runAfter, result and when references (the builds of the unit, or its scan beside its probes, whichever is more).
 #
-# releaseBuildPods is DECLARED, not derived: the attested builds come from the registrations of the books
-# branch, which this chart cannot read. It is the number of images the largest unit builds at once after
-# the scan (3 on 2026-10-09); the test renders a release with that many images and fails when they do not
-# all run in parallel. limitsMemoryBudget is the sum above for two releases of that unit, one 3584Mi
-# ci check and five 3Gi ci checks, plus six report pods: 56Gi exactly.
+# releaseUnitImages is DECLARED, not derived: the attested builds come from the registrations of the books branch, which
+# this chart cannot read. It is the number of images each unit builds at once after the scan, as the Pipelines
+# `<unit>-release` on the master had them on 2026-10-18 (swissbookai 4, digita-platform and hostyour-manager 3,
+# digita-auth and digita-post 2, every other unit 1); the test renders a release with that many images and fails when they
+# do not all run in parallel. A unit that builds more images, or a new unit, is added here, and the test then checks it
+# against the budget. limitsMemoryBudget is the sum above for the 4 + 3 + 3 + 2 images of the four largest units at once,
+# one 3584Mi ci check and five 3Gi ci checks, plus six report pods: 56Gi exactly. A buildah pod is 3Gi, a 2752Mi build step and
+# a 320Mi push step, from the largest working sets the steps reached on the master over 15 days
+# (scripts/build-contract.test.mjs).
 #
 # THE PODS OF THE BUILD NODE. The kubelet of the node admits at most nodePods active pods (finished pods do
 # not count): --max-pods=250 in hostyour-deploy ansiwise/programs/deploy-cluster.yaml, held there by
-# scripts/kubelet-image-gc.test.mjs; the default 110 is not what runs. The test adds, with every task of
-# every stage run of a release counted as a pod alive at once, which is more than ever runs together:
+# scripts/kubelet-image-gc.test.mjs; the default 110 is not what runs. The test adds the pods that a run has
+# alive at once, as for the memory above:
 #
-#   releaseSlots x max(stages x the tasks of the release pipeline, the tasks of the publish pipeline)
+#   the releaseSlots largest distinct units, each max(the pods that its release run has alive at once, the pods that its publish run has alive at once)
 #   + maxRunning x (podsPerUnit + 1 report pod)
 #   + standingPods
 #   < nodePods
 #
-# stages is the most stages a channel reaches (global.channelStages in clusters/platform/values-common.yaml, 3).
-# For two releases of the unit above that is 2 x (3 x 14) + 6 x 3 + 121 = 223 of 250. standingPods is DECLARED,
+# One run of a unit at a time means the stages that global.channelStages in clusters/platform/values-common.yaml
+# lets a channel reach (3) never run side by side. For the four largest units above that is
+# (5 + 4 + 4 + 3) + 6 x 3 + 121 = 155 of 250. standingPods is DECLARED,
 # not derived: the pods of the node that are not in a build namespace and not finished, 121 on 2026-10-14.
 #
 # THE CORES OF THE BUILD NODE. The scheduler admits a pod by its CPU requests, and a pod whose requests do not
@@ -125,8 +131,8 @@ releaseQueue:
 #
 #   maxRunning x the largest CPU request of a ci pod (the sum of its steps)
 #   + maxRunning x the CPU request of the report pod
-#   + releaseSlots x max(releaseBuildPods x the CPU request of a buildah pod (the sum of its steps),
-#                        the largest CPU request of a pod of the publish pipeline)
+#   + the releaseSlots largest distinct units, each max(the CPU requests of the pods that its release run has alive at once,
+#                                                        the CPU requests of the pods that its publish run has alive at once)
 #   + standingCpuRequests
 #   <= nodeCpu
 #
@@ -150,7 +156,19 @@ releaseQueue:
 ciCapacity:
   priorityClassName: image-builder-ci
   podsPerUnit: 2
-  releaseBuildPods: 3
+  releaseUnitImages:
+    digita-auth: 2
+    digita-catalog-proofapps: 1
+    digita-catalog-showcase: 1
+    digita-catalog-simplidigita: 1
+    digita-jobs: 1
+    digita-platform: 3
+    digita-post: 2
+    digita-report: 1
+    digita-testkit: 1
+    hostyour-demo-consumer: 1
+    hostyour-manager: 3
+    swissbookai: 4
   limitsMemoryBudget: 56Gi
   nodePods: 250
   standingPods: 121

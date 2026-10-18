@@ -186,7 +186,8 @@ for TOOL in curl helm yq jq tar; do
     || die "$TOOL is not on this path, and the release lists the images, tools and charts of its tag and reads them back from the mirror with it"
 done
 # THE LONGEST WAIT FOR THE MIRROR, in seconds. The publish run of the tag waits in
-# the release queue behind at most two runs, each held to an hour, and then copies.
+# the release queue behind the run of its own unit and the run that frees a slot, each held
+# to an hour, and then copies.
 MIRROR_WAIT="${RELEASE_MIRROR_WAIT:-7200}"
 [[ "$MIRROR_WAIT" =~ ^[0-9]+$ ]] \
   || die "RELEASE_MIRROR_WAIT is the number of seconds the release waits for the mirror at most (got '$MIRROR_WAIT')" 64
