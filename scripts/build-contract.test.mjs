@@ -184,10 +184,13 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const matches = (name, bodies, edit) => triggerMatches(builder, name, bodies, edit);
   // GitHub sends the repository's default branch with every push (repository.default_branch); `main` here, so a
   // filter that names `master` instead of reading it is seen.
-  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main'};
-  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}, default_branch: 'main'};
-  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}, default_branch: 'main'};
-  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
+  // Every repository is public unless a push says otherwise, so the owner clause is what refuses the customer's and the outsider's.
+  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main', visibility: 'public'};
+  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}, default_branch: 'main', visibility: 'public'};
+  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}, default_branch: 'main', visibility: 'public'};
+  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}, default_branch: 'master', visibility: 'public'};
+  const {visibility: _public, ...undeclared} = repository;
+  const privateRepository = {...repository, visibility: 'private'};
   const SHA = 'a'.repeat(40);
   const tag = '0.8.446-stable-20261009014252';
   const pushes = {
@@ -219,15 +222,23 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a push of master where the default branch is main': {ref: 'refs/heads/master', after: SHA, deleted: false, repository},
     'a push of a ci/ branch': {ref: 'refs/heads/ci/issue-1-planted-1', after: SHA, deleted: false, repository},
     'a branch with ci/ inside its name': {ref: 'refs/heads/feature/ci/x', after: SHA, deleted: false, repository},
+    // A repository that is not public runs no check here: its push gate is the only check of a private repository.
+    'a push of the default branch of a private repository': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: privateRepository},
+    'a push of a ci/ branch of a private repository': {ref: 'refs/heads/ci/issue-1-planted-1', after: SHA, deleted: false, repository: privateRepository},
+    'a push of the default branch of an internal repository': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: {...repository, visibility: 'internal'}},
+    'a push of the default branch of a repository whose payload names no visibility': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: undeclared},
+    // The release of a private repository is not touched: its deploy tag and its release tag still run.
+    'a deploy tag push of a private repository': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: privateRepository},
+    'a release tag push of a private repository': {ref: `refs/tags/${tag}`, after: SHA, deleted: false, repository: privateRepository},
   };
   // GitHub sends `before` with every push; a deletion carries the deleted commit there.
   const BEFORE = 'b'.repeat(40);
   for (const push of Object.values(pushes)) push.before = BEFORE;
   const bodies = Object.values(pushes);
   const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies), publish = matches('github-release-publish', bodies);
-  const verdicts = {ci: [false, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false],
-    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, false],
-    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false]};
+  const verdicts = {ci: [false, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false, false, false, false, false, false, false],
+    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false],
+    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true]};
   Object.keys(pushes).forEach((name, i) => {
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
@@ -285,6 +296,27 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     assert.notEqual(edit(trigger('github-ci-push').filter), trigger('github-ci-push').filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
     assert.ok(matches('github-ci-push', [pushes[push]], edit)[0].matched, `PLANTED DEFECT: ${defect}`);
   }
+  // PLANTED DEFECTS of the visibility clause: a filter without it runs the check of a private repository, and a filter that only
+  // refuses `private` runs it for the values GitHub may add (`internal`) and for a payload that names none. Each edit must change
+  // the filter, and each edited filter matches a push the trigger refuses.
+  const publicOnly = "has(body.repository.visibility) && body.repository.visibility == 'public'";
+  assert.ok(trigger('github-ci-push').filter.includes(`${publicOnly} && `), 'the filter reads the visibility of the repository, fail closed');
+  const refusesPrivateOnly = (filter) => filter.replace(publicOnly, "!(has(body.repository.visibility) && body.repository.visibility == 'private')");
+  const visibility = {
+    'a filter without the visibility clause runs the check of a private repository': [(filter) => filter.replace(`${publicOnly} && `, ''), ['a push of the default branch of a private repository', 'a push of a ci/ branch of a private repository']],
+    'a filter that refuses only private repositories runs the check of an internal one': [refusesPrivateOnly, ['a push of the default branch of an internal repository']],
+    'a filter that refuses only private repositories runs the check where the payload names no visibility': [refusesPrivateOnly, ['a push of the default branch of a repository whose payload names no visibility']],
+  };
+  for (const [defect, [edit, names]] of Object.entries(visibility)) {
+    assert.notEqual(edit(trigger('github-ci-push').filter), trigger('github-ci-push').filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
+    for (const name of names) {
+      assert.equal(matches('github-ci-push', [pushes[name]])[0].matched, false, `PLANTED INNOCENT: ${name} runs no check`);
+      assert.ok(matches('github-ci-push', [pushes[name]], edit)[0].matched, `PLANTED DEFECT: ${defect}`);
+    }
+  }
+  // The release of a private repository goes through the deploy and the publish trigger as before: neither reads the visibility.
+  assert.ok(!trigger('github-deploy-request').filter.includes('visibility'), 'the deploy trigger does not read the visibility');
+  assert.ok(!trigger('github-release-publish').filter.includes('visibility'), 'the publish trigger does not read the visibility');
 });
 
 // A release moves a pin by committing the new tag into clusters/inventories/<app>/values-<stage>.yaml of the default
@@ -307,7 +339,7 @@ test('the identity the ci trigger takes for a release pin is the one the release
 test('a push of the default branch that only moves release pins starts no ci run, and any other change in the push does', () => {
   const builder = imageBuilder();
   const SHA = 'a'.repeat(40), BEFORE = 'b'.repeat(40);
-  const repository = {name: 'hostyour-cloud', clone_url: 'https://github.com/simetrixch/hostyour-cloud.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
+  const repository = {name: 'hostyour-cloud', clone_url: 'https://github.com/simetrixch/hostyour-cloud.git', owner: {login: 'simetrixch'}, default_branch: 'master', visibility: 'public'};
   const bump = JSON.parse(execFileSync('yq', ['-o=json', '.ciPush.pinIdentity', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}));
   const person = {name: 'Mehmet', email: 'mehmet@example.com'};
   const commit = (modified, {added = [], removed = [], message = 'release: manager 0.8.497-stable-20261015010114 — pin 0.8.497-stable-20261015010114-72bca23 (prod)', author = bump, committer = bump} = {}) =>
@@ -380,7 +412,7 @@ test('a push of the default branch that only moves release pins starts no ci run
 test('the ci trigger needs a list of owners, and an empty or missing list fails the render naming the key', () => {
   assert.throws(() => renderChart('image-builder', ['--set-json', 'ciPush={"owners":[]}']), /ciPush\.owners is required/);
   assert.throws(() => renderChart('image-builder', ['--set', 'ciPush=null']), /ciPush\.owners is required/);
-  const filter = renderChart('image-builder', ['--set-json', 'ciPush={"owners":["one","two"],"pinIdentity":{"name":"pin","email":"pin@example.com"}}'])
+  const filter = renderChart('image-builder', ['--set-json', 'ciPush={"owners":["one","two"],"pinIdentity":{"name":"pin","email":"pin@example.com"},"timeouts":{"pipeline":"2m0s","tasks":"1m0s","finally":"1m0s"}}'])
     .find((d) => d.kind === 'Trigger' && d.metadata.name === 'github-ci-push').spec.interceptors
     .find((i) => i.ref.name === 'cel').params.find((p) => p.name === 'filter').value;
   assert.ok(filter.endsWith("body.repository.owner.login in ['one', 'two']"), 'every listed owner reaches the filter');
@@ -1424,16 +1456,33 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
   assert.equal(seconds(report.timeout), 300);
   assert.equal(seconds(pipeline.spec.finally.find((t) => t.name === 'commit-status').timeout), 120);
   // Tekton sets no start time on a waiting run, so the clocks start when the keeper starts it and hold no wait for a ci slot.
-  // They do hold the wait of a pod for the quota of its unit.
+  // They do hold the wait of a pod for the quota of its unit: Tekton restarts the clock of a task, never that of the run.
   // The finally tasks run on a clock of their own, so a run that used up its tasks budget still mails.
   const timeouts = imageBuilder().find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push').spec.resourcetemplates[0].spec.timeouts;
   const mailsAfterTimeout = (t) => Boolean(t.tasks && t.finally) && seconds(t.pipeline) >= seconds(t.tasks) + seconds(t.finally) &&
-    seconds(t.tasks) >= 2 * Object.values(bounds).reduce((a, b) => a + b, 0) && seconds(t.finally) >= seconds(report.timeout);
-  assert.ok(mailsAfterTimeout(timeouts), 'PLANTED INNOCENT: the run outlives two rounds of its own tasks and leaves the finally task its own time');
+    seconds(t.tasks) >= Object.values(bounds).reduce((a, b) => a + b, 0) && seconds(t.finally) >= seconds(report.timeout);
+  assert.ok(mailsAfterTimeout(timeouts), 'PLANTED INNOCENT: the run outlives one round of its own tasks and leaves the finally task its own time');
   assert.ok(!mailsAfterTimeout({pipeline: timeouts.pipeline}), 'PLANTED DEFECT: the pipeline timeout alone cancels the finally task with the rest');
-  assert.ok(!mailsAfterTimeout({...timeouts, pipeline: '1h50m0s'}), 'PLANTED DEFECT: a pipeline timeout shorter than tasks plus finally');
-  assert.ok(!mailsAfterTimeout({...timeouts, tasks: '30m0s'}), 'PLANTED DEFECT: a tasks budget that is not two rounds of the tasks');
+  assert.ok(!mailsAfterTimeout({...timeouts, pipeline: '50m0s'}), 'PLANTED DEFECT: a pipeline timeout shorter than tasks plus finally');
+  assert.ok(!mailsAfterTimeout({...timeouts, tasks: '30m0s'}), 'PLANTED DEFECT: a tasks budget that is not one round of the tasks');
   assert.ok(!mailsAfterTimeout({...timeouts, finally: '2m0s'}), 'PLANTED DEFECT: a finally budget shorter than the report task');
+  // The owner's bound (2026-10-19): the longest finished run of 1540 was 20.1 minutes, and the tasks budget is one minute above one
+  // round of the task caps, so a run whose tasks stay inside their caps never meets it.
+  assert.deepEqual(timeouts, {pipeline: '55m0s', tasks: '45m0s', finally: '10m0s'});
+});
+
+test('the bound of a ci run is set in ciPush.timeouts, each of its three clocks is required, and the TriggerTemplate carries them', () => {
+  const ciPush = (timeouts) => ['--set-json', `ciPush=${JSON.stringify({owners: ['one'], pinIdentity: {name: 'pin', email: 'pin@example.com'}, ...(timeouts ? {timeouts} : {})})}`];
+  const rendered = (timeouts) => renderChart('image-builder', ciPush(timeouts)).find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push')
+    .spec.resourcetemplates[0].spec.timeouts;
+  const given = {pipeline: '11m0s', tasks: '7m0s', finally: '3m0s'};
+  assert.deepEqual(rendered(given), given, 'PLANTED INNOCENT: the three values of the chart reach the run, none is a literal of the template');
+  for (const clock of Object.keys(given)) {
+    const without = {...given};
+    delete without[clock];
+    assert.throws(() => rendered(without), new RegExp(`ciPush\\.timeouts\\.${clock} is required`), `PLANTED DEFECT: a run without its ${clock} clock`);
+  }
+  assert.throws(() => rendered(undefined), /ciPush\.timeouts\.pipeline is required/, 'PLANTED DEFECT: a run without any bound');
 });
 
 // The scheduler admits a pod by its requests, and the kernel kills by QoS class when the node runs out of
@@ -1893,6 +1942,14 @@ test('the ci run keeper runs every minute, reads runs cluster-wide, and may patc
     .spec.jobTemplate.spec.template.spec.containers[0].image);
   const map = docs.find((d) => d.kind === 'ConfigMap' && d.metadata.name === 'ci-run-keeper');
   assert.ok(map.data['ci-run-keeper.jq'].includes('image-builder.io/ci-branch') && map.data['ci-run-keeper.sh'].includes('kubectl delete'));
+  assert.ok(map.data['ci-run-keeper.jq'].includes('image-builder.io/branch-deleted'));
+  // Every remote is asked at once, so asking takes at most the time one ask gets; the rest of the tick, which lists the runs and
+  // writes the changes, needs the rest of the Job's deadline, and a tick that overruns it makes no change at all.
+  const deadline = cron.spec.jobTemplate.spec.activeDeadlineSeconds;
+  const askSeconds = Number(/^git_timeout=(\d+)$/m.exec(map.data['ci-run-keeper.sh'])[1]);
+  const leavesTime = (ask) => ask * 2 <= deadline;
+  assert.ok(leavesTime(askSeconds), `PLANTED INNOCENT: an ask of ${askSeconds} seconds leaves the tick its half of ${deadline}`);
+  assert.ok(!leavesTime(deadline), 'PLANTED DEFECT: an ask that may take the whole deadline');
   // A patch or delete verb on a ClusterRole would reach every namespace, release runs of other units among them.
   const bound = docs.filter((d) => d.kind === 'ClusterRoleBinding' && d.subjects?.some((s) => s.name === 'ci-run-keeper'))
     .map((d) => docs.find((r) => r.kind === 'ClusterRole' && r.metadata.name === d.roleRef.name));
@@ -1906,12 +1963,12 @@ test('the ci run keeper runs every minute, reads runs cluster-wide, and may patc
 });
 
 const KEEPER = 'system:serviceaccount:image-builder:ci-run-keeper';
-const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run and name the push that replaced it, start a waiting one, or note what it waits for.';
+const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run and name the push that replaced it or the branch that was deleted, start a waiting one, or note what it waits for.';
 const PRIORITY_MESSAGE = "a managed run's podTemplate sets priorityClassName to the class of its pipeline and nothing else.";
 const OVERRIDE_MESSAGE = 'per-task pod, step, sidecar, metadata and account overrides are not allowed, except the report class on the task report-failure of a ci run.';
 const CI_CLASS_MESSAGE = 'a ci run carries the ci priority class: the capacity quota of its build namespace counts the pods of that class only.';
 
-test('the admission policy lets the ci run keeper cancel, name the replacing push, start and note a ci run and change nothing else', () => {
+test('the admission policy lets the ci run keeper cancel, name the replacing push or the deleted branch, start and note a ci run and change nothing else', () => {
   const policy = guardOf(imageBuilder());
   const running = (pipeline = 'shop-ci') => ({...createsRun('shop-build', pipeline).object,
     metadata: {namespace: 'shop-build', name: `${pipeline}-x`, labels: {'image-builder.io/ci': 'shop'}, annotations: {'image-builder.io/ci-branch': 'main'}, finalizers: ['chains.tekton.dev/pipelinerun']}});
@@ -1922,12 +1979,15 @@ test('the admission policy lets the ci run keeper cancel, name the replacing pus
   const waiting = changed((r) => { r.spec.status = 'PipelineRunPending'; });
   const noted = changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'all 7 ci slots are in use'; }, waiting);
   const named = (r) => { r.metadata.annotations['image-builder.io/cancelled-by'] = `${'a'.repeat(40)} (shop-ci-y)`; };
+  const deleted = (r) => { r.metadata.annotations['image-builder.io/branch-deleted'] = 'ci/issue-1-planted-1'; };
   const update = (username, object, oldObject) => ({object, oldObject, request: {operation: 'UPDATE', namespace: 'shop-build', userInfo: {username}}});
   const ADMITTED = {
     'the keeper cancels a running ci run': update(KEEPER, cancelled, base),
     'the keeper cancels a running ci run gracefully, so its finally tasks run': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; }), base),
     'the keeper cancels a running ci run and names the push that replaced it': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; named(r); }), base),
     'the keeper cancels a waiting ci run and names the push that replaced it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; named(r); }), waiting),
+    'the keeper cancels a waiting ci run and names the branch that was deleted': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; deleted(r); }), waiting),
+    'the keeper cancels a running ci run gracefully and names the branch that was deleted': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; deleted(r); }), base),
     'the keeper cancels a ci run again': update(KEEPER, cancelled, cancelled),
     'the keeper cancels a waiting ci run': update(KEEPER, cancelled, waiting),
     'the keeper starts a waiting ci run': update(KEEPER, base, waiting),
@@ -1957,6 +2017,13 @@ test('the admission policy lets the ci run keeper cancel, name the replacing pus
     'the keeper names a push while it cancels and changes the branch of the run beside it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; named(r); r.metadata.annotations['image-builder.io/ci-branch'] = 'other'; }), base),
     'the keeper names a push while it cancels and drops the branch of the run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations = {'image-builder.io/cancelled-by': 'x'}; }), base),
     'the keeper names a push on a run it does not cancel': update(KEEPER, changed(named), base),
+    'the keeper names a deleted branch on a run it does not cancel': update(KEEPER, changed(deleted), base),
+    'the keeper names a deleted branch while it starts a run': update(KEEPER, changed(deleted), waiting),
+    'the keeper names a deleted branch while it notes a run': update(KEEPER, changed(deleted, noted), waiting),
+    'the keeper names a deleted branch while it cancels a release run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; deleted(r); }, releaseRun), releaseRun),
+    'the keeper names a deleted branch while it cancels and changes the branch of the run beside it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; deleted(r); r.metadata.annotations['image-builder.io/ci-branch'] = 'other'; }), base),
+    'the keeper names a deleted branch while it cancels and drops the branch of the run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations = {'image-builder.io/branch-deleted': 'x'}; }), base),
+    'the keeper writes an annotation of another name while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations['image-builder.io/branch-removed'] = 'x'; }), base),
     'the keeper names a push while it starts a run': update(KEEPER, changed(named), waiting),
     'the keeper changes the finalizers while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.finalizers = []; }), base),
     'the keeper creates a run': {...createsRun('shop-build', 'shop-ci'), request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: KEEPER}}},
