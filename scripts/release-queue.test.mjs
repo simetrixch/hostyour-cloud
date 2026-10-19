@@ -6,13 +6,17 @@ import {createServer} from 'node:http';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
-// The release queue runs up to four release or publish PipelineRuns at a time on the build plane, one per unit. Its
+// The release queue runs up to nine release or publish PipelineRuns at a time on the build plane, one per unit. Its
 // decision is the jq program in clusters/inventories/image-builder/files, run here on planted PipelineRuns;
 // the charts are rendered for the pieces that make it work: runs created waiting, the CronJob, and its rights.
 
 const QUEUE = 'clusters/inventories/image-builder/files/release-queue.jq';
 // releaseQueue.maxRunning of clusters/inventories/image-builder, which the render test below holds to this.
-const MAX = 4;
+const MAX = 9;
+// The build namespaces of MAX + 1 units: MAX of them fill the queue, and the one after them waits.
+const NAMESPACES = Array.from({length: MAX + 1}, (_, i) => `unit${i}-build`);
+// What a run that waits notes: the release (namespace and tag) of each run it waits for, in the order given.
+const releasesOf = (runs, suffix = '') => runs.map((r) => `${r.metadata.namespace}/${r.spec.params[0].value}${suffix}`).join(' and ');
 
 let clock = 0;
 // A release run carries image-builder.io/consumer and a publish run image-builder.io/publish, as their
@@ -54,34 +58,33 @@ test('with nothing running, the oldest stage run of a release starts and the oth
   assert.equal(started(planted('(.holder | has($unit)) or', 'false or', [a2, a1])).length, 2, 'PLANTED DEFECT: a queue that admits a run of a release that is open starts both stages');
 });
 
-test('four units start, the fifth waits', () => {
-  const [a, b, c, d, e] = ['shop', 'post', 'auth', 'mail', 'books'].map((unit, i) => run(`${unit}-build`, `t${i}`, {pending: true}));
-  const changes = decide([e, d, c, b, a]);
-  assert.deepEqual(started(changes).sort(), [a, b, c, d].map((r) => r.metadata.name).sort(), 'the four oldest start');
-  assert.deepEqual(waiting(changes), [[e.metadata.name, 'shop-build/t0 and post-build/t1 and auth-build/t2 and mail-build/t3']], 'the fifth notes the four it waits for');
+test('nine units start, the tenth waits', () => {
+  const runs = NAMESPACES.map((ns, i) => run(ns, `t${i}`, {pending: true})), oldest = runs.slice(0, MAX), tenth = runs[MAX];
+  const changes = decide([...runs].reverse());
+  assert.deepEqual(started(changes).sort(), oldest.map((r) => r.metadata.name).sort(), 'the nine oldest start');
+  assert.deepEqual(waiting(changes), [[tenth.metadata.name, releasesOf(oldest)]], 'the tenth notes the nine it waits for');
   assert.deepEqual(changes.map((x) => x.say).filter((say) => say.includes(' waits ')),
-    [`books-build/${e.metadata.name} (release books-build/t4) waits for release shop-build/t0 and post-build/t1 and auth-build/t2 and mail-build/t3`]);
-  assert.deepEqual(started(decide([e, d, c, b, a], 3)).length, 3, 'PLANTED DEFECT: the old limit of two or any limit below four holds a fourth unit back');
-  assert.equal(started(decide([e, d, c, b, a], 5)).length, 5, 'PLANTED INNOCENT: a queue told to run five starts all five');
+    [`${tenth.metadata.namespace}/${tenth.metadata.name} (release ${tenth.metadata.namespace}/t${MAX}) waits for release ${releasesOf(oldest)}`]);
+  assert.deepEqual(started(decide([...runs].reverse(), MAX - 1)).length, MAX - 1, 'PLANTED DEFECT: any limit below nine holds a ninth unit back');
+  assert.equal(started(decide([...runs].reverse(), MAX + 1)).length, MAX + 1, 'PLANTED INNOCENT: a queue told to run ten starts all ten');
 });
 
 test('runs that already run take their slots, and the next waits', () => {
-  const a = run('shop-build', 'a'), b = run('post-build', 'b', {pending: true}), c = run('auth-build', 'c', {pending: true}),
-    d = run('mail-build', 'd', {pending: true}), e = run('books-build', 'e', {pending: true});
-  const changes = decide([a, b, c, d, e]);
-  assert.deepEqual(started(changes), [b, c, d].map((r) => r.metadata.name), 'three more start beside the running one');
-  assert.deepEqual(waiting(changes), [[e.metadata.name, 'shop-build/a and post-build/b and auth-build/c and mail-build/d']]);
+  const runs = NAMESPACES.map((ns, i) => run(ns, `t${i}`, {pending: i > 0})), running = runs[0], tenth = runs[MAX];
+  const changes = decide(runs);
+  assert.deepEqual(started(changes), runs.slice(1, MAX).map((r) => r.metadata.name), 'eight more start beside the running one');
+  assert.deepEqual(waiting(changes), [[tenth.metadata.name, releasesOf([running, ...runs.slice(1, MAX)])]]);
 });
 
 test('every run counts as a slot, so stage runs of one tag that run already hold two slots', () => {
-  const stages = [run('shop-build', 'a'), run('shop-build', 'a')], rest = [run('post-build', 'b'), run('auth-build', 'c')];
-  const next = run('mail-build', 'd', {pending: true});
+  const stages = [run(NAMESPACES[0], 'a'), run(NAMESPACES[0], 'a')], rest = NAMESPACES.slice(1, MAX - 1).map((ns, i) => run(ns, `t${i + 1}`));
+  const next = run(NAMESPACES[MAX - 1], 'n', {pending: true});
   const changes = decide([...stages, ...rest, next]);
-  assert.deepEqual(started(changes), [], 'four runs run, whatever their tags: the fifth run waits');
-  assert.deepEqual(waiting(changes), [[next.metadata.name, 'shop-build/a and post-build/b and auth-build/c']]);
-  assert.deepEqual(started(decide([...stages.slice(0, 1), ...rest, next])), [next.metadata.name], 'PLANTED INNOCENT: with one run of the tag three run and the fourth starts');
+  assert.deepEqual(started(changes), [], 'nine runs run, whatever their tags: the tenth run waits');
+  assert.deepEqual(waiting(changes), [[next.metadata.name, releasesOf([stages[0], ...rest])]]);
+  assert.deepEqual(started(decide([...stages.slice(0, 1), ...rest, next])), [next.metadata.name], 'PLANTED INNOCENT: with one run of the tag eight run and the ninth starts');
   assert.deepEqual(started(planted('active: ($running | length)', 'active: ($running | map(releaseKey) | inOrder | length)', [...stages, ...rest, next])), [next.metadata.name],
-    'PLANTED DEFECT: counting the keys of the running runs lets a fifth run start');
+    'PLANTED DEFECT: counting the keys of the running runs lets a tenth run start');
 });
 
 test('two of the same unit: one starts, one waits', () => {
@@ -96,11 +99,11 @@ test('two of the same unit: one starts, one waits', () => {
   assert.equal(started(decide([a, other])).length, 2, 'PLANTED INNOCENT: two releases of two units start together');
 });
 
-test('planted defect: four runs that run hold every other release back', () => {
-  const running = ['shop', 'post', 'auth', 'mail'].map((unit, i) => run(`${unit}-build`, `t${i}`)), c = run('books-build', 'c', {pending: true});
+test('planted defect: nine runs that run hold every other release back', () => {
+  const running = NAMESPACES.slice(0, MAX).map((ns, i) => run(ns, `t${i}`)), c = run(NAMESPACES[MAX], 'c', {pending: true});
   const changes = decide([...running, c]);
   assert.deepEqual(started(changes), []);
-  assert.deepEqual(waiting(changes), [[c.metadata.name, 'shop-build/t0 and post-build/t1 and auth-build/t2 and mail-build/t3']]);
+  assert.deepEqual(waiting(changes), [[c.metadata.name, releasesOf(running)]]);
 });
 
 test('the stage run of a release that runs waits for it, whether or not a slot is free', () => {
@@ -142,14 +145,14 @@ test('a running ci run neither holds a release back nor is touched, and the wait
 });
 
 test('a run that already notes what it waits for is not patched again, and its note goes when it starts', () => {
-  const a = run('shop-build', 'a'), c = run('auth-build', 'c'), d = run('mail-build', 'd'), e = run('books-build', 'e');
-  const note = 'shop-build/a and auth-build/c and mail-build/d and books-build/e';
-  const b = run('post-build', 'b', {pending: true, behind: note});
-  assert.deepEqual(decide([a, c, d, e, b]), []);
-  const later = decide([run('shop-build', 'a', {succeeded: 'True'}), c, d, e, b]);
+  const running = NAMESPACES.slice(0, MAX).map((ns, i) => run(ns, `t${i}`)), tenth = NAMESPACES[MAX];
+  const note = releasesOf(running);
+  const b = run(tenth, 'b', {pending: true, behind: note});
+  assert.deepEqual(decide([...running, b]), []);
+  const later = decide([run(NAMESPACES[0], 't0', {succeeded: 'True'}), ...running.slice(1), b]);
   assert.deepEqual(later[0].patch, [{op: 'remove', path: '/spec/status'}, {op: 'remove', path: '/metadata/annotations/image-builder.io~1queued-behind'}]);
-  const moved = decide([a, c, d, run('post-build', 'x'), run('post-build', 'b', {pending: true, behind: note})]);
-  assert.deepEqual(waiting(moved).map(([, behind]) => behind), ['post-build/x'], 'a note that no longer says what the run waits for is written again');
+  const moved = decide([...running.slice(0, MAX - 1), run(tenth, 'x'), run(tenth, 'b', {pending: true, behind: note})]);
+  assert.deepEqual(waiting(moved).map(([, behind]) => behind), [`${tenth}/x`], 'a note that no longer says what the run waits for is written again');
 });
 
 function renderChart(chart, extra = []) {
@@ -234,9 +237,9 @@ test('ci runs are not the queue\'s to delete, and a namespace\'s ci runs do not 
 });
 
 // A publish run (clusters/inventories/consumer-build pipeline-publish.yaml) packs and pushes a release's npm
-// packages. It waits in the same queue under a key of its own and takes a slot like a release: up to four releases or
+// packages. It waits in the same queue under a key of its own and takes a slot like a release: up to nine releases or
 // publish runs run at once, of different units, never two of one unit. The memory budget (ciCapacity in consumer-build)
-// bounds the sum of the limits of four such runs, not the free memory of the node.
+// bounds the sum of the limits of nine such runs, not the free memory of the node.
 const publish = (ns, tag, options = {}) => run(ns, tag, {...options, pipeline: ns.replace(/-build$/, '-publish')});
 test('a publish run waits behind a running release of its own unit, its own release included, and runs beside one of another unit', () => {
   const release = run('shop-build', 'a'), own = publish('shop-build', 'a', {pending: true});
@@ -253,18 +256,18 @@ test('a publish run waits behind a running release of its own unit, its own rele
   assert.deepEqual(waiting(changes), [[sameUnit.metadata.name, 'auth-build/c publish']], 'and holds back a release of its own unit');
 });
 
-test('publish runs take the slots of releases: four publish runs fill the queue, and a mix fills it the same', () => {
-  const units = ['shop', 'post', 'auth', 'mail'].map((unit) => `${unit}-build`), next = run('books-build', 'e', {pending: true});
+test('publish runs take the slots of releases: nine publish runs fill the queue, and a mix fills it the same', () => {
+  const units = NAMESPACES.slice(0, MAX), next = run(NAMESPACES[MAX], 'e', {pending: true});
   const publishing = units.map((ns, i) => publish(ns, `p${i}`));
   const full = decide([...publishing, next]);
-  assert.deepEqual(started(full), [], 'four publish runs run: no release starts');
-  assert.deepEqual(waiting(full), [[next.metadata.name, 'shop-build/p0 publish and post-build/p1 publish and auth-build/p2 publish and mail-build/p3 publish']]);
-  const mixed = decide([publish(units[0], 'p0'), run(units[1], 'r1'), publish(units[2], 'p2'), run(units[3], 'r3'), next]);
-  assert.deepEqual(started(mixed), [], 'two publish runs and two releases run: no release starts');
-  assert.deepEqual(started(decide([...publishing.slice(0, 3), next])), [next.metadata.name], 'PLANTED INNOCENT: three publish runs leave a slot to a release of a fifth unit');
+  assert.deepEqual(started(full), [], 'nine publish runs run: no release starts');
+  assert.deepEqual(waiting(full), [[next.metadata.name, releasesOf(publishing, ' publish')]]);
+  const mixed = decide([...units.map((ns, i) => (i % 2 === 0 ? publish(ns, `p${i}`) : run(ns, `r${i}`))), next]);
+  assert.deepEqual(started(mixed), [], 'five publish runs and four releases run: no release starts');
+  assert.deepEqual(started(decide([...publishing.slice(0, MAX - 1), next])), [next.metadata.name], 'PLANTED INNOCENT: eight publish runs leave a slot to a release of a ninth unit');
   const waitingPublishes = units.map((ns, i) => publish(ns, `q${i}`, {pending: true}));
-  assert.equal(started(decide([...waitingPublishes, publish('books-build', 'q4', {pending: true})])).length, 4, 'four waiting publish runs start and the fifth waits');
-  assert.equal(started(decide(waitingPublishes.slice(0, 3).concat(run(units[3], 'r3', {pending: true})))).length, 4, 'PLANTED INNOCENT: publish and release runs of four units start together');
+  assert.equal(started(decide([...waitingPublishes, publish(NAMESPACES[MAX], 'q9', {pending: true})])).length, MAX, 'nine waiting publish runs start and the tenth waits');
+  assert.equal(started(decide(waitingPublishes.slice(0, MAX - 1).concat(run(units[MAX - 1], 'r', {pending: true})))).length, MAX, 'PLANTED INNOCENT: publish and release runs of nine units start together');
 });
 
 test('release and publish runs of one unit exclude each other in both directions, for the same tag and for another', () => {
@@ -498,13 +501,13 @@ test('planted defect: a tick that lists only the release label never starts a pu
 });
 
 test('planted defect: a patch that fails is reported, the next ones still run, and the tick fails', async () => {
-  const [a, b, c, d, e] = ['shop', 'post', 'auth', 'mail', 'books'].map((unit, i) => run(`${unit}-build`, `t${i}`, {pending: true}));
-  const result = await tick([a, b, c, d, e], {refuse: [a.metadata.name]});
+  const runs = NAMESPACES.map((ns, i) => run(ns, `t${i}`, {pending: true}));
+  const result = await tick(runs, {refuse: [runs[0].metadata.name]});
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /could not patch shop-build\//);
-  assert.deepEqual(result.writes.map((w) => w.url.pathname.split('/').at(-1)), [a, b, c, d, e].map((r) => r.metadata.name));
-  assert.match(result.stdout.join('\n'), /started post-build\//);
-  assert.match(result.stdout.join('\n'), /books-build\/.* waits for release shop-build\/t0 and post-build\/t1 and auth-build\/t2 and mail-build\/t3/);
+  assert.match(result.stderr, /could not patch unit0-build\//);
+  assert.deepEqual(result.writes.map((w) => w.url.pathname.split('/').at(-1)), runs.map((r) => r.metadata.name));
+  assert.match(result.stdout.join('\n'), /started unit1-build\//);
+  assert.ok(result.stdout.join('\n').includes(`${NAMESPACES[MAX]}/${runs[MAX].metadata.name} (release ${NAMESPACES[MAX]}/t${MAX}) waits for release ${releasesOf(runs.slice(0, MAX))}`));
 });
 
 test('a list that fails fails the tick, and nothing is changed on part of the runs', async () => {

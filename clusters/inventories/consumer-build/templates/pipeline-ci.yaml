@@ -584,7 +584,7 @@ spec:
             # The memory request and limit come from ciCheckMemory in values-common.yaml.
             # The steps of this pod run one after the other, so the pod holds at most the
             # largest of its steps at once. The limits of the largest seven distinct ci units
-            # count against ciCapacity.limitsMemoryBudget alongside four releases.
+            # count against ciCapacity.limitsMemoryBudget alongside nine releases.
             # The CPU limit is 12 of the cores of the build node, and the request
             # is the largest whole number of cores for which the requests of all
             # ci pods, of the releases the queue runs at once and of the pods that
