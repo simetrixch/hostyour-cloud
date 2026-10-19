@@ -14,6 +14,8 @@ echo 'test: scripts/check-mirror-consumers.test.sh — a consumer of the owner'\
 bash scripts/check-mirror-consumers.test.sh || fail 'scripts/check-mirror-consumers.test.sh'
 echo 'test: production build chart and immutable-field contracts.'
 node --test scripts/build-contract.test.mjs || fail 'scripts/build-contract.test.mjs'
+echo 'test: site statistics read API — the gate refuses every caller that is not an administrator of the website asked for.'
+node --test scripts/site-telemetry.test.mjs || fail 'scripts/site-telemetry.test.mjs'
 echo 'test: release queue — four runs at a time on the build plane, never two of one unit, and the queue may only start a run.'
 node --test scripts/release-queue.test.mjs || fail 'scripts/release-queue.test.mjs'
 echo 'test: ci run keeper — at most 7 ci runs run at once, a newer push replaces the older run of its branch, and the newest 20 finished ci runs of a build namespace stay.'
