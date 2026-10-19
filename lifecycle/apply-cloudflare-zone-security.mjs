@@ -105,8 +105,6 @@ function changesOf(api, zone, certificate, privateKey) {
     changes.push({what: 'SSL mode to Full (strict)', method: 'PATCH', path: `${at}/settings/ssl`, body: {value: 'strict'}});
   const tls = api('GET', `${at}/settings/min_tls_version`).value;
   if (!TLS_VERSIONS.includes(tls)) fail(`zone ${zone.name} states min_tls_version ${tls}, which this act cannot compare with ${MINIMUM_TLS}`);
-  if (TLS_VERSIONS.indexOf(tls) < TLS_VERSIONS.indexOf(MINIMUM_TLS))
-    changes.push({what: `Minimum TLS version to ${MINIMUM_TLS}`, method: 'PATCH', path: `${at}/settings/min_tls_version`, body: {value: MINIMUM_TLS}});
   if (!api('GET', `${at}/origin_tls_client_auth`).some(c => samePem(c.certificate ?? '', certificate)))
     changes.push({what: 'upload the origin pull certificate of the config', method: 'POST', path: `${at}/origin_tls_client_auth`,
       body: {certificate, private_key: privateKey}});
