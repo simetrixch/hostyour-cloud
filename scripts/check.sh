@@ -958,7 +958,7 @@ while IFS= read -r pair; do
 done <<< "$tools_named"
 printf '%s\n' "$tools_named" | grep -qxF "promtool $prometheus_version" \
   || fail "ci-tools.json does not name promtool $prometheus_version, the version of the master's Prometheus, so the ci run would test its rules with another one"
-[ "$(yq e 'select(.kind == "Pipeline" and .metadata.name == "check-ci") | .spec.tasks[] | select(.name == "check") | .taskSpec.steps[0].env[] | select(.name == "CI_TOOLS_TABLE") | .value' "$work/publish-render")" = "$(cat "$tools_table")" ] \
+[ "$(yq e 'select(.kind == "Pipeline" and .metadata.name == "check-ci") | .spec.tasks[] | select(.name == "ci") | .taskSpec.steps[] | select(.name == "check") | .env[] | select(.name == "CI_TOOLS_TABLE") | .value' "$work/publish-render")" = "$(cat "$tools_table")" ] \
   || fail "the ci pipeline of a unit does not hand its check the table $tools_table, whole"
 echo "check: ci-tools.json names $(printf '%s\n' "$tools_named" | wc -l) tools, each a row of $tools_table, and the ci pipeline renders that table."
 objects_of "$work/fence-render" \
