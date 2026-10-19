@@ -53,9 +53,22 @@
 # they read the project's Git tags, and the report says beside the value that a
 # tag is source and no image is known to be served for it.
 images:
+  # Argo CD's own cache. The chart defaults to an older tag, so the bootstrap values name it.
+  argocd-redis:
+    version: "8.10.2-alpine"
+    upstream:
+      kind: docker_hub
+      image: library/redis
+      matching: '^8\.[0-9]+\.[0-9]+-alpine$'
+    stamps:
+      - kind: yaml_value
+        tree: platform
+        file: clusters/bootstrap/argocd/values.tpl
+        key: tag
+        anchor: 'repository: ecr-public.aws.com/docker/library/redis'
   zot:
-    version: "v2.1.18"
-    sha256: "34f18f783037f967dba10df02f9d4086c4d626f5643ef9f5e51e4a4547280a0b"
+    version: "v2.1.22"
+    sha256: "46f688dc26315a35a247e1784368829e66a67bf91de94c7d8d1645044fac1d5b"
     upstream:
       kind: git_tags
       project: project-zot/zot
@@ -514,7 +527,7 @@ bootstrap:
   # argoproj/argo-helm, the repository the chart is cut in; the program's
   # release names the chart in the owner's mirror.
   argocd:
-    version: "10.2.1"
+    version: "10.10.5"
     upstream:
       kind: git_tags
       project: argoproj/argo-helm
@@ -558,7 +571,7 @@ bootstrap:
         anchor: 'release: idp'
   # The cluster UI the bootstrap installs beside the reconciler.
   headlamp:
-    version: "0.42.0"
+    version: "0.46.0"
     upstream:
       kind: git_tags
       project: kubernetes-sigs/headlamp
@@ -698,8 +711,8 @@ toolchains:
 # this file (cliTools.ansiwise says where and who writes it).
 cliTools:
   argocd:
-    version: "v3.4.5"
-    sha256: "23303f05a58c1e041324d5645b0f9d6ea338b16bbf32f4a24508f388fcf9f9c0"
+    version: "v3.5.5"
+    sha256: "c3ddfa606fc3e89ab14f55bda6600b207c355b028f8eaabe69b817a4c4621aba"
     upstream:
       kind: git_tags
       project: argoproj/argo-cd

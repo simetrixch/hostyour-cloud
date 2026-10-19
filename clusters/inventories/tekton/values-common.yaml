@@ -8,10 +8,10 @@
 # manifests are vendored in templates/release-*.yaml (refresh by re-downloading).
 # Vendored versions, recorded here rather than inside the manifests because a
 # re-download overwrites those files verbatim:
-#   templates/release-pipelines.yaml     v1.12.0
-#   templates/release-triggers.yaml      v0.35.0
-#   templates/release-interceptors.yaml  v0.35.0
-#   templates/release-dashboard.yaml     v0.69.0  (build cluster only)
+#   templates/release-pipelines.yaml     v1.17.0
+#   templates/release-triggers.yaml      v0.37.1
+#   templates/release-interceptors.yaml  v0.37.1
+#   templates/release-dashboard.yaml     v0.73.0  (build cluster only)
 # EVERY IMAGE IS PULLED FROM THE OWNER'S MIRROR OF ghcr.io, the controller arguments that inject the
 # entrypoint, nop, sidecarlogresults, workingdirinit and eventlistenersink images included. A re-download
 # names ghcr.io/tektoncd/... again, so each such ref gets `{{ include "common.buildRegistry" $ }}/` in
@@ -35,6 +35,12 @@
 #                              array-typed result — and what else on this platform relies on a beta
 #                              field has not been established. It is recorded here so a refresh
 #                              notices the value rather than reverting it unread.
+#   set-security-context: "false"
+#                              is the value this platform ran on until Tekton Pipelines v1.16 made
+#                              "true" the default. "true" gives the init containers Tekton injects a
+#                              non-root user, and the build plane's workspaces are volumes owned by
+#                              root; nothing has measured that pair, so a refresh keeps "false" until
+#                              someone does.
 
 # ----- Tekton Dashboard (build-cluster only) -------------------------------
 # The Dashboard UI + its Ingress render only on the ONE build cluster (the

@@ -118,9 +118,9 @@ test('the release lists the commits since the nearest earlier tag and hands that
 });
 
 const PLANE_TARGETS = {workspace: 'simplidigita', projects: [
-  {prefixes: ['ansiwise-'], id: 'e5c01046-3739-4af7-abc4-3c13b28dd232', identifier: 'ANSIWISE'},
-  {prefixes: ['hostyour-'], id: '7bbca0da-56a0-4c33-bf6d-aaef3eb327d1', identifier: 'HOSTYOUR'},
-  {prefixes: ['simplidigita-', 'digita-'], id: '252cf88e-3c7d-4b13-a444-13403ddcb976', identifier: 'SIMPL'},
+  {prefixes: ['ansiwise-'], id: '9b8ad62f-6ba7-4fef-a037-7ae4d3fc87fc', identifier: 'ANSIWISE'},
+  {prefixes: ['hostyour-'], id: '1018c6bd-2e70-4b20-8d51-a15f0bcb754d', identifier: 'HOSTYOUR'},
+  {prefixes: ['simplidigita-', 'digita-'], id: '365d235e-9471-47d8-8962-e0053bdcb9d7', identifier: 'SIMPL'},
 ]};
 const PLANE = {PLANE_TOKEN: 'plane-token-on-standard-input', PLANE_API: 'http://plane-api.plane.svc:8000/api/v1',
   PLANE_TARGETS: JSON.stringify({...PLANE_TARGETS, projects: PLANE_TARGETS.projects.map(({identifier, ...target}) => target)}),
