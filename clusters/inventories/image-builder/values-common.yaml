@@ -89,7 +89,9 @@ eventListener:
 # waits for the run of that unit that runs. The memory budget, the cores and the pod limit of the node hold
 # the largest runs together with the ci runs (ciCapacity in clusters/inventories/consumer-build, proved by
 # scripts/build-contract.test.mjs), which is why a fifth run waits; raising maxRunning fails that test
-# until the budget is raised with it.
+# until the budget is raised with it. Four stays: the 12 images of the four largest units are 36 GiB of
+# limits, and a fifth slot (the next unit, 2 images) is 6 GiB more, past the 59.43 GiB of memory that master1
+# allocates (read from the node and the master's Prometheus on 2026-10-19).
 # The image is the one the release pipeline's own kubectl steps use; it carries bash, kubectl and jq.
 releaseQueue:
   image: &kubectlImage alpine/k8s:1.35.6
@@ -101,10 +103,14 @@ releaseQueue:
 # units, and each unit has at most one of them, because the keeper starts no second run of a unit. The memory budget
 # test in scripts/build-contract.test.mjs multiplies the memory limits of a ci pod and of the report pod
 # by it, and fails when the sum with the largest releases that run at once (releaseQueue.maxRunning) leaves
-# the budget of ciCapacity in clusters/inventories/consumer-build.
+# the budget of ciCapacity in clusters/inventories/consumer-build. Seven is the most whose limits fit the node:
+# the sum of limits, 59.25 GiB, stays under the 59.43 GiB that master1 allocates, and the cpu request of the ci
+# check is 2 cores; an eighth run would need 62.5 GiB (read on 2026-10-19: allocatable 32 cores, 62313320Ki, 250
+# pods; and 15 days of the master's Prometheus). The standing pods use 15-23 GiB of the node, so seven runs that
+# all reached their limits at once would still exceed what is free; the limits are held to the node, not the use.
 ciRunKeeper:
   image: *kubectlImage
-  maxRunning: 6
+  maxRunning: 7
 
 externalsecret-webhooks:
   externalSecret:
@@ -157,7 +163,7 @@ monitoring:
           interval: 60s
           rules:
             - alert: PipelineRunFailed
-              expr: increase(tekton_pipelines_controller_pipelinerun_count{status="failed"}[10m]) > 0
+              expr: increase(tekton_pipelines_controller_pipelinerun_total{status="failed"}[10m]) > 0
               for: 1m
               labels:
                 severity: warning
@@ -166,10 +172,12 @@ monitoring:
                 description: "Check `tkn pipelinerun list -A`."
 
             - alert: PipelineRunRunningTooLong
-              expr: time() - max(tekton_pipelines_controller_running_pipelineruns_count > 0) > 1800
+              expr: >-
+                time() - (tekton_pipelinerun_start_timestamp_seconds
+                unless on (cluster, namespace, pipelinerun) tekton_pipelinerun_completion_timestamp_seconds) > 1800
               for: 5m
               labels:
                 severity: warning
               annotations:
-                summary: "Release PipelineRun running > 30 minutes"
+                summary: "PipelineRun {{ $labels.namespace }}/{{ $labels.pipelinerun }} running > 30 minutes"
                 description: "Check for stuck Buildah steps."

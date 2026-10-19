@@ -807,6 +807,47 @@ kube-prometheus-stack:
       - --collector.systemd
       - --collector.systemd.unit-include=(snap\.microk8s\..+|kubelet|containerd|ssh)\.service
 
+  # THE AGE OF A TEKTON PIPELINERUN. The controller's own gauge tekton_pipelines_controller_running_pipelineruns
+  # counts the running runs and says nothing of how long one has run, which PipelineRunRunningTooLong
+  # (clusters/inventories/tekton and clusters/inventories/image-builder) asks. So kube-state-metrics reads
+  # status.startTime and status.completionTime of every tekton.dev/v1 PipelineRun as the Unix seconds it parses
+  # an RFC3339 string to, under tekton_pipelinerun_start_timestamp_seconds and
+  # tekton_pipelinerun_completion_timestamp_seconds, each labelled with namespace and pipelinerun. A run that
+  # has not started has no start series and a run that has not finished has no completion series, because
+  # kube-state-metrics skips a path that is absent. The chart's ClusterRole covers the built-in kinds and the
+  # CRDs themselves but not the runs, so rbac.extraRules adds list and watch on them.
+  # scripts/tekton-feature-flags.test.mjs holds the series names that the two alerts read to this list.
+  kube-state-metrics:
+    rbac:
+      extraRules:
+        - apiGroups: ["tekton.dev"]
+          resources: ["pipelineruns"]
+          verbs: ["list", "watch"]
+    customResourceState:
+      enabled: true
+      config:
+        kind: CustomResourceStateMetrics
+        spec:
+          resources:
+            - groupVersionKind: { group: tekton.dev, version: v1, kind: PipelineRun }
+              metricNamePrefix: tekton_pipelinerun
+              labelsFromPath:
+                namespace: [metadata, namespace]
+                pipelinerun: [metadata, name]
+              metrics:
+                - name: start_timestamp_seconds
+                  help: Start time of the PipelineRun in Unix seconds
+                  each:
+                    type: Gauge
+                    gauge:
+                      path: [status, startTime]
+                - name: completion_timestamp_seconds
+                  help: Completion time of the PipelineRun in Unix seconds
+                  each:
+                    type: Gauge
+                    gauge:
+                      path: [status, completionTime]
+
   # MicroK8s bundles etcd/controller-manager/scheduler/proxy as snap services
   # that don't expose the standard Prometheus endpoints. Disable those monitors
   # so their "Down" alerts don't constantly fire — Kubernetes overall health

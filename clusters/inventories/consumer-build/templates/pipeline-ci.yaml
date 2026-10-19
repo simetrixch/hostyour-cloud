@@ -551,7 +551,7 @@ spec:
               - name: shm
                 mountPath: /dev/shm
             # The memory request and limit come from ciCheckMemory in values-common.yaml.
-            # The limits of the largest six distinct ci units count against
+            # The limits of the largest seven distinct ci units count against
             # ciCapacity.limitsMemoryBudget alongside four releases.
             # The CPU limit is 12 of the cores of the build node, and the request
             # is the largest whole number of cores for which the requests of all
@@ -559,7 +559,7 @@ spec:
             # stand on the node still fit its cores (ciCapacity in
             # values-common.yaml, held by scripts/build-contract.test.mjs).
             computeResources:
-              requests: { cpu: "3", memory: {{ required "consumer-build: ciCheckMemory.requests is required" $checkMemory.requests | quote }} }
+              requests: { cpu: "2", memory: {{ required "consumer-build: ciCheckMemory.requests is required" $checkMemory.requests | quote }} }
               limits: { cpu: "12", memory: {{ required "consumer-build: ciCheckMemory.limits is required" $checkMemory.limits | quote }} }
             script: |
               #!/usr/bin/env bash
