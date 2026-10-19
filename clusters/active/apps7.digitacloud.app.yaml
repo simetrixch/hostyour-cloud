@@ -58,6 +58,7 @@ global:
     observability:
       prometheusPush: https://prom-push.master.digitacloud.app
       lokiPush: https://loki-push.master.digitacloud.app
+      query: https://observability-query.master.digitacloud.app
   objectStorage:
     r2:
       accountId: 7d6b0eaa4cff67abf485661f0022e065
