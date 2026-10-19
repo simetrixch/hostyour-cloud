@@ -42,13 +42,18 @@
 # is flock on a file in /run/lock, which every account may write: /var/lib/master-backup is root's alone, and
 # the operator, who runs this, can hold no lock in it. It belongs to this process, so it is gone when the
 # process is, however it ends, and a run that died leaves nothing that blocks the next. It sits on the
-# machine, so a run started from another computer is refused too.
+# machine, so a run started from another computer is refused too. The first is named from the record its run
+# wrote into the file, its id and its process id; that record stays after the run, and a lock held by hand writes
+# none, so the refusal names a run only while its process still has the file open, and otherwise says that no
+# run can be named.
 #
 # READ BACK BEFORE IT IS CALLED WHOLE. The count of names and the size check rclone makes while it copies
 # look at no byte of what the box keeps. So the backup is copied back from the box into a folder of root's,
-# and there its checksums are held to the manifest, the manifest's count of stores to the rows of STORES, and
-# the quorum archive is opened with the passphrase, to /dev/null: the opened quorum is written nowhere, and
-# this machine's output and log hold no line of it.
+# and there its checksums are held to the manifest, the manifest's count of stores to the rows of STORES, the
+# quorum archive is opened with the passphrase, to /dev/null (the opened quorum is written nowhere, and this
+# machine's output and log hold no line of it), and the manifest itself is held to the one that was sent. That
+# last check is what makes the first one whole: a checksum line that lost its form is skipped by the filter
+# of the first, and so is the archive under it.
 # ===========================================================================
 set -uo pipefail
 
@@ -160,23 +165,23 @@ exec 9<>"$LOCK_FILE" || die "the lock file $LOCK_FILE could not be opened — no
 LOCKED=0
 flock -n -E 75 9 || LOCKED=$?
 if [ "$LOCKED" = 75 ]; then
-  HOLDER="$(head -n 1 "$LOCK_FILE" 2>/dev/null || true)"
-  case "$HOLDER" in
-    [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z)
-      die "another master backup holds the lock $LOCK_FILE: run $HOLDER, started ${HOLDER:0:4}-${HOLDER:4:2}-${HOLDER:6:2} ${HOLDER:9:2}:${HOLDER:11:2}:${HOLDER:13:2} UTC. Nothing was stopped; start this again once it has ended" 75 ;;
-    *)
-      die "another master backup holds the lock $LOCK_FILE, and its record is empty or holds no run id, so it names no run. Nothing was stopped; start this again once it has ended" 75 ;;
-  esac
+  # The record stays in the file when its run ends, and a lock held by hand writes none, so a record names the
+  # holder only while the process it names still has this file open as descriptor 9.
+  HOLDER_ID='' HOLDER_PID=''
+  read -r HOLDER_ID HOLDER_PID _ < "$LOCK_FILE" || true
+  if [[ "$HOLDER_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ && "$HOLDER_PID" =~ ^[0-9]+$ ]] && [ "/proc/$HOLDER_PID/fd/9" -ef "$LOCK_FILE" ]; then
+    die "another master backup holds the lock $LOCK_FILE: run $HOLDER_ID, started ${HOLDER_ID:0:4}-${HOLDER_ID:4:2}-${HOLDER_ID:6:2} ${HOLDER_ID:9:2}:${HOLDER_ID:11:2}:${HOLDER_ID:13:2} UTC. Nothing was stopped; start this again once it has ended" 75
+  fi
+  die "the lock $LOCK_FILE is held, and its record is empty or names a run that is not alive, so no run can be named. Nothing was stopped; start this again once the holder has ended" 75
 elif [ "$LOCKED" != 0 ]; then
   die "the lock $LOCK_FILE could not be taken, flock ended $LOCKED — nothing was stopped" 78
 fi
-: > "$LOCK_FILE" || die "the record of an earlier run could not be emptied in $LOCK_FILE" 78
 
 ID="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUPS="box:$FQDN/master"
 WORK="/var/lib/master-backup/$ID"
 root install -d -m 700 -o root -g root /var/lib/master-backup "$WORK" || die "could not make $WORK" 78
-printf '%s\n' "$ID" > "$LOCK_FILE" || die "the run's id could not be written to $LOCK_FILE, where a second run reads it" 78
+printf '%s %s\n' "$ID" "$$" > "$LOCK_FILE" || die "the run's id could not be written to $LOCK_FILE, where a second run reads it" 78
 # seal OUT COMMAND...: what COMMAND writes, sealed to OUT. Both run as root inside one bash, because
 # root() hands sudo the password on standard input: nothing piped or redirected into a command it
 # starts reaches it, and under a NOPASSWD rule the command reads the password line as its data.
@@ -238,17 +243,19 @@ READBACK_CODE=0
 root sh -c 'cd "$1" || exit 10
 grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11
 grep -qx "STORES=$2" manifest.txt || exit 12
-gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13' _ "$READBACK" "${#STORES[@]}" "$PASSPHRASE_FILE" "$STAGE" || READBACK_CODE=$?
+gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13
+cmp -s manifest.txt "$5" || exit 14' _ "$READBACK" "${#STORES[@]}" "$PASSPHRASE_FILE" "$STAGE" "$WORK/manifest.txt" || READBACK_CODE=$?
 if [ "$READBACK_CODE" != 0 ]; then
   root rm -rf "$READBACK"
   case "$READBACK_CODE" in
     11) die "the archives read back from $BACKUPS/$ID/ do not match the checksums of their manifest — what the storage box keeps is not what was sent; the archives stand in $WORK on this machine" 69 ;;
     12) die "the manifest read back from $BACKUPS/$ID/ counts other stores than the ${#STORES[@]} rows of this backup — the archives stand in $WORK on this machine" 69 ;;
     13) die "the quorum archive read back from $BACKUPS/$ID/ does not open with the BACKUP_PASSPHRASE of the config, and a backup that cannot open its quorum could never be restored — the archives stand in $WORK on this machine" 69 ;;
+    14) die "the manifest read back from $BACKUPS/$ID/ is not the manifest that was sent — a checksum line that lost its form on the box is a line no archive is held to; the archives stand in $WORK on this machine" 69 ;;
     *) die "the read-back of $BACKUPS/$ID/ could not be run, it ended with $READBACK_CODE — the archives stand in $WORK on this machine" 69 ;;
   esac
 fi
-good "read back from $BACKUPS/$ID/: the checksums hold, the manifest counts the ${#STORES[@]} stores, the quorum opens"
+good "read back from $BACKUPS/$ID/: the checksums hold, the manifest counts the ${#STORES[@]} stores, the quorum opens, the manifest is the one sent"
 root rm -rf "$WORK" "$READBACK"
 good "$LISTED file(s) stand under $BACKUPS/$ID/ — $TAKEN store(s), the quorum, the manifest; nothing of it is left on this machine"
 printf 'BACKUP %s\n' "$ID"

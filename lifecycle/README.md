@@ -382,23 +382,29 @@ Two backups at once would leave a store stopped: the second reads the replicas o
 first holds it at 0, and starts it again with 0. So the driver takes a lock on the machine before it
 makes or stops anything. The lock is `flock` on `/run/lock/master-backup.lock`, held for the whole run.
 A second run, started from this computer or from another, stops nothing and ends at once with exit 75
-(the code for "try again later"). It names the run that holds the lock by its id and its start time. If
-the record in the lock file is empty, it says so and still refuses.
+(the code for "try again later"). The run that holds the lock writes its id and its process id into the lock
+file. The refusal names that run by its id and its start time only while the process still has the lock file
+open. A run that ended leaves its record in the file, and a lock held by hand (`flock` with a command) writes
+none. In both cases the refusal says that the record is empty or names a run that is not alive, names no run,
+and still ends 75.
 
 The lock belongs to the open file, so the kernel frees it when the last process that holds the file open
 ends, however it ends. A run that was killed leaves the file but no lock, and the next run starts. Nothing
-needs to be cleaned up by hand. The driver's own commands (`kubectl`, `tar`, `rclone`, `gpg`) inherit the
-open file, so the lock of a driver that was killed lasts until the command it was running ends, which is
-the time it still works on a stopped store. A killed driver does not start its store again; that is not
-changed here.
+needs to be cleaned up by hand. The driver's own commands (`kubectl`, `tar`, `rclone`, `gpg`) may inherit the
+open file, which was not checked for the `sudo` that starts the elevated ones. If they do, the lock of a driver
+that was killed lasts until the command it was running ends, which is the time it still works on a stopped
+store, and the refusal names no run then, because the driver whose id the record holds is gone. A killed driver
+does not start its store again; that is not changed here.
 
 Once the archives and the manifest are on the storage box and their names are counted, the driver reads
 the backup back. It copies the whole backup from the box into `/var/lib/master-backup/<id>.readback`, a
 folder of root's beside the work folder, so the machine needs the backup's size in free space once more
-while it runs. In that folder it checks three things: every checksum of the manifest holds, the
-manifest's `STORES=` equals the number of stores this backup took, and the quorum archive opens with
-`BACKUP_PASSPHRASE`. The quorum is opened to `/dev/null`, so no line of it is written anywhere or
-printed. If a check fails, the driver ends with exit 69 and names the check.
+while it runs. In that folder it checks four things: every checksum of the manifest holds, the
+manifest's `STORES=` equals the number of stores this backup took, the quorum archive opens with
+`BACKUP_PASSPHRASE`, and the manifest is byte for byte the one the driver sent. The last check is what
+holds the first to every archive: a checksum line that lost its form on the box is not a checksum line to
+`sha256sum -c`, so the archive under it would never be read. The quorum is opened to `/dev/null`, so no
+line of it is written anywhere or printed. If a check fails, the driver ends with exit 69 and names the check.
 
 Root removes the read-back folder when the checks pass and when one fails. The work folder is removed
 when they pass and stays when one fails, with the sealed archives in it, as it stays after any other
