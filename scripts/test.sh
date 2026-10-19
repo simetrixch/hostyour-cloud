@@ -59,7 +59,7 @@ suite scripts/site-telemetry.test.mjs 'site statistics read API — the gate ref
 suite scripts/alloy-access-log-strip.test.mjs 'alloy access-log strip — the query of a URL is cut off the request path and the referrer of Traefik'\''s access log before Loki, and off nothing else.'
 suite scripts/site-telemetry-registration.test.mjs 'site statistics registrations — the books render one ConfigMap per tenant and stage, with its host, proxied hosts and websites, in the namespace of the service.'
 suite scripts/site-telemetry-deployment.test.mjs 'site statistics service — the Deployment, Service, NetworkPolicy, Role, script and Ingress meet and run the tested script.'
-suite scripts/release-queue.test.mjs 'release queue — four runs at a time on the build plane, never two of one unit, and the queue may only start a run.'
+suite scripts/release-queue.test.mjs 'release queue — nine runs at a time on the build plane, never two of one unit, and the queue may only start a run.'
 suite scripts/ci-report-failure.test.mjs 'ci report — a failed ci run posts one alert with the last 60 lines of the failed step, and a green or cancelled run posts nothing.'
 suite scripts/ci-commit-status.test.mjs 'ci commit status — tekton/ci is pending while a run runs, then success, failure or error, and the token travels only in a header file.'
 suite scripts/ci-green-status.test.mjs 'ci green status — a commit that carries a green tekton/ci names the run that set it, and any other answer leaves the check to run.'

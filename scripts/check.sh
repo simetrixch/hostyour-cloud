@@ -106,6 +106,8 @@ for standin in "$cluster_map" "$registration" "$installation_values"; do
 done
 handed_revision="$(yq '.revision // ""' "$registration")"
 [ -n "$handed_revision" ] || fail "$registration carries no revision, and it is what the reconciler's charts are handed as the commit their root Application synced"
+unit_apex="$(yq '.global.unitApex // ""' "$cluster_map")"
+[ -n "$unit_apex" ] || fail "$cluster_map carries no global.unitApex, and it is the domain every mail sender of the platform stands at"
 
 # ── The probe of the immutable comparison ───────────────────────────────────────────────────
 # THE COMPARISON IS RUN OVER A PLANTED BASELINE BEFORE IT IS RUN OVER A REAL ONE. scripts/immutable-probe
@@ -191,6 +193,12 @@ function helm_expression(s,   m) {
   }
   return ""
 }
+function unquote(s) {
+  sub(/^[ \t]+/, "", s)
+  sub(/[ \t]+$/, "", s)
+  if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2)
+  return s
+}
 /^# Source: / { if (src == "") { source = substr($0, 11); next } }
 {
   key = "-"
@@ -200,6 +208,14 @@ function helm_expression(s,   m) {
   }
   if (src != "") { source = src }
   if (keyname != "") { key = keyname }
+  if ($0 !~ /^[ \t]*#/) {
+    if (match($0, /^[ \t]*smtp_from:[ \t]*/)) print "sender\t" source "\t" key "\t" unquote(substr($0, RLENGTH + 1))
+    if (match($0, /\.postfix\.svc\.cluster\.local/)) {
+      value = $0
+      if (match(value, /^[ \t]*[A-Za-z0-9._\/-]+:[ \t]*/)) value = substr(value, RLENGTH + 1)
+      print "relay\t" source "\t" key "\t" unquote(value)
+    }
+  }
   found = helm_expression($0)
   if (found != "") { print "expression\t" source "\t" key "\t" found; next }
   if (src == "" && match($0, /^[ \t]+[A-Za-z0-9._-]+:[ \t]*"?[A-Za-z0-9+\/]+=?=?"?[ \t]*$/)) {
@@ -213,22 +229,39 @@ function helm_expression(s,   m) {
 }
 '
 
-# HOW MANY VALUES scan_render DECODED IS TALLIED IN A FILE AND NOT IN A VARIABLE. Its callers read
-# it through `$( )`, which runs it in a subshell, and a count kept in a variable would be thrown
-# away with that subshell: the run would end by reporting nought values decoded over a tree full
-# of Secrets, which is a check saying it looked where it did not.
+# HOW MANY VALUES A SCAN DECODED IS TALLIED IN A FILE AND NOT IN A VARIABLE. Its callers read it
+# through `$( )`, which runs it in a subshell, and a count kept in a variable would be thrown away
+# with that subshell: the run would end by reporting nought values decoded over a tree full of
+# Secrets, which is a check saying it looked where it did not. Each scan tallies in a file of its
+# own, because each reads every render and decodes its values again.
 : > "$work/decoded.tally"
+: > "$work/sender.tally"
 
-# $1 says where the render came from, $2 is a file holding it. One line per finding on stdout.
-scan_render() {
+# $1 says where the render came from, $2 is a file holding it, $3 is the tally file that gets one
+# line for each value decoded. Leaves the records of the render in $work/records and those of its
+# decoded values in $work/records.decoded. A decoded Alertmanager configuration is also read as
+# YAML for the `from` of its email_configs items, because that is a sender no line of it names alone.
+read_render() {
   : > "$work/records.decoded"
   awk "$scan_awk" "$2" > "$work/records" || fail "the render of $1 could not be read"
   while IFS="$tab" read -r kind src key payload; do
     [ "$kind" = base64 ] || continue
-    echo >> "$work/decoded.tally"
-    printf '%s' "$payload" | base64 -d 2>/dev/null \
-      | awk -v src="$src" -v keyname="$key" "$scan_awk" >> "$work/records.decoded"
+    echo >> "$3"
+    printf '%s' "$payload" | base64 -d 2>/dev/null > "$work/decoded.value"
+    awk -v src="$src" -v keyname="$key" "$scan_awk" "$work/decoded.value" >> "$work/records.decoded" \
+      || fail "the value $key of $src in the render of $1 could not be read"
+    grep -q 'email_configs' "$work/decoded.value" || continue
+    yq eval -N '(.receivers // [])[] | (.email_configs // [])[] | select(.from != null) | .from' "$work/decoded.value" > "$work/email-configs" \
+      || fail "the email_configs of $key in $src in the render of $1 could not be read"
+    while read -r from; do
+      printf 'emailfrom\t%s\t%s\t%s\n' "$src" "$key" "$from" >> "$work/records.decoded"
+    done < "$work/email-configs"
   done < "$work/records"
+}
+
+# $1 says where the render came from, $2 is a file holding it. One line per finding on stdout.
+scan_render() {
+  read_render "$1" "$2" "$work/decoded.tally"
   cat "$work/records" "$work/records.decoded" | while IFS="$tab" read -r kind src key payload; do
     [ "$kind" = expression ] || continue
     printf '  %s, %s, %s: %s\n' "$1" "$src" "$key" "$payload"
@@ -446,6 +479,82 @@ collect_off_revision() {
 $found"
 }
 
+# EVERY MAIL THE MASTER SENDS LEAVES THROUGH THE RELAY FROM ONE SENDER AT THE UNIT APEX. The relay signs
+# with DKIM for the unit apex and the platform domain only (clusters/inventories/postfix), and the
+# apex SPF names the relay. A sender at any other host, such as `mail.<unit apex>`, has no SPF and
+# no DKIM key, so its mail leaves unsigned and fails DMARC at the receiver. The relay admits a
+# foreign sender, so this scan is the only protection against it.
+#
+# WHAT IT HOLDS, for every render at a stage:
+#  (a) every sender it finds is `alertmanager-<stage>` at global.unitApex of the stand-in cluster
+#      map, and every address of the relay is `postfix-<stage>.postfix.svc.cluster.local`;
+#  (b) a render names the relay, or sets `smtp_from`, only in a document whose source begins with
+#      observability/, the one chart that sends through the relay today. A chart that starts to send
+#      turns the run red until its sender is added here on purpose;
+#  (c) the sender of observability is found at every stage, so a scan that stopped looking cannot
+#      print green. The final line states the stages, the renders and the values decoded.
+#
+# WHAT IS READ. `smtp_from` and every line naming `.postfix.svc.cluster.local`, in the render and in
+# each base64 value of it, where Alertmanager's own configuration stands. The `from` of an
+# `emailConfigs` item of an AlertmanagerConfig, and of an `email_configs` item of a decoded
+# Alertmanager configuration, are read as YAML: a plain `from:` line is no sender (cert-manager,
+# external-secrets, observability-agent, service-provisioner and tekton render such lines).
+#
+# WHAT IT CANNOT PROVE. The stand-in cluster map gives `domain`, `unitApex` and `platformDomain` one
+# value, so a sender built from global.domain renders the same host as one built from global.unitApex.
+# This scan proves the set of senders and that none stands at a host in front of the apex;
+# scripts/ci-failure-mail.test.mjs renders per-stage domains and proves that the sender takes its
+# domain from global.unitApex. It does not prove that the apex is among the relay's
+# ALLOWED_SENDER_DOMAINS: no stand-in renders the allowlist, and ci-failure-mail.test.mjs hands it
+# in by --set. The allowlist is declared in hostyour-deploy ansiwise/templates/postfix-values.tpl:13
+# and no test reads it yet: a template that loses the apex leaves this check green.
+#
+# `eval` reads one document at a time, which the name bound in its filter needs.
+# $1 says where the render came from, $2 is a file holding it, $3 is the stage. One line per finding
+# on stdout, and in $work/sender.matches one line for each sender of observability found as expected.
+senders_off_apex() {
+  local where="$1" env="$3" expected_from expected_relay address
+  expected_from="alertmanager-$env@$unit_apex"
+  expected_relay="postfix-$env.postfix.svc.cluster.local"
+  read_render "$where" "$2" "$work/sender.tally"
+  yq eval -N 'select(.kind == "AlertmanagerConfig") | .metadata.name as $name | (.spec.receivers // [])[] | (.emailConfigs // [])[]
+    | select(.from != null) | "emailfrom\tAlertmanagerConfig " + $name + "\temailConfigs\t" + .from' "$2" > "$work/email-senders" 2>/dev/null \
+    || fail "the render of $where could not be read"
+  : > "$work/sender.matches"
+  cat "$work/records" "$work/records.decoded" "$work/email-senders" | awk '!seen[$0]++' | while IFS="$tab" read -r kind src key payload; do
+    case "$kind" in
+      sender|emailfrom)
+        if [ "$payload" != "$expected_from" ]; then
+          printf '  %s, %s, %s: sends from %s, and not from %s\n' "$where" "$src" "$key" "$payload" "$expected_from"
+        elif [ "$kind" = sender ]; then
+          case "$src" in observability/*) echo "$src" >> "$work/sender.matches" ;; esac
+        fi ;;
+      relay)
+        address="${payload%:[0-9]*}"
+        [ "$address" = "$expected_relay" ] \
+          || printf '  %s, %s, %s: names the relay as %s, and not as %s\n' "$where" "$src" "$key" "$payload" "$expected_relay" ;;
+      *) continue ;;
+    esac
+    case "$kind:$src" in
+      emailfrom:*|*:observability/*) ;;
+      *) printf '  %s, %s, %s: sends through the relay from a chart other than observability\n' "$where" "$src" "$key" ;;
+    esac
+  done
+}
+
+# $1 says where the render came from, $2 is the render itself. Adds what it finds to $foreign_senders,
+# and the stage to $sender_stages when observability sends as expected at it.
+collect_senders() {
+  printf '%s\n' "$2" > "$work/render"
+  found="$(senders_off_apex "$1" "$work/render" "$stage")"
+  if [ "$chart" = clusters/inventories/observability ] && [ -s "$work/sender.matches" ]; then
+    sender_stages="$sender_stages $stage"
+  fi
+  [ -n "$found" ] || return 0
+  foreign_senders="$foreign_senders
+$found"
+}
+
 # ── The awk programs of the scans read no regex interval ────────────────────────────────────
 # THE CI IMAGE'S AWK IS mawk 1.3.4 20200120, AND IT READS A BRACE EXPRESSION IN A REGEX AS TEXT. A
 # regex ending in an interval (a class and a count in braces) matches nothing there and nothing
@@ -531,6 +640,27 @@ if [ "$off_reported" != "$off_expected" ]; then
 fi
 echo "check: the counter-probe reports both planted sources of this repository at a branch and not the planted innocent."
 
+mail_expected="  scripts/counter-probe.yaml, counter-probe/planted-defect-in-the-clear.yaml, smtp_smarthost: names the relay as postfix-{{ .Values.global.env }}.postfix.svc.cluster.local:587, and not as postfix-prod.postfix.svc.cluster.local
+  scripts/counter-probe.yaml, counter-probe/planted-defect-in-the-clear.yaml, smtp_smarthost: sends through the relay from a chart other than observability
+  scripts/counter-probe.yaml, counter-probe/planted-defect-in-base64.yaml, alertmanager.yaml: sends from alertmanager-prod@mail.{{ .Values.global.domain }}, and not from alertmanager-prod@$unit_apex
+  scripts/counter-probe.yaml, counter-probe/planted-defect-in-base64.yaml, alertmanager.yaml: sends through the relay from a chart other than observability
+  scripts/counter-probe.yaml, counter-probe/planted-defect-sender-in-email-configs.yaml, alertmanager.yaml: sends from alertmanager-prod@other.example.invalid, and not from alertmanager-prod@$unit_apex
+  scripts/counter-probe.yaml, AlertmanagerConfig planted-defect-sender-in-a-receiver, emailConfigs: sends from alertmanager-prod@other.example.invalid, and not from alertmanager-prod@$unit_apex
+  scripts/counter-probe.yaml, AlertmanagerConfig planted-defect-sender-of-another-stage, emailConfigs: sends from alertmanager-dev@$unit_apex, and not from alertmanager-prod@$unit_apex
+  scripts/counter-probe.yaml, AlertmanagerConfig planted-defect-sender-with-another-local-part, emailConfigs: sends from postmaster@$unit_apex, and not from alertmanager-prod@$unit_apex"
+mail_reported="$(senders_off_apex 'scripts/counter-probe.yaml' "$counter_probe" prod)"
+if [ "$mail_reported" != "$mail_expected" ]; then
+  echo "The counter-probe plants a smarthost and a sender outside the one chart that sends, four receivers that send from another domain, stage or local part, and four innocents. The scan had to report:"
+  echo "$mail_expected"
+  echo "and it reported:"
+  echo "${mail_reported:-  (nothing)}"
+  fail "the scan for a mail sender outside the unit apex does not report what scripts/counter-probe.yaml plants"
+fi
+[ "$(wc -l < "$work/sender.matches" | tr -d ' ')" = 1 ] \
+  || fail "the scan for a mail sender outside the unit apex did not find the one sender of observability that scripts/counter-probe.yaml plants as an innocent"
+echo "check: the counter-probe reports the planted senders outside the unit apex and outside observability, and not the planted innocents."
+: > "$work/sender.tally"
+
 # A CHART THAT CARRIES rules.test.yaml HAS IT RUN OVER ITS OWN RENDER, so the test reads the rules
 # that reach the cluster and not the values they are written in. The .spec of every PrometheusRule
 # goes to a file of its own, because two objects may carry one group name and one rule file
@@ -560,6 +690,8 @@ disagreeing=""
 plain_http=""
 no_cpu_request=""
 off_revision=""
+foreign_senders=""
+sender_stages=""
 rule_tests=""
 
 # clusters/argocd IS A CHART, not a directory of charts, so it is named rather than globbed. It
@@ -620,6 +752,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_plain_http "$name at stage $stage" "$trunk_only"
       collect_cpu_requests "$name at stage $stage" "$trunk_only"
       collect_off_revision "$name at stage $stage" "$trunk_only"
+      collect_senders "$name at stage $stage" "$trunk_only"
       collect_rule_test "$trunk_only"
       check_immutable_render "$trunk_only"
       continue
@@ -636,6 +769,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_plain_http "$name at stage $stage" "$out"
       collect_cpu_requests "$name at stage $stage" "$out"
       collect_off_revision "$name at stage $stage" "$out"
+      collect_senders "$name at stage $stage" "$out"
       collect_rule_test "$out"
       check_immutable_render "$out"
       case " $needed_standin " in
@@ -660,6 +794,7 @@ for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ cluste
       collect_plain_http "$name at stage $stage" "$out"
       collect_cpu_requests "$name at stage $stage" "$out"
       collect_off_revision "$name at stage $stage" "$out"
+      collect_senders "$name at stage $stage" "$out"
       collect_rule_test "$out"
       check_immutable_render "$out" --set global.placeholderTag=check-takes-the-placeholder-for-a-tag
       awaiting_release="$awaiting_release $name at $stage,"
@@ -718,6 +853,17 @@ if [ -n "$plain_http" ]; then
   fail "an Ingress is served over plain http"
 fi
 echo "check: every Ingress of those $rendered renders binds websecure alone."
+
+if [ -n "$foreign_senders" ]; then
+  echo "These mails would leave the relay unsigned or from a chart that may not send, and fail DMARC at the receiver:$foreign_senders"
+  fail "a mail sender stands outside alertmanager-<stage> at the unit apex, or a chart other than observability sends"
+fi
+stage_count="$(wc -w <<< "$stages" | tr -d ' ')"
+if [ "$(wc -w <<< "$sender_stages" | tr -d ' ')" -ne "$stage_count" ]; then
+  fail "the sender of observability was found at only these of the stages $stages:${sender_stages:- none}, so the scan for a mail sender outside the unit apex did not look where the sender stands"
+fi
+sender_decoded="$(wc -l < "$work/sender.tally" | tr -d ' ')"
+echo "check: every mail sender it reads stands at alertmanager-<stage> at $unit_apex, and the sender of observability was found at $stage_count of $stage_count stages, over $rendered renders and the $sender_decoded base64 values in them."
 
 # THE RECONCILER OF THE MASTER IS NOT A CHART OF THIS REPOSITORY: the deploy program installs the argo-cd chart with
 # clusters/bootstrap/argocd/values.tpl. The slave chart depends on that chart at the master's version, so its archive

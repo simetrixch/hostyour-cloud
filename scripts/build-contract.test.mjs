@@ -1694,7 +1694,7 @@ const ciMemoryPipelines = () => {
   return pipelines;
 };
 
-test('the seven largest distinct ci units and four releases fit the 59.25Gi memory budget, which stays within the memory of the node', () => {
+test('the seven largest distinct ci units and nine releases fit the 54.75Gi memory budget, which stays within the memory of the node', () => {
   const capacity = readCiCapacity();
   assert.ok(declaresEveryCount(capacity.releaseUnitImages), 'every declared unit names how many images it builds');
   assert.equal(capacity.releaseUnitImages['digita-realtime'], 1, 'digita-realtime builds its one image after the scan');
@@ -1712,35 +1712,43 @@ test('the seven largest distinct ci units and four releases fit the 59.25Gi memo
   const thirdPod = structuredClone(pipeline);
   thirdPod.spec.tasks.push({...thirdPod.spec.tasks[0], name: 'second', runAfter: ['ci']});
   assert.notEqual(podsAtBoundary(thirdPod), capacity.podsPerUnit, 'PLANTED DEFECT: a second task of the ci pipeline is a third pod at the boundary, which the quota refuses');
+  // The Buildah pods a release has alive at once: the builds, by the same reading of runAfter, results and when references as the budget.
+  const buildsAlive = (release) => peakConcurrent(release, (task) => (task.name.startsWith('build-') ? 1 : 0));
   for (const unit of units) {
-    assert.equal(unit.release.spec.tasks.filter((t) => t.name.startsWith('build-') && t.runAfter?.includes('scan')).length, unit.images, `every image of ${unit.name} builds in parallel after the scan`);
+    assert.equal(buildsAlive(unit.release), Math.min(unit.images, capacity.releaseBuildsAtOnce), `${unit.name} builds at most releaseBuildsAtOnce of its ${unit.images} images at once`);
   }
+  const swissbookai = units.find((unit) => unit.name === 'swissbookai').release;
+  const secondInParallel = structuredClone(swissbookai);
+  secondInParallel.spec.tasks.find((t) => t.name === 'build-image-2').runAfter = ['scan'];
+  assert.equal(buildsAlive(swissbookai), 1, 'PLANTED INNOCENT: the swissbookai release as rendered builds its four images one after the other');
+  assert.equal(buildsAlive(secondInParallel), 2, 'PLANTED DEFECT: a second build that waits for the scan alone runs beside the first, two Buildah pods at once, and is caught');
   const admitsNextTask = (pods) => pods === 2;
   assert.ok(admitsNextTask(capacity.podsPerUnit), 'the quota admits the pod of the next task while the finished pod before it still counts, and no more');
   assert.ok(!admitsNextTask(1), 'PLANTED DEFECT: one pod per unit refuses the next task until the finished pod is gone, and Tekton tries it again a minute later');
   assert.ok(!admitsNextTask(3), 'PLANTED DEFECT: a third pod has no task of a chain to run, and the memory budget counts one live ci pod per run');
-  assert.equal(capacity.releaseSlots, 4, 'the owner decided four releases at once');
+  assert.equal(capacity.releaseBuildsAtOnce, 1, 'the owner decided on 2026-10-19 that a release builds one image at a time');
+  assert.equal(capacity.releaseSlots, 9, 'the owner decided on 2026-10-19 that nine releases run at once');
   assert.ok(Object.keys(capacity.releaseUnitImages).length >= capacity.releaseSlots, 'the declared units fill every slot of the queue');
-  assert.equal(quantity(capacity.limitsMemoryBudget) / BYTES.Gi, 59.25, 'the budget holds one 3.5Gi ci unit, six 3Gi ci units, seven report pods of 256Mi, and the 12 images of the four largest units at 3Gi');
+  assert.equal(quantity(capacity.limitsMemoryBudget) / BYTES.Gi, 54.75, 'the budget holds one 3.5Gi ci unit, six 3Gi ci units, seven report pods of 256Mi and nine release slots at 3.5Gi');
   const withinNode = (limit) => quantity(limit.limitsMemoryBudget) <= quantity(limit.nodeMemory);
   assert.ok(withinNode(capacity), 'PLANTED INNOCENT: the budget stands within the allocatable memory of the node');
   assert.ok(!withinNode({...capacity, limitsMemoryBudget: `${quantity(capacity.nodeMemory) / BYTES.Mi + 1}Mi`}), 'PLANTED DEFECT: a budget one Mi above the allocatable memory of the node is caught');
-  assert.ok(fits(), 'PLANTED INNOCENT: the seven largest distinct ci units and the four largest releases exactly fit');
-  assert.ok(!fits(pipelines, {...capacity, limitsMemoryBudget: '60671Mi'}), 'PLANTED DEFECT: one Mi below the exact 59.25Gi sum is caught');
+  assert.ok(fits(), 'PLANTED INNOCENT: the seven largest distinct ci units and the nine largest releases exactly fit');
+  assert.ok(!fits(pipelines, {...capacity, limitsMemoryBudget: '56063Mi'}), 'PLANTED DEFECT: one Mi below the exact 54.75Gi sum is caught');
   assert.ok(fits(pipelines, {...capacity, releaseSlots: 2}), 'PLANTED INNOCENT: two releases at a time fit too');
-  assert.ok(!fits(pipelines, {...capacity, releaseSlots: 5}), 'PLANTED DEFECT: a fifth release at once is caught');
-  assert.ok(!fits(pipelines, {...capacity, limitsMemoryBudget: '45312Mi'}), 'PLANTED DEFECT: four releases on the budget of two, 44.25Gi, are caught');
+  assert.ok(!fits(pipelines, {...capacity, releaseSlots: capacity.releaseSlots + 1}), 'PLANTED DEFECT: a tenth release at once is caught');
+  assert.ok(!fits(pipelines, {...capacity, limitsMemoryBudget: '48896Mi'}), 'PLANTED DEFECT: nine releases on the budget of seven, 47.75Gi, are caught');
   const planted = structuredClone(pipelines);
   checkResources(planted.find((unit) => unit.metadata.name === 'digita-platform-ci')).limits.memory = '4Gi';
-  assert.ok(!fits(planted), 'PLANTED DEFECT: a 4Gi override makes the sum 59.75Gi');
-  assert.ok(!fits(pipelines, {...capacity, maxRunning: capacity.maxRunning + 1}), 'PLANTED DEFECT: an eighth ci run at once, 62.5Gi against the 59.25Gi budget, is caught');
+  assert.ok(!fits(planted), 'PLANTED DEFECT: a 4Gi override makes the sum 55.25Gi (56576Mi)');
+  assert.ok(!fits(pipelines, {...capacity, maxRunning: capacity.maxRunning + 1}), 'PLANTED DEFECT: an eighth ci run at once, 58Gi (59392Mi) against the 54.75Gi budget, is caught');
   assert.ok(!fits(pipelines, {...capacity, maxRunning: 14}), 'PLANTED DEFECT: 14 distinct ci units at once are caught');
-  const largestName = largestUnit(units).name, images = capacity.releaseUnitImages;
-  assert.ok(!fits(pipelines, capacity, releaseUnitsOf({...images, [largestName]: images[largestName] + 1})), 'PLANTED DEFECT: one more image built in parallel by the largest unit is caught');
-  const thirdOfAnother = Object.entries(images).sort(([, a], [, b]) => b - a)[3][0];
-  assert.ok(!fits(pipelines, capacity, releaseUnitsOf({...images, [thirdOfAnother]: images[thirdOfAnother] + 1})), 'PLANTED DEFECT: one more image of the fourth largest unit, a thirteenth image in the four slots, is caught');
-  assert.ok(!fits(pipelines, capacity, releaseUnitsOf(Object.fromEntries(Array.from({length: capacity.releaseSlots}, (_, i) => [`unit${i}`, images[largestName]])))),
-    'PLANTED DEFECT: four units that each build as many images as the largest do, which would fill every slot with it, are caught');
+  const largestName = largestUnit(units).name;
+  const largestInParallel = withUnits(units, (unit) => {
+    if (unit.name === largestName) unit.release.spec.tasks.find((t) => t.name === 'build-image-2').runAfter = ['scan'];
+    return unit;
+  });
+  assert.ok(!fits(pipelines, capacity, largestInParallel), `PLANTED DEFECT: the second build of ${largestName} waiting for the scan alone, two builds of 3072Mi in a slot of 3584Mi, is caught by the exact budget`);
   const heavyStep = structuredClone(pipelines);
   ciStep(heavyStep[0], 'sources').computeResources.limits.memory = '4Gi';
   assert.ok(!fits(heavyStep), 'PLANTED DEFECT: a step before the check that outgrows it makes the pod larger than the 3Gi counted');
@@ -1753,7 +1761,7 @@ test('the seven largest distinct ci units and four releases fit the 59.25Gi memo
   const heavy = withSharedTask(shared, 'buildah-build-push', (task) => { task.spec.steps.find((step) => step.name === 'build').computeResources.limits.memory = '8Gi'; });
   assert.ok(!fitsBudget(capacity, pipelines, heavy, units), 'PLANTED DEFECT: a raised buildah limit is caught');
   const formerLimits = withSharedTask(shared, 'buildah-build-push', (task) => { task.spec.steps.find((step) => step.name === 'build').computeResources.limits.memory = '4Gi'; });
-  assert.ok(!fitsBudget(capacity, pipelines, formerLimits, units), 'PLANTED DEFECT: the former 4Gi build and 2Gi push limits, 6Gi a pod, at four releases are caught');
+  assert.ok(!fitsBudget(capacity, pipelines, formerLimits, units), 'PLANTED DEFECT: the former 4Gi build and 2Gi push limits, 6Gi a pod, at nine releases are caught');
   const heavyPublish = structuredClone(publish);
   heavyPublish.spec.tasks.find((t) => t.name === 'pack').taskSpec.steps[0].computeResources.limits.memory = '19Gi';
   assert.ok(!fits(pipelines, capacity, withUnits(units, (unit) => ({...unit, publish: heavyPublish}))), 'PLANTED DEFECT: a publish pod above a release slot is caught');
@@ -1762,7 +1770,7 @@ test('the seven largest distinct ci units and four releases fit the 59.25Gi memo
 });
 
 // The limits of the Buildah pod are set from the largest working set a step reached on the master, with a margin, because
-// the sum of the pods of the four largest releases is what the budget above holds. Measured 2026-10-18 13:28 UTC on the
+// the sum of the pods of the nine release slots is what the budget above holds. Measured 2026-10-18 13:28 UTC on the
 // master's Prometheus over 15 days, the whole retention (query: max by (namespace, pod, container)
 // (max_over_time(container_memory_working_set_bytes{namespace=~".*-build", container=~"step-(build|push)"}[15d])) / 1024^2):
 // `step-build` reached 2320.7Mi (swissbookai-build, pod swissbookai-release-5pqbj-build-swissbookai-web-pod) and
@@ -1855,7 +1863,7 @@ test('the check step takes 12 cores at most and requests the largest whole numbe
   assert.ok(!limitIsSound(withCheck(pipeline, 'requests', '13')), 'PLANTED DEFECT: a request above the limit, which the API server refuses, is caught');
   assert.ok(requestIsLargest(pipeline), 'PLANTED INNOCENT: the request as it stands fits, and one more core does not');
   assert.ok(!requestIsLargest(withCheck(pipeline, 'requests', '1')), 'PLANTED DEFECT: a request below what the node admits, one more core would fit, is caught');
-  assert.ok(!requestIsLargest(withCheck(pipeline, 'requests', '3')), 'PLANTED DEFECT: the former request of 3 cores, which the node does not admit with seven runs and four releases at once, is caught');
+  assert.ok(!requestIsLargest(withCheck(pipeline, 'requests', '3')), 'PLANTED DEFECT: the former request of 3 cores, which the node does not admit with seven runs and nine releases at once, is caught');
   assert.ok(fits(pipeline, {...capacity, releaseSlots: 2}), 'PLANTED INNOCENT: two releases at a time fit too');
   assert.ok(!fits(pipeline, {...capacity, maxRunning: 14}), 'PLANTED DEFECT: 14 runs at once, one per unit of 14 units and so no cap, is caught');
   assert.ok(!fits(pipeline, {...capacity, releaseSlots: Object.keys(capacity.releaseUnitImages).length}), 'PLANTED DEFECT: every declared unit released at once is caught');
@@ -1864,10 +1872,10 @@ test('the check step takes 12 cores at most and requests the largest whole numbe
   const heavy = withSharedTask(shared, 'buildah-build-push', (task) => { task.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '4'; });
   assert.ok(!fitsBudget(capacity, pipeline, heavy, units, CORES), 'PLANTED DEFECT: a raised request of the buildah build step is caught');
   const wide = withSharedTask(shared, 'buildah-build-push', (task) => {
-    task.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '750m';
+    task.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '1000m';
     task.spec.steps.find((step) => step.name === 'push').computeResources.requests.cpu = '250m';
   });
-  assert.ok(!fitsBudget(capacity, pipeline, wide, units, CORES), 'PLANTED DEFECT: a Buildah pod that requests 1 core, 750m and 250m, does not fit the 12 images of four releases beside seven ci runs');
+  assert.ok(!fitsBudget(capacity, pipeline, wide, units, CORES), 'PLANTED DEFECT: a Buildah pod that requests 1.25 cores, 1000m and 250m, does not fit nine releases beside seven ci runs');
   const heavyPublish = structuredClone(publish);
   heavyPublish.spec.tasks.find((t) => t.name === 'pack').taskSpec.steps[0].computeResources.requests.cpu = '8';
   assert.ok(!fitsBudget(capacity, pipeline, shared, withUnits(units, (unit) => ({...unit, publish: heavyPublish})), CORES), 'PLANTED DEFECT: a publish pod that requests 8 cores, above the build pods of a release, is caught');
@@ -1908,7 +1916,7 @@ test('the standing CPU requests of the budget count the requests of the pods the
 // and one report pod) and the pods that stand there whatever the build plane does.
 const podsOnNode = (capacity, units) => largestQueued(capacity, units, () => 1) + capacity.maxRunning * (capacity.podsPerUnit + 1) + capacity.standingPods;
 
-test('the pods of all ci runs and the four largest releases or publish runs, with the pods that stand on the build node, stay below its pod limit', () => {
+test('the pods of all ci runs and the nine largest releases or publish runs, with the pods that stand on the build node, stay below its pod limit', () => {
   const capacity = readCiCapacity();
   const {units} = ciPlane(capacity);
   const below = (counted) => counted < capacity.nodePods;
@@ -1916,14 +1924,14 @@ test('the pods of all ci runs and the four largest releases or publish runs, wit
     assert.equal(peakConcurrent(unit.release, () => 1), Math.max(unit.images + 1, 3), `${unit.name} has the scan and a probe per image alive at once, or verify, builds and scan, or its builds: the largest of them`);
   }
   const largest = largestUnit(units);
-  assert.ok(below(podsOnNode(capacity, units)), 'PLANTED INNOCENT: four slots as they stand, the units of 4, 3, 3 and 2 images, 16 + 7 x 3 + 125 pods, stay below the limit');
+  assert.ok(below(podsOnNode(capacity, units)), 'PLANTED INNOCENT: nine slots as they stand, the units of 5 + 4 + 4 + 3 + 3 + 4 x 3 = 31 pods, 31 + 7 x 3 + 125 = 177 pods, stay below the limit');
   assert.ok(below(podsOnNode({...capacity, releaseSlots: 2}, units)), 'PLANTED INNOCENT: two releases at a time stay below it too');
   assert.ok(!below(podsOnNode({...capacity, releaseSlots: 40}, Array(40).fill(largest))), 'PLANTED DEFECT: forty slots of the largest unit, a total above 250, are caught');
   assert.ok(!below(podsOnNode({...capacity, standingPods: capacity.nodePods}, units)), 'PLANTED DEFECT: standing pods that fill the node are caught');
   const everyTask = capacity.releaseSlots * 3 * largest.release.spec.tasks.length + capacity.maxRunning * (capacity.podsPerUnit + 1) + capacity.standingPods;
-  assert.ok(!below(everyTask), 'PLANTED DEFECT: counting every task of every stage of four releases, 314 pods, is above 250, which is the count that this test replaces');
+  assert.ok(!below(everyTask), 'PLANTED DEFECT: counting every task of every stage of nine releases is above 250, which is the count that this test replaces');
   const wide = renderUnit('shop', imageNames(60)).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
-  assert.ok(!below(podsOnNode(capacity, Array(capacity.releaseSlots).fill({...largest, release: wide}))), 'PLANTED DEFECT: four units of sixty images, sixty probes and the scan alive at once in each, are caught');
+  assert.ok(!below(podsOnNode(capacity, Array(capacity.releaseSlots).fill({...largest, release: wide}))), 'PLANTED DEFECT: nine units of sixty images, sixty probes and the scan alive at once in each, are caught');
   const chain = (names) => ({metadata: {name: 'chain'}, spec: {tasks: names.map((name, i) => ({name, ...(i ? {runAfter: [names[i - 1]]} : {})}))}});
   assert.equal(peakConcurrent(chain(['a', 'b', 'c', 'd', 'e']), () => 1), 1, 'PLANTED INNOCENT: five tasks that run one after the other have one pod alive at a time');
   const referenced = chain(['a', 'b']);

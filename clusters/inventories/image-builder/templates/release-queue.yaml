@@ -5,7 +5,7 @@ holds to a budget, and every release run takes several pods. Releases started in
 that filled the node until no task pod could start and every run hung until its timeout. So every
 release run is created waiting (the deploy-request TriggerTemplate sets spec.status
 PipelineRunPending), and this CronJob starts the oldest waiting runs while fewer than
-releaseQueue.maxRunning (4) runs run, and never two runs of one unit: a run, whether another stage
+releaseQueue.maxRunning (9) runs run, and never two runs of one unit: a run, whether another stage
 of the same release tag, a retry or another tag, whose unit already has one that runs waits for it,
 whatever slot is free. Each waiting run carries the annotation image-builder.io/queued-behind with
 the release it waits for (the release of its own unit, else the releases that take the slots),
