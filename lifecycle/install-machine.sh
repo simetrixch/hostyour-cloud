@@ -68,7 +68,7 @@ fi
 # must be blank, a comment, or NAME='value' with no single quote inside the value. A
 # comment may follow a value on the same line, because that is valid in the shell that
 # reads it and it is where an operator naturally writes what a value may be.
-require_config_assignments "$FILE" \
+require_config_assignments "$FILE" "$CONFIG_EXAMPLE_KEYS" \
   || fail "$FILE carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL — a line that is not an assignment is a command that would run: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 
 # shellcheck disable=SC1090

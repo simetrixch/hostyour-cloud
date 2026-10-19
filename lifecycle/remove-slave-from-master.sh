@@ -151,7 +151,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
 # reading it is running it. A shell `.` executes every line, so a config carrying
 # a command would run it with the operator's own rights, and the same file is
 # read again by a shell on the machine.
-require_config_assignments "$CONFIG" \
+require_config_assignments "$CONFIG" "$CONFIG_EXAMPLE_KEYS" \
   || die "$CONFIG carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL on both sides: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 
 # THE TWO FACTS THIS RUN WAS GIVEN, PUT OUT OF THE CONFIG'S REACH. Reading the

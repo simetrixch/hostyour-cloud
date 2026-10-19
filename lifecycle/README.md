@@ -279,11 +279,14 @@ because at a machine's birth there is nothing to compare it against. A **changed
 - **Any line that is not a comment or `NAME='value'`.** The config is READ BY THE SHELL on the
   machine, so a line that is not an assignment is a command that would run there with the operator's
   own rights. The five launchers and the five drivers apply the same test, and the refusal names
-  each offending line by its number and by its `NAME` where one can be read, and never quotes the
-  line, because it may be a credential with a closing quote forgotten. A lowercase name, a name
-  behind a space or a command is named by its number alone. The launchers share
-  `require-config-assignments.sh`; each driver carries the same function, which `test.sh` holds
-  byte-equal to it.
+  each offending line by its number, and never quotes the line, because it may be a credential with
+  a closing quote forgotten. The `NAME` is added only where the line begins with it directly before
+  `=` and it is a key of `config.example.env`; a token that is no key, such as a bare
+  `GEZDGNBVGY3TQOJQ====` or a line inside a quote opened on an earlier line, is never printed. The
+  launchers share `require-config-assignments.sh`, which reads the keys from `config.example.env`
+  beside it and names numbers only when that file is missing. The drivers run on the machine, where
+  no example can be read, so they name numbers only. Each driver carries the same function, which
+  `test.sh` holds byte-equal to the sibling's.
 - **An apostrophe in any value.** That test refuses it as a side effect, and it would break the run
   in any case: a template slot standing inside quotes has no way to say so, and the cluster map
   becomes unparseable far from the cause (`ansiwise-plugins#161`).

@@ -92,16 +92,23 @@ trap 'exit 143' TERM
 # the operator's side; it is checked again HERE because what arrives is what
 # matters and a session is not a promise.
 # The same function as require-config-assignments.sh, held byte-equal to it by test.sh: this
-# script arrives over one ssh session and can read no sibling. A refused line is named by its
-# number and never quoted, because it may carry a credential.
+# script arrives over one ssh session and can read no sibling. It is handed no keys, so a refused
+# line is named by its number alone and never quoted, because it may carry a credential.
 require_config_assignments() {
-  local file="$1"
+  local file="$1" keys="${2:-}"
   BAD_LINES=$(
     export LC_ALL=C
     grep -anvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$file" \
       | head -3 \
-      | sed -E -e 's/^([0-9]+):([A-Z][A-Z0-9_]*)=.*/line \1 (\2)/' -e 's/^([0-9]+):.*/line \1/' \
-      | paste -sd, - | sed 's/,/, /g'
+      | awk -v keys=" $keys " '{
+          number = substr($0, 1, index($0, ":") - 1)
+          name = ""
+          if (match(substr($0, index($0, ":") + 1), /^[A-Z][A-Z0-9_]*=/)) {
+            name = substr($0, index($0, ":") + 1, RLENGTH - 1)
+            if (index(keys, " " name " ") == 0) name = ""
+          }
+          printf "%sline %s%s", (NR > 1 ? ", " : ""), number, (name == "" ? "" : " (" name ")")
+        }'
   )
   [ -z "$BAD_LINES" ]
 }

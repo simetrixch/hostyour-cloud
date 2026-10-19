@@ -54,7 +54,7 @@ if git -C "$CONFIG_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
   git -C "$CONFIG_DIR" check-ignore -q "$CONFIG" 2>/dev/null \
     || die "$CONFIG stands inside a git working tree that does not ignore it. A file of credentials belongs nowhere a commit can reach it: move it out, or name it in that tree's .gitignore" 77
 fi
-require_config_assignments "$CONFIG" \
+require_config_assignments "$CONFIG" "$CONFIG_EXAMPLE_KEYS" \
   || die "$CONFIG carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL on both sides: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 . "$CONFIG"
 for named in FQDN OPERATOR_USER STAGE PLATFORM_REPO PLATFORM_BRANCH; do
