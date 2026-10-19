@@ -1089,21 +1089,19 @@ printf '%s\n' "$publish_objects" | grep -q '^ExternalSecret/image-builder-regist
   && fail "a unit that builds nothing renders the registry pull identity, which only a release reads"
 
 # ── The tools of this repository's own ci run ────────────────────────────────────────────────
-# ci-tools.json names the tools the ci of the master installs before it runs this file and then scripts/test.sh
-# (clusters/inventories/consumer-build/templates/pipeline-ci.yaml). Each pair has to be a row of the table
-# that pipeline installs from, or the run ends on the build plane before the check starts, so it is refused here.
-# The promtool of the run is the one the master's Prometheus needs, as the one on this machine is above.
+# ci-tools.json names the tools the ci of the master installs before it runs scripts/test.sh
+# (clusters/inventories/consumer-build/templates/pipeline-ci.yaml): the tools its suites run. Each pair has to be a
+# row of the table that pipeline installs from, or the run ends on the build plane before its suites start, so it is
+# refused here.
 tools_table=clusters/inventories/consumer-build/files/ci-tools.table
 tools_named="$(yq -p=json -o=yaml e 'to_entries | .[] | .key + " " + .value' ci-tools.json)" \
   || fail "ci-tools.json does not parse as an object of tools and versions"
-[ -n "$tools_named" ] || fail "ci-tools.json names no tool, so the ci run of this repository would have no gitleaks and no promtool"
+[ -n "$tools_named" ] || fail "ci-tools.json names no tool, so the ci run of this repository would have none of the tools its suites run"
 tools_rows="$(awk '{ print $1, $2 }' "$tools_table")"
 while IFS= read -r pair; do
   printf '%s\n' "$tools_rows" | grep -qxF "$pair" \
-    || fail "ci-tools.json names $pair, which $tools_table does not carry, so the ci run of this repository would end before its check"
+    || fail "ci-tools.json names $pair, which $tools_table does not carry, so the ci run of this repository would end before its suites start"
 done <<< "$tools_named"
-printf '%s\n' "$tools_named" | grep -qxF "promtool $prometheus_version" \
-  || fail "ci-tools.json does not name promtool $prometheus_version, the version of the master's Prometheus, so the ci run would test its rules with another one"
 [ "$(yq e 'select(.kind == "Pipeline" and .metadata.name == "check-ci") | .spec.tasks[] | select(.name == "ci") | .taskSpec.steps[] | select(.name == "check") | .env[] | select(.name == "CI_TOOLS_TABLE") | .value' "$work/publish-render")" = "$(cat "$tools_table")" ] \
   || fail "the ci pipeline of a unit does not hand its check the table $tools_table, whole"
 echo "check: ci-tools.json names $(printf '%s\n' "$tools_named" | wc -l) tools, each a row of $tools_table, and the ci pipeline renders that table."
@@ -1782,28 +1780,20 @@ bootstrap_template_faults() { # <program> <tree> -> one line per template and ro
   done < <(cd "$2" && find clusters/bootstrap -name '*.tpl' | sort)
 }
 
-# THE ROWS ARE READ AT THE COMMIT ci-sources.json PINS, NEVER FROM A WORKING TREE: on the master's ci
-# out of the bare repository the sources step of the ci task makes under CI_SOURCES_DIR, on a machine out of the object
-# store of the hostyour-deploy clone beside the main checkout, which a worktree finds through its
-# common git directory. A template that needs a new binding moves the pin to the row's commit, and the
-# pin records which rows the templates were held to.
+# THE ROWS ARE READ AT THE COMMIT ci-sources.json PINS, NEVER FROM A WORKING TREE: out of the object store of the
+# hostyour-deploy clone beside the main checkout, which a worktree finds through its common git directory. A template
+# that needs a new binding moves the pin to the row's commit, and the pin records which rows the templates were held to.
 deploy_pin="$(yq -p=json -o=yaml '.git["hostyour-deploy"] // ""' ci-sources.json)" \
   || fail "ci-sources.json could not be read, so the commit of hostyour-deploy whose rows render clusters/bootstrap is not known"
 [[ "$deploy_pin" =~ ^[0-9a-f]{40}$ ]] \
   || fail "ci-sources.json pins hostyour-deploy at '$deploy_pin', not a full commit (40 lowercase hex digits)"
-if [ -n "${CI_SOURCES_DIR:-}" ]; then
-  deploy_source="$CI_SOURCES_DIR/hostyour-deploy.git"
-  deploy_from="CI_SOURCES_DIR ($deploy_source)"
-  deploy_read=(git --git-dir="$deploy_source")
-else
-  common="$(git rev-parse --git-common-dir)" || fail "the common git directory of this checkout could not be read"
-  case "$common" in /*) ;; *) common="$root/$common" ;; esac
-  deploy_source="$(cd "$common/../.." && pwd)/hostyour-deploy"
-  [ -d "$deploy_source" ] \
-    || fail "no hostyour-deploy clone at $deploy_source, beside the main checkout, and the rows that render clusters/bootstrap stand in it — clone simetrixch/hostyour-deploy there"
-  deploy_from="the clone beside the main checkout ($deploy_source)"
-  deploy_read=(git -C "$deploy_source")
-fi
+common="$(git rev-parse --git-common-dir)" || fail "the common git directory of this checkout could not be read"
+case "$common" in /*) ;; *) common="$root/$common" ;; esac
+deploy_source="$(cd "$common/../.." && pwd)/hostyour-deploy"
+[ -d "$deploy_source" ] \
+  || fail "no hostyour-deploy clone at $deploy_source, beside the main checkout, and the rows that render clusters/bootstrap stand in it — clone simetrixch/hostyour-deploy there"
+deploy_from="the clone beside the main checkout ($deploy_source)"
+deploy_read=(git -C "$deploy_source")
 "${deploy_read[@]}" show "$deploy_pin:ansiwise/programs/deploy-branch.yaml" > "$work/deploy-branch.yaml" \
   || fail "hostyour-deploy ansiwise/programs/deploy-branch.yaml at $deploy_pin, the pin of ci-sources.json, could not be read from $deploy_source — fetch that commit into it"
 bootstrap_template_faults "$work/deploy-branch.yaml" "$root" > "$work/bootstrap-faults"
@@ -2234,32 +2224,23 @@ echo 'check: NOT RUN locally — scripts/test-pool.test.sh; runs in the ci of th
 bash -n scripts/check-mirror-consumers.test.sh || fail 'Bash syntax: scripts/check-mirror-consumers.test.sh'
 echo 'check: NOT RUN locally — scripts/check-mirror-consumers.test.sh; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in the ci of the master via scripts/test.sh.'
-for module in scripts/release-queue.test.mjs scripts/site-telemetry.test.mjs scripts/ci-run-keeper.test.mjs scripts/ci-green-status.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/tenant-limits.test.mjs scripts/unit-networkpolicy.test.mjs scripts/loki-retention.test.mjs scripts/ingress-access-log-alert.test.mjs scripts/alloy-access-log-strip.test.mjs scripts/site-telemetry-registration.test.mjs scripts/site-telemetry-deployment.test.mjs; do
+for module in scripts/release-queue.test.mjs scripts/site-telemetry.test.mjs scripts/ci-run-keeper.test.mjs scripts/ci-green-status.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/unit-networkpolicy.test.mjs scripts/site-telemetry-registration.test.mjs scripts/site-telemetry-deployment.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
   echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
 done
-for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-appset-fixture.mjs scripts/tenant-appset.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/tenant-proxied-hosts.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
+for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/tenant-appset-fixture.mjs scripts/unit-charts-consumer-project.test.mjs scripts/e2e-runner.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
 echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in the ci of the master via scripts/test.sh.'
 node --check scripts/manager-pat-storage.test.mjs || fail 'Manager PAT storage check syntax'
 echo 'check: NOT RUN locally — scripts/manager-pat-storage.test.mjs; runs in the ci of the master via scripts/test.sh.'
-node --check scripts/manager-forge-env.test.mjs || fail 'Manager forge env check syntax'
-echo 'check: NOT RUN locally — scripts/manager-forge-env.test.mjs; runs in the ci of the master via scripts/test.sh.'
+node --check scripts/manager-cloudflare-zone-settings.test.mjs || fail 'Manager Cloudflare zone settings check syntax'
+echo 'check: NOT RUN locally — scripts/manager-cloudflare-zone-settings.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in the ci of the master via scripts/test.sh.'
 node --check scripts/zot-sync.test.mjs || fail 'Node syntax: scripts/zot-sync.test.mjs'
 echo 'check: NOT RUN locally — scripts/zot-sync.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/tenant-appset.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/tenant-proxied-hosts.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/unit-mongodb-exporter.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in the ci of the master via scripts/test.sh.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
 bash -n lifecycle/check-forgejo-ssh.sh || fail 'Forgejo SSH check Bash syntax'

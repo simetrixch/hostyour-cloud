@@ -10,7 +10,7 @@ import {join} from 'node:path';
 // no longer exists on its remote and names that on it, and keeps the newest 20 finished ci runs of each build
 // namespace. Its decision is the jq program in clusters/inventories/image-builder/files, run here on planted
 // PipelineRuns and on planted answers of the remote; its script is run against a stand-in kubectl and a
-// stand-in git. The CronJob, its rights and the admission policy clause for it are asserted in
+// stand-in git. The Deployment, its rights and the admission policy clause for it are asserted in
 // scripts/build-contract.test.mjs.
 
 const FILES = 'clusters/inventories/image-builder/files';
@@ -670,7 +670,7 @@ test('the cancellations come before the starts, the notes and the deletions, the
 // The script asks each remote that the decision names, all at once, and hands the answers to the decision. A remote
 // it cannot read is a remote it judges nothing of: a repository that asks for a login (a private one, or one that
 // is gone) is said so and costs the tick nothing, because nothing the keeper does can read it; any other failure
-// fails the tick, so that the CronJob shows it, and the other duties of the tick still run.
+// fails the tick, so that the log and the stalled alert show it, and the other duties of the tick still run.
 const ASKED = (url) => ({args: ['ls-remote', '--symref', url, 'HEAD', 'refs/heads/ci/*'], prompt: '0', protocol: 'https', locale: 'C'});
 // What the keeper says of the changes it made: its lines but the one that names each decision.
 const changesSaid = (result) => result.stdout.split('\n').filter(Boolean).filter((line) => !/^decided \d+ seconds into the tick$/.test(line));
@@ -772,8 +772,8 @@ test('planted defects: a script that may prompt, waits for ever, reads the end o
   assert.equal(gets(mutate('failed=1', 'failed=0'), {answers: failing}).status, 0, 'PLANTED DEFECT: a failure that does not fail the tick');
 });
 
-// The tick decides at the start and then every ten seconds, until the last decision that fits in the Job's deadline, and it reads the
-// remotes once. A run that appears between two decisions is started by the next one, and not by the next tick a minute later. The
+// The tick decides at the start and then every ten seconds, until the last decision that fits in the tick, and it reads the
+// remotes once. A run that appears between two decisions is started by the next one, and not by the next tick. The
 // stand-in clock moves only when the script sleeps, so a tick of fifty seconds takes none.
 const TICK = {CI_KEEPER_TICK_SECONDS: '50', CI_KEEPER_DECISION_SECONDS: '10'};
 const decisionsOf = (result) => result.at.filter(([verb]) => verb === 'get').map(([, seconds]) => seconds);
@@ -787,12 +787,12 @@ test('a tick decides at 0, 10, 20, 30 and 40 seconds, sleeps to each decision, r
   assert.equal(result.asked.length, 1, 'the remote is read at the first decision and not again');
   assert.deepEqual(result.stdout.split('\n').filter((line) => line.startsWith('decided')),
     [0, 10, 20, 30, 40].map((seconds) => `decided ${seconds} seconds into the tick`), 'the log names each decision');
-  assert.ok(decisionsOf(result).at(-1) <= 50 - 10, 'the last decision starts a decision interval before the Job\'s deadline');
+  assert.ok(decisionsOf(result).at(-1) <= 50 - 10, 'the last decision starts a decision interval before the tick ends');
   const mutate = (from, to) => { const script = SCRIPT.replaceAll(from, to); assert.notEqual(script, SCRIPT, `PLANTED DEFECT: the edit finds its clause: ${from}`); return script; };
   const single = runPaged(mutate('[ $((next - began)) -le $((tick - every)) ] || break', 'break'), [live], TICK, LISTER, {answers});
   assert.deepEqual(decisionsOf(single), [0], 'PLANTED DEFECT: a keeper that decides once a tick leaves a start to the next minute');
   const unbound = runPaged(mutate('-le $((tick - every))', '-le $((tick + 100))'), [live], TICK, LISTER, {answers});
-  assert.ok(decisionsOf(unbound).at(-1) > 50, 'PLANTED DEFECT: a keeper that decides past the end of the tick is cut by the Job\'s deadline');
+  assert.ok(decisionsOf(unbound).at(-1) > 50, 'PLANTED DEFECT: a keeper that decides past the end of its tick');
   const rereads = runPaged(mutate('if [ "$round" -eq 0 ]; then read_remotes; fi', 'read_remotes'), [live], TICK, LISTER, {answers});
   assert.equal(rereads.asked.length, 5, 'PLANTED DEFECT: a keeper that asks every remote at every decision asks GitHub five times a minute');
 });

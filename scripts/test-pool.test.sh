@@ -15,8 +15,15 @@ trap 'rm -rf "$work"' EXIT
 repo="$work/repo"
 mkdir -p "$repo/scripts" "$repo/bin" "$repo/suites"
 git -C "$repo" init -q || fail "no repository could be made"
-dependencies="$(grep -c '^  "\(update\|build\) ' "$root/scripts/test.sh")"
-[ "$dependencies" -gt 0 ] || fail "scripts/test.sh lists no chart dependency, so the order of the dependencies and the suites is not held"
+# Planted charts: one in each folder scripts/test.sh walks, each naming a repository, and a vendored one that names none.
+for chart in clusters/inventories/app clusters/units/unit clusters/slaves/slave clusters/argocd; do
+  mkdir -p "$repo/$chart"
+  printf 'apiVersion: v2\nname: %s\ndependencies:\n  - name: common\n    repository: file://../common\n' "${chart##*/}" >"$repo/$chart/Chart.yaml"
+done
+mkdir -p "$repo/clusters/inventories/vendored"
+printf 'apiVersion: v2\nname: vendored\ndependencies:\n  - name: inside\n' >"$repo/clusters/inventories/vendored/Chart.yaml"
+dependencies=4
+updated="$(printf 'update clusters/argocd\nupdate clusters/inventories/app\nupdate clusters/slaves/slave\nupdate clusters/units/unit')"
 
 # A stand-in helm: it logs "<verb> <chart>" and answers 0.
 cat >"$repo/bin/helm" <<'SH'
@@ -69,13 +76,18 @@ run_pool 1
 [ "$(cat "$work/status")" != 0 ] || fail "PLANTED DEFECT: suites run one after the other were not seen red"
 ok "TEST_JOBS=2 runs two suites at once; the planted defect, TEST_JOBS=1, is red because neither suite sees the other"
 
-# 3. Every chart dependency stands before the first suite starts.
+# 3. The dependencies of every chart that names a repository stand before the first suite starts, and a vendored chart is
+# left alone, as scripts/check.sh leaves it.
 suite_file early.sh "[ \"\$(wc -l <'$work/helm.log')\" -eq $dependencies ] || { echo \"only \$(wc -l <'$work/helm.log') of $dependencies chart dependencies stood at the start\"; exit 1; }"
 build_pool suites/early.sh
 run_pool 2
 [ "$(cat "$work/status")" = 0 ] || { cat "$work/out"; fail "the chart dependencies did not all stand before the first suite"; }
-awk '{ print $1 }' "$work/helm.log" | sort -u | grep -qx 'update' || fail "the stand-in helm saw no update"
-ok "all $dependencies chart dependencies are built before a suite starts"
+[ "$(sort "$work/helm.log")" = "$updated" ] || { cat "$work/helm.log"; fail "the charts updated are not the four that name a repository"; }
+ok "the dependencies of all $dependencies charts that name a repository are built before a suite starts, and the vendored chart is left alone"
+sed -i '/repository:.*Chart.yaml/d' "$repo/scripts/test.sh"
+run_pool 2
+grep -qx 'update clusters/inventories/vendored' "$work/helm.log" || fail "PLANTED DEFECT: a loop without the repository guard did not update the vendored chart"
+ok "the planted defect, a loop without the repository guard, updates the vendored chart, which helm refuses"
 
 # 4. A failed suite ends red, prints its whole output after the passed ones and names itself last; the others still ran.
 suite_file bad.sh 'echo first-line-of-bad; echo last-line-of-bad >&2; exit 3'

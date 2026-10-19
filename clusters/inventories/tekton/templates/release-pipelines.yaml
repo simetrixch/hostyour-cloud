@@ -26160,7 +26160,7 @@ data:
   #
   # "disabled", NOT the default "workspaces" — a value this platform depends on, recorded in
   # clusters/inventories/tekton/values-common.yaml because a refresh of this
-  # vendored manifest overwrites it, and checked by scripts/tekton-feature-flags.test.mjs.
+  # vendored manifest overwrites it.
   # "workspaces" adds one affinity-assistant pod to every PipelineRun, and parallel
   # releases filled the build plane's one node with them until no task pod could start.
   coschedule: "disabled"
@@ -26244,7 +26244,7 @@ data:
   # "false", NOT the default "true" of Tekton Pipelines v1.16 and later: it is the value this platform ran
   # on until then, and the build plane's workspaces are volumes owned by root, which the injected
   # init containers would meet as a non-root user. Recorded in
-  # clusters/inventories/tekton/values-common.yaml and checked by scripts/tekton-feature-flags.test.mjs.
+  # clusters/inventories/tekton/values-common.yaml.
   set-security-context: "false"
   # Setting this flag to "true" will set readOnlyRootFilesystem in securityContext for all containers used in TaskRuns and AffinityAssistant.
   set-security-context-read-only-root-filesystem: "false"

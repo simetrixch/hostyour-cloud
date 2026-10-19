@@ -18,8 +18,8 @@
 # front of it; scripts/check.sh refuses a rendered ref pulled from ghcr.io.
 #
 # THE FEATURE FLAGS THIS PLATFORM DEPENDS ON, in the `feature-flags` ConfigMap of
-# templates/release-pipelines.yaml. A re-download overwrites that file verbatim, and
-# scripts/tekton-feature-flags.test.mjs goes red when a refresh reverts either of these two:
+# templates/release-pipelines.yaml. A re-download overwrites that file verbatim, so
+# a refresh must put these two back:
 #   coschedule: "disabled"     no affinity-assistant pod per PipelineRun. Each running PipelineRun
 #                              held one, and parallel releases filled the build plane's node (110
 #                              pods at the time) with them until no task pod could start. This holds only on a

@@ -3,7 +3,7 @@
 # A tick lasts CI_KEEPER_TICK_SECONDS, and inside it the keeper decides every CI_KEEPER_DECISION_SECONDS: a round lists the runs,
 # decides on the list and applies the changes. The rounds start on a schedule of the tick (the first at its start, the next one
 # decision interval after the one before) and not a pause after the last, so a slow round does not push the others later; the last
-# one starts a decision interval before the tick ends, so it finishes inside the Job's deadline.
+# one starts a decision interval before the tick ends, so the tick ends by itself and the loop of the Deployment starts the next.
 # A change that fails is reported and the others still run, because the next round replays the same
 # list: stopping at the first failure would keep every later run for good.
 # The branches of a remote are read before the first decision of the tick, because deleting a branch sends no push that
@@ -17,7 +17,7 @@ apply() {
   esac
 }
 # Seconds git has to answer one remote. All remotes are asked at the same time, so this is also the most
-# that reading them adds to a tick, and the CronJob's activeDeadlineSeconds holds the tick to its minute.
+# that reading them adds to a tick.
 git_timeout=10
 # What the shell reads when `timeout` ended git. The image of the keeper (alpine/k8s) has the BusyBox timeout, which ends
 # its command by SIGTERM and so gives 128 + 15, where the timeout of coreutils would give 124.

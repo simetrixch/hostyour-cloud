@@ -32,7 +32,6 @@ tool https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-linux-a
 tool https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 tool https://github.com/prometheus/prometheus/releases/download/v3.13.1/prometheus-3.13.1.linux-amd64.tar.gz 962b812371aff838d152b6ff2d56fdb7a6396f5542f48ebf73421b9721f0d103
 tool https://github.com/traefik/traefik/releases/download/v3.6.2/traefik_v3.6.2_linux_amd64.tar.gz edc04e863795d741bdba8d70fbc1fd721b16edace829f8f25b0e13a9a34cb134
-tool https://github.com/grafana/loki/releases/download/v3.7.4/loki-linux-amd64.zip 4b4f17fc9416bd2099dac815ede1aac15aa0f8d1a21225e08909796b99aaad59
 tool https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
 chart https://prometheus-community.github.io/helm-charts kube-prometheus-stack 87.21.0 05eae98df0ff6c21877a26a4400780e4bbff248bc3b88694ef8d08b273ed6815
 chart https://prometheus-community.github.io/helm-charts kube-state-metrics 8.0.0 e9a119672c0764580ff8739c11a88dad5a9822607ea10b7e2475b207f8c39f41
