@@ -177,7 +177,8 @@ test('the admission policy admits the release, the ci, the image and the publish
 });
 
 test('the run the ci trigger creates is admitted, is no release, and the trigger takes a push of the default branch or a ci/ branch only', () => {
-  const builder = imageBuilder();
+  // The ci list names the repositories of the table below, so the clauses around it decide each push.
+  const builder = renderChart('image-builder', ['--set-json', 'ciPush.repositories=["digitaplatform/shop","simetrixch/ansiwise-core"]']);
   const byKind = (kind, name) => builder.find((d) => d.kind === kind && d.metadata.name === name);
   const template = byKind('TriggerTemplate', 'ci-push').spec.resourcetemplates[0];
   assert.equal(template.metadata.generateName, '$(tt.params.unit)-ci-');
@@ -202,7 +203,7 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const matches = (name, bodies, edit) => triggerMatches(builder, name, bodies, edit);
   // GitHub sends the repository's default branch with every push (repository.default_branch); `main` here, so a
   // filter that names `master` instead of reading it is seen.
-  // Every repository is public unless a push says otherwise, so the owner clause is what refuses the customer's and the outsider's.
+  // Every repository is public unless a push says otherwise, so the repository clause is what refuses the customer's and the outsider's.
   const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main', visibility: 'public'};
   const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}, default_branch: 'main', visibility: 'public'};
   const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}, default_branch: 'main', visibility: 'public'};
@@ -287,15 +288,24 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   // PLANTED DEFECT: a filter without the deletion guards, and one that takes every ref, each match a push they must not.
   const unguarded = (filter) => filter.replace(/ &&\s+!\(has\(body\.deleted\).*$/s, '');
   assert.ok(matches('github-ci-push', [pushes['a branch deletion']], unguarded)[0].matched);
-  const anyOwner = (filter) => filter.replace(/ && body\.repository\.owner\.login in \[[^\]]*\]$/, '');
-  assert.ok(matches('github-ci-push', [pushes['a branch push of a customer repository']], anyOwner)[0].matched);
-  assert.ok(matches('github-ci-push', [pushes['a branch push of an owner that is not listed']], anyOwner)[0].matched);
-  // The owner of this platform asks for its repositories' checks to run here (ansiwise-*, hostyour-*), so its pushes are listed,
-  // and only its pushes: the trigger takes the GitHub event `push` and no other, so a pull request from a fork starts nothing.
-  const withoutPlatformOwner = (filter) => filter.replace("in ['digitaplatform', 'simetrixch']", "in ['digitaplatform']");
-  assert.notEqual(withoutPlatformOwner(trigger('github-ci-push').filter), trigger('github-ci-push').filter);
-  assert.equal(matches('github-ci-push', [pushes['a branch push of the owner of this platform']], withoutPlatformOwner)[0].matched, false,
-    'PLANTED DEFECT: the list as it stood before runs no check of a repository of this platform');
+  const anyRepository = (filter) => filter.replace(/ && \(body\.repository\.owner\.login \+ '\/' \+ body\.repository\.name\)\.lowerAscii\(\) in \[[^\]]*\]$/, '');
+  assert.notEqual(anyRepository(trigger('github-ci-push').filter), trigger('github-ci-push').filter);
+  assert.ok(matches('github-ci-push', [pushes['a branch push of a customer repository']], anyRepository)[0].matched);
+  assert.ok(matches('github-ci-push', [pushes['a branch push of an owner that is not listed']], anyRepository)[0].matched);
+  // Only a listed repository runs: one of a listed owner that the list does not name has no suites its push gate leaves out.
+  const unlisted = {ref: 'refs/heads/main', before: BEFORE, after: SHA, deleted: false, repository: {...repository, name: 'other', clone_url: 'https://github.com/digitaplatform/other.git'}};
+  assert.equal(matches('github-ci-push', [unlisted])[0].matched, false, 'PLANTED INNOCENT: a public repository of a listed owner that the list does not name runs nothing');
+  assert.ok(matches('github-ci-push', [unlisted], anyRepository)[0].matched, 'PLANTED DEFECT: a filter without the repository clause runs it');
+  // GitHub compares names in any case: the push names Shop, the list digitaplatform/shop.
+  const caseSensitive = (filter) => filter.replace(".lowerAscii() in [", " in [");
+  assert.notEqual(caseSensitive(trigger('github-ci-push').filter), trigger('github-ci-push').filter);
+  assert.equal(matches('github-ci-push', [pushes['a push of the default branch without the deleted field']], caseSensitive)[0].matched, false,
+    'PLANTED DEFECT: a comparison in the case of the push misses the listed Shop');
+  // The trigger takes the GitHub event `push` and no other, so a pull request from a fork starts nothing.
+  const withoutPlatform = (filter) => filter.replace("in ['digitaplatform/shop', 'simetrixch/ansiwise-core']", "in ['digitaplatform/shop']");
+  assert.notEqual(withoutPlatform(trigger('github-ci-push').filter), trigger('github-ci-push').filter);
+  assert.equal(matches('github-ci-push', [pushes['a branch push of the owner of this platform']], withoutPlatform)[0].matched, false,
+    'PLANTED DEFECT: a list without the repository runs no check of it');
   const github = byKind('Trigger', 'github-ci-push').spec.interceptors.find((i) => i.ref.name === 'github').params;
   assert.deepEqual(github.find((p) => p.name === 'eventTypes').value, ['push'], 'the ci trigger takes push events only');
   const withBooksBranch = (filter) => filter.replace(/ &&\s+body\.ref != 'refs\/heads\/[^']*'/, '');
@@ -427,13 +437,13 @@ test('a push of the default branch that only moves release pins starts no ci run
   }
 });
 
-test('the ci trigger needs a list of owners, and an empty or missing list fails the render naming the key', () => {
-  assert.throws(() => renderChart('image-builder', ['--set-json', 'ciPush={"owners":[]}']), /ciPush\.owners is required/);
-  assert.throws(() => renderChart('image-builder', ['--set', 'ciPush=null']), /ciPush\.owners is required/);
-  const filter = renderChart('image-builder', ['--set-json', 'ciPush={"owners":["one","two"],"pinIdentity":{"name":"pin","email":"pin@example.com"},"timeouts":{"pipeline":"2m0s","tasks":"1m0s","finally":"1m0s"}}'])
+test('the ci trigger needs a list of repositories, and an empty or missing list fails the render naming the key', () => {
+  assert.throws(() => renderChart('image-builder', ['--set-json', 'ciPush={"repositories":[]}']), /ciPush\.repositories is required/);
+  assert.throws(() => renderChart('image-builder', ['--set', 'ciPush=null']), /ciPush\.repositories is required/);
+  const filter = renderChart('image-builder', ['--set-json', 'ciPush={"repositories":["One/A","two/b"],"pinIdentity":{"name":"pin","email":"pin@example.com"},"timeouts":{"pipeline":"2m0s","tasks":"1m0s","finally":"1m0s"}}'])
     .find((d) => d.kind === 'Trigger' && d.metadata.name === 'github-ci-push').spec.interceptors
     .find((i) => i.ref.name === 'cel').params.find((p) => p.name === 'filter').value;
-  assert.ok(filter.endsWith("body.repository.owner.login in ['one', 'two']"), 'every listed owner reaches the filter');
+  assert.ok(filter.endsWith("in ['one/a', 'two/b']"), 'every listed repository reaches the filter, in lower case');
   assert.throws(() => renderChart('image-builder', ['--set', 'global.booksCluster=']), /global\.booksCluster is required/);
 });
 
@@ -1501,7 +1511,7 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
 });
 
 test('the bound of a ci run is set in ciPush.timeouts, each of its three clocks is required, and the TriggerTemplate carries them', () => {
-  const ciPush = (timeouts) => ['--set-json', `ciPush=${JSON.stringify({owners: ['one'], pinIdentity: {name: 'pin', email: 'pin@example.com'}, ...(timeouts ? {timeouts} : {})})}`];
+  const ciPush = (timeouts) => ['--set-json', `ciPush=${JSON.stringify({repositories: ['one/a'], pinIdentity: {name: 'pin', email: 'pin@example.com'}, ...(timeouts ? {timeouts} : {})})}`];
   const rendered = (timeouts) => renderChart('image-builder', ciPush(timeouts)).find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push')
     .spec.resourcetemplates[0].spec.timeouts;
   const given = {pipeline: '11m0s', tasks: '7m0s', finally: '3m0s'};

@@ -1,6 +1,6 @@
 {{- if .Values.eventListener.enabled }}
-{{- $owners := (default (dict) .Values.ciPush).owners -}}
-{{- if not $owners }}{{ fail "image-builder: ciPush.owners is required: list the GitHub owners whose repositories run their check here" }}{{ end -}}
+{{- $repositories := (default (dict) .Values.ciPush).repositories -}}
+{{- if not $repositories }}{{ fail "image-builder: ciPush.repositories is required: list the repositories, as <owner>/<repository>, whose scripts/test.sh runs here" }}{{ end -}}
 {{- $pinIdentity := required "image-builder: ciPush.pinIdentity is required: the git author of the release pins, which the ci trigger does not run again" (default (dict) .Values.ciPush).pinIdentity -}}
 {{- $pinName := required "image-builder: ciPush.pinIdentity.name is required" $pinIdentity.name -}}
 {{- $pinEmail := required "image-builder: ciPush.pinIdentity.email is required" $pinIdentity.email -}}
@@ -15,19 +15,20 @@
 {{- /*
 A GitHub push of the DEFAULT BRANCH or of a `ci/` BRANCH → the unit's own ci
 pipeline. Such a push fires ONE PipelineRun `<unit>-ci-…` in the unit's build
-namespace, which runs the repository's scripts/check.sh at the pushed commit,
-so a red check is seen on the build plane and not only on the machine of
-whoever pushed.
+namespace, which runs the repository's scripts/test.sh at the pushed commit:
+the suites its push gate does not run, so their red is seen on the build plane.
 
 ONLY THE DEFAULT BRANCH runs by itself. Every other branch is judged by the
-push gate on the machine that pushes it, which runs the same check, so a run
-per push of an issue branch would only repeat it. The default branch is read
+push gate on the machine that pushes it, and its suites run here once it lands
+on the default branch or is pushed as a `ci/` branch. The default branch is read
 from the push (repository.default_branch), never named here, because each
 repository names its own.
 
 A `ci/` BRANCH is the deliberate run of any other commit, such as a planted
-defect pushed as `ci/<issue>-planted-<n>` to show that the check goes red on
-the build plane. The prefix is matched from refs/heads/, so a branch that only
+defect pushed as `ci/<issue>-planted-<n>` to show that a suite of
+scripts/test.sh goes red on the build plane. A defect that scripts/check.sh must
+catch is shown red by running scripts/check.sh on the planted tree, on the
+machine, since the ci no longer runs it. The prefix is matched from refs/heads/, so a branch that only
 contains `ci/` further on runs nothing.
 
 It is NOT a release. The run is created waiting (spec.status PipelineRunPending)
@@ -42,16 +43,17 @@ ONLY A PUBLIC REPOSITORY runs a check here. A private repository's push gate on 
 machine is its only check, and scripts/check.sh holds everything that check has to
 prove, so a run on the build plane would only repeat it and hold the build node. The
 filter reads repository.visibility of the push, at the moment of the push, so a
-repository that turns public starts running and one that turns private stops, with no
-list to keep. It is fail closed: a payload without the field, and a value other than
+listed repository that turns private stops at once. It is fail closed: a payload without the field, and a value other than
 `public` (`private`, `internal`), starts nothing. The release of a private repository
 is untouched, because the deploy and publish triggers below do not read it.
 
-ONLY THE LISTED OWNERS (ciPush.owners): a repository's check is its owner's code,
-run here with build-npmrc in reach, and only the listed owners have
-asked for it to run on this build plane. A push from any other owner, a customer
-repository registered for its releases among them, matches nothing. The deploy
-trigger has no such list: every registered repository may still be released.
+ONLY THE LISTED REPOSITORIES (ciPush.repositories, <owner>/<repository>): a
+repository's suites are its owner's code, run here with build-npmrc in reach, and
+only a listed repository has suites its push gate does not run. A push of any
+other repository, a customer repository registered for its releases among them,
+matches nothing. The names are compared in lower case, as GitHub compares them.
+The deploy trigger has no such list: every registered repository may still be
+released.
 
 ROUTING is the deploy trigger's: the unit is body.repository.name, the name
 invariant makes namespace `<unit>-build` and pipelineRef `<unit>-ci` derivable
@@ -156,7 +158,7 @@ spec:
             c.author.name == {{ $pinName | squote }} && c.author.email == {{ $pinEmail | squote }} &&
             c.committer.name == {{ $pinName | squote }} && c.committer.email == {{ $pinEmail | squote }} &&
             c.modified.all(path, path.matches(r'^clusters/inventories/[^/]+/values-({{ $stages | uniq | sortAlpha | join "|" }})[.]yaml$')))) &&
-            body.repository.owner.login in [{{ range $index, $owner := $owners }}{{ if $index }}, {{ end }}{{ $owner | squote }}{{ end }}]
+            (body.repository.owner.login + '/' + body.repository.name).lowerAscii() in [{{ range $index, $repository := $repositories }}{{ if $index }}, {{ end }}{{ $repository | lower | squote }}{{ end }}]
   bindings:
     - ref: github-ci-push-binding
   template:

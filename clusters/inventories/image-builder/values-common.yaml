@@ -50,13 +50,13 @@ priorityClasses:
     name: image-builder-ci-report
     value: -100
 
-# The GitHub owners whose PUBLIC repositories run their scripts/check.sh on the build plane for every
-# push of the default branch (except one that only moves release pins) or of a `ci/` branch (templates/triggers/github-ci-push.yaml).
-# A private repository runs nothing here, whatever its owner: the trigger reads the visibility of the push. A repository of any
-# other owner is released through the deploy trigger as before, but its check never runs here. Required: an empty list fails
-# the render. digitaplatform is the owner of the product repositories and simetrixch the owner of
-# this platform's own (hostyour-*, ansiwise-*): each is an organisation of the operator, and a push
-# needs write access to its repositories.
+# The PUBLIC repositories, as <owner>/<repository>, whose scripts/test.sh runs on the build plane for every push of the
+# default branch (except one that only moves release pins) or of a `ci/` branch (templates/triggers/github-ci-push.yaml).
+# A repository is listed only while it has suites its push gate does not run: the push gate runs scripts/check.sh before the
+# push, so a run of a repository without such suites would hold the build node for nothing. A private repository runs nothing
+# here, listed or not: the trigger reads the visibility of the push. Every other repository is released through the deploy
+# trigger as before, but its check never runs here. Required: an empty list fails the render. Both repositories belong to
+# simetrixch, an organisation of the operator, and a push needs write access to them.
 #
 # WHO MOVES A RELEASE PIN. A release pins the tag of the image it built by committing it to the default branch
 # as this identity, which the bump of clusters/inventories/consumer-build sets with git config
@@ -80,9 +80,9 @@ priorityClasses:
 #             own so that a run that used up its tasks budget still reports. At least the cap of the report task (5 minutes).
 #   pipeline  55m: tasks plus finally: the run ends at most this long after its start.
 ciPush:
-  owners:
-    - digitaplatform
-    - simetrixch
+  repositories:
+    - simetrixch/hostyour-cloud
+    - simetrixch/hostyour-deploy
   pinIdentity:
     name: image-builder
     email: image-builder@platform
