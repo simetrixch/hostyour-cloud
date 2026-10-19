@@ -28,7 +28,7 @@ app:
     # restart it. The value is "config-" and 12 hex digits of the git hash of the
     # config.json every stage renders. scripts/check.sh refuses any other value and
     # prints the one to set.
-    hostyour.cloud/config-revision: "config-beba28a38bf6"
+    hostyour.cloud/config-revision: "config-3a7017f8a577"
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
   # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
   # With RollingUpdate, the new pod fails to start until the old pod
@@ -181,7 +181,7 @@ ingress:
 # (ghcr.io/puppeteer/puppeteer does). Without compat zot refuses such a manifest, and converting it to
 # OCI would give it another digest. scripts/check.sh refuses a config.json without it.
 #
-# docker.io pull-through cache (extensions.sync, onDemand): a pull of any
+# docker.io pull-through cache (extensions.sync, onDemand): a pull of a Docker Hub
 # repo NOT found locally triggers an on-demand fetch from registry-1.docker.io,
 # cached under the SAME repo name (library/redis, ...). Each slave's containerd
 # mirrors docker.io -> this Zot (a hosts.toml the installer writes on the node),
@@ -190,6 +190,32 @@ ingress:
 # fires on a local miss); the retention policy below also evicts stale cached
 # upstream tags. Requires a Zot image built with the sync extension (the
 # official project-zot images bundle it, and the mirror holds the official one).
+#
+# THE SYNC ASKS DOCKER HUB ONLY FOR THE REPOSITORIES LISTED IN content BELOW. Without a content filter
+# every local miss goes upstream, the repositories the platform publishes itself too: Hub answers a name
+# it does not know with "unauthorized", zot v2.1.22 turns that into a 503, and a publish step that asks
+# whether a version of npm/<owner>/<name> or <owner>/<repository> exists refuses on it instead of reading a
+# 404. A name no content entry matches is answered 404 at once: SyncImage
+# (pkg/extensions/sync/service.go) returns ErrSyncImageFilteredOut, which
+# pkg/extensions/sync/client_error.go counts as a plain 404. GetContentByLocalRepo
+# (pkg/extensions/sync/content.go) globs each prefix with doublestar and the first entry that matches
+# wins, so one entry per repository is a list. A Hub name and the release-binaries repository
+# <owner>/<repository> have the same shape, so no prefix tells them apart: the Hub names are listed.
+# library/** is every official image; every other Hub image is named, never <namespace>/*.
+#
+# WHERE THE LIST COMES FROM, checked on 2026-10-19: (1) bash scripts/list-mirror-images.sh --hub, the
+# repository of every `image:` this tree renders on Docker Hub (every chart at dev, test and prod; the
+# build chart for both kinds of unit; the bootstrap releases); (2) the docker.io images running on the
+# master and on apps1 to apps8 (pods, init containers), which add the microk8s addons cdkbot/hostpath-
+# provisioner, coredns/coredns and calico/*; (3) the Hub repositories already cached in the PROD zot's
+# storage, which add library/alpine, library/debian, library/nginx, library/node and library/traefik,
+# the base images of builds, and nothing outside (1) and (2) beside them; (4) the digita-deploy charts
+# name no Hub image: each of their images is a flat build name on this registry. A Containerfile of a
+# consumer that starts FROM a Hub image off this list gets a 404 from the build plane, whose
+# registries.conf drop-in (image-builder tasks/buildah-build-push.yaml) maps docker.io to this registry
+# alone; a node falls back to Docker Hub itself when this registry does not answer
+# (hostyour-deploy ansiwise/programs/deploy-cluster.yaml, write_containerd_registry_mirror). A new Hub
+# image of this tree is listed in the same change: scripts/zot-sync.test.mjs fails on one that is not.
 #
 # credentialsFile IS WRITTEN ONLY WHERE THE FILE WILL EXIST. Zot reads
 # ONE file for EVERY upstream, and a path that is named and absent fails credential
@@ -427,6 +453,30 @@ configmap:
                 {
                   "urls": ["https://registry-1.docker.io"],
                   "onDemand": true,
+                  "content": [
+                    {"prefix": "library/**"},
+                    {"prefix": "alpine/git"},
+                    {"prefix": "alpine/k8s"},
+                    {"prefix": "boky/postfix"},
+                    {"prefix": "calico/cni"},
+                    {"prefix": "calico/kube-controllers"},
+                    {"prefix": "calico/node"},
+                    {"prefix": "cdkbot/hostpath-provisioner"},
+                    {"prefix": "coredns/coredns"},
+                    {"prefix": "dbgate/dbgate"},
+                    {"prefix": "grafana/alloy"},
+                    {"prefix": "grafana/grafana"},
+                    {"prefix": "grafana/loki"},
+                    {"prefix": "grafana/tempo"},
+                    {"prefix": "hashicorp/vault"},
+                    {"prefix": "nginxinc/nginx-unprivileged"},
+                    {"prefix": "oliver006/redis_exporter"},
+                    {"prefix": "percona/mongodb_exporter"},
+                    {"prefix": "pgsty/mc"},
+                    {"prefix": "pgsty/silo"},
+                    {"prefix": "valkey/valkey"},
+                    {"prefix": "zricethezav/gitleaks"}
+                  ],
                   "tlsVerify": true,
                   "maxRetries": 3,
                   "retryDelay": "5m",

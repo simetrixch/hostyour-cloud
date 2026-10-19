@@ -1214,6 +1214,21 @@ done
   || fail "pinned_tag_fault takes an override whose tag its chart no longer names"
 echo "check: ${#pinned_tags[@]} overrides carry a digest on their chart's own tag; the check refuses a planted chart that names another."
 
+# HEADLAMP IS GIVEN ITS OIDC SCOPES ONLY WHERE THE VALUES SAY THE EXTERNAL SECRET HAS THEM. From chart 0.46.0 on,
+# an external secret without externalSecret.hasScopes loses the container argument -oidc-scopes, so the scopes
+# the values name (OIDC_SCOPES) are never passed and the sign-in asks the identity provider for Headlamp's own.
+# The planted defect: the key false. The innocent case is the trunk's values.
+headlamp_scopes_fault() { # <extra helm arguments...> -> what is wrong, or nothing
+  helm template headlamp "$headlamp_address/headlamp" --version "$headlamp_version" -f clusters/bootstrap/headlamp/values.tpl "$@" \
+    | yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[].args[]' | grep -qxF -- '-oidc-scopes=$(OIDC_SCOPES)' \
+    || echo "the Headlamp container of chart $headlamp_version is given no -oidc-scopes argument by clusters/bootstrap/headlamp/values.tpl"
+}
+[ -z "$(headlamp_scopes_fault)" ] \
+  || fail "$(headlamp_scopes_fault) — set config.oidc.externalSecret.hasScopes to true there"
+[ -n "$(headlamp_scopes_fault --set config.oidc.externalSecret.hasScopes=false)" ] \
+  || fail "headlamp_scopes_fault takes a Headlamp chart rendered without the -oidc-scopes argument"
+echo "check: the Headlamp container is given -oidc-scopes; the check refuses a planted external secret without hasScopes."
+
 # ── The charts a cold owner's master renders before zot answers ───────────────────────────────
 # AN INVENTORY WHOSE SYNC WAVE IS AT MOST THE REGISTRY'S renders before zot serves, so a chart it fetches from
 # zot never arrives, and one it fetches from ghcr.io makes a cold start wait on GitHub. Its dependencies name
@@ -1949,6 +1964,8 @@ echo 'check: NOT RUN locally — scripts/manager-pat-storage.test.mjs; runs in t
 node --check scripts/manager-forge-env.test.mjs || fail 'Manager forge env check syntax'
 echo 'check: NOT RUN locally — scripts/manager-forge-env.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in the ci of the master via scripts/test.sh.'
+node --check scripts/zot-sync.test.mjs || fail 'Node syntax: scripts/zot-sync.test.mjs'
+echo 'check: NOT RUN locally — scripts/zot-sync.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in the ci of the master via scripts/test.sh.'
