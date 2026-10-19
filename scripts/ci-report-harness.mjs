@@ -57,16 +57,22 @@ export const taskRun = (task, {pod = `${RUN}-${task}-pod`, container, ok = true,
 
 export const numbered = (count) => Array.from({length: count}, (_, i) => `line ${i + 1}`).join('\n') + '\n';
 
-// A cluster is the run, its TaskRuns by task name, and the logs by pod name.
-export const SUCCESSFUL = {
-  gate: taskRun('gate', {}), clone: taskRun('clone', {}),
-  'describe-commit': taskRun('describe-commit', {ok: true, results: {subject: 'Fix the rounding of VAT', author: 'Ada <ada@example.com>'}, steps: [{name: 'describe', container: 'step-describe', terminated: {exitCode: 0}}]}),
-  'fetch': taskRun('fetch', {}), check: taskRun('check', {}),
-};
-export const withFailure = (task, options = {}, rest = SUCCESSFUL) => ({...rest, [task]: taskRun(task, {ok: false, ...options})});
-export const onlyBefore = (task, taskRuns) => {
-  const order = ['gate', 'clone', 'describe-commit', 'fetch', 'check'];
-  return Object.fromEntries(Object.entries(taskRuns).filter(([name]) => order.indexOf(name) <= order.indexOf(task)));
+// A cluster is the run, its TaskRuns by task name, and the logs by pod name. The ci pipeline has one task, `ci`, whose steps run in
+// one pod, in this order. A failed step is the first whose container exited with a code other than 0; the steps after it never
+// started and Tekton reports them as failed too. A step that is still running when its task is cancelled or times out has no end.
+export const STEPS = ['gate', 'earlier-green', 'commit-status-pending', 'clone', 'describe', 'branches', 'list-sources', 'list-tools', 'sources', 'hand-over', 'check'];
+const DESCRIBED = {subject: 'Fix the rounding of VAT', author: 'Ada <ada@example.com>'};
+const stepState = (name, terminated) => ({name, container: `step-${name}`, ...(terminated ? {terminated} : {})});
+export const SUCCESSFUL = {ci: taskRun('ci', {results: DESCRIBED, steps: STEPS.map((name) => stepState(name, {exitCode: 0, reason: 'Completed'}))})};
+// The step `step` of the task `ci` failed; `running` leaves it without an end, as a timeout or a cancel does. The describe step
+// writes the subject and the author of the commit, so a step after it keeps them in the results of the task.
+export const withFailure = (step, {running = false, exitCode = 1, results, ...options} = {}) => {
+  const at = STEPS.indexOf(step);
+  const steps = STEPS.map((name, i) => (i < at ? stepState(name, {exitCode: 0, reason: 'Completed'})
+    : i === at ? stepState(name, running ? undefined : {exitCode, reason: 'Error'})
+      : stepState(name, running ? undefined : {exitCode: 1, reason: 'Error'})));
+  return {ci: taskRun('ci', {ok: false, steps, results: results ?? (at > STEPS.indexOf('describe') ? DESCRIBED : {}),
+    message: `"step-${step}" exited with code ${exitCode}`, ...options})};
 };
 
 export const execute = ({taskRuns, logs = {}, codes = {}, postCode, env = {}}) => {

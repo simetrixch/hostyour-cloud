@@ -1,7 +1,8 @@
 {{- /*
-THE CI RUN KEEPER. Every push of a default or `ci/` branch creates one ci run, and each run holds a PersistentVolumeClaim
-of workspaces.sourceSize on the one build node until the run is deleted. This CronJob does these
-things each minute, to the ci runs only (the runs that carry image-builder.io/ci):
+THE CI RUN KEEPER. Every push of a default or `ci/` branch creates one ci run, and each finished run keeps its PipelineRun and
+TaskRuns on the master until it is deleted. This CronJob starts a tick each minute, and the tick decides every
+ciRunKeeper.decisionSeconds for ciRunKeeper.tickSeconds (five decisions, at 0, 10, 20, 30 and 40 seconds), and does these
+things at each decision, to the ci runs only (the runs that carry image-builder.io/ci):
 
   - it cancels a run that has not finished while a newer push to the same branch has a run of its own,
     because the newer push replaces it. The branch travels on each run as the annotation
@@ -18,7 +19,8 @@ things each minute, to the ci runs only (the runs that carry image-builder.io/ci
     seconds; so the namespace image-builder needs a way out to github.com, and it holds no secret for it,
     which is why only public repositories run a check here (templates/triggers/github-ci-push.yaml). The
     default branch is never cancelled this way, and neither is a run of the first two minutes, which the
-    remote may not list yet. A remote that cannot be read is judged on nothing: a failure to read it fails
+    remote may not list yet. The remotes are read at the first decision of a tick and their answers serve
+    its other decisions. A remote that cannot be read is judged on nothing: a failure to read it fails
     the tick after the rest of the tick is done, so that the failed Job and the stalled alert show it, and
     a repository that asks for a login (a private one, or one that is gone) is named in the log and costs
     the tick nothing.
@@ -30,9 +32,10 @@ things each minute, to the ci runs only (the runs that carry image-builder.io/ci
     build node: the cap is what scripts/build-contract.test.mjs adds up. A run that stays waiting carries
     the annotation image-builder.io/queued-behind with the reason (a ci run of its unit runs, or all
     slots are in use), and a waiting run that a newer push replaces is cancelled and never started. A start
-    takes up to a minute, the CronJob's period, and nothing starts while this CronJob does not run.
-  - it deletes the finished runs of a build namespace beyond the newest 20. Kubernetes deletes a run's
-    claim with it, through the claim's owner reference.
+    takes up to ciRunKeeper.decisionSeconds inside a tick, and up to the pause between two ticks (about 20 seconds)
+    across the end of one; nothing starts while this CronJob does not run.
+  - it deletes the finished runs of a build namespace beyond the newest 20, so the newest twenty keep recent failures
+    readable in the Tekton Dashboard.
 
 files/ci-run-keeper.jq decides; files/ci-run-keeper.sh applies; scripts/ci-run-keeper.test.mjs runs
 the decision on planted runs. Release runs carry no image-builder.io/ci label and are never listed; the
@@ -47,9 +50,10 @@ image-builder.io/branch-deleted, to
 dropping the waiting flag, and to its own annotation image-builder.io/queued-behind, and a delete by it to a finished run of the unit's own ci
 Pipeline.
 
-ITS OWN END. The Job gets 50 seconds (activeDeadlineSeconds), and no retry: the next minute is the retry. A tick that fails shows as a
-failed Job, and a keeper whose last success is more than ten minutes old, or that has none, raises the alert
-CIRunKeeperStalled (values-common.yaml, monitoring).
+ITS OWN END. The Job gets ciRunKeeper.tickSeconds (activeDeadlineSeconds), and no retry: the next minute is the retry. The
+last decision of a tick starts ciRunKeeper.decisionSeconds before the Job's deadline, so a tick ends by itself as long as
+a decision takes less than that; one that takes longer is cut by the deadline, and the next tick replays its changes. A tick that fails shows as a failed Job, and a keeper whose last success is more than ten
+minutes old, or that has none, raises the alert CIRunKeeperStalled (values-common.yaml, monitoring).
 */ -}}
 {{- if .Values.eventListener.enabled }}
 apiVersion: v1
@@ -116,13 +120,13 @@ metadata:
 spec:
   schedule: "* * * * *"
   concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 50
+  startingDeadlineSeconds: {{ required "image-builder: ciRunKeeper.tickSeconds is required" .Values.ciRunKeeper.tickSeconds }}
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 50
+      activeDeadlineSeconds: {{ .Values.ciRunKeeper.tickSeconds }}
       ttlSecondsAfterFinished: 120
       template:
         metadata:
@@ -145,6 +149,10 @@ spec:
                   value: /keeper
                 - name: CI_MAX_RUNNING
                   value: {{ required "image-builder: ciRunKeeper.maxRunning is required" .Values.ciRunKeeper.maxRunning | quote }}
+                - name: CI_KEEPER_TICK_SECONDS
+                  value: {{ .Values.ciRunKeeper.tickSeconds | quote }}
+                - name: CI_KEEPER_DECISION_SECONDS
+                  value: {{ required "image-builder: ciRunKeeper.decisionSeconds is required" .Values.ciRunKeeper.decisionSeconds | quote }}
                 # kubectl keeps its discovery cache under HOME; the root filesystem is read only.
                 - name: HOME
                   value: /tmp

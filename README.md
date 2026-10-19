@@ -95,8 +95,14 @@ The master's ci is the Tekton pipeline `hostyour-cloud-ci`
 (`clusters/inventories/consumer-build/templates/pipeline-ci.yaml`). It runs those checks and
 `bash scripts/test.sh` on every push of the default branch that does more than move release pins: the check
 step installs the tools `ci-tools.json` names, then runs `scripts/check.sh` and `scripts/test.sh`.
-The test entry point runs `lifecycle/test.sh` and `scripts/pipeline-release.test.sh`.
-Run tests only on a remote runner.
+The test entry point runs its suites `TEST_JOBS` at a time (4 unless set), after it has built the chart
+dependencies they render, and prints a failed suite in full. Run tests only on a remote runner.
+
+A run is one task, `ci`, in one pod, whose steps run one after the other and share an `emptyDir` of
+`ciScratch.size`; the run carries no workspace. A commit whose head already carries a green `tekton/ci` is not checked
+again: the step `earlier-green` ends the run with the result `earlier-run`, and the status keeps naming the run that did
+the check. The claim `ci-cache` of the unit (`ciCache.size`, evicted by last access when the check step ends) keeps the
+tool archives, the Go, pnpm, npm and pub caches and the helm cache between runs.
 
 Read its runs on the master as the PipelineRuns `hostyour-cloud-ci-*` in the namespace `hostyour-cloud-build`,
 or as the commit status `tekton/ci` on the commit

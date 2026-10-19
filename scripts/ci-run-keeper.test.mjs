@@ -283,7 +283,7 @@ test('planted defect: a change that fails is reported, the next one still runs, 
       + 'echo "$*" >> "$LOG"\n[ "$(wc -l < "$LOG")" -gt 1 ]\n');
     chmodSync(join(bin, 'kubectl'), 0o755);
     const result = spawnSync('bash', [`${FILES}/ci-run-keeper.sh`], {encoding: 'utf8',
-      env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, KEEPER_DIR: FILES, CI_MAX_RUNNING: String(MAX)}});
+      env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, KEEPER_DIR: FILES, CI_MAX_RUNNING: String(MAX), ...ONE_ROUND}});
     assert.equal(result.status, 1);
     assert.match(result.stderr, /could not change shop-build\/shop-ci-/);
     const calls = readFileSync(log, 'utf8').trim().split('\n');
@@ -298,6 +298,8 @@ test('planted defect: a change that fails is reported, the next one still runs, 
   }
 });
 
+// A tick of one round: the tick is as long as one decision. The script tests of one change run it so; the loop is run by its own tests.
+const ONE_ROUND = {CI_KEEPER_TICK_SECONDS: '10', CI_KEEPER_DECISION_SECONDS: '10'};
 test('the script starts a waiting run with a json patch, and refuses to run without the cap', () => {
   const bin = mkdtempSync(join(tmpdir(), 'ci-run-keeper-'));
   try {
@@ -307,7 +309,7 @@ test('the script starts a waiting run with a json patch, and refuses to run with
     writeFileSync(join(bin, 'kubectl'), '#!/usr/bin/env bash\nif [ "$1" = get ]; then cat "$RUNS"; exit 0; fi\necho "$*" >> "$LOG"\n');
     chmodSync(join(bin, 'kubectl'), 0o755);
     const env = {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, KEEPER_DIR: FILES};
-    const result = spawnSync('bash', [`${FILES}/ci-run-keeper.sh`], {encoding: 'utf8', env: {...env, CI_MAX_RUNNING: String(MAX)}});
+    const result = spawnSync('bash', [`${FILES}/ci-run-keeper.sh`], {encoding: 'utf8', env: {...env, CI_MAX_RUNNING: String(MAX), ...ONE_ROUND}});
     assert.equal(result.status, 0, result.stderr);
     const calls = readFileSync(log, 'utf8').trim().split('\n');
     assert.equal(calls.length, 2);
@@ -317,6 +319,11 @@ test('the script starts a waiting run with a json patch, and refuses to run with
     const without = spawnSync('bash', [`${FILES}/ci-run-keeper.sh`], {encoding: 'utf8', env});
     assert.notEqual(without.status, 0);
     assert.match(without.stderr, /CI_MAX_RUNNING is required/);
+    for (const name of Object.keys(ONE_ROUND)) {
+      const unset = spawnSync('bash', [`${FILES}/ci-run-keeper.sh`], {encoding: 'utf8', env: {...env, CI_MAX_RUNNING: String(MAX), ...ONE_ROUND, [name]: ''}});
+      assert.notEqual(unset.status, 0, `PLANTED DEFECT: a keeper without ${name} would loop by a default nobody chose`);
+      assert.match(unset.stderr, new RegExp(`${name} is required`));
+    }
   } finally {
     rmSync(bin, {recursive: true, force: true});
   }
@@ -325,10 +332,37 @@ test('the script starts a waiting run with a json patch, and refuses to run with
 // A stand-in kubectl that serves the planted runs as the API server pages a list: limit runs a page, and a
 // continue token holding a "+", which reaches it intact only when the script encodes the token. FAIL_PAGE
 // refuses that page, as an API server that times out would.
+// Every call is written down with the time of the stand-in clock (see FAKE_DATE) in $LOG.at. A patch or a delete changes the runs
+// the next list serves, as the API server does, so a keeper that decides twice does not start a run twice. RUNS_LATER holds runs
+// that appear in the list from the clock LATER_AT on.
 const PAGED_KUBECTL = `#!/usr/bin/env node
 const fs = require('fs');
-const args = process.argv.slice(2);
-if (args[0] !== 'get') { fs.appendFileSync(process.env.LOG, args.join(' ') + '\\n'); process.exit(0); }
+const args = process.argv.slice(2), env = process.env;
+const clock = Number(fs.readFileSync(env.LOG + '.clock', 'utf8'));
+fs.appendFileSync(env.LOG + '.at', args[0] + ' ' + clock + '\\n');
+const state = () => JSON.parse(fs.readFileSync(env.RUNS, 'utf8'));
+const merge = (into, patch) => { for (const [key, value] of Object.entries(patch)) { into[key] = value !== null && typeof value === 'object' && !Array.isArray(value) ? merge(into[key] ?? {}, value) : value; } return into; };
+if (env.RUNS_LATER && !fs.existsSync(env.LOG + '.later') && clock >= Number(env.LATER_AT)) {
+  fs.writeFileSync(env.RUNS, JSON.stringify({items: [...state().items, ...JSON.parse(fs.readFileSync(env.RUNS_LATER, 'utf8')).items]}));
+  fs.writeFileSync(env.LOG + '.later', '');
+}
+if (args[0] !== 'get') {
+  fs.appendFileSync(env.LOG, args.join(' ') + '\\n');
+  const at = args.indexOf('-n'), type = args.indexOf('--type');
+  const namespace = args[at + 1], name = args[at + 2];
+  const doc = state();
+  const target = doc.items.find((r) => r.metadata.namespace === namespace && r.metadata.name === name);
+  if (args[0] === 'delete') doc.items = doc.items.filter((r) => r !== target);
+  else if (target && args[type + 1] === 'merge') merge(target, JSON.parse(args[args.indexOf('-p') + 1]));
+  else if (target && args[type + 1] === 'json') {
+    for (const op of JSON.parse(args[args.indexOf('-p') + 1])) {
+      if (op.path === '/spec/status') delete target.spec.status;
+      else delete target.metadata.annotations[op.path.split('/').pop().replace('~1', '/')];
+    }
+  }
+  fs.writeFileSync(env.RUNS, JSON.stringify(doc));
+  process.exit(0);
+}
 fs.appendFileSync(process.env.LOG + '.get', args.join(' ') + '\\n');
 const url = new URL(args[2], 'https://api.invalid');
 const token = url.searchParams.get('continue');
@@ -362,8 +396,19 @@ exec "$@"
 // The answer of a remote to `git ls-remote --symref <url> HEAD 'refs/heads/ci/*'`: its default branch and its `ci/` branches.
 const listing = (defaultBranch, ...branches) => ({stdout: [`ref: refs/heads/${defaultBranch}\tHEAD`, `${'a'.repeat(40)}\tHEAD`,
   ...branches.map((name) => `${'b'.repeat(40)}\trefs/heads/${name}`)].join('\n') + '\n'});
+// The clock of a tick, so that a tick of 50 seconds takes none: `date +%s` reads $LOG.clock and `sleep` moves it by what it was asked
+// to wait, and writes that down in $LOG.sleep. Anything else the script asks `date` is an error.
+const FAKE_DATE = `#!/usr/bin/env bash
+[ "$1" = +%s ] || { echo "date: unexpected $*" >&2; exit 2; }
+cat "$LOG.clock"
+`;
+const FAKE_SLEEP = `#!/usr/bin/env bash
+echo "$1" >> "$LOG.sleep"
+echo $(( $(cat "$LOG.clock") + $1 )) > "$LOG.clock"
+`;
 const LOGIN = {status: 128, stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n"};
-const runPaged = (script, items, env = {}, lister = LISTER, {answers = {}} = {}) => {
+// later: runs that appear in the list when the clock has moved `after` seconds.
+const runPaged = (script, items, env = {}, lister = LISTER, {answers = {}, later} = {}) => {
   const bin = mkdtempSync(join(tmpdir(), 'ci-run-keeper-paged-'));
   try {
     const runs = join(bin, 'runs.json'), log = join(bin, 'log'), file = join(bin, 'ci-run-keeper.sh');
@@ -371,19 +416,29 @@ const runPaged = (script, items, env = {}, lister = LISTER, {answers = {}} = {})
     writeFileSync(log, '');
     writeFileSync(`${log}.git`, '');
     writeFileSync(`${log}.timeout`, '');
+    writeFileSync(`${log}.at`, '');
+    writeFileSync(`${log}.sleep`, '');
+    const began = Math.floor(Date.now() / 1000);
+    writeFileSync(`${log}.clock`, String(began));
     writeFileSync(join(bin, 'answers.json'), JSON.stringify(answers));
+    if (later) writeFileSync(join(bin, 'later.json'), JSON.stringify({items: later.items}));
     writeFileSync(join(bin, 'kubectl'), PAGED_KUBECTL);
     writeFileSync(join(bin, 'git'), GIT_STUB);
     writeFileSync(join(bin, 'timeout'), TIMEOUT_STUB);
-    for (const tool of ['kubectl', 'git', 'timeout']) chmodSync(join(bin, tool), 0o755);
+    writeFileSync(join(bin, 'date'), FAKE_DATE);
+    writeFileSync(join(bin, 'sleep'), FAKE_SLEEP);
+    for (const tool of ['kubectl', 'git', 'timeout', 'date', 'sleep']) chmodSync(join(bin, tool), 0o755);
     writeFileSync(file, script);
     writeFileSync(join(bin, 'list-pipelineruns.sh'), lister);
     writeFileSync(join(bin, 'ci-run-keeper.jq'), PROGRAM);
     const result = spawnSync('bash', [file], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
       env: {...process.env, PATH: bin + ':' + process.env.PATH, RUNS: runs, LOG: log, KEEPER_DIR: bin, CI_MAX_RUNNING: String(MAX),
-        GIT_ANSWERS: join(bin, 'answers.json'), ...env}});
+        GIT_ANSWERS: join(bin, 'answers.json'), ...ONE_ROUND, ...(later ? {RUNS_LATER: join(bin, 'later.json'), LATER_AT: String(began + later.after)} : {}), ...env}});
     const lines = (path) => readFileSync(path, 'utf8').split('\n').filter(Boolean);
-    return {...result, calls: lines(log), gets: lines(`${log}.get`), asked: lines(`${log}.git`).map((l) => JSON.parse(l)), bounds: lines(`${log}.timeout`)};
+    // The seconds into the tick of each call to the API server, as `<verb> <seconds>`.
+    const at = lines(`${log}.at`).map((line) => { const [verb, clock] = line.split(' '); return [verb, Number(clock) - began]; });
+    return {...result, calls: lines(log), gets: lines(`${log}.get`), asked: lines(`${log}.git`).map((l) => JSON.parse(l)), bounds: lines(`${log}.timeout`),
+      at, sleeps: lines(`${log}.sleep`).map(Number)};
   } finally {
     rmSync(bin, {recursive: true, force: true});
   }
@@ -427,7 +482,7 @@ test('the steady state of 32 build namespaces is listed raw, 50 runs a page, and
   const result = runPaged(SCRIPT, items, {}, LISTER, {answers: STEADY_ANSWERS});
   assert.equal(result.status, 0, result.stderr);
   // The projection drops nothing the decision reads: the same changes come out, in the same order.
-  assert.deepEqual(result.stdout.split('\n').filter(Boolean), expected.map((c) => c.say));
+  assert.deepEqual(changesSaid(result), expected.map((c) => c.say));
   assert.equal(result.calls.length, expected.length);
   assert.equal(result.gets.length, Math.ceil(items.length / 50));
   result.gets.forEach((get, page) => assert.equal(get, `get --raw /apis/tekton.dev/v1/pipelineruns?labelSelector=image-builder.io%2Fci&limit=50${page ? `&continue=page%2B${page * 50}%3D` : ''}`));
@@ -446,7 +501,7 @@ test('planted defects: a keeper that reads one page, drops spec.status, a param 
   for (const [name, [script, lister]] of Object.entries(variants)) {
     assert.ok(script !== SCRIPT || lister !== LISTER, `${name}: the planted defect no longer applies to the keeper`);
     const result = runPaged(script, items, {}, lister, {answers: STEADY_ANSWERS});
-    assert.ok(result.status !== 0 || result.stdout.split('\n').filter(Boolean).join('\n') !== expected.join('\n'), `${name} went unnoticed`);
+    assert.ok(result.status !== 0 || changesSaid(result).join('\n') !== expected.join('\n'), `${name} went unnoticed`);
   }
 });
 
@@ -617,6 +672,8 @@ test('the cancellations come before the starts, the notes and the deletions, the
 // is gone) is said so and costs the tick nothing, because nothing the keeper does can read it; any other failure
 // fails the tick, so that the CronJob shows it, and the other duties of the tick still run.
 const ASKED = (url) => ({args: ['ls-remote', '--symref', url, 'HEAD', 'refs/heads/ci/*'], prompt: '0', protocol: 'https', locale: 'C'});
+// What the keeper says of the changes it made: its lines but the one that names each decision.
+const changesSaid = (result) => result.stdout.split('\n').filter(Boolean).filter((line) => !/^decided \d+ seconds into the tick$/.test(line));
 const patched = (result, needle) => result.calls.filter((call) => call.includes(needle));
 
 test('the script asks each remote once, with no prompt, one protocol and ten seconds, and cancels the runs whose branch is gone', () => {
@@ -713,4 +770,52 @@ test('planted defects: a script that may prompt, waits for ever, reads the end o
   const failing = {[urlOf('shop-build')]: {status: 128, stderr: 'fatal: the remote hung up\n'}};
   assert.equal(gets(SCRIPT, {answers: failing}).status, 1);
   assert.equal(gets(mutate('failed=1', 'failed=0'), {answers: failing}).status, 0, 'PLANTED DEFECT: a failure that does not fail the tick');
+});
+
+// The tick decides at the start and then every ten seconds, until the last decision that fits in the Job's deadline, and it reads the
+// remotes once. A run that appears between two decisions is started by the next one, and not by the next tick a minute later. The
+// stand-in clock moves only when the script sleeps, so a tick of fifty seconds takes none.
+const TICK = {CI_KEEPER_TICK_SECONDS: '50', CI_KEEPER_DECISION_SECONDS: '10'};
+const decisionsOf = (result) => result.at.filter(([verb]) => verb === 'get').map(([, seconds]) => seconds);
+
+test('a tick decides at 0, 10, 20, 30 and 40 seconds, sleeps to each decision, reads the remotes once, and ends', () => {
+  const live = waiting('shop-build', {branch: 'ci/live', at: 1}), answers = {[urlOf('shop-build')]: listing('master', 'ci/live')};
+  const result = runPaged(SCRIPT, [live, running(1, 'post-build')[0]], TICK, LISTER, {answers});
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(decisionsOf(result), [0, 10, 20, 30, 40], 'PLANTED INNOCENT: the five decisions of a tick of fifty seconds, ten seconds apart');
+  assert.deepEqual(result.sleeps, [10, 10, 10, 10], 'the keeper sleeps up to the next decision');
+  assert.equal(result.asked.length, 1, 'the remote is read at the first decision and not again');
+  assert.deepEqual(result.stdout.split('\n').filter((line) => line.startsWith('decided')),
+    [0, 10, 20, 30, 40].map((seconds) => `decided ${seconds} seconds into the tick`), 'the log names each decision');
+  assert.ok(decisionsOf(result).at(-1) <= 50 - 10, 'the last decision starts a decision interval before the Job\'s deadline');
+  const mutate = (from, to) => { const script = SCRIPT.replaceAll(from, to); assert.notEqual(script, SCRIPT, `PLANTED DEFECT: the edit finds its clause: ${from}`); return script; };
+  const single = runPaged(mutate('[ $((next - began)) -le $((tick - every)) ] || break', 'break'), [live], TICK, LISTER, {answers});
+  assert.deepEqual(decisionsOf(single), [0], 'PLANTED DEFECT: a keeper that decides once a tick leaves a start to the next minute');
+  const unbound = runPaged(mutate('-le $((tick - every))', '-le $((tick + 100))'), [live], TICK, LISTER, {answers});
+  assert.ok(decisionsOf(unbound).at(-1) > 50, 'PLANTED DEFECT: a keeper that decides past the end of the tick is cut by the Job\'s deadline');
+  const rereads = runPaged(mutate('if [ "$round" -eq 0 ]; then read_remotes; fi', 'read_remotes'), [live], TICK, LISTER, {answers});
+  assert.equal(rereads.asked.length, 5, 'PLANTED DEFECT: a keeper that asks every remote at every decision asks GitHub five times a minute');
+});
+
+test('a run that appears between two decisions is started by the next decision, and a decision that finds a start done does not make it twice', () => {
+  const settled = running(1, 'post-build'), appears = waiting('shop-build', {branch: 'ci/live', at: 2});
+  const answers = {[urlOf('shop-build')]: listing('master', 'ci/live')};
+  const result = runPaged(SCRIPT, [...settled], TICK, LISTER, {answers, later: {after: 15, items: [appears]}});
+  assert.equal(result.status, 0, result.stderr);
+  // The calls that change a run, in the order of the log of the calls, each with the seconds into the tick.
+  const startsOf = (r) => r.at.filter(([verb]) => verb !== 'get').filter((_, i) => r.calls[i].includes('--type json')).map(([, seconds]) => seconds);
+  assert.deepEqual(startsOf(result), [20], 'PLANTED INNOCENT: the run that appeared at 15 seconds is started at 20, and only once');
+  assert.match(result.stdout, new RegExp(`started shop-build/${appears.metadata.name}: a ci slot is free`));
+  const mutate = (from, to) => { const script = SCRIPT.replaceAll(from, to); assert.notEqual(script, SCRIPT, `PLANTED DEFECT: the edit finds its clause: ${from}`); return script; };
+  const once = runPaged(mutate('[ $((next - began)) -le $((tick - every)) ] || break', 'break'), [...settled], TICK, LISTER, {answers, later: {after: 15, items: [appears]}});
+  assert.deepEqual(once.calls.filter((call) => call.includes('--type json')), [], 'PLANTED DEFECT: a keeper that decides once a tick leaves that run waiting for the next tick');
+});
+
+test('a clock that runs a decision long makes the next one follow at once, and the schedule does not move', () => {
+  const slow = runPaged(SCRIPT.replace('apply_changes\n  round=', 'apply_changes\n  if [ "$round" -eq 1 ]; then sleep 14; fi\n  round='), [running(1, 'post-build')[0]], TICK);
+  assert.equal(slow.status, 0, slow.stderr);
+  assert.deepEqual(decisionsOf(slow), [0, 10, 24, 30, 40], 'PLANTED INNOCENT: a decision that took until 24 is followed at once by the one due at 20, and the ones after keep their times');
+  const drifting = runPaged(SCRIPT.replace('apply_changes\n  round=', 'apply_changes\n  if [ "$round" -eq 1 ]; then sleep 14; fi\n  round=').replace('next=$((began + round * every))', 'next=$((now + every))'),
+    [running(1, 'post-build')[0]], TICK);
+  assert.deepEqual(decisionsOf(drifting), [0, 10, 24, 34], 'PLANTED DEFECT: a keeper that pauses ten seconds after a decision, and keeps no schedule, moves every later decision and loses one');
 });

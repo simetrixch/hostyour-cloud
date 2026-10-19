@@ -117,15 +117,44 @@ allowPrivilegeEscalation: false
 
 {{/* The step that hands the folders pods of root made to that user, before a step of it writes
      into them (node_modules, build output, the test databases, the binaries). It runs as the root
-     of its image. Takes a dict of image and folders. */}}
+     of its image. Takes a dict of image and folders, and optionally the lines of a guard that
+     opens its script and the volumeMounts that carry the folders. */}}
 {{- define "consumer-build.handOverStep" -}}
 - name: hand-over
   image: {{ .image }}
   script: |
     #!/usr/bin/env sh
+{{- if .guard }}
+    {{ .guard }}
+{{- end }}
     set -eu
     chown -R -h {{ include "consumer-build.checkUser" . }} {{ .folders }}
   computeResources:
     requests: { cpu: 50m, memory: 32Mi }
     limits: { cpu: 500m, memory: 64Mi }
+{{- if .mounts }}
+  volumeMounts:
+{{ .mounts | indent 4 }}
+{{- end }}
+{{- end -}}
+
+{{/* The marker the step earlier-green of the ci Pipeline writes when the commit carries a green tekton/ci
+     already, and the first lines of every step after it: such a step ends at once, so the run clones and
+     checks nothing and posts no pending that would hide the green status. */}}
+{{- define "consumer-build.ciEarlierGreenMarker" -}}
+/workspace/earlier-green
+{{- end -}}
+{{- define "consumer-build.ciEarlierGreenGuard" -}}
+if [ -e {{ include "consumer-build.ciEarlierGreenMarker" . }} ]; then echo "skipped: the commit is green already"; exit 0; fi
+{{- end -}}
+
+{{/* The mounts of the checkout in the one pod of a ci run: both folders of the scratch volume, at the paths
+     every step and CI_SOURCES_DIR read. Takes a dict of the folders: "repository" and "sources", each "rw", "ro" or absent. */}}
+{{- define "consumer-build.ciScratchMounts" -}}
+{{- if .repository }}
+- { name: scratch, mountPath: /workspace/source, subPath: repository{{ if eq .repository "ro" }}, readOnly: true{{ end }} }
+{{- end }}
+{{- if .sources }}
+- { name: scratch, mountPath: /workspace/sources, subPath: sources{{ if eq .sources "ro" }}, readOnly: true{{ end }} }
+{{- end }}
 {{- end -}}

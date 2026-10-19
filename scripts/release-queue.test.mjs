@@ -548,12 +548,13 @@ const waitingRun = () => ({
 const changed = (edit) => { const run = waitingRun(); edit(run); return run; };
 const asks = (operation, username, object, oldObject) => ({object, oldObject, request: {operation, namespace: 'shop-build', userInfo: {username}}});
 const startedRun = changed((r) => delete r.spec.status);
-const asCi = (r) => { r.spec.pipelineRef.name = 'shop-ci'; r.spec.taskRunTemplate.podTemplate.priorityClassName = 'image-builder-ci'; };
+const asCi = (r) => { r.spec.pipelineRef.name = 'shop-ci'; r.spec.taskRunTemplate.podTemplate.priorityClassName = 'image-builder-ci'; delete r.spec.workspaces; };
 const waitingCiRun = changed(asCi);
 const asPublish = (r) => { r.spec.pipelineRef.name = 'shop-publish'; r.metadata.labels = {'image-builder.io/publish': 'shop'}; };
 const startedCiRun = changed((r) => { asCi(r); delete r.spec.status; });
 const ADMITTED = {
   'the EventListener creates a waiting run': asks('CREATE', 'system:serviceaccount:image-builder:eventlistener-sa', waitingRun(), null),
+  'the EventListener creates a waiting ci run, which carries no workspace': asks('CREATE', 'system:serviceaccount:image-builder:eventlistener-sa', waitingCiRun, null),
   'the queue starts a waiting run': asks('UPDATE', QUEUE_SA, startedRun, waitingRun()),
   'the queue notes what a run waits for, beside other annotations': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; }), waitingRun()),
   'the queue starts a run and drops its note': asks('UPDATE', QUEUE_SA, startedRun, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; })),

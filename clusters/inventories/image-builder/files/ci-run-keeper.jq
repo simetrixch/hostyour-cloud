@@ -30,8 +30,7 @@
 #           run of each is taken: a second run of one unit would hold a slot without running a pod.
 #   note    on each run that stays waiting, the annotation image-builder.io/queued-behind with the reason:
 #           a ci run of its unit runs or starts, or else all slots are in use.
-#   delete  in each build namespace, every finished run but the newest 20. Every run holds a workspace
-#           claim of workspaces.sourceSize until the run is deleted, and the newest twenty keep recent
+#   delete  in each build namespace, every finished run but the newest 20. The newest twenty keep recent
 #           failures readable in the Tekton Dashboard.
 #
 # A run without the ci label (a release run among them) is never looked at, and a run that has not
