@@ -22,7 +22,9 @@ const externalSecrets = rendered => yq(rendered, 'select(.kind == "ExternalSecre
 const filesBelow = directory => readdirSync(directory, {recursive: true, withFileTypes: true}).filter(entry => entry.isFile())
   .map(entry => join(entry.parentPath, entry.name));
 
-const ZONE_SETTINGS = {variable: 'CLOUDFLARE_ZONE_SETTINGS_API_TOKEN', secret: 'manager-cloudflare-zone-settings', entry: 'app/cloudflare-zone-settings'};
+// Its Vault entry is absent while the answer is empty, and only deletionPolicy Delete keeps the ExternalSecret Ready then;
+// the DNS token is required, so its entry is always there and its ExternalSecret has no such policy.
+const ZONE_SETTINGS = {variable: 'CLOUDFLARE_ZONE_SETTINGS_API_TOKEN', secret: 'manager-cloudflare-zone-settings', entry: 'app/cloudflare-zone-settings', deletionPolicy: 'Delete'};
 const DNS = {variable: 'CLOUDFLARE_DNS_API_TOKEN', secret: 'manager-cloudflare-dns', entry: 'app/cloudflare-dns'};
 const TEMPLATE_ROW = /^CLOUDFLARE_ZONE_SETTINGS_API_TOKEN=$/gm;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -36,13 +38,14 @@ function findings({rendered, stage, secretsTemplate, otherCharts}) {
     else if (!same(env[variable].valueFrom?.secretKeyRef, {name: secret, key: 'api-token', optional: true})) found.push(`${variable} reads ${JSON.stringify(env[variable].valueFrom?.secretKeyRef ?? env[variable])}, not the optional api-token of ${secret}`);
   }
   const secrets = externalSecrets(rendered);
-  for (const {secret, entry} of [ZONE_SETTINGS, DNS]) {
+  for (const {secret, entry, deletionPolicy} of [ZONE_SETTINGS, DNS]) {
     const own = secrets.filter(each => each.metadata.name === secret);
     if (own.length !== 1) { found.push(`${own.length} ExternalSecrets named ${secret}`); continue; }
     if (own[0].spec.target.name !== secret) found.push(`ExternalSecret ${secret} makes the Secret ${own[0].spec.target.name}`);
     const data = own[0].spec.data.map(({secretKey, remoteRef}) => [secretKey, remoteRef.key, remoteRef.property]);
     if (!same(data, [['api-token', `${stage}/${entry}`, 'api-token']])) found.push(`ExternalSecret ${secret} reads ${JSON.stringify(data)}, not ${stage}/${entry} api-token alone`);
     if (own[0].spec.refreshPolicy !== 'OnChange') found.push(`ExternalSecret ${secret} refreshes by ${own[0].spec.refreshPolicy}, not on change`);
+    if (own[0].spec.target.deletionPolicy !== deletionPolicy) found.push(`ExternalSecret ${secret} has deletionPolicy ${own[0].spec.target.deletionPolicy}, not ${deletionPolicy}`);
   }
   if (secretsTemplate.match(TEMPLATE_ROW)?.length !== 1) found.push(`the secrets template declares ${ZONE_SETTINGS.variable} ${secretsTemplate.match(TEMPLATE_ROW)?.length ?? 0} times, and the installer refuses a value for a key the template does not declare`);
   for (const [file, text] of Object.entries(otherCharts))
@@ -71,6 +74,7 @@ test('PLANTED DEFECT: a chart that swaps the two Secrets, drops the env, reads a
       'the env dropped': {file: 'templates/deployment.yaml', change: text => text.replace(new RegExp(`\\n\\s*- name: ${ZONE_SETTINGS.variable}\\n(?:\\s+(?:valueFrom|secretKeyRef|name|key|optional):[^\\n]*\\n?)+`), '\n')},
       'the env required': {file: 'templates/deployment.yaml', change: text => text.replace(new RegExp(`(name: ${ZONE_SETTINGS.secret}\\n\\s+key: api-token\\n\\s+)optional: true`), '$1optional: false')},
       'a wrong Vault path': {file: 'templates/externalsecret-cloudflare-zone-settings.yaml', change: text => text.replace(`"%s/${ZONE_SETTINGS.entry}"`, `"%s/${DNS.entry}"`)},
+      'no deletionPolicy Delete': {file: 'templates/externalsecret-cloudflare-zone-settings.yaml', change: text => text.replace('    deletionPolicy: Delete\n', '')},
       'a Secret of another name': {file: 'templates/externalsecret-cloudflare-zone-settings.yaml', change: text => text.replace(/(target:\n\s+name: )manager-cloudflare-zone-settings/, '$1manager-cloudflare-dns')},
     };
     for (const [name, {file, change}] of Object.entries(mutations)) {
