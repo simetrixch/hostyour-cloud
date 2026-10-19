@@ -816,7 +816,6 @@ kube-prometheus-stack:
   # has not started has no start series and a run that has not finished has no completion series, because
   # kube-state-metrics skips a path that is absent. The chart's ClusterRole covers the built-in kinds and the
   # CRDs themselves but not the runs, so rbac.extraRules adds list and watch on them.
-  # scripts/tekton-feature-flags.test.mjs holds the series names that the two alerts read to this list.
   kube-state-metrics:
     rbac:
       extraRules:

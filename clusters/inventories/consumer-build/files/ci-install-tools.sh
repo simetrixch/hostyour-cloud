@@ -83,11 +83,6 @@ while read -r tool version sha256 url; do
     gitleaks | traefik)
       tar -xzf "${archive}" -C "${ci_tools_dir}/bin" "${tool}"
       ;;
-    loki)
-      # The release zip holds the one program, named for its platform.
-      unzip -q -p "${archive}" loki-linux-amd64 > "${ci_tools_dir}/bin/loki"
-      chmod 0755 "${ci_tools_dir}/bin/loki"
-      ;;
     promtool)
       tar -xzf "${archive}" -C "${ci_tools_dir}/bin" --strip-components=1 "prometheus-${version}.linux-amd64/promtool"
       ;;

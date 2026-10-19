@@ -224,8 +224,8 @@ secret-store:
 # are the members' headless-Service names, short so they resolve in this
 # namespace, and carry no credential: the chart copies each into the series'
 # instance label. This file lists the one member of the default mode;
-# values-mode-replicaset.yaml lists three. scripts/unit-mongodb-exporter.test.mjs
-# holds both lists to the member count templates/_members.tpl states.
+# values-mode-replicaset.yaml lists three, the member count that
+# templates/_members.tpl states for each mode.
 #
 # NO ALERT RULE IS RENDERED HERE. An app cluster evaluates no PrometheusRule: its
 # series are remote-written to the master, whose MongoDBDown and

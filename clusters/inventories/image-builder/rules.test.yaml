@@ -7,8 +7,8 @@
 #
 # THE SERIES ARE THE ONES THE METRICS REFERENCE OF THE VENDORED TEKTON RELEASE LISTS (the counter
 # tekton_pipelines_controller_pipelinerun_total) and the ones clusters/inventories/observability
-# makes kube-state-metrics read from tekton.dev/v1 PipelineRun (tekton_pipelinerun_*_timestamp_seconds);
-# scripts/tekton-feature-flags.test.mjs holds the names. The join is the `unless on (cluster,
+# makes kube-state-metrics read from tekton.dev/v1 PipelineRun (tekton_pipelinerun_*_timestamp_seconds).
+# The join is the `unless on (cluster,
 # namespace, pipelinerun)`: scripts/check.sh runs this file once more with cluster taken out of it
 # and with the join taken out, and both runs must fail.
 evaluation_interval: 1m
