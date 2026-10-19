@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 import {renderChart} from './render-chart.mjs';
+import {paramSet, patch, registration, render, yaml} from './tenant-appset-fixture.mjs';
 
 // The label hostyour.cloud/workload is the whole binding of the Vault role `external-secrets`, whose policy reads the
 // storage box login that opens every backup. The admission policy `namespace-workload-label` of the external-secrets
@@ -91,6 +92,31 @@ test('the admitted tracking ids follow the stage of the installation', () => {
     assert.equal(verdicts[2 * i].length, 1, `${app} of the prod stage is refused on a test installation`);
     assert.deepEqual(verdicts[2 * i + 1], [], `${app} of the test stage is admitted on a test installation`);
   });
+});
+
+// The tenants ApplicationSet is the one writer that copies namespace labels from data an outside party declares: the registration of
+// a tenant stands in the product's deploy repository, and its `namespaceLabels` ride onto the namespace Argo CD creates. That
+// write carries no tracking id, so the policy admits it and only the ApplicationSet can leave the label out.
+const tenantNamespaceLabels = (namespaceLabels, template = patch) => {
+  const [answer] = render(template, [paramSet('aaaaaaaaaaaa', 'prod', registration(['charts/app'], {namespaceLabels}))]);
+  assert.equal(answer.error, undefined, answer.error);
+  return yaml('.spec.syncPolicy.managedNamespaceMetadata.labels', answer.output);
+};
+
+test('the tenants ApplicationSet leaves the label off the namespace of a tenant whose registration declares it', () => {
+  const labels = tenantNamespaceLabels({[LABEL]: 'true', 'platform/redis-consumer': 'true'});
+  assert.equal(labels[LABEL], undefined);
+  assert.equal(labels['platform/redis-consumer'], 'true', 'a label of the registration that binds no Vault role stays');
+  assert.equal(labels['platform/tenant-managed'], 'true');
+});
+
+test('planted defect: with the label let through, the namespace the tenants ApplicationSet writes claims it and the policy admits that write', () => {
+  const letThrough = patch.replace('and (ne $k "platform/tenant-stage") (ne $k "hostyour.cloud/workload")', 'ne $k "platform/tenant-stage"');
+  assert.notEqual(letThrough, patch);
+  const labels = tenantNamespaceLabels({[LABEL]: 'true'}, letThrough);
+  assert.equal(labels[LABEL], 'true');
+  const {policy} = guard();
+  assert.deepEqual(evaluate(policy, [asks('CREATE', namespace('aaaaaaaaaaaa-prod', {labels}))]), [[]], 'no tracking id: the policy cannot tell the write from a platform namespace');
 });
 
 test('planted defect: without the validation, every namespace the platform does not own keeps the label', () => {

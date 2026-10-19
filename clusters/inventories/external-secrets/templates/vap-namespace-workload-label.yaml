@@ -16,7 +16,9 @@ WHO MAY CARRY IT. A Namespace carrying the label is admitted when
     which stamps no tracking id on it. An outside chart cannot reach that path: ArgoCD stamps every
     object it applies with the name of the Application that applies it, OVERWRITING whatever the manifest
     carried, and the AppProject of a unit (clusters/units/reconciler/templates/appproject.yaml) and of a
-    tenant blacklist the kind Application. Or
+    tenant blacklist the kind Application. The tenants ApplicationSet copies the `namespaceLabels` of a
+    tenant's registration, which stands in the product's deploy repository, onto the tenant namespace, and
+    leaves this label out (clusters/argocd/files/tenants-appset.yaml, held by scripts/workload-label.test.mjs). Or
 
   - its tracking id is one of the four ids below: the platform applications that render their own
     Namespace so that the label stands before their first pod
@@ -47,6 +49,8 @@ WHAT THIS DOES NOT HOLD, said plainly rather than left to be assumed:
   - The guard trusts that the name of an Application belongs to one owner. The policy
     consumer-build-namespace-label (clusters/inventories/consumer-build) relies on the same fact.
   - A tracking id on a Namespace created by hand is taken at its word, as it would be on any object.
+  - An ApplicationSet that copies namespace labels from data an outside party writes is held to this label by
+    its own template alone, because its write carries no tracking id and is admitted here.
 */ -}}
 {{- $ids := list }}
 {{- range .Values.workloadNamespaceApplications }}
