@@ -1353,16 +1353,19 @@ fault="$(vendored_patch_fault "$root")"
 [ -z "$fault" ] || fail "$fault"
 # The planted defects, each in a copy: a patched template line edited by hand; a template line the patch does not
 # touch edited by hand; the patch with its added line changed; the patch with its restored line changed; a file
-# added to the folder; a file removed; the unpatched upstream chart; the dependency stamped to another version. The
-# planted innocent: every file given another modification time.
+# added to the folder; a file removed; the unpatched upstream chart; the dependency stamped to another version; a
+# foreign folder in another inventory with an empty upstream list, and with a forged one. The planted innocent:
+# every file given another modification time.
 plant_vendor() { # <name> <a command run in the copy> -> the fault the check finds in that copy, or nothing
   local copy="$work/planted-vendor/$1"
   rm -rf "$copy" && mkdir -p "$copy/clusters/inventories" || return 1
-  cp -R clusters/inventories/plane "$copy/clusters/inventories/plane" || return 1
+  cp -R clusters/inventories/plane clusters/inventories/forgejo "$copy/clusters/inventories/" || return 1
   ( cd "$copy" && eval "$2" ) || return 1
   vendored_patch_fault "$copy"
 }
 pl=clusters/inventories/plane
+fg=clusters/inventories/forgejo
+foreign="printf '  - name: foreign\\n    version: 1.0.0\\n' >> $fg/Chart.yaml && mkdir -p $fg/charts/foreign $fg/vendor && printf 'name: foreign\\nversion: 1.0.0\\n' > $fg/charts/foreign/Chart.yaml && : > $fg/vendor/foreign-1.0.0.patch"
 planted_vendor=(
   "patched-line|sed -i 's/trunc 8/trunc 9/' $pl/charts/plane-ce/templates/workloads/migrator.job.yaml|does not apply in reverse"
   "other-line|sed -i '1s/\$/ # edited/' $pl/charts/plane-ce/templates/workloads/migrator.job.yaml|is not the upstream chart"
@@ -1372,6 +1375,8 @@ planted_vendor=(
   "removed|rm $pl/charts/plane-ce/.helmignore|holds 29 files"
   "unpatched|(cd $pl/charts && patch -R -p1 -s < ../vendor/plane-ce-1.8.5.patch)|does not apply in reverse"
   "stamped|sed -i 's/^    version: 1.8.5\$/    version: 1.8.6/' $pl/Chart.yaml|names plane-ce 1.8.6"
+  "foreign-empty|$foreign && : > $fg/vendor/foreign-1.0.0.upstream.sha256|the vendored foreign with the patch reversed holds 1 files, and foreign-1.0.0.upstream.sha256 lists 0"
+  "foreign-forged|$foreign && printf '%064d  foreign/Chart.yaml\\n' 1 > $fg/vendor/foreign-1.0.0.upstream.sha256|the vendored foreign with the patch reversed is not the upstream chart"
 )
 for row in "${planted_vendor[@]}"; do
   IFS='|' read -r name command expected <<< "$row"
