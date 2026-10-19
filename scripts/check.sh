@@ -1237,7 +1237,8 @@ echo "check: the Headlamp container is given -oidc-scopes; the check refuses a p
 # Chart.yaml (helm renders a stale archive without a word), and has exactly one line in
 # clusters/platform/charts.sha256, which `sha256sum --check` holds it to. A chart that also depends on charts of
 # this repository stands unpacked in its charts/ folder instead, because Helm builds its dependencies and takes a
-# dependency without a repository only as a folder; vendored_patch_fault holds that folder. The waves are read
+# dependency without a repository only as a folder; vendored_patch_fault holds every such folder, and charts_fault
+# passes only a folder that has its vendor/<name>-<version>.upstream.sha256. The waves are read
 # from the app.yaml files, so the set moves with the registry's wave.
 zot_host="${mirror_prefix%%/*}"
 charts_fault() { # <tree root> <file listing its vendored archives> -> the first fault, or nothing
@@ -1263,7 +1264,7 @@ charts_fault() { # <tree root> <file listing its vendored archives> -> the first
             return
           fi ;;
         '')
-          [ -f "$chart/charts/$name/Chart.yaml" ] && continue
+          [ -f "$chart/charts/$name/Chart.yaml" ] && [ -f "$chart/vendor/$name-$version.upstream.sha256" ] && continue
           archive="${chart#"$root/"}/charts/$name-$version.tgz"
           grep -qxF "$archive" "$archives" || { echo "${chart#"$root/"} names no repository for $name, and $archive is no vendored archive"; return; }
           [ "$(tar -xzOf "$root/$archive" "$name/Chart.yaml" 2>/dev/null | yq '.version')" = "$version" ] \
@@ -1278,7 +1279,7 @@ fault="$(charts_fault "$root" "$work/vendored-charts")"
 # The planted defects, each in a copy of what the check reads: the external-secrets dependency given back its
 # repository on ghcr.io; cert-manager fetched from zot; the archive removed; one byte of it changed; Chart.yaml
 # stamped to 2.9.0 beside the 2.8.0 archive; a second archive with no line; the 2.8.0 archive renamed to 2.9.0
-# with its line.
+# with its line; an unpacked chart folder in another inventory, with no upstream digest list.
 plant_charts() { # <name> <a command run in the copy> -> the fault the check finds in that copy, or nothing
   local copy="$work/planted-charts/$1"
   rm -rf "$copy" && mkdir -p "$copy/clusters/platform" "$copy/clusters/inventories" || return 1
@@ -1289,6 +1290,7 @@ plant_charts() { # <name> <a command run in the copy> -> the fault the check fin
     for folder in "$(dirname "$app")"/charts/*/; do
       [ -f "$folder/Chart.yaml" ] && mkdir -p "$copy/$folder" && cp "$folder/Chart.yaml" "$copy/$folder"
     done
+    [ -d "$(dirname "$app")/vendor" ] && cp -R "$(dirname "$app")/vendor" "$copy/$(dirname "$app")/vendor"
   done
   while read -r archive; do mkdir -p "$copy/$(dirname "$archive")" && cp "$archive" "$copy/$archive"; done < "$work/vendored-charts"
   cp "$work/vendored-charts" "$copy.archives"
@@ -1307,6 +1309,7 @@ planted_charts=(
   "stamped|sed -i 's#^    version: 2.8.0\$#    version: 2.9.0#' $eso/Chart.yaml|names no repository for external-secrets, and $eso/charts/external-secrets-2.9.0.tgz is no vendored archive"
   "unlisted|cp $eso/charts/external-secrets-2.8.0.tgz $eso/charts/external-secrets-2.9.0.tgz && echo $eso/charts/external-secrets-2.9.0.tgz >> ../unlisted.archives|has 0 lines in clusters/platform/charts.sha256"
   "renamed|mv $eso/charts/external-secrets-2.8.0.tgz $eso/charts/external-secrets-2.9.0.tgz && sed -i 's#external-secrets-2.8.0.tgz#external-secrets-2.9.0.tgz#' clusters/platform/charts.sha256 ../renamed.archives && sed -i 's#^    version: 2.8.0\$#    version: 2.9.0#' $eso/Chart.yaml|does not hold external-secrets 2.9.0 in its own Chart.yaml"
+  "foreign|printf '  - name: foreign\\n    version: 1.0.0\\n' >> clusters/inventories/forgejo/Chart.yaml && mkdir -p clusters/inventories/forgejo/charts/foreign && printf 'name: foreign\\nversion: 6.6.6\\n' > clusters/inventories/forgejo/charts/foreign/Chart.yaml|clusters/inventories/forgejo names no repository for foreign"
 )
 for row in "${planted_charts[@]}"; do
   IFS='|' read -r name command expected <<< "$row"
@@ -1315,7 +1318,7 @@ for row in "${planted_charts[@]}"; do
 done
 echo "check: $(grep -c . "$work/vendored-charts") vendored chart archive holds its line in clusters/platform/charts.sha256 and its version; no inventory up to the registry's sync wave fetches a chart from ghcr.io or zot, and none fetches one from ghcr.io; the check refuses ${#planted_charts[@]} planted defects."
 
-# THE PLANE CHART IS VENDORED UNPACKED AND PATCHED: clusters/inventories/plane/charts/plane-ce. Unpacked, because
+# EVERY UNPACKED CHART FOLDER IS VENDORED AND PATCHED; today that is clusters/inventories/plane/charts/plane-ce. Unpacked, because
 # the plane chart also depends on charts of this repository, so Helm builds its dependencies, and Helm accepts a
 # dependency that names no repository only as a folder. The claim "this folder is upstream plus the patch, and
 # nothing else" is held here and by no comment: the patch must apply in reverse without fuzz, and the result must be
@@ -1324,21 +1327,27 @@ echo "check: $(grep -c . "$work/vendored-charts") vendored chart archive holds i
 # scripts/check-mirror-consumers.sh refuses in every tracked file, and Helm renders nothing from it. The folder's own Chart.yaml must hold the version the dependency names, or
 # Helm renders a stale folder without a word.
 vendored_patch_fault() { # <tree root> -> the first fault, or nothing
-  local root="$1" plane="$1/clusters/inventories/plane" version patch_file upstream copy listed found
-  version="$(yq '.version' "$plane/charts/plane-ce/Chart.yaml" 2>/dev/null)"
-  [ "$(yq '.dependencies[] | select(.name == "plane-ce") | .version' "$plane/Chart.yaml")" = "$version" ] \
-    || { echo "clusters/inventories/plane/Chart.yaml names plane-ce $(yq '.dependencies[] | select(.name == "plane-ce") | .version' "$plane/Chart.yaml"), and the vendored folder holds plane-ce ${version:-nothing} in its own Chart.yaml"; return; }
-  patch_file="$plane/vendor/plane-ce-$version.patch"
-  upstream="$plane/vendor/plane-ce-$version.upstream.sha256"
-  [ -f "$patch_file" ] && [ -f "$upstream" ] || { echo "clusters/inventories/plane/vendor holds no plane-ce-$version.patch and plane-ce-$version.upstream.sha256"; return; }
-  copy="$(mktemp -d "$work/vendored-patch.XXXXXX")" && cp -R "$plane/charts/plane-ce" "$copy/plane-ce" || { echo "the vendored plane-ce could not be copied"; return; }
-  (cd "$copy" && patch -R -p1 -F0 -s --no-backup-if-mismatch < "$patch_file" >/dev/null 2>&1) \
-    || { echo "plane-ce-$version.patch does not apply in reverse to the vendored plane-ce, so the folder does not hold the patch"; return; }
-  found="$(cd "$copy" && find plane-ce -type f | grep -c .)"
-  listed="$(grep -c . "$upstream")"
-  [ "$found" = "$listed" ] || { echo "the vendored plane-ce with the patch reversed holds $found files, and plane-ce-$version.upstream.sha256 lists $listed"; return; }
-  (cd "$copy" && sha256sum --check --strict --quiet "$upstream" >/dev/null 2>&1) \
-    || { echo "the vendored plane-ce with the patch reversed is not the upstream chart listed in plane-ce-$version.upstream.sha256"; return; }
+  local root="$1" inventory name version dependency patch_file upstream copy listed found folder
+  for folder in "$root"/clusters/inventories/*/charts/*/; do
+    [ -f "$folder/Chart.yaml" ] || continue
+    inventory="$(dirname "$(dirname "${folder%/}")")"
+    name="$(basename "$folder")"
+    version="$(yq '.version' "$folder/Chart.yaml" 2>/dev/null)"
+    dependency="$(yq ".dependencies[] | select(.name == \"$name\") | .version" "$inventory/Chart.yaml")"
+    [ "$dependency" = "$version" ] \
+      || { echo "${inventory#"$root/"}/Chart.yaml names $name $dependency, and the vendored folder holds $name ${version:-nothing} in its own Chart.yaml"; return; }
+    patch_file="$inventory/vendor/$name-$version.patch"
+    upstream="$inventory/vendor/$name-$version.upstream.sha256"
+    [ -f "$patch_file" ] && [ -f "$upstream" ] || { echo "${inventory#"$root/"}/vendor holds no $name-$version.patch and $name-$version.upstream.sha256"; return; }
+    copy="$(mktemp -d "$work/vendored-patch.XXXXXX")" && cp -R "$folder" "$copy/$name" || { echo "the vendored $name could not be copied"; return; }
+    (cd "$copy" && patch -R -p1 -F0 -s --no-backup-if-mismatch < "$patch_file" >/dev/null 2>&1) \
+      || { echo "$name-$version.patch does not apply in reverse to the vendored $name, so the folder does not hold the patch"; return; }
+    found="$(cd "$copy" && find "$name" -type f | grep -c .)"
+    listed="$(grep -c . "$upstream")"
+    [ "$found" = "$listed" ] || { echo "the vendored $name with the patch reversed holds $found files, and $name-$version.upstream.sha256 lists $listed"; return; }
+    (cd "$copy" && sha256sum --check --strict --quiet "$upstream" >/dev/null 2>&1) \
+      || { echo "the vendored $name with the patch reversed is not the upstream chart listed in $name-$version.upstream.sha256"; return; }
+  done
 }
 fault="$(vendored_patch_fault "$root")"
 [ -z "$fault" ] || fail "$fault"

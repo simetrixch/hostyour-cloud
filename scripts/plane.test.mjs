@@ -239,6 +239,7 @@ function unmovedJobs(folder) {
   if (!moved(MIGRATION_JOB, '--set', 'plane-ce.planeVersion=v0.0.0-planted')) found.push('the migration Job keeps its name when the Plane version moves');
   if (!moved(MIGRATION_JOB, '--set', 'plane-ce.api.image=example.com/plane-backend')) found.push('the migration Job keeps its name when its image moves');
   if (!moved(BUCKET_JOB, '--set', 'plane-ce.minio.image_mc=example.com/mc:planted')) found.push('the bucket Job keeps its name when the bucket client moves');
+  if (!moved(BUCKET_JOB, '--set', 'plane-ce.minio.init_image=example.com/busybox:planted')) found.push('the bucket Job keeps its name when its init image moves');
   if (!moved(BUCKET_JOB, '--set', 'plane-ce.minio.image=example.com/silo:planted')) found.push('the bucket Job keeps its name when the object store moves');
   return found;
 }
@@ -265,7 +266,8 @@ test('PLANTED DEFECT: the chart as upstream ships it names both Jobs by the rele
     const upstream = renderChart('plane', [], folder);
     assert.deepEqual(['plane-api-migrate-1', 'plane-minio-bucket-1'].map(name => upstream.some(o => o.kind === 'Job' && o.metadata.name === name)), [true, true]);
     assert.deepEqual(unmovedJobs(folder), ['the migration Job keeps its name when the Plane version moves', 'the migration Job keeps its name when its image moves',
-      'the bucket Job keeps its name when the bucket client moves', 'the bucket Job keeps its name when the object store moves']);
+      'the bucket Job keeps its name when the bucket client moves', 'the bucket Job keeps its name when its init image moves',
+      'the bucket Job keeps its name when the object store moves']);
   } finally {
     rmSync(root, {recursive: true, force: true});
   }
