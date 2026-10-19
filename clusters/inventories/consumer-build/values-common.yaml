@@ -100,7 +100,7 @@ releaseQueue:
 # releaseUnitImages is DECLARED, not derived: the attested builds come from the registrations of the books branch, which
 # this chart cannot read. It is the number of images each unit builds at once after the scan, as the Pipelines
 # `<unit>-release` on the master had them on 2026-10-18 (swissbookai 4, digita-platform and hostyour-manager 3,
-# digita-auth and digita-post 2, every other unit 1); the test renders a release with that many images and fails when they
+# digita-auth and digita-post 2, every other unit 1; digita-realtime, new, has no Pipeline yet and builds 1); the test renders a release with that many images and fails when they
 # do not all run in parallel. A unit that builds more images, or a new unit, is added here, and the test then checks it
 # against the budget. limitsMemoryBudget is the sum above for the 4 + 3 + 3 + 2 images of the four largest units at once,
 # one 3584Mi ci check and five 3Gi ci checks, plus six report pods: 56Gi exactly. A buildah pod is 3Gi, a 2752Mi build step and
@@ -164,6 +164,7 @@ ciCapacity:
     digita-jobs: 1
     digita-platform: 3
     digita-post: 2
+    digita-realtime: 1
     digita-report: 1
     digita-testkit: 1
     hostyour-demo-consumer: 1

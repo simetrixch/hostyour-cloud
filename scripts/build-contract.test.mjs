@@ -1536,6 +1536,7 @@ const releaseUnitsOf = (images) => Object.entries(images).map(([name, count]) =>
   return {name, images: count, release: pipelineOf(docs, `${name}-release`), publish: pipelineOf(docs, `${name}-publish`)};
 });
 const withUnits = (units, edit) => units.map((unit) => edit(structuredClone(unit)));
+const declaresEveryCount = (images) => Object.values(images).every((count) => Number.isInteger(count) && count >= 1);
 const largestUnit = (units) => units.reduce((largest, unit) => (unit.images > largest.images ? unit : largest));
 // The charts the budgets are drawn for: the ci pipeline of an ordinary unit and the releases of the declared units.
 const ciPlane = (capacity) => {
@@ -1571,6 +1572,10 @@ const ciMemoryPipelines = () => {
 
 test('the six largest distinct ci units and four releases fit the 56Gi memory budget', () => {
   const capacity = readCiCapacity();
+  assert.ok(declaresEveryCount(capacity.releaseUnitImages), 'every declared unit names how many images it builds');
+  assert.equal(capacity.releaseUnitImages['digita-realtime'], 1, 'digita-realtime builds its one image after the scan');
+  assert.ok(declaresEveryCount({...capacity.releaseUnitImages, 'digita-realtime': 1}), 'PLANTED INNOCENT: the row of digita-realtime with its count');
+  assert.ok(!declaresEveryCount({...capacity.releaseUnitImages, 'digita-realtime': null}), 'PLANTED DEFECT: a row without its count is caught');
   const {docs, pipeline, shared, units} = ciPlane(capacity);
   const pipelines = ciMemoryPipelines();
   const fits = (ciUnits = pipelines, limit = capacity, releaseUnits = units) => fitsBudget(limit, ciUnits, shared, releaseUnits);
