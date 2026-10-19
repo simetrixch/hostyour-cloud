@@ -60,7 +60,7 @@ export const numbered = (count) => Array.from({length: count}, (_, i) => `line $
 // A cluster is the run, its TaskRuns by task name, and the logs by pod name. The ci pipeline has one task, `ci`, whose steps run in
 // one pod, in this order. A failed step is the first whose container exited with a code other than 0; the steps after it never
 // started and Tekton reports them as failed too. A step that is still running when its task is cancelled or times out has no end.
-export const STEPS = ['gate', 'earlier-green', 'commit-status-pending', 'clone', 'describe', 'branches', 'list-sources', 'list-tools', 'sources', 'hand-over', 'check'];
+export const STEPS = ['gate', 'earlier-green', 'commit-status-pending', 'clone', 'describe', 'list-sources', 'list-tools', 'sources', 'hand-over', 'check'];
 const DESCRIBED = {subject: 'Fix the rounding of VAT', author: 'Ada <ada@example.com>'};
 const stepState = (name, terminated) => ({name, container: `step-${name}`, ...(terminated ? {terminated} : {})});
 export const SUCCESSFUL = {ci: taskRun('ci', {results: DESCRIBED, steps: STEPS.map((name) => stepState(name, {exitCode: 0, reason: 'Completed'}))})};
