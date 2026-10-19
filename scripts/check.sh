@@ -1020,7 +1020,10 @@ zot_fault() { # $1 the zot config.json -> the first way it differs from the acce
   [ "$(yq -p=json -o=json -I=0 '.http.compat' "$1")" = '["docker2s2"]' ] \
     || { echo "zot refuses a Docker v2 schema 2 manifest, so the mirror cannot hold an upstream image of that media type at the digest its consumers pin"; return; }
   [ "$(yq -p=json -o=json -I=0 '[.extensions.sync.registries[].urls[]] | map(select(test("ghcr\\.io"))) | length' "$1")" = 0 ] \
-    || echo "zot still fetches from ghcr.io on a miss, so a platform image it lacks is pulled through from GitHub instead of failing"
+    || { echo "zot still fetches from ghcr.io on a miss, so a platform image it lacks is pulled through from GitHub instead of failing"; return; }
+  case "$(yq -p=json -o=json -I=0 '.http.writeTimeout' "$1")" in
+    null|'"60s"'|'"1m"') echo "zot ends a response that is still being written after its default 60 seconds, so eight clusters fetching one large pinned tool at once are cut part-way (curl 92)" ;;
+  esac
 }
 helm template registry clusters/inventories/registry --namespace registry \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -1037,6 +1040,10 @@ yq -p=json -o=json '.extensions.sync.registries = [{"urls": ["https://ghcr.io"],
 [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that still fetches from ghcr.io"
 yq -p=json -o=json 'del(.http.compat)' "$work/zot.json" > "$work/zot-planted.json"
 [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that refuses Docker v2 schema 2 manifests"
+yq -p=json -o=json 'del(.http.writeTimeout)' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that ends every response after its default 60 seconds"
+yq -p=json -o=json '.http.writeTimeout = "60s"' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot whose write timeout is written as the default 60 seconds"
 # The planted innocent: buildRegistry naming the owner's own registry keeps the owner's prefix.
 helm template registry clusters/inventories/registry --namespace registry \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -1045,7 +1052,7 @@ helm template registry clusters/inventories/registry --namespace registry \
   | yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' > "$work/zot-planted.json"
 fault="$(zot_fault "$work/zot-planted.json")"
 [ -z "$fault" ] || fail "the planted innocent, buildRegistry at the owner's own registry, is refused: $fault"
-echo "check: zot opens simetrixch/** alone to an anonymous read, takes Docker v2 schema 2 manifests as they are and fetches nothing from ghcr.io; the check refuses the three planted defects and takes the planted innocent."
+echo "check: zot opens simetrixch/** alone to an anonymous read, takes Docker v2 schema 2 manifests as they are and fetches nothing from ghcr.io; ends no response before 30 minutes; the check refuses the five planted defects and takes the planted innocent."
 
 # ── The pod of zot rolls when the config.json it was started with is not the one the ConfigMap holds ─
 # zot loads its config at start and never again, and a ConfigMap mount that follows an edit does not
