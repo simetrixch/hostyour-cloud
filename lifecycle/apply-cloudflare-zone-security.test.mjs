@@ -34,7 +34,7 @@ const body = value('data-binary')[0];
 fs.appendFileSync(dir + '/calls.jsonl', JSON.stringify({argv, config, method, path: path + url.search, body}) + '\\n');
 const answer = (status, result, errors = []) => { process.stdout.write(JSON.stringify({success: status < 300, errors, result}) + '\\n' + status); fs.writeFileSync(dir + '/state.json', JSON.stringify(state)); process.exit(0); };
 if (!value('header').includes('Authorization: Bearer ' + state.token)) answer(403, null, [{code: 9109, message: 'Invalid access token'}]);
-const area = /settings\\/ssl/.test(path) ? 'settings' : /origin_tls/.test(path) ? 'certificates' : /rulesets/.test(path) ? 'waf' : 'zone';
+const area = /settings\\/(ssl|min_tls_version|email_obfuscation)/.test(path) ? 'settings' : /origin_tls/.test(path) ? 'certificates' : /rulesets/.test(path) ? 'waf' : 'zone';
 if (state.denied.includes(area)) answer(403, null, [{code: 10000, message: 'Authentication error'}]);
 if (path === '/zones') answer(200, state.zones.filter(z => z.name === url.searchParams.get('name')).map(({id, name}) => ({id, name})));
 const zone = state.zones.find(z => path.startsWith('/zones/' + z.id + '/'));
@@ -44,6 +44,8 @@ const withIds = rules => rules.map((r, i) => ({id: r.id || 'r' + Date.now().toSt
   ratelimit: r.ratelimit && {requests_to_origin: false, ...r.ratelimit}}));
 let m;
 if (rest === '/settings/ssl') { if (method === 'PATCH') zone.ssl = sent.value; answer(200, {id: 'ssl', value: zone.ssl}); }
+if (rest === '/settings/min_tls_version') { if (method === 'PATCH' && !zone.minTlsFrozen) zone.minTls = sent.value; answer(200, {id: 'min_tls_version', value: zone.minTls}); }
+if (rest === '/settings/email_obfuscation') { if (method === 'PATCH' && !zone.emailObfuscationFrozen) zone.emailObfuscation = sent.value; answer(200, {id: 'email_obfuscation', value: zone.emailObfuscation}); }
 if (rest === '/origin_tls_client_auth') {
   if (method === 'POST') zone.certificates.push({id: 'c' + zone.certificates.length, certificate: sent.certificate, private_key_given: sent.private_key, status: state.uploadStatus, expires_on: '2028-10-15T00:00:00Z'});
   answer(200, zone.certificates.map(({private_key_given, ...c}) => c));
@@ -83,10 +85,10 @@ function fixture(mjs = readFileSync(join(HERE, `${ACT}.mjs`), 'utf8')) {
   chmodSync(join(root, 'config.env'), 0o600);
   return root;
 }
-/** Two Free zones as a new installation finds them: SSL Full, no origin pull, an unrelated custom rule, and the
+/** Two Free zones as a new installation finds them: SSL Full, the minimum TLS version at Cloudflare's default 1.0, Email Obfuscation on as Cloudflare ships it, no origin pull, an unrelated custom rule, and the
  * Free managed ruleset as Cloudflare lists it on a Free zone. */
 function cloudflare(root, change = state => state) {
-  const zone = (id, name) => ({id, name, ssl: 'full', certificates: [], originPull: false,
+  const zone = (id, name) => ({id, name, ssl: 'full', minTls: '1.0', emailObfuscation: 'on', certificates: [], originPull: false,
     managed: [{id: FREE_ID, name: 'Cloudflare Managed Free Ruleset', kind: 'managed', phase: 'http_request_firewall_managed'}],
     entrypoints: {http_request_firewall_custom: {id: `e-custom-${id}`, kind: 'zone', phase: 'http_request_firewall_custom', rules: [UNRELATED]}}});
   const state = change({token: TOKEN, denied: [], uploadStatus: 'active', zones: [zone('z1', 'shop.invalid'), zone('z2', 'units.invalid')]});
@@ -115,6 +117,8 @@ function findings(root) {
   expect('preview ends 0', result.status === 0);
   expect('preview writes nothing', result.writes.length === 0);
   expect('preview names the changes of both zones', /zone shop\.invalid: would SSL mode to Full \(strict\)/.test(result.stdout) && /zone units\.invalid: would add hostyour-next-action/.test(result.stdout));
+  expect('preview names the minimum TLS version of both zones', /zone shop\.invalid: would Minimum TLS version to 1\.2/.test(result.stdout) && /zone units\.invalid: would Minimum TLS version to 1\.2/.test(result.stdout));
+  expect('preview names Email Obfuscation of both zones', /zone shop\.invalid: would Email Obfuscation off/.test(result.stdout) && /zone units\.invalid: would Email Obfuscation off/.test(result.stdout));
   secretsKept('preview', result);
 
   result = run(root, 'apply');
@@ -123,6 +127,8 @@ function findings(root) {
   for (const zone of result.state.zones) {
     const rules = phase => zone.entrypoints[phase]?.rules ?? [];
     expect(`${zone.name}: SSL mode is strict`, zone.ssl === 'strict');
+    expect(`${zone.name}: the minimum TLS version is 1.2`, zone.minTls === '1.2');
+    expect(`${zone.name}: Email Obfuscation is off`, zone.emailObfuscation === 'off');
     expect(`${zone.name}: the certificate and its key are uploaded`, zone.certificates.length === 1 && zone.certificates[0].private_key_given === PRIVATE_KEY && zone.certificates[0].certificate === CERTIFICATE);
     expect(`${zone.name}: origin pull is on`, zone.originPull === true);
     expect(`${zone.name}: the unrelated rule stands as it stood`, JSON.stringify(rules('http_request_firewall_custom')[0]) === JSON.stringify(UNRELATED));
@@ -133,6 +139,35 @@ function findings(root) {
   expect('apply reads back', (result.stdout.match(/read back as declared; the origin pull certificate is active/g) ?? []).length === 2);
   result = run(root, 'preview');
   expect('a second preview has nothing to change', result.status === 0 && result.writes.length === 0 && (result.stdout.match(/nothing to change/g) ?? []).length === 2);
+
+  // A minimum at or above 1.2 stands as it is; only one below it is written.
+  const tlsWrites = result => result.writes.filter(c => c.path.endsWith('/settings/min_tls_version'));
+  cloudflare(root, state => { state.zones[0].minTls = '1.3'; state.zones[1].minTls = '1.1'; return state; });
+  result = run(root, 'preview');
+  expect('preview names the minimum TLS version of the zone below 1.2 and not of the zone at 1.3', !/zone shop\.invalid: would Minimum TLS version/.test(result.stdout) && /zone units\.invalid: would Minimum TLS version to 1\.2/.test(result.stdout));
+  result = run(root, 'apply');
+  expect(`apply raises 1.1 to 1.2 and never lowers 1.3 (${result.status}: ${result.stderr.trim()})`, result.status === 0 && result.state.zones[0].minTls === '1.3' && result.state.zones[1].minTls === '1.2' && tlsWrites(result).length === 1 && tlsWrites(result)[0].path.startsWith('/zones/z2/'));
+  cloudflare(root, state => { state.zones[0].minTls = '1.2'; state.zones[1].minTls = '1.2'; return state; });
+  result = run(root, 'apply');
+  expect('a minimum of 1.2 is neither named nor written', result.status === 0 && !/Minimum TLS version/.test(result.stdout) && tlsWrites(result).length === 0 && result.state.zones.every(z => z.minTls === '1.2'));
+  cloudflare(root, state => { state.zones[0].minTls = 'off'; return state; });
+  result = run(root, 'preview');
+  expect('a minimum Cloudflare does not list stops the run naming it', result.status === 65 && /zone shop\.invalid states min_tls_version off/.test(result.stderr));
+  cloudflare(root, state => { state.zones[0].minTlsFrozen = true; return state; });
+  result = run(root, 'apply');
+  expect('a minimum Cloudflare does not keep fails the read-back naming it', result.status === 65 && /zone shop\.invalid reads back without Minimum TLS version to 1\.2/.test(result.stderr));
+
+  // A zone that stands with Email Obfuscation off is neither named nor written.
+  const obfuscationWrites = result => result.writes.filter(c => c.path.endsWith('/settings/email_obfuscation'));
+  cloudflare(root, state => { state.zones[0].emailObfuscation = 'off'; return state; });
+  result = run(root, 'apply');
+  expect(`apply writes Email Obfuscation only where it stands on (${result.status}: ${result.stderr.trim()})`, result.status === 0 && obfuscationWrites(result).length === 1 && obfuscationWrites(result)[0].path.startsWith('/zones/z2/') && !/zone shop\.invalid: applying Email Obfuscation/.test(result.stdout));
+  cloudflare(root, state => { state.zones.forEach(z => { z.emailObfuscation = 'off'; }); return state; });
+  result = run(root, 'apply');
+  expect('Email Obfuscation off in every zone is neither named nor written', result.status === 0 && !/Email Obfuscation/.test(result.stdout) && obfuscationWrites(result).length === 0);
+  cloudflare(root, state => { state.zones[0].emailObfuscationFrozen = true; return state; });
+  result = run(root, 'apply');
+  expect('Email Obfuscation Cloudflare does not keep fails the read-back naming the zone', result.status === 65 && /zone shop\.invalid reads back without Email Obfuscation off/.test(result.stderr));
 
   // Cloudflare's own deployment of the Managed Free Ruleset counts, and is not deployed a second time.
   cloudflare(root, state => { state.zones[0].entrypoints.http_request_firewall_managed = {id: 'e-m', kind: 'zone', phase: 'http_request_firewall_managed', rules: [{id: 'd1', ref: 'd1', action: 'execute', action_parameters: {id: FREE_ID}, expression: 'true', enabled: true}]}; return state; });
@@ -185,7 +220,7 @@ test('a config others can read is refused before Cloudflare is asked', () => {
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
-test('PLANTED DEFECT: an act that replaces a whole ruleset, shows the token, skips the slot check, writes on preview or misses the Managed Free Ruleset as Cloudflare lists it is caught', () => {
+test('PLANTED DEFECT: an act that replaces a whole ruleset, shows the token, skips the slot check, writes on preview or misses the Managed Free Ruleset as Cloudflare lists it, leaves the minimum TLS version low, lowers a high one or leaves Email Obfuscation on is caught', () => {
   const act = readFileSync(join(HERE, `${ACT}.mjs`), 'utf8');
   const planted = {
     'a whole ruleset replaced': act.replace("method: 'POST', path: `${at}/rulesets/${entrypoint.id}/rules`, body: rule", "method: 'PUT', path: `${at}/rulesets/phases/${phase}/entrypoint`, body: {rules: [rule]}"),
@@ -195,6 +230,14 @@ test('PLANTED DEFECT: an act that replaces a whole ruleset, shows the token, ski
     'no read-back': act.replace("if (pending) fail(", "if (false) fail("),
     'the name the ruleset does not carry': act.replace("'Cloudflare Managed Free Ruleset'", "'Cloudflare Free Managed Ruleset'"),
     'no phase check': act.replace(" && r.phase === MANAGED", ""),
+    'no minimum TLS': act.replace('< TLS_VERSIONS.indexOf(MINIMUM_TLS)', '< 0'),
+    'a higher minimum lowered': act.replace('< TLS_VERSIONS.indexOf(MINIMUM_TLS)', '!== TLS_VERSIONS.indexOf(MINIMUM_TLS)'),
+    'a lower minimum than 1.2': act.replace("const MINIMUM_TLS = '1.2'", "const MINIMUM_TLS = '1.1'"),
+    'a minimum nobody lists passed': act.replace('if (!TLS_VERSIONS.includes(tls)) fail(', 'if (false) fail('),
+    'no Email Obfuscation entry': act.replace("if (api('GET', `${at}/settings/email_obfuscation`).value !== 'off')", 'if (false)'),
+    'Email Obfuscation written on': act.replace("path: `${at}/settings/email_obfuscation`, body: {value: 'off'}", "path: `${at}/settings/email_obfuscation`, body: {value: 'on'}"),
+    'Email Obfuscation written where it stands off': act.replace("if (api('GET', `${at}/settings/email_obfuscation`).value !== 'off')", "if (api('GET', `${at}/settings/email_obfuscation`).value)"),
+    'no read-back of the changes': act.replace('if (left.length) fail(', 'if (false) fail('),
   };
   for (const [name, text] of Object.entries(planted)) {
     assert.notEqual(text, act, name);

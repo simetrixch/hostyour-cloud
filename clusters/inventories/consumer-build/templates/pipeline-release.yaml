@@ -94,6 +94,8 @@ namespace, so the credential Secrets they envFrom by name are rendered here
 {{- end -}}
 {{- $releaseTagRe := printf "^%s$" (required "consumer-build: global.releaseTagFilter is required (platform values chain)" .Values.global.releaseTagFilter) -}}
 {{- $builds := include "consumer-build.builds" . | fromJsonArray -}}
+{{- $buildsAtOnce := int (required "consumer-build: ciCapacity.releaseBuildsAtOnce is required (values-common.yaml, the images of one release that build at the same time)" .Values.ciCapacity.releaseBuildsAtOnce) -}}
+{{- if lt $buildsAtOnce 1 }}{{ fail "consumer-build: ciCapacity.releaseBuildsAtOnce must be at least 1" }}{{ end -}}
 {{- $cloudURL := "https://github.com/simetrixch/hostyour-cloud.git" -}}
 {{- $channelStages := required "consumer-build: global.channelStages is required (platform values chain)" .Values.global.channelStages -}}
 {{- /* The channel table, serialized for shell consumption: one line per
@@ -391,7 +393,7 @@ spec:
           - { name: namespace, value: image-builder }
       workspaces:
         - { name: source, workspace: source }
-{{ range $b := $builds }}
+{{ range $i, $b := $builds }}
     # ── probe: {{ $b }} — build only when THIS COMMIT's image is missing ─────
     # A 200 IS NOT PROOF THE PLATFORM BUILT THE IMAGE. The registry answers a
     # local miss by fetching from its sync upstreams on demand
@@ -528,8 +530,11 @@ spec:
               limits: { cpu: 200m, memory: 128Mi }
 
     # ── build: {{ $b }} — pushed to the path decided at the top ──────────────
+    # The first ciCapacity.releaseBuildsAtOnce builds wait for the scan; every later one waits
+    # for the build that many places before it, so no more than that many Buildah pods are alive
+    # at once and the release slot of the memory budget counts exactly them.
     - name: {{ printf "build-%s" $b }}
-      runAfter: [scan]
+      runAfter: [{{ if lt $i $buildsAtOnce }}scan{{ else }}{{ printf "build-%s" (index $builds (sub $i $buildsAtOnce)) }}{{ end }}]
       when:
         - input: "$(tasks.builds.results.{{ $b }}-declared)"
           operator: in

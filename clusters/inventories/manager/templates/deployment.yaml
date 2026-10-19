@@ -432,6 +432,18 @@ spec:
                   name: manager-cloudflare-dns
                   key: api-token
                   optional: true
+            # Email Obfuscation off on the zone of every proxied record the manager writes
+            # (cloudflare-dns.ts). A token of its own beside the DNS one, because it changes
+            # zone settings and no other reader may have it. Sourced from the
+            # manager-cloudflare-zone-settings Secret (externalsecret-cloudflare-zone-settings.yaml).
+            # optional:true so a missing or unsynced secret never blocks manager boot; a proxied
+            # write fails LOUD without it, naming this variable, before any record is written.
+            - name: CLOUDFLARE_ZONE_SETTINGS_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: manager-cloudflare-zone-settings
+                  key: api-token
+                  optional: true
             # THE PLATFORM'S GITHUB APP (config.ts githubApp, all three required): the
             # identity the tenant-apps-repo run creates a tenant's own apps repository
             # under, in the customer's organisation, and mints the installation token

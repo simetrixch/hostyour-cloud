@@ -2,7 +2,9 @@
 // previewed, applied and read back. Started by apply-cloudflare-zone-security.sh, which guards the config.
 //
 // PER ZONE, platformDomain and unitApex of the books branch's map:
-//   SSL mode Full (strict); the zone-level origin pull certificate of the config uploaded and origin pull on;
+//   SSL mode Full (strict); the minimum TLS version raised to 1.2 where it stands lower (a higher one stays);
+//   Email Obfuscation off, so the proxy rewrites no address in a page;
+//   the zone-level origin pull certificate of the config uploaded and origin pull on;
 //   the Cloudflare Managed Free Ruleset deployed; the custom rule `hostyour-next-action`, which blocks
 //   (403 on Free) every request carrying a Next-Action header, WebSocket handshakes included; the one
 //   rate rule `hostyour-login-rate` on the login path. Every other rule and setting is left as it stands.
@@ -22,6 +24,10 @@ const MANAGED = 'http_request_firewall_managed';
 // The ruleset Free carries, as the zone's ruleset listing spells it: kind managed, phase MANAGED. The same
 // words in another order match nothing.
 const FREE_MANAGED = 'Cloudflare Managed Free Ruleset';
+// The minimum TLS versions a zone can state, lowest first. The edge ends the browser's TLS, so this zone
+// setting, not the origin's own policy, decides whether a browser on TLS 1.0 or 1.1 connects.
+const TLS_VERSIONS = ['1.0', '1.1', '1.2', '1.3'];
+const MINIMUM_TLS = '1.2';
 // Free admits five custom rules and one rate rule per zone.
 const CUSTOM_SLOTS = 5;
 const NEXT_ACTION = {
@@ -98,6 +104,12 @@ function changesOf(api, zone, certificate, privateKey) {
   const changes = [];
   if (api('GET', `${at}/settings/ssl`).value !== 'strict')
     changes.push({what: 'SSL mode to Full (strict)', method: 'PATCH', path: `${at}/settings/ssl`, body: {value: 'strict'}});
+  const tls = api('GET', `${at}/settings/min_tls_version`).value;
+  if (!TLS_VERSIONS.includes(tls)) fail(`zone ${zone.name} states min_tls_version ${tls}, which this act cannot compare with ${MINIMUM_TLS}`);
+  if (TLS_VERSIONS.indexOf(tls) < TLS_VERSIONS.indexOf(MINIMUM_TLS))
+    changes.push({what: `Minimum TLS version to ${MINIMUM_TLS}`, method: 'PATCH', path: `${at}/settings/min_tls_version`, body: {value: MINIMUM_TLS}});
+  if (api('GET', `${at}/settings/email_obfuscation`).value !== 'off')
+    changes.push({what: 'Email Obfuscation off', method: 'PATCH', path: `${at}/settings/email_obfuscation`, body: {value: 'off'}});
   if (!api('GET', `${at}/origin_tls_client_auth`).some(c => samePem(c.certificate ?? '', certificate)))
     changes.push({what: 'upload the origin pull certificate of the config', method: 'POST', path: `${at}/origin_tls_client_auth`,
       body: {certificate, private_key: privateKey}});

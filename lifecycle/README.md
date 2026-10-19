@@ -24,7 +24,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test; the stage `none` releases a library, which has no stage |
 | `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network, in a clone whose origin carries the install branch (exit 69 otherwise). `status.sh` calls it as one `forgejo-ssh:` row of every installation whose branch runs Forgejo, and `install-machine.sh` at its end after an installation that ended well: green on a banner, RED on none, `not asked` where it could not ask; 66 (no Forgejo on the branch) is no row. Tekton does not call it: it runs inside the network |
 | `create-origin-pull-certificate.sh` | makes the CA and the client certificate Cloudflare presents to the origins of proxied hosts, and writes `CLOUDFLARE_ORIGIN_PULL_CA`, `CLOUDFLARE_ORIGIN_PULL_CERTIFICATE` and `CLOUDFLARE_ORIGIN_PULL_PRIVATE_KEY` into the config; a second run is a rotation |
-| `apply-cloudflare-zone-security.sh` | previews or applies, and reads back, the Cloudflare Free controls of the installation's two zones |
+| `apply-cloudflare-zone-security.sh` | previews or applies, and reads back, the Cloudflare Free controls of the installation's two zones, among them the minimum TLS version of 1.2 and Email Obfuscation off |
 | `plan-installation-domain.sh` | plans and dry-runs proposed hostname changes across domain zones: reads every cluster map on a freshly fetched books branch, optionally probes machine names and Ingress/IngressRoute over ssh, and prints proposed hostname changes and coverage without altering remote state |
 
 `scripts/test.sh` runs their remote fixture checks.
@@ -530,12 +530,19 @@ which uploads the new client certificate. The run after the next drops the old C
 
 `apply-cloudflare-zone-security.sh` reads `CLOUDFLARE_ZONE_SECURITY_API_TOKEN` and the client
 certificate from the config, and the zones `platformDomain` and `unitApex` from the map on the books
-branch. On each zone it sets SSL mode Full (strict), uploads the client certificate and turns origin
-pull on, deploys the Cloudflare Managed Free Ruleset, and keeps two rules of its own by their `ref`:
+branch. On each zone it sets SSL mode Full (strict), raises the minimum TLS version to 1.2 where it
+stands lower (1.2 and 1.3 stay), turns Email Obfuscation off, uploads the client certificate and turns
+origin pull on, deploys the Cloudflare Managed Free Ruleset, and keeps two rules of its own by their `ref`:
 `hostyour-next-action` blocks every request with a `Next-Action` header (403 on Free), and
 `hostyour-login-rate` limits the sign-in path per address in 10-second windows. Every other rule and
 setting stays as it stands. `preview` writes nothing; `apply` writes, then reads back and fails on
 any difference. It stops, naming the item, on a missing permission (exit 77), a missing Managed
-Free Ruleset or a full rule slot (65), and a client certificate Cloudflare does not present yet
-(75: run `preview` again, and let no route require origin pull before it reads back active). The
-token and the private key reach curl on its standard input only, and nothing prints them.
+Free Ruleset, a full rule slot or a minimum TLS version it does not know (65), and a client
+certificate Cloudflare does not present yet (75: run `preview` again, and let no route require
+origin pull before it reads back active). The token and the private key reach curl on its standard
+input only, and nothing prints them. The zones of a tenant's own domains are not read here: the Manager
+turns Email Obfuscation off on each of them with its own token `CLOUDFLARE_ZONE_SETTINGS_API_TOKEN`.
+
+With the minimum at 1.2 the edge refuses a browser on TLS 1.0 or 1.1. A handshake test of that
+(`openssl s_client -tls1_1`) runs only on a proxied host, so the proof for a zone with none is a
+`preview` after `apply` that names no `Minimum TLS version to 1.2` line.

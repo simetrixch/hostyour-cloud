@@ -1,7 +1,7 @@
 # Decides, from the PipelineRuns that carry image-builder.io/consumer or image-builder.io/publish (the
 # labels their TriggerTemplates give them), which waiting release and publish runs start now and which
 # wait, and emits one patch per run that has to change. The caller passes the number of runs that run at
-# once as --argjson max (releaseQueue.maxRunning, 4). The build plane is one node, and runs beyond what its
+# once as --argjson max (releaseQueue.maxRunning, 9). The build plane is one node, and runs beyond what its
 # memory and its pod limit hold filled it until no task pod could start.
 # Every release run (one per stage of a release tag) and every publish run (the npm packages of a release
 # tag, consumer-build pipeline-publish.yaml) takes one slot and is counted on its own, whatever its tag. A
