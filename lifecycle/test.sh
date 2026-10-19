@@ -4988,6 +4988,30 @@ for locale in $SHAPE_LOCALE_LIST; do
 done
 ok "bytes no UTF-8 locale decodes and a NUL are named by line and name alike under $SHAPE_LOCALE_LIST, a value of Latin-1 bytes passes under each, and nothing reaches stderr"
 
+# ── a NUL followed by text with a colon: BusyBox awk ends a record at a NUL ──
+# It reads the bytes after the NUL as a record of its own and its text before the first colon
+# would print as a line number, a part of the value. The second line is that part shaped as a number.
+printf 'SECRET_X=abc\000plantedpart:rest def\nSECRET_X=abc\0004711:rest\n' > "$SHAPE/nul-colon.env"
+shape_nul_colon_is() { # the awk's folder put first on PATH, or empty for the awk on PATH; leaves SHAPE_GOT
+  SHAPE_AWK_PATH="${1:+$1:}$PATH"
+  PATH="$SHAPE_AWK_PATH" SHAPE_KEYS=SECRET_X shape_ask require_config_assignments "$SHAPE/nul-colon.env"
+  [ "$SHAPE_RC" = 1 ] && [ "$SHAPE_GOT" = 'line 1 (SECRET_X), line 2 (SECRET_X)' ] && [ ! -s "$SHAPE/ask.err" ]
+}
+shape_nul_colon_is '' \
+  || fail "a NUL before a colon, under the awk on PATH: it ended with $SHAPE_RC and left '$SHAPE_GOT', and the case records 1 and 'line 1 (SECRET_X), line 2 (SECRET_X)'"
+ok "a NUL before a colon is named by its line number and key alone under the awk on PATH — '$SHAPE_GOT'"
+SHAPE_HAS_BUSYBOX_AWK=0
+if command -v busybox > /dev/null 2>&1 && busybox --list 2> /dev/null | grep -qx awk; then
+  SHAPE_HAS_BUSYBOX_AWK=1
+  mkdir -p "$SHAPE/busybox-awk"
+  ln -sf "$(command -v busybox)" "$SHAPE/busybox-awk/awk"
+  shape_nul_colon_is "$SHAPE/busybox-awk" \
+    || fail "a NUL before a colon, under BusyBox awk: it ended with $SHAPE_RC and left '$SHAPE_GOT', and the case records 1 and 'line 1 (SECRET_X), line 2 (SECRET_X)'"
+  ok "a NUL before a colon is named by its line number and key alone under BusyBox awk — '$SHAPE_GOT'"
+else
+  echo 'test: NOT RUN — busybox is not on this machine, so a NUL before a colon is not run under BusyBox awk and is run under the awk on PATH only'
+fi
+
 # ── the copies the drivers carry are the sibling's function, byte for byte ──
 SHAPE_SPAN='/^require_config_assignments() {$/,/^}$/p'
 SHAPE_FN="$(sed -n "$SHAPE_SPAN" "$HERE/require-config-assignments.sh")"
@@ -5039,14 +5063,25 @@ if [ "$SHAPE_HAS_UTF8" = 1 ]; then
 else
   echo 'test: NOT RUN — locale -a lists no C.UTF-8 on this machine, so the planted function without its own locale is not told apart from the real one, and the real one is not run under a UTF-8 locale'
 fi
-unset -f shape_prints_line shape_names_any_token shape_without_text shape_without_locale
+# no removal of the NUL: BusyBox awk reads what follows it as a record of its own and names a part of the value
+mutant shape_keeps_nul "/tr -d/d"
+if [ "$SHAPE_HAS_BUSYBOX_AWK" = 1 ]; then
+  PATH="$SHAPE/busybox-awk:$PATH" SHAPE_KEYS=SECRET_X shape_ask shape_keeps_nul "$SHAPE/nul-colon.env"
+  [[ "$SHAPE_GOT" == *plantedpart* ]] \
+    || fail "a function that keeps the NUL left '$SHAPE_GOT' under BusyBox awk for a NUL before a colon — the planted defect was not caught"
+  ok "the planted defect was caught — a function that keeps the NUL leaves '$SHAPE_GOT' under BusyBox awk"
+else
+  echo 'test: NOT RUN — busybox is not on this machine, so the planted function that keeps the NUL is not told apart from the real one'
+fi
+unset -f shape_prints_line shape_names_any_token shape_without_text shape_without_locale shape_keeps_nul
 
 echo "test: covered — a config line that fails the shape check is refused by the five launchers and the five drivers by its number,"
 echo "test:   and by its NAME only where the launchers read that name as a key of config.example.env, and never by its value or by a token"
-echo "test:   that is no key, for a value with a blank in it, a value missing its closing quote, a line inside an open quote and a bare token;"
+echo "test:   that is no key, for a value with a blank in it, a value missing its closing quote, a line inside an open quote, a bare token and a NUL before a colon;"
 echo "test:   a well-formed config passes each launcher's shape check; a launcher without require-config-assignments.sh is refused;"
 echo "test:   the drivers' inline function is held byte-equal to the sibling's; a function that prints the line, one that names any token,"
-echo "test:   one without grep -a and, where locale -a lists C.UTF-8, one without its own locale are each planted and caught."
+echo "test:   one without grep -a, one that keeps a NUL, run under BusyBox awk where busybox is on the machine, and, where locale -a lists"
+echo "test:   C.UTF-8, one without its own locale are each planted and caught."
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
 echo "test:   reason for a host name it cannot resolve normalised, in the C locale."

@@ -32,7 +32,9 @@
 # THE PIPELINE RUNS IN C, so that the answer does not depend on the locale of
 # the caller: under a UTF-8 locale grep cannot match a value of Latin-1 bytes
 # with `[^']` and would refuse a line that is accepted under C. grep reads with -a
-# because it answers a line with a NUL as "Binary file matches".
+# because it answers a line with a NUL as "Binary file matches"; tr then drops the
+# NUL, because BusyBox awk ends a record at a NUL and would print the text after it,
+# up to its first colon, as a line number.
 #
 # THE SENTENCE STAYS THE CALLER'S. The five drivers run on the machine, where the
 # launcher sends one script over one ssh session and no sibling can be read, so
@@ -45,6 +47,7 @@ require_config_assignments() {
   BAD_LINES=$(
     export LC_ALL=C
     grep -anvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$file" \
+      | tr -d '\000' \
       | head -3 \
       | awk -v keys=" $keys " '{
           number = substr($0, 1, index($0, ":") - 1)

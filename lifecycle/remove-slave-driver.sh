@@ -73,6 +73,7 @@ require_config_assignments() {
   BAD_LINES=$(
     export LC_ALL=C
     grep -anvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$file" \
+      | tr -d '\000' \
       | head -3 \
       | awk -v keys=" $keys " '{
           number = substr($0, 1, index($0, ":") - 1)
