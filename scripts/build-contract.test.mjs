@@ -1604,6 +1604,7 @@ test('the seven largest distinct ci units and four releases fit the 59.25Gi memo
   const planted = structuredClone(pipelines);
   checkResources(planted.find((unit) => unit.metadata.name === 'digita-platform-ci')).limits.memory = '4Gi';
   assert.ok(!fits(planted), 'PLANTED DEFECT: a 4Gi override makes the sum 59.75Gi');
+  assert.ok(!fits(pipelines, {...capacity, maxRunning: capacity.maxRunning + 1}), 'PLANTED DEFECT: an eighth ci run at once, 62.5Gi against the 59.25Gi budget, is caught');
   assert.ok(!fits(pipelines, {...capacity, maxRunning: 14}), 'PLANTED DEFECT: 14 distinct ci units at once are caught');
   const largestName = largestUnit(units).name, images = capacity.releaseUnitImages;
   assert.ok(!fits(pipelines, capacity, releaseUnitsOf({...images, [largestName]: images[largestName] + 1})), 'PLANTED DEFECT: one more image built in parallel by the largest unit is caught');

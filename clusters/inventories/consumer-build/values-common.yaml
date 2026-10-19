@@ -126,7 +126,7 @@ releaseQueue:
 # (5 + 4 + 4 + 3) + 7 x 3 + 125 = 162 of 250. standingPods is DECLARED,
 # not derived: the pods of the node that are not in a build namespace and not finished, 125 at the peak of the five days
 # before 2026-10-19 (115 in the two days before; 111 running then), read from kube_pod_status_phase on the master's
-# Prometheus; it was 121 on 2026-10-14.
+# Prometheus.
 #
 # THE CORES OF THE BUILD NODE. The scheduler admits a pod by its CPU requests, and a pod whose requests do not
 # fit what is left of the node waits Pending, so a ci run would wait for a free core. A CPU limit reserves
