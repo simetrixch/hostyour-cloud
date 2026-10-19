@@ -2844,24 +2844,58 @@ if [ -n "$extract" ]; then cat > "$dir/payload"; exit 0; fi
 if [ -e "$dir/fails" ]; then head -c 1000 "$dir/payload"; exit 70; fi
 cat "$dir/payload"
 STANDIN_TAR
-printf '%s\n' '#!/usr/bin/env bash' \
-  '# microk8s kubectl apply -f - as the placement script calls it: it records what it is handed.' \
-  '[ "$1 $2 $3 $4" = "kubectl apply -f -" ] || exit 2' \
-  "cat >> '$STANDIN/kubectl.log'" > "$STANDIN/microk8s"
+cat > "$STANDIN/microk8s" <<'STANDIN_MICROK8S'
+#!/usr/bin/env bash
+# microk8s kubectl as the drivers call it. apply -f - (the placement script) appends what it is handed to
+# kubectl.log. Every other call is appended as it was made to kubectl-calls.log, and answers as the backup
+# needs: a node list, one replica for every workload, no pods, a rollout that is done. The first scale call,
+# while block-first-scale stands beside it, claims the folder blocked and then waits until the file release
+# stands (or 60 seconds pass), which is how a case holds one driver inside its store loop. It lets go of
+# descriptor 9, the backup's lock: a real kubectl call ends in seconds, and this one waits on purpose, so
+# it must not stand in for the holder of the lock when the case kills the driver that started it.
+exec 9>&-
+here="$(dirname "$0")"
+[ "$1" = kubectl ] || { echo 'microk8s stand-in: not called as microk8s kubectl' >&2; exit 2; }
+shift
+if [ "$*" = 'apply -f -' ]; then cat >> "$here/kubectl.log"; exit 0; fi
+printf 'kubectl %s\n' "$*" >> "$here/kubectl-calls.log"
+[ "$1" != -n ] || shift 2
+case "$1" in
+  get)
+    case "$2" in
+      nodes|pods) exit 0 ;;
+      *) echo 1; exit 0 ;;
+    esac ;;
+  rollout) exit 0 ;;
+  scale)
+    if [ -e "$here/block-first-scale" ] && mkdir "$here/blocked" 2> /dev/null; then
+      for _ in $(seq 1 600); do [ -e "$here/release" ] && break; sleep 0.1; done
+    fi
+    exit 0 ;;
+  *) echo "microk8s stand-in: a kubectl call the backup does not make: $1" >&2; exit 2 ;;
+esac
+STANDIN_MICROK8S
 cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 #!/usr/bin/env bash
 # rclone as the drivers call it. obscure takes the password on standard input (obscure -) or as an argument
 # and answers obscured-of-<it>. Every other call needs the remote box defined, as rclone reads it: by the
 # file --config or RCLONE_CONFIG names, or by RCLONE_CONFIG_BOX_* variables, with the host, the user and
 # the obscured password box.expected holds; it ends 1 otherwise. The folder and the mode of a config file it
-# reads go to secrets.seen, as the gpg stand-in's passphrase file does. copy from the box puts box-backup/
-# into its destination; copy to the box puts its source into box-uploaded/ under the remote path, and ends 1
-# on a source that rootonly names unless sudo raised the caller (STANDIN_ELEVATED), as a folder of root's at
-# mode 700 is refused to any other account. lsf of a remote path that was copied to lists what it holds.
+# reads go to secrets.seen, as the gpg stand-in's passphrase file does. copy from the box puts what a copy to
+# that remote path left in box-uploaded/ into its destination, or box-backup/ where nothing was copied there;
+# copy to the box puts its source into box-uploaded/ under the remote path, runs the file after-upload beside it on
+# what it put there if that file is executable, as a box that holds other bytes than were sent would, and ends
+# 1 on a source that rootonly names unless sudo raised the caller, as a folder of root's at mode 700 is
+# refused to any other account. lsf of a remote path that was copied to lists what it holds.
 # Every call that loads the config saves into it what rclone 1.60.1's sftp backend detects (shell_type,
 # md5sum_command, sha1sum_command) by renaming a file the caller wrote over it. So a call that sudo raised
 # leaves the config root's, at its old mode 600: rootonly names it, and any later call that sudo did not
 # raise ends 1 on it, as rclone does on a config it cannot load.
+# The first copy to the box, while block-first-upload stands beside it, claims the folder blocked and then
+# waits until the file release stands (or 60 seconds pass), which is how a case holds one driver in its
+# upload. Like the microk8s stand-in it lets go of descriptor 9, the backup's lock, so that the driver alone
+# holds the lock while it waits.
+exec 9>&-
 here="$(dirname "$0")"
 printf 'rclone %s\n' "$*" >> "$here/argv.log"
 conf="${RCLONE_CONFIG:-}"
@@ -2900,12 +2934,18 @@ case "$1" in
   lsf) if [ -d "$here/box-uploaded/${2#box:}" ]; then ls "$here/box-uploaded/${2#box:}"; fi; exit 0 ;;
   copy)
     case "$2" in
-      box:*) cp -R "$here/box-backup/." "$3" ;;
+      box:*)
+        from="$here/box-uploaded/${2#box:}"; [ -d "$from" ] || from="$here/box-backup"
+        cp -R "$from/." "$3" ;;
       *)
+        if [ -e "$here/block-first-upload" ] && mkdir "$here/blocked" 2> /dev/null; then
+          for _ in $(seq 1 600); do [ -e "$here/release" ] && break; sleep 0.1; done
+        fi
         if grep -qxF "$2" "$here/rootonly" 2> /dev/null && [ -z "${STANDIN_ELEVATED:-}" ]; then
           echo "rclone stand-in: open $2: permission denied" >&2; exit 1
         fi
-        mkdir -p "$here/box-uploaded/${3#box:}" && cp -R "$2/." "$here/box-uploaded/${3#box:}" ;;
+        mkdir -p "$here/box-uploaded/${3#box:}" && cp -R "$2/." "$here/box-uploaded/${3#box:}" || exit 1
+        if [ -x "$here/after-upload" ]; then "$here/after-upload" "$here/box-uploaded/${3#box:}" || exit 1; fi ;;
     esac ;;
   *) echo "rclone stand-in: a call the drivers do not make: $1" >&2; exit 2 ;;
 esac
@@ -3002,7 +3042,7 @@ sealed_by() { # <sudo kind> <the text lifted first> <command line...> — its co
   ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 022
     set -uo pipefail
-    die() { echo "die: $1" >&2; exit "${2:-1}"; }
+    die() { echo "die: $1" >&2; exit "${2:-1}"; }; say() { echo "say: $*"; }; good() { echo "good: $*"; }; step() { echo "step: $*"; }
     CONFIG="$WORK/seal-config"; : > "$CONFIG"
     ELEVATION_PASSWORD="$PLANTED_PASSWORD"; BACKUP_PASSPHRASE="$PLANTED_PASSPHRASE"; STORAGE_BOX_PASSWORD="$PLANTED_BOX_PASSWORD"
     STORAGE_BOX_HOST="$BOX_HOST"; STORAGE_BOX_USER="$BOX_USER"
@@ -3209,16 +3249,27 @@ CARRY_FQDN=master.example.invalid
 # shellcheck disable=SC2034 # the lifted text reads these
 carry_run() { # the driver's own lines: the work folder made, one store and the quorum sealed into it, then the way out
   FQDN="$CARRY_FQDN" STAGE=prod TAKEN=1
+  STORES=("ns|pvc|workload|deployment")
   eval "$CARRY_WORK"
   seal "$WORK/ns--pvc.tar.gpg" tar --numeric-owner -C "$SEAL_DIR/store" -cf - .
   seal "$WORK/host--vault-${STAGE}.txt.gpg" cat "$SEAL_DIR/quorum.txt"
   eval "$CARRY_WAY_OUT"
 }
-carry_holds() { # <sudo kind> <the text lifted first> <the way out> — ends 0 when the way out ran to its end and the box holds the sealed archives and a manifest that holds them, and the work folder is gone; what is wrong stands in $OUT/verdict
+printed_wrong() { # <file>... — says which planted line stands in those files, whole: the quorum, the passphrase and the passwords reach the operator's terminal and the log of the run, so none may; ends 0
+  local planted
+  for planted in planted-unseal-key-1 planted-unseal-key-2 "$PLANTED_PASSPHRASE" "$PLANTED_BOX_PASSWORD" "$PLANTED_PASSWORD"; do
+    grep -qF -- "$planted" "$@" && echo "the run printed the planted line $planted"
+  done
+  return 0
+}
+carry_holds() { # <sudo kind> <the text lifted first> <the way out> — ends 0 when the way out ran to its end and the box holds the sealed archives and a manifest that holds them, the work folder and the read-back folder are gone, and nothing planted was printed; what is wrong stands in $OUT/verdict
   local kind="$1" text="$2" code=0 landed
   CARRY_WAY_OUT="$3"
   : > "$OUT/verdict"
+  rm -rf "$SEAL_DIR/backups"
   sealed_by "$kind" "$text" carry_run || code=$?
+  printed_wrong "$OUT/sealed.out" "$OUT/sealed.err" >> "$OUT/verdict"
+  ! grep -q 'command not found' "$OUT/sealed.err" || echo "the way out called a command the case does not define: $(grep 'command not found' "$OUT/sealed.err" | head -n 1)" >> "$OUT/verdict"
   if [ "$code" != 0 ]; then
     echo "the way out ended with $code: $(tail -n 2 "$OUT/sealed.err" | tr '\n' ' ')" >> "$OUT/verdict"
     return 1
@@ -3234,6 +3285,7 @@ carry_holds() { # <sudo kind> <the text lifted first> <the way out> — ends 0 w
     { printf 'sealed with: %s\n' "$PLANTED_PASSPHRASE"; cat "$SEAL_DIR/quorum.txt"; } | cmp -s - "$landed/host--vault-prod.txt.gpg" || echo 'the archive on the box is not the sealed quorum' >> "$OUT/verdict"
     [ "$(tail -n 1 "$OUT/sealed.out")" = "BACKUP $(basename "$landed")" ] || echo 'the last line is not BACKUP and the id the box holds' >> "$OUT/verdict"
     [ ! -e "$SEAL_DIR/backups/$(basename "$landed")" ] || echo 'the work folder stands after the way out' >> "$OUT/verdict"
+    [ ! -e "$SEAL_DIR/backups/$(basename "$landed").readback" ] || echo 'the read-back folder stands after the way out' >> "$OUT/verdict"
   fi
   commands_wrong >> "$OUT/verdict"
   secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
@@ -3265,21 +3317,316 @@ for kind in nopasswd password; do
 done
 ok 'the planted copies are caught under each sudo: the operator refused the work folder, root without the config by path refused the box, the box config under an open umask'
 
-# planted defects of the read-back, which follows root's copy: the copy has just saved into the config what
+# planted defects of the listing, which follows root's copy: the copy has just saved into the config what
 # the box answered, so the config is root's, and a listing run by the operator cannot load it (it ends 1,
 # and the error stays on the screen); a listing root runs without the config by path does not know the box
 LIST_LINE='root rclone --config "$RCLONE_CONF" lsf'
 plant "$BACKUP_WAY_OUT" "$LIST_LINE" 'rclone lsf'; LIST_BY_OPERATOR="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" "$LIST_LINE" 'root rclone lsf'; LIST_WITHOUT_CONFIG="$PLANTED_TEXT"
 for kind in nopasswd password; do
-  ! carry_holds "$kind" "$BACKUP_TEXT" "$LIST_BY_OPERATOR" || fail "the planted read-back run by the operator was not caught under a sudo that reads $kind — the probe proves nothing"
-  caught_for 'read-back run by the operator' 'the way out ended with 69' 'Failed to load config file'
-  grep -qF 'Failed to load config file' "$OUT/verdict" || fail "the planted read-back run by the operator did not show the error rclone ended with: $(cat "$OUT/verdict")"
-  ! carry_holds "$kind" "$BACKUP_TEXT" "$LIST_WITHOUT_CONFIG" || fail "the planted root read-back without the config by path was not caught under a sudo that reads $kind — the probe proves nothing"
-  caught_for 'root read-back without the config by path' 'the way out ended with 69' 'the remote box is not defined'
-  grep -qF 'the remote box is not defined' "$OUT/verdict" || fail "the planted root read-back without the config by path did not show the error rclone ended with: $(cat "$OUT/verdict")"
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$LIST_BY_OPERATOR" || fail "the planted listing run by the operator was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'listing run by the operator' 'the way out ended with 69' 'Failed to load config file'
+  grep -qF 'Failed to load config file' "$OUT/verdict" || fail "the planted listing run by the operator did not show the error rclone ended with: $(cat "$OUT/verdict")"
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$LIST_WITHOUT_CONFIG" || fail "the planted root listing without the config by path was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'root listing without the config by path' 'the way out ended with 69' 'the remote box is not defined'
+  grep -qF 'the remote box is not defined' "$OUT/verdict" || fail "the planted root listing without the config by path did not show the error rclone ended with: $(cat "$OUT/verdict")"
 done
-ok 'the planted read-backs are caught under each sudo: the operator cannot load the config root saved into, root without the config by path does not know the box, and each shows the error rclone ended with'
+ok 'the planted listings are caught under each sudo: the operator cannot load the config root saved into, root without the config by path does not know the box, and each shows the error rclone ended with'
+
+# ── what stands on the box is read back, and a box that holds other bytes than were sent is refused ─
+# The count of file names and the size check rclone makes while it copies look at no byte of what the box
+# keeps. So after the count, the driver copies the backup back from the box into a folder of root's and
+# checks it there: the manifest's checksums, the manifest's count of stores against the rows of STORES, and
+# that the quorum archive opens with the passphrase, which writes the opened quorum nowhere. Each case makes
+# the box hold other bytes than the driver sent, by the script after-upload that the rclone stand-in runs on
+# what it was handed, as a copy that lost a connection half way would leave it. The refusal ends 69, names
+# the check that failed, removes the read-back folder, and leaves the work folder where the archives stand.
+BOX_FLIPPED_BYTE='printf Z | dd of="$1/ns--pvc.tar.gpg" bs=1 count=1 conv=notrunc 2> /dev/null'
+BOX_OTHER_COUNT='sed -i "s/^STORES=.*/STORES=2/" "$1/manifest.txt"'
+BOX_LOST_SHAPE='sed -i "/ ns--pvc.tar.gpg\$/s/^./g/" "$1/manifest.txt"'
+BOX_LOST_SHAPE_AND_FLIPPED="$BOX_LOST_SHAPE"$'\n'"$BOX_FLIPPED_BYTE"
+{ printf 'sealed with: another-passphrase\n'; cat "$SEAL_DIR/quorum.txt"; } > "$STANDIN/other-quorum.gpg"
+BOX_OTHER_PASSPHRASE='cp "$(dirname "$0")/other-quorum.gpg" "$1/host--vault-prod.txt.gpg"
+( cd "$1" && { head -n 5 manifest.txt; sha256sum -- *.gpg; } > manifest.new && mv manifest.new manifest.txt )'
+carry_refused() { # <sudo kind> <the way out> <what the box does to the upload: a script that is handed its folder> <what the refusal must say> — ends 0 when the way out ended 69 saying that, the read-back folder is gone and the work folder stands, and nothing planted was printed; what is wrong stands in $OUT/verdict
+  local kind="$1" says="$4" code=0 folders
+  CARRY_WAY_OUT="$2"
+  : > "$OUT/verdict"
+  rm -rf "$SEAL_DIR/backups"
+  printf '#!/usr/bin/env bash\n%s\n' "$3" > "$STANDIN/after-upload"; chmod 700 "$STANDIN/after-upload"
+  sealed_by "$kind" "$BACKUP_TEXT" carry_run || code=$?
+  rm -f "$STANDIN/after-upload"
+  printed_wrong "$OUT/sealed.out" "$OUT/sealed.err" >> "$OUT/verdict"
+  if [ "$code" = 0 ]; then
+    echo 'the way out ended with 0 although the box holds other bytes than were sent' >> "$OUT/verdict"
+  else
+    [ "$code" = 69 ] || echo "the way out ended with $code, not 69: $(tail -n 2 "$OUT/sealed.err" | tr '\n' ' ')" >> "$OUT/verdict"
+    grep -qF -- "$says" "$OUT/sealed.err" || echo "the way out did not say '$says': $(tail -n 2 "$OUT/sealed.err" | tr '\n' ' ')" >> "$OUT/verdict"
+    folders="$(ls "$SEAL_DIR/backups" 2> /dev/null)"
+    case "$folders" in *.readback*) echo 'the read-back folder stands after the way out' >> "$OUT/verdict" ;; esac
+    [ "$(printf '%s\n' "$folders" | grep -c '^[0-9]\{8\}T[0-9]\{6\}Z$')" = 1 ] \
+      || echo "the work folder does not stand after the way out: $(printf '%s' "$folders" | tr '\n' ' ')" >> "$OUT/verdict"
+  fi
+  [ ! -s "$OUT/verdict" ]
+}
+for kind in nopasswd password; do
+  carry_refused "$kind" "$BACKUP_WAY_OUT" "$BOX_FLIPPED_BYTE" 'do not match the checksums' \
+    || fail "backup: a box that holds a flipped byte in an archive was not refused under a sudo that reads $kind: $(cat "$OUT/verdict")"
+  carry_refused "$kind" "$BACKUP_WAY_OUT" "$BOX_OTHER_COUNT" 'counts other stores' \
+    || fail "backup: a manifest on the box that counts other stores than STORES has rows was not refused under a sudo that reads $kind: $(cat "$OUT/verdict")"
+  carry_refused "$kind" "$BACKUP_WAY_OUT" "$BOX_OTHER_PASSPHRASE" 'does not open' \
+    || fail "backup: a quorum archive on the box sealed with another passphrase was not refused under a sudo that reads $kind: $(cat "$OUT/verdict")"
+  carry_refused "$kind" "$BACKUP_WAY_OUT" "$BOX_LOST_SHAPE" 'is not the manifest that was sent' \
+    || fail "backup: a manifest on the box whose checksum line lost its form was not refused under a sudo that reads $kind: $(cat "$OUT/verdict")"
+  carry_refused "$kind" "$BACKUP_WAY_OUT" "$BOX_LOST_SHAPE_AND_FLIPPED" 'is not the manifest that was sent' \
+    || fail "backup: an archive on the box with a flipped byte under a checksum line that lost its form was not refused under a sudo that reads $kind: $(cat "$OUT/verdict")"
+done
+ok 'backup: a flipped byte in an archive on the box, a manifest that counts other stores than STORES has rows, a quorum archive sealed with another passphrase, and a manifest whose checksum line lost its form, with its archive flipped or not, are each refused with 69, naming the check; the read-back folder is gone and the work folder stands'
+
+# planted defects of the read-back, each of which lets its case through (the way out ends 0), or prints, or
+# leaves its folder
+READBACK_COPY='root rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet'
+plant "$BACKUP_WAY_OUT" "$READBACK_COPY" 'root cp -R "$WORK/." "$READBACK"'; READS_WORK="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" "$READBACK_COPY" 'rclone copy "$BACKUPS/$ID/" "$READBACK" --quiet'; READS_BY_OPERATOR="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" 'grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11' 'true'; NO_CHECKSUMS="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_MANIFEST_COMPARISON="$PLANTED_TEXT"
+# the comparison would refuse the damage of the next two cases first, so they are planted in a driver without it
+plant "$NO_MANIFEST_COMPARISON" 'grep -qx "STORES=$2" manifest.txt || exit 12' 'true'; NO_STORE_COUNT="$PLANTED_TEXT"
+plant "$NO_MANIFEST_COMPARISON" 'gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13' 'true'; NO_QUORUM_OPENING="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" '-o /dev/null -d "host--vault-$4.txt.gpg"' '-d "host--vault-$4.txt.gpg"'; OPENS_TO_OUTPUT="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" $'  root rm -rf "$READBACK"\n  case' '  case'; KEEPS_AFTER_REFUSAL="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" 'root rm -rf "$WORK" "$READBACK"' 'root rm -rf "$WORK"'; KEEPS_AFTER_SUCCESS="$PLANTED_TEXT"
+for kind in nopasswd password; do
+  ! carry_refused "$kind" "$READS_WORK" "$BOX_FLIPPED_BYTE" 'do not match the checksums' \
+    || fail "the planted read-back of the work folder was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'read-back of the work folder' 'the way out ended with 0'
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$READS_BY_OPERATOR" \
+    || fail "the planted read-back copy run by the operator was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'read-back copy run by the operator' 'the way out ended with 69' 'Failed to load config file'
+  ! carry_refused "$kind" "$NO_CHECKSUMS" "$BOX_FLIPPED_BYTE" 'do not match the checksums' \
+    || fail "the planted read-back without the checksums was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'read-back without the checksums' 'the way out ended with 0'
+  ! carry_refused "$kind" "$NO_MANIFEST_COMPARISON" "$BOX_LOST_SHAPE" 'is not the manifest that was sent' \
+    || fail "the planted read-back without the comparison of the manifest was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'read-back without the comparison of the manifest' 'the way out ended with 0'
+  ! carry_refused "$kind" "$NO_MANIFEST_COMPARISON" "$BOX_LOST_SHAPE_AND_FLIPPED" 'is not the manifest that was sent' \
+    || fail "the planted read-back without the comparison of the manifest was not caught on a flipped archive under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'read-back without the comparison of the manifest, on a flipped archive' 'the way out ended with 0'
+  ! carry_refused "$kind" "$NO_STORE_COUNT" "$BOX_OTHER_COUNT" 'counts other stores' \
+    || fail "the planted read-back without the count of stores was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'read-back without the count of stores' 'the way out ended with 0'
+  ! carry_refused "$kind" "$NO_QUORUM_OPENING" "$BOX_OTHER_PASSPHRASE" 'does not open' \
+    || fail "the planted read-back without the opening of the quorum was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'read-back without the opening of the quorum' 'the way out ended with 0'
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$OPENS_TO_OUTPUT" \
+    || fail "the planted opening of the quorum to the output was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'opening of the quorum to the output' 'the run printed the planted line planted-unseal-key-1' 'the run printed the planted line planted-unseal-key-2'
+  ! carry_refused "$kind" "$KEEPS_AFTER_REFUSAL" "$BOX_FLIPPED_BYTE" 'do not match the checksums' \
+    || fail "the planted refusal that leaves the read-back folder was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'refusal that leaves the read-back folder' 'the read-back folder stands after the way out'
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$KEEPS_AFTER_SUCCESS" \
+    || fail "the planted way out that leaves the read-back folder was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'way out that leaves the read-back folder' 'the read-back folder stands after the way out'
+done
+ok 'the planted read-backs are caught under each sudo: the work folder read in place of the box, the copy run by the operator, each check removed (the comparison of the manifest with the one sent among them), the quorum opened to the output, a folder left behind after a refusal and after a success'
+
+# ── one backup at a time on a machine ───────────────────────────────────────────────────────────────
+# Two backups at once leave a store at 0 replicas (the second reads 0 where the first holds the store
+# stopped, and starts it again with 0) and copy a store the first has started again. The cases run the
+# driver whole, against the stand-ins, with its four paths moved into the sandbox (the work folder, the
+# volumes, the quorum and the lock file); the lock is the kernel's, so flock is the real one. The first
+# driver is held inside its store loop by the microk8s stand-in, and a second one is started beside it.
+LOCK_DIR="$WORK/lock"
+BACKUP_STORES="$(sed -n '/^STORES=($/,/^)$/p' "$HERE/master-backup-driver.sh")"
+[ -n "$BACKUP_STORES" ] || fail 'the backup driver carries no STORES rows — the lock cases cannot give it volumes'
+mkdir -p "$LOCK_DIR/srv/secrets"
+cp "$SEAL_DIR/quorum.txt" "$LOCK_DIR/srv/secrets/vault-prod.txt"
+while IFS='|' read -r ns pvc _ _; do
+  mkdir -p "$LOCK_DIR/storage/${ns}-${pvc}-pvc-0000"
+  echo planted-store > "$LOCK_DIR/storage/${ns}-${pvc}-pvc-0000/payload"
+done < <(STAGE=prod; eval "$BACKUP_STORES"; printf '%s\n' "${STORES[@]}")
+LOCK_STORES="$(ls "$LOCK_DIR/storage" | wc -l | tr -d ' ')"
+lock_reset() { # <free|block|block-upload> — the stand-ins forget the last case; block holds the first scale call of the next one, block-upload its first copy to the box
+  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$LOCK_DIR/master-backup.lock"
+  : > "$STANDIN/kubectl-calls.log"
+  case "$1" in
+    block) : > "$STANDIN/block-first-scale" ;;
+    block-upload) : > "$STANDIN/block-first-upload" ;;
+  esac
+}
+lock_driver() { # <run> <the driver's text> — the run's folder, with the driver and its paths moved into the sandbox, and a config beside it
+  local dir="$LOCK_DIR/$1" literal
+  rm -rf "$dir"; mkdir -p "$dir"
+  for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
+    printf '%s\n' "$2" | grep -qF -- "$literal" || fail "the backup driver names no $literal — the sandbox of the lock cases proves nothing"
+  done
+  printf '%s\n' "$2" | sed -e "s#/var/lib/master-backup#$dir/backups#g" -e "s#/var/snap/microk8s/common/default-storage#$LOCK_DIR/storage#g" \
+    -e "s#/srv/hostyour-cloud#$LOCK_DIR/srv#g" -e "s#/run/lock/master-backup.lock#$LOCK_DIR/master-backup.lock#g" > "$dir/driver.sh"
+  for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
+    ! grep -qF -- "$literal" "$dir/driver.sh" || fail "the sandboxed backup driver still names $literal — the lock cases would reach this machine"
+  done
+  { printf "FQDN='%s'\nOPERATOR_USER='op'\nSTAGE='prod'\nELEVATION_PASSWORD='%s'\n" "$CARRY_FQDN" "$PLANTED_PASSWORD"
+    printf "STORAGE_BOX_HOST='%s'\nSTORAGE_BOX_USER='%s'\nSTORAGE_BOX_PASSWORD='%s'\nBACKUP_PASSPHRASE='%s'\n" "$BOX_HOST" "$BOX_USER" "$PLANTED_BOX_PASSWORD" "$PLANTED_PASSPHRASE"; } > "$dir/config"
+}
+lock_start() { # <run> — starts the run in the background as the launcher starts a driver (umask 077, no input); its pid stands in $LOCK_PID
+  local dir="$LOCK_DIR/$1"
+  ( export SUDO_STANDIN=nopasswd SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
+    umask 077
+    exec bash "$dir/driver.sh" "$dir/config" ) < /dev/null > "$dir/out" 2> "$dir/err" &
+  LOCK_PID=$!
+}
+lock_run() { # <run> — runs it in front, ended after two minutes at the latest; its code stands in $LOCK_CODE
+  local dir="$LOCK_DIR/$1"
+  LOCK_CODE=0
+  ( export SUDO_STANDIN=nopasswd SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
+    umask 077
+    exec timeout 120 bash "$dir/driver.sh" "$dir/config" ) < /dev/null > "$dir/out" 2> "$dir/err" || LOCK_CODE=$?
+}
+lock_held() { # <run> — waits until a stand-in holds the run, inside its store loop or in its upload
+  local _
+  for _ in $(seq 1 300); do [ -d "$STANDIN/blocked" ] && return 0; sleep 0.1; done
+  fail "the first driver did not reach the call that holds it in 30 seconds: $(tail -n 2 "$LOCK_DIR/$1/err" | tr '\n' ' ')"
+}
+lock_let_go() { # lets the held run go on, waits for it to end; its code stands in $LOCK_CODE
+  : > "$STANDIN/release"
+  LOCK_CODE=0; wait "$LOCK_PID" || LOCK_CODE=$?
+}
+scale_calls() { grep -c ' scale ' "$STANDIN/kubectl-calls.log" || true; }
+lock_refuses() { # <the driver's text> [<scale|upload>] — holds a first run in its store loop, or in the upload of its archives, and starts a second: ends 0 when the second ended 75, named the first run's id and start, scaled nothing and made no folder, and the first ran to its end once let go; what is wrong stands in $OUT/verdict
+  local text="$1" held="${2:-scale}" first_id started second scaled scaled_before
+  : > "$OUT/verdict"
+  if [ "$held" = upload ]; then lock_reset block-upload; else lock_reset block; fi
+  lock_driver first "$text"; lock_driver second "$text"
+  lock_start first; lock_held first
+  first_id="$(ls "$LOCK_DIR/first/backups" 2> /dev/null | head -n 1 || true)"
+  started="${first_id:0:4}-${first_id:4:2}-${first_id:6:2} ${first_id:9:2}:${first_id:11:2}:${first_id:13:2} UTC"
+  [ -n "$first_id" ] || echo 'the first driver made no folder, so there is no run to name' >> "$OUT/verdict"
+  scaled_before="$(scale_calls)"
+  lock_run second; second="$LOCK_CODE"
+  scaled=$(( $(scale_calls) - scaled_before ))
+  lock_let_go
+  [ "$second" = 75 ] || echo "the second driver ended with $second, not 75" >> "$OUT/verdict"
+  { [ -n "$first_id" ] && grep -qF -- "$first_id" "$LOCK_DIR/second/err" && grep -qF -- "$started" "$LOCK_DIR/second/err"; } \
+    || echo "the refusal did not name the running run $first_id, started $started: $(tail -n 1 "$LOCK_DIR/second/err")" >> "$OUT/verdict"
+  [ "$scaled" = 0 ] || echo "the second driver scaled $scaled time(s) while the first held the stores" >> "$OUT/verdict"
+  [ ! -e "$LOCK_DIR/second/backups" ] || echo 'the refused driver made a folder before it was refused' >> "$OUT/verdict"
+  [ "$LOCK_CODE" = 0 ] || echo "the first driver ended with $LOCK_CODE once let go" >> "$OUT/verdict"
+  [ "$(tail -n 1 "$LOCK_DIR/first/out")" = "BACKUP $first_id" ] || echo 'the first driver did not end with BACKUP and its id once let go' >> "$OUT/verdict"
+  printed_wrong "$LOCK_DIR/first/out" "$LOCK_DIR/first/err" "$LOCK_DIR/second/out" "$LOCK_DIR/second/err" >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+lock_frees_on_death() { # <the driver's text> — a first run is killed inside its store loop, and a second starts: ends 0 when the lock file stands and the second ended 0 with a backup of all the stores; what is wrong stands in $OUT/verdict
+  local text="$1"
+  : > "$OUT/verdict"
+  lock_reset block
+  lock_driver killed "$text"; lock_driver after "$text"
+  lock_start killed; lock_held killed
+  kill -KILL "$LOCK_PID"
+  { wait "$LOCK_PID"; } 2> /dev/null || true
+  : > "$STANDIN/release"; rm -f "$STANDIN/block-first-scale"
+  secrets_wrong "$STANDIN/secrets.seen" > /dev/null
+  [ -s "$LOCK_DIR/master-backup.lock" ] || echo 'the killed driver left no lock file with its record, so the case does not show a lock left behind' >> "$OUT/verdict"
+  lock_run after
+  if [ "$LOCK_CODE" != 0 ]; then
+    echo "the driver started after the holder was killed ended with $LOCK_CODE: $(tail -n 1 "$LOCK_DIR/after/err")" >> "$OUT/verdict"
+  elif [ "$(tail -n 1 "$LOCK_DIR/after/out" | cut -c1-7)" != 'BACKUP ' ]; then
+    echo 'the driver started after the holder was killed did not end with BACKUP and an id' >> "$OUT/verdict"
+  fi
+  [ ! -s "$OUT/verdict" ]
+}
+lock_refused_by_hand() { # <the driver's text> <none|ended|killed> — a process that is no backup holds the lock file, as flock(1) with a command does, after no run, after a run that ended or after one that was killed, each of which leaves its record in the file: ends 0 when the driver ended 75 saying the record names no run that is alive, without naming the earlier run, before it scaled or made anything; what is wrong stands in $OUT/verdict
+  local text="$1" earlier="$2" earlier_id='' holder _
+  : > "$OUT/verdict"
+  lock_reset free
+  lock_driver by-hand "$text"
+  case "$earlier" in
+    ended)
+      lock_driver earlier "$text"
+      lock_run earlier
+      [ "$LOCK_CODE" = 0 ] || fail "backup: the run that ends before the lock is held by hand ended with $LOCK_CODE: $(tail -n 2 "$LOCK_DIR/earlier/err")"
+      earlier_id="$(tail -n 1 "$LOCK_DIR/earlier/out" | cut -d' ' -f2)" ;;
+    killed)
+      lock_reset block
+      lock_driver earlier "$text"
+      lock_start earlier; lock_held earlier
+      earlier_id="$(ls "$LOCK_DIR/earlier/backups" | head -n 1)"
+      kill -KILL "$LOCK_PID"
+      { wait "$LOCK_PID"; } 2> /dev/null || true
+      : > "$STANDIN/release"; rm -f "$STANDIN/block-first-scale" ;;
+  esac
+  if [ -n "$earlier_id" ]; then
+    grep -qF -- "$earlier_id" "$LOCK_DIR/master-backup.lock" || fail "backup: the $earlier run left no record of its id in the lock file, so the case does not show a record left behind"
+  fi
+  : > "$STANDIN/kubectl-calls.log"
+  ( exec 7<>"$LOCK_DIR/master-backup.lock"; flock -n 7 || exit 1; : > "$LOCK_DIR/held-by-hand"; exec sleep 60 ) &
+  holder=$!
+  for _ in $(seq 1 50); do [ -e "$LOCK_DIR/held-by-hand" ] && break; sleep 0.1; done
+  [ -e "$LOCK_DIR/held-by-hand" ] || fail 'the case could not hold the lock file by hand'
+  lock_run by-hand
+  kill "$holder"; { wait "$holder"; } 2> /dev/null || true
+  rm -f "$LOCK_DIR/held-by-hand"
+  [ "$LOCK_CODE" = 75 ] || echo "the driver ended with $LOCK_CODE, not 75, on a lock held by hand: $(tail -n 1 "$LOCK_DIR/by-hand/err")" >> "$OUT/verdict"
+  grep -qF 'its record is empty or names a run that is not alive' "$LOCK_DIR/by-hand/err" || echo "the refusal did not say that the record names no run that is alive: $(tail -n 1 "$LOCK_DIR/by-hand/err")" >> "$OUT/verdict"
+  [ -z "$earlier_id" ] || ! grep -qF -- "$earlier_id" "$LOCK_DIR/by-hand/err" || echo "the refusal named the $earlier run $earlier_id, which does not hold the lock: $(tail -n 1 "$LOCK_DIR/by-hand/err")" >> "$OUT/verdict"
+  [ "$(scale_calls)" = 0 ] || echo 'the driver scaled a store on a lock held by hand' >> "$OUT/verdict"
+  [ ! -e "$LOCK_DIR/by-hand/backups" ] || echo 'the refused driver made a folder before it was refused' >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+LOCK_TEXT="$(cat "$HERE/master-backup-driver.sh")"
+lock_refuses "$LOCK_TEXT" || fail "backup: a second driver was not refused while the first held the stores: $(cat "$OUT/verdict")"
+lock_refuses "$LOCK_TEXT" upload || fail "backup: a second driver was not refused while the first uploaded its archives, after its store loop: $(cat "$OUT/verdict")"
+for earlier in none ended killed; do
+  lock_refused_by_hand "$LOCK_TEXT" "$earlier" || fail "backup: a lock held by hand (earlier run: $earlier) was not refused with a record that names no run: $(cat "$OUT/verdict")"
+done
+lock_frees_on_death "$LOCK_TEXT" || fail "backup: a lock left by a killed driver blocked the next one: $(cat "$OUT/verdict")"
+# innocent: two runs one after the other both pass, each stopping and starting every store
+lock_reset free
+lock_driver one "$LOCK_TEXT"; lock_driver two "$LOCK_TEXT"
+lock_run one; [ "$LOCK_CODE" = 0 ] || fail "backup: a first run alone ended with $LOCK_CODE: $(tail -n 2 "$LOCK_DIR/one/err")"
+[ -e "$LOCK_DIR/master-backup.lock" ] || fail 'backup: the lock file is not left on disk after a run, so the case does not show that a file left behind does not block'
+lock_run two; [ "$LOCK_CODE" = 0 ] || fail "backup: a run after a finished run was refused or failed, ended with $LOCK_CODE: $(tail -n 2 "$LOCK_DIR/two/err")"
+[ "$(scale_calls)" = "$(( 4 * LOCK_STORES ))" ] || fail "backup: two runs one after the other did not stop and start every one of the $LOCK_STORES stores twice: $(scale_calls) scale call(s)"
+printed_wrong "$LOCK_DIR/one/out" "$LOCK_DIR/one/err" "$LOCK_DIR/two/out" "$LOCK_DIR/two/err" > "$OUT/verdict"
+[ ! -s "$OUT/verdict" ] || fail "backup: a whole run printed a planted line: $(cat "$OUT/verdict")"
+secrets_wrong "$STANDIN/secrets.seen" > "$OUT/verdict"
+[ ! -s "$OUT/verdict" ] || fail "backup: a whole run left its secrets wrong: $(cat "$OUT/verdict")"
+ok 'backup: a second driver started while the first holds the stores, or uploads its archives, is refused with 75, naming the first run, before it scales or makes anything, and so is one that finds the lock held by hand, which it does not name a run for, whether the file holds no record or the record of a run that ended or was killed; a killed holder and a finished run leave a lock file that does not block; no run prints a planted line'
+
+# planted defects: the lock lines removed, the lock taken after the folder is made, the lock file opened for
+# writing (which wipes the record of the run that holds it), a lock that is the file's presence (which a
+# killed holder leaves behind), a lock let go of after the store loop, a record trusted without the process it
+# names (which a run that ended or was killed leaves behind), and a record never trusted
+LOCK_LINES="$(printf '%s\n' "$LOCK_TEXT" | sed -n '/^exec 9<>/,/^fi$/p')"
+[ -n "$LOCK_LINES" ] || fail 'the backup driver carries no lock lines — the planted defects cannot be built'
+INSTALL_LINE='root install -d -m 700 -o root -g root /var/lib/master-backup "$WORK" || die "could not make $WORK" 78'
+NO_LOCK="${LOCK_TEXT/"$LOCK_LINES"/true}"
+[ "$NO_LOCK" != "$LOCK_TEXT" ] || fail 'the planted driver without the lock was not planted — the probe proves nothing'
+LATE_LOCK="${NO_LOCK/"$INSTALL_LINE"/"$INSTALL_LINE"$'\n'"$LOCK_LINES"}"
+[ "$LATE_LOCK" != "$NO_LOCK" ] || fail 'the planted driver with the lock after the folder was not planted — the probe proves nothing'
+plant "$LOCK_TEXT" 'exec 9<>"$LOCK_FILE"' 'exec 9>"$LOCK_FILE"'; TRUNCATING_LOCK="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'flock -n -E 75 9 || LOCKED=$?' '[ ! -s "$LOCK_FILE" ] || LOCKED=75'; FILE_AS_LOCK="$PLANTED_TEXT"
+plant "$LOCK_TEXT" ' && [ "/proc/$HOLDER_PID/fd/9" -ef "$LOCK_FILE" ]' ''; TRUSTS_RECORD="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'step "the host'"'"'s own file"' $'exec 9>&-\nstep "the host\'s own file"'; LETS_GO_EARLY="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '[ "/proc/$HOLDER_PID/fd/9" -ef "$LOCK_FILE" ]' 'false'; NEVER_TRUSTS_RECORD="$PLANTED_TEXT"
+! lock_refuses "$NO_LOCK" || fail 'the planted driver without the lock was not caught — the probe proves nothing'
+caught_for 'driver without the lock' 'the second driver scaled' 'the second driver ended with 0' 'did not name the running run' 'made a folder'
+! lock_refuses "$LATE_LOCK" || fail 'the planted driver that takes the lock after it made its folder was not caught — the probe proves nothing'
+caught_for 'driver that takes the lock after it made its folder' 'made a folder'
+! lock_refuses "$TRUNCATING_LOCK" || fail 'the planted driver that opens the lock file for writing was not caught — the probe proves nothing'
+caught_for 'driver that opens the lock file for writing' 'did not name the running run'
+! lock_frees_on_death "$FILE_AS_LOCK" || fail 'the planted driver whose lock is the presence of a file was not caught — the probe proves nothing'
+caught_for 'driver whose lock is the presence of a file' 'ended with 75'
+for earlier in ended killed; do
+  ! lock_refused_by_hand "$TRUSTS_RECORD" "$earlier" || fail "the planted driver that trusts the record of a run that $earlier was not caught — the probe proves nothing"
+  caught_for "driver that trusts the record of a run that $earlier" 'the refusal named the' 'did not say that the record names no run'
+done
+lock_refuses "$LETS_GO_EARLY" || fail 'the planted driver that lets go of the lock after its store loop was refused while the first held the stores, so the case that holds the upload adds nothing'
+! lock_refuses "$LETS_GO_EARLY" upload || fail 'the planted driver that lets go of the lock after its store loop was not caught while the first uploaded — the probe proves nothing'
+caught_for 'driver that lets go of the lock after its store loop' 'the second driver scaled' 'the second driver ended with 0' 'did not name the running run' 'made a folder'
+! lock_refuses "$NEVER_TRUSTS_RECORD" || fail 'the planted driver that never trusts the record was not caught — the probe proves nothing'
+caught_for 'driver that never trusts the record' 'did not name the running run'
+ok 'the planted drivers are caught: no lock, a lock taken after the folder, a lock file opened for writing, a lock that is the presence of a file, a lock let go of after the store loop, a record trusted without the process it names, a record never trusted'
 
 # The restore: the fetch, the clone, the fetch of the branch, the opening of the quorum and of every store,
 # as the driver's own text runs them against a backup the rclone stand-in serves.
