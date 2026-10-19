@@ -1007,6 +1007,20 @@ echo "check: a release tag starts the publish pipeline of a unit, with builds or
 repository_policy() { # $1 the zot config.json, $2 a repositories key, $3 its field. A quoted regex, because yq reads a "*" in a key or in == as a glob.
   yq -p=json -o=json -I=0 ".http.accessControl.repositories | to_entries[] | select(.key | test(\"^\\\\Q$2\\\\E\$\")) | .value.$3" "$1"
 }
+go_duration_seconds() { # $1 a Go duration such as 30m, 1h30m or 1m0s -> its whole seconds, or nothing when it is not one; zot decodes http.writeTimeout with time.ParseDuration
+  awk -v text="$1" 'BEGIN {
+    rest = text; total = 0
+    if (rest == "") exit
+    while (rest != "") {
+      if (!match(rest, /^[0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h)/)) exit
+      part = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1)
+      unit = part; sub(/^[0-9.]+/, "", unit); sub(/(ns|us|ms|s|m|h)$/, "", part)
+      scale = (unit == "h") ? 3600 : (unit == "m") ? 60 : (unit == "s") ? 1 : (unit == "ms") ? 0.001 : (unit == "us") ? 0.000001 : 0.000000001
+      total += part * scale
+    }
+    printf "%d\n", total
+  }'
+}
 zot_fault() { # $1 the zot config.json -> the first way it differs from the access this platform needs, or nothing
   local open
   open="$(yq -p=json -o=json -I=0 '.http.accessControl.repositories | keys' "$1")"
@@ -1020,7 +1034,12 @@ zot_fault() { # $1 the zot config.json -> the first way it differs from the acce
   [ "$(yq -p=json -o=json -I=0 '.http.compat' "$1")" = '["docker2s2"]' ] \
     || { echo "zot refuses a Docker v2 schema 2 manifest, so the mirror cannot hold an upstream image of that media type at the digest its consumers pin"; return; }
   [ "$(yq -p=json -o=json -I=0 '[.extensions.sync.registries[].urls[]] | map(select(test("ghcr\\.io"))) | length' "$1")" = 0 ] \
-    || echo "zot still fetches from ghcr.io on a miss, so a platform image it lacks is pulled through from GitHub instead of failing"
+    || { echo "zot still fetches from ghcr.io on a miss, so a platform image it lacks is pulled through from GitHub instead of failing"; return; }
+  local write_timeout seconds
+  write_timeout="$(yq -p=json -o=yaml '.http.writeTimeout' "$1")"
+  seconds="$(go_duration_seconds "$write_timeout")"
+  [ -n "$seconds" ] && [ "$seconds" -ge 1800 ] \
+    || echo "zot ends a response that is still being written after http.writeTimeout ($write_timeout; its default is 60 seconds), so eight clusters fetching one large pinned tool at once are cut part-way (curl 92); it must be a Go duration of at least 30 minutes"
 }
 helm template registry clusters/inventories/registry --namespace registry \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -1037,6 +1056,14 @@ yq -p=json -o=json '.extensions.sync.registries = [{"urls": ["https://ghcr.io"],
 [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that still fetches from ghcr.io"
 yq -p=json -o=json 'del(.http.compat)' "$work/zot.json" > "$work/zot-planted.json"
 [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that refuses Docker v2 schema 2 manifests"
+yq -p=json -o=json 'del(.http.writeTimeout)' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot that ends every response after its default 60 seconds"
+for short in 60s 1m 1m0s 59s 5m 29m59s 1799s 0; do
+  yq -p=json -o=json ".http.writeTimeout = \"$short\"" "$work/zot.json" > "$work/zot-planted.json"
+  [ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot whose write timeout is $short, shorter than 30 minutes"
+done
+yq -p=json -o=json '.http.writeTimeout = 60' "$work/zot.json" > "$work/zot-planted.json"
+[ -n "$(zot_fault "$work/zot-planted.json")" ] || fail "zot_fault takes a zot whose write timeout is a bare number, not a duration"
 # The planted innocent: buildRegistry naming the owner's own registry keeps the owner's prefix.
 helm template registry clusters/inventories/registry --namespace registry \
   -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
@@ -1045,7 +1072,12 @@ helm template registry clusters/inventories/registry --namespace registry \
   | yq 'select(.kind == "ConfigMap" and .metadata.name == "zot-config") | .data."config.json"' > "$work/zot-planted.json"
 fault="$(zot_fault "$work/zot-planted.json")"
 [ -z "$fault" ] || fail "the planted innocent, buildRegistry at the owner's own registry, is refused: $fault"
-echo "check: zot opens simetrixch/** alone to an anonymous read, takes Docker v2 schema 2 manifests as they are and fetches nothing from ghcr.io; the check refuses the three planted defects and takes the planted innocent."
+for long in 30m 1h 1h0m0s 1800s 31m 90m; do
+  yq -p=json -o=json ".http.writeTimeout = \"$long\"" "$work/zot.json" > "$work/zot-planted.json"
+  fault="$(zot_fault "$work/zot-planted.json")"
+  [ -z "$fault" ] || fail "the planted innocent, a write timeout of $long, is refused: $fault"
+done
+echo "check: zot opens simetrixch/** alone to an anonymous read, takes Docker v2 schema 2 manifests as they are and fetches nothing from ghcr.io; ends no response before 30 minutes; the check refuses the planted defects and takes the planted innocent."
 
 # ── The pod of zot rolls when the config.json it was started with is not the one the ConfigMap holds ─
 # zot loads its config at start and never again, and a ConfigMap mount that follows an edit does not
