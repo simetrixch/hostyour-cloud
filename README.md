@@ -101,8 +101,9 @@ Run tests only on a remote runner.
 Read its runs on the master as the PipelineRuns `hostyour-cloud-ci-*` in the namespace `hostyour-cloud-build`,
 or as the commit status `tekton/ci` on the commit
 (`clusters/inventories/consumer-build/files/ci-commit-status.sh`). A push of the default branch or of a
-`ci/` branch starts a run through the Trigger `github-ci-push`
-(`clusters/inventories/image-builder/templates/triggers/github-ci-push.yaml`).
+`ci/` branch of a public repository starts a run through the Trigger `github-ci-push`
+(`clusters/inventories/image-builder/templates/triggers/github-ci-push.yaml`); a push of a private repository
+starts none and sets no `tekton/ci` status, because the trigger reads `repository.visibility` of the push.
 
 An issue branch is judged by the push gate on the machine and starts no ci run on the master.
 To run the master's ci on another commit, for example a planted defect that must show the check red,
@@ -112,7 +113,9 @@ push it to a branch whose name starts with `ci/`:
 git push origin HEAD:ci/issue-<n>-planted-1
 ```
 
-Delete that branch once its run has finished.
+Delete that branch once its run has finished. A run whose `ci/` branch is deleted before it finishes is cancelled by
+the ci run keeper within a minute (annotation `image-builder.io/branch-deleted` on the run), and every run ends
+at the bound set in `ciPush.timeouts` of `clusters/inventories/image-builder/values-common.yaml`.
 
 ## License
 

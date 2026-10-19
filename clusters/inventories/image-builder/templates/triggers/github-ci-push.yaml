@@ -4,6 +4,10 @@
 {{- $pinIdentity := required "image-builder: ciPush.pinIdentity is required: the git author of the release pins, which the ci trigger does not run again" (default (dict) .Values.ciPush).pinIdentity -}}
 {{- $pinName := required "image-builder: ciPush.pinIdentity.name is required" $pinIdentity.name -}}
 {{- $pinEmail := required "image-builder: ciPush.pinIdentity.email is required" $pinIdentity.email -}}
+{{- $timeouts := (default (dict) .Values.ciPush).timeouts | default (dict) -}}
+{{- $pipelineTimeout := required "image-builder: ciPush.timeouts.pipeline is required: the longest a ci run may take after its start, tasks and finally together" $timeouts.pipeline -}}
+{{- $tasksTimeout := required "image-builder: ciPush.timeouts.tasks is required: the longest the tasks of a ci run may take after its start" $timeouts.tasks -}}
+{{- $finallyTimeout := required "image-builder: ciPush.timeouts.finally is required: the longest the finally tasks of a ci run may take, on a clock of their own" $timeouts.finally -}}
 {{- /* The stages a release reaches, from the one table of the channels: the stage files of the pins are named after them. */ -}}
 {{- $stages := list -}}
 {{- range $reached := values (required "image-builder: global.channelStages is required (clusters/platform/values-common.yaml): the ci trigger names the stage files of the release pins after it" .Values.global.channelStages) }}{{ range $stage := $reached }}{{ $stages = append $stages $stage }}{{ end }}{{ end -}}
@@ -33,6 +37,15 @@ and it carries image-builder.io/ci, never image-builder.io/consumer, which the r
 releases by. Tekton copies a Pipeline's labels onto its runs, so the ci
 Pipeline must not carry the consumer label either
 (clusters/inventories/consumer-build/templates/pipeline-ci.yaml).
+
+ONLY A PUBLIC REPOSITORY runs a check here. A private repository's push gate on the
+machine is its only check, and scripts/check.sh holds everything that check has to
+prove, so a run on the build plane would only repeat it and hold the build node. The
+filter reads repository.visibility of the push, at the moment of the push, so a
+repository that turns public starts running and one that turns private stops, with no
+list to keep. It is fail closed: a payload without the field, and a value other than
+`public` (`private`, `internal`), starts nothing. The release of a private repository
+is untouched, because the deploy and publish triggers below do not read it.
 
 ONLY THE LISTED OWNERS (ciPush.owners): a repository's check is its owner's code,
 run here with build-npmrc in reach, and only the listed owners have
@@ -131,6 +144,7 @@ spec:
               expression: body.repository.clone_url
         - name: filter
           value: >-
+            has(body.repository.visibility) && body.repository.visibility == 'public' &&
             (body.ref == 'refs/heads/' + body.repository.default_branch || body.ref.startsWith('refs/heads/ci/')) &&
             !body.ref.startsWith('refs/heads/deploy/') &&
             body.ref != {{ printf "refs/heads/%s" $booksBranch | squote }} &&
@@ -236,12 +250,14 @@ spec:
         # timeout too. With the pipeline timeout alone, Tekton cancels the
         # finally tasks together with the rest when it runs out; with a budget
         # for the tasks and one for the finally tasks, a run that exhausts the
-        # tasks budget still runs report-failure inside its own 10 minutes.
-        # pipeline must not be shorter than tasks plus finally.
+        # tasks budget still runs report-failure inside the finally budget.
+        # pipeline must not be shorter than tasks plus finally. The values are
+        # ciPush.timeouts, where their measurement is written, and every run
+        # carries all three: a run that meets one ends, and none runs for ever.
         timeouts:
-          pipeline: 2h0m0s
-          tasks: 1h45m0s
-          finally: 10m0s
+          pipeline: {{ $pipelineTimeout }}
+          tasks: {{ $tasksTimeout }}
+          finally: {{ $finallyTimeout }}
         params:
           - name: commit
             value: $(tt.params.commit)

@@ -62,3 +62,52 @@ tests:
             value: 1
           - labels: ALERTS{alertname="PipelineRunRunningTooLong", alertstate="firing", cluster="master", namespace="shop-build", pipelinerun="shop-ci-twin", severity="warning"}
             value: 1
+
+  # THE SERIES ARE kube-state-metrics' (kube_cronjob_status_last_successful_time: the time of the last Job of the CronJob
+  # that succeeded, in seconds since the epoch), which clusters/inventories/observability scrapes. The keeper runs every
+  # minute, so a last success more than ten minutes old means that no tick has succeeded for ten ticks.
+  - name: CIRunKeeperStalled alerts when the last success of the keeper is more than 10 minutes old, and not when it succeeded a minute ago
+    interval: 1m
+    input_series:
+      # The keeper succeeded at second 0 and never again.
+      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="ci-run-keeper"}
+        values: 0x40
+      # The release queue stopped at second 0 too, and is not the keeper.
+      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="release-queue"}
+        values: 0x40
+    promql_expr_test:
+      # At 10 minutes the last success is 600 seconds old, which is not more than 600; at 14 minutes the alert is pending.
+      - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
+        eval_time: 14m
+      - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
+        eval_time: 20m
+        exp_samples:
+          - labels: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing", cluster="master", namespace="image-builder", cronjob="ci-run-keeper", severity="warning"}
+            value: 1
+
+  - name: CIRunKeeperStalled stays silent while the keeper succeeds every minute, whatever the other CronJobs do
+    interval: 1m
+    input_series:
+      # The last success moves with the clock: the keeper succeeded at the start of the minute before each evaluation.
+      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="ci-run-keeper"}
+        values: 0+60x40
+      # Another CronJob of the namespace that stopped long ago is no stalled keeper.
+      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="release-queue"}
+        values: 0x40
+    promql_expr_test:
+      - expr: ALERTS{alertname="CIRunKeeperStalled"}
+        eval_time: 30m
+
+  - name: CIRunKeeperStalled alerts when the keeper has no last success at all, a CronJob that never succeeded or one that is gone
+    interval: 1m
+    input_series:
+      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="release-queue"}
+        values: 0+60x40
+    promql_expr_test:
+      - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
+        eval_time: 3m
+      - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
+        eval_time: 10m
+        exp_samples:
+          - labels: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing", namespace="image-builder", cronjob="ci-run-keeper", severity="warning"}
+            value: 1
