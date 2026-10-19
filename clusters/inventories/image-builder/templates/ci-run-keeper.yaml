@@ -51,12 +51,14 @@ dropping the waiting flag, and to its own annotation image-builder.io/queued-beh
 Pipeline.
 
 ITS OWN END. A tick ends by itself: its last decision starts ciRunKeeper.decisionSeconds before ciRunKeeper.tickSeconds, and
-the next tick starts as it ends, so no two ticks ever run at once. A tick is not cut by `timeout`: the BusyBox timeout of the
-image ends only the script, and a kubectl it had started would go on beside the next tick. A tick that fails is followed by a
-pause of one decision interval, so a failing keeper does not run the API hot. A tick that succeeds marks the time in
-/tmp/keeper-succeeded, and the liveness probe restarts the container, every process of the tick with it, when no tick has
-succeeded for ten minutes; the restart raises the alert CIRunKeeperStalled (values-common.yaml, monitoring), and so does a
-Deployment without an available pod.
+the next tick starts as it ends, so no two ticks ever run at once. Each tick runs in a process group of its own. A watchdog
+ends that group at ciRunKeeper.tickSeconds, so a call that hangs costs one tick, as the deadline of a Job did; and when the
+tick ends, every process it left in its group ends too, a kubectl or a git helper among them. The BusyBox timeout of the
+image ends only the process it started, so a git helper it cut would otherwise stay alive in this pod. A tick that fails is
+followed by a pause of one decision interval, so a failing keeper does not run the API hot. A tick that succeeds marks the
+time in /tmp/keeper-succeeded, and the liveness probe restarts the container when no tick has succeeded for ten minutes; the
+restart raises the alert CIRunKeeperStalled (values-common.yaml, monitoring), and so does a Deployment without an available
+pod.
 */ -}}
 {{- if .Values.eventListener.enabled }}
 apiVersion: v1
@@ -148,8 +150,15 @@ spec:
             - bash
             - -c
             - |
+              set -m
               while :; do
-                if bash /keeper/ci-run-keeper.sh; then
+                bash /keeper/ci-run-keeper.sh &
+                tick=$!
+                { sleep "${CI_KEEPER_TICK_SECONDS}"; kill -TERM -- "-${tick}"; } 2>/dev/null &
+                watchdog=$!
+                if wait "${tick}"; then ok=1; else ok=0; fi
+                kill -KILL -- "-${tick}" "-${watchdog}" 2>/dev/null
+                if [ "${ok}" = 1 ]; then
                   touch /tmp/keeper-succeeded
                 else
                   sleep "${CI_KEEPER_DECISION_SECONDS}"
@@ -172,6 +181,7 @@ spec:
               command: ["sh", "-c", "test -n \"$(find /tmp/keeper-succeeded -mmin -10 2>/dev/null)\""]
             initialDelaySeconds: 600
             periodSeconds: 60
+            timeoutSeconds: 10
             failureThreshold: 1
           securityContext:
             allowPrivilegeEscalation: false

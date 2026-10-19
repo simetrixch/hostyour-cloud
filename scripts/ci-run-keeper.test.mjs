@@ -773,7 +773,7 @@ test('planted defects: a script that may prompt, waits for ever, reads the end o
 });
 
 // The tick decides at the start and then every ten seconds, until the last decision that fits in the tick, and it reads the
-// remotes once. A run that appears between two decisions is started by the next one, and not by the next tick a minute later. The
+// remotes once. A run that appears between two decisions is started by the next one, and not by the next tick. The
 // stand-in clock moves only when the script sleeps, so a tick of fifty seconds takes none.
 const TICK = {CI_KEEPER_TICK_SECONDS: '50', CI_KEEPER_DECISION_SECONDS: '10'};
 const decisionsOf = (result) => result.at.filter(([verb]) => verb === 'get').map(([, seconds]) => seconds);

@@ -85,6 +85,9 @@ tests:
         exp_samples:
           - labels: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing", cluster="master", namespace="image-builder", pod="ci-run-keeper-a", container="ci-run-keeper", severity="warning"}
             value: 1
+      # Fifteen minutes after the restart the window holds it no longer, and the alert has cleared.
+      - expr: ALERTS{alertname="CIRunKeeperStalled"}
+        eval_time: 32m
 
   - name: CIRunKeeperStalled stays silent while the keeper runs, whatever another container of the namespace does
     interval: 1m

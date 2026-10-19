@@ -2036,32 +2036,52 @@ test('the ci run keeper runs one tick after the other, reads runs cluster-wide, 
   assert.deepEqual(binding.subjects, [{kind: 'ServiceAccount', name: 'ci-run-keeper', namespace: 'image-builder'}]);
 });
 
-// The loop of the keeper and its liveness probe run here as the pod runs them, with a stand-in tick that ends with the status
-// it is given, the marker in a temporary directory and a decision interval of one second.
-test('the loop of the ci run keeper marks only a tick that succeeded, pauses after one that failed, and its probe restarts a stalled one', () => {
+// The loop of the keeper and its liveness probe run here as the pod runs them, with a stand-in tick that succeeds, fails, leaves
+// a child behind or hangs, the marker in a temporary directory, and a tick and a decision interval of one second each.
+test('the loop of the ci run keeper marks only a tick that succeeded, pauses after one that failed, ends a hung tick and every process a tick left, and its probe restarts a stalled one', () => {
   const container = imageBuilder().find((d) => d.kind === 'Deployment' && d.metadata.name === 'ci-run-keeper').spec.template.spec.containers[0];
   const dir = mkdtempSync(join(tmpdir(), 'keeper-loop-'));
-  const marker = join(dir, 'keeper-succeeded'), log = join(dir, 'ticks');
-  writeFileSync(join(dir, 'tick.sh'), `echo tick >>'${log}'; sleep 0.1; exit "$TICK_STATUS"\n`);
-  const at = (text) => text.replaceAll('/keeper/ci-run-keeper.sh', join(dir, 'tick.sh')).replaceAll('/tmp/keeper-succeeded', marker);
-  const loop = at(container.command[2]);
-  assert.notEqual(loop, container.command[2], 'the loop names the tick and the marker the test replaces');
-  const run = (script, status, seconds) => {
-    rmSync(marker, {force: true}); writeFileSync(log, '');
-    spawnSync('bash', ['-c', script], {env: {...process.env, TICK_STATUS: String(status), CI_KEEPER_DECISION_SECONDS: '1'}, timeout: seconds * 1000});
-    return {marked: existsSync(marker), ticks: readFileSync(log, 'utf8').split('\n').filter(Boolean).length};
+  const marker = join(dir, 'keeper-succeeded');
+  const at = (text, folder = dir) => text.replaceAll('/keeper/ci-run-keeper.sh', join(folder, 'tick.sh')).replaceAll('/tmp/keeper-succeeded', join(folder, 'keeper-succeeded'));
+  const loop = container.command[2];
+  assert.notEqual(at(loop), loop, 'the loop names the tick and the marker the test replaces');
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const lines = (file) => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean) : []);
+  // Each run has a folder of its own, because a tick of the run before may still write after the test ended that loop.
+  const run = (script, mode, seconds) => {
+    const folder = mkdtempSync(join(dir, 'run-'));
+    const log = join(folder, 'ticks'), children = join(folder, 'children');
+    writeFileSync(join(folder, 'tick.sh'), `echo tick >>'${log}'
+case "$TICK_MODE" in
+  fail) exit 1 ;;
+  leftover) sleep 30 & echo "$!" >>'${children}'; exit 0 ;;
+  hang) sleep 30 & echo "$!" >>'${children}'; sleep 30 ;;
+esac
+`);
+    spawnSync('bash', ['-c', at(script, folder)], {env: {...process.env, TICK_MODE: mode, CI_KEEPER_TICK_SECONDS: '1', CI_KEEPER_DECISION_SECONDS: '1'}, timeout: seconds * 1000});
+    const pids = lines(children).map(Number);
+    // The child of the last tick may still run when the test ends the loop in the middle of that tick.
+    const result = {marked: existsSync(join(folder, 'keeper-succeeded')), ticks: lines(log).length, leftOver: pids.slice(0, -1).filter(alive).length, children: pids.length};
+    for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+    return result;
   };
   const mutate = (from, to) => { const script = loop.replace(from, to); assert.notEqual(script, loop, `PLANTED DEFECT: the edit finds its clause: ${from}`); return script; };
-  assert.ok(run(loop, 0, 1).marked, 'PLANTED INNOCENT: a tick that succeeded is marked');
-  const failing = run(loop, 1, 2.5);
+  assert.ok(run(loop, 'ok', 1).marked, 'PLANTED INNOCENT: a tick that succeeded is marked');
+  const failing = run(loop, 'fail', 2.5);
   assert.ok(!failing.marked, 'a tick that failed is not marked');
   assert.ok(failing.ticks <= 3, `a failed tick is followed by a pause of one decision interval: ${failing.ticks} ticks in 2.5 seconds`);
-  assert.ok(run(mutate('tick.sh; then', 'tick.sh || true; then'), 1, 1).marked, 'PLANTED DEFECT: a loop that marks a failed tick');
-  assert.ok(run(mutate('sleep "${CI_KEEPER_DECISION_SECONDS}"', ':'), 1, 2.5).ticks > 10, 'PLANTED DEFECT: a loop that does not pause after a failed tick');
+  assert.ok(run(mutate('if wait "${tick}"; then ok=1; else ok=0; fi', 'wait "${tick}"; ok=1'), 'fail', 1).marked, 'PLANTED DEFECT: a loop that marks a failed tick');
+  assert.ok(run(mutate('sleep "${CI_KEEPER_DECISION_SECONDS}"', ':'), 'fail', 2.5).ticks > 10, 'PLANTED DEFECT: a loop that does not pause after a failed tick');
+  const leftover = run(loop, 'leftover', 1.5);
+  assert.ok(leftover.children > 2 && leftover.leftOver === 0, `every process a tick left ends with the tick: ${leftover.leftOver} of ${leftover.children} still ran`);
+  assert.ok(run(mutate('kill -KILL -- "-${tick}" "-${watchdog}" 2>/dev/null', ':'), 'leftover', 1.5).leftOver > 0, 'PLANTED DEFECT: a loop that leaves the processes of a tick running');
+  const hung = run(loop, 'hang', 3.5);
+  assert.ok(hung.ticks >= 2 && hung.leftOver === 0, `a hung tick is ended at its length, with its child: ${hung.ticks} ticks, ${hung.leftOver} children left`);
+  assert.equal(run(mutate('{ sleep "${CI_KEEPER_TICK_SECONDS}"; kill -TERM -- "-${tick}"; } 2>/dev/null &', ':'), 'hang', 3.5).ticks, 1, 'PLANTED DEFECT: a loop without its watchdog waits for a hung tick');
   // The probe passes while the last success is younger than ten minutes; the first ten minutes of the pod are not probed.
   const probe = container.livenessProbe;
-  assert.deepEqual([probe.initialDelaySeconds, probe.periodSeconds, probe.failureThreshold], [600, 60, 1]);
-  const probes = (command) => spawnSync(command[0], command.slice(1).map(at)).status === 0;
+  assert.deepEqual([probe.initialDelaySeconds, probe.periodSeconds, probe.timeoutSeconds, probe.failureThreshold], [600, 60, 10, 1]);
+  const probes = (command) => spawnSync(command[0], command.slice(1).map((part) => at(part))).status === 0;
   const aged = (minutes) => { writeFileSync(marker, ''); const then = Date.now() / 1000 - minutes * 60; utimesSync(marker, then, then); };
   rmSync(marker, {force: true});
   assert.ok(!probes(probe.exec.command), 'a pod whose tick never succeeded fails the probe');
