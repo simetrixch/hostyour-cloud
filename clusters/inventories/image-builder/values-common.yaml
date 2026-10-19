@@ -18,8 +18,10 @@ pipeline:
 
 # Workspace sizing. The `source` workspace holds the cloned source for the
 # duration of one PipelineRun (PVC-backed; Kubernetes deletes the claim with
-# its PipelineRun). Read by the volumeClaimTemplate of the deploy-request and
-# ci-push TriggerTemplates.
+# its PipelineRun). Read by the volumeClaimTemplate of the forgejo-release,
+# github-deploy-request and github-release-publish TriggerTemplates. A ci run
+# has no workspace: its pod keeps the checkout on the volume ciScratch.size
+# of consumer-build.
 workspaces:
   sourceSize: 10Gi
 
@@ -127,9 +129,16 @@ releaseQueue:
 # check is 2 cores; an eighth run would need 62.5 GiB (read on 2026-10-19: allocatable 32 cores, 62313320Ki, 250
 # pods; and 15 days of the master's Prometheus). The standing pods use 15-23 GiB of the node, so seven runs that
 # all reached their limits at once would still exceed what is free; the limits are held to the node, not the use.
+#
+# The CronJob starts a tick every minute and the tick decides every decisionSeconds for tickSeconds: a waiting ci run starts
+# at the next decision after a slot frees, not at the next minute. tickSeconds is also the Job's deadline, so the last
+# decision of a tick starts decisionSeconds before it (scripts/ci-run-keeper.test.mjs); the minute's remaining
+# seconds, and the Job's start, are the pause between two ticks.
 ciRunKeeper:
   image: *kubectlImage
   maxRunning: 7
+  tickSeconds: 50
+  decisionSeconds: 10
 
 externalsecret-webhooks:
   externalSecret:
