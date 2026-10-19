@@ -210,7 +210,7 @@ function unquote(s) {
   if (keyname != "") { key = keyname }
   if ($0 !~ /^[ \t]*#/) {
     if (match($0, /^[ \t]*smtp_from:[ \t]*/)) print "sender\t" source "\t" key "\t" unquote(substr($0, RLENGTH + 1))
-    if (index($0, ".postfix.svc.cluster.local") > 0) {
+    if (match($0, /\.postfix\.svc\.cluster\.local/)) {
       value = $0
       if (match(value, /^[ \t]*[A-Za-z0-9._\/-]+:[ \t]*/)) value = substr(value, RLENGTH + 1)
       print "relay\t" source "\t" key "\t" unquote(value)
@@ -504,10 +504,13 @@ $found"
 # value, so a sender built from global.domain renders the same host as one built from global.unitApex.
 # This scan proves the set of senders and that none stands at a host in front of the apex;
 # scripts/ci-failure-mail.test.mjs renders per-stage domains and proves that the sender takes its
-# domain from global.unitApex. Whether the apex is among the relay's ALLOWED_SENDER_DOMAINS is proved
-# there too, because no stand-in renders the allowlist.
+# domain from global.unitApex. It does not prove that the apex is among the relay's
+# ALLOWED_SENDER_DOMAINS: no stand-in renders the allowlist, and ci-failure-mail.test.mjs hands it
+# in by --set. The allowlist is declared in hostyour-deploy ansiwise/templates/postfix-values.tpl:13
+# and no test reads it yet: a template that loses the apex leaves this check green.
 #
-# `eval` reads one document at a time, which the name bound in its filter needs. $1 says where the render came from, $2 is a file holding it, $3 is the stage. One line per finding
+# `eval` reads one document at a time, which the name bound in its filter needs.
+# $1 says where the render came from, $2 is a file holding it, $3 is the stage. One line per finding
 # on stdout, and in $work/sender.matches one line for each sender of observability found as expected.
 senders_off_apex() {
   local where="$1" env="$3" expected_from expected_relay address
@@ -642,10 +645,12 @@ mail_expected="  scripts/counter-probe.yaml, counter-probe/planted-defect-in-the
   scripts/counter-probe.yaml, counter-probe/planted-defect-in-base64.yaml, alertmanager.yaml: sends from alertmanager-prod@mail.{{ .Values.global.domain }}, and not from alertmanager-prod@$unit_apex
   scripts/counter-probe.yaml, counter-probe/planted-defect-in-base64.yaml, alertmanager.yaml: sends through the relay from a chart other than observability
   scripts/counter-probe.yaml, counter-probe/planted-defect-sender-in-email-configs.yaml, alertmanager.yaml: sends from alertmanager-prod@other.example.invalid, and not from alertmanager-prod@$unit_apex
-  scripts/counter-probe.yaml, AlertmanagerConfig planted-defect-sender-in-a-receiver, emailConfigs: sends from alertmanager-prod@other.example.invalid, and not from alertmanager-prod@$unit_apex"
+  scripts/counter-probe.yaml, AlertmanagerConfig planted-defect-sender-in-a-receiver, emailConfigs: sends from alertmanager-prod@other.example.invalid, and not from alertmanager-prod@$unit_apex
+  scripts/counter-probe.yaml, AlertmanagerConfig planted-defect-sender-of-another-stage, emailConfigs: sends from alertmanager-dev@$unit_apex, and not from alertmanager-prod@$unit_apex
+  scripts/counter-probe.yaml, AlertmanagerConfig planted-defect-sender-with-another-local-part, emailConfigs: sends from postmaster@$unit_apex, and not from alertmanager-prod@$unit_apex"
 mail_reported="$(senders_off_apex 'scripts/counter-probe.yaml' "$counter_probe" prod)"
 if [ "$mail_reported" != "$mail_expected" ]; then
-  echo "The counter-probe plants a smarthost and a sender outside the one chart that sends, two receivers that send from another domain, and three innocents. The scan had to report:"
+  echo "The counter-probe plants a smarthost and a sender outside the one chart that sends, four receivers that send from another domain, stage or local part, and four innocents. The scan had to report:"
   echo "$mail_expected"
   echo "and it reported:"
   echo "${mail_reported:-  (nothing)}"
@@ -858,7 +863,7 @@ if [ "$(wc -w <<< "$sender_stages" | tr -d ' ')" -ne "$stage_count" ]; then
   fail "the sender of observability was found at only these of the stages $stages:${sender_stages:- none}, so the scan for a mail sender outside the unit apex did not look where the sender stands"
 fi
 sender_decoded="$(wc -l < "$work/sender.tally" | tr -d ' ')"
-echo "check: every mail sender stands at alertmanager-<stage> at $unit_apex, and the sender of observability was found at $stage_count of $stage_count stages, over $rendered renders and the $sender_decoded base64 values in them."
+echo "check: every mail sender it reads stands at alertmanager-<stage> at $unit_apex, and the sender of observability was found at $stage_count of $stage_count stages, over $rendered renders and the $sender_decoded base64 values in them."
 
 # THE RECONCILER OF THE MASTER IS NOT A CHART OF THIS REPOSITORY: the deploy program installs the argo-cd chart with
 # clusters/bootstrap/argocd/values.tpl. The slave chart depends on that chart at the master's version, so its archive

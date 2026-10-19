@@ -14,7 +14,7 @@
 # and no cluster ever sees it. It is shaped like the output of `helm template` — documents split by
 # ---, each under the `# Source:` line helm writes — because that output is what the scan reads.
 #
-# THE THREE ENCODED DOCUMENTS ARE ConfigMaps AND NOT Secrets, and the real one they stand for is a
+# THE ENCODED DOCUMENTS ARE ConfigMaps AND NOT Secrets, and the real one they stand for is a
 # Secret. The scan reads the LINE — a key whose whole value is one base64 token — and never the
 # `kind:` above it, so a ConfigMap plants the same shape. A Secret here would not survive step 3 of
 # this check: gitleaks' `kubernetes-secret-yaml` rule reports `kind: Secret` with a high-entropy
@@ -115,6 +115,13 @@
 #                                                                          MUST STAY UNREPORTED
 #  25. an encoded Alertmanager configuration whose email_configs item writes `from` at another
 #      domain than the unit apex, which only a read of the decoded YAML sees.  MUST BE REPORTED
+#  26. an AlertmanagerConfig whose emailConfigs item writes `from` at the unit apex with the local
+#      part of another stage, alertmanager-dev. The domain is right, so a scan that compares the
+#      domain alone stays silent.                                           MUST BE REPORTED
+#  27. an AlertmanagerConfig whose emailConfigs item writes `from` at the unit apex with a local
+#      part that is no alertmanager-<stage>, postmaster.                    MUST BE REPORTED
+#  28. an AlertmanagerConfig whose emailConfigs item writes `from` as alertmanager-prod at the unit
+#      apex, the one sender this scan expects at the stage prod.         MUST STAY UNREPORTED
 #
 # The four decoded payloads are, in full:
 #
@@ -445,3 +452,39 @@ metadata:
   name: planted-defect-sender-in-email-configs
 binaryData:
   alertmanager.yaml: "cmVjZWl2ZXJzOgotIG5hbWU6IHBsYW50ZWQKICBlbWFpbF9jb25maWdzOgogIC0gdG86IHBsYW50ZWRAY2hlY2suZXhhbXBsZS5pbnZhbGlkCiAgICBmcm9tOiBhbGVydG1hbmFnZXItcHJvZEBvdGhlci5leGFtcGxlLmludmFsaWQK"
+---
+# Source: counter-probe/planted-defect-sender-of-another-stage.yaml
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: planted-defect-sender-of-another-stage
+spec:
+  receivers:
+    - name: planted
+      emailConfigs:
+        - to: "planted@check.example.invalid"
+          from: "alertmanager-dev@check.example.invalid"
+---
+# Source: counter-probe/planted-defect-sender-with-another-local-part.yaml
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: planted-defect-sender-with-another-local-part
+spec:
+  receivers:
+    - name: planted
+      emailConfigs:
+        - to: "planted@check.example.invalid"
+          from: "postmaster@check.example.invalid"
+---
+# Source: counter-probe/planted-innocent-sender-of-the-stage.yaml
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: planted-innocent-sender-of-the-stage
+spec:
+  receivers:
+    - name: planted
+      emailConfigs:
+        - to: "planted@check.example.invalid"
+          from: "alertmanager-prod@check.example.invalid"
