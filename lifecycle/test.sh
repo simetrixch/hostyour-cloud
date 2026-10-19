@@ -4141,8 +4141,8 @@ forgejo_answers_cases() { # <composer> <example config>
   python3 - "$1" "$2" "$FORGEJO_ANSWERS_WORK" <<'FORGEJO_ANSWERS_TEST'
 import json, pathlib, subprocess, sys
 composer, example, work = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
-names = ['forgejo_platform_repository', 'forgejo_deploy_repository', 'forgejo_organisations']
-expected = dict(zip(names, ['platform-team/platform', 'deploy-team/deploy', 'platform-team,deploy-team']))
+names = ['forgejo_platform_repository', 'forgejo_deploy_repository', 'forgejo_organisations', 'forgejo_host']
+expected = dict(zip(names, ['platform-team/platform', 'deploy-team/deploy', 'platform-team,deploy-team', 'forgejo.master.example.org']))
 for name in names:
     assert name.upper() + "=''" in example.read_text(), name + ' is missing from config.example.env'
 declares = work / 'declares.yaml'
@@ -4167,11 +4167,30 @@ for driver in driver.sh regenerate-driver.sh; do
     fail "$driver's projection passed with forgejo_platform_repository removed"
   fi
 done
-sed '/^FORGEJO_DEPLOY_REPOSITORY=/d' "$HERE/config.example.env" > "$FORGEJO_ANSWERS_WORK/planted.env"
-if forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/driver.sh.py" "$FORGEJO_ANSWERS_WORK/planted.env" 2>/dev/null; then
-  fail 'an example config without the deploy destination passed'
-fi
-ok 'both drivers retain the three configured Forgejo destinations with GitHub clone URLs; missing config keys and a dropped destination are caught'
+for dropped in FORGEJO_PLATFORM_REPOSITORY FORGEJO_DEPLOY_REPOSITORY FORGEJO_ORGANISATIONS FORGEJO_HOST; do
+  sed "/^$dropped=/d" "$HERE/config.example.env" > "$FORGEJO_ANSWERS_WORK/planted.env"
+  if forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/driver.sh.py" "$FORGEJO_ANSWERS_WORK/planted.env" 2>/dev/null; then
+    fail "an example config without $dropped passed"
+  fi
+done
+ok 'both drivers retain the three configured Forgejo destinations and the Forgejo host with GitHub clone URLs; missing config keys and a dropped line of the example are caught'
+
+# THE EXAMPLE STATES EVERY ONE OF THE FOUR APP ANSWERS the programs require (github_app_id, github_app_installation_id,
+# github_app_private_key, github_app_owner), because a config written from it is what a first install is read from.
+app_keys_of_example() { # <example> -> 0 when it carries a line for each of the four, else the first one it lacks, named
+  local key
+  for key in GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_OWNER; do
+    grep -q "^$key=''\$" "$1" || { echo "$key is missing from config.example.env" >&2; return 1; }
+  done
+}
+app_keys_of_example "$HERE/config.example.env" || fail 'the example config lacks an App key'
+for dropped in GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_OWNER; do
+  sed "/^$dropped=/d" "$HERE/config.example.env" > "$FORGEJO_ANSWERS_WORK/planted-app.env"
+  if app_keys_of_example "$FORGEJO_ANSWERS_WORK/planted-app.env" 2>/dev/null; then
+    fail "an example config without $dropped passed"
+  fi
+done
+ok 'the example config carries a line for each of the four App answers, and a copy without any one of them is caught'
 
 # ===========================================================================
 # EIGHT, continued — which forge the drivers read the platform repository from
