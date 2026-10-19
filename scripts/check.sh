@@ -2246,6 +2246,8 @@ node --check scripts/manager-pat-storage.test.mjs || fail 'Manager PAT storage c
 echo 'check: NOT RUN locally — scripts/manager-pat-storage.test.mjs; runs in the ci of the master via scripts/test.sh.'
 node --check scripts/manager-forge-env.test.mjs || fail 'Manager forge env check syntax'
 echo 'check: NOT RUN locally — scripts/manager-forge-env.test.mjs; runs in the ci of the master via scripts/test.sh.'
+node --check scripts/manager-cloudflare-zone-settings.test.mjs || fail 'Manager Cloudflare zone settings check syntax'
+echo 'check: NOT RUN locally — scripts/manager-cloudflare-zone-settings.test.mjs; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in the ci of the master via scripts/test.sh.'
 node --check scripts/zot-sync.test.mjs || fail 'Node syntax: scripts/zot-sync.test.mjs'
 echo 'check: NOT RUN locally — scripts/zot-sync.test.mjs; runs in the ci of the master via scripts/test.sh.'

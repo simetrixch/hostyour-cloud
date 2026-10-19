@@ -67,6 +67,7 @@ suite scripts/ci-failure-mail.test.mjs 'ci failure mail — the alert reaches it
 suite scripts/manager-generator-refresh.test.mjs 'manager-generator-refresh — approved grant only.'
 suite scripts/manager-pat-storage.test.mjs
 suite scripts/manager-forge-env.test.mjs 'manager forge env — the platform and deploy repositories whole, the Forgejo host, its webhook key and the scope table reach the Manager.'
+suite scripts/manager-cloudflare-zone-settings.test.mjs 'manager Cloudflare zone settings — the settings token reaches the Manager from its own Vault entry and Secret, beside the DNS token, and no other inventory reads it.'
 suite scripts/ingress-entrypoints.test.mjs 'ingress entrypoints — the shared ingress chart writes websecure once, whatever a consumer sets.'
 suite scripts/installation-domain.test.mjs 'installation domain planning and its launcher.'
 suite scripts/tenant-stage-label.test.mjs
