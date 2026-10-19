@@ -33,3 +33,21 @@ regexes = [
   # ordinary file still turns this red.
   '''key:\s*(secret|build|kv)/[a-z0-9<>/_-]+''',
 ]
+
+# PUBLIC DEFAULTS OF A VENDORED UPSTREAM CHART, overridden by the umbrella values: plane-ce ships the two
+# keys below in its own values.yaml, public in its repository, and clusters/inventories/plane/values-common.yaml
+# makes the chart refuse to render with them. The allowlist sits on the rule that reports them, and both
+# conditions must hold, the file and the value: a third key-shaped value added to that file, or either value
+# in any other file, still turns the scan red (scripts/check.sh plants both). A global [[allowlists]] entry is
+# no substitute: gitleaks 8.30.1 hid every finding of a file on its path alone there, whatever `condition` said.
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "plane-ce's public default keys in its vendored values.yaml"
+condition = "AND"
+paths = [
+  '''clusters/inventories/plane/charts/plane-ce/values\.yaml''',
+]
+regexes = [
+  '''^(60gp0byfz2dvffa45cxl20p1scy9xbpf6d8c5y0geejgkyp1b5|htbqvBJAgpm9bzvf3r4urJer0ENReatceh)$''',
+]
