@@ -1,8 +1,10 @@
-# THE COUNTER-PROBE OF THE FIVE SCANS THAT READ A RENDER: the one that looks for an unresolved Helm
+# THE COUNTER-PROBE OF THE SIX SCANS THAT READ A RENDER: the one that looks for an unresolved Helm
 # expression, the one that looks for an Application naming one repository at two revisions, the
 # one that looks for an Ingress served over plain http, the one that looks for a source or a
-# generator of this repository at another revision than the one the chart was handed, and the one
-# that looks for a workload the master cannot work without that carries no CPU request. scripts/check.sh runs each over this file
+# generator of this repository at another revision than the one the chart was handed, the one
+# that looks for a workload the master cannot work without that carries no CPU request, and the one
+# that looks for a mail sender outside the unit apex or a chart that sends through the relay.
+# scripts/check.sh runs each over this file
 # before any of them touches a real chart, and ends the run red
 # unless each reports EXACTLY the defects planted for it below and says nothing at all about the
 # innocents beside them. Without the defects neither scan can be shown to go red; without the
@@ -12,7 +14,7 @@
 # and no cluster ever sees it. It is shaped like the output of `helm template` — documents split by
 # ---, each under the `# Source:` line helm writes — because that output is what the scan reads.
 #
-# THE TWO ENCODED DOCUMENTS ARE ConfigMaps AND NOT Secrets, and the real one they stand for is a
+# THE THREE ENCODED DOCUMENTS ARE ConfigMaps AND NOT Secrets, and the real one they stand for is a
 # Secret. The scan reads the LINE — a key whose whole value is one base64 token — and never the
 # `kind:` above it, so a ConfigMap plants the same shape. A Secret here would not survive step 3 of
 # this check: gitleaks' `kubernetes-secret-yaml` rule reports `kind: Secret` with a high-entropy
@@ -94,13 +96,40 @@
 #                                                                          MUST STAY UNREPORTED
 #  20. a ConfigMap named traefik, which is no workload.                    MUST STAY UNREPORTED
 #
-# The two decoded payloads are, in full:
+# WHAT THE SIXTH SCAN IS PLANTED. scripts/check.sh hands it the stage prod, so the sender it
+# expects is alertmanager-prod at the unit apex of the stand-in cluster map, check.example.invalid,
+# and the relay it expects is postfix-prod.postfix.svc.cluster.local. It reads the whole file, so
+# the two defects planted for the first scan are read by it too: the smtp_from of 2 stands at a
+# host in front of the apex, which has no SPF and no DKIM key, and the smarthost of 1 names the
+# relay. Both stand outside observability/, the one chart that sends. The new cases:
+#
+#  21. an AlertmanagerConfig whose emailConfigs item writes `from` at another domain than the unit
+#      apex, which the receivers of this tree never write.                     MUST BE REPORTED
+#  22. an encoded Alertmanager configuration under a source of observability/ whose smtp_from is
+#      alertmanager-prod at the unit apex and whose smtp_smarthost is the relay's address. It is
+#      the shape that stands in production.                                    MUST STAY UNREPORTED
+#  23. an AlertmanagerConfig whose emailConfigs item carries `to` only. It is the shape
+#      clusters/charts/monitoring writes, and observability renders two of them.
+#                                                                          MUST STAY UNREPORTED
+#  24. a ConfigMap with a plain `from:` key and no sender. Five charts render such a line.
+#                                                                          MUST STAY UNREPORTED
+#  25. an encoded Alertmanager configuration whose email_configs item writes `from` at another
+#      domain than the unit apex, which only a read of the decoded YAML sees.  MUST BE REPORTED
+#
+# The four decoded payloads are, in full:
 #
 #   2. global:
 #        smtp_from: alertmanager-prod@mail.<the Helm expression for global.domain>
 #        smtp_require_tls: false
 #   3. a define block, a range over .GroupLabels.SortedPairs printing .Name and .Value, a call to
 #      template "alert.text", and a Prometheus label reference.
+#  22. global:
+#        smtp_from: alertmanager-prod@check.example.invalid
+#        smtp_require_tls: false
+#        smtp_smarthost: postfix-prod.postfix.svc.cluster.local:587
+#  25. receivers:
+#        - name: planted, with one email_configs item that sends to a planted mailbox and from
+#          alertmanager-prod at other.example.invalid.
 ---
 # Source: counter-probe/planted-defect-in-the-clear.yaml
 apiVersion: v1
@@ -368,3 +397,51 @@ metadata:
   name: traefik
 data:
   planted: "no workload"
+---
+# Source: counter-probe/planted-defect-sender-in-a-receiver.yaml
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: planted-defect-sender-in-a-receiver
+spec:
+  receivers:
+    - name: planted
+      emailConfigs:
+        - to: "planted@check.example.invalid"
+          from: "alertmanager-prod@other.example.invalid"
+---
+# Source: observability/planted-innocent-sender-in-base64.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: planted-innocent-sender-in-base64
+binaryData:
+  alertmanager.yaml: "Z2xvYmFsOgogIHNtdHBfZnJvbTogYWxlcnRtYW5hZ2VyLXByb2RAY2hlY2suZXhhbXBsZS5pbnZhbGlkCiAgc210cF9yZXF1aXJlX3RsczogZmFsc2UKICBzbXRwX3NtYXJ0aG9zdDogcG9zdGZpeC1wcm9kLnBvc3RmaXguc3ZjLmNsdXN0ZXIubG9jYWw6NTg3Cg=="
+---
+# Source: counter-probe/planted-innocent-receiver-without-a-sender.yaml
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: planted-innocent-receiver-without-a-sender
+spec:
+  receivers:
+    - name: planted
+      emailConfigs:
+        - to: "planted@check.example.invalid"
+          sendResolved: true
+---
+# Source: counter-probe/planted-innocent-from-key.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: planted-innocent-from-key
+data:
+  from: "planted-origin"
+---
+# Source: counter-probe/planted-defect-sender-in-email-configs.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: planted-defect-sender-in-email-configs
+binaryData:
+  alertmanager.yaml: "cmVjZWl2ZXJzOgotIG5hbWU6IHBsYW50ZWQKICBlbWFpbF9jb25maWdzOgogIC0gdG86IHBsYW50ZWRAY2hlY2suZXhhbXBsZS5pbnZhbGlkCiAgICBmcm9tOiBhbGVydG1hbmFnZXItcHJvZEBvdGhlci5leGFtcGxlLmludmFsaWQK"
