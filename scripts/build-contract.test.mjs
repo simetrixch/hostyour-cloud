@@ -1536,6 +1536,7 @@ const releaseUnitsOf = (images) => Object.entries(images).map(([name, count]) =>
   return {name, images: count, release: pipelineOf(docs, `${name}-release`), publish: pipelineOf(docs, `${name}-publish`)};
 });
 const withUnits = (units, edit) => units.map((unit) => edit(structuredClone(unit)));
+const declaresEveryCount = (images) => Object.values(images).every((count) => Number.isInteger(count) && count >= 1);
 const largestUnit = (units) => units.reduce((largest, unit) => (unit.images > largest.images ? unit : largest));
 // The charts the budgets are drawn for: the ci pipeline of an ordinary unit and the releases of the declared units.
 const ciPlane = (capacity) => {
@@ -1586,6 +1587,10 @@ test('the six largest distinct ci units and four releases fit the 56Gi memory bu
   assert.ok(!admitsNextTask(1), 'PLANTED DEFECT: one pod per unit refuses the next task until the finished pod is gone, and Tekton tries it again a minute later');
   assert.ok(!admitsNextTask(3), 'PLANTED DEFECT: a third pod has no task of a chain to run, and the memory budget counts one live ci pod per run');
   assert.equal(capacity.releaseSlots, 4, 'the owner decided four releases at once');
+  assert.ok(declaresEveryCount(capacity.releaseUnitImages), 'every declared unit names how many images it builds');
+  assert.equal(capacity.releaseUnitImages['digita-realtime'], 1, 'digita-realtime builds its one image after the scan');
+  assert.ok(declaresEveryCount({...capacity.releaseUnitImages, 'digita-realtime': 1}), 'PLANTED INNOCENT: the row of digita-realtime with its count');
+  assert.ok(!declaresEveryCount({...capacity.releaseUnitImages, 'digita-realtime': null}), 'PLANTED DEFECT: a row without its count is caught');
   assert.ok(Object.keys(capacity.releaseUnitImages).length >= capacity.releaseSlots, 'the declared units fill every slot of the queue');
   assert.equal(quantity(capacity.limitsMemoryBudget) / BYTES.Gi, 56, 'the budget holds one 3.5Gi ci unit, five 3Gi ci units, six report pods, and the 12 images of the four largest units at 3Gi');
   assert.ok(fits(), 'PLANTED INNOCENT: the six largest distinct ci units and the four largest releases exactly fit');

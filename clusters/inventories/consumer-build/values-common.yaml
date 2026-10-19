@@ -164,6 +164,7 @@ ciCapacity:
     digita-jobs: 1
     digita-platform: 3
     digita-post: 2
+    digita-realtime: 1
     digita-report: 1
     digita-testkit: 1
     hostyour-demo-consumer: 1
