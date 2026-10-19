@@ -1727,11 +1727,11 @@ test('the check step takes 12 cores at most and requests the largest whole numbe
   assert.ok(!fits(pipeline, {...capacity, nodeCpu: '24'}), 'PLANTED DEFECT: a build node of 24 cores is caught');
   const heavy = withSharedTask(shared, 'buildah-build-push', (task) => { task.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '4'; });
   assert.ok(!fitsBudget(capacity, pipeline, heavy, units, CORES), 'PLANTED DEFECT: a raised request of the buildah build step is caught');
-  const former = withSharedTask(shared, 'buildah-build-push', (task) => {
-    task.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '500m';
+  const wide = withSharedTask(shared, 'buildah-build-push', (task) => {
+    task.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '750m';
     task.spec.steps.find((step) => step.name === 'push').computeResources.requests.cpu = '250m';
   });
-  assert.ok(!fitsBudget(capacity, pipeline, former, units, CORES), 'PLANTED DEFECT: the former 500m and 250m requests, 750m a pod, do not fit the 12 images of four releases');
+  assert.ok(!fitsBudget(capacity, pipeline, wide, units, CORES), 'PLANTED DEFECT: a Buildah pod that requests 1 core, 750m and 250m, does not fit the 12 images of four releases beside seven ci runs');
   const heavyPublish = structuredClone(publish);
   heavyPublish.spec.tasks.find((t) => t.name === 'pack').taskSpec.steps[0].computeResources.requests.cpu = '8';
   assert.ok(!fitsBudget(capacity, pipeline, shared, withUnits(units, (unit) => ({...unit, publish: heavyPublish})), CORES), 'PLANTED DEFECT: a publish pod that requests 8 cores, above the build pods of a release, is caught');
