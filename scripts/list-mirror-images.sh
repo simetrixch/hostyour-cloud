@@ -6,6 +6,7 @@
 #   bash scripts/list-mirror-images.sh --rendered   every such ref as the tree renders it: <ref> <where>
 #   bash scripts/list-mirror-images.sh --refs       the refs of one render, read on standard input
 #   bash scripts/list-mirror-images.sh --entries    the entries of "<ref> [<where>]" lines read on standard input
+#   bash scripts/list-mirror-images.sh --hub        the Docker Hub repositories the tree names: <namespace>/<name> <where>
 #
 # ONE LIST, THREE READERS. scripts/check.sh holds every rendered ref to where it may point, the
 # `mirror` task of clusters/inventories/consumer-build/templates/pipeline-publish.yaml copies every
@@ -16,6 +17,10 @@
 # `<global.buildRegistry>/ghcr.io/<path>:<tag>@sha256:<hex>`. A ref without its tag or its digest has no
 # entry and fails the list by name: the mirror copies one digest, and a tag alone names whatever the
 # upstream moves it to.
+#
+# --hub lists, from the same render, the repositories of every `image:` that names Docker Hub, with or
+# without docker.io before it: the names the Docker Hub pull-through of the registry must admit
+# (clusters/inventories/registry, scripts/zot-sync.test.mjs). An official image is library/<name>.
 #
 # THE TREE IS RENDERED THE WAY scripts/check.sh RENDERS IT: every chart under clusters/inventories,
 # clusters/units, clusters/slaves and clusters/argocd at every stage, from the trunk's values, else with
@@ -68,11 +73,32 @@ entries_of() { # "<ref> [<where>]" lines on standard input -> the sorted entries
   printf '%s\n' "$entries"
 }
 
+hub_repositories_in() { # a render on standard input -> the Docker Hub repository of every `image:` in it, one per line
+  local ref name first
+  yq --no-doc '.. | select(tag == "!!map") | .image | select(tag == "!!str")' | while read -r ref; do
+    [ -n "$ref" ] || continue
+    # A Tekton substitution is filled in at run time from a param, and every param of an image in this tree
+    # carries the platform registry's host before it.
+    [[ "$ref" == *'$('* ]] && continue
+    [[ "$ref" =~ ^[a-z0-9._/-]+(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$ ]] \
+      || { echo "list-mirror-images: FAIL — the image '$ref' is no ref, so its registry cannot be told" >&2; return 1; }
+    name="${ref#docker.io/}"
+    name="${name#index.docker.io/}"
+    first="${name%%/*}"
+    [[ "$name" == */* && ( "$first" == *.* || "$first" == localhost ) ]] && continue
+    name="${name%%@*}"
+    [[ "${name##*/}" == *:* ]] && name="${name%:*}"
+    [[ "$name" == */* ]] || name="library/$name"
+    printf '%s\n' "$name"
+  done
+}
+
 case "${1:-}" in
+  --hub) hub=1 ;;
   --refs) refs_in; exit 0 ;;
   --entries) entries_of; exit ;;
   --rendered|'') ;;
-  *) fail "usage: bash scripts/list-mirror-images.sh [--rendered | --refs | --entries]" ;;
+  *) fail "usage: bash scripts/list-mirror-images.sh [--rendered | --refs | --entries | --hub]" ;;
 esac
 
 work="$(mktemp -d)" && mkdir "$work/bootstrap" || fail "no temporary directory could be made"
@@ -84,6 +110,10 @@ render() { # <where> <helm template arguments...> -> "<ref> <where>" for every r
   local where="$1"
   shift
   helm template "$@" > "$work/render" 2> "$work/render.err" || return 1
+  if [ -n "${hub:-}" ]; then
+    hub_repositories_in < "$work/render" | sed "s|\$| $where|"
+    return "${PIPESTATUS[0]}"
+  fi
   grep -q 'ghcr\.io/' "$work/render" || return 0
   refs_in < "$work/render" | sed "s|\$| $where|"
 }
@@ -165,7 +195,7 @@ dependencies_of() { # <chart>
   done
 } > "$work/rendered" || exit 1
 
-if [ "${1:-}" = --rendered ]; then
+if [ -n "${hub:-}" ] || [ "${1:-}" = --rendered ]; then
   sort -u "$work/rendered"
 else
   entries_of < "$work/rendered"
