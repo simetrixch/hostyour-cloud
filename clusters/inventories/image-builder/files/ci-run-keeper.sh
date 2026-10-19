@@ -15,6 +15,9 @@ apply() {
 # Seconds git has to answer one remote. All remotes are asked at the same time, so this is also the most
 # that reading them adds to a tick, and the CronJob's activeDeadlineSeconds holds the tick to its minute.
 git_timeout=10
+# What the shell reads when `timeout` ended git. The image of the keeper (alpine/k8s) has the BusyBox timeout, which ends
+# its command by SIGTERM and so gives 128 + 15, where the timeout of coreutils would give 124.
+git_timeout_status=143
 # The branches of one remote, as git prints them for `ls-remote --symref <url> HEAD 'refs/heads/ci/*'`: the
 # line `ref: refs/heads/<default>	HEAD` names the default branch, and each other line `<sha>	refs/heads/<name>`
 # a branch. An answer without the first line is not an answer of a repository: a listing of no `ci/` branch
@@ -81,7 +84,7 @@ while IFS= read -r ask; do
     echo "not judged: $url asks for a login, so no branch of it is read for $runs_of"
   else
     reason="$(tail -n 1 "$work/ask-$number.err")"
-    [ "$status" != 124 ] || reason="git did not answer within $git_timeout seconds"
+    [ "$status" != "$git_timeout_status" ] || reason="git did not answer within $git_timeout seconds"
     echo "could not read the branches of $url for $runs_of: ${reason:-git answered with exit status $status and no branch listing}" >&2
     failed=1
   fi

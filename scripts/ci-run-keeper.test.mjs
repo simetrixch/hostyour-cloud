@@ -351,10 +351,11 @@ process.stdout.write(answer.stdout ?? '');
 process.stderr.write(answer.stderr ?? '');
 process.exit(answer.status ?? 0);
 `;
-// A stand-in timeout that writes down the seconds it was given, and gives up at once when TIMEOUT_FIRES is set.
+// A stand-in timeout that writes down the seconds it was given, and when TIMEOUT_FIRES is set ends as the BusyBox timeout of the
+// keeper's image (alpine/k8s) does: by the SIGTERM it sends its command, which the shell reads as 143, not as the 124 of coreutils.
 const TIMEOUT_STUB = `#!/usr/bin/env bash
 echo "$1" >> "$LOG.timeout"
-[ -z "\${TIMEOUT_FIRES:-}" ] || exit 124
+[ -z "\${TIMEOUT_FIRES:-}" ] || kill -TERM $$
 shift
 exec "$@"
 `;
@@ -691,7 +692,7 @@ test('a git-url that is no GitHub clone url is refused: it is never handed to gi
   assert.deepEqual(result.asked, []);
 });
 
-test('planted defects: a script that may prompt, waits for ever, takes any protocol, reads a bad answer as no branch, or hides a failure goes red', () => {
+test('planted defects: a script that may prompt, waits for ever, reads the end of its bound by the wrong status, takes any protocol, reads a bad answer as no branch, or hides a failure goes red', () => {
   const live = waiting('shop-build', {branch: 'ci/live'});
   const answers = {[urlOf('shop-build')]: listing('master', 'ci/live')};
   const gets = (script, extra = {}) => runPaged(script, [live], extra.env ?? {}, LISTER, {answers: extra.answers ?? answers});
@@ -700,6 +701,9 @@ test('planted defects: a script that may prompt, waits for ever, takes any proto
   const mutate = (from, to) => { const script = SCRIPT.replaceAll(from, to); assert.notEqual(script, SCRIPT, `PLANTED DEFECT: the edit finds its clause: ${from}`); return script; };
   assert.equal(gets(mutate('GIT_TERMINAL_PROMPT=0 ', '')).status, 1, 'PLANTED DEFECT: git may ask a person for a login');
   assert.deepEqual(gets(mutate('timeout "$git_timeout" ', '')).bounds, [], 'PLANTED DEFECT: git has no time bound');
+  const hung = {env: {TIMEOUT_FIRES: '1'}};
+  assert.match(gets(SCRIPT, hung).stderr, /did not answer within 10 seconds/);
+  assert.doesNotMatch(gets(mutate('git_timeout_status=143', 'git_timeout_status=124'), hung).stderr, /did not answer within 10 seconds/, 'PLANTED DEFECT: the bound is read by the status of coreutils, which the image of the keeper does not give');
   assert.notEqual(gets(mutate('GIT_ALLOW_PROTOCOL=https ', '')).asked[0].protocol, 'https', 'PLANTED DEFECT: git takes any protocol');
   assert.notEqual(gets(mutate('LC_ALL=C ', '')).asked[0].locale, 'C', 'PLANTED DEFECT: git answers in the language of the machine');
   const noHead = {[urlOf('shop-build')]: {stdout: ''}};
