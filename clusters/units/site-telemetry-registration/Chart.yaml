@@ -1,0 +1,5 @@
+apiVersion: v2
+name: site-telemetry-registration
+version: 1.0.0
+description: What the site statistics service of the observability application knows of one tenant at one stage, as one ConfigMap in the namespace observability. Rendered by clusters/argocd/files/site-telemetry-registrations-appset.yaml, which hands it the tenant's facts from the books; this chart holds none of its own.
+type: application

@@ -1,0 +1,86 @@
+{{- /*
+The site statistics service: the read API behind observability-query.<master>, which a website's admin
+calls for its Visitors and Security pages. It counts from Loki on request and stores nothing, and it
+answers a caller only for the tenant whose identity provider signed the caller's token.
+
+ONE REPLICA, because every cache it keeps (registrations, signing keys, finished reports) is in memory
+and a second pod would only repeat the reads.
+
+THE PROBES RUN INSIDE THE POD (exec), so they need no path from the node to the pod, which the
+NetworkPolicy beside this file closes to every source but the ingress controller.
+*/ -}}
+{{- if .Values.global.servicesLocal.observability }}
+{{- $service := .Values.siteTelemetry }}
+{{- $health := printf "import urllib.request; urllib.request.urlopen('http://127.0.0.1:%v/healthz', timeout=3)" $service.port }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: site-telemetry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "site-telemetry.selectorLabels" . | nindent 4 }}
+spec:
+  revisionHistoryLimit: 3
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "site-telemetry.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "site-telemetry.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/script: {{ include (print $.Template.BasePath "/site-telemetry-script.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: site-telemetry
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: site-telemetry
+          image: "{{ $service.image.repository }}:{{ $service.image.tag }}"
+          imagePullPolicy: {{ $service.image.pullPolicy }}
+          command: ["python", "-u", "/app/site_telemetry.py"]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LISTEN_PORT
+              value: {{ $service.port | quote }}
+            - name: LOKI_URL
+              value: {{ printf "http://%s.%s.svc.cluster.local:3100" (required "observability: loki.fullnameOverride is required, the site statistics service dials Loki by it" .Values.loki.fullnameOverride) .Release.Namespace | quote }}
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          ports:
+            - name: http
+              containerPort: {{ $service.port }}
+          readinessProbe:
+            exec:
+              command: ["python", "-c", {{ $health | quote }}]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["python", "-c", {{ $health | quote }}]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml $service.resources | nindent 12 }}
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: site-telemetry-script
+{{- end }}

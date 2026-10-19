@@ -28,7 +28,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-LOKI_URL = os.environ.get("LOKI_URL", "http://loki.observability.svc.cluster.local:3100")
+LOKI_URL = os.environ["LOKI_URL"]
 NAMESPACE = os.environ["POD_NAMESPACE"]
 KUBERNETES_API = os.environ.get("KUBERNETES_API_URL", "https://kubernetes.default.svc")
 TOKEN_FILE = os.environ.get("KUBERNETES_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token")

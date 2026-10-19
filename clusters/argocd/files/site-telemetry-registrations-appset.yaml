@@ -1,0 +1,100 @@
+# Site statistics registrations — ONE Application "site-telemetry-<guid>-<stage>" per tenant and stage,
+# from the tenant registrations registrations/<guid>/<stage>.yaml in this installation's books, into
+# the namespace of the observability application. Each renders clusters/units/site-telemetry-registration:
+# one ConfigMap holding the tenant's host and websites, which the site statistics service of
+# clusters/inventories/observability lists to learn whom it may answer for and which pages are whose.
+#
+# THE BOOKS ARE THE ONE LIST OF TENANTS, and this is how the service reads them with no credential of
+# its own: the master's Argo CD already reads the books (clusters/inventories/argocd-secrets), renders
+# the ConfigMaps through its own sync, and the service only lists them in its namespace. A tenant
+# removed from the books leaves the selection, and its Application and ConfigMap are deleted with it.
+#
+# EVERY TENANT, NOT ONLY THE ONES OF THIS CLUSTER. tenants-appset.yaml selects the registrations of one
+# cluster because it deploys their workloads there. The statistics of every cluster are read from one
+# Loki, on the master, so this file selects all of them and is rendered only where the books are kept.
+#
+# THE HOST IS DERIVED HERE, from the same registration fields tenants-appset.yaml hands every chart:
+# the tenant's own domain where it has one, else its zone.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: site-telemetry-registrations
+  namespace: __ARGOCD_NAMESPACE__
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: The registrations of the site statistics service, one ConfigMap per tenant and stage, in the namespace of the observability application and nowhere else.
+  sourceRepos:
+    - https://github.com/simetrixch/hostyour-cloud.git
+  destinations:
+    - name: __CLUSTER_NAME__
+      namespace: observability
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: site-telemetry-registrations
+  namespace: __ARGOCD_NAMESPACE__
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:  # the generator of tenants-appset.yaml: one Application per registration and stage
+    - git:
+        repoURL: https://github.com/__DEPLOY_REPO__.git
+        revision: __BOOKS_FQDN__
+        files:
+          - path: "registrations/*/dev.yaml"
+          - path: "registrations/*/test.yaml"
+          - path: "registrations/*/prod.yaml"
+        values:
+          guid: "{{ index .path.segments 1 }}"
+          stage: '{{ trimSuffix ".yaml" .path.filename }}'
+  template:
+    metadata:
+      name: "site-telemetry-{{ .values.guid }}-{{ .values.stage }}"
+      namespace: __ARGOCD_NAMESPACE__
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: site-telemetry-registrations
+      destination:
+        name: __CLUSTER_NAME__
+        namespace: observability
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+  templatePatch: |
+    {{- $zone := printf "%s.%s" .subdomain (index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") .values.stage) }}
+    {{- /* A website is an app that carries `site`; the Manager writes its `sitePath` with it. */}}
+    {{- $sites := list }}
+    {{- range dig "apps" (list) . }}
+    {{- if hasKey . "site" }}
+    {{- $sites = append $sites (dict "name" .site "sitePath" .sitePath "main" (dig "main" false .)) }}
+    {{- end }}
+    {{- end }}
+    spec:
+      sources:
+        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+          targetRevision: __BRANCH__
+          path: clusters/units/site-telemetry-registration
+          helm:
+            valuesObject:
+              tenant:
+                guid: "{{ .values.guid }}"
+                stage: "{{ .values.stage }}"
+                host: "{{ .ownDomain | default $zone }}"
+                proxiedHosts: {{ dig "proxiedHosts" (list) . | toJson }}
+                sites: {{ $sites | toJson }}

@@ -1265,7 +1265,7 @@ loki:
           schema: v13
           index: { prefix: index_, period: 24h }
     limits_config:
-      retention_period: 336h
+      retention_period: 720h
       allow_structured_metadata: true
       volume_enabled: true
     # Without retention_enabled the limits_config.retention_period above is
@@ -1395,6 +1395,29 @@ alloy:
       - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
 
 # ============================================================================
+# The site statistics service (templates/site-telemetry-*.yaml, files/site_telemetry.py): the read API
+# behind global.endpoints.observability.query that a website's admin calls for its Visitors and
+# Security pages. It runs on the stock python image, with the script mounted from a ConfigMap, and
+# counts from Loki on request, so it stores nothing.
+# ============================================================================
+siteTelemetry:
+  image:
+    repository: python
+    tag: "3.12-slim"
+    pullPolicy: IfNotPresent
+  port: 8080
+  # The namespace of the ingress controller, the one source its NetworkPolicy admits.
+  ingressNamespace: ingress
+  # A report reads up to 200000 log lines into memory (MAX_LINES in the script), which sets the limit.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# ============================================================================
 # Vault-backed secrets (ExternalSecret CRDs)
 # Per-env vaultPath overrides go in values-{test,prod}.yaml.
 # Per-app exporter secrets live in each app's chart, not here.
@@ -1490,6 +1513,23 @@ ingress-loki-push:
     tls:
       enabled: true
       secretName: 'observability-loki-push-{{ .Values.global.env }}-tls'
+
+# observability-query.<master-fqdn> → the site statistics service, path /api/v1/site-telemetry. The
+# host is the one the cluster map states (global.endpoints.observability.query), the address the apps
+# read it from. No basic-auth Middleware: the service verifies the caller's own access token.
+ingress-site-telemetry:
+  ingress:
+    enabled: true
+    className: public
+    host: '{{ (urlParse (required "observability: global.endpoints.observability.query is required (clusters/active/<fqdn>.yaml) — the site statistics are served at that address" .Values.global.endpoints.observability.query)).host }}'
+    paths:
+      - path: /api/v1/site-telemetry
+        pathType: Prefix
+        serviceName: site-telemetry
+        servicePort: 80
+    tls:
+      enabled: true
+      secretName: 'observability-site-telemetry-{{ .Values.global.env }}-tls'
 
 # Traefik basic-auth Middleware shared by both push Ingresses. `secret` points
 # at the K8s Secret obs-push-htpasswd (key `users`, htpasswd format) that the

@@ -1,0 +1,17 @@
+{{- /*
+The site statistics service (files/site_telemetry.py), shipped as a ConfigMap and mounted at /app in
+the Deployment, so it runs on the stock python image the values pin and nothing is built or
+installed at boot, the way clusters/inventories/service-provisioner ships its reconciler.
+*/ -}}
+{{- if .Values.global.servicesLocal.observability }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: site-telemetry-script
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "site-telemetry.selectorLabels" . | nindent 4 }}
+data:
+  site_telemetry.py: |
+    {{- .Files.Get "files/site_telemetry.py" | nindent 4 }}
+{{- end }}
