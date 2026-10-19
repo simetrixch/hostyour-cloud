@@ -2035,7 +2035,8 @@ test('the loop of the ci run keeper marks only a tick that succeeded, pauses aft
   const at = (text, folder = dir) => text.replaceAll('/keeper/ci-run-keeper.sh', join(folder, 'tick.sh')).replaceAll('/tmp/keeper-succeeded', join(folder, 'keeper-succeeded'));
   const loop = container.command[2];
   assert.notEqual(at(loop), loop, 'the loop names the tick and the marker the test replaces');
-  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  // A killed child whose parent is gone stays a zombie where nothing reaps orphans, as in a ci pod, and kill(0) still finds it.
+  const alive = (pid) => { try { return readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ').pop()[0] !== 'Z'; } catch { return false; } };
   const lines = (file) => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean) : []);
   // Each run has a folder of its own, because a tick of the run before may still write after the test ended that loop.
   const run = (script, mode, seconds) => {
