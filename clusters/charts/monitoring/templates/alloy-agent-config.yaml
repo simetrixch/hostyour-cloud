@@ -226,6 +226,20 @@ data:
     loki.process "app_json" {
       forward_to = [loki.write.default.receiver]
 
+      // Traefik's access log carries the whole request target in RequestPath, and a Referer may carry
+      // the query of the page the visitor came from, so a token in a URL reaches Loki and the site
+      // statistics unless it is cut here, before the line leaves the node. Only the query is cut: the
+      // group is what the stage replaces, and `(?:[^"\\]|\\.)*` reads a JSON string through its escapes,
+      // so an escaped quote inside the query cannot end the cut early.
+      stage.match {
+        selector = `{namespace="ingress", container="traefik"}`
+
+        stage.replace {
+          expression = `"(?:RequestPath|request_Referer)":"(?:[^"?\\]|\\.)*(\?(?:[^"\\]|\\.)*)"`
+          replace    = ""
+        }
+      }
+
       stage.json {
         expressions = {
           level     = "level",

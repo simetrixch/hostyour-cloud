@@ -1,0 +1,24 @@
+{{- /*
+The registration the site statistics service reads (clusters/inventories/observability/files/site_telemetry.py,
+registrations()): the tenant it answers for, the host its pages and its identity provider stand at, and
+the websites it counts. The service lists the ConfigMaps of its own namespace by the label below and
+decides from nothing else which host belongs to which tenant, so a tenant without this ConfigMap has
+no statistics and a refused caller learns nothing of why.
+
+The one host is both the host of the pages and the issuer of the access tokens, because every member
+of a tenant serves under a path of that one host (clusters/argocd/files/e2e-targets-appset.yaml).
+*/ -}}
+{{- $guid := required "tenant.guid is empty: the ApplicationSet hands it from the registration's path" .Values.tenant.guid }}
+{{- $stage := required "tenant.stage is empty: the ApplicationSet hands it from the registration's file name" .Values.tenant.stage }}
+{{- $host := required "tenant.host is empty: the ApplicationSet hands it from the registration's own domain or zone" .Values.tenant.host }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: site-telemetry-registration-{{ $guid }}-{{ $stage }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    platform/site-telemetry-registration: "true"
+data:
+  registration.json: {{ dict "tenant" (printf "%s-%s" $guid $stage) "hosts" (list $host) "issuers" (list $host) "proxiedHosts" .Values.tenant.proxiedHosts "sites" .Values.tenant.sites | toJson | quote }}

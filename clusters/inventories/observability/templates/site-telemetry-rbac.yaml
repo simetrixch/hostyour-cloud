@@ -1,0 +1,42 @@
+{{- /*
+WHAT THE SITE STATISTICS SERVICE MAY READ: the ConfigMaps of its own namespace, which is where
+clusters/argocd/files/site-telemetry-registrations-appset.yaml renders one registration per tenant and
+stage. It holds no credential for the books and reads no Secret.
+*/ -}}
+{{- if .Values.global.servicesLocal.observability }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: site-telemetry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "site-telemetry.selectorLabels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: site-telemetry-registrations
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "site-telemetry.selectorLabels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: site-telemetry-registrations
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "site-telemetry.selectorLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: site-telemetry-registrations
+subjects:
+  - kind: ServiceAccount
+    name: site-telemetry
+    namespace: {{ .Release.Namespace }}
+{{- end }}
