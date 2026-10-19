@@ -91,8 +91,22 @@ trap 'exit 143' TERM
 # a command would run it as this account. The launcher checks the same thing on
 # the operator's side; it is checked again HERE because what arrives is what
 # matters and a session is not a promise.
-BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
-[ -z "$BAD" ] || die "the config carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL: $BAD" 65
+# The same function as require-config-assignments.sh, held byte-equal to it by test.sh: this
+# script arrives over one ssh session and can read no sibling. A refused line is named by its
+# number and never quoted, because it may carry a credential.
+require_config_assignments() {
+  local file="$1"
+  BAD_LINES=$(
+    export LC_ALL=C
+    grep -anvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$file" \
+      | head -3 \
+      | sed -E -e 's/^([0-9]+):([A-Z][A-Z0-9_]*)=.*/line \1 (\2)/' -e 's/^([0-9]+):.*/line \1/' \
+      | paste -sd, - | sed 's/,/, /g'
+  )
+  [ -z "$BAD_LINES" ]
+}
+require_config_assignments "$CONFIG" \
+  || die "the config carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 
 # AND NO CARRIAGE RETURN. The shape check above lets one through — a CR falls
 # after the closing quote, where [[:space:]] matches it — and a bash on Linux

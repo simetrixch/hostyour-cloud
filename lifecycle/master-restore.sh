@@ -40,6 +40,8 @@ DRIVER="$HERE/master-restore-driver.sh"
   || die 'master-restore-driver.sh is not beside this file. It IS the staging on the machine, and this only starts it' 66
 . "$HERE/require-owner-only.sh" \
   || die 'require-owner-only.sh is not beside this file. It is the guard every launcher puts on a config' 66
+. "$HERE/require-config-assignments.sh" \
+  || die 'require-config-assignments.sh is not beside this file. It is the check every launcher makes on the lines of a config' 66
 command -v ssh >/dev/null 2>&1 \
   || die 'ssh is not on this path, and the staging is one session to the machine'
 
@@ -52,9 +54,8 @@ if git -C "$CONFIG_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
   git -C "$CONFIG_DIR" check-ignore -q "$CONFIG" 2>/dev/null \
     || die "$CONFIG stands inside a git working tree that does not ignore it. A file of credentials belongs nowhere a commit can reach it: move it out, or name it in that tree's .gitignore" 77
 fi
-BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
-[ -z "$BAD" ] \
-  || die "$CONFIG carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL on both sides: $BAD" 65
+require_config_assignments "$CONFIG" \
+  || die "$CONFIG carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL on both sides: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 . "$CONFIG"
 for named in FQDN OPERATOR_USER STAGE PLATFORM_REPO PLATFORM_BRANCH; do
   [ -n "${!named:-}" ] || die "$CONFIG states no $named, and nothing here may choose one" 65

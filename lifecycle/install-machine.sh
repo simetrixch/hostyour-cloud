@@ -41,6 +41,8 @@ fail() { printf '\n  %s\n\n' "$1" >&2; exit "${2:-65}"; }
 # shellcheck disable=SC1091
 . "$HERE/require-owner-only.sh" || fail 'require-owner-only.sh is not beside this file — it is the guard every launcher puts on a config' 66
 # shellcheck disable=SC1091
+. "$HERE/require-config-assignments.sh" || fail 'require-config-assignments.sh is not beside this file — it is the check every launcher makes on the lines of a config' 66
+# shellcheck disable=SC1091
 . "$HERE/require-forgejo-destinations.sh" || fail 'require-forgejo-destinations.sh is not beside this file — it is the guard that asks the Forgejo destinations of a config' 66
 [ -r "$FILE" ]   || fail "there is no config at $FILE. Copy config.example.env, fill it in, and make it readable by you alone" 66
 
@@ -66,11 +68,8 @@ fi
 # must be blank, a comment, or NAME='value' with no single quote inside the value. A
 # comment may follow a value on the same line, because that is valid in the shell that
 # reads it and it is where an operator naturally writes what a value may be.
-BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$FILE" | head -3)
-if [ -n "$BAD" ]; then
-  fail "$FILE carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL — a line that is not an assignment is a command that would run:
-$BAD" 65
-fi
+require_config_assignments "$FILE" \
+  || fail "$FILE carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL — a line that is not an assignment is a command that would run: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 
 # shellcheck disable=SC1090
 . "$FILE"

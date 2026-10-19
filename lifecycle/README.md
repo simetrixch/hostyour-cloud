@@ -278,8 +278,12 @@ because at a machine's birth there is nothing to compare it against. A **changed
   a token that reached a remote must be rotated.
 - **Any line that is not a comment or `NAME='value'`.** The config is READ BY THE SHELL on the
   machine, so a line that is not an assignment is a command that would run there with the operator's
-  own rights. All three files apply the same test, and the launcher quotes the offending line with
-  its number.
+  own rights. The five launchers and the five drivers apply the same test, and the refusal names
+  each offending line by its number and by its `NAME` where one can be read, and never quotes the
+  line, because it may be a credential with a closing quote forgotten. A lowercase name, a name
+  behind a space or a command is named by its number alone. The launchers share
+  `require-config-assignments.sh`; each driver carries the same function, which `test.sh` holds
+  byte-equal to it.
 - **An apostrophe in any value.** That test refuses it as a side effect, and it would break the run
   in any case: a template slot standing inside quotes has no way to say so, and the cluster map
   becomes unparseable far from the cause (`ansiwise-plugins#161`).
