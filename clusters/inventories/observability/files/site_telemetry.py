@@ -48,6 +48,8 @@ STATIC = re.compile(r"\.(?:js|css|map|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf
 PROBE_AGENT = re.compile(r"Digita-Smoke|kube-probe|Uptime", re.I)
 SCANNER_PATH = re.compile(r"(?:^|/)(?:\.env|\.git|wp-login\.php|wp-admin|xmlrpc\.php|phpmyadmin|cgi-bin)", re.I)
 AUTH_FAILURES = {"login_failed", "login_locked", "2fa_failed"}
+FORM_PATHS = ("/api/contact", "/api/record")
+FORM_REFUSALS = (400, 403, 413, 415)
 SHA256_DIGEST_INFO = bytes.fromhex("3031300d060960864801650304020105000420")
 
 # Hashes of one process lifetime: a restart changes every ipHash, so a hash is never a durable
@@ -166,11 +168,17 @@ def site_of_path(facts, path):
     return owner
 
 
-def loki_lines(selector, start, end, counted):
+def nanoseconds(moment):
+    """Loki reads a bound as Unix nanoseconds: it refuses a datetime written the Python way."""
+    return (moment - datetime(1970, 1, 1, tzinfo=timezone.utc)) // timedelta(microseconds=1) * 1000
+
+
+def loki_lines(selector, begin, end, counted):
     """Log lines of one selector, oldest first, at most MAX_LINES in all."""
+    start, stop = nanoseconds(begin), nanoseconds(end)
     with LOKI_SLOTS:
         while counted["lines"] < MAX_LINES:
-            query = urllib.parse.urlencode({"query": selector, "start": start, "end": end, "limit": PAGE, "direction": "forward"})
+            query = urllib.parse.urlencode({"query": selector, "start": start, "end": stop, "limit": PAGE, "direction": "forward"})
             result = fetch_json(f"{LOKI_URL}/loki/api/v1/query_range?{query}", timeout=60)["data"]["result"]
             entries = sorted((int(stamp), line) for stream in result for stamp, line in stream["values"])
             for entry in entries:
@@ -258,11 +266,11 @@ def security_category(event):
         return "scanner_probe", ("blocked" if 400 <= status < 500 else "allowed")
     if status == 429:
         return "rate_limit_429", "blocked"
-    if path.endswith(("/api/contact", "/api/record")) and status in (400, 403, 413, 415):
-        # Traefik carries the status and not the reason, so a forged signature and a honeypot catch
-        # cannot be told apart here.
-        return "form_rejected", "blocked"
     return None
+
+
+def is_form_refusal(event):
+    return event["path"].endswith(FORM_PATHS) and event["status"] in FORM_REFUSALS
 
 
 def buckets(begin, end, span):
@@ -325,15 +333,22 @@ def visitors_report(facts, tenant, site, span, query, begin, end):
 
 def security_report(facts, tenant, site, span, query, begin, end):
     counted = {"lines": 0, "truncated": False}
-    events = []
+    events, refusals = [], []
     for event in traffic(facts, tenant, site, begin, end, counted):
         found = security_category(event)
         if found is not None:
             events.append({**event, "category": found[0], "action": found[1], "statusCode": event["status"]})
+        elif is_form_refusal(event):
+            # Traefik carries the status and not the reason, so a forged signature and a honeypot catch
+            # cannot be told apart. The refusal is counted in the two KPIs of the form blocks and stands
+            # in no row, because a row would need a category word for it.
+            refusals.append({**event, "category": None, "action": "blocked", "statusCode": event["status"]})
     events += list(sign_in_failures(tenant, site, begin, end, counted))
     filters = {"category": "category", "action": "action", "country": "country", "path": "path", "ipHash": "ipHash"}
-    events = [event for event in events if all(event[field] == query[name] for name, field in filters.items() if name in query)
-              and ("statusCode" not in query or str(event["statusCode"]) == query["statusCode"])]
+    wanted = lambda event: (all(event[field] == query[name] for name, field in filters.items() if name in query)
+                            and ("statusCode" not in query or str(event["statusCode"]) == query["statusCode"]))
+    events = [event for event in events if wanted(event)]
+    form_blocks = sum(1 for event in refusals if wanted(event))
     by = lambda field: {key: sum(1 for event in events if event[field] == key) for key in {event[field] for event in events}}
     step, slots = buckets(begin, end, span)
     timeline = {slot: 0 for slot in slots}
@@ -343,9 +358,9 @@ def security_report(facts, tenant, site, span, query, begin, end):
     categories = by("category")
     return {
         "site": site, "range": query["range"], "from": begin.isoformat(), "to": end.isoformat(), "truncated": counted["truncated"],
-        "kpis": {"blockedAttacks": sum(1 for event in events if event["action"] == "blocked"),
+        "kpis": {"blockedAttacks": sum(1 for event in events if event["action"] == "blocked") + form_blocks,
                  "scannerProbes": categories.get("scanner_probe", 0),
-                 "botFormBlocks": categories.get("rate_limit_429", 0) + categories.get("form_rejected", 0),
+                 "botFormBlocks": categories.get("rate_limit_429", 0) + form_blocks,
                  "signInFailures": sum(categories.get(name, 0) for name in AUTH_FAILURES)},
         "timeline": [{"time": slot.isoformat(), "count": count} for slot, count in timeline.items()],
         "categories": ranked(categories), "countries": ranked(by("country")), "attackers": ranked(by("ipHash")),

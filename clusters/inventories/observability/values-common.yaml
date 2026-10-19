@@ -1514,9 +1514,9 @@ ingress-loki-push:
       enabled: true
       secretName: 'observability-loki-push-{{ .Values.global.env }}-tls'
 
-# observability-query.<master-fqdn> → the site statistics service, path /api/v1/site-telemetry. The
-# host is the one the cluster map states (global.endpoints.observability.query), the address the apps
-# read it from. No basic-auth Middleware: the service verifies the caller's own access token.
+# global.endpoints.observability.query → the site statistics service, path /api/v1/site-telemetry. The
+# host is the one the cluster map states there, the address the apps read the statistics from. No
+# basic-auth Middleware: the service verifies the caller's own access token.
 ingress-site-telemetry:
   ingress:
     enabled: true

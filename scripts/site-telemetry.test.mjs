@@ -32,6 +32,10 @@ const REGISTRATIONS = [
     sites: [{name: 'main', sitePath: '/', main: true}]},
   {tenant: 'cccc-prod', hosts: ['edge.example.test'], issuers: ['edge.example.test'], proxiedHosts: ['edge.example.test'],
     sites: [{name: 'main', sitePath: '/', main: true}]},
+  {tenant: 'dddd-prod', hosts: ['big.example.test'], issuers: ['big.example.test'], proxiedHosts: [],
+    sites: [{name: 'main', sitePath: '/', main: true}]},
+  {tenant: 'eeee-prod', hosts: ['days.example.test'], issuers: ['days.example.test'], proxiedHosts: [],
+    sites: [{name: 'main', sitePath: '/', main: true}]},
 ];
 
 const CHROME = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
@@ -66,7 +70,19 @@ const TRAFFIC = [
   access({minutes: 20, host: 'evil.example.test', path: '/spoofed-host'}),
   access({minutes: 20, host: 'edge.example.test', tenant: 'cccc-prod', path: '/behind-the-edge'}),
 ];
-const FAILURES = [failure({minutes: 45}), failure({minutes: 44, site: 'secondary'}), failure({minutes: 43, service: 'imposter'}), failure({minutes: 42, namespace: 'bbbb-prod'})];
+const FAILURES = [failure({minutes: 45}), failure({minutes: 44, site: 'secondary'}), failure({minutes: 43, service: 'imposter'}), failure({minutes: 42, namespace: 'bbbb-prod'}),
+  failure({minutes: 41, category: 'password_reset'})];
+
+// More lines than one page of Loki's answer holds (5000), a second apart, so a reader that stops at the
+// first page, or reads a line twice at the page border, counts something else than BULK_LINES.
+const BULK_LINES = 5200;
+const BULK = Array.from({length: BULK_LINES}, (_, index) => [NOW - 2 * 3600000 + index * 1000, access({minutes: 0, host: 'big.example.test', tenant: 'dddd-prod'})[1]]);
+// The same visitor on two days: two requests at noon of the day before yesterday and one at noon of yesterday (UTC).
+const noon = daysAgo => { const day = new Date(NOW); return Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() - daysAgo, 12); };
+const ROTATION = [noon(2), noon(2) + 300000, noon(1)]
+  .map(stamp => [stamp, access({minutes: 0, host: 'days.example.test', tenant: 'eeee-prod', address: '203.0.113.77:1234'})[1]]);
+// What the selector's host filter would pick out of the ingress log.
+const TRAFFIC_BY_HOST = [['big\\.example\\.test', BULK], ['days\\.example\\.test', ROTATION]];
 
 const listen = handler => new Promise(resolve => { const server = createServer(handler).listen(0, '127.0.0.1', () => resolve(server)); });
 const freePort = () => new Promise(resolve => { const server = createSocketServer().listen(0, '127.0.0.1', () => { const {port} = server.address(); server.close(() => resolve(port)); }); });
@@ -75,6 +91,7 @@ const json = (response, body) => { response.setHeader('content-type', 'applicati
 let folder;
 const servers = [];
 let urls;
+let lokiRequests = 0;
 before(async () => {
   folder = mkdtempSync(join(tmpdir(), 'site-telemetry-'));
   writeFileSync(join(folder, 'token'), 'service-account-token');
@@ -83,12 +100,25 @@ before(async () => {
     assert.match(request.url, /^\/api\/v1\/namespaces\/observability\/configmaps\?labelSelector=platform%2Fsite-telemetry-registration%3Dtrue$/);
     json(response, {items: REGISTRATIONS.map(facts => ({data: {'registration.json': JSON.stringify(facts)}})).concat([{data: {'registration.json': 'not json'}}])});
   });
+  // Loki as the service meets it: a bound is Unix nanoseconds (the real Loki 3.7.4 answered 400 to a date
+  // written any other way), `start` is included and `end` is not, at most `limit` lines come back, 100
+  // when the request names none, and the newest first unless `direction` says forward.
   const loki = await listen((request, response) => {
-    const query = new URL(request.url, 'http://x').searchParams.get('query');
-    const values = query.includes('container="traefik"')
-      ? TRAFFIC.map(([stamp, line]) => [String(BigInt(stamp) * 1000000n), line])
-      : FAILURES.filter(([namespace]) => query.includes(`namespace="${namespace}"`)).map(([, stamp, line]) => [String(BigInt(stamp) * 1000000n), line]);
-    json(response, {status: 'success', data: {result: [{stream: {}, values}]}});
+    lokiRequests += 1;
+    const parameters = new URL(request.url, 'http://x').searchParams;
+    const [start, end] = ['start', 'end'].map(name => (/^\d{19}$/.test(parameters.get(name) ?? '') ? BigInt(parameters.get(name)) : null));
+    if (start === null || end === null) {
+      response.statusCode = 400;
+      return response.end(`could not parse 'start' or 'end' parameter: ${parameters.get('start')} ${parameters.get('end')}`);
+    }
+    const query = parameters.get('query');
+    const lines = query.includes('container="traefik"')
+      ? TRAFFIC_BY_HOST.find(([host]) => query.includes(host))?.[1] ?? TRAFFIC
+      : FAILURES.filter(([namespace]) => query.includes(`namespace="${namespace}"`)).map(([, stamp, line]) => [stamp, line]);
+    const values = lines.map(([stamp, line]) => [BigInt(stamp) * 1000000n, line]).filter(([stamp]) => stamp >= start && stamp < end)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+    if ((parameters.get('direction') ?? 'backward') === 'backward') values.reverse();
+    json(response, {status: 'success', data: {result: [{stream: {}, values: values.slice(0, Number(parameters.get('limit') ?? 100)).map(([stamp, line]) => [String(stamp), line])}]}});
   });
   const jwk = key => ({kty: 'RSA', kid: 'k1', alg: 'RS256', ...key.publicKey.export({format: 'jwk'})});
   const identity = await listen((request, response) => {
@@ -100,12 +130,12 @@ before(async () => {
 });
 after(() => { servers.forEach(server => server.close()); rmSync(folder, {recursive: true, force: true}); });
 
-/** Starts the service from [source] and runs [use] against it. */
-async function serving(source, use) {
+/** Starts the service from [source] with the settings [environment] changes and runs [use] against it. */
+async function serving(source, use, environment = {}) {
   const port = await freePort();
   const child = spawn('python3', ['-I', source], {stdio: ['ignore', 'ignore', 'pipe'], env: {
     POD_NAMESPACE: 'observability', LISTEN_PORT: String(port), KUBERNETES_API_URL: urls.kubernetes, KUBERNETES_TOKEN_FILE: join(folder, 'token'),
-    LOKI_URL: urls.loki, JWKS_URL_TEMPLATE: `${urls.identity}/{host}/jwks.json`, CACHE_SECONDS: '0', PATH: process.env.PATH}});
+    LOKI_URL: urls.loki, JWKS_URL_TEMPLATE: `${urls.identity}/{host}/jwks.json`, CACHE_SECONDS: '0', PATH: process.env.PATH, ...environment}});
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
   try {
@@ -115,9 +145,9 @@ async function serving(source, use) {
       assert.ok(tries < 100, `the service never answered:\n${stderr}`);
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    return await use(async (kind, query, bearer, extra = {}) => {
+    return await use(async (kind, query, bearer, extra = {}, method = 'GET') => {
       const parameters = new URLSearchParams({tenant: 'aaaa-prod', site: 'main', range: '24h', ...query});
-      const answer = await fetch(`http://127.0.0.1:${port}/api/v1/site-telemetry/${kind}?${parameters}`, {headers: {...(bearer ? {authorization: `Bearer ${bearer}`} : {}), ...extra}});
+      const answer = await fetch(`http://127.0.0.1:${port}/api/v1/site-telemetry/${kind}?${parameters}`, {method, headers: {...(bearer ? {authorization: `Bearer ${bearer}`} : {}), ...extra}});
       return {status: answer.status, text: await answer.text(), headers: answer.headers};
     });
   } finally {
@@ -126,6 +156,9 @@ async function serving(source, use) {
   }
 }
 const read = (kind, query, bearer, extra) => serving(SOURCE, ask => ask(kind, query, bearer, extra));
+// The category words a security report may speak: the keys of the plan that Traefik and digita-auth can tell apart.
+const CATEGORIES = ['login_failed', 'login_locked', '2fa_failed', 'rate_limit_429', 'scanner_probe'];
+const unplannedWords = body => [...body.categories.map(row => row.key), ...body.requests.items.map(item => item.category)].filter(word => !CATEGORIES.includes(word));
 const mutated = (from, to) => {
   const source = readFileSync(SOURCE, 'utf8');
   assert.equal(source.split(from).length, 2, `${from} stands once in the service`);
@@ -134,6 +167,7 @@ const mutated = (from, to) => {
   return copy;
 };
 const admin = {roles: ['Administrator']};
+const PREFLIGHTS_REFUSED = ['https://evil.example.test', 'https://other.example.test', 'http://shop.example.test', 'shop.example.test'];
 
 test('a caller without a valid tenant token is refused with 403 Forbidden', async () => {
   const refused = [
@@ -232,14 +266,29 @@ test('security: scanner probes, blocked requests and sign-in failures of the sit
   const body = JSON.parse(answer.text);
   assert.equal(answer.status, 200);
   assert.deepEqual(body.kpis, {blockedAttacks: 4, scannerProbes: 1, botFormBlocks: 2, signInFailures: 1});
-  assert.deepEqual(body.categories.map(row => row.key).sort(), ['form_rejected', 'login_failed', 'rate_limit_429', 'scanner_probe']);
+  assert.deepEqual(body.categories.map(row => row.key).sort(), ['login_failed', 'rate_limit_429', 'scanner_probe'], 'a sign-in line of another category is no sign-in failure');
+  assert.deepEqual(unplannedWords(body), []);
+  assert.equal(body.requests.total, 3, 'the refused form stands in no row');
+  assert.doesNotMatch(answer.text, /form_rejected|forged_form_signature|honeypot_bot/, 'Traefik cannot tell a forged signature from a honeypot catch');
   assert.doesNotMatch(answer.text, /192\.0\.2\.|imposter|spoofed-host/, 'no raw address, no line of another service');
+  const limited = JSON.parse((await read('security', {category: 'rate_limit_429'}, token(admin))).text);
+  assert.deepEqual([limited.kpis.blockedAttacks, limited.kpis.botFormBlocks], [1, 1], 'a category filter leaves out the refused form, which has no category');
   const probes = JSON.parse((await read('security', {category: 'scanner_probe'}, token(admin))).text);
   assert.deepEqual(probes.requests.items.map(item => item.path), ['/.env']);
   const byAddress = JSON.parse((await read('security', {ipHash: 'a1b2c3d4e5f6'}, token(admin))).text);
   assert.equal(byAddress.requests.total, 1);
   const secondary = JSON.parse((await read('security', {site: 'secondary'}, token(admin))).text);
   assert.deepEqual(secondary.kpis, {blockedAttacks: 1, scannerProbes: 0, botFormBlocks: 0, signInFailures: 1});
+});
+
+test('PLANTED DEFECT: a word for the refused forms, the old or a new one, or a refusal counted nowhere, is found', async () => {
+  const refusal = 'refusals.append({**event, "category": None,';
+  const security = async source => JSON.parse((await serving(source, ask => ask('security', {}, token(admin)))).text);
+  for (const word of ['form_rejected', 'forged_form_signature', 'honeypot_bot', 'form_block']) {
+    const body = await security(mutated(refusal, `events.append({**event, "category": "${word}",`));
+    assert.deepEqual(unplannedWords(body), [word, word], `the word ${word} stands in a row and a category`);
+  }
+  assert.equal((await security(mutated('form_blocks = sum(1 for event in refusals if wanted(event))', 'form_blocks = 0'))).kpis.botFormBlocks, 1, 'the refused form is counted nowhere');
 });
 
 test('a range outside 24 hours, 7 days and 30 days is refused', async () => {
@@ -252,6 +301,85 @@ test('a browser of the tenant may read the answer, and no other origin', async (
   assert.equal(own.headers.get('access-control-allow-origin'), 'https://shop.example.test');
   const foreign = await read('visitors', {}, token(admin), {origin: 'https://evil.example.test'});
   assert.equal(foreign.headers.get('access-control-allow-origin'), null);
+});
+
+test('a preflight is answered for the tenant\'s own hosts and for no other origin', async () => {
+  await serving(SOURCE, async ask => {
+    const own = await ask('visitors', {}, undefined, {origin: 'https://shop.example.test'}, 'OPTIONS');
+    assert.deepEqual([own.status, own.headers.get('access-control-allow-origin')], [204, 'https://shop.example.test']);
+    for (const origin of PREFLIGHTS_REFUSED) {
+      const refused = await ask('visitors', {}, undefined, {origin}, 'OPTIONS');
+      assert.deepEqual([origin, refused.status, refused.headers.get('access-control-allow-origin')], [origin, 403, null]);
+    }
+  });
+});
+
+test('PLANTED DEFECT: a preflight that answers a foreign origin is found', async () => {
+  const planted = {
+    'every origin is allowed': mutated('if facts is None or origin.removeprefix("https://") not in facts["hosts"] or not origin.startswith("https://"):', 'if facts is None:'),
+    'the scheme is not checked': mutated(' or not origin.startswith("https://")', ''),
+  };
+  for (const [name, source] of Object.entries(planted)) {
+    const answered = await serving(source, async ask => {
+      for (const origin of PREFLIGHTS_REFUSED) {
+        if ((await ask('visitors', {}, undefined, {origin}, 'OPTIONS')).status === 204) return origin;
+      }
+      return null;
+    });
+    assert.notEqual(answered, null, `${name}: the planted copy answers a refused origin`);
+  }
+});
+
+test('the sign-in failures of the site are the three failures of digita-auth and no other line of its', async () => {
+  const body = JSON.parse((await read('security', {category: 'password_reset'}, token(admin))).text);
+  assert.deepEqual([body.kpis.blockedAttacks, body.requests.total, body.categories], [0, 0, []]);
+  const planted = JSON.parse((await serving(mutated(' or entry["category"] not in AUTH_FAILURES', ''), ask => ask('security', {category: 'password_reset'}, token(admin)))).text);
+  assert.equal(planted.requests.total, 1, 'PLANTED DEFECT: without the category filter the line of another category is a security event');
+});
+
+test('the cache answers each website its own figures, and a repeated question without a second read of Loki', async () => {
+  const asked = source => serving(source, async ask => {
+    const bearer = token(admin);
+    const main = JSON.parse((await ask('visitors', {site: 'main'}, bearer)).text);
+    const before = lokiRequests;
+    await ask('visitors', {site: 'main'}, bearer);
+    const repeated = lokiRequests - before;
+    const secondary = JSON.parse((await ask('visitors', {site: 'secondary'}, bearer)).text);
+    return {repeated, main: main.topPages, secondary: secondary.topPages};
+  }, {CACHE_SECONDS: '60'});
+  const real = await asked(SOURCE);
+  assert.equal(real.repeated, 0, 'the cache is on in this run');
+  assert.deepEqual(real.secondary, [{key: '/web/secondary/blog', count: 1}]);
+  assert.notDeepEqual(real.main, real.secondary);
+  const planted = await asked(mutated('tuple(sorted(query.items()))', 'tuple(sorted((name, value) for name, value in query.items() if name != "site"))'));
+  assert.deepEqual(planted.secondary, planted.main, 'PLANTED DEFECT: a cache key without the website serves one website\'s figures to another');
+});
+
+test('every line Loki holds is counted: the reader pages on until a page is not full', async () => {
+  const bearer = token({...admin, tenantKey: keys.other, host: 'big.example.test'});
+  const counted = async source => JSON.parse((await serving(source, ask => ask('visitors', {tenant: 'dddd-prod'}, bearer))).text);
+  const real = await counted(SOURCE);
+  assert.deepEqual([real.kpis.pageviews, real.requests.total, real.truncated], [BULK_LINES, BULK_LINES, false]);
+  const planted = {
+    'only the first page is read': mutated('if len(entries) < PAGE:', 'if True:'),
+    'the next page starts at the last line again': mutated('start = entries[-1][0] + 1', 'start = entries[-1][0]'),
+    'the page size is left to Loki, which answers 100 lines': mutated('"limit": PAGE, ', ''),
+    'the newest lines come first, so the next start skips the rest': mutated('"direction": "forward"', '"direction": "backward"'),
+  };
+  for (const [name, source] of Object.entries(planted)) assert.notEqual((await counted(source)).kpis.pageviews, BULK_LINES, `PLANTED DEFECT: ${name}`);
+});
+
+test('the address of a visitor is hashed with the day, so the same visitor is no one on another day', async () => {
+  const bearer = token({...admin, tenantKey: keys.other, host: 'days.example.test'});
+  const hashes = async source => {
+    const body = JSON.parse((await serving(source, ask => ask('visitors', {tenant: 'eeee-prod', range: '7d'}, bearer))).text);
+    return {unique: body.kpis.uniqueVisitors, byTime: body.requests.items.slice().sort((left, right) => left.time.localeCompare(right.time)).map(item => item.ipHash)};
+  };
+  const real = await hashes(SOURCE);
+  assert.equal(real.unique, 2, 'one visitor on two days');
+  assert.deepEqual([real.byTime[0] === real.byTime[1], real.byTime[1] === real.byTime[2]], [true, false], 'the same day the same hash, the next day another');
+  const planted = await hashes(mutated('salt = hmac.new(PROCESS_SECRET, day, hashlib.sha256).digest()', 'salt = hmac.new(PROCESS_SECRET, b"fixed", hashlib.sha256).digest()'));
+  assert.equal(planted.unique, 1, 'PLANTED DEFECT: a salt that does not change with the day makes the hash a durable identifier');
 });
 
 test('PLANTED DEFECT: counting another tenant\'s hosts, a query string or a raw address is found', async () => {

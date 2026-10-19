@@ -14,7 +14,7 @@ const render = (...args) => yaml('select(.kind == "ConfigMap" and .metadata.name
     '-f', 'clusters/platform/values-common.yaml', '-f', 'scripts/standin/cluster-map.yaml', ...args], {encoding: 'utf8'}));
 const CONFIGS = {
   'the agent of an app cluster': render('--set', 'alloyAgent.enabled=true'),
-  'the shipper of the master': render('--set', 'alloy.logsEnabled=true'),
+  'the shipper of the logs (alloy.logsEnabled)': render('--set', 'alloy.logsEnabled=true'),
 };
 
 // The two renders are different configs: only a slave's agent pushes metrics, and a test that read one

@@ -5,13 +5,15 @@
 # clusters/inventories/observability lists to learn whom it may answer for and which pages are whose.
 #
 # THE BOOKS ARE THE ONE LIST OF TENANTS, and this is how the service reads them with no credential of
-# its own: the master's Argo CD already reads the books (clusters/inventories/argocd-secrets), renders
-# the ConfigMaps through its own sync, and the service only lists them in its namespace. A tenant
-# removed from the books leaves the selection, and its Application and ConfigMap are deleted with it.
+# its own: the Argo CD of the cluster that keeps the books already reads them
+# (clusters/inventories/argocd-secrets), renders the ConfigMaps through its own sync, and the service
+# only lists them in its namespace. A tenant removed from the books leaves the selection, and its
+# Application and ConfigMap are deleted with it.
 #
 # EVERY TENANT, NOT ONLY THE ONES OF THIS CLUSTER. tenants-appset.yaml selects the registrations of one
 # cluster because it deploys their workloads there. The statistics of every cluster are read from one
-# Loki, on the master, so this file selects all of them and is rendered only where the books are kept.
+# Loki, the one of the observability application, so this file selects all of them and is rendered
+# only where the books are kept.
 #
 # THE HOST IS DERIVED HERE, from the same registration fields tenants-appset.yaml hands every chart:
 # the tenant's own domain where it has one, else its zone.

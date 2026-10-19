@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import {execFileSync, spawnSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {readdirSync, readFileSync} from 'node:fs';
 import test from 'node:test';
 
-// THE SERVICE AS THE MASTER RUNS IT: clusters/inventories/observability rendered for dev against the
-// stand-in cluster map, which states the query address (global.endpoints.observability.query). The
-// objects are held to each other, because a pod that renders but is not selected, not admitted or not
-// bound to its role passes every check of a single object and answers nobody.
+// THE SERVICE WHERE global.servicesLocal.observability IS ON: clusters/inventories/observability rendered
+// for dev against the stand-in cluster map, which states the query address
+// (global.endpoints.observability.query). The objects are held to each other, because a pod that
+// renders but is not selected, not admitted or not bound to its role passes every check of a single
+// object and answers nobody.
 const script = readFileSync('clusters/inventories/observability/files/site_telemetry.py', 'utf8');
 const render = (...set) => spawnSync('helm', ['template', 'observability', 'clusters/inventories/observability', '--namespace', 'observability',
   '--api-versions', 'monitoring.coreos.com/v1', '--api-versions', 'monitoring.coreos.com/v1alpha1',
@@ -17,9 +18,9 @@ const render = (...set) => spawnSync('helm', ['template', 'observability', 'clus
 const documents = rendered => execFileSync('yq', ['-o=json', '-I=0', 'select(. != null)', '-'], {input: rendered, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024})
   .split('\n').filter(Boolean).map(line => JSON.parse(line));
 
-const master = render();
-assert.equal(master.status, 0, master.stderr);
-const DOCUMENTS = documents(master.stdout);
+const served = render();
+assert.equal(served.status, 0, served.stderr);
+const DOCUMENTS = documents(served.stdout);
 const named = (documents, kind, name) => documents.find(candidate => candidate.kind === kind && candidate.metadata.name === name);
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 
@@ -89,11 +90,53 @@ test('PLANTED DEFECT: every way the objects can miss each other is caught, by na
   }
 });
 
-test('a cluster that is not the master renders none of the service, and one without the address is refused', () => {
+test('a cluster without global.servicesLocal.observability renders none of the service, and one without the address is refused', () => {
   const elsewhere = render('--set', 'global.servicesLocal.observability=false');
   assert.equal(elsewhere.status, 0, elsewhere.stderr);
   assert.deepEqual(documents(elsewhere.stdout).filter(({metadata}) => /site-telemetry/.test(metadata?.name ?? '')).map(({kind}) => kind), []);
   const unaddressed = render('--set-string', 'global.endpoints.observability.query=');
   assert.notEqual(unaddressed.status, 0);
   assert.match(unaddressed.stderr, /global\.endpoints\.observability\.query is required/);
+});
+
+// The owner's limit on the site statistics: no code and no text names the master, because the figures
+// are served at global.endpoints.observability.query, and a word that names a server is false the day
+// that address moves. The files are the ones of the statistics alone, whole, this one apart, which states
+// the limit; the spans are the lines of this change in files that predate it, from the first line holding
+// the first anchor to the first line, from there on, holding the second.
+const SERVER = /master/i;
+const whole = path => [path, readFileSync(path, 'utf8')];
+const listed = (directory, accepted) => readdirSync(directory).filter(name => accepted.test(name)).map(name => whole(`${directory}/${name}`));
+function span(path, from, to) {
+  const lines = readFileSync(path, 'utf8').split('\n');
+  const first = lines.findIndex(line => line.includes(from));
+  const last = lines.findIndex((line, at) => at >= first && line.includes(to));
+  assert.ok(first >= 0 && last >= first, `${path} holds no span from "${from}" to "${to}"`);
+  return [`${path}: ${from}`, lines.slice(first, last + 1).join('\n')];
+}
+const ALLOY_STAGE = ["Traefik's access log carries the whole request target", 'replace    = ""'];
+const OWNED = [
+  ...listed('clusters/inventories/observability/templates', /^_?site-telemetry/),
+  whole('clusters/inventories/observability/files/site_telemetry.py'),
+  span('clusters/inventories/observability/values-common.yaml', 'The site statistics service (templates/site-telemetry', 'memory: 1Gi'),
+  span('clusters/inventories/observability/values-common.yaml', '# global.endpoints.observability.query → the site statistics service', "secretName: 'observability-site-telemetry-"),
+  whole('clusters/argocd/files/site-telemetry-registrations-appset.yaml'),
+  ...['Chart.yaml', 'values.yaml', 'templates/configmap.yaml'].map(name => whole(`clusters/units/site-telemetry-registration/${name}`)),
+  span('clusters/charts/monitoring/templates/alloy-agent-config.yaml', ...ALLOY_STAGE),
+  span('clusters/charts/monitoring/templates/alloy-config.yaml', ...ALLOY_STAGE),
+  ...listed('scripts', /^(?:site-telemetry.*\.test\.mjs|alloy-access-log-strip\.test\.mjs)$/).filter(([name]) => name !== 'scripts/site-telemetry-deployment.test.mjs'),
+  whole('scripts/alloy-replace/main.go'),
+];
+const namingTheServer = files => files.filter(([, text]) => SERVER.test(text)).map(([name]) => name);
+
+test('no file of the site statistics names the master', () => {
+  assert.ok(OWNED.some(([name]) => name.endsWith('site-telemetry-deployment.yaml')), 'the Deployment is among the files');
+  assert.deepEqual(namingTheServer(OWNED), []);
+});
+
+test('PLANTED DEFECT: the master named in a file of the statistics, or in any line of a span, is found; a text without it is not', () => {
+  for (const [name, text] of OWNED) {
+    assert.deepEqual(namingTheServer([[name, `${text}\n# observability-query.<master-fqdn>`]]), [name], name);
+    assert.deepEqual(namingTheServer([[name, text.replaceAll(/\bobservability\b/g, 'the observability application')]]), [], name);
+  }
 });

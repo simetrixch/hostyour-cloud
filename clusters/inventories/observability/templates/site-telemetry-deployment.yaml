@@ -1,5 +1,5 @@
 {{- /*
-The site statistics service: the read API behind observability-query.<master>, which a website's admin
+The site statistics service: the read API behind global.endpoints.observability.query, which a website's admin
 calls for its Visitors and Security pages. It counts from Loki on request and stores nothing, and it
 answers a caller only for the tenant whose identity provider signed the caller's token.
 
