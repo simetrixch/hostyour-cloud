@@ -74,6 +74,10 @@ function renderFindings(objects) {
   const silo = pins['plane-silo'];
   const store = objects.find(o => o.kind === 'StatefulSet' && o.metadata.name === 'plane-minio-wl')?.spec.template.spec.containers.map(c => c.image);
   if (JSON.stringify(store) !== JSON.stringify([`docker.io/${silo.upstream.image}:${silo.version}`])) found.push(`minio runs ${store?.join(', ') ?? 'nothing'}, not docker.io/${silo.upstream.image}:${silo.version} of versions.yaml`);
+  const mc = pins['plane-mc'];
+  const bucket = objects.find(o => o.kind === 'Job' && BUCKET_JOB.test(o.metadata.name))?.spec.template.spec.containers.map(c => c.image);
+  if (JSON.stringify(bucket) !== JSON.stringify([`docker.io/${mc.upstream.image}:${mc.version}`])) found.push(`the bucket Job runs ${bucket?.join(', ') ?? 'nothing'}, not docker.io/${mc.upstream.image}:${mc.version} of versions.yaml`);
+
   const text = JSON.stringify(objects);
   for (const value of PUBLIC_DEFAULTS) if (text.includes(value)) found.push(`a public default of the chart renders: ${value}`);
   const chartSecrets = objects.filter(o => o.kind === 'Secret').map(o => o.metadata.name);
@@ -155,6 +159,7 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
     'a database one release behind its pin': ['--set', 'plane-ce.postgres.image=postgres:18.5-alpine'],
     'a queue on another repository': ['--set', 'plane-ce.rabbitmq.image=bitnami/rabbitmq:4.3.6-management-alpine'],
     'the chart\'s own object store image': ['--set', 'plane-ce.minio.image=docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z'],
+    'the chart\'s own bucket client image': ['--set', 'plane-ce.minio.image_mc=docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z'],
   };
   for (const [name, args] of Object.entries(planted)) {
     assert.notDeepEqual(renderFindings(renderChart('plane', args)), [], name);
@@ -163,6 +168,8 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
     ['pgdb runs postgres:15.7-alpine, not postgres:18.6-alpine of versions.yaml']);
   assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.minio.image=docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z'])),
     ['minio runs docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z, not docker.io/pgsty/silo:RELEASE.2026-10-18T00-00-00Z of versions.yaml']);
+  assert.deepEqual(renderFindings(renderChart('plane', ['--set', 'plane-ce.minio.image_mc=docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z'])),
+    ['the bucket Job runs docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z, not docker.io/pgsty/mc:RELEASE.2026-10-18T00-00-00Z of versions.yaml']);
   const widened = renderChart('plane');
   widened.find(o => o.metadata?.name === 'plane-api-v1').spec.rules[0].http.paths.push({path: '/api', pathType: 'Prefix', backend: {service: {name: 'plane-api', port: {number: 8000}}}});
   assert.deepEqual(renderFindings(widened), ['plane-api-v1 serves /api/v1, /api without the forward auth']);
