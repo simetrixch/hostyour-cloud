@@ -22,11 +22,11 @@ const environment = rendered => {
 };
 
 // The contract the Manager reads, as a function so a chart that drops an env can be shown to go red.
-const FORGE_ENV = ['PLATFORM_REPO_URL', 'GITHUB_REPO', 'DEPLOY_REPO_URL', 'FORGEJO_HOST', 'FORGEJO_PACKAGE_SCOPES', 'FORGEJO_MOVE_GITHUB_OWNERS', 'FORGEJO_WEBHOOK_SECRET'];
+const FORGE_ENV = ['PLATFORM_REPO_URL', 'DEPLOY_REPO_URL', 'FORGEJO_HOST', 'FORGEJO_PACKAGE_SCOPES', 'FORGEJO_MOVE_GITHUB_OWNERS', 'FORGEJO_WEBHOOK_SECRET'];
 function assertForgeEnv(env, expected) {
   for (const name of FORGE_ENV) assert.ok(env[name], `the Manager chart passes no ${name}`);
   assert.equal(env.PLATFORM_REPO_URL.value, expected.platformUrl);
-  assert.equal(env.GITHUB_REPO.value, expected.platformRepo);
+  assert.equal(env.GITHUB_REPO, undefined, 'the platform repository is named once, in PLATFORM_REPO_URL: the Manager takes its owner and name from that address');
   assert.equal(env.DEPLOY_REPO_URL.value, expected.deployUrl);
   assert.equal(env.FORGEJO_HOST.value, expected.forgejoHost);
   assert.deepEqual(parsePackageScopes(env.FORGEJO_PACKAGE_SCOPES.value), expected.packageScopes ?? {});
@@ -44,7 +44,7 @@ function parsePackageScopes(value) {
 }
 
 const rendered = render();
-const today = {platformUrl: 'https://github.com/simetrixch/hostyour-cloud.git', platformRepo: 'simetrixch/hostyour-cloud',
+const today = {platformUrl: 'https://github.com/simetrixch/hostyour-cloud.git',
   deployUrl: 'https://github.com/check/check.git', forgejoHost: 'forgejo.check.example.invalid'};
 
 test('the empty package scope default renders an empty string accepted as an empty map', () => {
@@ -88,9 +88,9 @@ test('the chart hands the Manager the platform and deploy repositories whole, th
   assert.equal(environment(rendered).GITHUB_WEBHOOK_SECRET.valueFrom.secretKeyRef.name, 'manager-webhook');
 });
 
-test('a platform and a deploy repository on the Forgejo host are passed whole, and GITHUB_REPO follows the platform URL', () => {
+test('a platform and a deploy repository on the Forgejo host are passed whole', () => {
   const moved = render('global.platformUrl=https://forgejo.check.example.invalid/org-a/hostyour-cloud.git', 'global.deployUrl=https://forgejo.check.example.invalid/org-a/hostyour-deploy.git');
-  assertForgeEnv(environment(moved), {platformUrl: 'https://forgejo.check.example.invalid/org-a/hostyour-cloud.git', platformRepo: 'org-a/hostyour-cloud',
+  assertForgeEnv(environment(moved), {platformUrl: 'https://forgejo.check.example.invalid/org-a/hostyour-cloud.git',
     deployUrl: 'https://forgejo.check.example.invalid/org-a/hostyour-deploy.git', forgejoHost: 'forgejo.check.example.invalid'});
 });
 
@@ -100,14 +100,23 @@ test('PLANTED DEFECT: the Forgejo host and the repositories render without consu
   for (const name of ['PLATFORM_REPO_URL', 'DEPLOY_REPO_URL', 'FORGEJO_HOST', 'FORGEJO_PACKAGE_SCOPES', 'FORGEJO_MOVE_GITHUB_OWNERS']) assert.ok(env[name], `without consumer onboarding the Manager chart passes no ${name}`);
 });
 
-test('PLANTED DEFECT: a github.repo that names another repository than global.platformUrl fails the render, naming both', () => {
-  assert.throws(() => render('github.repo=org-a/cloud'), /github\.repo \(org-a\/cloud\).*global\.platformUrl \(simetrixch\/hostyour-cloud\)/s);
+test('PLANTED DEFECT: a chart that names the platform repository a second time goes red, and this chart names it once', () => {
+  const twice = {...environment(rendered), GITHUB_REPO: {name: 'GITHUB_REPO', value: 'simetrixch/hostyour-cloud'}};
+  assert.throws(() => assertForgeEnv(twice, today), /named once, in PLATFORM_REPO_URL/);
+  assert.deepEqual(select(readFileSync('clusters/inventories/manager/values-common.yaml', 'utf8'), '.github'), {}, 'values-common.yaml carries a second name for the platform repository');
+  for (const file of ['_plugins.tpl', 'deployment.yaml', 'externalsecret-github.yaml', 'externalsecret-registry-push.yaml']) {
+    assert.ok(!readFileSync(join('clusters/inventories/manager/templates', file), 'utf8').includes('platformRepo'), `${file} still derives the platform repository's name`);
+  }
 });
 
-test('PLANTED INNOCENT: a github.repo that names the repository global.platformUrl names changes nothing', () => {
-  assertForgeEnv(environment(render('github.repo=simetrixch/hostyour-cloud')), today);
-  const moved = render('github.repo=org-a/hostyour-cloud', 'global.platformUrl=https://forgejo.check.example.invalid/org-a/hostyour-cloud.git');
-  assert.equal(environment(moved).GITHUB_REPO.value, 'org-a/hostyour-cloud');
+test('PLANTED INNOCENT: the write token and the registry reaper render where the platform URL is named, and neither where it is empty', () => {
+  const count = (text, name) => Number(execFileSync('yq', ['ea', '-o=json', '-I=0', `[select(.kind == "ExternalSecret" and .metadata.name == "${name}")] | length`, '-'], {input: text, encoding: 'utf8'}).trim());
+  assert.equal(count(rendered, 'manager-github'), 1);
+  assert.equal(count(rendered, 'registry-reaper-push'), 1);
+  const unnamed = render('global.platformUrl=');
+  assert.equal(count(unnamed, 'manager-github'), 0);
+  assert.equal(count(unnamed, 'registry-reaper-push'), 0);
+  assert.equal(environment(unnamed).PLATFORM_REPO_URL, undefined);
 });
 
 test('PLANTED DEFECT: the product ships no organisation of any installation, and an installation names the owners that move', () => {

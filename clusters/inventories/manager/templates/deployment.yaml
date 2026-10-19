@@ -250,18 +250,15 @@ spec:
             # pins + seals WITHOUT a pod restart.
             - name: MASTER_SSH_HOST_KEY_FP_FILE
               value: /etc/manager/master-key/host-key-fp
-            {{- if include "manager.platformRepo" . }}
-            # Branches view + Reset wizard (config.ts PLATFORM_REPO_URL + GITHUB_REPO + GITHUB_WRITE_PAT).
+            {{- if .Values.global.platformUrl }}
+            # Branches view + Reset wizard (config.ts PLATFORM_REPO_URL + GITHUB_WRITE_PAT).
             # PLATFORM_REPO_URL is the platform repository whole (global.platformUrl); the forge is the
-            # host of that address. GITHUB_REPO is its "owner/repo", derived from the same value
-            # (manager.platformRepo) so the two cannot disagree. GITHUB_WRITE_PAT carries the
+            # host of that address, and the Manager takes the owner and the name from it. GITHUB_WRITE_PAT carries the
             # write-capable token of the platform repository, placed on the isolated manager-host tier
             # (manager-github ExternalSecret) so the manager's own SA can read it — it cannot reach the
             # system tier where ArgoCD's copy lives. Rendered only on the control host (master.sshUser).
             - name: PLATFORM_REPO_URL
               value: {{ required "manager: global.platformUrl is required (clusters/platform/values-common.yaml)" .Values.global.platformUrl | quote }}
-            - name: GITHUB_REPO
-              value: {{ include "manager.platformRepo" . | quote }}
             - name: GITHUB_WRITE_PAT
               valueFrom:
                 secretKeyRef:
@@ -604,7 +601,7 @@ spec:
               mountPath: /etc/manager/master-key
               readOnly: true
             {{- end }}
-            {{- if and .Values.reaper.enabled .Values.master.sshUser (include "manager.platformRepo" .) }}
+            {{- if and .Values.reaper.enabled .Values.master.sshUser .Values.global.platformUrl }}
             # The zot PUSH credential (delete rights) the registry reaper prunes with. A plain directory
             # mount, never subPath, so an ESO resync refreshes it without a restart.
             - name: registry-push
@@ -685,7 +682,7 @@ spec:
             optional: true
             defaultMode: 0440
         {{- end }}
-        {{- if and .Values.reaper.enabled .Values.master.sshUser (include "manager.platformRepo" .) }}
+        {{- if and .Values.reaper.enabled .Values.master.sshUser .Values.global.platformUrl }}
         - name: registry-push
           secret:
             secretName: registry-reaper-push
