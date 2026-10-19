@@ -128,6 +128,9 @@ DRIVER="$HERE/remove-slave-driver.sh"
 # shellcheck disable=SC1091
 . "$HERE/require-owner-only.sh" \
   || die 'require-owner-only.sh is not beside this file. It is the guard every launcher puts on a config' 66
+# shellcheck disable=SC1091
+. "$HERE/require-config-assignments.sh" \
+  || die 'require-config-assignments.sh is not beside this file. It is the check every launcher makes on the lines of a config' 66
 
 command -v git >/dev/null 2>&1 \
   || die 'git is not on this path, and the master keeps its books in git'
@@ -148,9 +151,8 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
 # reading it is running it. A shell `.` executes every line, so a config carrying
 # a command would run it with the operator's own rights, and the same file is
 # read again by a shell on the machine.
-BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
-[ -z "$BAD" ] \
-  || die "$CONFIG carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL on both sides: $BAD" 65
+require_config_assignments "$CONFIG" "$CONFIG_EXAMPLE_KEYS" \
+  || die "$CONFIG carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL on both sides: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 
 # THE TWO FACTS THIS RUN WAS GIVEN, PUT OUT OF THE CONFIG'S REACH. Reading the
 # config is running it, so an assignment in that file lands in this shell under

@@ -912,7 +912,7 @@ RECORDED
 # ── the planted defect for this act ─────────────────────────────────────────
 PLANTED_R="$WORK/planted-regenerate.sh"
 # The planted copy looks beside itself for its driver and for the guard it reads.
-cp "$HERE/regenerate-driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$WORK/"
+cp "$HERE/regenerate-driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-config-assignments.sh" "$HERE/require-forgejo-destinations.sh" "$WORK/"
 sed 's/is pinned to/is pinned at/' "$HERE/regenerate-install-branch.sh" > "$PLANTED_R"
 grep -q 'is pinned at' "$PLANTED_R" || fail 'the planted line was not planted — the probe proves nothing'
 A_CODE=0
@@ -1265,7 +1265,7 @@ RECORDED
 # driver and the guard it reads, must print other bytes than its case recorded.
 PLANTED_IM="$WORK/planted-install-machine"
 mkdir -p "$PLANTED_IM"
-cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$PLANTED_IM/"
+cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-config-assignments.sh" "$HERE/require-forgejo-destinations.sh" "$PLANTED_IM/"
 sed 's/make it readable by you alone/make it readable by you only/' "$HERE/install-machine.sh" > "$PLANTED_IM/install-machine.sh"
 grep -q 'readable by you only' "$PLANTED_IM/install-machine.sh" \
   || fail 'the planted line was not planted in install-machine.sh — the probe proves nothing'
@@ -1349,7 +1349,7 @@ RECORDED
 # The planted defect: a copy without the refusal, beside the driver and the guard, reaches the session.
 PLANTED_ACME="$WORK/planted-install-machine-acme"
 mkdir -p "$PLANTED_ACME"
-cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$PLANTED_ACME/"
+cp "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-config-assignments.sh" "$HERE/require-forgejo-destinations.sh" "$PLANTED_ACME/"
 grep -vF '[ -z "${ACME_CREDENTIALS_JSON:-}" ] ||' "$HERE/install-machine.sh" > "$PLANTED_ACME/install-machine.sh"
 cmp -s "$HERE/install-machine.sh" "$PLANTED_ACME/install-machine.sh" \
   && fail 'the refusal was not taken out of the planted install-machine.sh — the probe proves nothing'
@@ -1432,7 +1432,7 @@ for launcher in install-machine regenerate-install-branch; do
   # PLANTED LAUNCHER: a copy without the call reaches the session with the finding's organisations.
   planted="$FDEST/planted-$launcher"
   mkdir -p "$planted"
-  cp "$HERE/$launcher.sh" "$HERE/driver.sh" "$HERE/regenerate-driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$planted/"
+  cp "$HERE/$launcher.sh" "$HERE/driver.sh" "$HERE/regenerate-driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-config-assignments.sh" "$HERE/require-forgejo-destinations.sh" "$planted/"
   grep -vF 'require_forgejo_destinations ||' "$HERE/$launcher.sh" > "$planted/$launcher.sh"
   cmp -s "$HERE/$launcher.sh" "$planted/$launcher.sh" \
     && fail "the call was not taken out of the planted $launcher.sh — the probe proves nothing"
@@ -1527,7 +1527,7 @@ rm -f "$FORGEJO_NET/asked"
 # install-machine: the same two rows at its end, and none after an installation that failed.
 FORGEJO_IM="$WORK/forgejo-install-machine"
 mkdir -p "$FORGEJO_IM"
-cp "$HERE/install-machine.sh" "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-forgejo-destinations.sh" "$HERE/check-forgejo-ssh.sh" "$FORGEJO_IM/"
+cp "$HERE/install-machine.sh" "$HERE/driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-config-assignments.sh" "$HERE/require-forgejo-destinations.sh" "$HERE/check-forgejo-ssh.sh" "$FORGEJO_IM/"
 cat > "$FORGEJO_NET/ssh" <<'STUB'
 #!/usr/bin/env bash
 case "$*" in *' true') exit 0 ;; esac
@@ -2524,7 +2524,7 @@ RECORDED
   # guard with one word changed. The refusal must carry the changed word, which proves
   # the launcher reads the guard beside itself, and differ from the recorded bytes.
   mkdir -p "$MASTER/planted-guard"
-  cp "$HERE/$act.sh" "$HERE/$act-driver.sh" "$MASTER/planted-guard/"
+  cp "$HERE/$act.sh" "$HERE/$act-driver.sh" "$HERE/require-config-assignments.sh" "$MASTER/planted-guard/"
   sed 's/is mode /has mode /' "$HERE/require-owner-only.sh" > "$MASTER/planted-guard/require-owner-only.sh"
   grep -q 'has mode ' "$MASTER/planted-guard/require-owner-only.sh" \
     || fail 'the planted line was not planted in require-owner-only.sh — the probe proves nothing'
@@ -2568,7 +2568,7 @@ RECORDED
   # The planted defect for this act: a copy with its reach sentence changed, beside its driver.
   PLANTED_M="$MASTER/planted-$act.sh"
   sed 's/could not be reached: /could not be reached — /' "$HERE/$act.sh" > "$PLANTED_M"
-  cp "$HERE/$act-driver.sh" "$HERE/require-owner-only.sh" "$MASTER/"
+  cp "$HERE/$act-driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-config-assignments.sh" "$MASTER/"
   grep -q 'could not be reached — ' "$PLANTED_M" || fail "the planted line was not planted in $act — the probe proves nothing"
   A_CODE=0
   ( cd "$MASTER" && bash "$PLANTED_M" "$MCFG" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
@@ -4806,6 +4806,282 @@ trap 'rm -rf "$WORK"' EXIT
 RELEASE_UNIT="$HERE/release-unit.sh"
 rm -rf "$PLANT"
 
+# ===========================================================================
+# TEN — a config line that fails the shape check is named by its number, and never printed
+# ===========================================================================
+# A CONFIG IS READ BY THE SHELL, so five launchers and five drivers refuse a line that is not a
+# comment or NAME='value' before they read it. The line they refuse is the line an operator
+# mistyped, and the credentials of an installation are lines of that file: a closing quote
+# forgotten on STORAGE_BOX_PASSWORD makes the refusal itself print the password, to a terminal
+# and to any `| tee` log. The refusal names the line by its number, and adds the NAME only when
+# that name is a key of config.example.env: a token that is not a key may be a piece of a value
+# (a line of base32 ends in `====`, a quote opened on one line closes on the next), so it is
+# never printed, and neither is the rest of the line.
+#
+# The launchers share the function in require-config-assignments.sh and hand it the keys of the
+# config.example.env beside them. The drivers cannot read a file beside them, because they arrive
+# on one ssh session, so each carries the same function inline, hands it no keys and names line
+# numbers only; this section holds every copy byte-equal to the sibling's. The planted lines are
+# fixtures: no value here is a credential.
+SHAPE="$WORK/shape"
+mkdir -p "$SHAPE"
+# each planted line with what a launcher names for it, what a driver names for it, and the pieces
+# of it (split at |) that no output may carry; the last line is two lines, a quote that opens on
+# the first and closes on the second
+SHAPE_LABELS=(SECRET_X STORAGE_BOX_PASSWORD base32 open-quote)
+SHAPE_LINES=("SECRET_X=abc def" "STORAGE_BOX_PASSWORD='planted-secret" "GEZDGNBVGY3TQOJQ====" "X='zqa
+ZQPART2=zqb'")
+SHAPE_LAUNCHER_NAMES=('line 3' 'line 3 (STORAGE_BOX_PASSWORD)' 'line 3' 'line 3, line 4')
+SHAPE_DRIVER_NAMES=('line 3' 'line 3' 'line 3' 'line 3, line 4')
+SHAPE_LAUNCHER_LEAKS=('abc def|SECRET_X' 'planted-secret' 'GEZDGNBVGY3TQOJQ' 'zqa|zqb|ZQPART2')
+SHAPE_DRIVER_LEAKS=('abc def|SECRET_X' 'planted-secret|STORAGE_BOX_PASSWORD' 'GEZDGNBVGY3TQOJQ' 'zqa|zqb|ZQPART2')
+SHAPE_LAUNCHERS=(master-backup master-restore regenerate-install-branch remove-slave-from-master install-machine)
+SHAPE_DRIVERS=(master-backup-driver master-restore-driver regenerate-driver remove-slave-driver driver)
+
+plant_shape() { # the file, the line to plant as its third; the drivers remove the file they are given
+  printf '%s\n' '# the planted config' "FQDN='shape.example.invalid'" "$2" "OPERATOR_USER='op'" > "$1"
+  chmod 600 "$1"
+}
+launch_shape() { # the folder the launcher stands in, the launcher, the config it is given
+  local dir="$1" launcher="$2" config="$3" cwd="$WORK_A" args=("$3")
+  case "$launcher" in
+    regenerate-install-branch) args=(apps3.example.invalid "$config") ;;
+    remove-slave-from-master) args=(apps7.example.invalid "$config"); cwd="$SLAVEWORK_A" ;;
+    master-backup|master-restore) cwd="$MASTER" ;;
+  esac
+  A_CODE=0
+  ( cd "$cwd" && bash "$dir/$launcher.sh" "${args[@]}" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+}
+refused_by_number() { # what ran, the lines it must name as the refusal prints them, the pieces (split at |) no output may carry
+  local piece
+  [ "$A_CODE" = 65 ] || fail "$1 — the planted line ended with $A_CODE, and a refused config ends with 65"
+  must 'neither a comment nor NAME=' "$1 — the shape check did not refuse the planted line"
+  must ": $2. They are named" "$1 — the refusal does not name exactly '$2'"
+  while IFS= read -r piece; do
+    must_not "$piece" "$1 — the refusal prints a piece of the planted line"
+  done <<< "${3//|/$'\n'}"
+}
+
+# ── the five launchers, run up to the refusal ──
+for i in 0 1 2 3; do
+  for launcher in "${SHAPE_LAUNCHERS[@]}"; do
+    plant_shape "$SHAPE/launcher.env" "${SHAPE_LINES[$i]}"
+    launch_shape "$HERE" "$launcher" "$SHAPE/launcher.env"
+    refused_by_number "$launcher refusing ${SHAPE_LABELS[$i]}" "${SHAPE_LAUNCHER_NAMES[$i]}" "${SHAPE_LAUNCHER_LEAKS[$i]}"
+    ok "$launcher refuses the planted ${SHAPE_LABELS[$i]} line as '${SHAPE_LAUNCHER_NAMES[$i]}' and prints no piece of it, exit 65"
+  done
+done
+
+# ── the five drivers, run as the machine runs them: the config is their one argument ──
+for i in 0 1 2 3; do
+  for driver in "${SHAPE_DRIVERS[@]}"; do
+    plant_shape "$SHAPE/driver.env" "${SHAPE_LINES[$i]}"
+    A_CODE=0
+    ( cd "$SHAPE" && bash "$HERE/$driver.sh" "$SHAPE/driver.env" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+    refused_by_number "$driver refusing ${SHAPE_LABELS[$i]}" "${SHAPE_DRIVER_NAMES[$i]}" "${SHAPE_DRIVER_LEAKS[$i]}"
+    ok "$driver refuses the planted ${SHAPE_LABELS[$i]} line as '${SHAPE_DRIVER_NAMES[$i]}' and prints no piece of it, exit 65"
+  done
+done
+
+# ── the innocent case: a well-formed config passes the shape check ──
+# It states FQDN and OPERATOR_USER and nothing else, so each launcher reads it and ends on the first
+# name it requires and does not find, STAGE, before any session is opened.
+printf '%s\n' '# an innocent config' "FQDN='shape.example.invalid'" "OPERATOR_USER='op' # a trailing comment" '' > "$SHAPE/innocent.env"
+chmod 600 "$SHAPE/innocent.env"
+for launcher in "${SHAPE_LAUNCHERS[@]}"; do
+  launch_shape "$HERE" "$launcher" "$SHAPE/innocent.env"
+  must_not 'neither a comment nor NAME=' "$launcher — a well-formed config was refused by the shape check"
+  must 'states no STAGE' "$launcher — a well-formed config did not reach the names it requires"
+  [ "$A_CODE" = 65 ] || fail "$launcher — a well-formed config without STAGE ended with $A_CODE, and the missing name ends with 65"
+  ok "$launcher passes a well-formed config through the shape check and stops on the name it lacks, exit 65"
+done
+
+# ── a launcher without the sibling is refused, and says which file is missing ──
+mkdir -p "$SHAPE/no-sibling"
+cp "$HERE"/*.sh "$SHAPE/no-sibling/"
+rm "$SHAPE/no-sibling/require-config-assignments.sh"
+for launcher in "${SHAPE_LAUNCHERS[@]}"; do
+  launch_shape "$SHAPE/no-sibling" "$launcher" "$SHAPE/innocent.env"
+  must 'require-config-assignments.sh is not beside this file' "$launcher — a missing sibling is not named"
+  [ "$A_CODE" = 66 ] || fail "$launcher — a missing require-config-assignments.sh ended with $A_CODE, and a missing sibling ends with 66"
+  ok "$launcher without require-config-assignments.sh beside it is refused, exit 66"
+done
+
+# ── a launcher without config.example.env beside it knows no key and names line numbers only ──
+mkdir -p "$SHAPE/no-keys"
+cp "$HERE"/*.sh "$SHAPE/no-keys/"
+plant_shape "$SHAPE/launcher.env" "${SHAPE_LINES[1]}"
+for launcher in "${SHAPE_LAUNCHERS[@]}"; do
+  launch_shape "$SHAPE/no-keys" "$launcher" "$SHAPE/launcher.env"
+  refused_by_number "$launcher without the example beside it, refusing ${SHAPE_LABELS[1]}" 'line 3' "${SHAPE_DRIVER_LEAKS[1]}"
+  ok "$launcher without config.example.env beside it refuses the planted ${SHAPE_LABELS[1]} line as 'line 3', exit 65"
+done
+
+# ── the function, asked directly ──
+# shellcheck disable=SC1091
+. "$HERE/require-config-assignments.sh" || fail 'require-config-assignments.sh is not beside this file'
+for key in FQDN STORAGE_BOX_PASSWORD; do
+  case " $CONFIG_EXAMPLE_KEYS " in
+    *" $key "*) ;;
+    *) fail "the keys read from config.example.env do not hold $key — the launchers would name no line of it" ;;
+  esac
+done
+ok 'the keys the launchers read from config.example.env hold FQDN and STORAGE_BOX_PASSWORD'
+shape_ask() { # the function, the file; leaves SHAPE_RC and SHAPE_GOT; the locale is SHAPE_LOCALE, C where unset, the keys SHAPE_KEYS, none where unset
+  SHAPE_RC=0
+  SHAPE_GOT="$( export LC_ALL="${SHAPE_LOCALE:-C}"; BAD_LINES=''; rc=0; "$1" "$2" "${SHAPE_KEYS:-}" >/dev/null 2> "$SHAPE/ask.err" || rc=$?; printf '%s' "$BAD_LINES"; exit "$rc" )" || SHAPE_RC=$?
+}
+shape_is() { # the case, the return code, the BAD_LINES it must leave, then the lines of a config; the keys are SHAPE_KEYS
+  local label="$1" code="$2" want="$3"
+  shift 3
+  printf '%s\n' "$@" > "$SHAPE/f.env"
+  shape_ask require_config_assignments "$SHAPE/f.env"
+  [ "$SHAPE_RC" = "$code" ] && [ "$SHAPE_GOT" = "$want" ] \
+    || fail "$label — it ended with $SHAPE_RC and left '$SHAPE_GOT', and the case records $code and '$want'"
+  ok "$label — return $code, '$want'"
+}
+SHAPE_KEYS='FQDN STAGE STORAGE_BOX_PASSWORD A_ONE C_THREE'
+shape_is 'a well-formed config' 0 '' \
+  '# a comment' '' "FQDN='shape.example.invalid'" '   # an indented comment' "STAGE='prod' # a trailing comment" "PW='a b \$c \"d\"'"
+for i in 0 1 2; do
+  shape_is "the planted ${SHAPE_LABELS[$i]} line" 1 "${SHAPE_LAUNCHER_NAMES[$i]}" \
+    '# the planted config' "FQDN='shape.example.invalid'" "${SHAPE_LINES[$i]}" "OPERATOR_USER='op'"
+done
+shape_is "the planted ${SHAPE_LABELS[3]} lines" 1 "${SHAPE_LAUNCHER_NAMES[3]}" \
+  '# the planted config' "FQDN='shape.example.invalid'" "${SHAPE_LINES[3]}" "OPERATOR_USER='op'"
+shape_is 'four bad lines, of which three are named and two are keys' 1 'line 1 (A_ONE), line 2, line 3 (C_THREE)' \
+  'A_ONE=x y' 'B_TWO=x y' 'C_THREE=x y' 'D_FOUR=x y'
+shape_is 'a name that only starts with a key' 1 'line 1' 'FQDN_EXTRA=a b'
+shape_is 'a key whose value carries an equals sign' 1 'line 1 (FQDN)' 'FQDN=a=b c'
+shape_is 'a command, a lowercase name and an indented name, which have no NAME to read' 1 'line 1, line 2, line 3' \
+  'echo hello' 'lower_x=abc def' ' INDENTED_X=abc def'
+SHAPE_KEYS=''
+shape_is 'a broken line of a real key, with no keys given' 1 'line 3' \
+  '# the planted config' "FQDN='shape.example.invalid'" "${SHAPE_LINES[1]}" "OPERATOR_USER='op'"
+unset SHAPE_KEYS
+
+# ── a line that is not text: bytes no UTF-8 locale decodes, and a NUL ──
+# The planted function without its own locale is told from the real one by a value of Latin-1
+# bytes: the real function reads bytes and accepts it under any locale, and under a UTF-8
+# locale grep cannot match those bytes with [^'] and refuses the line.
+printf 'SECRET_X=abc \377\376 def\n' > "$SHAPE/bytes.env"
+printf 'SECRET_X=abc\000def\n' > "$SHAPE/nul.env"
+printf "FQDN='caf\351'\n" > "$SHAPE/latin1.env"
+SHAPE_LOCALES="$(locale -a 2>/dev/null || true)"
+SHAPE_LOCALE_LIST=C
+SHAPE_HAS_UTF8=0
+if grep -qiE '^C\.utf-?8$' <<< "$SHAPE_LOCALES"; then
+  SHAPE_HAS_UTF8=1
+  SHAPE_LOCALE_LIST='C C.UTF-8'
+fi
+shape_bytes_is() { # the function, the file, the locale, the return code and the BAD_LINES it must leave
+  SHAPE_KEYS=SECRET_X SHAPE_LOCALE="$3" shape_ask "$1" "$2"
+  [ "$SHAPE_RC" = "$4" ] && [ "$SHAPE_GOT" = "$5" ] && [ ! -s "$SHAPE/ask.err" ]
+}
+for locale in $SHAPE_LOCALE_LIST; do
+  shape_bytes_is require_config_assignments "$SHAPE/bytes.env" "$locale" 1 'line 1 (SECRET_X)' \
+    || fail "bytes no UTF-8 locale decodes, under $locale: it ended with $SHAPE_RC and left '$SHAPE_GOT' and $(wc -c < "$SHAPE/ask.err") bytes on stderr, and the case records 1, 'line 1 (SECRET_X)' and none"
+  shape_bytes_is require_config_assignments "$SHAPE/nul.env" "$locale" 1 'line 1 (SECRET_X)' \
+    || fail "a NUL, under $locale: it ended with $SHAPE_RC and left '$SHAPE_GOT' and $(wc -c < "$SHAPE/ask.err") bytes on stderr, and the case records 1, 'line 1 (SECRET_X)' and none"
+  shape_bytes_is require_config_assignments "$SHAPE/latin1.env" "$locale" 0 '' \
+    || fail "a value of Latin-1 bytes, under $locale: it ended with $SHAPE_RC and left '$SHAPE_GOT', and the case records 0 and nothing — the answer depends on the locale of the caller"
+done
+ok "bytes no UTF-8 locale decodes and a NUL are named by line and name alike under $SHAPE_LOCALE_LIST, a value of Latin-1 bytes passes under each, and nothing reaches stderr"
+
+# ── a NUL followed by text with a colon: BusyBox awk ends a record at a NUL ──
+# It reads the bytes after the NUL as a record of its own and its text before the first colon
+# would print as a line number, a part of the value. The second line is that part shaped as a number.
+printf 'SECRET_X=abc\000plantedpart:rest def\nSECRET_X=abc\0004711:rest\n' > "$SHAPE/nul-colon.env"
+shape_nul_colon_is() { # the awk's folder put first on PATH, or empty for the awk on PATH; leaves SHAPE_GOT
+  SHAPE_AWK_PATH="${1:+$1:}$PATH"
+  PATH="$SHAPE_AWK_PATH" SHAPE_KEYS=SECRET_X shape_ask require_config_assignments "$SHAPE/nul-colon.env"
+  [ "$SHAPE_RC" = 1 ] && [ "$SHAPE_GOT" = 'line 1 (SECRET_X), line 2 (SECRET_X)' ] && [ ! -s "$SHAPE/ask.err" ]
+}
+shape_nul_colon_is '' \
+  || fail "a NUL before a colon, under the awk on PATH: it ended with $SHAPE_RC and left '$SHAPE_GOT', and the case records 1 and 'line 1 (SECRET_X), line 2 (SECRET_X)'"
+ok "a NUL before a colon is named by its line number and key alone under the awk on PATH — '$SHAPE_GOT'"
+SHAPE_HAS_BUSYBOX_AWK=0
+if command -v busybox > /dev/null 2>&1 && busybox --list 2> /dev/null | grep -qx awk; then
+  SHAPE_HAS_BUSYBOX_AWK=1
+  mkdir -p "$SHAPE/busybox-awk"
+  ln -sf "$(command -v busybox)" "$SHAPE/busybox-awk/awk"
+  shape_nul_colon_is "$SHAPE/busybox-awk" \
+    || fail "a NUL before a colon, under BusyBox awk: it ended with $SHAPE_RC and left '$SHAPE_GOT', and the case records 1 and 'line 1 (SECRET_X), line 2 (SECRET_X)'"
+  ok "a NUL before a colon is named by its line number and key alone under BusyBox awk — '$SHAPE_GOT'"
+else
+  echo 'test: NOT RUN — busybox is not on this machine, so a NUL before a colon is not run under BusyBox awk and is run under the awk on PATH only'
+fi
+
+# ── the copies the drivers carry are the sibling's function, byte for byte ──
+SHAPE_SPAN='/^require_config_assignments() {$/,/^}$/p'
+SHAPE_FN="$(sed -n "$SHAPE_SPAN" "$HERE/require-config-assignments.sh")"
+[ -n "$SHAPE_FN" ] || fail 'require-config-assignments.sh holds no function require_config_assignments to compare the drivers to'
+for driver in "${SHAPE_DRIVERS[@]}"; do
+  [ "$(sed -n "$SHAPE_SPAN" "$HERE/$driver.sh")" = "$SHAPE_FN" ] \
+    || fail "$driver carries a require_config_assignments that is not the one in require-config-assignments.sh"
+done
+sed 's/head -3/head -4/' "$HERE/driver.sh" > "$SHAPE/planted-driver.sh"
+[ "$(sed -n "$SHAPE_SPAN" "$SHAPE/planted-driver.sh")" != "$SHAPE_FN" ] \
+  || fail 'a driver whose function was changed by one word compared equal — the comparison proves nothing'
+ok 'the five drivers carry the function of require-config-assignments.sh byte for byte, and a copy with one word changed is caught'
+
+# ── planted defects in the function: each must leave an answer the cases above refuse ──
+mutant() { # the new name of the function, then the sed script that plants the defect in its text
+  local name="$1" script="$2" renamed text
+  renamed="$(printf '%s\n' "$SHAPE_FN" | sed "s/^require_config_assignments() {\$/$name() {/")"
+  text="$(printf '%s\n' "$renamed" | sed "$script")"
+  [ "$text" != "$renamed" ] || fail "the plant for $name changed nothing in the function — the probe proves nothing"
+  eval "$text"
+}
+printf '%s\n' '# the planted config' "FQDN='shape.example.invalid'" "${SHAPE_LINES[0]}" > "$SHAPE/f.env"
+# the line comes out as grep found it: the print that cuts it down to its number and name is replaced by one of the whole line
+mutant shape_prints_line 's/printf "%sline.*/print $0/'
+SHAPE_KEYS=SECRET_X shape_ask shape_prints_line "$SHAPE/f.env"
+[[ "$SHAPE_GOT" == *'abc def'* ]] \
+  || fail "a function that prints the line left '$SHAPE_GOT' — the planted defect was not caught"
+ok "the planted defect was caught — a function that prints the line leaves '$SHAPE_GOT'"
+# a token that is not a key is named: the test against the keys is gone
+printf '%s\n' '# the planted config' "FQDN='shape.example.invalid'" "${SHAPE_LINES[2]}" > "$SHAPE/f.env"
+mutant shape_names_any_token 's/if (index(keys, " " name " ") == 0) name = ""//'
+SHAPE_KEYS=FQDN shape_ask shape_names_any_token "$SHAPE/f.env"
+[[ "$SHAPE_GOT" == *GEZDGNBVGY3TQOJQ* ]] \
+  || fail "a function that names any token left '$SHAPE_GOT' for a line that is no key — the planted defect was not caught"
+ok "the planted defect was caught — a function that names any token leaves '$SHAPE_GOT'"
+# no text mode for grep: a NUL makes the file binary, and grep names the file instead of the line
+mutant shape_without_text 's/grep -anvE/grep -nvE/'
+SHAPE_KEYS=SECRET_X SHAPE_LOCALE=C shape_ask shape_without_text "$SHAPE/nul.env"
+[ "$SHAPE_GOT" != 'line 1 (SECRET_X)' ] \
+  || fail 'a function whose grep has no text mode answered a NUL line as the real one does — the planted defect was not caught'
+ok "the planted defect was caught — a function without grep -a leaves '$SHAPE_GOT' for a line with a NUL"
+# no locale of its own: under a UTF-8 locale grep cannot match the Latin-1 value, so the caller's locale decides
+mutant shape_without_locale '/export LC_ALL=C/d'
+if [ "$SHAPE_HAS_UTF8" = 1 ]; then
+  SHAPE_KEYS=FQDN SHAPE_LOCALE=C.UTF-8 shape_ask shape_without_locale "$SHAPE/latin1.env"
+  [ "$SHAPE_RC" = 1 ] \
+    || fail "a function that keeps the caller's UTF-8 locale ended with $SHAPE_RC and left '$SHAPE_GOT' for a value of Latin-1 bytes, as the real one does — the planted defect was not caught"
+  ok "the planted defect was caught — a function that keeps the caller's UTF-8 locale leaves '$SHAPE_GOT' for a value of Latin-1 bytes"
+else
+  echo 'test: NOT RUN — locale -a lists no C.UTF-8 on this machine, so the planted function without its own locale is not told apart from the real one, and the real one is not run under a UTF-8 locale'
+fi
+# no removal of the NUL: BusyBox awk reads what follows it as a record of its own and names a part of the value
+mutant shape_keeps_nul "/tr -d/d"
+if [ "$SHAPE_HAS_BUSYBOX_AWK" = 1 ]; then
+  PATH="$SHAPE/busybox-awk:$PATH" SHAPE_KEYS=SECRET_X shape_ask shape_keeps_nul "$SHAPE/nul-colon.env"
+  [[ "$SHAPE_GOT" == *plantedpart* ]] \
+    || fail "a function that keeps the NUL left '$SHAPE_GOT' under BusyBox awk for a NUL before a colon — the planted defect was not caught"
+  ok "the planted defect was caught — a function that keeps the NUL leaves '$SHAPE_GOT' under BusyBox awk"
+else
+  echo 'test: NOT RUN — busybox is not on this machine, so the planted function that keeps the NUL is not told apart from the real one'
+fi
+unset -f shape_prints_line shape_names_any_token shape_without_text shape_without_locale shape_keeps_nul
+
+echo "test: covered — a config line that fails the shape check is refused by the five launchers and the five drivers by its number,"
+echo "test:   and by its NAME only where the launchers read that name as a key of config.example.env, and never by its value or by a token"
+echo "test:   that is no key, for a value with a blank in it, a value missing its closing quote, a line inside an open quote, a bare token and a NUL before a colon;"
+echo "test:   a well-formed config passes each launcher's shape check; a launcher without require-config-assignments.sh is refused;"
+echo "test:   the drivers' inline function is held byte-equal to the sibling's; a function that prints the line, one that names any token,"
+echo "test:   one without grep -a, one that keeps a NUL, run under BusyBox awk where busybox is on the machine, and, where locale -a lists"
+echo "test:   C.UTF-8, one without its own locale are each planted and caught."
 echo "test: GREEN — every case above printed the bytes and ended with the code recorded for it,"
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
 echo "test:   reason for a host name it cannot resolve normalised, in the C locale."
