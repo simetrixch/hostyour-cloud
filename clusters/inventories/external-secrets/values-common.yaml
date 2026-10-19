@@ -95,3 +95,15 @@ external-secrets:
       enabled: true
   serviceMonitor:
     enabled: false   # owned by clusters/inventories/observability/
+
+# THE PLATFORM APPLICATIONS THAT RENDER A NAMESPACE OF THEIR OWN WITH THE LABEL hostyour.cloud/workload.
+# templates/vap-namespace-workload-label.yaml admits the label on a namespace tracked by one of these
+# Applications, `<name>-<stage>`, and on a namespace no Application stamped. This key stands at the top
+# of the file, beside external-secrets and not under it: everything under that key is the upstream
+# chart's own values. scripts/workload-label.test.mjs holds the list to the inventories whose templates
+# render such a namespace.
+workloadNamespaceApplications:
+  - e2e-runner
+  - forgejo-build
+  - gate-runner
+  - service-provisioner

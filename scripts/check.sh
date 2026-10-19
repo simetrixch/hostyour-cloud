@@ -2275,6 +2275,8 @@ for module in scripts/forgejo.test.mjs scripts/plane-test-accounts.test.mjs scri
   node --check "$module" || fail "Node syntax: $module"
   echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
 done
+node --check scripts/workload-label.test.mjs || fail 'Node syntax: scripts/workload-label.test.mjs'
+echo 'check: NOT RUN locally — scripts/workload-label.test.mjs; runs in the ci of the master via scripts/test.sh.'
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
 # SCANNED OVER WHAT GIT WOULD LET YOU COMMIT, and that is not the same as this directory. A
