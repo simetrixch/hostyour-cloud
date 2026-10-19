@@ -83,9 +83,6 @@ while read -r tool version sha256 url; do
     gitleaks | traefik)
       tar -xzf "${archive}" -C "${ci_tools_dir}/bin" "${tool}"
       ;;
-    promtool)
-      tar -xzf "${archive}" -C "${ci_tools_dir}/bin" --strip-components=1 "prometheus-${version}.linux-amd64/promtool"
-      ;;
     kubectl)
       # The download is the program itself, not an archive.
       install -m 0755 "${archive}" "${ci_tools_dir}/bin/kubectl"
