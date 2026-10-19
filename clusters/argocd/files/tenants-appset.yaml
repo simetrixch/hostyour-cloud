@@ -75,9 +75,12 @@
 # four is the registration's own `namespaceLabels` — data, so that a rule granting reach to a backing
 # service only the tenant's product uses never has to stand in this file. Except
 # `hostyour.cloud/workload`: the registration stands in the product's deploy repository, and that label alone
-# binds the Vault role that reads the storage box login of every backup. The write of this namespace carries
-# no tracking id, so the admission policy namespace-workload-label (clusters/inventories/external-secrets)
-# admits it, and this template is the only place that can leave the label out. The AppProject
+# binds the Vault role that reads the storage box login of every backup. This template leaves it out, and it
+# writes every key it copies quoted, so that the key a YAML parser reads is exactly the string the template
+# compared: a bare key that only parses to the label (a trailing blank, quote characters) would pass the compare,
+# and a key with a newline would add lines to the patch. The admission policy namespace-workload-label
+# (clusters/inventories/external-secrets) is the second line: it refuses the label on a namespace that carries
+# platform/tenant-managed, which this same write stamps, whatever the registration says. The AppProject
 # <guid>-<stage> (name == the destination namespace, destinations pinned to exactly that namespace)
 # is the isolation — the Manager renders it BEFORE it writes the registration, so this template's
 # project: always resolves.
@@ -151,7 +154,7 @@ spec:
             platform/db-consumer: "true"
             {{- range $k, $v := .namespaceLabels }}
             {{- if and (ne $k "platform/tenant-stage") (ne $k "hostyour.cloud/workload") }}
-            {{ $k }}: {{ $v | quote }}
+            {{ $k | quote }}: {{ $v | quote }}
             {{- end }}
             {{- end }}
       sources:

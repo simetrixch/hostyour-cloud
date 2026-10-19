@@ -9,22 +9,29 @@ master backups, every tenant and consumer backup, and the recovery folder. A cha
 renders Namespace objects of its own (the AppProject of a unit whitelists that cluster-scoped kind), so
 without this policy the label, and with it that login, is a unit's to claim.
 
-WHO MAY CARRY IT. A Namespace carrying the label is admitted when
+WHO MAY CARRY IT. A Namespace carrying the label is admitted when it is no tenant namespace and
 
   - it has no `argocd.argoproj.io/tracking-id` annotation: it is the namespace an Application's
     managedNamespaceMetadata marks (clusters/argocd/files/platform-apps-appset.yaml and slaves-appset.yaml),
     which stamps no tracking id on it. An outside chart cannot reach that path: ArgoCD stamps every
     object it applies with the name of the Application that applies it, OVERWRITING whatever the manifest
     carried, and the AppProject of a unit (clusters/units/reconciler/templates/appproject.yaml) and of a
-    tenant blacklist the kind Application. The tenants ApplicationSet copies the `namespaceLabels` of a
-    tenant's registration, which stands in the product's deploy repository, onto the tenant namespace, and
-    leaves this label out (clusters/argocd/files/tenants-appset.yaml, held by scripts/workload-label.test.mjs). Or
+    tenant blacklist the kind Application. Or
 
   - its tracking id is one of the four ids below: the platform applications that render their own
     Namespace so that the label stands before their first pod
     (clusters/inventories/{e2e-runner,forgejo-build,gate-runner,service-provisioner}/templates/namespace.yaml).
     The id is `<application>-<stage>:/Namespace:<namespace>/<namespace>`, the string ArgoCD wrote on the
     four namespaces of the master and of apps1 to apps8 when this policy was written.
+
+A TENANT NAMESPACE carries `platform/tenant-managed`, and may never carry the label, whatever else the write
+says. The tenants ApplicationSet copies the `namespaceLabels` of a tenant's registration, which stands in the
+product's deploy repository, onto the namespace it creates, and that write carries no tracking id, so the
+first line above would admit it. The ApplicationSet leaves this label out and writes every key it copies
+quoted (clusters/argocd/files/tenants-appset.yaml, held by scripts/workload-label.test.mjs); this policy is
+the second line, at the API, for any key the first one misses. The marker is the one label that same write
+stamps on every tenant namespace (it is the precondition of the tenant Vault role): a registration can
+override its value but not remove the key, and the policy reads the key.
 
 Every other tracking id — a `<unit>-build` namespace under its build fan-out Application, a
 `<unit>-<stage>` namespace under its delivery Application, a tenant namespace, a platform namespace
@@ -49,8 +56,9 @@ WHAT THIS DOES NOT HOLD, said plainly rather than left to be assumed:
   - The guard trusts that the name of an Application belongs to one owner. The policy
     consumer-build-namespace-label (clusters/inventories/consumer-build) relies on the same fact.
   - A tracking id on a Namespace created by hand is taken at its word, as it would be on any object.
-  - An ApplicationSet that copies namespace labels from data an outside party writes is held to this label by
-    its own template alone, because its write carries no tracking id and is admitted here.
+  - An ApplicationSet other than the tenants one that copies namespace labels from data an outside party
+    writes is held to this label by its own template alone, because its write carries no tracking id and no
+    tenant marker, and is admitted here.
 */ -}}
 {{- $ids := list }}
 {{- range .Values.workloadNamespaceApplications }}
@@ -74,13 +82,15 @@ spec:
   variables:
     - name: claimsWorkload
       expression: "has(object.metadata.labels) && 'hostyour.cloud/workload' in object.metadata.labels"
+    - name: tenantManaged
+      expression: "has(object.metadata.labels) && 'platform/tenant-managed' in object.metadata.labels"
     - name: trackingId
       expression: >-
         (has(object.metadata.annotations) && 'argocd.argoproj.io/tracking-id' in object.metadata.annotations)
           ? object.metadata.annotations['argocd.argoproj.io/tracking-id'] : ''
   validations:
-    - expression: {{ printf "!variables.claimsWorkload || variables.trackingId == '' || variables.trackingId in [%s]" (join ", " $ids) | quote }}
-      message: "the label hostyour.cloud/workload binds the Vault role that reads the storage box login of every backup — only a namespace no Application stamped, or one of the platform applications that render their own namespace, may carry it."
+    - expression: {{ printf "!variables.claimsWorkload || (!variables.tenantManaged && (variables.trackingId == '' || variables.trackingId in [%s]))" (join ", " $ids) | quote }}
+      message: "the label hostyour.cloud/workload binds the Vault role that reads the storage box login of every backup — only a namespace no Application stamped, or one of the platform applications that render their own namespace, may carry it, and a tenant namespace (platform/tenant-managed) never."
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

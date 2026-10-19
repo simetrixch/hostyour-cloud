@@ -38,6 +38,10 @@ const asks = (operation, object, oldObject = null) => ({object, oldObject,
 const OWNERS = ['e2e-runner', 'forgejo-build', 'gate-runner', 'service-provisioner'];
 const liveId = (app) => `${app}-prod:/Namespace:${app}/${app}`;
 
+// The labels the tenants ApplicationSet stamps on a tenant namespace, and one the registration declares.
+const TENANT = 'platform/tenant-managed';
+const TENANT_LABELS = {'platform/tenant': 'aaaaaaaaaaaa', [TENANT]: 'true', 'platform/tenant-stage': 'prod', 'platform/db-consumer': 'true', 'platform/redis-consumer': 'true'};
+
 const ADMITTED = {
   'the controller marks a platform namespace through managedNamespaceMetadata, which stamps no tracking id': asks('CREATE', workload('external-secrets')),
   'the same on a slave namespace of the master, beside an annotation of another kind': asks('CREATE', namespace('apps1', {labels: {[LABEL]: 'true'}, annotations: {note: 'x'}})),
@@ -46,6 +50,8 @@ const ADMITTED = {
   'a namespace of an outside unit with another platform label': asks('CREATE', namespace('acme-build', {labels: {'hostyour.cloud/build': 'true'}, annotations: {[TRACKING_ID]: 'acme-build:/Namespace:acme-build/acme-build'}})),
   'an update that takes the label off a namespace an outside Application tracks': asks('UPDATE', namespace('acme-build', {labels: {}, annotations: {[TRACKING_ID]: 'acme-build:/Namespace:acme-build/acme-build'}}),
     workload('acme-build', 'acme-build:/Namespace:acme-build/acme-build')),
+  'a tenant namespace without the label: the four labels the tenants ApplicationSet stamps and one of the registration': asks('CREATE', namespace('aaaaaaaaaaaa-prod', {labels: TENANT_LABELS})),
+  'an update that takes the label off a tenant namespace': asks('UPDATE', namespace('aaaaaaaaaaaa-prod', {labels: TENANT_LABELS}), namespace('aaaaaaaaaaaa-prod', {labels: {...TENANT_LABELS, [LABEL]: 'true'}})),
   ...Object.fromEntries(OWNERS.flatMap((app) => [
     [`${app} creates its own namespace under its own Application`, asks('CREATE', workload(app, liveId(app)))],
     [`${app} syncs its own namespace again`, asks('UPDATE', workload(app, liveId(app)), workload(app, liveId(app)))],
@@ -60,6 +66,10 @@ const DENIED = {
   'an Application of another stage than the installation': asks('CREATE', workload('e2e-runner', 'e2e-runner-dev:/Namespace:e2e-runner/e2e-runner')),
   'an Application whose name only begins like a platform one': asks('CREATE', workload('e2e-runner', 'e2e-runner-prod-x:/Namespace:e2e-runner/e2e-runner')),
   'a platform Application on an object it does not own': asks('CREATE', workload('acme-build', 'e2e-runner-prod:/Namespace:e2e-runner/e2e-runner-x')),
+  'the tenants ApplicationSet writes the label beside its tenant marker, which stamps no tracking id': asks('CREATE', namespace('aaaaaaaaaaaa-prod', {labels: {...TENANT_LABELS, [LABEL]: 'true'}})),
+  'the same with another value of the marker': asks('CREATE', namespace('aaaaaaaaaaaa-prod', {labels: {...TENANT_LABELS, [TENANT]: 'false', [LABEL]: 'true'}})),
+  'an update that adds the label to a tenant namespace': asks('UPDATE', namespace('aaaaaaaaaaaa-prod', {labels: {...TENANT_LABELS, [LABEL]: 'true'}}), namespace('aaaaaaaaaaaa-prod', {labels: TENANT_LABELS})),
+  'a platform owner\'s tracking id does not excuse the tenant marker': asks('CREATE', namespace('forgejo-build', {labels: {...TENANT_LABELS, [LABEL]: 'true'}, annotations: {[TRACKING_ID]: liveId('forgejo-build')}})),
 };
 
 test('the policy namespace-workload-label stands on every namespace write and refuses in the validation, not in a match', () => {
@@ -96,27 +106,77 @@ test('the admitted tracking ids follow the stage of the installation', () => {
 
 // The tenants ApplicationSet is the one writer that copies namespace labels from data an outside party declares: the registration of
 // a tenant stands in the product's deploy repository, and its `namespaceLabels` ride onto the namespace Argo CD creates. That
-// write carries no tracking id, so the policy admits it and only the ApplicationSet can leave the label out.
-const tenantNamespaceLabels = (namespaceLabels, template = patch) => {
+// write carries no tracking id, so the tracking-id rule admits it. Two lines hold the label back: the template writes every key
+// it copies so that it parses back to the string it compared, and the policy refuses the label on a namespace that carries the
+// tenant marker the same write stamps.
+const renderPatch = (namespaceLabels, template = patch) => {
   const [answer] = render(template, [paramSet('aaaaaaaaaaaa', 'prod', registration(['charts/app'], {namespaceLabels}))]);
   assert.equal(answer.error, undefined, answer.error);
-  return yaml('.spec.syncPolicy.managedNamespaceMetadata.labels', answer.output);
+  return yaml('.', answer.output);
+};
+const labelsOf = (application) => application.spec.syncPolicy.managedNamespaceMetadata.labels;
+
+// Keys that are not the label as a string and parse back to it once a YAML parser has read them bare (review r21012).
+const VARIANTS = {
+  'a trailing blank': `${LABEL} `,
+  'double quotes': `"${LABEL}"`,
+  'single quotes': `'${LABEL}'`,
+  'a newline that starts a further line of the patch': `injected: line\n        ${LABEL}`,
+};
+const bareKey = patch.replace('{{ $k | quote }}:', '{{ $k }}:');
+const withoutTenantMarker = (policy) => {
+  const variable = policy.spec.variables.find((v) => v.name === 'tenantManaged');
+  assert.ok(variable, 'the policy reads the tenant marker in a variable of its own');
+  variable.expression = 'false';
+  return policy;
 };
 
 test('the tenants ApplicationSet leaves the label off the namespace of a tenant whose registration declares it', () => {
-  const labels = tenantNamespaceLabels({[LABEL]: 'true', 'platform/redis-consumer': 'true'});
+  const labels = labelsOf(renderPatch({[LABEL]: 'true', 'platform/redis-consumer': 'true'}));
   assert.equal(labels[LABEL], undefined);
-  assert.equal(labels['platform/redis-consumer'], 'true', 'a label of the registration that binds no Vault role stays');
-  assert.equal(labels['platform/tenant-managed'], 'true');
+  assert.deepEqual(labels, TENANT_LABELS,
+    'a label of the registration that binds no Vault role stays, and so do the four the ApplicationSet stamps');
 });
 
-test('planted defect: with the label let through, the namespace the tenants ApplicationSet writes claims it and the policy admits that write', () => {
+for (const [variant, key] of Object.entries(VARIANTS)) {
+  test(`the tenants ApplicationSet writes a declared key as ${variant} exactly as declared: no label ${LABEL}, no further line in the patch`, () => {
+    const baseline = renderPatch({'platform/redis-consumer': 'true'});
+    const application = renderPatch({'platform/redis-consumer': 'true', [key]: 'true'});
+    const labels = labelsOf(application);
+    assert.equal(labels[LABEL], undefined);
+    assert.equal(labels[key], 'true', 'the key parses back to the string that was compared, so Kubernetes refuses it as a label');
+    delete labels[key];
+    assert.deepEqual(application, baseline, 'nothing else of the Application differs: the key adds no line to the patch');
+  });
+
+  test(`the policy refuses the namespace that carries the label and the tenant marker, as the bare template wrote it for ${variant}`, () => {
+    const leaked = labelsOf(renderPatch({[key]: 'true'}, bareKey));
+    assert.equal(leaked[LABEL], 'true', 'precondition: the template with the key bare lets this variant through');
+    const {policy} = guard();
+    const [{message}] = policy.spec.validations;
+    assert.deepEqual(evaluate(policy, [asks('CREATE', namespace('aaaaaaaaaaaa-prod', {labels: leaked}))]), [[message]]);
+  });
+}
+
+test('planted defect: with the key written bare, every variant reaches the namespace as the label', () => {
+  assert.notEqual(bareKey, patch);
+  for (const [variant, key] of Object.entries(VARIANTS)) assert.equal(labelsOf(renderPatch({[key]: 'true'}, bareKey))[LABEL], 'true', variant);
+});
+
+test('planted defect: with the label let through, the namespace the tenants ApplicationSet writes claims it and the tracking-id rule admits that write', () => {
   const letThrough = patch.replace('and (ne $k "platform/tenant-stage") (ne $k "hostyour.cloud/workload")', 'ne $k "platform/tenant-stage"');
   assert.notEqual(letThrough, patch);
-  const labels = tenantNamespaceLabels({[LABEL]: 'true'}, letThrough);
+  const labels = labelsOf(renderPatch({[LABEL]: 'true'}, letThrough));
   assert.equal(labels[LABEL], 'true');
   const {policy} = guard();
-  assert.deepEqual(evaluate(policy, [asks('CREATE', namespace('aaaaaaaaaaaa-prod', {labels}))]), [[]], 'no tracking id: the policy cannot tell the write from a platform namespace');
+  assert.deepEqual(evaluate(withoutTenantMarker(policy), [asks('CREATE', namespace('aaaaaaaaaaaa-prod', {labels}))]), [[]], 'no tracking id: without the tenant marker the policy cannot tell the write from a platform namespace');
+});
+
+test('planted defect: without the tenant marker, the policy admits the label on the namespace of every variant', () => {
+  const {policy} = guard();
+  const leaked = Object.values(VARIANTS).map((key) => labelsOf(renderPatch({[key]: 'true'}, bareKey)));
+  const verdicts = evaluate(withoutTenantMarker(policy), leaked.map((labels) => asks('CREATE', namespace('aaaaaaaaaaaa-prod', {labels}))));
+  assert.deepEqual(verdicts, leaked.map(() => []));
 });
 
 test('planted defect: without the validation, every namespace the platform does not own keeps the label', () => {
