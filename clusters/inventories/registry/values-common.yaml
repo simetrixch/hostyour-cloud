@@ -28,7 +28,7 @@ app:
     # restart it. The value is "config-" and 12 hex digits of the git hash of the
     # config.json every stage renders. scripts/check.sh refuses any other value and
     # prints the one to set.
-    hostyour.cloud/config-revision: "config-beba28a38bf6"
+    hostyour.cloud/config-revision: "config-9078a7d97e8a"
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
   # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
   # With RollingUpdate, the new pod fails to start until the old pod
@@ -181,7 +181,7 @@ ingress:
 # (ghcr.io/puppeteer/puppeteer does). Without compat zot refuses such a manifest, and converting it to
 # OCI would give it another digest. scripts/check.sh refuses a config.json without it.
 #
-# docker.io pull-through cache (extensions.sync, onDemand): a pull of any
+# docker.io pull-through cache (extensions.sync, onDemand): a pull of a Docker Hub
 # repo NOT found locally triggers an on-demand fetch from registry-1.docker.io,
 # cached under the SAME repo name (library/redis, ...). Each slave's containerd
 # mirrors docker.io -> this Zot (a hosts.toml the installer writes on the node),
@@ -190,6 +190,17 @@ ingress:
 # fires on a local miss); the retention policy below also evicts stale cached
 # upstream tags. Requires a Zot image built with the sync extension (the
 # official project-zot images bundle it, and the mirror holds the official one).
+#
+# THE SYNC ASKS DOCKER HUB FOR DOCKER HUB NAMES ONLY (content, templates/_helpers.tpl). Without a
+# content filter every local miss goes upstream, the owned repositories too: Hub answers a name it does
+# not know with "unauthorized", zot v2.1.22 turns that into a 503, and the publish step that asks whether
+# a version of npm/<owner>/<name> exists refuses on it instead of reading a 404. A Hub name is
+# <namespace>/<name>, two segments. The owner's two-segment names (<owner>/<build>) are left out; the
+# flat names and npm/** have another depth. Read in zot v2.1.22: a registry with content makes SyncImage
+# (pkg/extensions/sync/service.go) return ErrSyncImageFilteredOut for a name no prefix matches, and
+# pkg/extensions/sync/client_error.go counts that as a plain 404. GetContentByLocalRepo
+# (pkg/extensions/sync/content.go) globs the prefix with doublestar, which has no negation, so the
+# prefix lists every first segment that is not the owner's. scripts/zot-sync.test.mjs holds it.
 #
 # credentialsFile IS WRITTEN ONLY WHERE THE FILE WILL EXIST. Zot reads
 # ONE file for EVERY upstream, and a path that is named and absent fails credential
@@ -427,6 +438,7 @@ configmap:
                 {
                   "urls": ["https://registry-1.docker.io"],
                   "onDemand": true,
+                  "content": [{"prefix": "{{ include "registry.dockerHubPrefix" . }}"}],
                   "tlsVerify": true,
                   "maxRetries": 3,
                   "retryDelay": "5m",
