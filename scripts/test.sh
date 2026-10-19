@@ -36,24 +36,30 @@ chart_dependencies=(
 
 suite_files=()
 suite_notes=()
-# suite <file> [<note>]: a .sh file runs with bash, a .mjs file with node --test. The pool starts the suites in this order.
+# suite <file> [<note>]: a .sh file runs with bash, a .mjs file with node --test. The pool starts the suites in this order, the slowest first (by the times a run printed on 2026-10-19),
+# so the run ends when the slowest suite ends and not after the slowest has waited for a free place.
 suite() {
   suite_files+=("$1")
   suite_notes+=("${2:-}")
 }
 
 suite lifecycle/test.sh 'delivery tooling, held to its recorded bytes.'
-suite scripts/pipeline-release.test.sh 'release pipeline decisions.'
-suite scripts/pipeline-publish.test.sh 'what a release tag publishes to the registry, what a packed tarball may carry, and the push.'
-suite scripts/check-mirror-consumers.test.sh 'a consumer of the owner'\''s mirror that names an upstream, or a version, a sha256, a chart or an allowlist entry the table does not hold, is refused by file:line.'
-suite scripts/test-pool.test.sh 'the pool of this script runs suites at once, builds the chart dependencies first, and ends red for a failed suite and for one that left no status.'
 suite scripts/build-contract.test.mjs 'production build chart and immutable-field contracts.'
+suite scripts/ci-run-keeper.test.mjs 'ci run keeper — at most 7 ci runs run at once, a newer push or a deleted branch ends the older run of its branch, and the newest 20 finished ci runs of a build namespace stay.'
+suite scripts/pipeline-publish.test.sh 'what a release tag publishes to the registry, what a packed tarball may carry, and the push.'
+suite scripts/zot-sync.test.mjs 'registry sync — zot asks Docker Hub on a miss for the Docker Hub repositories it lists, every one the tree names among them, and for no repository the platform publishes, so a missing owned version is a 404.'
+suite scripts/tenant-limits.test.mjs 'tenant limits — Traefik 3.6.2 answers 429 to one flooding visitor per chain and serves the next.'
+suite scripts/ingress-access-log-alert.test.mjs 'ingress access log — Loki 3.7.4 alerts on an ingress that wrote access lines in the last day and none in the last hour.'
+suite scripts/forgejo-ssh.test.mjs 'forge — the Forgejo SSH check reads the announced port from the install branch, is green on an SSH banner, and red on a closed, a silent or a wrong port.'
+suite scripts/test-pool.test.sh 'the pool of this script runs suites at once, builds the chart dependencies first, and ends red for a failed suite and for one that left no status.'
+suite scripts/plane.test.mjs 'forge — Plane waits for the forward auth on every page but /api/v1, keeps its data beside it, and renders no public default.'
+suite scripts/pipeline-release.test.sh 'release pipeline decisions.'
+suite scripts/check-mirror-consumers.test.sh 'a consumer of the owner'\''s mirror that names an upstream, or a version, a sha256, a chart or an allowlist entry the table does not hold, is refused by file:line.'
 suite scripts/site-telemetry.test.mjs 'site statistics read API — the gate refuses every caller that is not an administrator of the website asked for.'
 suite scripts/alloy-access-log-strip.test.mjs 'alloy access-log strip — the query of a URL is cut off the request path and the referrer of Traefik'\''s access log before Loki, and off nothing else.'
 suite scripts/site-telemetry-registration.test.mjs 'site statistics registrations — the books render one ConfigMap per tenant and stage, with its host, proxied hosts and websites, in the namespace of the service.'
 suite scripts/site-telemetry-deployment.test.mjs 'site statistics service — the Deployment, Service, NetworkPolicy, Role, script and Ingress meet and run the tested script.'
 suite scripts/release-queue.test.mjs 'release queue — four runs at a time on the build plane, never two of one unit, and the queue may only start a run.'
-suite scripts/ci-run-keeper.test.mjs 'ci run keeper — at most 7 ci runs run at once, a newer push or a deleted branch ends the older run of its branch, and the newest 20 finished ci runs of a build namespace stay.'
 suite scripts/ci-report-failure.test.mjs 'ci report — a failed ci run posts one alert with the last 60 lines of the failed step, and a green or cancelled run posts nothing.'
 suite scripts/ci-commit-status.test.mjs 'ci commit status — tekton/ci is pending while a run runs, then success, failure or error, and the token travels only in a header file.'
 suite scripts/ci-green-status.test.mjs 'ci green status — a commit that carries a green tekton/ci names the run that set it, and any other answer leaves the check to run.'
@@ -90,20 +96,15 @@ suite scripts/trust-manager-adoption.test.mjs 'trust-manager adoption — the in
 suite scripts/trust-manager-bundles.test.mjs 'trust-manager bundles — the Bundle after trust-manager, in the form of the cluster issuer.'
 suite scripts/cert-manager-issuers.test.mjs 'cert-manager issuers — platform-acme as every cluster holds it, or the cluster authority, nothing else.'
 suite scripts/cloudflare-origin-pull.test.mjs 'cloudflare origin pull — the TLSOption of a proxied host requires the client certificate its CA verifies.'
-suite scripts/tenant-limits.test.mjs 'tenant limits — Traefik 3.6.2 answers 429 to one flooding visitor per chain and serves the next.'
 suite scripts/unit-networkpolicy.test.mjs 'unit network policy — a unit admits its own pods, Traefik and the scrapers, nothing else.'
 suite scripts/loki-retention.test.mjs 'Loki retention — logs are kept at most 30 days on every stage.'
-suite scripts/ingress-access-log-alert.test.mjs 'ingress access log — Loki 3.7.4 alerts on an ingress that wrote access lines in the last day and none in the last hour.'
 suite scripts/inventory-project-fit.test.mjs
 suite scripts/e2e-runner.test.mjs 'e2e runner — the password of a demo target stays bound to its host, and a run names a path on it and a case, nothing else.'
 suite scripts/platform-argo-sync.test.mjs 'platform argo-sync — every inventory a release pins lets that release read its Application, and nothing else.'
 suite scripts/forgejo.test.mjs 'forge — Forgejo admits the groups admins and plane-users alone, through the identity provider, and keeps its data in one volume.'
 suite scripts/plane-test-accounts.test.mjs 'forge — the Plane sign-in test accounts are in the group plane-users alone, with passwords from the environment, the provider restarts onto them, and every application admits admins, only Plane and Forgejo plane-users beside them.'
 suite scripts/forward-auth-gate.test.mjs 'forge — every host behind the forward auth is answered, in the embedded outpost, by providers whose applications admit admins alone, and plane-users at plane alone.'
-suite scripts/plane.test.mjs 'forge — Plane waits for the forward auth on every page but /api/v1, keeps its data beside it, and renders no public default.'
 suite scripts/forgejo-release.test.mjs 'forge — a Forgejo delivery runs forgejo-release in forgejo-build past the guard, its tokens reach the three API Tasks alone, and GitHub and Forgejo deliveries never cross.'
-suite scripts/forgejo-ssh.test.mjs 'forge — the Forgejo SSH check reads the announced port from the install branch, is green on an SSH banner, and red on a closed, a silent or a wrong port.'
-suite scripts/zot-sync.test.mjs 'registry sync — zot asks Docker Hub on a miss for the Docker Hub repositories it lists, every one the tree names among them, and for no repository the platform publishes, so a missing owned version is a 404.'
 
 # One suite of the pool: `bash scripts/test.sh --suite <file>` runs it and leaves its output and "<exit status> <seconds>" in $TEST_LOGS.
 if [ "${1:-}" = --suite ]; then
