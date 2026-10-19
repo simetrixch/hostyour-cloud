@@ -1,0 +1,22 @@
+--- a/plane-ce/templates/workloads/migrator.job.yaml
++++ b/plane-ce/templates/workloads/migrator.job.yaml
+@@ -3,7 +3,7 @@
+ kind: Job
+ metadata:
+   namespace: {{ .Release.Namespace }}
+-  name: {{ .Release.Name }}-api-migrate-{{ .Release.Revision }}
++  name: {{ .Release.Name }}-api-migrate-{{ printf "%s:%s" (.Values.api.image | default "artifacts.plane.so/makeplane/plane-backend") .Values.planeVersion | sha256sum | trunc 8 }}
+   {{- include "plane.labelsAndAnnotations" (dict "context" $ "values" .Values.api) }}
+ spec:
+   backoffLimit: 3
+--- a/plane-ce/templates/workloads/minio.stateful.yaml
++++ b/plane-ce/templates/workloads/minio.stateful.yaml
+@@ -88,7 +88,7 @@
+ kind: Job
+ metadata:
+   namespace: {{ .Release.Namespace }}
+-  name: {{ .Release.Name }}-minio-bucket-{{ .Release.Revision }}
++  name: {{ .Release.Name }}-minio-bucket-{{ printf "%s %s %s" .Values.minio.image_mc (.Values.minio.init_image | default "busybox") .Values.minio.image | sha256sum | trunc 8 }}
+   {{- include "plane.labelsAndAnnotations" (dict "context" $ "values" .Values.minio) }}
+ spec:
+   backoffLimit: 6

@@ -227,7 +227,6 @@ spec:
   description: Plane, the platform's own project tracker, on the master. Namespaced only.
   sourceRepos:
     - https://github.com/simetrixch/hostyour-cloud.git
-    - oci://zot.master.digitacloud.app/simetrixch/helm.plane.so
   destinations:
     - name: __CLUSTER_NAME__
       namespace: plane
