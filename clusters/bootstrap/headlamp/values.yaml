@@ -6,7 +6,7 @@
 # cannot leave the image behind.
 image:
   registry: zot.master.digitacloud.app/simetrixch/ghcr.io
-  tag: "v0.42.0@sha256:c9754bae1d799220da0547e51ceee234f6e66ebadc138518ca73e33ecd331e59"
+  tag: "v0.46.0@sha256:8a0ef97527544baa2b35825940ddf4db6e2d09c30cd5aa31fd269ff604cc8b75"
 
 # Service Configuration
 service:
@@ -55,7 +55,8 @@ settings:
 # AS THE ENV VARS Headlamp expects: OIDC_CLIENT_ID, OIDC_CLIENT_SECRET,
 # OIDC_ISSUER_URL, OIDC_SCOPES (NOT camelCase clientID/etc.). The Secret
 # headlamp-oidc in this namespace is created by GitOps.
-# `hasScopes: true` makes the chart pass `-oidc-scopes=$(OIDC_SCOPES)` flag.
+# `hasScopes: true` makes the chart pass `-oidc-scopes=$(OIDC_SCOPES)` flag. From chart 0.46.0 on the chart
+# omits that flag unless the key is true, and scripts/check.sh refuses a render without it.
 # `secret.create: false` disables the chart's own bundled Secret (which
 # would only contain scopes literal and double-render).
 #
@@ -100,6 +101,7 @@ config:
     externalSecret:
       enabled: true
       name: headlamp-oidc
+      hasScopes: true
 
 # `env` AND NOT `extraEnv`, which this chart has never read. The deployment renders `.Values.env`
 # — in both of its branches — and nothing at all under any other name, so values written under any
