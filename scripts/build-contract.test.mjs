@@ -135,6 +135,7 @@ const createdCiRun = (docs) => createdRun(docs, 'ci-push');
 const guardOf = (docs) => docs.find((d) => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
 
 const OWNERSHIP = 'a build namespace runs only its own release, ci, image and publish Pipelines.';
+const WORKSPACE = 'a ci run is created with no workspace and an update leaves its workspaces as they were, its one pod keeps the checkout on a volume of its own task; every other managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace.';
 const EVENT_LISTENER = 'system:serviceaccount:image-builder:eventlistener-sa';
 const RELEASE_CLASS = 'image-builder-release', CI_CLASS = 'image-builder-ci', REPORT_CLASS = 'image-builder-ci-report';
 const classOf = (pipeline) => (pipeline.endsWith('-ci') ? CI_CLASS : RELEASE_CLASS);
@@ -159,7 +160,6 @@ test('the admission policy admits the release, the ci, the image and the publish
   assert.deepEqual(evaluate(without, [createsRun('shop-build', 'post-ci')])[0].denied, []);
   // A ci run carries no workspace: its checkout is on a volume of its own task, and a claim would be a volume on the node that
   // outlives nothing and costs a second of binding. Every other managed run keeps its one `source` claim.
-  const WORKSPACE = 'a ci run carries no workspace, its one pod keeps the checkout on a volume of its own task; every other managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace.';
   const workspaceVerdict = (pipeline, workspaces) => evaluate(policy, [createsRun('shop-build', pipeline, undefined, workspaces)])[0].denied;
   assert.deepEqual(workspaceVerdict('shop-ci', SOURCE_CLAIM), [WORKSPACE], 'PLANTED DEFECT: a ci run with the source claim');
   assert.deepEqual(workspaceVerdict('shop-ci', [{name: 'source', emptyDir: {}}]), [WORKSPACE], 'PLANTED DEFECT: a ci run with an emptyDir workspace');
@@ -2138,6 +2138,42 @@ test('the admission policy lets the ci run keeper cancel, name the replacing pus
   const without = structuredClone(policy);
   without.spec.validations = without.spec.validations.filter((v) => v.message !== KEEPER_MESSAGE);
   assert.ok(evaluate(without, Object.values(DENIED)).every((v) => v.denied.length === 0), 'without the keeper clause every one of them is admitted');
+});
+
+// A ci run created by the Trigger of the earlier release carries the `source` claim. Tekton lets nothing but spec.status change on a
+// run, so every update of such a run keeps its workspaces, and the keeper that starts or cancels it is not refused for them.
+test('the admission policy lets the keeper start and cancel a waiting ci run that still carries the source claim, and gives no ci run a workspace by an update', () => {
+  const policy = guardOf(imageBuilder());
+  const waiting = {metadata: {namespace: 'shop-build', name: 'shop-ci-x', labels: {'image-builder.io/ci': 'shop'}, annotations: {'image-builder.io/ci-branch': 'main'}},
+    spec: {...createsRun('shop-build', 'shop-ci').object.spec, status: 'PipelineRunPending', workspaces: SOURCE_CLAIM}};
+  const changed = (edit, from = waiting) => { const run = structuredClone(from); edit(run); return run; };
+  const update = (username, object, oldObject) => ({object, oldObject, request: {operation: 'UPDATE', namespace: 'shop-build', userInfo: {username}}});
+  const bare = changed((r) => { delete r.spec.workspaces; });
+  const ADMITTED = {
+    'the keeper starts a waiting ci run that carries the source claim': update(KEEPER, changed((r) => { delete r.spec.status; }), waiting),
+    'the keeper cancels a waiting ci run that carries the source claim': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; }), waiting),
+    'the keeper notes a waiting ci run that carries the source claim': update(KEEPER, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'all 7 ci slots are in use'; }), waiting),
+    'the Tekton controller updates a started ci run that carries the source claim': update('system:serviceaccount:tekton:tekton-controller',
+      changed((r) => { delete r.spec.status; r.metadata.labels['tekton.dev/pipeline'] = 'shop-ci'; }), changed((r) => { delete r.spec.status; })),
+    'the keeper starts a waiting ci run without a workspace': update(KEEPER, changed((r) => { delete r.spec.status; }, bare), bare),
+    'the keeper cancels a waiting ci run without a workspace': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; }, bare), bare),
+  };
+  const DENIED = {
+    'an update gives a waiting ci run a workspace': update('owner@example.com', waiting, bare),
+    'an update changes the claim of a waiting ci run': update('owner@example.com',
+      changed((r) => { r.spec.workspaces[0].volumeClaimTemplate.spec.accessModes = ['ReadWriteMany']; }), waiting),
+  };
+  const verdicts = evaluate(policy, [...Object.values(ADMITTED), ...Object.values(DENIED)]).map((v) => v.denied);
+  Object.keys(ADMITTED).forEach((name, i) => assert.deepEqual(verdicts[i], [], `PLANTED INNOCENT: ${name}`));
+  Object.keys(DENIED).forEach((name, i) => assert.deepEqual(verdicts[Object.keys(ADMITTED).length + i], [WORKSPACE], `PLANTED DEFECT: ${name}`));
+  // The clause as it was, which judged an update like a create: the three actions on a run with the claim are refused, which stalls the unit.
+  const before = structuredClone(policy);
+  const clause = before.spec.validations.find((v) => v.message === WORKSPACE);
+  const sameWorkspaces = '(!has(object.spec.workspaces) || variables.sameWorkspaces)';
+  assert.ok(clause.expression.includes(sameWorkspaces));
+  clause.expression = clause.expression.replace(sameWorkspaces, '!has(object.spec.workspaces)');
+  const stalled = evaluate(before, Object.values(ADMITTED).slice(0, 4)).map((v) => v.denied);
+  assert.deepEqual(stalled, [[WORKSPACE], [WORKSPACE], [WORKSPACE], [WORKSPACE]], 'PLANTED DEFECT: a clause that judges an update like a create');
 });
 
 test('the admission policy lets the ci run keeper delete a finished ci run of its own namespace, and no other run', () => {
