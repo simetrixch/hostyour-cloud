@@ -22,15 +22,19 @@
 #
 # SEALED BEFORE IT LEAVES. Every archive is passed through gpg with the config's BACKUP_PASSPHRASE
 # before it is written, so the storage box holds the installation's every credential and can open
-# none of it. The passphrase reaches this machine on the session's standard input, is read into the
-# environment and never lands in a file.
+# none of it. The passphrase and the storage box's password reach this machine on the session's
+# standard input, and gpg and rclone are given them by the path of a file of mode 600 in a folder in
+# memory (/dev/shm) that is removed when this ends. Never as an argument: sudo writes the arguments of
+# every command it runs to the system log.
 #
 # WHERE IT GOES. box:<fqdn>/master/<id>/ on the storage box. Everything of one installation lives
 # under its FQDN: the unit backups the Manager writes stand beside this, under box:<fqdn>/<stage>/.
 # It goes through the same rclone remote the Manager's relocations use (hostyour-manager
 # relocation-jobs.ts BOX_REMOTE), one directory per backup, named by the moment it was taken, with a
-# manifest of checksums beside the archives. The last line this prints is that id, which is what
-# master-restore asks for.
+# manifest of checksums beside the archives. Root made the archives in a folder that is root's alone,
+# so root carries them, and root lists the box back on the same config: rclone saves what it learns of
+# the box into the config it loaded, so after root's copy that file is root's and the operator cannot
+# load it. The last line this prints is that id, which is what master-restore asks for.
 # ===========================================================================
 set -uo pipefail
 
@@ -42,7 +46,8 @@ die()  { printf '%s   ✗ %s%s\n' "$C_RED" "$1" "$C_OFF" >&2; exit "${2:-1}"; }
 step() { printf '\n%s══ %s%s\n' "$C_BLD" "$*" "$C_OFF"; }
 
 readonly CONFIG="${1:?the config's path is this script's only argument}"
-cleanup() { rm -f "$CONFIG" 2>/dev/null || true; }
+SECRETS=''
+cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
 BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
@@ -52,6 +57,13 @@ for named in FQDN OPERATOR_USER STAGE ELEVATION_PASSWORD STORAGE_BOX_HOST STORAG
   [ -n "${!named:-}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
 
+# A SECRET AN ELEVATED COMMAND NEEDS IS A FILE, never an argument: sudo writes every command it runs, with
+# its arguments, to the system log, and any local account reads an argument in the process list. This
+# shell's own printf is no process, so it writes the secret to a file of mode 600 in a folder in memory
+# that cleanup removes, and the elevated command is given the file's path.
+SECRETS="$(mktemp -d /dev/shm/aw-backup.XXXXXX)" || die 'no folder in memory could be made for the secrets an elevated command needs, and none of them may stand on its command line' 78
+PASSPHRASE_FILE="$SECRETS/passphrase"
+( umask 077; printf '%s' "$BACKUP_PASSPHRASE" > "$PASSPHRASE_FILE" ) || die 'the passphrase could not be written to a file in memory' 78
 root() { printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 K() { microk8s kubectl "$@"; }
 
@@ -73,6 +85,14 @@ STORES=(
   "forgejo|gitea-shared-storage|forgejo|deployment"
 )
 readonly QUORUM="/srv/hostyour-cloud/secrets/vault-${STAGE}.txt"
+# THE QUORUM IS THE OPERATOR'S OWN FILE, and this runs as the operator: it is checked as that account,
+# as the unseal service reads it, never through root. An elevated test -r is no check of it: where the
+# OS's test is uutils, it judges root by the mode bits and answers no for a 0600 file root does not
+# own, which would be reported here as a file that is not on the host.
+require_quorum() {
+  [ -f "$QUORUM" ] || die "$QUORUM is not on this host — a master keeps Vault's quorum there, and a backup without it could never be opened" 66
+  [ -r "$QUORUM" ] || die "$QUORUM stands on this host, but $(id -un), who runs this backup, cannot read it — a master keeps Vault's quorum as the operator's own file at mode 600" 66
+}
 readonly STORAGE_ROOT=/var/snap/microk8s/common/default-storage
 
 step "what this machine is, before anything is stopped"
@@ -80,7 +100,7 @@ say "asked as $(id -un) on $(hostname), for $FQDN, stage $STAGE"
 printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' true 2>/dev/null || die 'the ELEVATION_PASSWORD in the config does not raise a command on this machine' 77
 command -v microk8s >/dev/null 2>&1 || die 'microk8s is not on this machine, so there is no cluster whose stores could be taken' 69
 K get nodes >/dev/null 2>&1 || die 'the cluster does not answer, and a store copied while it cannot be stopped is a store with a write in flight' 69
-root test -r "$QUORUM" || die "$QUORUM is not on this host — a master keeps Vault's quorum there, and a backup without it could never be opened" 66
+require_quorum
 ROOT_DIR="$(readlink -f "$STORAGE_ROOT")"
 [ -d "$ROOT_DIR" ] || die "$STORAGE_ROOT does not lead to a directory, so the stores' volumes cannot be found" 69
 good "the stores' volumes stand under $ROOT_DIR"
@@ -89,10 +109,10 @@ if ! command -v rclone >/dev/null 2>&1; then
   say 'rclone is not on this machine; it is what carries the archives to the storage box, so it is installed now'
   root apt-get install -y -q rclone >/dev/null 2>&1 || die 'rclone could not be installed, and nothing else here reaches the storage box' 69
 fi
-export RCLONE_CONFIG_BOX_TYPE=sftp
-export RCLONE_CONFIG_BOX_HOST="$STORAGE_BOX_HOST"
-export RCLONE_CONFIG_BOX_USER="$STORAGE_BOX_USER"
-RCLONE_CONFIG_BOX_PASS="$(rclone obscure "$STORAGE_BOX_PASSWORD")"; export RCLONE_CONFIG_BOX_PASS
+RCLONE_CONF="$SECRETS/rclone.conf"
+( umask 077; printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF" ) \
+  || die 'the storage box config could not be written to a file in memory' 78
+export RCLONE_CONFIG="$RCLONE_CONF"
 rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was stopped" 69
 good "the storage box $STORAGE_BOX_HOST opens"
 
@@ -100,11 +120,16 @@ ID="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUPS="box:$FQDN/master"
 WORK="/var/lib/master-backup/$ID"
 root install -d -m 700 -o root -g root /var/lib/master-backup "$WORK" || die "could not make $WORK" 78
-seal() { # a file on stdin, sealed to $1 as root
-  root env BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" sh -c 'exec gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 3 --symmetric --cipher-algo AES256 -o "$1" 3<<EOF
-$BACKUP_PASSPHRASE
-EOF
-' _ "$1"
+# seal OUT COMMAND...: what COMMAND writes, sealed to OUT. Both run as root inside one bash, because
+# root() hands sudo the password on standard input: nothing piped or redirected into a command it
+# starts reaches it, and under a NOPASSWD rule the command reads the password line as its data.
+# pipefail makes a COMMAND that fails fail the seal, so the copy is not taken for whole. gpg reads the
+# passphrase from its file by path.
+seal() {
+  root bash -c 'set -o pipefail
+passfile=$1; out=$2; shift 2
+"$@" | gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$passfile" --symmetric --cipher-algo AES256 -o "$out"
+' _ "$PASSPHRASE_FILE" "$@"
 }
 replicas_of() { K -n "$1" get "$3/$2" -o jsonpath='{.spec.replicas}' 2>/dev/null; }
 
@@ -123,7 +148,7 @@ for row in "${STORES[@]}"; do
     sleep 2
   done
   out="$WORK/${ns}--${pvc}.tar.gpg"
-  if root tar --numeric-owner -C "$dir" -cf - . | seal "$out"; then
+  if seal "$out" tar --numeric-owner -C "$dir" -cf - .; then
     good "${ns}/${pvc} taken from $(basename "$dir") — $(root du -sh "$out" | cut -f1)"
   else
     K -n "$ns" scale "$kind/$workload" --replicas="$before" >/dev/null
@@ -135,15 +160,16 @@ for row in "${STORES[@]}"; do
 done
 
 step "the host's own file"
-root cat "$QUORUM" | seal "$WORK/host--vault-${STAGE}.txt.gpg" || die "the quorum file could not be sealed" 70
+seal "$WORK/host--vault-${STAGE}.txt.gpg" cat "$QUORUM" || die "the quorum file could not be sealed" 70
 good "vault-${STAGE}.txt taken — the quorum this backup is opened with"
 
 step "the manifest, and the way out"
 RELEASE=$(grep -E '^release:' "/srv/hostyour-cloud/clusters/active/${FQDN}.yaml" 2>/dev/null | head -1 | sed 's/^release:[[:space:]]*//' | tr -d '"'"'")
 root sh -c "cd '$WORK' && { printf 'FQDN=%s\nSTAGE=%s\nID=%s\nRELEASE=%s\nSTORES=%s\n' '$FQDN' '$STAGE' '$ID' '$RELEASE' '$TAKEN'; sha256sum *.gpg; } > manifest.txt" || die 'the manifest could not be written' 70
 say "release on this machine: ${RELEASE:-unknown}"
-rclone copy "$WORK" "$BACKUPS/$ID/" --quiet || die "the archives could not be carried to $BACKUPS/$ID/ — they stand in $WORK on this machine" 69
-LISTED=$(rclone lsf "$BACKUPS/$ID/" 2>/dev/null | wc -l | tr -d ' ')
+root rclone --config "$RCLONE_CONF" copy "$WORK" "$BACKUPS/$ID/" --quiet || die "the archives could not be carried to $BACKUPS/$ID/ — they stand in $WORK on this machine" 69
+LISTING=$(root rclone --config "$RCLONE_CONF" lsf "$BACKUPS/$ID/") || die "the storage box could not be listed under $BACKUPS/$ID/ — the archives stand in $WORK on this machine" 69
+LISTED=$(printf '%s\n' "$LISTING" | grep -c .)
 EXPECTED=$(( TAKEN + 2 ))
 [ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under $BACKUPS/$ID/ and $EXPECTED were sent" 69
 root rm -rf "$WORK"
