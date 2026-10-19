@@ -254,11 +254,12 @@ spec:
       message: "caller labels may not impersonate Tekton task or pod identities."
       reason: Forbidden
     - expression: >-
-        request.operation == 'DELETE' || (has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
+        request.operation == 'DELETE' || (variables.refName.endsWith('-ci') ? !has(object.spec.workspaces) :
+        (has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
         object.spec.workspaces.all(w, w.name == 'source' &&
           !has(w.subPath) && !has(w.persistentVolumeClaim) && !has(w.secret) && !has(w.configMap) &&
-          !has(w.emptyDir) && !has(w.projected) && !has(w.csi)))
-      message: "a managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace."
+          !has(w.emptyDir) && !has(w.projected) && !has(w.csi))))
+      message: "a ci run carries no workspace, its one pod keeps the checkout on a volume of its own task; every other managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace."
       reason: Forbidden
     - expression: "!variables.isReleaseQueue || request.operation == 'DELETE' || (request.operation == 'UPDATE' && (variables.refName.endsWith('-release') || variables.refName.endsWith('-publish')) && variables.unchangedButStatus && variables.startsOrKeepsStatus)"
       message: "the release queue may only start a waiting release or publish run or note what it waits for."

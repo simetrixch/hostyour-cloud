@@ -267,12 +267,4 @@ spec:
             value: $(tt.params.branch)
           - name: git-url
             value: $(tt.params.git-url)
-        workspaces:
-          - name: source
-            volumeClaimTemplate:
-              spec:
-                accessModes: [ReadWriteOnce]
-                resources:
-                  requests:
-                    storage: {{ .Values.workspaces.sourceSize }}
 {{- end }}

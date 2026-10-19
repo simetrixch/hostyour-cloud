@@ -1605,7 +1605,7 @@ bootstrap_template_faults() { # <program> <tree> -> one line per template and ro
 }
 
 # THE ROWS ARE READ AT THE COMMIT ci-sources.json PINS, NEVER FROM A WORKING TREE: on the master's ci
-# out of the bare repository the fetch task makes under CI_SOURCES_DIR, on a machine out of the object
+# out of the bare repository the sources step of the ci task makes under CI_SOURCES_DIR, on a machine out of the object
 # store of the hostyour-deploy clone beside the main checkout, which a worktree finds through its
 # common git directory. A template that needs a new binding moves the pin to the row's commit, and the
 # pin records which rows the templates were held to.
@@ -2050,10 +2050,13 @@ echo 'check: NOT RUN locally — lifecycle/test.sh; runs in the ci of the master
 echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the ci of the master via scripts/test.sh.'
 bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
 echo 'check: NOT RUN locally — scripts/pipeline-publish.test.sh; runs in the ci of the master via scripts/test.sh.'
+bash -n scripts/test.sh || fail 'Bash syntax: scripts/test.sh'
+bash -n scripts/test-pool.test.sh || fail 'Bash syntax: scripts/test-pool.test.sh'
+echo 'check: NOT RUN locally — scripts/test-pool.test.sh; runs in the ci of the master via scripts/test.sh.'
 bash -n scripts/check-mirror-consumers.test.sh || fail 'Bash syntax: scripts/check-mirror-consumers.test.sh'
 echo 'check: NOT RUN locally — scripts/check-mirror-consumers.test.sh; runs in the ci of the master via scripts/test.sh.'
 echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in the ci of the master via scripts/test.sh.'
-for module in scripts/release-queue.test.mjs scripts/site-telemetry.test.mjs scripts/ci-run-keeper.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/tenant-limits.test.mjs scripts/unit-networkpolicy.test.mjs scripts/loki-retention.test.mjs scripts/ingress-access-log-alert.test.mjs scripts/alloy-access-log-strip.test.mjs scripts/site-telemetry-registration.test.mjs scripts/site-telemetry-deployment.test.mjs; do
+for module in scripts/release-queue.test.mjs scripts/site-telemetry.test.mjs scripts/ci-run-keeper.test.mjs scripts/ci-green-status.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/tenant-limits.test.mjs scripts/unit-networkpolicy.test.mjs scripts/loki-retention.test.mjs scripts/ingress-access-log-alert.test.mjs scripts/alloy-access-log-strip.test.mjs scripts/site-telemetry-registration.test.mjs scripts/site-telemetry-deployment.test.mjs; do
   node --check "$module" || fail "Node syntax: $module"
   echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
 done

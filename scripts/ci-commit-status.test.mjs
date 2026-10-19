@@ -8,16 +8,31 @@ import {join} from 'node:path';
 // The ci pipeline sets the commit status tekton/ci with this script: pending after the gate, then the outcome
 // in a finally task. It is run here against a stand-in curl that records each call, so nothing leaves the
 // machine. When the pipeline runs it and with which values is asserted in scripts/build-contract.test.mjs.
+// The outcome task inlines ci-green-status.sh before it, so a success is posted only on a commit with no green status yet.
 
 const SCRIPT = 'clusters/inventories/consumer-build/files/ci-commit-status.sh';
+const GREEN_STATUS = 'clusters/inventories/consumer-build/files/ci-green-status.sh';
 const TOKEN = 'token-that-travels-only-in-a-header-file';
 const COMMIT = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 const RUN_URL = 'https://tekton.example.test/#/namespaces/shop-build/pipelineruns/shop-ci-abc12';
 
 // The stand-in logs its arguments, copies the header file it is given and the body, writes $ANSWER to -o and
 // prints the HTTP code of its call: the Nth word of $CODES, the last word for every call after them (000 is
-// what curl prints when GitHub gave no answer at all). The stand-in sleep only logs how long it was asked to wait.
+// what curl prints when GitHub gave no answer at all). A read of the commit's combined status is answered apart, with
+// $GREEN_CODE (200) and $GREEN_ANSWER (no status), and logged to $READS, so the posts are counted alone. The stand-in sleep only
+// logs how long it was asked to wait.
 const STAND_IN_CURL = `#!/usr/bin/env bash
+case "\${*: -1}" in
+  */commits/*)
+    echo "$*" >> "$READS"
+    answer="\${GREEN_ANSWER:-}"
+    [ -n "$answer" ] || answer='{"statuses":[]}'
+    while [ $# -gt 0 ]; do
+      case "$1" in -o) printf '%s' "$answer" > "$2"; shift 2;; *) shift;; esac
+    done
+    printf '%s' "\${GREEN_CODE:-200}"
+    exit 0;;
+esac
 echo "$*" >> "$CALLS"
 out=
 while [ $# -gt 0 ]; do
@@ -37,22 +52,23 @@ const STAND_IN_SLEEP = `#!/usr/bin/env bash
 echo "$1" >> "$SLEEPS"
 `;
 
-const execute = (env, {codes, answer} = {}) => {
+const execute = (env, {codes, answer} = {}, stand = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'ci-commit-status-'));
   try {
-    const bin = join(dir, 'bin'), seen = join(dir, 'seen'), calls = join(dir, 'calls'), sleeps = join(dir, 'sleeps');
+    const bin = join(dir, 'bin'), seen = join(dir, 'seen'), calls = join(dir, 'calls'), reads = join(dir, 'reads'), sleeps = join(dir, 'sleeps'), script = join(dir, 'script.sh');
+    writeFileSync(script, `${readFileSync(GREEN_STATUS, 'utf8')}\n${readFileSync(SCRIPT, 'utf8')}`);
     mkdirSync(bin);
     mkdirSync(seen);
     for (const [name, text] of [['curl', STAND_IN_CURL], ['sleep', STAND_IN_SLEEP]]) {
       writeFileSync(join(bin, name), text);
       chmodSync(join(bin, name), 0o755);
     }
-    const result = spawnSync('bash', [SCRIPT], {encoding: 'utf8', env: {PATH: `${bin}:${process.env.PATH}`, CALLS: calls, SEEN: seen, SLEEPS: sleeps,
+    const result = spawnSync('bash', [script], {encoding: 'utf8', env: {PATH: `${bin}:${process.env.PATH}`, CALLS: calls, READS: reads, SEEN: seen, SLEEPS: sleeps,
       ...(codes ? {CODES: codes} : {}), ...(answer ? {ANSWER: answer} : {}),
-      GITHUB_TOKEN: TOKEN, REPOSITORY_PATH: 'digitaplatform/shop', COMMIT, RUN_URL, ...env}});
+      GITHUB_TOKEN: TOKEN, REPOSITORY_PATH: 'digitaplatform/shop', COMMIT, RUN_URL, ...stand, ...env}});
     const read = (path) => (existsSync(path) ? readFileSync(path, 'utf8') : undefined);
     const body = read(join(seen, 'body.json'));
-    return {...result, calls: (read(calls) ?? '').split('\n').filter(Boolean), sleeps: (read(sleeps) ?? '').split('\n').filter(Boolean),
+    return {...result, calls: (read(calls) ?? '').split('\n').filter(Boolean), reads: (read(reads) ?? '').split('\n').filter(Boolean), sleeps: (read(sleeps) ?? '').split('\n').filter(Boolean),
       auth: read(join(seen, 'auth')),
       status: result.status, posted: body === undefined ? undefined : JSON.parse(body)};
   } finally {
@@ -97,6 +113,47 @@ test('the status of a stopped run names every way a run is stopped: a newer push
   assert.match(description, /a newer push replaced it/, 'PLANTED INNOCENT: the replaced run keeps its reason');
   assert.match(description, /its branch was deleted/, 'PLANTED DEFECT: a run whose branch was deleted must not be said to be replaced');
   assert.match(description, /its time ran out/);
+});
+
+// The outcome task runs after a run the gate refused, whose commit nothing proved: a value that is no full lowercase SHA-1 is
+// never put into a URL, and a refused run sets no status.
+test('a commit that is no full lowercase SHA-1 posts nothing and ends the task cleanly, whatever the state', () => {
+  for (const state of ['running', 'Succeeded', 'Failed']) {
+    assert.equal(execute({RUN_STATE: state}).calls.length, 1, `PLANTED INNOCENT: the commit of the fixture, ${state}`);
+  }
+  for (const commit of ['', 'abc', COMMIT.toUpperCase(), `${COMMIT}0`, COMMIT.slice(1), `${COMMIT.slice(0, 39)}g`, '$(touch /tmp/planted)', `${COMMIT.slice(0, 30)}/../../x`, 'x'.repeat(40)]) {
+    for (const state of ['running', 'Succeeded', 'Failed']) {
+      const result = execute({RUN_STATE: state, COMMIT: commit || 'unset'});
+      assert.equal(result.status, 0, `PLANTED DEFECT: '${commit}' ends the task without failing it: ${result.stderr}`);
+      assert.deepEqual([result.calls, result.reads, result.posted], [[], [], undefined], `PLANTED DEFECT: '${commit}' reaches GitHub with ${state}`);
+      assert.match(result.stdout, /is not a full lowercase SHA-1, so no status is posted/);
+    }
+  }
+});
+
+// A run that found the commit green already did no check; the status keeps naming the run that did.
+const GREEN = JSON.stringify({state: 'success', statuses: [{context: 'tekton/ci', state: 'success', target_url: 'https://tekton.example.test/#/namespaces/shop-build/pipelineruns/shop-ci-first'}]});
+test('a success is not posted on a commit that carries a green tekton/ci already, and every other outcome is', () => {
+  const green = execute({RUN_STATE: 'Succeeded'}, {answer: undefined, codes: '201'}, {GREEN_ANSWER: GREEN});
+  assert.equal(green.status, 0, green.stderr);
+  assert.deepEqual([green.calls, green.posted], [[], undefined], 'PLANTED DEFECT: a second green status would name the run that did no check');
+  assert.equal(green.reads.length, 1);
+  assert.match(green.stdout, /tekton\/ci is success on digitaplatform\/shop@a1b2c3d\S* already, set by the run shop-ci-first, so nothing is posted/);
+  assert.equal(execute({RUN_STATE: 'Succeeded'}).posted.state, 'success', 'PLANTED INNOCENT: a commit with no status gets its success');
+  for (const [name, answer] of Object.entries({
+    'a failure': {state: 'failure', statuses: [{context: 'tekton/ci', state: 'failure', target_url: 'https://tekton.example.test/x/shop-ci-red'}]},
+    'a pending': {state: 'pending', statuses: [{context: 'tekton/ci', state: 'pending', target_url: 'https://tekton.example.test/x/shop-ci-open'}]},
+    'a green of another context': {state: 'success', statuses: [{context: 'other/ci', state: 'success', target_url: 'https://example.test/x/other-1'}]},
+  })) {
+    assert.equal(execute({RUN_STATE: 'Succeeded'}, {}, {GREEN_ANSWER: JSON.stringify(answer)}).posted.state, 'success', `PLANTED INNOCENT: ${name} is no green tekton/ci`);
+  }
+  const unreadable = execute({RUN_STATE: 'Succeeded'}, {}, {GREEN_CODE: '500', GREEN_ANSWER: '{"message":"Server Error"}'});
+  assert.equal(unreadable.posted.state, 'success', 'PLANTED INNOCENT: a read that fails never counts as green, so the outcome is posted');
+  for (const [state, reasons] of [['Failed', 'Failed'], ['Failed', 'TaskRunTimeout'], ['Completed', '']]) {
+    const posted = execute({RUN_STATE: state, TASK_REASONS: reasons}, {}, {GREEN_ANSWER: GREEN});
+    assert.deepEqual([posted.reads, posted.posted.state === 'success'], [[], false], `${state} ${reasons} reads nothing and posts its own state`);
+  }
+  assert.deepEqual(execute({RUN_STATE: 'running'}, {}, {GREEN_ANSWER: GREEN}).reads, [], 'the pending status of the first step reads nothing');
 });
 
 test('a state that is no state of a run posts nothing and fails the task', () => {

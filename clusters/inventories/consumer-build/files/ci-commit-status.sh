@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Sets the commit status `tekton/ci` of the pushed commit on GitHub, linked to the run in the Tekton
-# Dashboard. The ci pipeline runs it twice: as the task commit-status-pending right after the gate,
+# Dashboard. The ci pipeline runs it twice: as the step commit-status-pending of its task ci right after the gate,
 # with RUN_STATE=running, and as the finally task commit-status with the outcome Tekton reports.
 # scripts/ci-commit-status.test.mjs runs it against a stand-in curl.
 #
-# The outcome is $(tasks.status) and the reasons of the tasks before the finally ones. Tekton counts a
-# task it cancelled as failed: TaskRunCancelled when a newer push replaced the run or its branch was deleted
-# (the ci run keeper cancels a started run gracefully, so this task still runs) or when the time of the run
-# ran out, and
-# TaskRunTimeout when the task's own time ran out. Such a run never finished its check, so the commit
-# gets `error`, not `failure`, which GitHub keeps for a check that ran and failed. A graceful cancel
-# that lands between two tasks cancels no TaskRun and skips the rest, so Tekton reports `Completed`:
-# no task of this pipeline has a when, so a skipped task is always a stopped run, and `Completed` is
-# `error` too, never a passed check.
+# The outcome is $(tasks.status) and the reason of the task ci. Tekton counts a task it cancelled as failed:
+# TaskRunCancelled when a newer push replaced the run or its branch was deleted (the ci run keeper cancels a
+# started run gracefully, so this task still runs) or when the time of the run ran out, and TaskRunTimeout when
+# the task's own time ran out. Such a run never finished its check, so the commit gets `error`, not `failure`,
+# which GitHub keeps for a check that ran and failed. A graceful cancel that lands before the task ci starts
+# skips it, so Tekton reports `Completed`: the one task of this pipeline has no when, so a skipped task is
+# always a stopped run, and `Completed` is `error` too, never a passed check.
+#
+# The commit is validated before anything is posted: 40 lowercase hex, or the script ends at once without a post. The pipeline
+# lets this task run after a run the gate refused, whose commit nothing proved, so a refused run sets no status here.
+# A success is posted only when the commit carries none yet (earlier_green_run of ci-green-status.sh, inlined before this
+# file): a run that found the commit green already did no check, and the status keeps naming the run that did.
 #
 # The token is the unit's statuses token from build-git-https (key `token`): it posts commit statuses on
 # the unit's own repository and writes nothing else. It travels in a header file, so it is in no
@@ -20,6 +23,15 @@
 set -euo pipefail
 
 : "${GITHUB_TOKEN:?}" "${REPOSITORY_PATH:?}" "${COMMIT:?}" "${RUN_URL:?}" "${RUN_STATE:?}"
+
+case "${COMMIT}" in
+  *[!0-9a-f]*) valid=false ;;
+  *) valid=true ;;
+esac
+if [ "${valid}" != true ] || [ "${#COMMIT}" -ne 40 ]; then
+  echo "commit-status: '${COMMIT}' is not a full lowercase SHA-1, so no status is posted"
+  exit 0
+fi
 
 stopped="The run stopped before its check finished: a newer push replaced it, its branch was deleted, or its time ran out."
 case "${RUN_STATE}" in
@@ -37,6 +49,11 @@ case "${RUN_STATE}" in
     exit 1
     ;;
 esac
+
+if [ "${state}" = success ] && earlier="$(earlier_green_run)"; then
+  echo "commit-status: tekton/ci is success on ${REPOSITORY_PATH}@${COMMIT} already, set by the run ${earlier}, so nothing is posted"
+  exit 0
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
