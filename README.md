@@ -102,7 +102,7 @@ A run is one task, `ci`, in one pod, whose steps run one after the other and sha
 `ciScratch.size`; the run carries no workspace. A commit whose head already carries a green `tekton/ci` is not checked
 again: the step `earlier-green` ends the run with the result `earlier-run`, and the status keeps naming the run that did
 the check. The claim `ci-cache` of the unit (`ciCache.size`, evicted by last access when the check step ends) keeps the
-tool archives, the Go and pnpm caches and the helm cache between runs.
+tool archives, the Go, pnpm, npm and pub caches and the helm cache between runs.
 
 Read its runs on the master as the PipelineRuns `hostyour-cloud-ci-*` in the namespace `hostyour-cloud-build`,
 or as the commit status `tekton/ci` on the commit

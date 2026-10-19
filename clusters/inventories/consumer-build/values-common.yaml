@@ -192,8 +192,9 @@ ciCapacity:
 # THE VOLUMES OF A CI RUN. The one pod of a ci run keeps the checkout on an emptyDir of its task, ciScratch.size
 # (the size of the claim a run held before it), which the kubelet evicts the pod for exceeding. ciCache.size is the
 # claim `ci-cache` of each unit (templates/ci-cache.yaml, on the master's local storage class): the check step
-# keeps the Go module and build caches, the helm repository cache, the pnpm content store and the tool archives
-# of a run there, and prints its size and what it evicted, oldest last access first, to stay under it.
+# keeps the Go module and build caches, the helm repository cache, the pnpm content store, the npm and pub package
+# caches and the tool archives of a run there, and prints its size and what it evicted, oldest last access first, to
+# stay under it.
 ciScratch:
   size: 10Gi
 ciCache:

@@ -2756,8 +2756,59 @@ test('the ci cache is one claim per unit on the hostpath class that Argo CD does
   assert.ok(ciStep(pipeline, 'check').script.includes('trap \'ci_cache_trim'), 'the check step trims the cache when it ends, whatever the outcome');
 });
 
-// The trim runs in the check step of every run: the files with the oldest last access go first, until the cache is within the bound.
-const runCacheTrim = (limitKiB, plant) => {
+// A package install that a run repeats is a download per run unless its manager keeps the packages on the claim: go, pnpm, npm,
+// dart and helm each read one variable for it, and the check step sets every one of them under the claim.
+test('the check step points the package cache of every manager it runs at the claim, one directory per version of the manager', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const script = ciStep(pipeline, 'check').script;
+  const PACKAGE_CACHES = ['COREPACK_HOME', 'HELM_CACHE_HOME', 'GOMODCACHE', 'GOCACHE', 'pnpm_config_store_dir', 'PUB_CACHE', 'npm_config_cache'];
+  const unpointed = (text) => PACKAGE_CACHES.filter((name) => !new RegExp(`${name}="\\$\\{(CI_CACHE_DIR|go_cache)\\}`).test(text));
+  assert.deepEqual(unpointed(script), [], 'PLANTED INNOCENT: the seven caches stand under the claim');
+  for (const name of ['PUB_CACHE', 'npm_config_cache']) {
+    assert.deepEqual(unpointed(script.replace(`export ${name}=`, `export ${name}_ELSEWHERE=`)), [name], `PLANTED DEFECT: a check step that leaves ${name} where the manager puts it keeps nothing between runs`);
+  }
+  // The block that sets the two caches of dart and npm, run with stand-in managers that print the version they have.
+  const block = script.slice(script.indexOf('# The package caches of dart'), script.indexOf('if [ -f pnpm-lock.yaml ]'));
+  const root = mkdtempSync(join(tmpdir(), 'ci-package-caches-')), bin = join(root, 'bin');
+  try {
+    mkdirSync(bin);
+    const stand = (name, output, status = 0) => { writeFileSync(join(bin, name), `#!/usr/bin/env bash\necho '${output}'\nexit ${status}\n`); chmodSync(join(bin, name), 0o755); };
+    const run = () => spawnSync('bash', ['-euo', 'pipefail', '-c', `${block}\necho "pub=\${PUB_CACHE-} npm=\${npm_config_cache-}"`],
+      {encoding: 'utf8', env: {PATH: `${bin}:/usr/bin:/bin`, CI_CACHE_DIR: '/ci-cache'}});
+    stand('dart', 'Dart SDK version: 3.13.4 (stable) (Tue Sep 15 01:01:15 2026 -0700) on "linux_x64"');
+    stand('npm', '12.2.0');
+    const both = run();
+    assert.equal(both.status, 0, both.stderr);
+    assert.equal(both.stdout.trim(), 'pub=/ci-cache/pub/3.13.4 npm=/ci-cache/npm/12.2.0', 'PLANTED INNOCENT: one directory per version of dart and of npm');
+    rmSync(join(bin, 'dart'));
+    rmSync(join(bin, 'npm'));
+    const neither = run();
+    assert.equal(neither.status, 0, neither.stderr);
+    assert.equal(neither.stdout.trim(), 'pub= npm=', 'PLANTED INNOCENT: a run without dart or npm sets neither');
+    stand('dart', 'a text that names no version');
+    const unreadable = run();
+    assert.notEqual(unreadable.status, 0, 'PLANTED DEFECT: a dart whose version cannot be read must not put its packages in a directory without a version');
+    assert.match(unreadable.stderr, /the version of dart cannot be read from: a text that names no version/);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+// The trim runs in the check step of every run: the entries with the oldest last access go first, until the cache is within the
+// bound. `limitKiB` is a number, or a function of the planted cache. `then` runs on the cache after the trim.
+const CACHE_TRIM = readFileSync(`${CI_FILES}/ci-cache-trim.sh`, 'utf8');
+// The trim of the first build: file by file, wherever the file lies. Planted as the defect that the whole-directory entries answer.
+const FILE_BY_FILE_TRIM = `ci_cache_trim() {
+  chmod -R u+w "\${CI_CACHE_DIR}"
+  local total; total="$(du -sk "\${CI_CACHE_DIR}" | cut -f1)"
+  while IFS=$'\\t' read -r _ size path; do
+    [ "\${total}" -gt "\${CI_CACHE_LIMIT_KIB}" ] || break
+    rm -f -- "\${path}"
+    total=$((total - (size + 1023) / 1024))
+  done < <(find "\${CI_CACHE_DIR}" -type f -printf '%A@\\t%s\\t%p\\n' | sort -n)
+  find "\${CI_CACHE_DIR}" -mindepth 1 -type d -empty -delete
+}`;
+const runCacheTrim = (limitKiB, plant, {script = CACHE_TRIM, then = () => undefined} = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'ci-trim-')), cache = join(root, 'cache');
   try {
     mkdirSync(cache);
@@ -2766,45 +2817,134 @@ const runCacheTrim = (limitKiB, plant) => {
       writeFileSync(join(cache, name), Buffer.alloc(kib * 1024, 1));
       utimesSync(join(cache, name), accessedAt, accessedAt);
     };
-    plant(file, cache);
-    const script = readFileSync(`${CI_FILES}/ci-cache-trim.sh`, 'utf8');
-    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\nci_cache_trim`], {encoding: 'utf8', env: {...process.env, CI_CACHE_DIR: cache, CI_CACHE_LIMIT_KIB: String(limitKiB)}});
+    plant(file, cache, root);
+    const limit = typeof limitKiB === 'function' ? limitKiB(cache) : limitKiB;
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\nci_cache_trim`], {encoding: 'utf8', env: {...process.env, CI_CACHE_DIR: cache, CI_CACHE_LIMIT_KIB: String(limit)}});
     const left = [];
     const walk = (dir) => readdirSync(dir, {withFileTypes: true}).forEach((entry) => (entry.isDirectory() ? walk(join(dir, entry.name)) : left.push(join(dir, entry.name).slice(cache.length + 1))));
     walk(cache);
-    return {status: result.status, stdout: result.stdout, stderr: result.stderr, left: left.sort()};
+    return {status: result.status, stdout: result.stdout, stderr: result.stderr, left: left.sort(), after: then(cache, root)};
   } finally {
     // A cache of Go modules is read-only, and so is the planted one.
     spawnSync('chmod', ['-R', 'u+w', root]);
     rmSync(root, {recursive: true, force: true});
   }
 };
+const usedKiB = (cache) => Number(spawnSync('du', ['-sk', cache], {encoding: 'utf8'}).stdout.split('\t')[0]);
 
-test('the ci cache trim evicts the files with the oldest last access first until the cache is within its bound, and says what it evicted', () => {
+test('the ci cache trim evicts the entries with the oldest last access first until the cache is within its bound, and says what it evicted', () => {
   const plant = (file) => {
-    file('go/old', 64, 1_000_000_000);
-    file('pnpm/middle', 64, 1_500_000_000);
-    file('helm/new', 64, 2_000_000_000);
+    file('go/go1/build/old', 64, 1_000_000_000);
+    file('pnpm/11.7.0/middle', 64, 1_500_000_000);
+    file('helm/v4/new', 64, 2_000_000_000);
   };
   const over = runCacheTrim(160, plant);
   assert.equal(over.status, 0, over.stderr);
-  assert.deepEqual(over.left, ['helm/new', 'pnpm/middle'], 'PLANTED DEFECT: a cache over its bound loses the file nobody read for longest, and only that one');
-  assert.match(over.stdout, /^ci-cache: \d+ KiB of 160 KiB, evicted 1 files \(64 KiB\), the oldest last access first$/m);
+  assert.deepEqual(over.left, ['helm/v4/new', 'pnpm/11.7.0/middle'], 'PLANTED DEFECT: a cache over its bound loses the entry nobody read for longest, and only that one');
+  assert.match(over.stdout, /^ci-cache: \d+ KiB of 160 KiB, evicted 1 entries \(64 KiB\), the oldest last access first$/m);
+  assert.ok(Number(/^ci-cache: (\d+) KiB/m.exec(over.stdout)[1]) <= 160, 'the size it prints is the size it measured after the eviction');
   const within = runCacheTrim(4096, plant);
-  assert.deepEqual(within.left, ['go/old', 'helm/new', 'pnpm/middle'], 'PLANTED INNOCENT: a cache within its bound loses nothing');
-  assert.match(within.stdout, /evicted 0 files \(0 KiB\)/);
-  const emptied = runCacheTrim(160, (file) => { file('go/only', 64, 1_000_000_000); file('go/also', 64, 1_000_000_001); file('go/third', 64, 1_000_000_002); file('go/last', 64, 1_000_000_003); });
-  assert.deepEqual(emptied.left, ['go/last', 'go/third'], 'the newest stay when several must go');
-  // The module cache of Go makes its directories and files read-only; the trim makes them writable before it removes any.
-  const readOnly = runCacheTrim(100, (file, cache) => {
-    file('go/mod/old', 64, 1_000_000_000);
-    file('go/mod/new', 64, 2_000_000_000);
-    spawnSync('chmod', ['-R', 'a-w', join(cache, 'go')]);
-  });
-  assert.equal(readOnly.status, 0, readOnly.stderr);
-  assert.deepEqual(readOnly.left, ['go/mod/new'], 'PLANTED DEFECT: a read-only module cache over its bound is evicted all the same');
-  const noCache = spawnSync('bash', ['-euo', 'pipefail', '-c', `${readFileSync(`${CI_FILES}/ci-cache-trim.sh`, 'utf8')}\nci_cache_trim`], {encoding: 'utf8', env: {...process.env, CI_CACHE_DIR: '/nonexistent-ci-cache', CI_CACHE_LIMIT_KIB: '1'}});
+  assert.deepEqual(within.left, ['go/go1/build/old', 'helm/v4/new', 'pnpm/11.7.0/middle'], 'PLANTED INNOCENT: a cache within its bound loses nothing');
+  assert.match(within.stdout, /evicted 0 entries \(0 KiB\)/);
+  const emptied = runCacheTrim(160, (file) => { file('go/go1/build/only', 64, 1_000_000_000); file('go/go1/build/also', 64, 1_000_000_001); file('go/go1/build/third', 64, 1_000_000_002); file('go/go1/build/last', 64, 1_000_000_003); });
+  assert.deepEqual(emptied.left, ['go/go1/build/last', 'go/go1/build/third'], 'the newest stay when several must go');
+  const noCache = spawnSync('bash', ['-euo', 'pipefail', '-c', `${CACHE_TRIM}\nci_cache_trim`], {encoding: 'utf8', env: {...process.env, CI_CACHE_DIR: '/nonexistent-ci-cache', CI_CACHE_LIMIT_KIB: '1'}});
   assert.equal(noCache.status, 0, 'a run whose claim is not mounted has nothing to trim');
+});
+
+// What each tool brings back by itself when one file of it is missing, probed on 2026-10-19 with go 1.27.1, pnpm 11.7.0, npm 12.2.0,
+// dart 3.13.4, corepack 0.36.0 and helm 4.3.0: the file stands alone, and only that file goes.
+const SINGLE_FILES = ['archives/0a1b2c', 'corepack/lastKnownGood.json', 'go/go1.24.13/build/ab/ab12-a', 'go/go1.24.13/mod/cache/download/example.com/m/@v/v1.0.0.zip',
+  'go/go1.24.13/mod/cache/download/example.com/m/@v/v1.0.0.ziphash', 'go/go1.24.13/mod/cache/download/example.com/m/@v/v1.0.0.mod', 'pnpm/11.7.0/v11/files/ab/cdef', 'pnpm/11.7.0/v11/index.db',
+  'npm/12.2.0/_cacache/content-v2/sha512/ab/cd/ef', 'pub/3.13.4/hosted-hashes/pub.dev/args-2.7.0.sha256', 'pub/3.13.4/hosted/pub.dev/.cache/args-versions.json', 'helm/v4.3.0/repository/chart-1.0.0.tgz'];
+// What a tool takes as complete as soon as its directory exists: the files of the entry, and the entry itself.
+const DIRECTORY_ENTRIES = {
+  'a module that go extracted': ['go/go1.24.13/mod/example.com/m@v1.0.0', ['go.mod', 'a/a.go', 'b/b.go']],
+  'a module of a nested path that go extracted': ['go/go1.24.13/mod/golang.org/x/text@v0.3.0', ['go.mod', 'unicode/norm/norm.go', 'transform/transform.go']],
+  'a repository that go cloned': ['go/go1.24.13/mod/cache/vcs/0123abcd', ['HEAD', 'objects/pack/pack-1.pack', 'refs/heads/main']],
+  'a package manager that corepack unpacked': ['corepack/v1/pnpm/11.7.0', ['.corepack', 'bin/pnpm.cjs', 'dist/pnpm.mjs']],
+  'a package folder of pub': ['pub/3.13.4/hosted/pub.dev/args-2.7.0', ['pubspec.yaml', 'lib/args.dart', 'lib/src/parser.dart']],
+  'a repository that pub cloned': ['pub/3.13.4/git/cache/shop-0123', ['HEAD', 'objects/pack/pack-1.pack']],
+  'a checkout that pub made': ['pub/3.13.4/git/shop-0123', ['pubspec.yaml', 'lib/shop.dart']],
+};
+
+test('the ci cache trim evicts a directory that a tool takes as complete whole, and a file that stands alone by itself', () => {
+  const oneKiBLess = (cache) => usedKiB(cache) - 1;
+  for (const [what, [entry, files]] of Object.entries(DIRECTORY_ENTRIES)) {
+    // The second file has the oldest last access of the whole cache; a newer file of the entry and a newer entry stand beside it.
+    const plant = (file, cache) => {
+      files.forEach((name, i) => file(`${entry}/${name}`, 4, i === 1 ? 1_000_000_000 : 1_200_000_000 + i));
+      file('go/go1.24.13/build/newer', 64, 2_000_000_000);
+      spawnSync('chmod', ['-R', 'a-w', join(cache, entry)]);
+    };
+    const present = (left) => files.filter((name) => left.includes(`${entry}/${name}`));
+    const whole = runCacheTrim(oneKiBLess, plant);
+    assert.equal(whole.status, 0, `${what}: ${whole.stderr}`);
+    assert.deepEqual(whole.left, ['go/go1.24.13/build/newer'], `PLANTED INNOCENT: ${what} goes whole, the read-only one too`);
+    assert.match(whole.stdout, /evicted 1 entries/, what);
+    const stays = runCacheTrim(4096, plant);
+    assert.deepEqual(present(stays.left), files, `PLANTED INNOCENT: ${what} stays whole within the bound`);
+    // The bound is one KiB below what the cache holds: a trim file by file has enough with the oldest file, the whole entry must go.
+    const partial = runCacheTrim(oneKiBLess, plant, {script: FILE_BY_FILE_TRIM});
+    assert.ok(present(partial.left).length > 0 && present(partial.left).length < files.length,
+      `PLANTED DEFECT: a trim file by file leaves ${what} with ${present(partial.left).length} of ${files.length} files, which its tool never fetches again`);
+  }
+  for (const single of SINGLE_FILES) {
+    const siblings = [`${dirname(single)}/sibling-1`, `${dirname(single)}/sibling-2`];
+    const plant = (file) => { file(single, 64, 1_000_000_000); siblings.forEach((name) => file(name, 64, 2_000_000_000)); };
+    const result = runCacheTrim(oneKiBLess, plant);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.left, siblings.sort(), `PLANTED INNOCENT: ${single} stands alone, so its siblings stay`);
+  }
+});
+
+// The first build of the trim left half a Go module: go takes the directory as complete, so every later run of the unit failed to compile.
+test('a go build still compiles after the trim has evicted the module with the oldest access, and fails after a trim file by file', () => {
+  const zipper = 'package main\n\nimport (\n\t"archive/zip"\n\t"io/fs"\n\t"os"\n\t"path/filepath"\n)\n\nfunc main() {\n\tout, _ := os.Create(os.Args[1])\n\tw := zip.NewWriter(out)\n' +
+    '\troot, prefix := os.Args[2], os.Args[3]\n\tfilepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {\n\t\tif err != nil || d.IsDir() {\n\t\t\treturn err\n\t\t}\n' +
+    '\t\trel, _ := filepath.Rel(root, path)\n\t\tf, _ := w.Create(prefix + filepath.ToSlash(rel))\n\t\tdata, _ := os.ReadFile(path)\n\t\tf.Write(data)\n\t\treturn nil\n\t})\n\tw.Close()\n\tout.Close()\n}\n';
+  // The build cache of go stands outside the planted cache and serves both runs, so the standard library is compiled once.
+  const gocache = mkdtempSync(join(tmpdir(), 'ci-trim-gocache-'));
+  const goEnv = (root, cache) => ({...process.env, GOPROXY: `file://${root}/proxy`, GOSUMDB: 'off', GOFLAGS: '-mod=mod', GOTOOLCHAIN: 'local', GOWORK: 'off',
+    GOPATH: join(root, 'gopath'), GOMODCACHE: join(cache, 'go/go1.24.13/mod'), GOCACHE: gocache, HOME: root});
+  const build = (root, cache) => spawnSync('go', ['build', '-o', '/dev/null', '.'], {cwd: join(root, 'app'), encoding: 'utf8', env: goEnv(root, cache)});
+  const plant = (file, cache, root) => {
+    const files = {'go.mod': 'module example.com/m\n\ngo 1.21\n', 'a/a.go': 'package a\n\nfunc A() string { return "a" }\n', 'b/b.go': 'package b\n\nfunc B() string { return "b" }\n'};
+    mkdirSync(join(root, 'module'), {recursive: true});
+    for (const [name, text] of Object.entries(files)) { mkdirSync(dirname(join(root, 'module', name)), {recursive: true}); writeFileSync(join(root, 'module', name), text); }
+    mkdirSync(join(root, 'proxy/example.com/m/@v'), {recursive: true});
+    writeFileSync(join(root, 'proxy/example.com/m/@v/v1.0.0.info'), '{"Version":"v1.0.0","Time":"2020-01-01T00:00:00Z"}');
+    writeFileSync(join(root, 'proxy/example.com/m/@v/v1.0.0.mod'), files['go.mod']);
+    writeFileSync(join(root, 'zipper.go'), zipper);
+    execFileSync('go', ['run', join(root, 'zipper.go'), join(root, 'proxy/example.com/m/@v/v1.0.0.zip'), join(root, 'module'), 'example.com/m@v1.0.0/'], {env: goEnv(root, cache)});
+    mkdirSync(join(root, 'app'), {recursive: true});
+    writeFileSync(join(root, 'app/go.mod'), 'module shop\n\ngo 1.21\n\nrequire example.com/m v1.0.0\n');
+    writeFileSync(join(root, 'app/main.go'), 'package main\n\nimport "example.com/m/b"\n\nfunc main() { println(b.B()) }\n');
+    const first = build(root, cache);
+    assert.equal(first.status, 0, first.stderr);
+    // The module, extracted, has the oldest access, b/b.go the oldest of it; every file that go downloaded is newer.
+    const module = join(cache, 'go/go1.24.13/mod/example.com/m@v1.0.0');
+    for (const name of Object.keys(files)) utimesSync(join(module, name), name === 'b/b.go' ? 1_000_000_000 : 1_100_000_000, name === 'b/b.go' ? 1_000_000_000 : 1_100_000_000);
+    const stamp = (dir) => readdirSync(dir, {withFileTypes: true}).forEach((entry) => (entry.isDirectory() ? stamp(join(dir, entry.name)) : utimesSync(join(dir, entry.name), 1_900_000_000, 1_900_000_000)));
+    stamp(join(cache, 'go/go1.24.13/mod/cache'));
+  };
+  const after = (cache, root) => ({module: ['a/a.go', 'b/b.go'].map((name) => existsSync(join(cache, 'go/go1.24.13/mod/example.com/m@v1.0.0', name))), build: build(root, cache)});
+  // One KiB below what the cache holds: b/b.go alone would be enough for a trim file by file, and the module is the entry to evict.
+  const bound = (cache) => usedKiB(cache) - 1;
+  try {
+    const trimmed = runCacheTrim(bound, plant, {then: after});
+    assert.equal(trimmed.status, 0, trimmed.stderr);
+    assert.equal(trimmed.after.module[0], trimmed.after.module[1], 'PLANTED INNOCENT: the module is whole or gone, never half');
+    assert.equal(trimmed.after.build.status, 0, `PLANTED INNOCENT: the next run compiles, from the proxy if the module went: ${trimmed.after.build.stderr}`);
+    const halved = runCacheTrim(bound, plant, {script: FILE_BY_FILE_TRIM, then: after});
+    assert.deepEqual(halved.after.module, [true, false], 'a trim file by file takes b/b.go, the oldest file, and leaves the module standing');
+    assert.notEqual(halved.after.build.status, 0, 'PLANTED DEFECT: a trim file by file ends in a unit whose every run fails to compile');
+    assert.match(halved.after.build.stderr, /b\b.*(no such file|does not contain package|no Go files)|(no such file|does not contain package|no Go files).*b\b/s);
+  } finally {
+    // The build cache of go makes nothing read-only, but its module cache does, and so would a cache pointed at it.
+    spawnSync('chmod', ['-R', 'u+w', gocache]);
+    rmSync(gocache, {recursive: true, force: true});
+  }
 });
 
 // Every step after earlier-green ends at once when the commit is green already, and neither earlier-green nor the gate before it does.

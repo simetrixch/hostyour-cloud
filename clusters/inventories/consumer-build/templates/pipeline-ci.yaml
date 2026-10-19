@@ -95,9 +95,11 @@ without ci-tools.json runs as it always did, with the tools of the image.
 
 THE CACHE. The claim `ci-cache` of the unit (templates/ci-cache.yaml, ciCache.size) is mounted by the check step only, at
 /ci-cache: the tool archives of files/ci-install-tools.sh under their sha256 (a kept archive is used only while its
-sha256 still matches the table), the Go module and build caches and the pnpm content store (one directory per tool version),
-the helm repository cache and the corepack home. When the check step ends, whatever the outcome, files/ci-cache-trim.sh
-evicts the files with the oldest last access until the cache is within ciCache.size and prints what it holds and evicted.
+sha256 still matches the table), the Go module and build caches, the pnpm content store, the package caches of dart and npm
+and the helm repository cache (one directory per tool version), and the corepack home. When the check step ends, whatever the
+outcome, files/ci-cache-trim.sh evicts the entries with the oldest last access until the cache is within ciCache.size and
+prints what it holds and evicted. An entry is a file, or a directory that a tool takes as complete once it exists (an extracted
+Go module, an unpacked package manager, a pub package folder): that one goes whole or stays.
 What the cache can poison is bounded by what the tools verify themselves (go.sum, the integrity of pnpm-lock.yaml, the
 sha256 of the table), and no unit reads the cache of another.
 
@@ -640,12 +642,23 @@ spec:
 
               # One directory per tool and version for what the tools keep between runs: the Go module and build caches
               # of the go that stands first on PATH, the pnpm content store of the pnpm that the repository activates.
+              # files/ci-cache-trim.sh names the directories of this layout that it evicts whole.
               if [ -n "$(command -v go)" ]; then
                 go_cache="${CI_CACHE_DIR}/go/$(go env GOVERSION)"
                 mkdir -p "${go_cache}"
                 export GOMODCACHE="${go_cache}/mod" GOCACHE="${go_cache}/build"
               fi
               export pnpm_config_store_dir="${CI_CACHE_DIR}/pnpm/$(pnpm --version)"
+              # The package caches of dart (`dart pub get`) and npm (`npm ci`), one directory per version of the tool that fills it.
+              if [ -n "$(command -v dart)" ]; then
+                dart_version="$(dart --version 2>&1 | sed -n 's/^Dart SDK version: \([^ ]*\) .*/\1/p')"
+                if [ -z "${dart_version}" ]; then
+                  echo "check: the version of dart cannot be read from: $(dart --version 2>&1)" >&2
+                  exit 1
+                fi
+                export PUB_CACHE="${CI_CACHE_DIR}/pub/${dart_version}"
+              fi
+              if [ -n "$(command -v npm)" ]; then export npm_config_cache="${CI_CACHE_DIR}/npm/$(npm --version)"; fi
               if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; fi
               if grep -q '^npm ' <<< "${CI_TOOLS}"; then npm ci; fi
               bash scripts/check.sh
