@@ -3,6 +3,7 @@
 //
 // PER ZONE, platformDomain and unitApex of the books branch's map:
 //   SSL mode Full (strict); the minimum TLS version raised to 1.2 where it stands lower (a higher one stays);
+//   Email Obfuscation off, so the proxy rewrites no address in a page;
 //   the zone-level origin pull certificate of the config uploaded and origin pull on;
 //   the Cloudflare Managed Free Ruleset deployed; the custom rule `hostyour-next-action`, which blocks
 //   (403 on Free) every request carrying a Next-Action header, WebSocket handshakes included; the one
@@ -107,6 +108,8 @@ function changesOf(api, zone, certificate, privateKey) {
   if (!TLS_VERSIONS.includes(tls)) fail(`zone ${zone.name} states min_tls_version ${tls}, which this act cannot compare with ${MINIMUM_TLS}`);
   if (TLS_VERSIONS.indexOf(tls) < TLS_VERSIONS.indexOf(MINIMUM_TLS))
     changes.push({what: `Minimum TLS version to ${MINIMUM_TLS}`, method: 'PATCH', path: `${at}/settings/min_tls_version`, body: {value: MINIMUM_TLS}});
+  if (api('GET', `${at}/settings/email_obfuscation`).value !== 'off')
+    changes.push({what: 'Email Obfuscation off', method: 'PATCH', path: `${at}/settings/email_obfuscation`, body: {value: 'off'}});
   if (!api('GET', `${at}/origin_tls_client_auth`).some(c => samePem(c.certificate ?? '', certificate)))
     changes.push({what: 'upload the origin pull certificate of the config', method: 'POST', path: `${at}/origin_tls_client_auth`,
       body: {certificate, private_key: privateKey}});
