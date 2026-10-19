@@ -162,7 +162,7 @@ monitoring:
           interval: 60s
           rules:
             - alert: PipelineRunFailed
-              expr: increase(tekton_pipelines_controller_pipelinerun_count{status="failed"}[10m]) > 0
+              expr: increase(tekton_pipelines_controller_pipelinerun_total{status="failed"}[10m]) > 0
               for: 1m
               labels:
                 severity: warning
@@ -171,10 +171,12 @@ monitoring:
                 description: "Check `tkn pipelinerun list -A`."
 
             - alert: PipelineRunRunningTooLong
-              expr: time() - max(tekton_pipelines_controller_running_pipelineruns_count > 0) > 1800
+              expr: >-
+                time() - (tekton_pipelinerun_start_timestamp_seconds
+                unless on (cluster, namespace, pipelinerun) tekton_pipelinerun_completion_timestamp_seconds) > 1800
               for: 5m
               labels:
                 severity: warning
               annotations:
-                summary: "Release PipelineRun running > 30 minutes"
+                summary: "PipelineRun {{ $labels.namespace }}/{{ $labels.pipelinerun }} running > 30 minutes"
                 description: "Check for stuck Buildah steps."

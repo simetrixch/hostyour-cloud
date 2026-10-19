@@ -122,7 +122,7 @@ monitoring:
                 summary: "Tekton controller {{ $labels.job }} is down"
 
             - alert: PipelineRunFailed
-              expr: increase(tekton_pipelines_controller_pipelinerun_count{status="failed"}[10m]) > 0
+              expr: increase(tekton_pipelines_controller_pipelinerun_total{status="failed"}[10m]) > 0
               for: 1m
               labels:
                 severity: warning
@@ -142,9 +142,11 @@ monitoring:
                 description: "Release PipelineRuns mount a ReadWriteOnce workspace from several pods; on a second node one of them stays Pending. Set coschedule back to workspaces in clusters/inventories/tekton/templates/release-pipelines.yaml, or make the source workspace ReadWriteMany. With coschedule on workspaces, the affinity-assistant pod of each running ci run carries the ci priority class and takes one ci-pods slot for the whole run, so raise ciCapacity.podsPerUnit in clusters/inventories/consumer-build/values-common.yaml with it, or waiting runs hold every slot and none of their task pods is admitted."
 
             - alert: PipelineRunRunningTooLong
-              expr: time() - max(tekton_pipelines_controller_running_pipelineruns_count > 0) > 1800
+              expr: >-
+                time() - (tekton_pipelinerun_start_timestamp_seconds
+                unless on (cluster, namespace, pipelinerun) tekton_pipelinerun_completion_timestamp_seconds) > 1800
               for: 5m
               labels:
                 severity: warning
               annotations:
-                summary: "Tekton PipelineRun has been running > 30 minutes"
+                summary: "Tekton PipelineRun {{ $labels.namespace }}/{{ $labels.pipelinerun }} has been running > 30 minutes"
