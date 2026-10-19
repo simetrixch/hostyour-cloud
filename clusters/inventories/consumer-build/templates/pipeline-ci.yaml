@@ -1,13 +1,14 @@
 {{- /*
 The unit's ci pipeline `<unit>-ci` — ONE generic pipeline, rendered per unit
 from this template beside `<unit>-release`. Every push of the default branch
-or of a `ci/` branch runs the repository's own scripts/check.sh at the pushed
-commit, so red is seen on the build plane and not only on the machine of
-whoever pushed. The whole run is ONE task, `ci`, in ONE pod, whose steps run
-one after the other:
+or of a `ci/` branch of a repository that ciPush.repositories lists
+(clusters/inventories/image-builder) runs the repository's own scripts/test.sh
+at the pushed commit: the suites its push gate does not run. The push gate ran
+scripts/check.sh before the push, so the ci never runs it a second time. The
+whole run is ONE task, `ci`, in ONE pod, whose steps run one after the other:
 
   gate → earlier-green → commit-status-pending → clone@commit → describe →
-  branches → list-sources → list-tools → sources → hand-over → check,
+  list-sources → list-tools → sources → hand-over → check,
 
 and two finally tasks: report-failure mails the error lines of the step that
 failed, and commit-status sets the commit status tekton/ci to the outcome.
@@ -45,8 +46,8 @@ The trust split:
 THE CHECK RUNS THE REPOSITORY'S OWN CODE and holds nothing worth stealing:
 no ServiceAccount token (pipeline-sa mounts none), no clone credential, and never the GitOps write tokens of
 the release bump, which this Pipeline does not reference at all. What keeps the credential away is the
-mounts of the steps and not the pods: build-git-https is mounted by earlier-green, commit-status-pending, clone,
-branches and sources only, the check step mounts none, and it is the LAST step, so it runs after every step that
+mounts of the steps and not the pods: build-git-https is mounted by earlier-green, commit-status-pending, clone
+and sources only, the check step mounts none, and it is the LAST step, so it runs after every step that
 holds one. Two secrets are in reach of the check. build-npmrc, the registry's pull identity, is mounted read-only
 as the user npmrc because `pnpm install` cannot read the npm packages this build plane publishes without it.
 build-issues-read is GITHUB_TOKEN, a token that reads the issues of the unit's
@@ -70,7 +71,7 @@ repository and the sources the ci-sources.json of its DEFAULT branch names,
 and nothing else, so a source a branch adds is fetched once the default branch
 names it; for a PAT unit, whatever the owner's PAT reads.
 
-WHAT THE CHECK NEEDS, read from the check.sh of every unit: Node 24, pnpm,
+WHAT THE CHECK NEEDS: Node 24, pnpm,
 git and bash; a mongod, which mongodb-memory-server downloads on first use; a
 Chrome for the tests of a unit that prints PDFs; and helm, yq and jq for the
 units whose check renders charts or reads JSON. One public image carries all but
@@ -89,9 +90,10 @@ a sha256 and an https url per tool and version, unpacks it only after the sha256
 matched and puts it before the image's own tools on PATH. A version the table
 lacks fails the run; the table is the only place a version is allowed from, so a
 repository cannot make the check download whatever it names. A repository that
-names npm is installed with `npm ci`, one with pnpm-lock.yaml with pnpm, and one
-with ci-tools.json runs its scripts/test.sh after scripts/check.sh. A repository
-without ci-tools.json runs as it always did, with the tools of the image.
+names npm is installed with `npm ci`, and one with pnpm-lock.yaml with pnpm. Then
+the check runs scripts/test.sh. A repository without it fails the run and is
+named: the ci has nothing to run for it that its push gate did not, so it does
+not belong in ciPush.repositories.
 
 THE CACHE. The claim `ci-cache` of the unit (templates/ci-cache.yaml, ciCache.size) is mounted by the check step only, at
 /ci-cache: the tool archives of files/ci-install-tools.sh under their sha256 (a kept archive is used only while its
@@ -176,7 +178,7 @@ metadata:
     image-builder.io/ci: {{ $unit | quote }}
 spec:
   description: >-
-    Runs the repository's scripts/check.sh at one pushed commit. When a task
+    Runs the repository's scripts/test.sh at one pushed commit. When a task
     fails, the finally task report-failure mails the last 60 lines of the step
     that failed through Alertmanager.
   params:
@@ -196,9 +198,9 @@ spec:
   tasks:
     # ── ci — the whole run in ONE pod ─────────────────────────────────────────
     # The steps run one after the other in one pod, in this order: gate, earlier-green, commit-status-pending, clone,
-    # describe, branches, list-sources, list-tools, sources, hand-over, check. What keeps a credential away from the
+    # describe, list-sources, list-tools, sources, hand-over, check. What keeps a credential away from the
     # repository's code is the mounts of the steps and not the pods: only gate-adjacent steps mount build-git-https
-    # (earlier-green, commit-status-pending, clone, branches, sources), the check step mounts none, and it is the last
+    # (earlier-green, commit-status-pending, clone, sources), the check step mounts none, and it is the last
     # step, so it runs after every step that holds a credential. The checkout lives on the emptyDir `scratch` of this
     # task, in the folders repository and sources.
     - name: ci
@@ -387,41 +389,13 @@ spec:
             computeResources:
               requests: { cpu: 50m, memory: 64Mi }
               limits: { cpu: 200m, memory: 128Mi }
-          # ── fetch — what the check compares against and what it reads ────────
-          # The clone fetches the one commit and nothing else, so no origin/<branch>
-          # exists, and the git of this pod and of the check step never names the
-          # default branch of such a clone: origin/HEAD is set here, from the remote.
-          # A check that diffs against its default branch (a freeze guard that reads
-          # origin/master, a release probe that reads origin/HEAD) would refuse every
-          # run. A check may also read the pinned commits of sibling repositories
-          # (SOURCES OF OTHER REPOSITORIES above). Both fetches need the clone
-          # credential, which the check step must never hold, so they run in steps of their own.
-          # Each credential store lives in /tmp of its own container, never in the
-          # checkout, and the step that reads ci-sources.json holds no credential.
-          - name: branches
-            image: {{ $gitImage }}
-            envFrom:
-              - secretRef:
-                  name: build-git-https
-            workingDir: /workspace/source
-            volumeMounts:
-{{ include "consumer-build.ciScratchMounts" (dict "repository" "rw") | indent 14 }}
-            script: |
-              #!/usr/bin/env sh
-{{ include "consumer-build.ciEarlierGreenGuard" . | indent 14 }}
-              set -eu
-              printf '%s\n' "${GITCREDENTIALS}" > /tmp/git-credentials
-              chmod 600 /tmp/git-credentials
-              export HOME=/tmp
-              git config --global credential.helper "store --file=/tmp/git-credentials"
-              git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
-              git remote set-head origin --auto
-              echo "fetch: ok — the branch heads of origin are at refs/remotes/origin"
-            # The fetch takes every branch head: 95 MiB of anonymous memory
-            # for 183 branches, the most of the repositories measured.
-            computeResources:
-              requests: { cpu: 50m, memory: 128Mi }
-              limits: { cpu: 500m, memory: 256Mi }
+          # ── fetch — the pinned commits of sibling repositories the check reads ──
+          # (SOURCES OF OTHER REPOSITORIES above). The fetch needs the clone credential,
+          # which the check step must never hold, so it runs in a step of its own, with
+          # its credential store in /tmp of its own container, never in the checkout;
+          # the step that reads ci-sources.json holds no credential. The clone fetches
+          # the one commit and no branch head: the suites of scripts/test.sh compare
+          # against no branch, and the push gate, which does, ran before the push.
           # Reads the branch's ci-sources.json into "<repository> <commit>"
           # lines, refusing any name that is not a plain repository name and
           # any commit that is not a full SHA-1, so the step that holds the
@@ -521,7 +495,7 @@ spec:
           # The steps above run as root and leave the clone to root; the check runs as a user
           # without root and has to write into it (node_modules, build output, the test databases).
 {{ include "consumer-build.handOverStep" (dict "image" $gitImage "folders" "/workspace/source" "guard" (include "consumer-build.ciEarlierGreenGuard" .) "mounts" (include "consumer-build.ciScratchMounts" (dict "repository" "rw"))) | indent 10 }}
-          # ── check — the repository's own scripts/check.sh ───────────────────
+          # ── check — the repository's own scripts/test.sh ────────────────────
           # The last step: it runs after every step that holds a credential, and it mounts none.
           - name: check
             image: {{ include "consumer-build.nodeImage" $ }}
@@ -661,8 +635,11 @@ spec:
               if [ -n "$(command -v npm)" ]; then export npm_config_cache="${CI_CACHE_DIR}/npm/$(npm --version)"; fi
               if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; fi
               if grep -q '^npm ' <<< "${CI_TOOLS}"; then npm ci; fi
-              bash scripts/check.sh
-              if [ -f ci-tools.json ] && [ -f scripts/test.sh ]; then bash scripts/test.sh; fi
+              if [ ! -f scripts/test.sh ]; then
+                echo "check: FAIL — this repository has no scripts/test.sh, so the ci has nothing to run that its push gate did not; take it out of ciPush.repositories" >&2
+                exit 1
+              fi
+              bash scripts/test.sh
 
   finally:
     # ── report-failure — one mail for a failed run, with the error in it ──────

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Fixture suites run in the ci of the master (the check step of the ci pipeline, after scripts/check.sh), never on the shared workstation.
+# Fixture suites run in the ci of the master (the check step of the ci pipeline), never on the shared workstation. The ci runs no
+# scripts/check.sh, so this file builds whatever its suites need by itself.
 # The suites share nothing: each works in a temporary directory of its own and listens only on a port the kernel hands it, so TEST_JOBS of them
 # run at once (4 unless set). The charts they render get their dependencies first, one chart after the other, because two suites that rendered
 # one chart before its charts/ directory stood would write it together. The output of a suite is kept in a log of its own and printed in the order
@@ -9,30 +10,6 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 fail() { echo "test: FAIL — $1"; exit 1; }
-
-# The chart dependencies the suites render: "<update|build> <chart>".
-chart_dependencies=(
-  "update clusters/inventories/observability"
-  "update clusters/inventories/postfix"
-  "build clusters/inventories/manager"
-  "update clusters/inventories/redis"
-  "update clusters/units/redis"
-  "update clusters/units/postgresql"
-  "update clusters/units/mariadb"
-  "update clusters/units/mongodb"
-  "update clusters/units/networkpolicy"
-  "update clusters/units/quota"
-  "update clusters/inventories/service-provisioner"
-  "update clusters/inventories/cert-manager"
-  "update clusters/inventories/trust-manager"
-  "build clusters/inventories/e2e-runner"
-  "build clusters/inventories/gate-runner"
-  "update clusters/inventories/forgejo"
-  "update clusters/inventories/plane"
-  "update clusters/inventories/forgejo-build"
-  "update clusters/inventories/image-builder"
-  "build clusters/inventories/registry"
-)
 
 suite_files=()
 suite_notes=()
@@ -121,9 +98,14 @@ if [ "${1:-}" = --suite ]; then
   exit 0
 fi
 
-for dependency in "${chart_dependencies[@]}"; do
-  # shellcheck disable=SC2086 # "<verb> <chart>" is two words
-  helm dependency $dependency || fail "helm dependency $dependency"
+# The dependencies of every chart, by the rule of scripts/check.sh: update every chart whose dependencies name a
+# repository, and leave a vendored one alone. The suites render charts from every folder, and a hand-kept list of
+# them misses the next one a suite starts to render.
+for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ clusters/argocd/; do
+  chart="${chart%/}"
+  [ -f "$chart/Chart.yaml" ] || continue
+  grep -qE '^[[:space:]]+repository:' "$chart/Chart.yaml" || continue
+  out="$(helm dependency update "$chart" 2>&1)" || { echo "$out"; fail "helm dependency update $chart"; }
 done
 
 TEST_LOGS="$(mktemp -d)"

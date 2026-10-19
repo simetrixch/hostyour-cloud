@@ -99,7 +99,7 @@ test('a red clone says that the commit was not cloned', () => {
 });
 
 test('the failed step is the first that exited with a code other than 0, and the subject of the commit survives it', () => {
-  for (const step of ['branches', 'sources', 'hand-over']) {
+  for (const step of ['list-tools', 'sources', 'hand-over']) {
     const result = execute({taskRuns: withFailure(step), logs: {[`${RUN}-ci-pod`]: `${step} broke\n`}});
     const alert = only(result.alerts);
     assert.equal(alert.labels.step, step, `PLANTED DEFECT: the steps after ${step} are failed too, and none of them is the one to name`);
