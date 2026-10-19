@@ -11,9 +11,11 @@ description: |
   the install branch.
 type: application
 dependencies:
+  # Vendored as the folder charts/plane-ce, upstream plus the two-line patch in vendor/: plane-ce names its
+  # two Jobs with the Helm release revision, which Argo CD renders as 1 every time, so a new Plane
+  # version never got a new migration Job. The patch names them by the images they run.
   - name: plane-ce
     version: 1.8.5
-    repository: oci://zot.master.digitacloud.app/simetrixch/helm.plane.so
   - name: external-secret
     version: 1.0.0
     repository: file://../../charts/external-secret

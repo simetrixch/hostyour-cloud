@@ -21,9 +21,9 @@ fail() { echo "check: FAIL — $1"; exit 1; }
 # the first two have run costs a minute for an answer that was knowable at the start.
 #
 # base64 decodes rendered values; yq reads the version stamp declarations; promtool runs the rule
-# tests.
+# tests; patch reverses the patch of the vendored Plane chart.
 missing=""
-for tool in helm gitleaks base64 yq node promtool; do
+for tool in helm gitleaks base64 yq node promtool patch; do
   command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
 done
 [ -n "$missing" ] && fail "these tools are not on this path:$missing"
@@ -1235,8 +1235,10 @@ echo "check: the Headlamp container is given -oidc-scopes; the check refuses a p
 # neither host, and no inventory names ghcr.io at all. Such a chart is vendored instead: its dependency names no
 # repository, its archive <name>-<version>.tgz stands in its charts/ folder, holds that version in its own
 # Chart.yaml (helm renders a stale archive without a word), and has exactly one line in
-# clusters/platform/charts.sha256, which `sha256sum --check` holds it to. The waves are read from the app.yaml
-# files, so the set moves with the registry's wave.
+# clusters/platform/charts.sha256, which `sha256sum --check` holds it to. A chart that also depends on charts of
+# this repository stands unpacked in its charts/ folder instead, because Helm builds its dependencies and takes a
+# dependency without a repository only as a folder; vendored_patch_fault holds that folder. The waves are read
+# from the app.yaml files, so the set moves with the registry's wave.
 zot_host="${mirror_prefix%%/*}"
 charts_fault() { # <tree root> <file listing its vendored archives> -> the first fault, or nothing
   local root="$1" archives="$2" registry_wave app wave chart name version repository archive lines out
@@ -1261,6 +1263,7 @@ charts_fault() { # <tree root> <file listing its vendored archives> -> the first
             return
           fi ;;
         '')
+          [ -f "$chart/charts/$name/Chart.yaml" ] && continue
           archive="${chart#"$root/"}/charts/$name-$version.tgz"
           grep -qxF "$archive" "$archives" || { echo "${chart#"$root/"} names no repository for $name, and $archive is no vendored archive"; return; }
           [ "$(tar -xzOf "$root/$archive" "$name/Chart.yaml" 2>/dev/null | yq '.version')" = "$version" ] \
@@ -1283,6 +1286,9 @@ plant_charts() { # <name> <a command run in the copy> -> the fault the check fin
   for app in clusters/inventories/*/app.yaml; do
     mkdir -p "$copy/$(dirname "$app")" && cp "$app" "$copy/$app"
     [ -f "$(dirname "$app")/Chart.yaml" ] && cp "$(dirname "$app")/Chart.yaml" "$copy/$(dirname "$app")/"
+    for folder in "$(dirname "$app")"/charts/*/; do
+      [ -f "$folder/Chart.yaml" ] && mkdir -p "$copy/$folder" && cp "$folder/Chart.yaml" "$copy/$folder"
+    done
   done
   while read -r archive; do mkdir -p "$copy/$(dirname "$archive")" && cp "$archive" "$copy/$archive"; done < "$work/vendored-charts"
   cp "$work/vendored-charts" "$copy.archives"
@@ -1308,6 +1314,64 @@ for row in "${planted_charts[@]}"; do
   case "$fault" in *"$expected"*) ;; *) fail "charts_fault does not refuse the planted chart defect '$name' as expected ('$expected'): ${fault:-it found nothing}" ;; esac
 done
 echo "check: $(grep -c . "$work/vendored-charts") vendored chart archive holds its line in clusters/platform/charts.sha256 and its version; no inventory up to the registry's sync wave fetches a chart from ghcr.io or zot, and none fetches one from ghcr.io; the check refuses ${#planted_charts[@]} planted defects."
+
+# THE PLANE CHART IS VENDORED UNPACKED AND PATCHED: clusters/inventories/plane/charts/plane-ce. Unpacked, because
+# the plane chart also depends on charts of this repository, so Helm builds its dependencies, and Helm accepts a
+# dependency that names no repository only as a folder. The claim "this folder is upstream plus the patch, and
+# nothing else" is held here and by no comment: the patch must apply in reverse without fuzz, and the result must be
+# exactly the files, and only the files, of vendor/plane-ce-<version>.upstream.sha256, which lists each file of the
+# upstream archive but its README.md with its sha256. The README is not vendored: it names upstream addresses that
+# scripts/check-mirror-consumers.sh refuses in every tracked file, and Helm renders nothing from it. The folder's own Chart.yaml must hold the version the dependency names, or
+# Helm renders a stale folder without a word.
+vendored_patch_fault() { # <tree root> -> the first fault, or nothing
+  local root="$1" plane="$1/clusters/inventories/plane" version patch_file upstream copy listed found
+  version="$(yq '.version' "$plane/charts/plane-ce/Chart.yaml" 2>/dev/null)"
+  [ "$(yq '.dependencies[] | select(.name == "plane-ce") | .version' "$plane/Chart.yaml")" = "$version" ] \
+    || { echo "clusters/inventories/plane/Chart.yaml names plane-ce $(yq '.dependencies[] | select(.name == "plane-ce") | .version' "$plane/Chart.yaml"), and the vendored folder holds plane-ce ${version:-nothing} in its own Chart.yaml"; return; }
+  patch_file="$plane/vendor/plane-ce-$version.patch"
+  upstream="$plane/vendor/plane-ce-$version.upstream.sha256"
+  [ -f "$patch_file" ] && [ -f "$upstream" ] || { echo "clusters/inventories/plane/vendor holds no plane-ce-$version.patch and plane-ce-$version.upstream.sha256"; return; }
+  copy="$(mktemp -d "$work/vendored-patch.XXXXXX")" && cp -R "$plane/charts/plane-ce" "$copy/plane-ce" || { echo "the vendored plane-ce could not be copied"; return; }
+  (cd "$copy" && patch -R -p1 -F0 -s --no-backup-if-mismatch < "$patch_file" >/dev/null 2>&1) \
+    || { echo "plane-ce-$version.patch does not apply in reverse to the vendored plane-ce, so the folder does not hold the patch"; return; }
+  found="$(cd "$copy" && find plane-ce -type f | grep -c .)"
+  listed="$(grep -c . "$upstream")"
+  [ "$found" = "$listed" ] || { echo "the vendored plane-ce with the patch reversed holds $found files, and plane-ce-$version.upstream.sha256 lists $listed"; return; }
+  (cd "$copy" && sha256sum --check --strict --quiet "$upstream" >/dev/null 2>&1) \
+    || { echo "the vendored plane-ce with the patch reversed is not the upstream chart listed in plane-ce-$version.upstream.sha256"; return; }
+}
+fault="$(vendored_patch_fault "$root")"
+[ -z "$fault" ] || fail "$fault"
+# The planted defects, each in a copy: a patched template line edited by hand; a template line the patch does not
+# touch edited by hand; the patch with its added line changed; the patch with its restored line changed; a file
+# added to the folder; a file removed; the unpatched upstream chart; the dependency stamped to another version. The
+# planted innocent: every file given another modification time.
+plant_vendor() { # <name> <a command run in the copy> -> the fault the check finds in that copy, or nothing
+  local copy="$work/planted-vendor/$1"
+  rm -rf "$copy" && mkdir -p "$copy/clusters/inventories" || return 1
+  cp -R clusters/inventories/plane "$copy/clusters/inventories/plane" || return 1
+  ( cd "$copy" && eval "$2" ) || return 1
+  vendored_patch_fault "$copy"
+}
+pl=clusters/inventories/plane
+planted_vendor=(
+  "patched-line|sed -i 's/trunc 8/trunc 9/' $pl/charts/plane-ce/templates/workloads/migrator.job.yaml|does not apply in reverse"
+  "other-line|sed -i '1s/\$/ # edited/' $pl/charts/plane-ce/templates/workloads/migrator.job.yaml|is not the upstream chart"
+  "hunk-added|sed -i 's/trunc 8/trunc 9/' $pl/vendor/plane-ce-1.8.5.patch|does not apply in reverse"
+  "hunk-restored|sed -i 's/^-  name: {{ .Release.Name }}-api-migrate-{{ .Release.Revision }}\$/-  name: {{ .Release.Name }}-api-migrate-edited/' $pl/vendor/plane-ce-1.8.5.patch|is not the upstream chart"
+  "added|echo extra > $pl/charts/plane-ce/templates/extra.yaml|holds 31 files, and plane-ce-1.8.5.upstream.sha256 lists 30"
+  "removed|rm $pl/charts/plane-ce/.helmignore|holds 29 files"
+  "unpatched|(cd $pl/charts && patch -R -p1 -s < ../vendor/plane-ce-1.8.5.patch)|does not apply in reverse"
+  "stamped|sed -i 's/^    version: 1.8.5\$/    version: 1.8.6/' $pl/Chart.yaml|names plane-ce 1.8.6"
+)
+for row in "${planted_vendor[@]}"; do
+  IFS='|' read -r name command expected <<< "$row"
+  fault="$(plant_vendor "$name" "$command")" || fail "the planted vendored-chart defect '$name' could not be planted"
+  case "$fault" in *"$expected"*) ;; *) fail "vendored_patch_fault does not refuse the planted vendored-chart defect '$name' as expected ('$expected'): ${fault:-it found nothing}" ;; esac
+done
+fault="$(plant_vendor retimed "find $pl/charts -type f -exec touch -d 2001-01-01 {} +")" || fail "the planted innocent vendored-chart case could not be planted"
+[ -z "$fault" ] || fail "vendored_patch_fault refuses the planted innocent case, every file given another modification time: $fault"
+echo "check: the vendored plane-ce folder is the upstream chart plus plane-ce-$(yq '.version' clusters/inventories/plane/charts/plane-ce/Chart.yaml).patch, and nothing else; the check refuses ${#planted_vendor[@]} planted defects and passes the innocent case."
 
 push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
   helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
@@ -2024,5 +2088,25 @@ while IFS= read -r -d '' file; do
     || fail "the committable files could not be collected for the credential scan"
 done < "$list"
 gitleaks detect --redact --no-git --no-banner --source "$scan" || fail "gitleaks found a credential"
+# The allowlist of .gitleaks.toml for the two public default keys of the vendored plane-ce values.yaml hides those
+# two values in that file and nothing else. The planted defects, each in a copy of the config and that file: a third
+# key-shaped value added to it; one of the two values written into another file. The planted innocent: the file
+# as vendored.
+plant_leak() { # <name> <a command run in the copy> -> 0 when gitleaks finds nothing in that copy, 1 when it finds a leak
+  local copy="$work/planted-leaks/$1" status
+  rm -rf "$copy" && mkdir -p "$copy/$pl/charts/plane-ce" || fail "the planted leak '$1' could not be planted"
+  cp .gitleaks.toml "$copy/" && cp "$pl/charts/plane-ce/values.yaml" "$copy/$pl/charts/plane-ce/" || fail "the planted leak '$1' could not be planted"
+  ( cd "$copy" && eval "$2" ) || fail "the planted leak '$1' could not be planted"
+  gitleaks detect --redact --no-git --no-banner --source "$copy" >/dev/null 2>&1
+  status=$?
+  [ "$status" -le 1 ] || fail "gitleaks failed on the planted leak '$1' with status $status"
+  return "$status"
+}
+plant_leak vendored true || fail "gitleaks reports the vendored plane-ce values.yaml, whose public default keys .gitleaks.toml allows"
+plant_leak third "sed -i 's|^  sentry_dsn: \"\"|  admin_secret_key: \"Zk3Qw9Lm2Xv7Bn5Rt1Yc4Hd6Jp0Sf8Ga\"\n&|' $pl/charts/plane-ce/values.yaml" \
+  && fail "gitleaks does not report a third key-shaped value added to the vendored plane-ce values.yaml"
+plant_leak elsewhere "printf 'secret_key: \"60gp0byfz2dvffa45cxl20p1scy9xbpf6d8c5y0geejgkyp1b5\"\\n' > other.yaml" \
+  && fail "gitleaks does not report a public default key of plane-ce written into another file"
+echo "check: the .gitleaks.toml allowlist for plane-ce's public default keys hides them in the vendored values.yaml only; gitleaks reports 2 planted defects and passes the innocent case."
 
 echo "check: OK — every check green"

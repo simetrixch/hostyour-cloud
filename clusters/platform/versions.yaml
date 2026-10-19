@@ -373,6 +373,28 @@ charts:
         tree: platform
         file: clusters/inventories/forgejo/Chart.yaml
         dependency: forgejo
+  # VENDORED, PATCHED, UNPACKED: clusters/inventories/plane/charts/plane-ce is the upstream chart plus
+  # clusters/inventories/plane/vendor/plane-ce-<version>.patch, which names the chart's two Jobs by a hash of
+  # the images they run, where the chart names them by the Helm release revision (Argo CD renders it as 1
+  # every time, so a new Plane version never got a new migration Job). The folder stands unpacked because the
+  # plane chart also depends on charts of this repository, and Helm takes a dependency without a repository
+  # only as a folder. A bump stamps the version into Chart.yaml, and scripts/check.sh stays red until the folder
+  # follows. The chart is pulled from the chart repository helm.plane.so, as the address <repository> with the
+  # https scheme in front:
+  #   helm pull plane-ce --repo <repository> --version <version> -d <folder>
+  #   curl -fsS <repository>/index.yaml
+  # The sha256 of the pulled archive is the `digest:` of the plane-ce entry at <version> in that index:
+  #   echo "<digest>  <folder>/plane-ce-<version>.tgz" | sha256sum --check
+  # The archive of 1.8.5 has the digest 9d68ae1eb2d9e1a6181d1779063fa7feb949fcd48de31b2df4d847ea1eece755. That
+  # hex is declared here, and no check reads it. To prove it again: pull the archive, check it against the digest
+  # of the index, unpack it, and run `sha256sum --check --strict` of vendor/plane-ce-1.8.5.upstream.sha256 in the
+  # unpacked folder once its README.md is deleted, which scripts/check-mirror-consumers.sh would refuse for the
+  # upstream addresses it names, and which holds the list of files to upstream. Then, for the new version:
+  #   delete README.md from the unpacked archive, write vendor/plane-ce-<version>.upstream.sha256 from it, one line
+  #     per file (find plane-ce -type f | sort | xargs sha256sum), and unpack it into clusters/inventories/plane/charts/
+  #   patch -p1 < the old patch file, run inside charts/ (a hunk that no longer applies means upstream moved)
+  #   write the patch file anew as vendor/plane-ce-<version>.patch, and git rm the old folder and the old vendor files
+  # scripts/check.sh stays red until all of it is done together.
   plane-ce:
     version: "1.8.5"
     upstream:

@@ -124,6 +124,8 @@ export function probeImmutableChanges() {
   const job = {apiVersion: 'batch/v1', kind: 'Job', metadata: {name: 'init'}, spec: {template: {spec: {containers: [{name: 'init', image: 'before'}]}}}};
   const changedJob = structuredClone(job); changedJob.spec.template.spec.containers[0].image = 'after';
   assert.equal(immutableChanges([job], [changedJob]).length, 1);
+  // plane-ce names its Jobs by a hash of their images: a new image under a new name is a new identity, not a changed one.
+  assert.deepEqual(immutableChanges([job], [{...changedJob, metadata: {...changedJob.metadata, name: 'init-after'}}]), []);
   const annotations = {'argocd.argoproj.io/hook': 'Sync', 'argocd.argoproj.io/hook-delete-policy': 'BeforeHookCreation,HookSucceeded'};
   const hook = {...job, metadata: {...job.metadata, annotations}};
   const changedHook = {...changedJob, metadata: {...changedJob.metadata, annotations}};

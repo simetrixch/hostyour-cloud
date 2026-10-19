@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {cpSync, mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import test from 'node:test';
 import {applicationOf, driftFindings, renderChart, renderTwice} from './render-chart.mjs';
 
@@ -18,6 +20,10 @@ const FORWARD_AUTH = 'idp-forwardauth@kubernetescrd';
 const MIDDLEWARES = 'traefik.ingress.kubernetes.io/router.middlewares';
 // The values plane-ce 1.8.5 falls back to, public in its own values.yaml.
 const PUBLIC_DEFAULTS = ['60gp0byfz2dvffa45cxl20p1scy9xbpf6d8c5y0geejgkyp1b5', 'htbqvBJAgpm9bzvf3r4urJer0ENReatceh', 'plane:plane@'];
+
+// plane-ce names its two Jobs by a hash of the images they run (clusters/inventories/plane/vendor).
+const MIGRATION_JOB = /^plane-api-migrate-[0-9a-f]{8}$/;
+const BUCKET_JOB = /^plane-minio-bucket-[0-9a-f]{8}$/;
 
 /** Every way the render breaks the rules above, named. */
 function renderFindings(objects) {
@@ -68,7 +74,6 @@ function renderFindings(objects) {
   const silo = pins['plane-silo'];
   const store = objects.find(o => o.kind === 'StatefulSet' && o.metadata.name === 'plane-minio-wl')?.spec.template.spec.containers.map(c => c.image);
   if (JSON.stringify(store) !== JSON.stringify([`docker.io/${silo.upstream.image}:${silo.version}`])) found.push(`minio runs ${store?.join(', ') ?? 'nothing'}, not docker.io/${silo.upstream.image}:${silo.version} of versions.yaml`);
-
   const text = JSON.stringify(objects);
   for (const value of PUBLIC_DEFAULTS) if (text.includes(value)) found.push(`a public default of the chart renders: ${value}`);
   const chartSecrets = objects.filter(o => o.kind === 'Secret').map(o => o.metadata.name);
@@ -192,7 +197,8 @@ test('PLANTED INNOCENT: more replicas of the web app and a larger upload limit c
 // immutable, so one changed field fails every sync of plane, and the RollingSync waits behind it.
 const [first, second] = renderTwice('plane');
 const STAMPED = ['admin', 'api', 'beat-worker', 'live', 'space', 'web', 'worker'].map(name => `Deployment/plane-${name}-wl`)
-  .concat('Job/plane-api-migrate-1').map(object => `${object} /spec/template/metadata/annotations/timestamp`);
+  .concat(`Job/${first.find(o => o.kind === 'Job' && MIGRATION_JOB.test(o.metadata.name)).metadata.name}`)
+  .map(object => `${object} /spec/template/metadata/annotations/timestamp`);
 
 test('a render a second later changes nothing a sync of plane writes', () => {
   assert.deepEqual(driftFindings(first, second, applicationOf(app)), []);
@@ -207,4 +213,61 @@ test('PLANTED DEFECT: the plain chart, and the timestamp ignored without Respect
 
 test('PLANTED INNOCENT: more replicas of the web app, rendered twice, change nothing a sync writes', () => {
   assert.deepEqual(driftFindings(...renderTwice('plane', ['--set', 'plane-ce.web.replicas=2']), applicationOf(app)), []);
+});
+
+// Argo CD renders plane-ce as Helm release revision 1 every time, so a Job named by the revision keeps its name
+// and its immutable pod template for good: a new Plane version never migrates, and a new bucket client never
+// runs. The vendored chart names the Jobs by the images they run instead, and a new image is a new Job.
+const jobName = (objects, pattern) => objects.find(o => o.kind === 'Job' && pattern.test(o.metadata.name))?.metadata.name;
+const plain = renderChart('plane');
+
+/** Every Job of the release that keeps its name when the image it runs changes, or is not named by a hash at all. */
+function unmovedJobs(folder) {
+  const base = renderChart('plane', [], folder);
+  const moved = (pattern, ...args) => {
+    const before = jobName(base, pattern), after = jobName(renderChart('plane', args, folder), pattern);
+    return before !== undefined && after !== undefined && before !== after;
+  };
+  const found = [];
+  if (!moved(MIGRATION_JOB, '--set', 'plane-ce.planeVersion=v0.0.0-planted')) found.push('the migration Job keeps its name when the Plane version moves');
+  if (!moved(MIGRATION_JOB, '--set', 'plane-ce.api.image=example.com/plane-backend')) found.push('the migration Job keeps its name when its image moves');
+  if (!moved(BUCKET_JOB, '--set', 'plane-ce.minio.image_mc=example.com/mc:planted')) found.push('the bucket Job keeps its name when the bucket client moves');
+  if (!moved(BUCKET_JOB, '--set', 'plane-ce.minio.image=example.com/silo:planted')) found.push('the bucket Job keeps its name when the object store moves');
+  return found;
+}
+
+/** The chart folder with the vendored patch reversed: plane-ce as upstream ships it. */
+function upstreamChart() {
+  const root = mkdtempSync(join(tmpdir(), 'plane-upstream-'));
+  cpSync('clusters/inventories/plane', join(root, 'clusters/inventories/plane'), {recursive: true});
+  cpSync('clusters/charts', join(root, 'clusters/charts'), {recursive: true});
+  execFileSync('patch', ['-R', '-p1', '-F0', '-s', '--no-backup-if-mismatch', '-i', join(process.cwd(), 'clusters/inventories/plane/vendor/plane-ce-1.8.5.patch')],
+    {cwd: join(root, 'clusters/inventories/plane/charts')});
+  return {root, folder: join(root, 'clusters/inventories/plane')};
+}
+
+test('the migration Job and the bucket Job are named by a hash of their images, and a new image gives each a new name', () => {
+  assert.match(jobName(plain, MIGRATION_JOB) ?? '', MIGRATION_JOB);
+  assert.match(jobName(plain, BUCKET_JOB) ?? '', BUCKET_JOB);
+  assert.deepEqual(unmovedJobs(undefined), []);
+});
+
+test('PLANTED DEFECT: the chart as upstream ships it names both Jobs by the release revision, and both keep their name when their image moves', () => {
+  const {root, folder} = upstreamChart();
+  try {
+    const upstream = renderChart('plane', [], folder);
+    assert.deepEqual(['plane-api-migrate-1', 'plane-minio-bucket-1'].map(name => upstream.some(o => o.kind === 'Job' && o.metadata.name === name)), [true, true]);
+    assert.deepEqual(unmovedJobs(folder), ['the migration Job keeps its name when the Plane version moves', 'the migration Job keeps its name when its image moves',
+      'the bucket Job keeps its name when the bucket client moves', 'the bucket Job keeps its name when the object store moves']);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('PLANTED INNOCENT: more replicas of the web app and a larger worker request keep the names of both Jobs', () => {
+  for (const args of [['--set', 'plane-ce.web.replicas=2'], ['--set', 'plane-ce.worker.memoryRequest=300Mi'], ['--set', 'plane-ce.env.doc_upload_size_limit=10485760']]) {
+    const changed = renderChart('plane', args);
+    assert.equal(jobName(changed, MIGRATION_JOB), jobName(plain, MIGRATION_JOB), args.join(' '));
+    assert.equal(jobName(changed, BUCKET_JOB), jobName(plain, BUCKET_JOB), args.join(' '));
+  }
 });
