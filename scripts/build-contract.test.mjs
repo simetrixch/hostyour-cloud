@@ -1570,7 +1570,7 @@ const ciMemoryPipelines = () => {
   return pipelines;
 };
 
-test('the six largest distinct ci units and four releases fit the 56Gi memory budget', () => {
+test('the seven largest distinct ci units and four releases fit the 59.25Gi memory budget, which stays within the memory of the node', () => {
   const capacity = readCiCapacity();
   assert.ok(declaresEveryCount(capacity.releaseUnitImages), 'every declared unit names how many images it builds');
   assert.equal(capacity.releaseUnitImages['digita-realtime'], 1, 'digita-realtime builds its one image after the scan');
@@ -1592,15 +1592,19 @@ test('the six largest distinct ci units and four releases fit the 56Gi memory bu
   assert.ok(!admitsNextTask(3), 'PLANTED DEFECT: a third pod has no task of a chain to run, and the memory budget counts one live ci pod per run');
   assert.equal(capacity.releaseSlots, 4, 'the owner decided four releases at once');
   assert.ok(Object.keys(capacity.releaseUnitImages).length >= capacity.releaseSlots, 'the declared units fill every slot of the queue');
-  assert.equal(quantity(capacity.limitsMemoryBudget) / BYTES.Gi, 56, 'the budget holds one 3.5Gi ci unit, five 3Gi ci units, six report pods, and the 12 images of the four largest units at 3Gi');
-  assert.ok(fits(), 'PLANTED INNOCENT: the six largest distinct ci units and the four largest releases exactly fit');
-  assert.ok(!fits(pipelines, {...capacity, limitsMemoryBudget: '57343Mi'}), 'PLANTED DEFECT: one Mi below the exact 56Gi sum is caught');
+  assert.equal(quantity(capacity.limitsMemoryBudget) / BYTES.Gi, 59.25, 'the budget holds one 3.5Gi ci unit, six 3Gi ci units, seven report pods of 256Mi, and the 12 images of the four largest units at 3Gi');
+  const withinNode = (limit) => quantity(limit.limitsMemoryBudget) <= quantity(limit.nodeMemory);
+  assert.ok(withinNode(capacity), 'PLANTED INNOCENT: the budget stands within the allocatable memory of the node');
+  assert.ok(!withinNode({...capacity, limitsMemoryBudget: `${quantity(capacity.nodeMemory) / BYTES.Mi + 1}Mi`}), 'PLANTED DEFECT: a budget one Mi above the allocatable memory of the node is caught');
+  assert.ok(fits(), 'PLANTED INNOCENT: the seven largest distinct ci units and the four largest releases exactly fit');
+  assert.ok(!fits(pipelines, {...capacity, limitsMemoryBudget: '60671Mi'}), 'PLANTED DEFECT: one Mi below the exact 59.25Gi sum is caught');
   assert.ok(fits(pipelines, {...capacity, releaseSlots: 2}), 'PLANTED INNOCENT: two releases at a time fit too');
   assert.ok(!fits(pipelines, {...capacity, releaseSlots: 5}), 'PLANTED DEFECT: a fifth release at once is caught');
-  assert.ok(!fits(pipelines, {...capacity, limitsMemoryBudget: '38Gi'}), 'PLANTED DEFECT: four releases on the budget of two are caught');
+  assert.ok(!fits(pipelines, {...capacity, limitsMemoryBudget: '45312Mi'}), 'PLANTED DEFECT: four releases on the budget of two, 44.25Gi, are caught');
   const planted = structuredClone(pipelines);
   checkResources(planted.find((unit) => unit.metadata.name === 'digita-platform-ci')).limits.memory = '4Gi';
-  assert.ok(!fits(planted), 'PLANTED DEFECT: a 4Gi override makes the sum 56.5Gi');
+  assert.ok(!fits(planted), 'PLANTED DEFECT: a 4Gi override makes the sum 59.75Gi');
+  assert.ok(!fits(pipelines, {...capacity, maxRunning: capacity.maxRunning + 1}), 'PLANTED DEFECT: an eighth ci run at once, 62.5Gi against the 59.25Gi budget, is caught');
   assert.ok(!fits(pipelines, {...capacity, maxRunning: 14}), 'PLANTED DEFECT: 14 distinct ci units at once are caught');
   const largestName = largestUnit(units).name, images = capacity.releaseUnitImages;
   assert.ok(!fits(pipelines, capacity, releaseUnitsOf({...images, [largestName]: images[largestName] + 1})), 'PLANTED DEFECT: one more image built in parallel by the largest unit is caught');
@@ -1715,20 +1719,20 @@ test('the check step takes 12 cores at most and requests the largest whole numbe
   assert.ok(!limitIsSound(withCheck(pipeline, 'limits', String(milliCores(capacity.nodeCpu) / 1000 + 1))), 'PLANTED DEFECT: a limit above the cores of the node is caught');
   assert.ok(!limitIsSound(withCheck(pipeline, 'requests', '13')), 'PLANTED DEFECT: a request above the limit, which the API server refuses, is caught');
   assert.ok(requestIsLargest(pipeline), 'PLANTED INNOCENT: the request as it stands fits, and one more core does not');
-  assert.ok(!requestIsLargest(withCheck(pipeline, 'requests', '2')), 'PLANTED DEFECT: a request below what the node admits, one more core would fit, is caught');
-  assert.ok(!requestIsLargest(withCheck(pipeline, 'requests', '4')), 'PLANTED DEFECT: a request that the node does not admit with six runs and four releases at once is caught');
+  assert.ok(!requestIsLargest(withCheck(pipeline, 'requests', '1')), 'PLANTED DEFECT: a request below what the node admits, one more core would fit, is caught');
+  assert.ok(!requestIsLargest(withCheck(pipeline, 'requests', '3')), 'PLANTED DEFECT: the former request of 3 cores, which the node does not admit with seven runs and four releases at once, is caught');
   assert.ok(fits(pipeline, {...capacity, releaseSlots: 2}), 'PLANTED INNOCENT: two releases at a time fit too');
   assert.ok(!fits(pipeline, {...capacity, maxRunning: 14}), 'PLANTED DEFECT: 14 runs at once, one per unit of 14 units and so no cap, is caught');
-  assert.ok(!fits(pipeline, {...capacity, releaseSlots: 7}), 'PLANTED DEFECT: seven releases at once are caught');
+  assert.ok(!fits(pipeline, {...capacity, releaseSlots: Object.keys(capacity.releaseUnitImages).length}), 'PLANTED DEFECT: every declared unit released at once is caught');
   assert.ok(!fits(pipeline, {...capacity, standingCpuRequests: capacity.nodeCpu}), 'PLANTED DEFECT: standing requests that fill the node are caught');
   assert.ok(!fits(pipeline, {...capacity, nodeCpu: '24'}), 'PLANTED DEFECT: a build node of 24 cores is caught');
   const heavy = withSharedTask(shared, 'buildah-build-push', (task) => { task.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '4'; });
   assert.ok(!fitsBudget(capacity, pipeline, heavy, units, CORES), 'PLANTED DEFECT: a raised request of the buildah build step is caught');
-  const former = withSharedTask(shared, 'buildah-build-push', (task) => {
-    task.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '500m';
+  const wide = withSharedTask(shared, 'buildah-build-push', (task) => {
+    task.spec.steps.find((step) => step.name === 'build').computeResources.requests.cpu = '750m';
     task.spec.steps.find((step) => step.name === 'push').computeResources.requests.cpu = '250m';
   });
-  assert.ok(!fitsBudget(capacity, pipeline, former, units, CORES), 'PLANTED DEFECT: the former 500m and 250m requests, 750m a pod, do not fit the 12 images of four releases');
+  assert.ok(!fitsBudget(capacity, pipeline, wide, units, CORES), 'PLANTED DEFECT: a Buildah pod that requests 1 core, 750m and 250m, does not fit the 12 images of four releases beside seven ci runs');
   const heavyPublish = structuredClone(publish);
   heavyPublish.spec.tasks.find((t) => t.name === 'pack').taskSpec.steps[0].computeResources.requests.cpu = '8';
   assert.ok(!fitsBudget(capacity, pipeline, shared, withUnits(units, (unit) => ({...unit, publish: heavyPublish})), CORES), 'PLANTED DEFECT: a publish pod that requests 8 cores, above the build pods of a release, is caught');
@@ -1777,12 +1781,12 @@ test('the pods of all ci runs and the four largest releases or publish runs, wit
     assert.equal(peakConcurrent(unit.release, () => 1), Math.max(unit.images + 1, 3), `${unit.name} has the scan and a probe per image alive at once, or verify, builds and scan, or its builds: the largest of them`);
   }
   const largest = largestUnit(units);
-  assert.ok(below(podsOnNode(capacity, units)), 'PLANTED INNOCENT: four slots as they stand, the units of 4, 3, 3 and 2 images, 16 + 6 x 3 + 121 pods, stay below the limit');
+  assert.ok(below(podsOnNode(capacity, units)), 'PLANTED INNOCENT: four slots as they stand, the units of 4, 3, 3 and 2 images, 16 + 7 x 3 + 125 pods, stay below the limit');
   assert.ok(below(podsOnNode({...capacity, releaseSlots: 2}, units)), 'PLANTED INNOCENT: two releases at a time stay below it too');
   assert.ok(!below(podsOnNode({...capacity, releaseSlots: 40}, Array(40).fill(largest))), 'PLANTED DEFECT: forty slots of the largest unit, a total above 250, are caught');
   assert.ok(!below(podsOnNode({...capacity, standingPods: capacity.nodePods}, units)), 'PLANTED DEFECT: standing pods that fill the node are caught');
   const everyTask = capacity.releaseSlots * 3 * largest.release.spec.tasks.length + capacity.maxRunning * (capacity.podsPerUnit + 1) + capacity.standingPods;
-  assert.ok(!below(everyTask), 'PLANTED DEFECT: counting every task of every stage of four releases, 307 pods, is above 250, which is the count that this test replaces');
+  assert.ok(!below(everyTask), 'PLANTED DEFECT: counting every task of every stage of four releases, 314 pods, is above 250, which is the count that this test replaces');
   const wide = renderUnit('shop', imageNames(60)).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release');
   assert.ok(!below(podsOnNode(capacity, Array(capacity.releaseSlots).fill({...largest, release: wide}))), 'PLANTED DEFECT: four units of sixty images, sixty probes and the scan alive at once in each, are caught');
   const chain = (names) => ({metadata: {name: 'chain'}, spec: {tasks: names.map((name, i) => ({name, ...(i ? {runAfter: [names[i - 1]]} : {})}))}});
@@ -1916,7 +1920,7 @@ test('the admission policy lets the ci run keeper cancel, name the replacing pus
   const changed = (edit, from = base) => { const run = structuredClone(from); edit(run); return run; };
   const cancelled = changed((r) => { r.spec.status = 'Cancelled'; });
   const waiting = changed((r) => { r.spec.status = 'PipelineRunPending'; });
-  const noted = changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'all 6 ci slots are in use'; }, waiting);
+  const noted = changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'all 7 ci slots are in use'; }, waiting);
   const named = (r) => { r.metadata.annotations['image-builder.io/cancelled-by'] = `${'a'.repeat(40)} (shop-ci-y)`; };
   const update = (username, object, oldObject) => ({object, oldObject, request: {operation: 'UPDATE', namespace: 'shop-build', userInfo: {username}}});
   const ADMITTED = {
