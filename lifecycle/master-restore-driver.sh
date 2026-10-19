@@ -50,8 +50,30 @@ SECRETS=''
 cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
-[ -z "$BAD" ] || die "the config carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL: $BAD" 65
+# The same function as require-config-assignments.sh, held byte-equal to it by test.sh: this
+# script arrives over one ssh session and can read no sibling. It is handed no keys, so a refused
+# line is named by its number alone and never quoted, because it may carry a credential.
+require_config_assignments() {
+  local file="$1" keys="${2:-}"
+  BAD_LINES=$(
+    export LC_ALL=C
+    grep -anvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$file" \
+      | tr -d '\000' \
+      | head -3 \
+      | awk -v keys=" $keys " '{
+          number = substr($0, 1, index($0, ":") - 1)
+          name = ""
+          if (match(substr($0, index($0, ":") + 1), /^[A-Z][A-Z0-9_]*=/)) {
+            name = substr($0, index($0, ":") + 1, RLENGTH - 1)
+            if (index(keys, " " name " ") == 0) name = ""
+          }
+          printf "%sline %s%s", (NR > 1 ? ", " : ""), number, (name == "" ? "" : " (" name ")")
+        }'
+  )
+  [ -z "$BAD_LINES" ]
+}
+require_config_assignments "$CONFIG" \
+  || die "the config carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 . "$CONFIG"
 for named in FQDN OPERATOR_USER STAGE ELEVATION_PASSWORD PLATFORM_REPO PLATFORM_BRANCH PLATFORM_REPO_READ_PAT STORAGE_BOX_HOST STORAGE_BOX_USER STORAGE_BOX_PASSWORD BACKUP_PASSPHRASE; do
   [ -n "${!named:-}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
