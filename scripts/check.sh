@@ -1036,7 +1036,7 @@ zot_fault() { # $1 the zot config.json -> the first way it differs from the acce
   [ "$(yq -p=json -o=json -I=0 '[.extensions.sync.registries[].urls[]] | map(select(test("ghcr\\.io"))) | length' "$1")" = 0 ] \
     || { echo "zot still fetches from ghcr.io on a miss, so a platform image it lacks is pulled through from GitHub instead of failing"; return; }
   local write_timeout seconds
-  write_timeout="$(yq -p=json '.http.writeTimeout' "$1")"
+  write_timeout="$(yq -p=json -o=yaml '.http.writeTimeout' "$1")"
   seconds="$(go_duration_seconds "$write_timeout")"
   [ -n "$seconds" ] && [ "$seconds" -ge 1800 ] \
     || echo "zot ends a response that is still being written after http.writeTimeout ($write_timeout; its default is 60 seconds), so eight clusters fetching one large pinned tool at once are cut part-way (curl 92); it must be a Go duration of at least 30 minutes"
