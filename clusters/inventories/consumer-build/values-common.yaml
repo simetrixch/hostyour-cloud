@@ -39,7 +39,7 @@ eventListener:
   namespace: image-builder
 
 # WHO STARTS A WAITING RELEASE RUN. Release runs are created waiting, and the release queue of
-# clusters/inventories/image-builder starts them four runs at a time. Its grant is `patch` on
+# clusters/inventories/image-builder starts them nine runs at a time. Its grant is `patch` on
 # pipelineruns in the unit's build namespace, rendered per unit by templates/rbac-release-queue.yaml;
 # the admission policy of image-builder lets that identity change nothing but the waiting flag and
 # the note of what a run waits for.
@@ -69,15 +69,16 @@ releaseQueue:
 #                                                        the memory limits of the pods that its publish run has alive at once)
 #   <= limitsMemoryBudget
 #
-# The budget is NOT the free memory of the node. With seven ci runs and four releases the worst case, every pod at its
-# limit, is 59.25 GiB (3.5 + 6 x 3 + 7 x 0.25 + 12 x 3) on a node that allocates 62313320Ki (59.43 GiB, nodeMemory
+# The budget is NOT the free memory of the node. With seven ci runs and nine releases the worst case, every pod at its
+# limit, is 54.75 GiB (3.5 + 6 x 3 + 7 x 0.25 + 9 x 3.5) on a node that allocates 62313320Ki (59.43 GiB, nodeMemory
 # below) and of which 15-23 GiB were in use by the standing pods on 2026-10-19 (peak working set of 15 days: 17.35 GiB),
 # so it exceeds what is free. The owner accepted that (decision of 2026-10-15: the platform has no customer data and
 # production may be down); the test holds the budget itself to nodeMemory, so the pods alone, at their limits, cannot
 # ask for more than the node has. The limits are close to what the pods reach (a ci check peaked at 2.97 of 3 GiB and a
-# Buildah build at 2.32 of 2.69 GiB over 15 days), so the budget is not slack: a fifth release at once (65.25 GiB), an
-# eighth ci run (62.5 GiB) or a larger limit raises the sum past nodeMemory and fails the test until the owner accepts
-# a worst case beyond the node. The seventh ci run is what was left of the budget, and the release queue stays at four.
+# Buildah build at 2.32 of 2.69 GiB over 15 days), so the budget is not slack: a tenth release at once (58.25 GiB), an
+# eighth ci run (58 GiB) or a larger limit raises the sum past the budget and fails the test until the owner raises the
+# budget. The budget is the exact sum and stays 4.68 GiB below nodeMemory: the release queue stops at nine because a tenth
+# release also takes the CPU requests past the 32 cores (THE CORES OF THE BUILD NODE below), not because the memory is gone.
 #
 # maxRunning is ciRunKeeper.maxRunning in clusters/inventories/image-builder: the ci run keeper starts a
 # waiting ci run only while fewer ci runs than that have started and not finished, whatever the number of
@@ -96,19 +97,28 @@ releaseQueue:
 # so the term is bounded by the same cap.
 #
 # The third term is the runs the queue runs at once (releaseSlots is releaseQueue.maxRunning in
-# clusters/inventories/image-builder, 4). The queue runs one run of a unit at a time, so the runs in the slots belong to
+# clusters/inventories/image-builder, 9). The queue runs one run of a unit at a time, so the runs in the slots belong to
 # different units and the stage runs of a release never add up. A slot holds the larger of the release run and the publish
 # run of its unit, and the worst case fills the slots with the largest units: the test sorts the units by that size and
 # adds the releaseSlots largest. A run holds the pods that none of its tasks waits for, which the test reads from the
-# rendered runAfter, result and when references (the builds of the unit, or its scan beside its probes, whichever is more).
+# rendered runAfter, result and when references (the releaseBuildsAtOnce builds of the unit, or its scan beside its probes, or
+# the pack pod of its publish run, whichever is more).
+#
+# releaseBuildsAtOnce is the number of images of one release that build at the same time (1): templates/pipeline-release.yaml
+# lets the first releaseBuildsAtOnce builds of a unit wait for the scan and every later build wait for the build that many
+# places before it, so the images of a unit build one after the other and a release slot holds one Buildah pod of 3Gi where
+# it held every image of the unit at once (swissbookai 4, 12 Gi). That is what lets nine releases fit the memory where four
+# did: the largest release of 15 days, swissbookai-release-5pqbj, built 4 images with pods at 2321, 2202 and 2023Mi, 7.5Gi
+# in all (read from the master's Prometheus), and a Buildah pod is limited to 3Gi whatever the unit.
 #
 # releaseUnitImages is DECLARED, not derived: the attested builds come from the registrations of the books branch, which
-# this chart cannot read. It is the number of images each unit builds at once after the scan, as the Pipelines
+# this chart cannot read. It is the number of images each unit builds, one after the other from the scan on, as the Pipelines
 # `<unit>-release` on the master had them on 2026-10-18 (swissbookai 4, digita-platform and hostyour-manager 3,
-# digita-auth and digita-post 2, every other unit 1; digita-realtime, new, has no Pipeline yet and builds 1); the test renders a release with that many images and fails when they
-# do not all run in parallel. A unit that builds more images, or a new unit, is added here, and the test then checks it
-# against the budget. limitsMemoryBudget is the sum above for the 4 + 3 + 3 + 2 images of the four largest units at once,
-# one 3584Mi ci check and six 3Gi ci checks, plus seven report pods of 256Mi: 59.25Gi (60672Mi) exactly. A buildah pod is 3Gi, a 2752Mi build step and
+# digita-auth and digita-post 2, every other unit 1; digita-realtime, new, has no Pipeline yet and builds 1); the test renders a release with that many images and fails when more
+# than releaseBuildsAtOnce of them run at once. A unit that builds more images, or a new unit, is added here, and the test then checks it
+# against the budget. limitsMemoryBudget is the sum above for nine release slots of 3584Mi (the pack pod of the publish run,
+# the heaviest pod a slot holds), one 3584Mi ci check and six 3Gi ci checks, plus seven report pods of 256Mi: 54.75Gi (56064Mi)
+# exactly. A buildah pod is 3Gi, a 2752Mi build step and
 # a 320Mi push step, from the largest working sets the steps reached on the master over 15 days
 # (scripts/build-contract.test.mjs).
 #
@@ -123,8 +133,8 @@ releaseQueue:
 #   < nodePods
 #
 # One run of a unit at a time means the stages that global.channelStages in clusters/platform/values-common.yaml
-# lets a channel reach (3) never run side by side. For the four largest units above that is
-# (5 + 4 + 4 + 3) + 7 x 3 + 125 = 162 of 250. standingPods is DECLARED,
+# lets a channel reach (3) never run side by side. For the nine largest units above that is
+# (5 + 4 + 4 + 3 + 3 + 4 x 3) + 7 x 3 + 125 = 177 of 250. standingPods is DECLARED,
 # not derived: the pods of the node that are not in a build namespace and not finished, 125 at the peak of the five days
 # before 2026-10-19 (115 in the two days before; 111 running then), read from kube_pod_status_phase on the master's
 # Prometheus.
@@ -145,8 +155,9 @@ releaseQueue:
 #
 # The check step requests the largest whole number of cores for which that still holds: the test fails when
 # the request is above it and when one more core would fit. nodeCpu is the allocatable CPU of master1 (32 on
-# 2026-10-15, and again on 2026-10-19). With seven runs and four releases the largest whole number is 2 cores: 7 x (2 + 0.05)
-# + 6.6 (the 12 images of the four largest units at 0.55 each) + 6.97 = 27.9 of 32, where 3 cores would ask for 34.9. The cores
+# 2026-10-15, and again on 2026-10-19). With seven runs and nine releases the largest whole number is 2 cores: 7 x (2 + 0.05)
+# + 9.9 (the nine release slots at 1.1 each, the publish pod) + 6.97 = 31.22 of 32, where 3 cores would ask for 38.2, and a tenth release
+# would ask for 32.32. The cores
 # are no loss in use: the master's Prometheus saw the whole node, standing pods and builds together, at 7.1 cores at most in
 # 15 days (a ci check up to 5.85, a build namespace up to 5.65 together), and a request only decides who is admitted
 # and how the cores are shared once the node is full. nodeMemory is the allocatable memory of master1, 62313320Ki,
@@ -168,6 +179,7 @@ releaseQueue:
 ciCapacity:
   priorityClassName: image-builder-ci
   podsPerUnit: 2
+  releaseBuildsAtOnce: 1
   releaseUnitImages:
     digita-auth: 2
     digita-catalog-proofapps: 1
@@ -182,7 +194,7 @@ ciCapacity:
     hostyour-demo-consumer: 1
     hostyour-manager: 3
     swissbookai: 4
-  limitsMemoryBudget: 60672Mi
+  limitsMemoryBudget: 56064Mi
   nodeMemory: 60852Mi
   nodePods: 250
   standingPods: 125

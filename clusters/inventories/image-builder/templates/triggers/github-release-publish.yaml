@@ -14,7 +14,7 @@ exist, and the pipeline's gate compares the webhook's clone_url fail-closed
 against its pinned repoURL.
 
 THE RUN WAITS IN THE RELEASE QUEUE (templates/release-queue.yaml), under a key
-of its own: it takes one of the queue's slots (up to four runs run at once, of different
+of its own: it takes one of the queue's slots (up to nine runs run at once, of different
 units) and never builds beside a run of its own unit. It carries
 image-builder.io/publish and never image-builder.io/consumer, the label the
 Manager's release watch selects release runs by.

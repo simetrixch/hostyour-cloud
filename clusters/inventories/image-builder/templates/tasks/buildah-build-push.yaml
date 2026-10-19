@@ -267,7 +267,7 @@ spec:
         # untrusted code above has already run): drop the cached pull credential.
         buildah --root /var/lib/containers/storage --storage-driver=vfs logout "$(params.registry)" || true
       # The limits of the two steps add up to the memory limit of one pod that clusters/inventories/
-      # consumer-build ciCapacity counts for every image a release builds at once, and the requests to its
+      # consumer-build ciCapacity counts for each image a release builds at once (ciCapacity.releaseBuildsAtOnce, one), and the requests to its
       # CPU request; scripts/build-contract.test.mjs holds both to the budgets and the limits to the
       # measured peaks.
       computeResources:

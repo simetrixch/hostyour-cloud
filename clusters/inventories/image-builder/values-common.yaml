@@ -109,14 +109,17 @@ eventListener:
 # on the build plane, one run per unit: a second stage run, a retry, another tag or a publish run of a unit
 # waits for the run of that unit that runs. The memory budget, the cores and the pod limit of the node hold
 # the largest runs together with the ci runs (ciCapacity in clusters/inventories/consumer-build, proved by
-# scripts/build-contract.test.mjs), which is why a fifth run waits; raising maxRunning fails that test
-# until the budget is raised with it. Four stays: the 12 images of the four largest units are 36 GiB of
-# limits, and a fifth slot (the next unit, 2 images) is 6 GiB more, past the 59.43 GiB of memory that master1
-# allocates (read from the node and the master's Prometheus on 2026-10-19).
+# scripts/build-contract.test.mjs), which is why a tenth run waits; raising maxRunning fails that test
+# until the budget is raised with it. Nine stays: a release builds its images one after the other
+# (ciCapacity.releaseBuildsAtOnce in clusters/inventories/consumer-build, 1), so a slot holds one Buildah pod of 3 GiB
+# or the pack pod of a publish run, 3.5 GiB, and nine slots are 31.5 GiB of limits. Beside seven ci runs (3.5 + 6 x 3 + 7 x 0.25 =
+# 23.25 GiB) that is 54.75 GiB, which the budget holds exactly. A tenth slot would add 3.5 GiB and take the CPU requests of
+# the node (7 x 2.05 + 10 x 1.1 + 6.97 = 32.32 cores) past its 32 cores (allocatable memory and cores read from the node and the
+# master's Prometheus on 2026-10-19; the largest release of 15 days built 4 images with pods at 2321Mi at most).
 # The image is the one the release pipeline's own kubectl steps use; it carries bash, kubectl and jq.
 releaseQueue:
   image: &kubectlImage alpine/k8s:1.35.6
-  maxRunning: 4
+  maxRunning: 9
 
 # The ci run keeper (templates/ci-run-keeper.yaml) starts the waiting ci runs, cancels the ones that a
 # newer push replaces or whose `ci/` branch was deleted, and deletes the oldest finished ones with their workspace claims. It runs the same
@@ -124,9 +127,10 @@ releaseQueue:
 # units, and each unit has at most one of them, because the keeper starts no second run of a unit. The memory budget
 # test in scripts/build-contract.test.mjs multiplies the memory limits of a ci pod and of the report pod
 # by it, and fails when the sum with the largest releases that run at once (releaseQueue.maxRunning) leaves
-# the budget of ciCapacity in clusters/inventories/consumer-build. Seven is the most whose limits fit the node:
-# the sum of limits, 59.25 GiB, stays under the 59.43 GiB that master1 allocates, and the cpu request of the ci
-# check is 2 cores; an eighth run would need 62.5 GiB (read on 2026-10-19: allocatable 32 cores, 62313320Ki, 250
+# the budget of ciCapacity in clusters/inventories/consumer-build. Seven is the most whose limits fit that budget:
+# the sum of limits, 54.75 GiB with nine releases, is held by the budget, which stands under the 59.43 GiB that master1
+# allocates, and the cpu request of the ci check is 2 cores; an eighth run would need 58 GiB, past the budget, and take
+# the CPU requests past the 32 cores (read on 2026-10-19: allocatable 32 cores, 62313320Ki, 250
 # pods; and 15 days of the master's Prometheus). The standing pods use 15-23 GiB of the node, so seven runs that
 # all reached their limits at once would still exceed what is free; the limits are held to the node, not the use.
 #
