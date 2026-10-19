@@ -10,7 +10,7 @@ import {renderChart} from './render-chart.mjs';
 
 test('no Tekton test resources are rendered and production readers remain', () => {
   const builder = renderChart('image-builder');
-  assert.ok(!builder.some(d => d.kind === 'PipelineRun' || (d.kind === 'CronJob' && !['release-queue', 'ci-run-keeper'].includes(d.metadata.name)) ||
+  assert.ok(!builder.some(d => d.kind === 'PipelineRun' || (d.kind === 'CronJob' && d.metadata.name !== 'release-queue') ||
     d.metadata.name.includes('test-reporter') || d.metadata.name.includes('test-pruner') ||
     (d.kind === 'Task' && d.metadata.name.startsWith('test-')) || d.metadata.name.endsWith('-test-push')));
   assert.deepEqual(builder.find(d => d.kind === 'EventListener').spec.triggers,
@@ -2001,31 +2001,27 @@ test('the egress policy of a build namespace selects every pod of it', () => {
   assert.ok(exempts(planted), 'PLANTED DEFECT: a missing selector is caught');
 });
 
-test('the ci run keeper runs every minute, reads runs cluster-wide, and may patch and delete only inside a build namespace', () => {
+test('the ci run keeper runs one tick after the other, reads runs cluster-wide, and may patch and delete only inside a build namespace', () => {
   const docs = imageBuilder();
-  const cron = docs.find((d) => d.kind === 'CronJob' && d.metadata.name === 'ci-run-keeper');
-  assert.equal(cron.spec.schedule, '* * * * *');
-  assert.equal(cron.spec.concurrencyPolicy, 'Forbid');
-  const pod = cron.spec.jobTemplate.spec.template.spec;
+  const keeper = docs.find((d) => d.kind === 'Deployment' && d.metadata.name === 'ci-run-keeper');
+  // Two keepers at once would each start runs up to the cap, so there is one, and the old pod ends before the new one starts.
+  assert.equal(keeper.spec.replicas, 1);
+  assert.equal(keeper.spec.strategy.type, 'Recreate');
+  const pod = keeper.spec.template.spec;
   assert.equal(pod.serviceAccountName, 'ci-run-keeper');
   assert.equal(pod.containers[0].image, docs.find((d) => d.kind === 'CronJob' && d.metadata.name === 'release-queue')
     .spec.jobTemplate.spec.template.spec.containers[0].image);
   const map = docs.find((d) => d.kind === 'ConfigMap' && d.metadata.name === 'ci-run-keeper');
   assert.ok(map.data['ci-run-keeper.jq'].includes('image-builder.io/ci-branch') && map.data['ci-run-keeper.sh'].includes('kubectl delete'));
   assert.ok(map.data['ci-run-keeper.jq'].includes('image-builder.io/branch-deleted'));
-  // Every remote is asked at once, so asking takes at most the time one ask gets; the rest of the tick, which lists the runs and
-  // writes the changes, needs the rest of the Job's deadline, and a tick that overruns it makes no change at all.
-  const deadline = cron.spec.jobTemplate.spec.activeDeadlineSeconds;
-  const askSeconds = Number(/^git_timeout=(\d+)$/m.exec(map.data['ci-run-keeper.sh'])[1]);
-  const leavesTime = (ask) => ask * 2 <= deadline;
-  assert.ok(leavesTime(askSeconds), `PLANTED INNOCENT: an ask of ${askSeconds} seconds leaves the tick its half of ${deadline}`);
-  assert.ok(!leavesTime(deadline), 'PLANTED DEFECT: an ask that may take the whole deadline');
-  // The tick of the script ends by itself, with its last decision a decision interval before the Job's deadline, which is the tick.
+  // Every remote is asked at once, so asking takes at most the time one ask gets, and it leaves the tick at least half of its
+  // length to list the runs and write the changes.
   const setting = (name) => Number(pod.containers[0].env.find((e) => e.name === name).value);
   const [tick, every] = [setting('CI_KEEPER_TICK_SECONDS'), setting('CI_KEEPER_DECISION_SECONDS')];
-  const endsInside = (seconds) => seconds <= deadline;
-  assert.ok(endsInside(tick) && tick === deadline && cron.spec.startingDeadlineSeconds === tick, 'PLANTED INNOCENT: the tick is the deadline of the Job');
-  assert.ok(!endsInside(deadline + every), 'PLANTED DEFECT: a tick longer than the deadline is cut in the middle of a decision');
+  const askSeconds = Number(/^git_timeout=(\d+)$/m.exec(map.data['ci-run-keeper.sh'])[1]);
+  const leavesTime = (ask) => ask * 2 <= tick;
+  assert.ok(leavesTime(askSeconds), `PLANTED INNOCENT: an ask of ${askSeconds} seconds leaves the tick its half of ${tick}`);
+  assert.ok(!leavesTime(tick), 'PLANTED DEFECT: an ask that may take the whole tick');
   assert.equal(Math.floor((tick - every) / every) + 1, 5, 'five decisions a tick, ten seconds apart');
   assert.ok(askSeconds <= every, 'the remotes are read in the first decision, which may then take the whole interval and no more');
   // A patch or delete verb on a ClusterRole would reach every namespace, release runs of other units among them.
@@ -2038,6 +2034,41 @@ test('the ci run keeper runs every minute, reads runs cluster-wide, and may patc
   assert.deepEqual(role.rules, [{apiGroups: ['tekton.dev'], resources: ['pipelineruns'], verbs: ['patch', 'delete']}]);
   const binding = unit.find((d) => d.kind === 'RoleBinding' && d.metadata.name === 'ci-run-keeper-pipelineruns');
   assert.deepEqual(binding.subjects, [{kind: 'ServiceAccount', name: 'ci-run-keeper', namespace: 'image-builder'}]);
+});
+
+// The loop of the keeper and its liveness probe run here as the pod runs them, with a stand-in tick that ends with the status
+// it is given, the marker in a temporary directory and a decision interval of one second.
+test('the loop of the ci run keeper marks only a tick that succeeded, pauses after one that failed, and its probe restarts a stalled one', () => {
+  const container = imageBuilder().find((d) => d.kind === 'Deployment' && d.metadata.name === 'ci-run-keeper').spec.template.spec.containers[0];
+  const dir = mkdtempSync(join(tmpdir(), 'keeper-loop-'));
+  const marker = join(dir, 'keeper-succeeded'), log = join(dir, 'ticks');
+  writeFileSync(join(dir, 'tick.sh'), `echo tick >>'${log}'; sleep 0.1; exit "$TICK_STATUS"\n`);
+  const at = (text) => text.replaceAll('/keeper/ci-run-keeper.sh', join(dir, 'tick.sh')).replaceAll('/tmp/keeper-succeeded', marker);
+  const loop = at(container.command[2]);
+  assert.notEqual(loop, container.command[2], 'the loop names the tick and the marker the test replaces');
+  const run = (script, status, seconds) => {
+    rmSync(marker, {force: true}); writeFileSync(log, '');
+    spawnSync('bash', ['-c', script], {env: {...process.env, TICK_STATUS: String(status), CI_KEEPER_DECISION_SECONDS: '1'}, timeout: seconds * 1000});
+    return {marked: existsSync(marker), ticks: readFileSync(log, 'utf8').split('\n').filter(Boolean).length};
+  };
+  const mutate = (from, to) => { const script = loop.replace(from, to); assert.notEqual(script, loop, `PLANTED DEFECT: the edit finds its clause: ${from}`); return script; };
+  assert.ok(run(loop, 0, 1).marked, 'PLANTED INNOCENT: a tick that succeeded is marked');
+  const failing = run(loop, 1, 2.5);
+  assert.ok(!failing.marked, 'a tick that failed is not marked');
+  assert.ok(failing.ticks <= 3, `a failed tick is followed by a pause of one decision interval: ${failing.ticks} ticks in 2.5 seconds`);
+  assert.ok(run(mutate('tick.sh; then', 'tick.sh || true; then'), 1, 1).marked, 'PLANTED DEFECT: a loop that marks a failed tick');
+  assert.ok(run(mutate('sleep "${CI_KEEPER_DECISION_SECONDS}"', ':'), 1, 2.5).ticks > 10, 'PLANTED DEFECT: a loop that does not pause after a failed tick');
+  // The probe passes while the last success is younger than ten minutes; the first ten minutes of the pod are not probed.
+  const probe = container.livenessProbe;
+  assert.deepEqual([probe.initialDelaySeconds, probe.periodSeconds, probe.failureThreshold], [600, 60, 1]);
+  const probes = (command) => spawnSync(command[0], command.slice(1).map(at)).status === 0;
+  const aged = (minutes) => { writeFileSync(marker, ''); const then = Date.now() / 1000 - minutes * 60; utimesSync(marker, then, then); };
+  rmSync(marker, {force: true});
+  assert.ok(!probes(probe.exec.command), 'a pod whose tick never succeeded fails the probe');
+  aged(9); assert.ok(probes(probe.exec.command), 'PLANTED INNOCENT: a success nine minutes ago passes');
+  aged(11); assert.ok(!probes(probe.exec.command), 'a success eleven minutes ago fails the probe');
+  assert.ok(probes(probe.exec.command.map((part) => part.replace('-mmin -10', '-mmin -100'))), 'PLANTED DEFECT: a probe of a hundred minutes passes a keeper stalled for eleven');
+  rmSync(dir, {recursive: true, force: true});
 });
 
 const KEEPER = 'system:serviceaccount:image-builder:ci-run-keeper';

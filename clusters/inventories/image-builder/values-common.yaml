@@ -134,10 +134,9 @@ releaseQueue:
 # pods; and 15 days of the master's Prometheus). The standing pods use 15-23 GiB of the node, so seven runs that
 # all reached their limits at once would still exceed what is free; the limits are held to the node, not the use.
 #
-# The CronJob starts a tick every minute and the tick decides every decisionSeconds for tickSeconds: a waiting ci run starts
-# at the next decision after a slot frees, not at the next minute. tickSeconds is also the Job's deadline, so the last
-# decision of a tick starts decisionSeconds before it (scripts/ci-run-keeper.test.mjs); the minute's remaining
-# seconds, and the Job's start, are the pause between two ticks.
+# The pod of the Deployment runs one tick after the other, and each tick decides every decisionSeconds for tickSeconds: a
+# waiting ci run starts at the next decision after a slot frees. The last decision of a tick starts decisionSeconds before
+# tickSeconds (scripts/ci-run-keeper.test.mjs), so the tick ends by itself, and the next tick starts as it ends.
 ciRunKeeper:
   image: *kubectlImage
   maxRunning: 7
@@ -214,17 +213,19 @@ monitoring:
                 summary: "PipelineRun {{ $labels.namespace }}/{{ $labels.pipelinerun }} running > 30 minutes"
                 description: "Check for stuck Buildah steps."
 
-            # The ci run keeper (templates/ci-run-keeper.yaml) runs every minute. Without it no waiting ci run starts and
-            # no run of a deleted or replaced branch ends. The metric is kube-state-metrics' time of the last Job of the
-            # CronJob that succeeded: a tick that fails does not move it, so a keeper that fails every minute stalls too.
-            # No series at all is a keeper that never succeeded or one that is gone.
+            # The ci run keeper (templates/ci-run-keeper.yaml) runs one tick after the other in the pod of its Deployment.
+            # Without it no waiting ci run starts and no run of a deleted or replaced branch ends. Its liveness probe restarts
+            # the container when no tick has succeeded for ten minutes, so a restart of the container is a stalled keeper, and
+            # so is a Deployment without an available pod. The metrics are kube-state-metrics'; no series of the Deployment at
+            # all is a keeper that is gone.
             - alert: CIRunKeeperStalled
               expr: >-
-                time() - kube_cronjob_status_last_successful_time{namespace="image-builder", cronjob="ci-run-keeper"} > 600
-                or absent(kube_cronjob_status_last_successful_time{namespace="image-builder", cronjob="ci-run-keeper"})
+                increase(kube_pod_container_status_restarts_total{namespace="image-builder", container="ci-run-keeper"}[15m]) > 0
+                or kube_deployment_status_replicas_available{namespace="image-builder", deployment="ci-run-keeper"} < 1
+                or absent(kube_deployment_status_replicas_available{namespace="image-builder", deployment="ci-run-keeper"})
               for: 5m
               labels:
                 severity: warning
               annotations:
-                summary: "The ci run keeper has not succeeded for more than 10 minutes"
-                description: "Nothing starts, replaces or ends a ci run meanwhile. Read the last Jobs of the CronJob ci-run-keeper in namespace image-builder: `kubectl -n image-builder get job -l app.kubernetes.io/component=ci-run-keeper` and their logs."
+                summary: "The ci run keeper has not succeeded for more than 10 minutes, or has no pod"
+                description: "Nothing starts, replaces or ends a ci run meanwhile. Read the pod of the Deployment ci-run-keeper in namespace image-builder and its log, the one before the restart too: `kubectl -n image-builder logs deploy/ci-run-keeper --previous`."

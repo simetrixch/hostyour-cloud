@@ -63,51 +63,67 @@ tests:
           - labels: ALERTS{alertname="PipelineRunRunningTooLong", alertstate="firing", cluster="master", namespace="shop-build", pipelinerun="shop-ci-twin", severity="warning"}
             value: 1
 
-  # THE SERIES ARE kube-state-metrics' (kube_cronjob_status_last_successful_time: the time of the last Job of the CronJob
-  # that succeeded, in seconds since the epoch), which clusters/inventories/observability scrapes. The keeper runs every
-  # minute, so a last success more than ten minutes old means that no tick has succeeded for ten ticks.
-  - name: CIRunKeeperStalled alerts when the last success of the keeper is more than 10 minutes old, and not when it succeeded a minute ago
+  # THE SERIES ARE kube-state-metrics' (kube_pod_container_status_restarts_total, the restarts of a container of a pod,
+  # and kube_deployment_status_replicas_available), which clusters/inventories/observability scrapes. The liveness probe
+  # of the keeper restarts its container when no tick has succeeded for ten minutes, so a restart is a stalled keeper.
+  - name: CIRunKeeperStalled alerts when the container of the keeper restarted, and not before
     interval: 1m
     input_series:
-      # The keeper succeeded at second 0 and never again.
-      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="ci-run-keeper"}
-        values: 0x40
-      # The release queue stopped at second 0 too, and is not the keeper.
-      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="release-queue"}
-        values: 0x40
+      # The probe restarted the keeper at minute 10; its Deployment keeps one available pod throughout.
+      - series: kube_pod_container_status_restarts_total{cluster="master", namespace="image-builder", pod="ci-run-keeper-a", container="ci-run-keeper"}
+        values: 0x10 1x30
+      - series: kube_deployment_status_replicas_available{cluster="master", namespace="image-builder", deployment="ci-run-keeper"}
+        values: 1x40
     promql_expr_test:
-      # At 10 minutes the last success is 600 seconds old, which is not more than 600; at 14 minutes the alert is pending.
+      # Before the restart nothing fires; four minutes after it the alert is still pending.
+      - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
+        eval_time: 9m
       - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
         eval_time: 14m
       - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
-        eval_time: 20m
+        eval_time: 17m
         exp_samples:
-          - labels: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing", cluster="master", namespace="image-builder", cronjob="ci-run-keeper", severity="warning"}
+          - labels: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing", cluster="master", namespace="image-builder", pod="ci-run-keeper-a", container="ci-run-keeper", severity="warning"}
             value: 1
 
-  - name: CIRunKeeperStalled stays silent while the keeper succeeds every minute, whatever the other CronJobs do
+  - name: CIRunKeeperStalled stays silent while the keeper runs, whatever another container of the namespace does
     interval: 1m
     input_series:
-      # The last success moves with the clock: the keeper succeeded at the start of the minute before each evaluation.
-      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="ci-run-keeper"}
-        values: 0+60x40
-      # Another CronJob of the namespace that stopped long ago is no stalled keeper.
-      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="release-queue"}
+      - series: kube_pod_container_status_restarts_total{cluster="master", namespace="image-builder", pod="ci-run-keeper-a", container="ci-run-keeper"}
         values: 0x40
+      - series: kube_deployment_status_replicas_available{cluster="master", namespace="image-builder", deployment="ci-run-keeper"}
+        values: 1x40
+      # The event listener restarting is no stalled keeper.
+      - series: kube_pod_container_status_restarts_total{cluster="master", namespace="image-builder", pod="el-image-builder-a", container="event-listener"}
+        values: 0+1x40
     promql_expr_test:
       - expr: ALERTS{alertname="CIRunKeeperStalled"}
         eval_time: 30m
 
-  - name: CIRunKeeperStalled alerts when the keeper has no last success at all, a CronJob that never succeeded or one that is gone
+  - name: CIRunKeeperStalled alerts when the Deployment of the keeper has no available pod
     interval: 1m
     input_series:
-      - series: kube_cronjob_status_last_successful_time{cluster="master", namespace="image-builder", cronjob="release-queue"}
-        values: 0+60x40
+      - series: kube_deployment_status_replicas_available{cluster="master", namespace="image-builder", deployment="ci-run-keeper"}
+        values: 0x40
     promql_expr_test:
       - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
         eval_time: 3m
       - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
         eval_time: 10m
         exp_samples:
-          - labels: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing", namespace="image-builder", cronjob="ci-run-keeper", severity="warning"}
+          - labels: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing", cluster="master", namespace="image-builder", deployment="ci-run-keeper", severity="warning"}
+            value: 1
+
+  - name: CIRunKeeperStalled alerts when the keeper is gone, a Deployment with no series at all
+    interval: 1m
+    input_series:
+      - series: kube_deployment_status_replicas_available{cluster="master", namespace="image-builder", deployment="el-image-builder"}
+        values: 1x40
+    promql_expr_test:
+      - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
+        eval_time: 3m
+      - expr: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing"}
+        eval_time: 10m
+        exp_samples:
+          - labels: ALERTS{alertname="CIRunKeeperStalled", alertstate="firing", namespace="image-builder", deployment="ci-run-keeper", severity="warning"}
             value: 1
