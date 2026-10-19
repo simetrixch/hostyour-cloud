@@ -125,7 +125,7 @@ helm dependency update clusters/inventories/image-builder
 node --test scripts/forgejo-release.test.mjs || fail 'scripts/forgejo-release.test.mjs'
 echo 'test: forge — the Forgejo SSH check reads the announced port from the install branch, is green on an SSH banner, and red on a closed, a silent or a wrong port.'
 node --test scripts/forgejo-ssh.test.mjs || fail 'scripts/forgejo-ssh.test.mjs'
-echo 'test: registry sync — zot asks Docker Hub for a Docker Hub image on a miss and for no repository the platform publishes, so a missing owned version is a 404.'
+echo 'test: registry sync — zot asks Docker Hub on a miss for the Docker Hub repositories it lists, every one the tree names among them, and for no repository the platform publishes, so a missing owned version is a 404.'
 helm dependency build clusters/inventories/registry
 node --test scripts/zot-sync.test.mjs || fail 'scripts/zot-sync.test.mjs'
 echo 'test: OK — all suites green'
