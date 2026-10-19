@@ -1,0 +1,64 @@
+# `promtool test rules` over this chart's PrometheusRules as they render. scripts/check.sh sets
+# rule_files to the rules of each stage's render before it runs this file, so it names none here.
+#
+# EVERY TEST READS ALERTS, NOT alert_rule_test: alert_rule_test compares the annotations byte for
+# byte, so a reworded description would turn a test red while the rule is right. ALERTS carries
+# the labels alone, and an alert on a run it should not name is a sample the test did not expect.
+#
+# THE SERIES ARE THE ONES THE METRICS REFERENCE OF THE VENDORED TEKTON RELEASE LISTS (the counter
+# tekton_pipelines_controller_pipelinerun_total) and the ones clusters/inventories/observability
+# makes kube-state-metrics read from tekton.dev/v1 PipelineRun (tekton_pipelinerun_*_timestamp_seconds);
+# scripts/tekton-feature-flags.test.mjs holds the names. The join is the `unless on (cluster,
+# namespace, pipelinerun)`: scripts/check.sh runs this file once more with cluster taken out of it
+# and with the join taken out, and both runs must fail.
+evaluation_interval: 1m
+tests:
+  - name: PipelineRunFailed alerts when the failed counter of the Tekton controller rises, and not when a run succeeds
+    interval: 1m
+    input_series:
+      # The failed counter stands at 26 and then takes a run.
+      - series: tekton_pipelines_controller_pipelinerun_total{cluster="master", status="failed"}
+        values: 26x4 27x25
+      # The success counter rises on every minute and the failed one of another cluster does not move.
+      - series: tekton_pipelines_controller_pipelinerun_total{cluster="master", status="success"}
+        values: 1+1x29
+      - series: tekton_pipelines_controller_pipelinerun_total{cluster="apps1", status="failed"}
+        values: 5x29
+    promql_expr_test:
+      - expr: ALERTS{alertname="PipelineRunFailed"}
+        eval_time: 3m
+      - expr: ALERTS{alertname="PipelineRunFailed"}
+        eval_time: 8m
+        exp_samples:
+          - labels: ALERTS{alertname="PipelineRunFailed", alertstate="firing", cluster="master", status="failed", severity="warning"}
+            value: 1
+
+  - name: PipelineRunRunningTooLong alerts on the run that started more than 30 minutes ago and has not completed, not on a finished run, a young run, or a run whose name another cluster completed
+    interval: 1m
+    input_series:
+      # shop-ci-old started at second 0 and never completed: 40 minutes old at the evaluation.
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-old"}
+        values: 0x40
+      # shop-ci-done started at second 0 and completed at second 600.
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-done"}
+        values: 0x40
+      - series: tekton_pipelinerun_completion_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-done"}
+        values: 600x40
+      # shop-ci-young started at second 1500, so it is 15 minutes old at the evaluation.
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-young"}
+        values: 1500x40
+      # shop-ci-twin runs on master and has not completed there; the run of the same name on apps1 completed.
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-twin"}
+        values: 0x40
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="apps1", namespace="shop-build", pipelinerun="shop-ci-twin"}
+        values: 0x40
+      - series: tekton_pipelinerun_completion_timestamp_seconds{cluster="apps1", namespace="shop-build", pipelinerun="shop-ci-twin"}
+        values: 600x40
+    promql_expr_test:
+      - expr: ALERTS{alertname="PipelineRunRunningTooLong"}
+        eval_time: 40m
+        exp_samples:
+          - labels: ALERTS{alertname="PipelineRunRunningTooLong", alertstate="firing", cluster="master", namespace="shop-build", pipelinerun="shop-ci-old", severity="warning"}
+            value: 1
+          - labels: ALERTS{alertname="PipelineRunRunningTooLong", alertstate="firing", cluster="master", namespace="shop-build", pipelinerun="shop-ci-twin", severity="warning"}
+            value: 1

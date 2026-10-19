@@ -366,7 +366,7 @@ $found"
 }
 
 # THE PODS THE MASTER CANNOT WORK WITHOUT CARRY A CPU REQUEST. A pod with none gets the smallest share of the node
-# once the node is saturated, and the build plane saturates it: the ci check may take 12 cores, six runs at once. The
+# once the node is saturated, and the build plane saturates it: the ci check may take 12 cores, seven runs at once. The
 # ingress, the reconcilers, the certificates and the build plane's controllers are the pods that must keep working
 # then, so each container of the workloads below asks for the CPU it uses (its p95 over seven days, which the
 # comment beside each request in the values names). The names are the ones the charts render and the live pods
@@ -775,6 +775,30 @@ if (cd "$planted" && promtool test rules rules.test.yaml >/dev/null 2>&1); then
   fail "the rule test clusters/inventories/observability/rules.test.yaml passes at stage dev with cluster taken out of PodNotReady's on (cluster, namespace, pod), so it cannot catch a join across clusters, or PodNotReady carries that on list no more"
 fi
 echo "check: the rule test goes red at stage dev with cluster taken out of PodNotReady's on (cluster, namespace, pod)."
+
+# THE PLANTED DEFECTS OF THE PIPELINERUN ALERTS are the two shapes of a wrong join between the start series and the
+# completion series: cluster taken out of the `on` list, which lets a run of another cluster that carries the same
+# name hide a run that has not completed, and the `unless` clause taken out, which alerts on a run that completed. The
+# dev rules of tekton and image-builder run once more with each, and each run fails.
+for planted_chart in tekton image-builder; do
+  for planted_defect in "cluster taken out of the on list of PipelineRunRunningTooLong" "the unless clause taken out of PipelineRunRunningTooLong"; do
+    planted="$work/rules-planted-$planted_chart"
+    rm -rf "$planted"
+    cp -R "$work/rules/$planted_chart/dev" "$planted" \
+      || fail "the planted run of the rule test needs the rules of $planted_chart at stage dev"
+    planted_rules="$(grep -l 'alert: PipelineRunRunningTooLong' "$planted"/rule-*.yml)" \
+      || fail "the rules of $planted_chart at stage dev carry no PipelineRunRunningTooLong to plant a defect in"
+    case "$planted_defect" in
+      cluster*) yq -i '(.groups[].rules[] | select(.alert == "PipelineRunRunningTooLong") | .expr) |= sub("on [(]cluster, namespace, pipelinerun[)]"; "on (namespace, pipelinerun)")' "$planted_rules" ;;
+      *) yq -i '(.groups[].rules[] | select(.alert == "PipelineRunRunningTooLong") | .expr) |= "time() - tekton_pipelinerun_start_timestamp_seconds > 1800"' "$planted_rules" ;;
+    esac \
+      || fail "PipelineRunRunningTooLong of $planted_chart could not be planted with $planted_defect"
+    if (cd "$planted" && promtool test rules rules.test.yaml >/dev/null 2>&1); then
+      fail "the rule test clusters/inventories/$planted_chart/rules.test.yaml passes at stage dev with $planted_defect, so it cannot catch that join, or the alert is not written the way the plant expects"
+    fi
+    echo "check: the rule test of $planted_chart goes red at stage dev with $planted_defect."
+  done
+done
 
 # ── clusters/argocd as ArgoCD is handed it: the cluster map ALONE ────────────────────────────
 # THE LOOP ABOVE RENDERS IT WITH THE PLATFORM CHAIN, AND NO CLUSTER EVER DOES. clusters/argocd is
