@@ -113,7 +113,9 @@ push it to a branch whose name starts with `ci/`:
 git push origin HEAD:ci/issue-<n>-planted-1
 ```
 
-Delete that branch once its run has finished.
+Delete that branch once its run has finished. A run whose `ci/` branch is deleted before it finishes is cancelled by
+the ci run keeper within a minute (annotation `image-builder.io/branch-deleted` on the run), and every run ends
+at the bound set in `ciPush.timeouts` of `clusters/inventories/image-builder/values-common.yaml`.
 
 ## License
 

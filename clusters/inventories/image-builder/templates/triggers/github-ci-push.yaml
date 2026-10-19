@@ -4,6 +4,10 @@
 {{- $pinIdentity := required "image-builder: ciPush.pinIdentity is required: the git author of the release pins, which the ci trigger does not run again" (default (dict) .Values.ciPush).pinIdentity -}}
 {{- $pinName := required "image-builder: ciPush.pinIdentity.name is required" $pinIdentity.name -}}
 {{- $pinEmail := required "image-builder: ciPush.pinIdentity.email is required" $pinIdentity.email -}}
+{{- $timeouts := (default (dict) .Values.ciPush).timeouts | default (dict) -}}
+{{- $pipelineTimeout := required "image-builder: ciPush.timeouts.pipeline is required: the longest a ci run may take after its start, tasks and finally together" $timeouts.pipeline -}}
+{{- $tasksTimeout := required "image-builder: ciPush.timeouts.tasks is required: the longest the tasks of a ci run may take after its start" $timeouts.tasks -}}
+{{- $finallyTimeout := required "image-builder: ciPush.timeouts.finally is required: the longest the finally tasks of a ci run may take, on a clock of their own" $timeouts.finally -}}
 {{- /* The stages a release reaches, from the one table of the channels: the stage files of the pins are named after them. */ -}}
 {{- $stages := list -}}
 {{- range $reached := values (required "image-builder: global.channelStages is required (clusters/platform/values-common.yaml): the ci trigger names the stage files of the release pins after it" .Values.global.channelStages) }}{{ range $stage := $reached }}{{ $stages = append $stages $stage }}{{ end }}{{ end -}}
@@ -246,12 +250,14 @@ spec:
         # timeout too. With the pipeline timeout alone, Tekton cancels the
         # finally tasks together with the rest when it runs out; with a budget
         # for the tasks and one for the finally tasks, a run that exhausts the
-        # tasks budget still runs report-failure inside its own 10 minutes.
-        # pipeline must not be shorter than tasks plus finally.
+        # tasks budget still runs report-failure inside the finally budget.
+        # pipeline must not be shorter than tasks plus finally. The values are
+        # ciPush.timeouts, where their measurement is written, and every run
+        # carries all three: a run that meets one ends, and none runs for ever.
         timeouts:
-          pipeline: 2h0m0s
-          tasks: 1h45m0s
-          finally: 10m0s
+          pipeline: {{ $pipelineTimeout }}
+          tasks: {{ $tasksTimeout }}
+          finally: {{ $finallyTimeout }}
         params:
           - name: commit
             value: $(tt.params.commit)

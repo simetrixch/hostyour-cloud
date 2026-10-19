@@ -63,6 +63,20 @@ priorityClasses:
 # again: the release proved the commit it pins. A person's commit to the same files is run, whatever its subject.
 # The webhook names the author and the committer of a commit and not what the commit says it changed in a file,
 # so the identity is what tells a pin move from an edit of another line of a pin file.
+#
+# THE BOUND OF ONE CI RUN: the three clocks of the spec.timeouts of every ci run (templates/triggers/github-ci-push.yaml),
+# set together, and required: a run without them would have no end. A run that meets one is ended by Tekton as failed,
+# and its finally tasks set the commit status and mail the failure; the alert PipelineRunFailed counts it.
+# The clocks start when the ci run keeper starts the run, so the wait for a ci slot uses none of them, but the wait of a pod
+# for the quota of its unit does: Tekton restarts the clock of a task then, never the one of the run.
+#   tasks     45m: the budget of every task of the run together. One minute above one round of the six task caps of the
+#             ci pipeline (44 minutes, templates/pipeline-ci.yaml of consumer-build), so a run whose tasks stay inside
+#             their caps never meets it. The finished ci runs of the master from 2026-10-10 to 2026-10-19 (1540 runs of 23
+#             units) took 1.7 minutes at the median, 11.2 at the 99th percentile and 20.1 at the longest: the budget is 2.2
+#             times the longest.
+#   finally   10m: the budget of the finally tasks, which set the commit status and mail the failure, on a clock of their
+#             own so that a run that used up its tasks budget still reports. At least the cap of the report task (5 minutes).
+#   pipeline  55m: tasks plus finally: the run ends at most this long after its start.
 ciPush:
   owners:
     - digitaplatform
@@ -70,6 +84,10 @@ ciPush:
   pinIdentity:
     name: image-builder
     email: image-builder@platform
+  timeouts:
+    pipeline: 55m0s
+    tasks: 45m0s
+    finally: 10m0s
 
 # EventListener config — exposed publicly so GitHub can call it on a branch
 # push and on a deploy/<stage>/<release-tag> tag push.
@@ -182,3 +200,18 @@ monitoring:
               annotations:
                 summary: "PipelineRun {{ $labels.namespace }}/{{ $labels.pipelinerun }} running > 30 minutes"
                 description: "Check for stuck Buildah steps."
+
+            # The ci run keeper (templates/ci-run-keeper.yaml) runs every minute. Without it no waiting ci run starts and
+            # no run of a deleted or replaced branch ends. The metric is kube-state-metrics' time of the last Job of the
+            # CronJob that succeeded: a tick that fails does not move it, so a keeper that fails every minute stalls too.
+            # No series at all is a keeper that never succeeded or one that is gone.
+            - alert: CIRunKeeperStalled
+              expr: >-
+                time() - kube_cronjob_status_last_successful_time{namespace="image-builder", cronjob="ci-run-keeper"} > 600
+                or absent(kube_cronjob_status_last_successful_time{namespace="image-builder", cronjob="ci-run-keeper"})
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "The ci run keeper has not succeeded for more than 10 minutes"
+                description: "Nothing starts, replaces or ends a ci run meanwhile. Read the last Jobs of the CronJob ci-run-keeper in namespace image-builder: `kubectl -n image-builder get job -l app.kubernetes.io/component=ci-run-keeper` and their logs."
