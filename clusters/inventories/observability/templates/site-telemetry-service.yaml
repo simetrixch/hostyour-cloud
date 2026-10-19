@@ -1,0 +1,16 @@
+{{- if .Values.global.servicesLocal.observability }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: site-telemetry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "site-telemetry.selectorLabels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "site-telemetry.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}

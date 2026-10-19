@@ -1,0 +1,11 @@
+# The tenant's facts, out of its registration (clusters/argocd/files/site-telemetry-registrations-appset.yaml).
+# Empty and required on purpose: a default would be a second source for what the books state.
+tenant:
+  guid: ""
+  stage: ""
+  # The one host the tenant is served at on that stage: its own domain, else its zone.
+  host: ""
+  # The hosts among them that Cloudflare's proxy serves, the own domain or none.
+  proxiedHosts: []
+  # The tenant's websites, each {name, sitePath, main}; none for a tenant without a website.
+  sites: []

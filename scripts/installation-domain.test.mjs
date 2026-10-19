@@ -9,7 +9,8 @@ const fixture = () => [{file: 'clusters/active/master.old.example.yaml', map: {
     domain: 'master.old.example', clusterName: 'standing-name', booksCluster: 'master.old.example',
     buildPlane: 'master.old.example', unitApex: 'old.example', platformDomain: 'mail.example',
     endpoints: {registry: {host: 'zot.master.old.example'}, vault: {url: 'https://vault.master.old.example', privateAddress: '100.64.0.1'},
-      idp: {url: 'https://external.example/issuer/'}, mail: {host: 'mail.old.example', password: 'never-emitted'}}
+      idp: {url: 'https://external.example/issuer/'},
+      observability: {prometheusPush: 'https://prom-push.master.old.example', lokiPush: 'https://loki-push.master.old.example', query: 'https://observability-query.master.old.example'}, mail: {host: 'mail.old.example', password: 'never-emitted'}}
   }
 }}];
 
@@ -25,6 +26,12 @@ test('map only hostname boundaries, retain data/keys/mail and original inventory
   assert.ok(plan.changes[0].fields.some(row => row.before === 'https://vault.master.old.example' && row.after === 'https://vault.master.new.example'));
   for (const forbidden of ['never-emitted', '100.64.0.1', 'unchanged-pin', 'mail.old.example']) assert.ok(!JSON.stringify(plan).includes(forbidden));
   assert.ok(!plan.changes[0].fields.some(row => row.path === 'global.endpoints.idp.url'));
+  // The three addresses of the observability plane move with the installation's domain, the one
+  // the site statistics are read from among them.
+  assert.deepEqual(plan.changes[0].fields.filter(row => row.path.startsWith('global.endpoints.observability.')).map(row => [row.path, row.after]), [
+    ['global.endpoints.observability.lokiPush', 'https://loki-push.master.new.example'],
+    ['global.endpoints.observability.prometheusPush', 'https://prom-push.master.new.example'],
+    ['global.endpoints.observability.query', 'https://observability-query.master.new.example']]);
   const upper = fixture(); upper[0].map.global.endpoints.vault.url = 'https://VAULT.master.old.example:443/';
   assert.ok(planInstallation(upper, 'old.example', 'new.example').changes[0].fields.some(row => row.after === 'https://vault.master.new.example:443/'));
 });

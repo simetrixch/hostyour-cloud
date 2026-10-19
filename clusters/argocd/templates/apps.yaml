@@ -148,9 +148,9 @@ syncs at once — the state the steps exist to end, arrived at in silence.
 {{- end }}
 {{- $waveSteps = append $waveSteps (printf "        - matchExpressions: [{ key: %q, operator: NotIn, values: [%s] }]" $waveLabel (join ", " $waveValues)) }}
 {{- $waveStepList := printf "\n%s" (join "\n" $waveSteps) }}
-{{- $booksOnly := list "cluster-self.yaml" "e2e-targets-appset.yaml" "slaves-appset.yaml" }}
+{{- $booksOnly := list "cluster-self.yaml" "e2e-targets-appset.yaml" "site-telemetry-registrations-appset.yaml" "slaves-appset.yaml" }}
 {{- $docs := list }}
-{{- $names := list "cluster-self.yaml" "consumers-appset.yaml" "e2e-targets-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "slaves-appset.yaml" "tenants-appset.yaml" "units-appset.yaml" }}
+{{- $names := list "cluster-self.yaml" "consumers-appset.yaml" "e2e-targets-appset.yaml" "platform-apps-appset.yaml" "projects.yaml" "site-telemetry-registrations-appset.yaml" "slaves-appset.yaml" "tenants-appset.yaml" "units-appset.yaml" }}
 {{- if $previousUnitApex }}
 {{- $names = append $names "redirects-appset.yaml" | sortAlpha }}
 {{- end }}
