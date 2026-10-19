@@ -104,7 +104,7 @@ that the check has had in its hands.
 
 report-failure runs after a task timeout because the ci TriggerTemplate bounds
 the tasks and the finally task separately (clusters/inventories/image-builder,
-templates/triggers/github-ci-push.yaml). A newer push replaces a started run by
+templates/triggers/github-ci-push.yaml). A newer push, or the deletion of the branch, ends a started run by
 cancelling it gracefully (CancelledRunFinally): its finally tasks still run,
 report-failure finds no failure to mail, and commit-status sets error.
 

@@ -117,7 +117,7 @@ releaseQueue:
   maxRunning: 4
 
 # The ci run keeper (templates/ci-run-keeper.yaml) starts the waiting ci runs, cancels the ones that a
-# newer push replaces and deletes the oldest finished ones with their workspace claims. It runs the same
+# newer push replaces or whose `ci/` branch was deleted, and deletes the oldest finished ones with their workspace claims. It runs the same
 # kubectl image as the release queue. maxRunning is the number of ci runs that run at once across all
 # units, and each unit has at most one of them, because the keeper starts no second run of a unit. The memory budget
 # test in scripts/build-contract.test.mjs multiplies the memory limits of a ci pod and of the report pod
