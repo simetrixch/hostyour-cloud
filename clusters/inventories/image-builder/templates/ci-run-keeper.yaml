@@ -9,6 +9,19 @@ things each minute, to the ci runs only (the runs that carry image-builder.io/ci
     branch name. The same patch writes the annotation image-builder.io/cancelled-by on the run: the
     commit and the run of the newest push to the branch, so the cancelled run says by which push it was
     replaced.
+  - it cancels a run that has not finished and is not replaced, whose `ci/` branch no longer exists on the
+    remote of the run (the parameter git-url): deleting a branch sends no push, so nothing else would end
+    the runs of a deleted branch, which would hold the ci slot of their unit one after the other. A waiting
+    run is cancelled outright and a started one gracefully, as above, and the patch writes the annotation
+    image-builder.io/branch-deleted with the branch. The keeper reads the remote with `git ls-remote`,
+    anonymously, over https, at the same time for every repository that has such a run, each within ten
+    seconds; so the namespace image-builder needs a way out to github.com, and it holds no secret for it,
+    which is why only public repositories run a check here (templates/triggers/github-ci-push.yaml). The
+    default branch is never cancelled this way, and neither is a run of the first two minutes, which the
+    remote may not list yet. A remote that cannot be read is judged on nothing: a failure to read it fails
+    the tick after the rest of the tick is done, so that the failed Job and the stalled alert show it, and
+    a repository that asks for a login (a private one, or one that is gone) is named in the log and costs
+    the tick nothing.
   - it starts the oldest waiting runs while fewer than ciRunKeeper.maxRunning ci runs have started and
     not finished, at most one run per build namespace and none in a namespace that has a started run,
     because the ci quota of a unit lets one task pod run (its second slot only covers the finished pod
@@ -29,9 +42,14 @@ ITS RIGHTS. Read on PipelineRuns cluster-wide (the build namespaces come and go 
 patch and delete only in each <unit>-build namespace, rendered there by clusters/inventories/consumer-build
 (templates/rbac-ci-run-keeper.yaml). A patch can rewrite any field, so the admission policy
 image-builder-pipelinerun-guard limits this identity on a ci run to setting spec.status Cancelled or
-CancelledRunFinally together with the annotation image-builder.io/cancelled-by, to
+CancelledRunFinally together with the annotation image-builder.io/cancelled-by or
+image-builder.io/branch-deleted, to
 dropping the waiting flag, and to its own annotation image-builder.io/queued-behind, and a delete by it to a finished run of the unit's own ci
 Pipeline.
+
+ITS OWN END. The Job gets 50 seconds (activeDeadlineSeconds), and no retry: the next minute is the retry. A tick that fails shows as a
+failed Job, and a keeper whose last success is more than ten minutes old, or that has none, raises the alert
+CIRunKeeperStalled (values-common.yaml, monitoring).
 */ -}}
 {{- if .Values.eventListener.enabled }}
 apiVersion: v1
@@ -135,13 +153,15 @@ spec:
                 readOnlyRootFilesystem: true
                 capabilities:
                   drop: ["ALL"]
+              # Every remote is asked at once, by a git and a git-remote-https of their own (the larger of the two
+              # measured 18 MB at its peak), so the limits hold as many of them as there are repositories with a run.
               resources:
                 requests:
-                  cpu: 10m
-                  memory: 32Mi
+                  cpu: 20m
+                  memory: 64Mi
                 limits:
-                  cpu: 100m
-                  memory: 128Mi
+                  cpu: 500m
+                  memory: 512Mi
               volumeMounts:
                 - name: keeper
                   mountPath: /keeper

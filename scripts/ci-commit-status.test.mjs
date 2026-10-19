@@ -92,6 +92,13 @@ test('a task that ran and failed sets failure, and a run that was stopped before
   assert.equal(stateOf({RUN_STATE: 'None'}), 'error', 'a run cut short before all its tasks were done');
 });
 
+test('the status of a stopped run names every way a run is stopped: a newer push, a deleted branch and a time that ran out', () => {
+  const description = execute({RUN_STATE: 'Failed', TASK_REASONS: 'Succeeded TaskRunCancelled'}).posted.description;
+  assert.match(description, /a newer push replaced it/, 'PLANTED INNOCENT: the replaced run keeps its reason');
+  assert.match(description, /its branch was deleted/, 'PLANTED DEFECT: a run whose branch was deleted must not be said to be replaced');
+  assert.match(description, /its time ran out/);
+});
+
 test('a state that is no state of a run posts nothing and fails the task', () => {
   const result = execute({RUN_STATE: '$(tasks.status)'});
   assert.equal(result.status, 1);

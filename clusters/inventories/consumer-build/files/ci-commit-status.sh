@@ -5,8 +5,9 @@
 # scripts/ci-commit-status.test.mjs runs it against a stand-in curl.
 #
 # The outcome is $(tasks.status) and the reasons of the tasks before the finally ones. Tekton counts a
-# task it cancelled as failed: TaskRunCancelled when a newer push replaced the run (the ci run keeper
-# cancels a started run gracefully, so this task still runs) or when the time of the run ran out, and
+# task it cancelled as failed: TaskRunCancelled when a newer push replaced the run or its branch was deleted
+# (the ci run keeper cancels a started run gracefully, so this task still runs) or when the time of the run
+# ran out, and
 # TaskRunTimeout when the task's own time ran out. Such a run never finished its check, so the commit
 # gets `error`, not `failure`, which GitHub keeps for a check that ran and failed. A graceful cancel
 # that lands between two tasks cancels no TaskRun and skips the rest, so Tekton reports `Completed`:
@@ -20,7 +21,7 @@ set -euo pipefail
 
 : "${GITHUB_TOKEN:?}" "${REPOSITORY_PATH:?}" "${COMMIT:?}" "${RUN_URL:?}" "${RUN_STATE:?}"
 
-stopped="The run stopped before its check finished: a newer push replaced it, or its time ran out."
+stopped="The run stopped before its check finished: a newer push replaced it, its branch was deleted, or its time ran out."
 case "${RUN_STATE}" in
   running) state=pending description="The check runs." ;;
   Succeeded) state=success description="The check passed." ;;
