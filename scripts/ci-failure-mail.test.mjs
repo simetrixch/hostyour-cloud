@@ -21,7 +21,7 @@ const baseConfig = JSON.parse(execFileSync('yq', ['-o=json', '.'], {input: fromS
 
 const LOG = ['npm ERR! <script>alert("pwned")</script>', 'expected "a" & got <b>b</b>', 'at file.js:10'].join('\n');
 const posted = (() => {
-  const result = execute({taskRuns: withFailure('check'), logs: {'shop-ci-abc12-check-pod': LOG + '\n'}});
+  const result = execute({taskRuns: withFailure('check'), logs: {'shop-ci-abc12-ci-pod': LOG + '\n'}});
   assert.equal(result.status, 0, result.stderr);
   return result.alerts[0][0];
 })();
@@ -128,12 +128,12 @@ test('the html part escapes the log, a repository\'s own output, and sets it in 
     'PLANTED DEFECT: a log marked safe is refused by the stand-in, so it cannot pass this test');
 });
 
-test('two failed tasks of one run are two blocks of one mail, and an annotation that is missing reads as empty', () => {
-  const second = {...posted, labels: {...posted.labels, task: 'fetch', step: 'fetch'},
-    annotations: {...posted.annotations, failure: 'fetch, step fetch: Failed: exited with code 128', log: 'fetch broke'}};
+test('a failure and the problem of reading it are two blocks of one mail, and an annotation that is missing reads as empty', () => {
+  const second = {...posted, labels: {...posted.labels, task: 'report-failure', step: 'none'},
+    annotations: {...posted.annotations, failure: 'report-failure, step none: GET the log of ci answered HTTP 500', log: 'the log of ci could not be read'}};
   const [text] = renders([{text: emailConfig.text, data: data([posted, second])}]);
   assert.equal(text.error, '');
-  assert.ok(text.out.includes(posted.annotations.failure) && text.out.includes(second.annotations.failure) && text.out.includes('fetch broke'));
+  assert.ok(text.out.includes(posted.annotations.failure) && text.out.includes(second.annotations.failure) && text.out.includes('the log of ci could not be read'));
   const bare = {labels: posted.labels, annotations: {}};
   const [empty] = renders([{text: emailConfig.text, data: data([bare])}]);
   assert.equal(empty.error, '', 'a missing annotation is empty and not an error');

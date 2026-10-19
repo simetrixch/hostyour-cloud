@@ -18,7 +18,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `regenerate-install-branch.sh` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
-| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/` |
+| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
 | `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test; the stage `none` releases a library, which has no stage |
@@ -278,8 +278,15 @@ because at a machine's birth there is nothing to compare it against. A **changed
   a token that reached a remote must be rotated.
 - **Any line that is not a comment or `NAME='value'`.** The config is READ BY THE SHELL on the
   machine, so a line that is not an assignment is a command that would run there with the operator's
-  own rights. All three files apply the same test, and the launcher quotes the offending line with
-  its number.
+  own rights. The five launchers and the five drivers apply the same test, and the refusal names
+  each offending line by its number, and never quotes the line, because it may be a credential with
+  a closing quote forgotten. The `NAME` is added only where the line begins with it directly before
+  `=` and it is a key of `config.example.env`; a token that is no key, such as a bare
+  `GEZDGNBVGY3TQOJQ====` or a line inside a quote opened on an earlier line, is never printed. The
+  launchers share `require-config-assignments.sh`, which reads the keys from `config.example.env`
+  beside it and names numbers only when that file is missing. The drivers run on the machine, where
+  no example can be read, so they name numbers only. Each driver carries the same function, which
+  `test.sh` holds byte-equal to the sibling's.
 - **An apostrophe in any value.** That test refuses it as a side effect, and it would break the run
   in any case: a template slot standing inside quotes has no way to say so, and the cluster map
   becomes unparseable far from the cause (`ansiwise-plugins#161`).
@@ -368,6 +375,41 @@ exactly that set: each store is stopped for its own copy and started again with 
 sealed with `BACKUP_PASSPHRASE` before it leaves, and the whole goes to the storage box under
 `<fqdn>/master/<id>/` with a manifest of checksums. The Manager is among the stores stopped, so a run
 in flight when the backup starts is a run it interrupts: start it at a quiet hour.
+
+## One backup at a time, and a backup read back
+
+Two backups at once would leave a store stopped: the second reads the replicas of a store while the
+first holds it at 0, and starts it again with 0. So the driver takes a lock on the machine before it
+makes or stops anything. The lock is `flock` on `/run/lock/master-backup.lock`, held for the whole run.
+A second run, started from this computer or from another, stops nothing and ends at once with exit 75
+(the code for "try again later"). The run that holds the lock writes its id and its process id into the lock
+file. The refusal names that run by its id and its start time only while the process still has the lock file
+open. A run that ended leaves its record in the file, and a lock held by hand (`flock` with a command) writes
+none. In both cases the refusal says that the record is empty or names a run that is not alive, names no run,
+and still ends 75.
+
+The lock belongs to the open file, so the kernel frees it when the last process that holds the file open
+ends, however it ends. A run that was killed leaves the file but no lock, and the next run starts. Nothing
+needs to be cleaned up by hand. The driver's own commands (`kubectl`, `tar`, `rclone`, `gpg`) may inherit the
+open file, which was not checked for the `sudo` that starts the elevated ones. If they do, the lock of a driver
+that was killed lasts until the command it was running ends, which is the time it still works on a stopped
+store, and the refusal names no run then, because the driver whose id the record holds is gone. A killed driver
+does not start its store again; that is not changed here.
+
+Once the archives and the manifest are on the storage box and their names are counted, the driver reads
+the backup back. It copies the whole backup from the box into `/var/lib/master-backup/<id>.readback`, a
+folder of root's beside the work folder, so the machine needs the backup's size in free space once more
+while it runs. In that folder it checks four things: every checksum of the manifest holds, the
+manifest's `STORES=` equals the number of stores this backup took, the quorum archive opens with
+`BACKUP_PASSPHRASE`, and the manifest is byte for byte the one the driver sent. The last check is what
+holds the first to every archive: a checksum line that lost its form on the box is not a checksum line to
+`sha256sum -c`, so the archive under it would never be read. The quorum is opened to `/dev/null`, so no
+line of it is written anywhere or printed. If a check fails, the driver ends with exit 69 and names the check.
+
+Root removes the read-back folder when the checks pass and when one fails. The work folder is removed
+when they pass and stays when one fails, with the sealed archives in it, as it stays after any other
+refusal. A run that is killed during the read-back leaves both folders. They are root's alone and hold
+sealed archives only.
 
 ## The identity is the name, and the name is a CNAME
 

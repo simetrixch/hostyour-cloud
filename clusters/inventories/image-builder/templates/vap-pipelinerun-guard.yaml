@@ -76,7 +76,8 @@ WHAT IT BINDS (CEL, fail-closed logic):
      ci run, and only in one of two ways: by setting spec.status to Cancelled or
      CancelledRunFinally (a started run, so its finally tasks set its commit status) and
      writing the annotation image-builder.io/cancelled-by, which names the push that replaced
-     the run, or
+     the run, or image-builder.io/branch-deleted, which names the `ci/` branch that no longer
+     exists on the run's remote, or
      as the release queue does in clause 7, by dropping spec.status
      PipelineRunPending, which starts the run, and by its own annotation
      image-builder.io/queued-behind. Its RBAC grant is `patch` and `delete`; a
@@ -139,6 +140,13 @@ spec:
       expression: >-
         has(oldObject.status) && has(oldObject.status.conditions) &&
         oldObject.status.conditions.exists(c, c.type == 'Succeeded' && (c.status == 'True' || c.status == 'False'))
+    # The workspaces of the run, as oldObject had them, on an update. Tekton lets nothing but spec.status change on a run, so an
+    # update of a ci run that was created with the source claim of the earlier Trigger keeps carrying it, and the keeper that starts
+    # or cancels such a waiting run must not be refused for it.
+    - name: sameWorkspaces
+      expression: >-
+        request.operation == 'UPDATE' && has(object.spec.workspaces) == has(oldObject.spec.workspaces) &&
+          (!has(object.spec.workspaces) || object.spec.workspaces == oldObject.spec.workspaces)
     # Every field but spec.status and the annotations, unchanged by an update.
     - name: sameBody
       expression: >-
@@ -151,8 +159,7 @@ spec:
           (!has(object.spec.taskRunTemplate) || object.spec.taskRunTemplate == oldObject.spec.taskRunTemplate) &&
           has(object.spec.timeouts) == has(oldObject.spec.timeouts) &&
           (!has(object.spec.timeouts) || object.spec.timeouts == oldObject.spec.timeouts) &&
-          has(object.spec.workspaces) == has(oldObject.spec.workspaces) &&
-          (!has(object.spec.workspaces) || object.spec.workspaces == oldObject.spec.workspaces) &&
+          variables.sameWorkspaces &&
           has(object.spec.taskRunSpecs) == has(oldObject.spec.taskRunSpecs) &&
           (!has(object.spec.taskRunSpecs) || object.spec.taskRunSpecs == oldObject.spec.taskRunSpecs) &&
           has(object.spec.managedBy) == has(oldObject.spec.managedBy) &&
@@ -161,14 +168,15 @@ spec:
           (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) &&
           has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
           (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers))
-    # Every annotation but the one that names the push which replaced a cancelled ci run, unchanged by an update.
-    - name: sameAnnotationsButCancelledBy
+    # Every annotation but the two that say why a ci run was cancelled (the push that replaced it, the branch that was
+    # deleted), unchanged by an update.
+    - name: sameAnnotationsButCancelNote
       expression: >-
         request.operation != 'UPDATE' || (
-          (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k == 'image-builder.io/cancelled-by' ||
+          (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k in ['image-builder.io/cancelled-by', 'image-builder.io/branch-deleted'] ||
             (has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations &&
              oldObject.metadata.annotations[k] == object.metadata.annotations[k]))) &&
-          (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k == 'image-builder.io/cancelled-by' ||
+          (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k in ['image-builder.io/cancelled-by', 'image-builder.io/branch-deleted'] ||
             (has(object.metadata.annotations) && k in object.metadata.annotations))))
     # Every field but spec.status and the annotation of the queue and the keeper, unchanged by an update.
     - name: unchangedButStatus
@@ -252,11 +260,12 @@ spec:
       message: "caller labels may not impersonate Tekton task or pod identities."
       reason: Forbidden
     - expression: >-
-        request.operation == 'DELETE' || (has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
+        request.operation == 'DELETE' || (variables.refName.endsWith('-ci') ? (!has(object.spec.workspaces) || variables.sameWorkspaces) :
+        (has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
         object.spec.workspaces.all(w, w.name == 'source' &&
           !has(w.subPath) && !has(w.persistentVolumeClaim) && !has(w.secret) && !has(w.configMap) &&
-          !has(w.emptyDir) && !has(w.projected) && !has(w.csi)))
-      message: "a managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace."
+          !has(w.emptyDir) && !has(w.projected) && !has(w.csi))))
+      message: "a ci run is created with no workspace and an update leaves its workspaces as they were, its one pod keeps the checkout on a volume of its own task; every other managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace."
       reason: Forbidden
     - expression: "!variables.isReleaseQueue || request.operation == 'DELETE' || (request.operation == 'UPDATE' && (variables.refName.endsWith('-release') || variables.refName.endsWith('-publish')) && variables.unchangedButStatus && variables.startsOrKeepsStatus)"
       message: "the release queue may only start a waiting release or publish run or note what it waits for."
@@ -265,9 +274,9 @@ spec:
       message: "the release queue may only delete a finished release or publish run of its own namespace."
       reason: Forbidden
     - expression: "!variables.isCiRunKeeper || request.operation == 'DELETE' || (request.operation == 'UPDATE' && variables.refName.endsWith('-ci') && (
-        (variables.sameBody && variables.sameAnnotationsButCancelledBy && has(object.spec.status) && object.spec.status in ['Cancelled', 'CancelledRunFinally']) ||
+        (variables.sameBody && variables.sameAnnotationsButCancelNote && has(object.spec.status) && object.spec.status in ['Cancelled', 'CancelledRunFinally']) ||
         (variables.unchangedButStatus && variables.startsOrKeepsStatus)))"
-      message: "the ci run keeper may only cancel a ci run and name the push that replaced it, start a waiting one, or note what it waits for."
+      message: "the ci run keeper may only cancel a ci run and name the push that replaced it or the branch that was deleted, start a waiting one, or note what it waits for."
       reason: Forbidden
     - expression: "!variables.isCiRunKeeper || request.operation != 'DELETE' || (variables.deletedRefName in variables.ownPipelines && variables.deletedRefName.endsWith('-ci') && variables.deletedRunIsFinished)"
       message: "the ci run keeper may only delete a finished ci run of its own namespace."

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync, spawnSync} from 'node:child_process';
-import {chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {immutableChanges, probeImmutableChanges} from './check-immutable.mjs';
@@ -123,6 +123,10 @@ const triggerMatches = (docs, name, bodies, edit = (filter) => filter) => {
 };
 const renderUnit = (name, builds = ['app']) => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name,
   repoURL: `https://github.com/check/${name}.git`, buildsJson: JSON.stringify(builds)})]);
+// The ci Pipeline runs in one pod: its one task `ci` holds the steps, which run one after the other.
+const CI_STEPS = ['gate', 'earlier-green', 'commit-status-pending', 'clone', 'describe', 'branches', 'list-sources', 'list-tools', 'sources', 'hand-over', 'check'];
+const ciTaskSpec = (pipeline) => pipeline.spec.tasks.find((t) => t.name === 'ci').taskSpec;
+const ciStep = (pipeline, name) => pipeline.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === name);
 const imageBuilder = () => renderChart('image-builder');
 // What a TriggerTemplate creates, with the trigger's parameters filled in.
 const createdRun = (docs, template) => JSON.parse(JSON.stringify(docs.find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === template).spec.resourcetemplates[0])
@@ -131,13 +135,16 @@ const createdCiRun = (docs) => createdRun(docs, 'ci-push');
 const guardOf = (docs) => docs.find((d) => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
 
 const OWNERSHIP = 'a build namespace runs only its own release, ci, image and publish Pipelines.';
+const WORKSPACE = 'a ci run is created with no workspace and an update leaves its workspaces as they were, its one pod keeps the checkout on a volume of its own task; every other managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace.';
 const EVENT_LISTENER = 'system:serviceaccount:image-builder:eventlistener-sa';
 const RELEASE_CLASS = 'image-builder-release', CI_CLASS = 'image-builder-ci', REPORT_CLASS = 'image-builder-ci-report';
 const classOf = (pipeline) => (pipeline.endsWith('-ci') ? CI_CLASS : RELEASE_CLASS);
-// podTemplate null leaves the template out.
-const createsRun = (namespace, pipeline, podTemplate = {priorityClassName: classOf(pipeline)}) => ({object: {metadata: {namespace, labels: {'image-builder.io/ci': 'shop'}},
+// podTemplate null leaves the template out. A ci run carries no workspace (its one pod keeps the checkout on a volume of its own
+// task); every other managed run carries the one `source` claim. `workspaces` replaces that default, and null leaves them out.
+const SOURCE_CLAIM = [{name: 'source', volumeClaimTemplate: {spec: {accessModes: ['ReadWriteOnce']}}}];
+const createsRun = (namespace, pipeline, podTemplate = {priorityClassName: classOf(pipeline)}, workspaces = pipeline.endsWith('-ci') ? null : SOURCE_CLAIM) => ({object: {metadata: {namespace, labels: {'image-builder.io/ci': 'shop'}},
   spec: {pipelineRef: {name: pipeline}, taskRunTemplate: {serviceAccountName: 'pipeline-sa', ...(podTemplate ? {podTemplate} : {})},
-    workspaces: [{name: 'source', volumeClaimTemplate: {spec: {accessModes: ['ReadWriteOnce']}}}]}},
+    ...(workspaces ? {workspaces} : {})}},
   oldObject: null, request: {operation: 'CREATE', namespace, userInfo: {username: EVENT_LISTENER}}});
 
 test('the admission policy admits the release, the ci, the image and the publish pipeline of a unit in its own build namespace, and nothing else', () => {
@@ -151,6 +158,17 @@ test('the admission policy admits the release, the ci, the image and the publish
   const without = structuredClone(policy);
   without.spec.validations = without.spec.validations.filter((v) => v.message !== OWNERSHIP);
   assert.deepEqual(evaluate(without, [createsRun('shop-build', 'post-ci')])[0].denied, []);
+  // A ci run carries no workspace: its checkout is on a volume of its own task, and a claim would be a volume on the node that
+  // outlives nothing and costs a second of binding. Every other managed run keeps its one `source` claim.
+  const workspaceVerdict = (pipeline, workspaces) => evaluate(policy, [createsRun('shop-build', pipeline, undefined, workspaces)])[0].denied;
+  assert.deepEqual(workspaceVerdict('shop-ci', SOURCE_CLAIM), [WORKSPACE], 'PLANTED DEFECT: a ci run with the source claim');
+  assert.deepEqual(workspaceVerdict('shop-ci', [{name: 'source', emptyDir: {}}]), [WORKSPACE], 'PLANTED DEFECT: a ci run with an emptyDir workspace');
+  assert.deepEqual(workspaceVerdict('shop-ci', null), [], 'PLANTED INNOCENT: a ci run without a workspace');
+  for (const pipeline of ['shop-release', 'shop-image', 'shop-publish']) {
+    assert.deepEqual(workspaceVerdict(pipeline, SOURCE_CLAIM), [], `PLANTED INNOCENT: ${pipeline} with the one source claim`);
+    assert.deepEqual(workspaceVerdict(pipeline, null), [WORKSPACE], `PLANTED DEFECT: ${pipeline} without its source claim`);
+    assert.deepEqual(workspaceVerdict(pipeline, [{name: 'source', emptyDir: {}}]), [WORKSPACE], `PLANTED DEFECT: ${pipeline} with an emptyDir workspace`);
+  }
   // The Tekton controller keeps updating a ci run it started.
   const run = createsRun('shop-build', 'shop-ci');
   const update = {...run, oldObject: run.object, request: {operation: 'UPDATE', namespace: 'shop-build',
@@ -184,10 +202,13 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const matches = (name, bodies, edit) => triggerMatches(builder, name, bodies, edit);
   // GitHub sends the repository's default branch with every push (repository.default_branch); `main` here, so a
   // filter that names `master` instead of reading it is seen.
-  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main'};
-  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}, default_branch: 'main'};
-  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}, default_branch: 'main'};
-  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
+  // Every repository is public unless a push says otherwise, so the owner clause is what refuses the customer's and the outsider's.
+  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main', visibility: 'public'};
+  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}, default_branch: 'main', visibility: 'public'};
+  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}, default_branch: 'main', visibility: 'public'};
+  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}, default_branch: 'master', visibility: 'public'};
+  const {visibility: _public, ...undeclared} = repository;
+  const privateRepository = {...repository, visibility: 'private'};
   const SHA = 'a'.repeat(40);
   const tag = '0.8.446-stable-20261009014252';
   const pushes = {
@@ -219,15 +240,23 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a push of master where the default branch is main': {ref: 'refs/heads/master', after: SHA, deleted: false, repository},
     'a push of a ci/ branch': {ref: 'refs/heads/ci/issue-1-planted-1', after: SHA, deleted: false, repository},
     'a branch with ci/ inside its name': {ref: 'refs/heads/feature/ci/x', after: SHA, deleted: false, repository},
+    // A repository that is not public runs no check here: its push gate is the only check of a private repository.
+    'a push of the default branch of a private repository': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: privateRepository},
+    'a push of a ci/ branch of a private repository': {ref: 'refs/heads/ci/issue-1-planted-1', after: SHA, deleted: false, repository: privateRepository},
+    'a push of the default branch of an internal repository': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: {...repository, visibility: 'internal'}},
+    'a push of the default branch of a repository whose payload names no visibility': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: undeclared},
+    // The release of a private repository is not touched: its deploy tag and its release tag still run.
+    'a deploy tag push of a private repository': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: privateRepository},
+    'a release tag push of a private repository': {ref: `refs/tags/${tag}`, after: SHA, deleted: false, repository: privateRepository},
   };
   // GitHub sends `before` with every push; a deletion carries the deleted commit there.
   const BEFORE = 'b'.repeat(40);
   for (const push of Object.values(pushes)) push.before = BEFORE;
   const bodies = Object.values(pushes);
   const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies), publish = matches('github-release-publish', bodies);
-  const verdicts = {ci: [false, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false],
-    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, false],
-    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false]};
+  const verdicts = {ci: [false, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false, false, false, false, false, false, false],
+    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false],
+    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true]};
   Object.keys(pushes).forEach((name, i) => {
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
@@ -285,6 +314,27 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     assert.notEqual(edit(trigger('github-ci-push').filter), trigger('github-ci-push').filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
     assert.ok(matches('github-ci-push', [pushes[push]], edit)[0].matched, `PLANTED DEFECT: ${defect}`);
   }
+  // PLANTED DEFECTS of the visibility clause: a filter without it runs the check of a private repository, and a filter that only
+  // refuses `private` runs it for the values GitHub may add (`internal`) and for a payload that names none. Each edit must change
+  // the filter, and each edited filter matches a push the trigger refuses.
+  const publicOnly = "has(body.repository.visibility) && body.repository.visibility == 'public'";
+  assert.ok(trigger('github-ci-push').filter.includes(`${publicOnly} && `), 'the filter reads the visibility of the repository, fail closed');
+  const refusesPrivateOnly = (filter) => filter.replace(publicOnly, "!(has(body.repository.visibility) && body.repository.visibility == 'private')");
+  const visibility = {
+    'a filter without the visibility clause runs the check of a private repository': [(filter) => filter.replace(`${publicOnly} && `, ''), ['a push of the default branch of a private repository', 'a push of a ci/ branch of a private repository']],
+    'a filter that refuses only private repositories runs the check of an internal one': [refusesPrivateOnly, ['a push of the default branch of an internal repository']],
+    'a filter that refuses only private repositories runs the check where the payload names no visibility': [refusesPrivateOnly, ['a push of the default branch of a repository whose payload names no visibility']],
+  };
+  for (const [defect, [edit, names]] of Object.entries(visibility)) {
+    assert.notEqual(edit(trigger('github-ci-push').filter), trigger('github-ci-push').filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
+    for (const name of names) {
+      assert.equal(matches('github-ci-push', [pushes[name]])[0].matched, false, `PLANTED INNOCENT: ${name} runs no check`);
+      assert.ok(matches('github-ci-push', [pushes[name]], edit)[0].matched, `PLANTED DEFECT: ${defect}`);
+    }
+  }
+  // The release of a private repository goes through the deploy and the publish trigger as before: neither reads the visibility.
+  assert.ok(!trigger('github-deploy-request').filter.includes('visibility'), 'the deploy trigger does not read the visibility');
+  assert.ok(!trigger('github-release-publish').filter.includes('visibility'), 'the publish trigger does not read the visibility');
 });
 
 // A release moves a pin by committing the new tag into clusters/inventories/<app>/values-<stage>.yaml of the default
@@ -307,7 +357,7 @@ test('the identity the ci trigger takes for a release pin is the one the release
 test('a push of the default branch that only moves release pins starts no ci run, and any other change in the push does', () => {
   const builder = imageBuilder();
   const SHA = 'a'.repeat(40), BEFORE = 'b'.repeat(40);
-  const repository = {name: 'hostyour-cloud', clone_url: 'https://github.com/simetrixch/hostyour-cloud.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
+  const repository = {name: 'hostyour-cloud', clone_url: 'https://github.com/simetrixch/hostyour-cloud.git', owner: {login: 'simetrixch'}, default_branch: 'master', visibility: 'public'};
   const bump = JSON.parse(execFileSync('yq', ['-o=json', '.ciPush.pinIdentity', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}));
   const person = {name: 'Mehmet', email: 'mehmet@example.com'};
   const commit = (modified, {added = [], removed = [], message = 'release: manager 0.8.497-stable-20261015010114 — pin 0.8.497-stable-20261015010114-72bca23 (prod)', author = bump, committer = bump} = {}) =>
@@ -380,7 +430,7 @@ test('a push of the default branch that only moves release pins starts no ci run
 test('the ci trigger needs a list of owners, and an empty or missing list fails the render naming the key', () => {
   assert.throws(() => renderChart('image-builder', ['--set-json', 'ciPush={"owners":[]}']), /ciPush\.owners is required/);
   assert.throws(() => renderChart('image-builder', ['--set', 'ciPush=null']), /ciPush\.owners is required/);
-  const filter = renderChart('image-builder', ['--set-json', 'ciPush={"owners":["one","two"],"pinIdentity":{"name":"pin","email":"pin@example.com"}}'])
+  const filter = renderChart('image-builder', ['--set-json', 'ciPush={"owners":["one","two"],"pinIdentity":{"name":"pin","email":"pin@example.com"},"timeouts":{"pipeline":"2m0s","tasks":"1m0s","finally":"1m0s"}}'])
     .find((d) => d.kind === 'Trigger' && d.metadata.name === 'github-ci-push').spec.interceptors
     .find((i) => i.ref.name === 'cel').params.find((p) => p.name === 'filter').value;
   assert.ok(filter.endsWith("body.repository.owner.login in ['one', 'two']"), 'every listed owner reaches the filter');
@@ -390,24 +440,36 @@ test('the ci trigger needs a list of owners, and an empty or missing list fails 
 test('the ci pipeline of a unit holds no GitOps credential, mounts only build-npmrc, and is no release', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['gate', 'commit-status-pending', 'clone', 'describe-commit', 'fetch', 'check']);
+  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['ci']);
+  assert.deepEqual(ciTaskSpec(pipeline).steps.map((s) => s.name), CI_STEPS);
   assert.deepEqual(pipeline.spec.finally.map((t) => t.name), ['report-failure', 'commit-status']);
   const referencesBump = (doc) => JSON.stringify(doc).includes('bump');
   assert.ok(!referencesBump(pipeline), 'the ci pipeline names no bump task, volume or secret');
   const planted = structuredClone(pipeline);
-  planted.spec.tasks.find((t) => t.name === 'check').taskSpec.volumes.push({name: 'bump', secret: {secretName: 'bump-git-https'}});
+  planted.spec.tasks.find((t) => t.name === 'ci').taskSpec.volumes.push({name: 'bump', secret: {secretName: 'bump-git-https'}});
   assert.ok(referencesBump(planted), 'PLANTED DEFECT: a render that adds the bump volume is caught');
   const secrets = (doc) => [...JSON.stringify(doc).matchAll(/"(?:secretName|name)":"((?:build|bump)-[a-z-]+)"/g)].map((m) => m[1]).sort();
   assert.deepEqual([...new Set(secrets(pipeline))], ['build-git-https', 'build-issues-read', 'build-npmrc']);
-  const check = pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec;
-  assert.equal(check.steps[0].envFrom, undefined, 'the check step holds no secret as environment');
-  assert.equal(check.steps[0].env.find((e) => e.name === 'CI')?.value, 'true', 'a check sees the variable GitHub Actions also sets');
-  assert.equal(check.steps[0].env.find((e) => e.name === 'CI_BEFORE_COMMIT')?.value, '$(params.before)', 'a check sees the commit the branch stood at before the push');
-  assert.deepEqual(pipeline.spec.tasks.find((t) => t.name === 'check').params, [{name: 'before', value: '$(params.before)'}, {name: 'tools', value: '$(tasks.fetch.results.tools)'}]);
+  const check = ciStep(pipeline, 'check');
+  assert.equal(check.envFrom, undefined, 'the check step holds no secret as environment');
+  assert.equal(check.env.find((e) => e.name === 'CI')?.value, 'true', 'a check sees the variable GitHub Actions also sets');
+  assert.equal(check.env.find((e) => e.name === 'CI_BEFORE_COMMIT')?.value, '$(params.before)', 'a check sees the commit the branch stood at before the push');
+  assert.deepEqual(pipeline.spec.tasks[0].params.map((p) => p.name), ['commit', 'before', 'branch', 'git-url']);
   assert.ok(pipeline.spec.params.some((p) => p.name === 'before'));
-  assert.deepEqual(check.volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
-  assert.deepEqual(check.steps[0].volumeMounts.filter((m) => m.name === 'npmrc').map((m) => m.readOnly), [true]);
-  assert.deepEqual(pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['commit-status-pending', 'clone', 'fetch']);
+  assert.deepEqual(ciTaskSpec(pipeline).volumes.filter((v) => v.secret).map((v) => v.secret.secretName), ['build-npmrc']);
+  assert.deepEqual(check.volumeMounts.filter((m) => m.name === 'npmrc').map((m) => m.readOnly), [true]);
+  // One pod holds the credential and the repository's code, so what keeps them apart is the mounts of the steps: the check
+  // step mounts no clone credential and runs last, after every step that holds one.
+  const holdersOf = (doc) => ciTaskSpec(doc).steps.filter((step) => JSON.stringify(step).includes('build-git-https')).map((step) => step.name);
+  assert.deepEqual(holdersOf(pipeline), ['earlier-green', 'commit-status-pending', 'clone', 'branches', 'sources']);
+  assert.equal(ciTaskSpec(pipeline).steps.at(-1).name, 'check', 'the check runs after every step that holds a credential');
+  const credentialInCheck = structuredClone(pipeline);
+  ciStep(credentialInCheck, 'check').envFrom = [{secretRef: {name: 'build-git-https'}}];
+  assert.ok(holdersOf(credentialInCheck).includes('check'), 'PLANTED DEFECT: a check step that mounts build-git-https is caught');
+  const secretsOfCheck = (doc) => JSON.stringify(ciStep(doc, 'check'));
+  assert.ok(secretsOfCheck(pipeline).includes('build-issues-read') && ciStep(pipeline, 'check').volumeMounts.some((m) => m.name === 'npmrc'),
+    'PLANTED INNOCENT: the check step mounts build-npmrc and build-issues-read and holds no clone credential');
+  assert.ok(!holdersOf(pipeline).includes('check'));
   assert.deepEqual(pipeline.spec.finally.filter((t) => JSON.stringify(t).includes('build-git-https')).map((t) => t.name), ['commit-status']);
   // Tekton copies a Pipeline's labels onto its runs: a consumer label here would make every ci run a release.
   assert.equal(pipeline.metadata.labels['image-builder.io/ci'], 'shop');
@@ -421,7 +483,7 @@ test('the ci pipeline of a unit holds no GitOps credential, mounts only build-np
 // own repository and nothing else: the property `issues` the Manager mints for that alone, never `pat` or `push`.
 const checkTokenReadsIssuesOnly = (docs, unit) => {
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === `${unit}-ci`);
-  const token = pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].env.find((e) => e.name === 'GITHUB_TOKEN');
+  const token = pipeline.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check').env.find((e) => e.name === 'GITHUB_TOKEN');
   const reader = docs.find((d) => d.kind === 'ExternalSecret' && d.spec.target.name === 'build-issues-read');
   return JSON.stringify(token?.valueFrom) === JSON.stringify({secretKeyRef: {name: 'build-issues-read', key: 'token', optional: true}})
     && JSON.stringify(reader?.spec.target.template.data) === JSON.stringify({token: '{{ .issues }}'})
@@ -432,15 +494,15 @@ test('the ci check holds a GITHUB_TOKEN that reads the issues of its own reposit
   for (const builds of [['app'], []]) assert.ok(checkTokenReadsIssuesOnly(renderUnit('shop', builds), 'shop'), `the check of a unit with builds ${JSON.stringify(builds)} reads issues`);
   const docs = renderUnit('shop');
   const plant = (change) => { const planted = structuredClone(docs); change(planted); return checkTokenReadsIssuesOnly(planted, 'shop'); };
-  const checkEnv = (planted) => planted.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].env;
+  const checkEnv = (planted) => planted.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check').env;
   const reader = (planted) => planted.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-issues-read');
   assert.ok(!plant((p) => checkEnv(p).splice(checkEnv(p).findIndex((e) => e.name === 'GITHUB_TOKEN'), 1)), 'PLANTED DEFECT: a check without GITHUB_TOKEN is caught');
   assert.ok(!plant((p) => { checkEnv(p).find((e) => e.name === 'GITHUB_TOKEN').valueFrom.secretKeyRef.name = 'build-git-https'; }), 'PLANTED DEFECT: the repository token on the check is caught');
   assert.ok(!plant((p) => { reader(p).spec.data[0].remoteRef.property = 'push'; }), 'PLANTED DEFECT: the issues reader filled from the push token is caught');
   assert.ok(!plant((p) => { reader(p).spec.target.template.data.token = '{{ .pat }}'; }), 'PLANTED DEFECT: the issues reader templated from another property is caught');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  const holdsIssuesToken = (tasks) => tasks.filter((t) => JSON.stringify(t).includes('build-issues-read')).map((t) => t.name);
-  assert.deepEqual([holdsIssuesToken(pipeline.spec.tasks), holdsIssuesToken(pipeline.spec.finally)], [['check'], []]);
+  const holdsIssuesToken = (steps) => steps.filter((t) => JSON.stringify(t).includes('build-issues-read')).map((t) => t.name);
+  assert.deepEqual([holdsIssuesToken(ciTaskSpec(pipeline).steps), holdsIssuesToken(pipeline.spec.finally)], [['check'], []]);
   assert.equal(reader(docs).spec.refreshPolicy, 'OnChange', 'the Manager rewrites the token in Vault and asks for the Secret again, as for build-git-https');
 });
 
@@ -643,23 +705,22 @@ test('the build offers REGISTRY only to a Containerfile that declares it', () =>
 // check from a read-only volume beside the clone, never inside it.
 test('the fetch task fetches the pinned sources with the credential, and the check reads them read-only without it', () => {
   const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  const task = (name) => pipeline.spec.tasks.find((t) => t.name === name);
-  const fetch = task('fetch').taskSpec;
-  assert.deepEqual(fetch.steps.map((s) => s.name), ['branches', 'list-sources', 'list-tools', 'sources', 'hand-over']);
-  assert.deepEqual(fetch.results.map((r) => r.name), ['tools'], 'the tools of ci-tools.json travel to the check as a result of the fetch');
+  const ci = ciTaskSpec(pipeline);
+  assert.deepEqual(ci.steps.slice(5).map((s) => s.name), ['branches', 'list-sources', 'list-tools', 'sources', 'hand-over', 'check']);
+  assert.deepEqual(ci.results.map((r) => r.name), ['subject', 'author', 'tools', 'earlier-run'], 'the tools of ci-tools.json travel to the check as a result of the task');
   const holdsCredential = (spec) => spec.steps.filter((s) => JSON.stringify(s.envFrom ?? []).includes('build-git-https')).map((s) => s.name);
-  assert.deepEqual(holdsCredential(fetch), ['branches', 'sources'], 'the step that reads the branch\'s ci-sources.json holds no credential');
-  const planted = structuredClone(fetch);
-  planted.steps[1].envFrom = [{secretRef: {name: 'build-git-https'}}];
-  assert.notDeepEqual(holdsCredential(planted), ['branches', 'sources'], 'PLANTED DEFECT: a credential on the reading step is caught');
-  assert.equal(fetch.steps.find((s) => s.name === 'sources').env.find((e) => e.name === 'SOURCES_OWNER_URL').value, 'https://github.com/check', 'sources come from the unit\'s own owner');
-  for (const name of ['clone', 'describe-commit', 'fetch', 'check']) {
-    assert.equal(task(name).workspaces.find((w) => w.name === 'source').subPath, 'repository', `${name} reads the clone from subPath repository`);
+  assert.deepEqual(holdsCredential(ci), ['clone', 'branches', 'sources'], 'the step that reads the branch\'s ci-sources.json holds no credential');
+  const planted = structuredClone(ci);
+  planted.steps.find((s) => s.name === 'list-sources').envFrom = [{secretRef: {name: 'build-git-https'}}];
+  assert.notDeepEqual(holdsCredential(planted), ['clone', 'branches', 'sources'], 'PLANTED DEFECT: a credential on the reading step is caught');
+  assert.equal(ciStep(pipeline, 'sources').env.find((e) => e.name === 'SOURCES_OWNER_URL').value, 'https://github.com/check', 'sources come from the unit\'s own owner');
+  const mountOf = (name, path) => ciStep(pipeline, name).volumeMounts.find((m) => m.mountPath === path);
+  for (const name of ['clone', 'describe', 'branches', 'list-sources', 'list-tools', 'hand-over', 'check']) {
+    assert.deepEqual([mountOf(name, '/workspace/source').name, mountOf(name, '/workspace/source').subPath], ['scratch', 'repository'], `${name} reads the clone from subPath repository`);
   }
-  for (const name of ['fetch', 'check']) assert.equal(task(name).workspaces.find((w) => w.name === 'sources').subPath, 'sources');
-  const check = task('check').taskSpec;
-  assert.equal(check.workspaces.find((w) => w.name === 'sources').readOnly, true);
-  assert.equal(check.steps[0].env.find((e) => e.name === 'CI_SOURCES_DIR').value, '/workspace/sources');
+  for (const name of ['sources', 'check']) assert.equal(mountOf(name, '/workspace/sources').subPath, 'sources');
+  assert.equal(mountOf('check', '/workspace/sources').readOnly, true);
+  assert.equal(ciStep(pipeline, 'check').env.find((e) => e.name === 'CI_SOURCES_DIR').value, '/workspace/sources');
   assert.throws(() => renderChart('consumer-build', ['--set-json', 'unit=' + JSON.stringify({name: 'shop', repoURL: 'https://gitlab.com/check/shop.git', buildsJson: '[]'})]),
     /unit\.repoURL .* is not https:\/\/github\.com\/<owner>\/<repository>/);
 });
@@ -695,7 +756,7 @@ const runBranches = (script, defaultBranch) => {
 
 test('the fetch task names the default branch of the clone, whichever branch was pushed and whatever the default branch is called', () => {
   const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  const script = pipeline.spec.tasks.find((t) => t.name === 'fetch').taskSpec.steps.find((s) => s.name === 'branches').script;
+  const script = pipeline.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'branches').script;
   for (const defaultBranch of ['master', 'trunk']) {
     assert.deepEqual(runBranches(script, defaultBranch), {status: 0, stderr: '', originHead: `refs/remotes/origin/${defaultBranch}`},
       `PLANTED INNOCENT: a push of feature to a repository whose default branch is ${defaultBranch} leaves origin/HEAD at ${defaultBranch}, not at feature`);
@@ -710,7 +771,7 @@ test('the fetch task names the default branch of the clone, whichever branch was
 
 test('the ci gate takes a full SHA-1 as commit and as before, all zeros for a new branch, and refuses anything else', () => {
   const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  const script = pipeline.spec.tasks.find((t) => t.name === 'gate').taskSpec.steps[0].script;
+  const script = pipeline.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'gate').script;
   const SHA = 'a'.repeat(40), REPO = 'https://github.com/check/shop.git';
   const gate = (script, before, commit = SHA) => spawnSync('sh', ['-c', script], {encoding: 'utf8',
     env: {...process.env, REPO_URL: REPO, GIT_URL: REPO, COMMIT: commit, BEFORE: before, BRANCH: 'feature/x'}}).status;
@@ -727,7 +788,7 @@ test('the ci gate takes a full SHA-1 as commit and as before, all zeros for a ne
 
 test('list-sources passes only plain repository names with full commits, and a repository without ci-sources.json fetches nothing', () => {
   const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  const script = pipeline.spec.tasks.find((t) => t.name === 'fetch').taskSpec.steps.find((s) => s.name === 'list-sources').script;
+  const script = pipeline.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'list-sources').script;
   const SHA = 'a'.repeat(40);
   const list = (sources) => {
     const dir = mkdtempSync(join(tmpdir(), 'list-sources-'));
@@ -868,7 +929,7 @@ const runInstallAndCheck = (installAndCheck, files) => {
 
 test('the ci check installs with pnpm only a repository that carries pnpm-lock.yaml, and checks every repository', () => {
   const script = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci')
-    .spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].script;
+    .spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check').script;
   const lines = script.split('\n');
   const installAndCheck = lines.slice(lines.findIndex((line) => line.includes('pnpm install'))).join('\n');
   assert.ok(installAndCheck.includes('bash scripts/check.sh'), 'the install is followed by the repository check');
@@ -884,10 +945,10 @@ test('the ci check installs with pnpm only a repository that carries pnpm-lock.y
 // files/ci-tools.table, with its sha256, and puts it before the image's own tools on PATH.
 const CI_FILES = 'clusters/inventories/consumer-build/files';
 const ciPipeline = (builds = []) => renderUnit('shop', builds).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-const ciTask = (name, builds) => ciPipeline(builds).spec.tasks.find((t) => t.name === name).taskSpec;
+const ciTask = (builds) => ciPipeline(builds).spec.tasks.find((t) => t.name === 'ci').taskSpec;
 
 test('list-tools passes only a known tool at a plain version, and a repository without ci-tools.json lists none', () => {
-  const step = ciTask('fetch').steps.find((s) => s.name === 'list-tools');
+  const step = ciTask().steps.find((s) => s.name === 'list-tools');
   assert.equal(step.envFrom, undefined, 'the step that reads the repository\'s file holds no credential');
   assert.equal(step.env.find((e) => e.name === 'TOOLS_RESULT').value, '$(results.tools.path)');
   const list = (contents) => {
@@ -936,7 +997,7 @@ const tableErrors = (table, tools) => {
 };
 
 test('the tools table carries one sha256 and one https url per tool and version, for exactly the tools list-tools accepts', () => {
-  const listTools = ciTask('fetch').steps.find((s) => s.name === 'list-tools').script;
+  const listTools = ciTask().steps.find((s) => s.name === 'list-tools').script;
   const tools = listTools.match(/IN\(([^)]*)\)/)[1].match(/[a-z]+/g);
   assert.deepEqual(tableErrors(TOOLS_TABLE, tools), [], 'PLANTED INNOCENT: the table as it stands');
   assert.deepEqual([...new Set(TOOLS_TABLE.split('\n').filter(Boolean).map((line) => line.split(' ')[0]))].sort(), [...tools].sort(), 'every accepted tool has a row and no row names another');
@@ -958,7 +1019,7 @@ test('the tools table carries one sha256 and one https url per tool and version,
     assert.notDeepEqual(tableErrors(`${row.join(' ')}\n`, tools), [], `PLANTED DEFECT: ${defect} is caught`);
   }
   assert.notDeepEqual(tableErrors(`${first}\n${first}\n`, tools), [], 'PLANTED DEFECT: a tool and version twice is caught');
-  const envTable = ciTask('check').steps[0].env.find((e) => e.name === 'CI_TOOLS_TABLE');
+  const envTable = ciTask().steps.find((s) => s.name === 'check').env.find((e) => e.name === 'CI_TOOLS_TABLE');
   assert.equal(envTable.value, TOOLS_TABLE, 'the check step is handed the table file, whole');
 });
 
@@ -1010,13 +1071,13 @@ const buildToolFixtures = (root) => {
     ['traefik', '3.6.2', 'traefik.tgz'], ['loki', '3.7.4', 'loki.zip']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
 };
 
-const runInstallTools = (wanted, rows, plant = (script) => script) => {
+const runInstallTools = (wanted, rows, plant = (script) => script, extraEnv = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'ci-tools-')), dir = join(root, 'installed');
   try {
     const table = rows(buildToolFixtures(root));
     const script = plant(readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8')).replaceAll('/tmp/ci-tools', dir);
     const probe = 'for t in node npm npx go dart gitleaks promtool kubectl emcc traefik loki; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
-    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\n${probe}`], {encoding: 'utf8', env: {...process.env, CI_TOOLS: wanted, CI_TOOLS_TABLE: table}});
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\n${probe}`], {encoding: 'utf8', env: {...process.env, CI_TOOLS: wanted, CI_TOOLS_TABLE: table, ...extraEnv}});
     const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|gitleaks|promtool|kubectl|emcc|traefik|loki)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
     // emcc reads the .emscripten beside it as Python; python3 reads the two roots out of it the same way.
     const emccConfig = join(dir, 'emcc/emscripten/.emscripten');
@@ -1030,6 +1091,45 @@ const runInstallTools = (wanted, rows, plant = (script) => script) => {
 };
 const allRows = (rows) => Object.values(rows).join('\n');
 const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\ngitleaks 8.30.1\npromtool 3.13.1\nkubectl 1.35.6\nemcc 5.0.1\ntraefik 3.6.2\nloki 3.7.4\n';
+
+test('the tools step keeps each archive under its sha256 in the cache, uses a kept one only while its sha256 matches, and downloads again otherwise', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'ci-cache-'));
+  try {
+    let sha256 = '';
+    const first = runInstallTools('gitleaks 8.30.1\n', (rows) => { sha256 = rows.gitleaks.split(' ')[2]; return allRows(rows); }, undefined, {CI_CACHE_DIR: cache});
+    assert.equal(first.status, 0, first.stderr);
+    assert.deepEqual(readdirSync(join(cache, 'archives')), [sha256], 'PLANTED INNOCENT: the first run keeps the archive under its sha256');
+    const sha256Of = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+    assert.equal(sha256Of(join(cache, 'archives', sha256)), sha256);
+    // The address is gone, so the run can only succeed from the kept archive.
+    const kept = runInstallTools('gitleaks 8.30.1\n', () => `gitleaks 8.30.1 ${sha256} file:///nowhere`, undefined, {CI_CACHE_DIR: cache});
+    assert.equal(kept.status, 0, kept.stderr);
+    assert.deepEqual([kept.resolved.gitleaks.inside, kept.unpacked], [true, ['gitleaks']], 'PLANTED INNOCENT: a kept archive with its sha256 is used and nothing is downloaded');
+    assert.deepEqual(readdirSync(join(cache, 'archives')), [sha256]);
+    // A kept file that is not what its name says is replaced by a new download, which the row's sha256 vouches for.
+    let current = '';
+    const corrupt = (rows) => {
+      current = rows.gitleaks.split(' ')[2];
+      mkdirSync(join(cache, 'archives'), {recursive: true});
+      writeFileSync(join(cache, 'archives', current), 'other bytes');
+      return allRows(rows);
+    };
+    const replaced = runInstallTools('gitleaks 8.30.1\n', corrupt, undefined, {CI_CACHE_DIR: cache});
+    assert.equal(replaced.status, 0, replaced.stderr);
+    assert.match(replaced.stderr, new RegExp(`the kept archive ${current} no longer matches its sha256`), 'PLANTED DEFECT: a kept archive of other bytes is said so and removed');
+    assert.equal(sha256Of(join(cache, 'archives', current)), current, 'and the download that replaced it is what the cache holds now');
+    assert.deepEqual([replaced.resolved.gitleaks.inside, replaced.unpacked], [true, ['gitleaks']]);
+    // Without the check of the kept archive the other bytes would be unpacked.
+    const unchecked = runInstallTools('gitleaks 8.30.1\n', corrupt, (script) => script.replace('if echo "${sha256}  ${kept}" | sha256sum -c --status -; then', 'if true; then'), {CI_CACHE_DIR: cache});
+    assert.notEqual(unchecked.status, 0, 'PLANTED DEFECT: a cache whose archives are used unchecked ends in a tool that is not what the table vouches for');
+    // A run without a cache downloads and keeps nothing.
+    const bare = runInstallTools('gitleaks 8.30.1\n', allRows);
+    assert.equal(bare.status, 0, bare.stderr);
+    assert.ok(!existsSync(join(cache, 'nothing')), 'a run without CI_CACHE_DIR keeps nothing');
+  } finally {
+    rmSync(cache, {recursive: true, force: true});
+  }
+});
 
 test('the tools step installs each tool of ci-tools.json from the table before the image\'s own, and refuses what the table cannot vouch for', () => {
   const all = runInstallTools(WANTED_ALL, allRows);
@@ -1081,8 +1181,9 @@ test('the tools step installs each tool of ci-tools.json from the table before t
 });
 
 test('the check step installs the tools after the fixed ones and before the repository\'s own install, from the file the tests run', () => {
-  const check = ciTask('check').steps[0];
-  assert.equal(check.env.find((e) => e.name === 'CI_TOOLS').value, '$(params.tools)', 'the validated lines reach the step as a variable, never as text of the script');
+  const check = ciTask().steps.find((s) => s.name === 'check');
+  assert.equal(check.env.find((e) => e.name === 'CI_TOOLS_FILE').value, '$(results.tools.path)', 'the validated lines reach the step as a file of the task\'s results, never as text of the script');
+  assert.ok(check.script.includes('CI_TOOLS="$(cat "${CI_TOOLS_FILE}")"'), 'the step reads them from that file before the installer runs');
   const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
   assert.ok(check.script.includes(installer), 'the pipeline carries the file that these tests run');
   const at = (text) => check.script.indexOf(text);
@@ -1144,7 +1245,7 @@ test('build-binaries installs the fixed tools and the tools of ci-tools.json bef
   const fixed = readFileSync(`${CI_FILES}/ci-fixed-tools.sh`, 'utf8').trimEnd();
   for (const tool of [/helm-v4\.3\.0-linux-amd64\.tar\.gz/, /yq_linux_amd64/, /jq-linux-amd64/]) assert.match(fixed, tool, `${tool} is installed by the fixed tools`);
   assert.equal(fixed.match(/sha256sum -c -/g)?.length, 3, 'helm, yq and jq are each held to their sha256');
-  const check = ciTask('check').steps[0].script;
+  const check = ciTask().steps.find((s) => s.name === 'check').script;
   const build = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish')
     .spec.tasks.find((t) => t.name === 'build-binaries').taskSpec.steps.find((s) => s.name === 'build').script;
   assert.deepEqual(toolsProblems(check, 'bash scripts/check.sh'), [], 'PLANTED INNOCENT: the check step as rendered');
@@ -1261,16 +1362,17 @@ const pinnedRowProblems = (task, tools, runs, pinned) => {
   const tool = pinned.split(' ')[0];
   const rows = (env('CI_TOOLS_TABLE') ?? '').split('\n').filter((line) => line.startsWith(`${tool} `));
   if (rows.join('\n') !== pinned) problems.push(`${task.name} is handed ${rows.length ? rows.join(' and ') : `no ${tool} row`}, and not ${pinned}`);
-  if (task.params?.find((p) => p.name === 'tools')?.value !== tools || env('CI_TOOLS') !== '$(params.tools)') problems.push(`${task.name} is not handed the tools of ci-tools.json from ${tools}`);
+  const handed = task.name === 'ci' ? env('CI_TOOLS_FILE') === tools : task.params?.find((p) => p.name === 'tools')?.value === tools && env('CI_TOOLS') === '$(params.tools)';
+  if (!handed) problems.push(`${task.name} is not handed the tools of ci-tools.json from ${tools}`);
   const installerAt = step.script.indexOf(installer);
   if (installerAt < 0 || installerAt > step.script.indexOf(runs)) problems.push(`${task.name} runs ${runs} before files/ci-install-tools.sh`);
   return problems;
 };
 
 test('the check of the ci and pack of the publish pipeline put the pinned emcc 5.0.1, traefik 3.6.2 and loki 3.7.4 first on PATH before they build', () => {
-  const ci = ciPipeline().spec.tasks.find((t) => t.name === 'check');
+  const ci = ciPipeline().spec.tasks.find((t) => t.name === 'ci');
   const pack = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish').spec.tasks.find((t) => t.name === 'pack');
-  const holds = [[ci, '$(tasks.fetch.results.tools)', 'bash scripts/check.sh'], [pack, '$(tasks.scan.results.tools)', 'build_packages /workspace/packed/publishable.tsv']];
+  const holds = [[ci, '$(results.tools.path)', 'bash scripts/check.sh'], [pack, '$(tasks.scan.results.tools)', 'build_packages /workspace/packed/publishable.tsv']];
   const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
   const plant = (task, edit) => { const copy = structuredClone(task); edit(copy.taskSpec.steps.find((s) => s.env?.some((e) => e.name === 'CI_TOOLS_TABLE')), copy); return copy; };
   const table = (edit) => (step) => { const e = step.env.find((x) => x.name === 'CI_TOOLS_TABLE'); e.value = edit(e.value); };
@@ -1284,7 +1386,7 @@ test('the check of the ci and pack of the publish pipeline put the pinned emcc 5
       'another release': table((value) => value.replace(row, row.replace(named, another))),
       'another version': table((value) => value.replace(`${tool} ${version} `, `${tool} ${version}9 `)),
       'the installer removed': (step) => { step.script = step.script.replace(installer, ''); },
-      'the tools of ci-tools.json not handed over': (step, task) => { task.params = task.params.filter((p) => p.name !== 'tools'); },
+      'the tools of ci-tools.json not handed over': (step, task) => { task.params = task.params.filter((p) => p.name !== 'tools'); step.env = step.env.filter((e) => e.name !== 'CI_TOOLS_FILE'); },
     };
     for (const [task, tools, runs] of holds) {
       for (const [defect, edit] of Object.entries(defects)) {
@@ -1303,7 +1405,7 @@ test('the check of the ci and pack of the publish pipeline put the pinned emcc 5
 // What root did for them is done otherwise: the folders pods of root made are handed to that user by a step of root before
 // it, and the check script installs and writes only below places that user owns.
 const CHECK_USER = 10042;
-const OWNED_BY_CHECK_USER = ['/tmp', '/workspace', '/dev/shm', '/pnpm-store', '/npmrc', '/home/pptruser'];
+const OWNED_BY_CHECK_USER = ['/tmp', '/workspace', '/dev/shm', '/ci-cache', '/npmrc', '/home/pptruser'];
 // What is wrong with the user `step` runs as, and with `handOver`, the step of root that hands it `folders` first.
 const userProblems = (step, handOver, folders) => {
   const user = step.securityContext?.runAsUser;
@@ -1314,9 +1416,8 @@ const userProblems = (step, handOver, folders) => {
   return problems;
 };
 const checkUserProblems = (pipeline) => {
-  const task = (name) => pipeline.spec.tasks.find((t) => t.name === name).taskSpec;
-  const check = task('check').steps.find((s) => s.name === 'check');
-  const problems = userProblems(check, task('fetch').steps.at(-1), '/workspace/source');
+  const check = ciStep(pipeline, 'check');
+  const problems = userProblems(check, ciStep(pipeline, 'hand-over'), '/workspace/source');
   // The commands of the script, without comments and urls, and every absolute path they name.
   const code = check.script.split('\n').filter((line) => !/^\s*#(?!!)/.test(line)).join('\n').replace(/https?:\/\/\S+/g, '');
   for (const path of new Set(code.match(/(?<![\w.$}/:-])\/[\w.*-]+(?:\/[\w.${}*-]+)*/g))) {
@@ -1329,13 +1430,13 @@ const checkUserProblems = (pipeline) => {
 test('the check step runs as the user of its image, takes the clone from the fetch task, and writes only where that user can', () => {
   const pipeline = ciPipeline();
   assert.deepEqual(checkUserProblems(pipeline), [], 'PLANTED INNOCENT: the pipeline as rendered');
-  const planted = (change) => { const copy = structuredClone(pipeline); change(copy.spec.tasks.find((t) => t.name === 'check').taskSpec, copy.spec.tasks.find((t) => t.name === 'fetch').taskSpec); return checkUserProblems(copy); };
+  const planted = (change) => { const copy = structuredClone(pipeline); change(ciTaskSpec(copy), ciTaskSpec(copy)); return checkUserProblems(copy); };
   const asRoot = planted((check) => { check.steps.find((s) => s.name === 'check').securityContext = {runAsUser: 0, allowPrivilegeEscalation: false}; });
   assert.ok(asRoot.includes('the check step may run as root'), 'PLANTED DEFECT: the check step as it ran before, uid 0');
   const unset = planted((check) => { delete check.steps.find((s) => s.name === 'check').securityContext; });
   assert.ok(unset.includes('the check step may run as root'), 'PLANTED DEFECT: a check step that leaves the user to the image is not held to a user');
-  assert.ok(planted((check, fetch) => { fetch.steps.at(-1).script = fetch.steps.at(-1).script.replace(`${CHECK_USER}`, '1000'); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone handed to another user than the check runs as');
-  assert.ok(planted((check, fetch) => { fetch.steps.pop(); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone nobody hands over stays root\'s, and the check cannot write into it');
+  assert.ok(planted((check, fetch) => { const handOver = fetch.steps.find((s) => s.name === 'hand-over'); handOver.script = handOver.script.replace(`${CHECK_USER}`, '1000'); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone handed to another user than the check runs as');
+  assert.ok(planted((check, fetch) => { fetch.steps.splice(fetch.steps.findIndex((s) => s.name === 'hand-over'), 1); }).some((p) => p.includes('is not handed')), 'PLANTED DEFECT: a clone nobody hands over stays root\'s, and the check cannot write into it');
   const script = (find, replace) => planted((check) => { const step = check.steps.find((s) => s.name === 'check'); assert.ok(step.script.includes(find)); step.script = step.script.replaceAll(find, replace); });
   assert.ok(script('ci_bin=/tmp/ci-bin', 'ci_bin=/usr/local/bin').some((p) => p.includes('/usr/local/bin')), 'PLANTED DEFECT: tools installed into a directory of root');
   assert.ok(script('corepack enable --install-directory "${ci_bin}"', 'corepack enable').some((p) => p.includes('corepack enable')), 'PLANTED DEFECT: shims written beside node');
@@ -1349,9 +1450,11 @@ test('build-binaries runs release/build.sh as the user the ci check runs as, aft
   };
   assert.deepEqual(problems(pipeline), [], 'PLANTED INNOCENT: the pipeline as rendered');
   const steps = (p) => p.spec.tasks.find((t) => t.name === 'build-binaries').taskSpec.steps;
-  const fetch = ciTask('fetch');
+  // The ci hand-over differs by its guard for a commit that is green already and by the mounts of its volume, which the publish pod has not.
+  const {volumeMounts, ...handOver} = ciTask().steps.find((s) => s.name === 'hand-over');
+  assert.ok(volumeMounts.length > 0);
   assert.deepEqual([steps(pipeline)[0], steps(pipeline).find((s) => s.name === 'build').securityContext],
-    [{...fetch.steps.at(-1), script: fetch.steps.at(-1).script.replace('/workspace/source', '/workspace/source /workspace/packed')}, ciTask('check').steps.find((s) => s.name === 'check').securityContext],
+    [{...handOver, script: handOver.script.replace(/^if \[ -e .*\n/m, '').replace('/workspace/source', '/workspace/source /workspace/packed')}, ciTask().steps.find((s) => s.name === 'check').securityContext],
     'one shape: the hand-over and the user of the build are the ci\'s, apart from the folder the binaries are left in');
   const planted = (change) => { const copy = structuredClone(pipeline); change(steps(copy), steps(copy).find((s) => s.name === 'build')); return problems(copy); };
   assert.ok(planted((all, build) => { build.securityContext = {runAsUser: 0, allowPrivilegeEscalation: false}; }).includes('the build step may run as root'),
@@ -1383,7 +1486,7 @@ const runInstallSteps = (script, {files = [], tools = '', checkExit = 0}) => {
 };
 
 test('the ci check runs the install the repository declares, then scripts/check.sh, then scripts/test.sh where ci-tools.json stands', () => {
-  const lines = ciTask('check').steps[0].script.split('\n');
+  const lines = ciTask().steps.find((s) => s.name === 'check').script.split('\n');
   const steps = lines.slice(lines.findIndex((line) => line.includes('pnpm install'))).join('\n');
   const NPM = 'npm 12.2.0\n', LOCKS = ['package.json', 'package-lock.json'];
   assert.deepEqual(runInstallSteps(steps, {files: [...LOCKS, 'ci-tools.json', 'scripts/test.sh'], tools: NPM}), {green: true, events: ['npm ci', 'check', 'test']},
@@ -1404,8 +1507,7 @@ const seconds = (duration) => ['h', 'm', 's'].reduce((sum, unit, i) => sum + Num
 
 test('every step of the ci pipeline has requests and limits, and a run that waits for the quota outlives its tasks', () => {
   const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  const cloneTask = imageBuilder().find((d) => d.kind === 'Task' && d.metadata.name === 'git-clone');
-  const stepsOf = (task) => (task.taskSpec ?? cloneTask.spec).steps;
+  const stepsOf = (task) => task.taskSpec.steps;
   for (const task of pipeline.spec.tasks) {
     for (const step of stepsOf(task)) {
       const resources = step.computeResources;
@@ -1416,7 +1518,8 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
     assert.ok(task.timeout, `${task.name} bounds its own run: the timeout of a task restarts while its pod waits for the quota`);
   }
   const bounds = Object.fromEntries(pipeline.spec.tasks.map((t) => [t.name, seconds(t.timeout)]));
-  assert.deepEqual(bounds, {gate: 300, 'commit-status-pending': 120, clone: 600, 'describe-commit': 120, 'fetch': 300, check: 1200});
+  assert.deepEqual(bounds, {ci: 2640}, 'the one task is bounded by the sum of the caps of the six tasks it replaced');
+  assert.deepEqual([seconds(ciStep(pipeline, 'clone').timeout), seconds(ciStep(pipeline, 'check').timeout)], [600, 1200]);
   const report = pipeline.spec.finally.find((t) => t.name === 'report-failure');
   for (const step of report.taskSpec.steps) {
     for (const side of ['requests', 'limits']) assert.ok(step.computeResources?.[side]?.cpu && step.computeResources?.[side]?.memory, `report-failure/${step.name} has ${side}`);
@@ -1424,16 +1527,33 @@ test('every step of the ci pipeline has requests and limits, and a run that wait
   assert.equal(seconds(report.timeout), 300);
   assert.equal(seconds(pipeline.spec.finally.find((t) => t.name === 'commit-status').timeout), 120);
   // Tekton sets no start time on a waiting run, so the clocks start when the keeper starts it and hold no wait for a ci slot.
-  // They do hold the wait of a pod for the quota of its unit.
+  // They do hold the wait of a pod for the quota of its unit: Tekton restarts the clock of a task, never that of the run.
   // The finally tasks run on a clock of their own, so a run that used up its tasks budget still mails.
   const timeouts = imageBuilder().find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push').spec.resourcetemplates[0].spec.timeouts;
   const mailsAfterTimeout = (t) => Boolean(t.tasks && t.finally) && seconds(t.pipeline) >= seconds(t.tasks) + seconds(t.finally) &&
-    seconds(t.tasks) >= 2 * Object.values(bounds).reduce((a, b) => a + b, 0) && seconds(t.finally) >= seconds(report.timeout);
-  assert.ok(mailsAfterTimeout(timeouts), 'PLANTED INNOCENT: the run outlives two rounds of its own tasks and leaves the finally task its own time');
+    seconds(t.tasks) >= Object.values(bounds).reduce((a, b) => a + b, 0) && seconds(t.finally) >= seconds(report.timeout);
+  assert.ok(mailsAfterTimeout(timeouts), 'PLANTED INNOCENT: the run outlives one round of its own tasks and leaves the finally task its own time');
   assert.ok(!mailsAfterTimeout({pipeline: timeouts.pipeline}), 'PLANTED DEFECT: the pipeline timeout alone cancels the finally task with the rest');
-  assert.ok(!mailsAfterTimeout({...timeouts, pipeline: '1h50m0s'}), 'PLANTED DEFECT: a pipeline timeout shorter than tasks plus finally');
-  assert.ok(!mailsAfterTimeout({...timeouts, tasks: '30m0s'}), 'PLANTED DEFECT: a tasks budget that is not two rounds of the tasks');
+  assert.ok(!mailsAfterTimeout({...timeouts, pipeline: '50m0s'}), 'PLANTED DEFECT: a pipeline timeout shorter than tasks plus finally');
+  assert.ok(!mailsAfterTimeout({...timeouts, tasks: '30m0s'}), 'PLANTED DEFECT: a tasks budget that is not one round of the tasks');
   assert.ok(!mailsAfterTimeout({...timeouts, finally: '2m0s'}), 'PLANTED DEFECT: a finally budget shorter than the report task');
+  // The owner's bound (2026-10-19): the longest finished run of 1540 was 20.1 minutes, and the tasks budget is one minute above one
+  // round of the task caps, so a run whose tasks stay inside their caps never meets it.
+  assert.deepEqual(timeouts, {pipeline: '55m0s', tasks: '45m0s', finally: '10m0s'});
+});
+
+test('the bound of a ci run is set in ciPush.timeouts, each of its three clocks is required, and the TriggerTemplate carries them', () => {
+  const ciPush = (timeouts) => ['--set-json', `ciPush=${JSON.stringify({owners: ['one'], pinIdentity: {name: 'pin', email: 'pin@example.com'}, ...(timeouts ? {timeouts} : {})})}`];
+  const rendered = (timeouts) => renderChart('image-builder', ciPush(timeouts)).find((d) => d.kind === 'TriggerTemplate' && d.metadata.name === 'ci-push')
+    .spec.resourcetemplates[0].spec.timeouts;
+  const given = {pipeline: '11m0s', tasks: '7m0s', finally: '3m0s'};
+  assert.deepEqual(rendered(given), given, 'PLANTED INNOCENT: the three values of the chart reach the run, none is a literal of the template');
+  for (const clock of Object.keys(given)) {
+    const without = {...given};
+    delete without[clock];
+    assert.throws(() => rendered(without), new RegExp(`ciPush\\.timeouts\\.${clock} is required`), `PLANTED DEFECT: a run without its ${clock} clock`);
+  }
+  assert.throws(() => rendered(undefined), /ciPush\.timeouts\.pipeline is required/, 'PLANTED DEFECT: a run without any bound');
 });
 
 // The scheduler admits a pod by its requests, and the kernel kills by QoS class when the node runs out of
@@ -1460,11 +1580,15 @@ const podSteps = (task, shared) => {
   assert.ok(shared.has(sharedTaskName(task)), `${task.name} runs the shared Task ${sharedTaskName(task)}, which image-builder does not render`);
   return shared.get(sharedTaskName(task)).spec.steps;
 };
-const podLimit = (task, shared) => podSteps(task, shared).reduce((sum, step) => sum + quantity(step.computeResources.limits.memory), 0);
+// What a pod holds at once. The steps of a pod run one after the other, so the one pod of a ci run, ten steps of which only the
+// check is large, holds its largest step; the pods of the release and the publish pipelines are counted by the sum of their steps,
+// as the budget has always counted them.
+const holdsAtOnce = (task, amounts) => (task.name === 'ci' ? Math.max(...amounts) : amounts.reduce((sum, amount) => sum + amount, 0));
+const podLimit = (task, shared) => holdsAtOnce(task, podSteps(task, shared).map((step) => quantity(step.computeResources.limits.memory)));
 // A CPU limit reserves nothing: the kernel only slows a pod that asks for more than its share, so the limits may add up
 // to more than the node has, and one limit may not exceed it. What the scheduler holds to the cores is the requests.
 const milliCores = (text) => (text.endsWith('m') ? Number(text.slice(0, -1)) : Number(text) * 1000);
-const podRequest = (task, shared) => podSteps(task, shared).reduce((sum, step) => sum + milliCores(step.computeResources.requests.cpu), 0);
+const podRequest = (task, shared) => holdsAtOnce(task, podSteps(task, shared).map((step) => milliCores(step.computeResources.requests.cpu)));
 const withSharedTask = (shared, name, edit) => {
   const task = structuredClone(shared.get(name));
   edit(task);
@@ -1582,7 +1706,12 @@ test('the seven largest distinct ci units and four releases fit the 59.25Gi memo
   const [{publish}] = units;
   assert.ok(units.every((unit) => unit.publish.spec.tasks.every((t, i) => i === 0 || t.runAfter?.length === 1 && t.runAfter[0] === unit.publish.spec.tasks[i - 1].name)), 'the budget counts one publish pod, so its tasks run one after the other');
   assert.equal(String(capacity.podsPerUnit), docs.find((d) => d.kind === 'ResourceQuota').spec.hard.pods, 'the quota renders the declared pods per unit');
-  assert.ok(pipeline.spec.tasks.every((t, i) => i === 0 || t.runAfter?.length === 1 && t.runAfter[0] === pipeline.spec.tasks[i - 1].name), 'the budget counts one ci pod per running run, so the tasks run one after the other');
+  // The pods that meet at the boundary of a run: its one task `ci` and the finally task commit-status, which runs after it.
+  const podsAtBoundary = (p) => p.spec.tasks.length + p.spec.finally.filter((t) => t.name === 'commit-status').length;
+  assert.equal(podsAtBoundary(pipeline), capacity.podsPerUnit, 'the budget counts one ci pod per running run, and the quota admits the pod of commit-status beside it');
+  const thirdPod = structuredClone(pipeline);
+  thirdPod.spec.tasks.push({...thirdPod.spec.tasks[0], name: 'second', runAfter: ['ci']});
+  assert.notEqual(podsAtBoundary(thirdPod), capacity.podsPerUnit, 'PLANTED DEFECT: a second task of the ci pipeline is a third pod at the boundary, which the quota refuses');
   for (const unit of units) {
     assert.equal(unit.release.spec.tasks.filter((t) => t.name.startsWith('build-') && t.runAfter?.includes('scan')).length, unit.images, `every image of ${unit.name} builds in parallel after the scan`);
   }
@@ -1612,6 +1741,12 @@ test('the seven largest distinct ci units and four releases fit the 59.25Gi memo
   assert.ok(!fits(pipelines, capacity, releaseUnitsOf({...images, [thirdOfAnother]: images[thirdOfAnother] + 1})), 'PLANTED DEFECT: one more image of the fourth largest unit, a thirteenth image in the four slots, is caught');
   assert.ok(!fits(pipelines, capacity, releaseUnitsOf(Object.fromEntries(Array.from({length: capacity.releaseSlots}, (_, i) => [`unit${i}`, images[largestName]])))),
     'PLANTED DEFECT: four units that each build as many images as the largest do, which would fill every slot with it, are caught');
+  const heavyStep = structuredClone(pipelines);
+  ciStep(heavyStep[0], 'sources').computeResources.limits.memory = '4Gi';
+  assert.ok(!fits(heavyStep), 'PLANTED DEFECT: a step before the check that outgrows it makes the pod larger than the 3Gi counted');
+  const lightSteps = structuredClone(pipelines);
+  ciStep(lightSteps[0], 'sources').computeResources.limits.memory = '512Mi';
+  assert.ok(fits(lightSteps), 'PLANTED INNOCENT: the steps before the check stay below it, so the pod is counted by the check');
   const heavyReport = structuredClone(pipelines);
   heavyReport[0].spec.finally[0].taskSpec.steps[0].computeResources.limits.memory = '2Gi';
   assert.ok(!fits(heavyReport), 'PLANTED DEFECT: a larger report pod outside the quota is caught');
@@ -1668,8 +1803,8 @@ test('the queue runs one run of a unit and releaseSlots runs in all, which the c
 // the ci pods of the runs that run at once, of the releases or publish runs the queue runs at once and of the pods that
 // stand on the node still fit its cores (the sum of fitsBudget, in CPU requests). One more core fails the test as well as
 // a core less: the request is as far as the budget allows.
-const checkResources = (pipeline) => pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].computeResources;
-const workerCap = (pipeline) => pipeline.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].env.find((entry) => entry.name === 'VITEST_MAX_WORKERS')?.value;
+const checkResources = (pipeline) => pipeline.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check').computeResources;
+const workerCap = (pipeline) => pipeline.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check').env.find((entry) => entry.name === 'VITEST_MAX_WORKERS')?.value;
 
 test('digita-platform has four Vitest workers and enough check memory while other units retain their resources', () => {
   const digita = renderUnit('digita-platform').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'digita-platform-ci');
@@ -1687,10 +1822,10 @@ test('digita-platform has four Vitest workers and enough check memory while othe
   assert.equal(checkResources(ordinary).requests.memory, '2Gi');
   assert.equal(checkResources(ordinary).limits.memory, '3Gi');
   const missingCap = structuredClone(digita);
-  missingCap.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].env = missingCap.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].env.filter((entry) => entry.name !== 'VITEST_MAX_WORKERS');
+  missingCap.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check').env = missingCap.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check').env.filter((entry) => entry.name !== 'VITEST_MAX_WORKERS');
   assert.ok(!admitsWorkers(missingCap), 'PLANTED DEFECT: a missing cap is caught');
   const ignoredCap = structuredClone(digita);
-  ignoredCap.spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].env.find((entry) => entry.name === 'VITEST_MAX_WORKERS').name = 'VITEST_WORKERS';
+  ignoredCap.spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check').env.find((entry) => entry.name === 'VITEST_MAX_WORKERS').name = 'VITEST_WORKERS';
   assert.ok(!admitsWorkers(ignoredCap), 'PLANTED DEFECT: an env name the Vitest reader ignores is caught');
   const lowLimit = structuredClone(digita);
   checkResources(lowLimit).limits.memory = '3Gi';
@@ -1806,39 +1941,47 @@ test('the pods of all ci runs and the four largest releases or publish runs, wit
 // gives no volume is the container's own: /tmp is its writable layer on the node's disk, and /dev/shm is the 64 MiB tmpfs
 // the runtime mounts. A volume sized by its sizeLimit has that size; one without a sizeLimit is the node's disk.
 const MIN_FREE = BYTES.Gi, RUNTIME_SHM = 64 * BYTES.Mi;
-const storageShort = (run, check) => {
-  const claim = run.spec.workspaces.find((w) => w.name === 'source').volumeClaimTemplate.spec.resources.requests.storage;
+const storageShort = (pipeline) => {
+  const spec = ciTaskSpec(pipeline), check = spec.steps.find((s) => s.name === 'check');
   const sizeAt = (path, fallback) => {
-    const mount = check.taskSpec.steps[0].volumeMounts?.find((m) => m.mountPath === path);
-    const volume = mount && check.taskSpec.volumes.find((v) => v.name === mount.name);
-    return !volume ? fallback : volume.emptyDir.sizeLimit ? quantity(volume.emptyDir.sizeLimit) : Infinity;
+    const mount = check.volumeMounts?.find((m) => m.mountPath === path);
+    const volume = mount && spec.volumes.find((v) => v.name === mount.name);
+    return !volume ? fallback : volume.emptyDir?.sizeLimit ? quantity(volume.emptyDir.sizeLimit) : Infinity;
   };
-  return Object.entries({workspace: quantity(claim), '/tmp': sizeAt('/tmp', Infinity), '/dev/shm': sizeAt('/dev/shm', RUNTIME_SHM)})
+  return Object.entries({'/workspace/source': sizeAt('/workspace/source', 0), '/tmp': sizeAt('/tmp', Infinity), '/dev/shm': sizeAt('/dev/shm', RUNTIME_SHM)})
     .filter(([, bytes]) => bytes < MIN_FREE).map(([path]) => path);
 };
 
-test('the ci check has 1 GiB in its workspace, in /tmp and in /dev/shm', () => {
-  const run = createdCiRun(imageBuilder());
-  const check = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'check');
-  assert.deepEqual(storageShort(run, check), [], 'PLANTED INNOCENT: the run and the check step as they stand');
+test('the ci check has 1 GiB in its workspace, in /tmp and in /dev/shm, and its scratch volume is bounded', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  assert.deepEqual(storageShort(pipeline), [], 'PLANTED INNOCENT: the check step as it stands');
   const withVolume = (path, emptyDir) => {
-    const planted = structuredClone(check), name = `planted-${path.replaceAll('/', '')}`;
-    planted.taskSpec.volumes = [...planted.taskSpec.volumes.filter((v) => v.name !== name), {name, emptyDir}];
-    planted.taskSpec.steps[0].volumeMounts = [...planted.taskSpec.steps[0].volumeMounts.filter((m) => m.mountPath !== path), {name, mountPath: path}];
+    const planted = structuredClone(pipeline), spec = ciTaskSpec(planted), check = spec.steps.find((s) => s.name === 'check'), name = `planted-${path.replaceAll('/', '')}`;
+    spec.volumes = [...spec.volumes.filter((v) => v.name !== name), {name, emptyDir}];
+    check.volumeMounts = [...check.volumeMounts.filter((m) => m.mountPath !== path), {name, mountPath: path}];
     return planted;
   };
   const withoutMount = (path) => {
-    const planted = structuredClone(check);
-    planted.taskSpec.steps[0].volumeMounts = planted.taskSpec.steps[0].volumeMounts.filter((m) => m.mountPath !== path);
+    const planted = structuredClone(pipeline), check = ciStep(planted, 'check');
+    check.volumeMounts = check.volumeMounts.filter((m) => m.mountPath !== path);
     return planted;
   };
-  assert.deepEqual(storageShort(run, withoutMount('/dev/shm')), ['/dev/shm'], 'PLANTED DEFECT: no volume at /dev/shm leaves the 64 MiB tmpfs of the runtime');
-  const workspace = structuredClone(run);
-  workspace.spec.workspaces[0].volumeClaimTemplate.spec.resources.requests.storage = '512Mi';
-  assert.deepEqual(storageShort(workspace, check), ['workspace'], 'PLANTED DEFECT: a workspace claim of 512Mi');
-  assert.deepEqual(storageShort(run, withVolume('/tmp', {sizeLimit: '256Mi'})), ['/tmp'], 'PLANTED DEFECT: /tmp on a volume of 256Mi');
-  assert.deepEqual(storageShort(run, withVolume('/dev/shm', {sizeLimit: '45Mi'})), ['/dev/shm'], 'PLANTED DEFECT: /dev/shm on a volume of 45Mi');
-  assert.deepEqual(storageShort(run, withVolume('/dev/shm', {})), [], 'PLANTED INNOCENT: /dev/shm on an unsized volume of the node disk');
+  assert.deepEqual(storageShort(withoutMount('/dev/shm')), ['/dev/shm'], 'PLANTED DEFECT: no volume at /dev/shm leaves the 64 MiB tmpfs of the runtime');
+  assert.deepEqual(storageShort(withoutMount('/workspace/source')), ['/workspace/source'], 'PLANTED DEFECT: a check with no volume under its clone');
+  assert.deepEqual(storageShort(withVolume('/workspace/source', {sizeLimit: '512Mi'})), ['/workspace/source'], 'PLANTED DEFECT: a workspace of 512Mi');
+  assert.deepEqual(storageShort(withVolume('/tmp', {sizeLimit: '256Mi'})), ['/tmp'], 'PLANTED DEFECT: /tmp on a volume of 256Mi');
+  assert.deepEqual(storageShort(withVolume('/dev/shm', {sizeLimit: '45Mi'})), ['/dev/shm'], 'PLANTED DEFECT: /dev/shm on a volume of 45Mi');
+  assert.deepEqual(storageShort(withVolume('/dev/shm', {})), [], 'PLANTED INNOCENT: /dev/shm on an unsized volume of the node disk');
+  // The scratch volume holds the clone and the pinned sources of one run, and a check that fills it ends its own pod: the size limit is
+  // what bounds it, and it is the value of ciScratch.size.
+  const scratchOf = (p) => ciTaskSpec(p).volumes.find((v) => v.name === 'scratch');
+  const size = execFileSync('yq', ['.ciScratch.size', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'}).trim();
+  assert.equal(scratchOf(pipeline).emptyDir.sizeLimit, size, 'PLANTED INNOCENT: the scratch volume carries the size of ciScratch.size');
+  const unbounded = structuredClone(pipeline);
+  delete scratchOf(unbounded).emptyDir.sizeLimit;
+  assert.notEqual(scratchOf(unbounded).emptyDir.sizeLimit, size, 'PLANTED DEFECT: a scratch volume without a size limit fills the node disk');
+  assert.equal(scratchOf(pipeline).persistentVolumeClaim, undefined, 'the checkout of a ci run is on no claim');
+  assert.ok(quantity(size) >= MIN_FREE, 'the scratch volume holds the 1 GiB the check needs');
 });
 
 // The lines of the check step before the tools are installed, run with a df that reports a short path as 45 MB free.
@@ -1856,9 +1999,9 @@ const runStorageGuard = (guard, shortPath) => {
 };
 
 test('the ci check prints the free space of its workspace, /tmp and /dev/shm, and stops before the tools when one is under 1 GiB', () => {
-  const script = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0].script;
+  const script = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check').script;
   const lines = script.split('\n');
-  const guard = lines.slice(0, lines.findIndex((line) => line.includes('corepack enable'))).join('\n');
+  const guard = lines.slice(0, lines.findIndex((line) => line.includes('trap '))).join('\n');
   const roomy = runStorageGuard(guard, 'none');
   assert.equal(roomy.status, 0, 'PLANTED INNOCENT: 1 GiB or more free everywhere passes');
   for (const path of ['/workspace/source', '/tmp', '/dev/shm']) {
@@ -1893,6 +2036,22 @@ test('the ci run keeper runs every minute, reads runs cluster-wide, and may patc
     .spec.jobTemplate.spec.template.spec.containers[0].image);
   const map = docs.find((d) => d.kind === 'ConfigMap' && d.metadata.name === 'ci-run-keeper');
   assert.ok(map.data['ci-run-keeper.jq'].includes('image-builder.io/ci-branch') && map.data['ci-run-keeper.sh'].includes('kubectl delete'));
+  assert.ok(map.data['ci-run-keeper.jq'].includes('image-builder.io/branch-deleted'));
+  // Every remote is asked at once, so asking takes at most the time one ask gets; the rest of the tick, which lists the runs and
+  // writes the changes, needs the rest of the Job's deadline, and a tick that overruns it makes no change at all.
+  const deadline = cron.spec.jobTemplate.spec.activeDeadlineSeconds;
+  const askSeconds = Number(/^git_timeout=(\d+)$/m.exec(map.data['ci-run-keeper.sh'])[1]);
+  const leavesTime = (ask) => ask * 2 <= deadline;
+  assert.ok(leavesTime(askSeconds), `PLANTED INNOCENT: an ask of ${askSeconds} seconds leaves the tick its half of ${deadline}`);
+  assert.ok(!leavesTime(deadline), 'PLANTED DEFECT: an ask that may take the whole deadline');
+  // The tick of the script ends by itself, with its last decision a decision interval before the Job's deadline, which is the tick.
+  const setting = (name) => Number(pod.containers[0].env.find((e) => e.name === name).value);
+  const [tick, every] = [setting('CI_KEEPER_TICK_SECONDS'), setting('CI_KEEPER_DECISION_SECONDS')];
+  const endsInside = (seconds) => seconds <= deadline;
+  assert.ok(endsInside(tick) && tick === deadline && cron.spec.startingDeadlineSeconds === tick, 'PLANTED INNOCENT: the tick is the deadline of the Job');
+  assert.ok(!endsInside(deadline + every), 'PLANTED DEFECT: a tick longer than the deadline is cut in the middle of a decision');
+  assert.equal(Math.floor((tick - every) / every) + 1, 5, 'five decisions a tick, ten seconds apart');
+  assert.ok(askSeconds <= every, 'the remotes are read in the first decision, which may then take the whole interval and no more');
   // A patch or delete verb on a ClusterRole would reach every namespace, release runs of other units among them.
   const bound = docs.filter((d) => d.kind === 'ClusterRoleBinding' && d.subjects?.some((s) => s.name === 'ci-run-keeper'))
     .map((d) => docs.find((r) => r.kind === 'ClusterRole' && r.metadata.name === d.roleRef.name));
@@ -1906,12 +2065,12 @@ test('the ci run keeper runs every minute, reads runs cluster-wide, and may patc
 });
 
 const KEEPER = 'system:serviceaccount:image-builder:ci-run-keeper';
-const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run and name the push that replaced it, start a waiting one, or note what it waits for.';
+const KEEPER_MESSAGE = 'the ci run keeper may only cancel a ci run and name the push that replaced it or the branch that was deleted, start a waiting one, or note what it waits for.';
 const PRIORITY_MESSAGE = "a managed run's podTemplate sets priorityClassName to the class of its pipeline and nothing else.";
 const OVERRIDE_MESSAGE = 'per-task pod, step, sidecar, metadata and account overrides are not allowed, except the report class on the task report-failure of a ci run.';
 const CI_CLASS_MESSAGE = 'a ci run carries the ci priority class: the capacity quota of its build namespace counts the pods of that class only.';
 
-test('the admission policy lets the ci run keeper cancel, name the replacing push, start and note a ci run and change nothing else', () => {
+test('the admission policy lets the ci run keeper cancel, name the replacing push or the deleted branch, start and note a ci run and change nothing else', () => {
   const policy = guardOf(imageBuilder());
   const running = (pipeline = 'shop-ci') => ({...createsRun('shop-build', pipeline).object,
     metadata: {namespace: 'shop-build', name: `${pipeline}-x`, labels: {'image-builder.io/ci': 'shop'}, annotations: {'image-builder.io/ci-branch': 'main'}, finalizers: ['chains.tekton.dev/pipelinerun']}});
@@ -1922,12 +2081,15 @@ test('the admission policy lets the ci run keeper cancel, name the replacing pus
   const waiting = changed((r) => { r.spec.status = 'PipelineRunPending'; });
   const noted = changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'all 7 ci slots are in use'; }, waiting);
   const named = (r) => { r.metadata.annotations['image-builder.io/cancelled-by'] = `${'a'.repeat(40)} (shop-ci-y)`; };
+  const deleted = (r) => { r.metadata.annotations['image-builder.io/branch-deleted'] = 'ci/issue-1-planted-1'; };
   const update = (username, object, oldObject) => ({object, oldObject, request: {operation: 'UPDATE', namespace: 'shop-build', userInfo: {username}}});
   const ADMITTED = {
     'the keeper cancels a running ci run': update(KEEPER, cancelled, base),
     'the keeper cancels a running ci run gracefully, so its finally tasks run': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; }), base),
     'the keeper cancels a running ci run and names the push that replaced it': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; named(r); }), base),
     'the keeper cancels a waiting ci run and names the push that replaced it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; named(r); }), waiting),
+    'the keeper cancels a waiting ci run and names the branch that was deleted': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; deleted(r); }), waiting),
+    'the keeper cancels a running ci run gracefully and names the branch that was deleted': update(KEEPER, changed((r) => { r.spec.status = 'CancelledRunFinally'; deleted(r); }), base),
     'the keeper cancels a ci run again': update(KEEPER, cancelled, cancelled),
     'the keeper cancels a waiting ci run': update(KEEPER, cancelled, waiting),
     'the keeper starts a waiting ci run': update(KEEPER, base, waiting),
@@ -1957,6 +2119,13 @@ test('the admission policy lets the ci run keeper cancel, name the replacing pus
     'the keeper names a push while it cancels and changes the branch of the run beside it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; named(r); r.metadata.annotations['image-builder.io/ci-branch'] = 'other'; }), base),
     'the keeper names a push while it cancels and drops the branch of the run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations = {'image-builder.io/cancelled-by': 'x'}; }), base),
     'the keeper names a push on a run it does not cancel': update(KEEPER, changed(named), base),
+    'the keeper names a deleted branch on a run it does not cancel': update(KEEPER, changed(deleted), base),
+    'the keeper names a deleted branch while it starts a run': update(KEEPER, changed(deleted), waiting),
+    'the keeper names a deleted branch while it notes a run': update(KEEPER, changed(deleted, noted), waiting),
+    'the keeper names a deleted branch while it cancels a release run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; deleted(r); }, releaseRun), releaseRun),
+    'the keeper names a deleted branch while it cancels and changes the branch of the run beside it': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; deleted(r); r.metadata.annotations['image-builder.io/ci-branch'] = 'other'; }), base),
+    'the keeper names a deleted branch while it cancels and drops the branch of the run': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations = {'image-builder.io/branch-deleted': 'x'}; }), base),
+    'the keeper writes an annotation of another name while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.annotations['image-builder.io/branch-removed'] = 'x'; }), base),
     'the keeper names a push while it starts a run': update(KEEPER, changed(named), waiting),
     'the keeper changes the finalizers while it cancels': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; r.metadata.finalizers = []; }), base),
     'the keeper creates a run': {...createsRun('shop-build', 'shop-ci'), request: {operation: 'CREATE', namespace: 'shop-build', userInfo: {username: KEEPER}}},
@@ -1969,6 +2138,42 @@ test('the admission policy lets the ci run keeper cancel, name the replacing pus
   const without = structuredClone(policy);
   without.spec.validations = without.spec.validations.filter((v) => v.message !== KEEPER_MESSAGE);
   assert.ok(evaluate(without, Object.values(DENIED)).every((v) => v.denied.length === 0), 'without the keeper clause every one of them is admitted');
+});
+
+// A ci run created by the Trigger of the earlier release carries the `source` claim. Tekton lets nothing but spec.status change on a
+// run, so every update of such a run keeps its workspaces, and the keeper that starts or cancels it is not refused for them.
+test('the admission policy lets the keeper start and cancel a waiting ci run that still carries the source claim, and gives no ci run a workspace by an update', () => {
+  const policy = guardOf(imageBuilder());
+  const waiting = {metadata: {namespace: 'shop-build', name: 'shop-ci-x', labels: {'image-builder.io/ci': 'shop'}, annotations: {'image-builder.io/ci-branch': 'main'}},
+    spec: {...createsRun('shop-build', 'shop-ci').object.spec, status: 'PipelineRunPending', workspaces: SOURCE_CLAIM}};
+  const changed = (edit, from = waiting) => { const run = structuredClone(from); edit(run); return run; };
+  const update = (username, object, oldObject) => ({object, oldObject, request: {operation: 'UPDATE', namespace: 'shop-build', userInfo: {username}}});
+  const bare = changed((r) => { delete r.spec.workspaces; });
+  const ADMITTED = {
+    'the keeper starts a waiting ci run that carries the source claim': update(KEEPER, changed((r) => { delete r.spec.status; }), waiting),
+    'the keeper cancels a waiting ci run that carries the source claim': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; }), waiting),
+    'the keeper notes a waiting ci run that carries the source claim': update(KEEPER, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'all 7 ci slots are in use'; }), waiting),
+    'the Tekton controller updates a started ci run that carries the source claim': update('system:serviceaccount:tekton:tekton-controller',
+      changed((r) => { delete r.spec.status; r.metadata.labels['tekton.dev/pipeline'] = 'shop-ci'; }), changed((r) => { delete r.spec.status; })),
+    'the keeper starts a waiting ci run without a workspace': update(KEEPER, changed((r) => { delete r.spec.status; }, bare), bare),
+    'the keeper cancels a waiting ci run without a workspace': update(KEEPER, changed((r) => { r.spec.status = 'Cancelled'; }, bare), bare),
+  };
+  const DENIED = {
+    'an update gives a waiting ci run a workspace': update('owner@example.com', waiting, bare),
+    'an update changes the claim of a waiting ci run': update('owner@example.com',
+      changed((r) => { r.spec.workspaces[0].volumeClaimTemplate.spec.accessModes = ['ReadWriteMany']; }), waiting),
+  };
+  const verdicts = evaluate(policy, [...Object.values(ADMITTED), ...Object.values(DENIED)]).map((v) => v.denied);
+  Object.keys(ADMITTED).forEach((name, i) => assert.deepEqual(verdicts[i], [], `PLANTED INNOCENT: ${name}`));
+  Object.keys(DENIED).forEach((name, i) => assert.deepEqual(verdicts[Object.keys(ADMITTED).length + i], [WORKSPACE], `PLANTED DEFECT: ${name}`));
+  // The clause as it was, which judged an update like a create: the three actions on a run with the claim are refused, which stalls the unit.
+  const before = structuredClone(policy);
+  const clause = before.spec.validations.find((v) => v.message === WORKSPACE);
+  const sameWorkspaces = '(!has(object.spec.workspaces) || variables.sameWorkspaces)';
+  assert.ok(clause.expression.includes(sameWorkspaces));
+  clause.expression = clause.expression.replace(sameWorkspaces, '!has(object.spec.workspaces)');
+  const stalled = evaluate(before, Object.values(ADMITTED).slice(0, 4)).map((v) => v.denied);
+  assert.deepEqual(stalled, [[WORKSPACE], [WORKSPACE], [WORKSPACE], [WORKSPACE]], 'PLANTED DEFECT: a clause that judges an update like a create');
 });
 
 test('the admission policy lets the ci run keeper delete a finished ci run of its own namespace, and no other run', () => {
@@ -2170,28 +2375,47 @@ const gitHttpsFindings = (secret, unit) => {
 test('tekton/ci is set to pending after the gate and to the outcome in a finally task, with the statuses token and the run link', () => {
   const docs = renderUnit('shop');
   const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
-  const pending = pipeline.spec.tasks.find((t) => t.name === 'commit-status-pending');
+  const pending = ciStep(pipeline, 'commit-status-pending');
   const outcome = pipeline.spec.finally.find((t) => t.name === 'commit-status');
-  const script = readFileSync('clusters/inventories/consumer-build/files/ci-commit-status.sh', 'utf8');
-  const envOf = (task) => Object.fromEntries(task.taskSpec.steps[0].env.map((e) => [e.name, e.value ?? e.valueFrom]));
-  for (const task of [pending, outcome]) {
-    assert.equal(task.taskSpec.steps[0].script, script, 'the pipeline carries the script that scripts/ci-commit-status.test.mjs runs');
-    const env = envOf(task);
+  const outcomeStep = outcome.taskSpec.steps[0];
+  const status = readFileSync('clusters/inventories/consumer-build/files/ci-commit-status.sh', 'utf8');
+  const green = readFileSync('clusters/inventories/consumer-build/files/ci-green-status.sh', 'utf8');
+  const envOf = (step) => Object.fromEntries(step.env.map((e) => [e.name, e.value ?? e.valueFrom]));
+  assert.ok(pending.script.includes(status), 'the pipeline carries the script that scripts/ci-commit-status.test.mjs runs');
+  assert.ok(outcomeStep.script.includes(status) && outcomeStep.script.includes(green), 'and the outcome task carries it with the reader of the green status that it calls');
+  for (const step of [pending, outcomeStep]) {
+    const env = envOf(step);
     assert.deepEqual(env.GITHUB_TOKEN, {secretKeyRef: {name: 'build-git-https', key: 'token'}});
     assert.equal(env.REPOSITORY_PATH, 'check/shop');
     assert.equal(env.COMMIT, '$(params.commit)');
     assert.match(env.RUN_URL, /^https:\/\/tekton\.[^/]+\/#\/namespaces\/shop-build\/pipelineruns\/\$\(context\.pipelineRun\.name\)$/);
   }
-  assert.deepEqual(pending.runAfter, ['gate']);
+  assert.deepEqual(pipeline.spec.tasks.map((t) => t.name), ['ci'], 'one task, so one pod runs the check');
   assert.deepEqual(pipeline.spec.tasks.filter((t) => t.when), [],
     'ci-commit-status.sh reads Completed as a stopped run, which holds only while no task is skipped by a when');
+  const order = ciTaskSpec(pipeline).steps.map((s) => s.name);
+  assert.ok(order.indexOf('gate') < order.indexOf('commit-status-pending') && order.indexOf('commit-status-pending') < order.indexOf('clone'),
+    'the pending status is set after the gate proved the commit and before the clone');
   assert.equal(envOf(pending).RUN_STATE, 'running');
-  assert.deepEqual(outcome.when, [{input: '$(tasks.gate.status)', operator: 'in', values: ['Succeeded']}],
-    'a run the gate refused set no pending, so it sets no outcome');
+  // The outcome runs for every run of the registered repository, whatever happened to the task, and reads nothing the task may not
+  // have left: a finally task that names a missing result is skipped, and a run that timed out before it would stay pending for ever.
+  const readsResult = (task) => /\$\(tasks\.[a-z-]+\.results\./.test(JSON.stringify(task));
+  assert.ok(!readsResult(outcome), 'PLANTED INNOCENT: the outcome names the status and reason of the task and params only');
+  const readingResult = structuredClone(outcome);
+  readingResult.params.push({name: 'earlier-run', value: '$(tasks.ci.results.earlier-run)'});
+  assert.ok(readsResult(readingResult), 'PLANTED DEFECT: a result of the task named by the outcome is caught');
+  const repoURL = 'https://github.com/check/shop.git';
+  assert.deepEqual(outcome.when, [{input: '$(params.git-url)', operator: 'in', values: [repoURL]}],
+    'a run for a repository the registration does not name set no pending, so it sets no outcome');
+  const postsFor = (task, gitUrl) => (task.when ?? []).every((w) => w.operator === 'in' && w.values.includes(w.input.replace('$(params.git-url)', gitUrl)));
+  assert.ok(postsFor(outcome, repoURL), 'PLANTED INNOCENT: the registered repository gets its outcome');
+  assert.ok(!postsFor(outcome, 'https://github.com/someone/else.git'), 'PLANTED DEFECT: a refused run for a repository the registration does not name posts nothing');
+  const withoutWhen = structuredClone(outcome);
+  delete withoutWhen.when;
+  assert.ok(postsFor(withoutWhen, 'https://github.com/someone/else.git'), 'PLANTED DEFECT: an outcome without the when posts for the refused run');
   const params = Object.fromEntries(outcome.params.map((p) => [p.name, p.value]));
   assert.equal(params['run-state'], '$(tasks.status)');
-  assert.deepEqual(params['task-reasons'].split(' '), pipeline.spec.tasks.map((t) => `$(tasks.${t.name}.reason)`),
-    'the outcome reads the reason of every task, so a cancelled one is told from a failed one');
+  assert.equal(params['task-reasons'], '$(tasks.ci.reason)', 'the outcome reads the reason of the task, so a cancelled one is told from a failed one');
   const secret = docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-git-https');
   assert.deepEqual(gitHttpsFindings(secret, 'shop'), [], 'PLANTED INNOCENT: the render of shop');
   const tokenOnPat = structuredClone(secret);
@@ -2227,7 +2451,7 @@ test('report-failure runs after a failure only, holds the one token, and reads w
   asEnvironment.taskSpec.steps[0].envFrom = [{secretRef: {name: 'build-git-https'}}];
   assert.ok(holdsSecret(asEnvironment), 'PLANTED DEFECT: the report task reading a secret as environment is caught');
   assert.deepEqual(all.filter(mountsToken).map((t) => t.name), ['report-failure'], 'only the report task mounts a token');
-  const check = structuredClone(pipeline.spec.tasks.find((t) => t.name === 'check'));
+  const check = structuredClone(pipeline.spec.tasks.find((t) => t.name === 'ci'));
   check.taskSpec.volumes.push({name: 'api', projected: {sources: [{serviceAccountToken: {path: 'token', expirationSeconds: 600}}]}});
   assert.ok(mountsToken(check), 'PLANTED DEFECT: a check that mounts a token is caught');
   assert.ok(mountsToken({taskSpec: {steps: [], automountServiceAccountToken: true}}) && mountsToken({podTemplate: {automountServiceAccountToken: true}}),
@@ -2271,7 +2495,7 @@ test('only the report pod of a ci run reaches the API server and Alertmanager, a
   // Alertmanager's pods and its one port: a namespace alone, or any other port, is wider.
   const alertmanagerRulesAreNarrow = (docs, task) => rulesFor(docs, task).filter(mentionsAlertmanager).every((rule) =>
     rule.to.every((to) => Object.keys(to.podSelector?.matchLabels ?? {}).length > 0) && JSON.stringify(rule.ports) === JSON.stringify([{protocol: 'TCP', port: 9093}]));
-  const CI_TASKS = ['gate', 'clone', 'describe-commit', 'fetch', 'check'];
+  const CI_TASKS = ['ci'];
   const holds = (docs) => reachesApiServer(docs, 'report-failure') && reachesAlertmanager(docs, 'report-failure') && alertmanagerRulesAreNarrow(docs, 'report-failure') &&
     CI_TASKS.every((task) => !reachesApiServer(docs, task) && !reachesAlertmanager(docs, task));
   const docs = renderUnit('shop');
@@ -2500,11 +2724,249 @@ test('no install of the gate worker sets nodedir as an npm config, which npm 12 
   const docs = renderUnit('shop');
   assert.ok(docs.some((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci'), 'the pipelines under check are rendered');
   assert.ok(!setsNodedir(docs), 'PLANTED INNOCENT: the pipelines as rendered select no headers through an npm config');
-  const planted = (change) => { const copy = structuredClone(docs); change(copy.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'check').taskSpec.steps[0]); return copy; };
+  const planted = (change) => { const copy = structuredClone(docs); change(copy.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci').spec.tasks.find((t) => t.name === 'ci').taskSpec.steps.find((s) => s.name === 'check')); return copy; };
   assert.ok(!setsNodedir(planted((step) => { step.env.push({name: 'npm_package_config_node_gyp_nodedir', value: '/usr/local'}); })),
     'PLANTED INNOCENT: node-gyp\'s own key selects the same headers and npm does not report it');
   assert.ok(setsNodedir(planted((step) => { step.env.push({name: 'npm_config_nodedir', value: '/usr/local'}); })), 'PLANTED DEFECT: npm_config_nodedir set as an env of the check step');
   assert.ok(setsNodedir(planted((step) => { step.env.push({name: 'NPM_CONFIG_NODEDIR', value: '/usr/local'}); })), 'PLANTED DEFECT: the upper-case spelling npm reads as well');
   assert.ok(setsNodedir(planted((step) => { step.script += '\nexport npm_config_nodedir=/usr/local\n'; })), 'PLANTED DEFECT: npm_config_nodedir exported by the script');
   assert.ok(setsNodedir(planted((step) => { step.script += '\nnpm ci --nodedir=/usr/local\n'; })), 'PLANTED DEFECT: the nodedir flag of the install command');
+});
+
+// The cache of the ci runs of a unit is a claim of its own, kept under its bound by the check step, which alone mounts it.
+test('the ci cache is one claim per unit on the hostpath class that Argo CD does not wait for, and only the check step mounts it', () => {
+  const docs = renderUnit('shop');
+  const claim = docs.find((d) => d.kind === 'PersistentVolumeClaim' && d.metadata.name === 'ci-cache');
+  assert.equal(claim.metadata.namespace, 'shop-build', 'the claim of the unit, and no claim shared between units');
+  const bound = execFileSync('yq', ['.ciCache.size', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'}).trim();
+  assert.deepEqual([claim.spec.storageClassName, claim.spec.accessModes, claim.spec.resources.requests.storage], ['microk8s-hostpath', ['ReadWriteOnce'], bound]);
+  assert.equal(bound, '5Gi');
+  assert.equal(claim.metadata.annotations['argocd.argoproj.io/ignore-healthcheck'], 'true',
+    'the class binds on the first consumer, and a unit with no ci run would show Progressing for ever');
+  const pipeline = docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const mounts = (name) => (ciStep(pipeline, name).volumeMounts ?? []).filter((m) => m.name === 'ci-cache');
+  assert.deepEqual(ciTaskSpec(pipeline).steps.filter((s) => mounts(s.name).length > 0).map((s) => s.name), ['check'], 'PLANTED INNOCENT: the check step alone');
+  assert.equal(ciTaskSpec(pipeline).volumes.find((v) => v.name === 'ci-cache').persistentVolumeClaim.claimName, 'ci-cache');
+  const planted = structuredClone(pipeline);
+  ciStep(planted, 'clone').volumeMounts.push({name: 'ci-cache', mountPath: '/ci-cache'});
+  assert.deepEqual(ciTaskSpec(planted).steps.filter((s) => (s.volumeMounts ?? []).some((m) => m.name === 'ci-cache')).map((s) => s.name), ['clone', 'check'],
+    'PLANTED DEFECT: a step that holds the clone credential and mounts the cache would let the credential step write what the check reads');
+  const limit = ciStep(pipeline, 'check').env.find((e) => e.name === 'CI_CACHE_LIMIT_KIB').value;
+  assert.equal(Number(limit) * 1024, quantity(bound), 'the trim holds the cache to the size of the claim: the one bound is stated in ciCache.size');
+  assert.ok(ciStep(pipeline, 'check').script.includes('trap \'ci_cache_trim'), 'the check step trims the cache when it ends, whatever the outcome');
+});
+
+// A package install that a run repeats is a download per run unless its manager keeps the packages on the claim: go, pnpm, npm,
+// dart and helm each read one variable for it, and the check step sets every one of them under the claim.
+test('the check step points the package cache of every manager it runs at the claim, one directory per version of the manager', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const script = ciStep(pipeline, 'check').script;
+  const PACKAGE_CACHES = ['COREPACK_HOME', 'HELM_CACHE_HOME', 'GOMODCACHE', 'GOCACHE', 'pnpm_config_store_dir', 'PUB_CACHE', 'npm_config_cache'];
+  const unpointed = (text) => PACKAGE_CACHES.filter((name) => !new RegExp(`${name}="\\$\\{(CI_CACHE_DIR|go_cache)\\}`).test(text));
+  assert.deepEqual(unpointed(script), [], 'PLANTED INNOCENT: the seven caches stand under the claim');
+  for (const name of ['PUB_CACHE', 'npm_config_cache']) {
+    assert.deepEqual(unpointed(script.replace(`export ${name}=`, `export ${name}_ELSEWHERE=`)), [name], `PLANTED DEFECT: a check step that leaves ${name} where the manager puts it keeps nothing between runs`);
+  }
+  // The block that sets the two caches of dart and npm, run with stand-in managers that print the version they have.
+  const block = script.slice(script.indexOf('# The package caches of dart'), script.indexOf('if [ -f pnpm-lock.yaml ]'));
+  const root = mkdtempSync(join(tmpdir(), 'ci-package-caches-')), bin = join(root, 'bin');
+  try {
+    mkdirSync(bin);
+    const stand = (name, output, status = 0) => { writeFileSync(join(bin, name), `#!/usr/bin/env bash\necho '${output}'\nexit ${status}\n`); chmodSync(join(bin, name), 0o755); };
+    const run = () => spawnSync('bash', ['-euo', 'pipefail', '-c', `${block}\necho "pub=\${PUB_CACHE-} npm=\${npm_config_cache-}"`],
+      {encoding: 'utf8', env: {PATH: `${bin}:/usr/bin:/bin`, CI_CACHE_DIR: '/ci-cache'}});
+    stand('dart', 'Dart SDK version: 3.13.4 (stable) (Tue Sep 15 01:01:15 2026 -0700) on "linux_x64"');
+    stand('npm', '12.2.0');
+    const both = run();
+    assert.equal(both.status, 0, both.stderr);
+    assert.equal(both.stdout.trim(), 'pub=/ci-cache/pub/3.13.4 npm=/ci-cache/npm/12.2.0', 'PLANTED INNOCENT: one directory per version of dart and of npm');
+    rmSync(join(bin, 'dart'));
+    rmSync(join(bin, 'npm'));
+    const neither = run();
+    assert.equal(neither.status, 0, neither.stderr);
+    assert.equal(neither.stdout.trim(), 'pub= npm=', 'PLANTED INNOCENT: a run without dart or npm sets neither');
+    stand('dart', 'a text that names no version');
+    const unreadable = run();
+    assert.notEqual(unreadable.status, 0, 'PLANTED DEFECT: a dart whose version cannot be read must not put its packages in a directory without a version');
+    assert.match(unreadable.stderr, /the version of dart cannot be read from: a text that names no version/);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+// The trim runs in the check step of every run: the entries with the oldest last access go first, until the cache is within the
+// bound. `limitKiB` is a number, or a function of the planted cache. `then` runs on the cache after the trim.
+const CACHE_TRIM = readFileSync(`${CI_FILES}/ci-cache-trim.sh`, 'utf8');
+// The trim of the first build: file by file, wherever the file lies. Planted as the defect that the whole-directory entries answer.
+const FILE_BY_FILE_TRIM = `ci_cache_trim() {
+  chmod -R u+w "\${CI_CACHE_DIR}"
+  local total; total="$(du -sk "\${CI_CACHE_DIR}" | cut -f1)"
+  while IFS=$'\\t' read -r _ size path; do
+    [ "\${total}" -gt "\${CI_CACHE_LIMIT_KIB}" ] || break
+    rm -f -- "\${path}"
+    total=$((total - (size + 1023) / 1024))
+  done < <(find "\${CI_CACHE_DIR}" -type f -printf '%A@\\t%s\\t%p\\n' | sort -n)
+  find "\${CI_CACHE_DIR}" -mindepth 1 -type d -empty -delete
+}`;
+const runCacheTrim = (limitKiB, plant, {script = CACHE_TRIM, then = () => undefined} = {}) => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-trim-')), cache = join(root, 'cache');
+  try {
+    mkdirSync(cache);
+    const file = (name, kib, accessedAt) => {
+      mkdirSync(dirname(join(cache, name)), {recursive: true});
+      writeFileSync(join(cache, name), Buffer.alloc(kib * 1024, 1));
+      utimesSync(join(cache, name), accessedAt, accessedAt);
+    };
+    plant(file, cache, root);
+    const limit = typeof limitKiB === 'function' ? limitKiB(cache) : limitKiB;
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\nci_cache_trim`], {encoding: 'utf8', env: {...process.env, CI_CACHE_DIR: cache, CI_CACHE_LIMIT_KIB: String(limit)}});
+    const left = [];
+    const walk = (dir) => readdirSync(dir, {withFileTypes: true}).forEach((entry) => (entry.isDirectory() ? walk(join(dir, entry.name)) : left.push(join(dir, entry.name).slice(cache.length + 1))));
+    walk(cache);
+    return {status: result.status, stdout: result.stdout, stderr: result.stderr, left: left.sort(), after: then(cache, root)};
+  } finally {
+    // A cache of Go modules is read-only, and so is the planted one.
+    spawnSync('chmod', ['-R', 'u+w', root]);
+    rmSync(root, {recursive: true, force: true});
+  }
+};
+const usedKiB = (cache) => Number(spawnSync('du', ['-sk', cache], {encoding: 'utf8'}).stdout.split('\t')[0]);
+
+test('the ci cache trim evicts the entries with the oldest last access first until the cache is within its bound, and says what it evicted', () => {
+  const plant = (file) => {
+    file('go/go1/build/old', 64, 1_000_000_000);
+    file('pnpm/11.7.0/middle', 64, 1_500_000_000);
+    file('helm/v4/new', 64, 2_000_000_000);
+  };
+  const over = runCacheTrim(160, plant);
+  assert.equal(over.status, 0, over.stderr);
+  assert.deepEqual(over.left, ['helm/v4/new', 'pnpm/11.7.0/middle'], 'PLANTED DEFECT: a cache over its bound loses the entry nobody read for longest, and only that one');
+  assert.match(over.stdout, /^ci-cache: \d+ KiB of 160 KiB, evicted 1 entries \(64 KiB\), the oldest last access first$/m);
+  assert.ok(Number(/^ci-cache: (\d+) KiB/m.exec(over.stdout)[1]) <= 160, 'the size it prints is the size it measured after the eviction');
+  const within = runCacheTrim(4096, plant);
+  assert.deepEqual(within.left, ['go/go1/build/old', 'helm/v4/new', 'pnpm/11.7.0/middle'], 'PLANTED INNOCENT: a cache within its bound loses nothing');
+  assert.match(within.stdout, /evicted 0 entries \(0 KiB\)/);
+  const emptied = runCacheTrim(160, (file) => { file('go/go1/build/only', 64, 1_000_000_000); file('go/go1/build/also', 64, 1_000_000_001); file('go/go1/build/third', 64, 1_000_000_002); file('go/go1/build/last', 64, 1_000_000_003); });
+  assert.deepEqual(emptied.left, ['go/go1/build/last', 'go/go1/build/third'], 'the newest stay when several must go');
+  const noCache = spawnSync('bash', ['-euo', 'pipefail', '-c', `${CACHE_TRIM}\nci_cache_trim`], {encoding: 'utf8', env: {...process.env, CI_CACHE_DIR: '/nonexistent-ci-cache', CI_CACHE_LIMIT_KIB: '1'}});
+  assert.equal(noCache.status, 0, 'a run whose claim is not mounted has nothing to trim');
+});
+
+// What each tool brings back by itself when one file of it is missing, probed on 2026-10-19 with go 1.27.1, pnpm 11.7.0, npm 12.2.0,
+// dart 3.13.4, corepack 0.36.0 and helm 4.3.0: the file stands alone, and only that file goes.
+const SINGLE_FILES = ['archives/0a1b2c', 'corepack/lastKnownGood.json', 'go/go1.24.13/build/ab/ab12-a', 'go/go1.24.13/mod/cache/download/example.com/m/@v/v1.0.0.zip',
+  'go/go1.24.13/mod/cache/download/example.com/m/@v/v1.0.0.ziphash', 'go/go1.24.13/mod/cache/download/example.com/m/@v/v1.0.0.mod', 'pnpm/11.7.0/v11/files/ab/cdef', 'pnpm/11.7.0/v11/index.db',
+  'npm/12.2.0/_cacache/content-v2/sha512/ab/cd/ef', 'pub/3.13.4/hosted-hashes/pub.dev/args-2.7.0.sha256', 'pub/3.13.4/hosted/pub.dev/.cache/args-versions.json', 'helm/v4.3.0/repository/chart-1.0.0.tgz'];
+// What a tool takes as complete as soon as its directory exists: the files of the entry, and the entry itself.
+const DIRECTORY_ENTRIES = {
+  'a module that go extracted': ['go/go1.24.13/mod/example.com/m@v1.0.0', ['go.mod', 'a/a.go', 'b/b.go']],
+  'a module of a nested path that go extracted': ['go/go1.24.13/mod/golang.org/x/text@v0.3.0', ['go.mod', 'unicode/norm/norm.go', 'transform/transform.go']],
+  'a repository that go cloned': ['go/go1.24.13/mod/cache/vcs/0123abcd', ['HEAD', 'objects/pack/pack-1.pack', 'refs/heads/main']],
+  'a package manager that corepack unpacked': ['corepack/v1/pnpm/11.7.0', ['.corepack', 'bin/pnpm.cjs', 'dist/pnpm.mjs']],
+  'a package folder of pub': ['pub/3.13.4/hosted/pub.dev/args-2.7.0', ['pubspec.yaml', 'lib/args.dart', 'lib/src/parser.dart']],
+  'a repository that pub cloned': ['pub/3.13.4/git/cache/shop-0123', ['HEAD', 'objects/pack/pack-1.pack']],
+  'a checkout that pub made': ['pub/3.13.4/git/shop-0123', ['pubspec.yaml', 'lib/shop.dart']],
+};
+
+test('the ci cache trim evicts a directory that a tool takes as complete whole, and a file that stands alone by itself', () => {
+  const oneKiBLess = (cache) => usedKiB(cache) - 1;
+  for (const [what, [entry, files]] of Object.entries(DIRECTORY_ENTRIES)) {
+    // The second file has the oldest last access of the whole cache; a newer file of the entry and a newer entry stand beside it.
+    const plant = (file, cache) => {
+      files.forEach((name, i) => file(`${entry}/${name}`, 4, i === 1 ? 1_000_000_000 : 1_200_000_000 + i));
+      file('go/go1.24.13/build/newer', 64, 2_000_000_000);
+      spawnSync('chmod', ['-R', 'a-w', join(cache, entry)]);
+    };
+    const present = (left) => files.filter((name) => left.includes(`${entry}/${name}`));
+    const whole = runCacheTrim(oneKiBLess, plant);
+    assert.equal(whole.status, 0, `${what}: ${whole.stderr}`);
+    assert.deepEqual(whole.left, ['go/go1.24.13/build/newer'], `PLANTED INNOCENT: ${what} goes whole, the read-only one too`);
+    assert.match(whole.stdout, /evicted 1 entries/, what);
+    const stays = runCacheTrim(4096, plant);
+    assert.deepEqual(present(stays.left), files, `PLANTED INNOCENT: ${what} stays whole within the bound`);
+    // The bound is one KiB below what the cache holds: a trim file by file has enough with the oldest file, the whole entry must go.
+    const partial = runCacheTrim(oneKiBLess, plant, {script: FILE_BY_FILE_TRIM});
+    assert.ok(present(partial.left).length > 0 && present(partial.left).length < files.length,
+      `PLANTED DEFECT: a trim file by file leaves ${what} with ${present(partial.left).length} of ${files.length} files, which its tool never fetches again`);
+  }
+  for (const single of SINGLE_FILES) {
+    const siblings = [`${dirname(single)}/sibling-1`, `${dirname(single)}/sibling-2`];
+    const plant = (file) => { file(single, 64, 1_000_000_000); siblings.forEach((name) => file(name, 64, 2_000_000_000)); };
+    const result = runCacheTrim(oneKiBLess, plant);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.left, siblings.sort(), `PLANTED INNOCENT: ${single} stands alone, so its siblings stay`);
+  }
+});
+
+// The first build of the trim left half a Go module: go takes the directory as complete, so every later run of the unit failed to compile.
+test('a go build still compiles after the trim has evicted the module with the oldest access, and fails after a trim file by file', () => {
+  const zipper = 'package main\n\nimport (\n\t"archive/zip"\n\t"io/fs"\n\t"os"\n\t"path/filepath"\n)\n\nfunc main() {\n\tout, _ := os.Create(os.Args[1])\n\tw := zip.NewWriter(out)\n' +
+    '\troot, prefix := os.Args[2], os.Args[3]\n\tfilepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {\n\t\tif err != nil || d.IsDir() {\n\t\t\treturn err\n\t\t}\n' +
+    '\t\trel, _ := filepath.Rel(root, path)\n\t\tf, _ := w.Create(prefix + filepath.ToSlash(rel))\n\t\tdata, _ := os.ReadFile(path)\n\t\tf.Write(data)\n\t\treturn nil\n\t})\n\tw.Close()\n\tout.Close()\n}\n';
+  // The build cache of go stands outside the planted cache and serves both runs, so the standard library is compiled once.
+  const gocache = mkdtempSync(join(tmpdir(), 'ci-trim-gocache-'));
+  const goEnv = (root, cache) => ({...process.env, GOPROXY: `file://${root}/proxy`, GOSUMDB: 'off', GOFLAGS: '-mod=mod', GOTOOLCHAIN: 'local', GOWORK: 'off',
+    GOPATH: join(root, 'gopath'), GOMODCACHE: join(cache, 'go/go1.24.13/mod'), GOCACHE: gocache, HOME: root});
+  const build = (root, cache) => spawnSync('go', ['build', '-o', '/dev/null', '.'], {cwd: join(root, 'app'), encoding: 'utf8', env: goEnv(root, cache)});
+  const plant = (file, cache, root) => {
+    const files = {'go.mod': 'module example.com/m\n\ngo 1.21\n', 'a/a.go': 'package a\n\nfunc A() string { return "a" }\n', 'b/b.go': 'package b\n\nfunc B() string { return "b" }\n'};
+    mkdirSync(join(root, 'module'), {recursive: true});
+    for (const [name, text] of Object.entries(files)) { mkdirSync(dirname(join(root, 'module', name)), {recursive: true}); writeFileSync(join(root, 'module', name), text); }
+    mkdirSync(join(root, 'proxy/example.com/m/@v'), {recursive: true});
+    writeFileSync(join(root, 'proxy/example.com/m/@v/v1.0.0.info'), '{"Version":"v1.0.0","Time":"2020-01-01T00:00:00Z"}');
+    writeFileSync(join(root, 'proxy/example.com/m/@v/v1.0.0.mod'), files['go.mod']);
+    writeFileSync(join(root, 'zipper.go'), zipper);
+    execFileSync('go', ['run', join(root, 'zipper.go'), join(root, 'proxy/example.com/m/@v/v1.0.0.zip'), join(root, 'module'), 'example.com/m@v1.0.0/'], {env: goEnv(root, cache)});
+    mkdirSync(join(root, 'app'), {recursive: true});
+    writeFileSync(join(root, 'app/go.mod'), 'module shop\n\ngo 1.21\n\nrequire example.com/m v1.0.0\n');
+    writeFileSync(join(root, 'app/main.go'), 'package main\n\nimport "example.com/m/b"\n\nfunc main() { println(b.B()) }\n');
+    const first = build(root, cache);
+    assert.equal(first.status, 0, first.stderr);
+    // The module, extracted, has the oldest access, b/b.go the oldest of it; every file that go downloaded is newer.
+    const module = join(cache, 'go/go1.24.13/mod/example.com/m@v1.0.0');
+    for (const name of Object.keys(files)) utimesSync(join(module, name), name === 'b/b.go' ? 1_000_000_000 : 1_100_000_000, name === 'b/b.go' ? 1_000_000_000 : 1_100_000_000);
+    const stamp = (dir) => readdirSync(dir, {withFileTypes: true}).forEach((entry) => (entry.isDirectory() ? stamp(join(dir, entry.name)) : utimesSync(join(dir, entry.name), 1_900_000_000, 1_900_000_000)));
+    stamp(join(cache, 'go/go1.24.13/mod/cache'));
+  };
+  const after = (cache, root) => ({module: ['a/a.go', 'b/b.go'].map((name) => existsSync(join(cache, 'go/go1.24.13/mod/example.com/m@v1.0.0', name))), build: build(root, cache)});
+  // One KiB below what the cache holds: b/b.go alone would be enough for a trim file by file, and the module is the entry to evict.
+  const bound = (cache) => usedKiB(cache) - 1;
+  try {
+    const trimmed = runCacheTrim(bound, plant, {then: after});
+    assert.equal(trimmed.status, 0, trimmed.stderr);
+    assert.equal(trimmed.after.module[0], trimmed.after.module[1], 'PLANTED INNOCENT: the module is whole or gone, never half');
+    assert.equal(trimmed.after.build.status, 0, `PLANTED INNOCENT: the next run compiles, from the proxy if the module went: ${trimmed.after.build.stderr}`);
+    const halved = runCacheTrim(bound, plant, {script: FILE_BY_FILE_TRIM, then: after});
+    assert.deepEqual(halved.after.module, [true, false], 'a trim file by file takes b/b.go, the oldest file, and leaves the module standing');
+    assert.notEqual(halved.after.build.status, 0, 'PLANTED DEFECT: a trim file by file ends in a unit whose every run fails to compile');
+    assert.match(halved.after.build.stderr, /b\b.*(no such file|does not contain package|no Go files)|(no such file|does not contain package|no Go files).*b\b/s);
+  } finally {
+    // The build cache of go makes nothing read-only, but its module cache does, and so would a cache pointed at it.
+    spawnSync('chmod', ['-R', 'u+w', gocache]);
+    rmSync(gocache, {recursive: true, force: true});
+  }
+});
+
+// Every step after earlier-green ends at once when the commit is green already, and neither earlier-green nor the gate before it does.
+test('every step of the ci task after earlier-green ends at once on a commit that is green already', () => {
+  const pipeline = renderUnit('shop').find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-ci');
+  const guard = 'if [ -e /workspace/earlier-green ]; then echo "skipped: the commit is green already"; exit 0; fi';
+  const unguarded = (p) => {
+    const steps = ciTaskSpec(p).steps, after = steps.findIndex((s) => s.name === 'earlier-green') + 1;
+    return steps.slice(after).filter((s) => !s.script.split('\n').slice(0, 3).includes(guard)).map((s) => s.name);
+  };
+  assert.deepEqual(unguarded(pipeline), [], 'PLANTED INNOCENT: all nine steps after earlier-green carry the guard in their first lines');
+  assert.equal(ciTaskSpec(pipeline).steps.length - ciTaskSpec(pipeline).steps.findIndex((s) => s.name === 'earlier-green') - 1, 9);
+  for (const name of CI_STEPS.slice(CI_STEPS.indexOf('earlier-green') + 1)) {
+    const planted = structuredClone(pipeline);
+    const step = ciStep(planted, name);
+    step.script = step.script.replace(guard, '');
+    assert.deepEqual(unguarded(planted), [name], `PLANTED DEFECT: ${name} without the guard would clone, or check, a commit that is green already`);
+  }
+  for (const name of ['gate', 'earlier-green']) assert.ok(!ciStep(pipeline, name).script.includes(guard), `${name} runs for every commit`);
+  const scriptOf = (name) => ciStep(pipeline, name).script;
+  assert.ok(scriptOf('earlier-green').includes('touch /workspace/earlier-green') && scriptOf('earlier-green').includes('$(results.earlier-run.path)'),
+    'the marker and the result that names the run are written by the step that found the green status');
+  const check = ciStep(pipeline, 'check');
+  assert.ok(!(check.volumeMounts ?? []).some((m) => m.mountPath === '/workspace'), 'the marker lives in the implicit /workspace of the pod, which no step mounts over');
 });

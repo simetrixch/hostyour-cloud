@@ -95,14 +95,21 @@ The master's ci is the Tekton pipeline `hostyour-cloud-ci`
 (`clusters/inventories/consumer-build/templates/pipeline-ci.yaml`). It runs those checks and
 `bash scripts/test.sh` on every push of the default branch that does more than move release pins: the check
 step installs the tools `ci-tools.json` names, then runs `scripts/check.sh` and `scripts/test.sh`.
-The test entry point runs `lifecycle/test.sh` and `scripts/pipeline-release.test.sh`.
-Run tests only on a remote runner.
+The test entry point runs its suites `TEST_JOBS` at a time (4 unless set), after it has built the chart
+dependencies they render, and prints a failed suite in full. Run tests only on a remote runner.
+
+A run is one task, `ci`, in one pod, whose steps run one after the other and share an `emptyDir` of
+`ciScratch.size`; the run carries no workspace. A commit whose head already carries a green `tekton/ci` is not checked
+again: the step `earlier-green` ends the run with the result `earlier-run`, and the status keeps naming the run that did
+the check. The claim `ci-cache` of the unit (`ciCache.size`, evicted by last access when the check step ends) keeps the
+tool archives, the Go, pnpm, npm and pub caches and the helm cache between runs.
 
 Read its runs on the master as the PipelineRuns `hostyour-cloud-ci-*` in the namespace `hostyour-cloud-build`,
 or as the commit status `tekton/ci` on the commit
 (`clusters/inventories/consumer-build/files/ci-commit-status.sh`). A push of the default branch or of a
-`ci/` branch starts a run through the Trigger `github-ci-push`
-(`clusters/inventories/image-builder/templates/triggers/github-ci-push.yaml`).
+`ci/` branch of a public repository starts a run through the Trigger `github-ci-push`
+(`clusters/inventories/image-builder/templates/triggers/github-ci-push.yaml`); a push of a private repository
+starts none and sets no `tekton/ci` status, because the trigger reads `repository.visibility` of the push.
 
 An issue branch is judged by the push gate on the machine and starts no ci run on the master.
 To run the master's ci on another commit, for example a planted defect that must show the check red,
@@ -112,7 +119,9 @@ push it to a branch whose name starts with `ci/`:
 git push origin HEAD:ci/issue-<n>-planted-1
 ```
 
-Delete that branch once its run has finished.
+Delete that branch once its run has finished. A run whose `ci/` branch is deleted before it finishes is cancelled by
+the ci run keeper within a minute (annotation `image-builder.io/branch-deleted` on the run), and every run ends
+at the bound set in `ciPush.timeouts` of `clusters/inventories/image-builder/values-common.yaml`.
 
 ## License
 

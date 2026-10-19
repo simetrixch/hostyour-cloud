@@ -3,13 +3,13 @@ import {existsSync} from 'node:fs';
 import {ignoredFields, withoutIgnored} from './check-immutable.mjs';
 
 // Renders an inventory chart of this repository with the stand-in values of scripts/standin, as scripts/check.sh does.
-export function renderChart(chart, extra = []) {
-  const rendered = execFileSync('helm', ['template', chart, 'clusters/inventories/' + chart,
+// `folder` names a copy of the chart's folder to render instead, as a test of a planted defect in the chart does.
+export function renderChart(chart, extra = [], folder = 'clusters/inventories/' + chart) {
+  const rendered = execFileSync('helm', ['template', chart, folder,
     '--namespace', chart === 'image-builder' ? 'image-builder' : 'argocd',
     '-f', 'clusters/platform/values-common.yaml', '-f', 'clusters/platform/values-prod.yaml',
-    '-f', 'clusters/inventories/' + chart + '/values-common.yaml',
-    ...(existsSync('clusters/inventories/' + chart + '/values-prod.yaml') ?
-      ['-f', 'clusters/inventories/' + chart + '/values-prod.yaml'] : []),
+    '-f', folder + '/values-common.yaml',
+    ...(existsSync(folder + '/values-prod.yaml') ? ['-f', folder + '/values-prod.yaml'] : []),
     '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', ...extra],
     {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']});
   return JSON.parse(execFileSync('yq', ['eval-all', '-o=json', '-I=0', '[.]', '-'],

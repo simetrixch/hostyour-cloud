@@ -20,9 +20,9 @@ plane-ce:
   # Plane's own data stays beside it: each of the four runs in this namespace on its own volume.
   # The chart writes an empty storageClass as none, so the platform's class is named. The four
   # images are written by hand, one string each as the chart reads it; clusters/platform/versions.yaml
-  # keeps their versions as plane-postgres, plane-redis, plane-rabbitmq and plane-silo, and a bump
-  # edits both. The bucket client `image_mc` stays the chart's: a Job's pod template is immutable, and
-  # scripts/check.sh refuses a changed image on the retained identity plane-minio-bucket-1.
+  # keeps their versions as plane-postgres, plane-redis, plane-rabbitmq, plane-silo and, for the
+  # bucket client `image_mc`, plane-mc, and a bump edits both. The vendored chart names its migration
+  # Job and its bucket Job by the images they run, so a bump gives each a new identity.
   postgres:
     image: postgres:18.6-alpine
     local_setup: true
@@ -37,6 +37,7 @@ plane-ce:
     storageClass: microk8s-hostpath
   minio:
     image: docker.io/pgsty/silo:RELEASE.2026-10-18T00-00-00Z
+    image_mc: docker.io/pgsty/mc:RELEASE.2026-10-18T00-00-00Z
     local_setup: true
     storageClass: microk8s-hostpath
 

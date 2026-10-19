@@ -43,7 +43,6 @@ chart https://prometheus-community.github.io/helm-charts prometheus-postgres-exp
 chart https://grafana.github.io/helm-charts alloy 1.11.0 11d253b62e47beeacd89eb4283fc056962ecbf143984863c1998be13da0772dd
 chart https://grafana-community.github.io/helm-charts loki 18.7.0 066756e9541507b665da700f3cf489cb990a9fab17b735845a60138a8e5c35fc
 chart https://grafana-community.github.io/helm-charts tempo 2.2.3 14c52efe5d0cad5456ffa5a8be1e5107be47d184be3e209f748be51a7b0316fe
-chart https://helm.plane.so plane-ce 1.8.5 9d68ae1eb2d9e1a6181d1779063fa7feb949fcd48de31b2df4d847ea1eece755
 chart https://bokysan.github.io/docker-postfix mail 5.1.0 202c9e211dd313990e0cf08a8ac2dacb31c2d6b85a3e2ab3f299a51e8fa0c271
 chart https://argoproj.github.io/argo-helm argo-cd 10.10.5 ba6447eeed42bc41d1f0527721047b236304e97669a7b6286d02be4a1644ba7a
 chart https://kubernetes-sigs.github.io/headlamp headlamp 0.46.0 faa471a8c5c55125b3dceed1cf73000e1ced18f07e2088e5e12e75292fb9ae62

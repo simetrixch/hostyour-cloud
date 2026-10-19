@@ -20,7 +20,7 @@ function findings(common, stages) {
     const period = String(merged.limits_config?.retention_period ?? '');
     const [, amount, unit] = period.match(/^(\d+)([hdw])$/) ?? [];
     if (!amount || Number(amount) === 0) found.push(`${stage}: retention_period ${period || 'unset'} keeps every log`);
-    else if (Number(amount) * HOURS[unit] > 336) found.push(`${stage}: retention_period ${period} is past the 14 days the access logs are kept`);
+    else if (Number(amount) * HOURS[unit] > 720) found.push(`${stage}: retention_period ${period} is past the 30 days the access logs are kept`);
     if (merged.compactor?.retention_enabled !== true) found.push(`${stage}: the compactor does not enforce the retention period`);
   }
   return found;
@@ -29,7 +29,7 @@ function findings(common, stages) {
 const common = read(`${DIR}/values-common.yaml`);
 const stages = Object.fromEntries(STAGES.map(stage => [stage, read(`${DIR}/values-${stage}.yaml`)]));
 
-test('Loki keeps logs at most 14 days on every stage, and its compactor enforces it', () => {
+test('Loki keeps logs at most 30 days on every stage, and its compactor enforces it', () => {
   assert.deepEqual(findings(common, stages), []);
 });
 
@@ -40,6 +40,7 @@ test('PLANTED DEFECT: retention off, zero, unset, too long or lifted by a stage 
     ['zero', change(l => { l.limits_config.retention_period = '0s'; }), stages],
     ['unset', change(l => { delete l.limits_config.retention_period; }), stages],
     ['a year', change(l => { l.limits_config.retention_period = '52w'; }), stages],
+    ['31 days', change(l => { l.limits_config.retention_period = '744h'; }), stages],
     ['prod lifts it', common, {...stages, prod: {loki: {loki: {compactor: {retention_enabled: false}}}}}],
   ]) assert.notDeepEqual(findings(values, perStage), [], name);
 });

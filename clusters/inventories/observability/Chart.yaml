@@ -65,6 +65,11 @@ dependencies:
     repository: file://../../charts/ingress
     alias: ingress-loki-push
     condition: global.servicesLocal.observability
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+    alias: ingress-site-telemetry
+    condition: global.servicesLocal.observability
   - name: middleware
     version: 1.0.0
     repository: file://../../charts/middleware

@@ -70,7 +70,7 @@ export function planInstallation(maps, fromDomain, toDomain, installedHosts = []
         // Mail configuration belongs to its separate owner decision; private IPs stay unchanged.
         if (path === 'global.endpoints' && key === 'mail') continue;
         if (value && typeof value === 'object') walk(value, `${path}.${key}`);
-        else if (['host', 'url', 'prometheusPush', 'lokiPush'].includes(key)) {
+        else if (['host', 'url', 'prometheusPush', 'lokiPush', 'query'].includes(key)) {
           if (typeof value !== 'string') refuse('an endpoint address must be text');
           const after = moveEndpoint(value, fromDomain, toDomain);
           const host = value.includes('://') ? new URL(value).hostname : value;

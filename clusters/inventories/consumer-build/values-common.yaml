@@ -81,14 +81,15 @@ releaseQueue:
 #
 # maxRunning is ciRunKeeper.maxRunning in clusters/inventories/image-builder: the ci run keeper starts a
 # waiting ci run only while fewer ci runs than that have started and not finished, whatever the number of
-# units. A run holds one live ci pod at a time, because the tasks of the ci pipeline run one after the other
-# (the test asserts the chain), and one report pod after them.
+# units. A run holds one live ci pod at a time: the task ci is one pod whose steps run one after the other (the
+# test asserts it), the finally task commit-status runs after it, and report-failure beside it only on a red run.
 #
-# podsPerUnit is 2 for that same chain, not for a second live pod. Tekton creates the pod of the next task as
-# soon as the steps of the one before have exited, and for a moment that pod is not yet Succeeded, so the
-# quota still counts it. With a cap of 1 the next pod is refused (ExceededResourceQuota) and Tekton tries it
-# again a minute later, at every task boundary: a check of 30 s took 5 min. The finished pod holds no running
-# step, so the memory budget still counts one ci pod per run.
+# podsPerUnit is 2 for that pair, not for a second live pod. Tekton creates the pod of commit-status as soon as the
+# steps of the task ci have exited, and for a moment that pod is not yet Succeeded, so the quota still counts it.
+# With a cap of 1 the next pod is refused (ExceededResourceQuota) and Tekton tries it again a minute later: a check
+# of 30 s took 5 min. The finished pod holds no running step, so the memory budget still counts one ci pod per run,
+# and the pod of the task ci weighs its largest step, the check, because Tekton gives a pod the largest request of
+# its steps and not their sum.
 #
 # The report pod carries the class image-builder-ci-report, which the quota does not count, so a red run
 # reports at once even while the next check of its unit holds the slot. Each running run has at most one,
@@ -188,6 +189,17 @@ ciCapacity:
   nodeCpu: "32"
   standingCpuRequests: 6970m
 
+# THE VOLUMES OF A CI RUN. The one pod of a ci run keeps the checkout on an emptyDir of its task, ciScratch.size
+# (the size of the claim a run held before it), which the kubelet evicts the pod for exceeding. ciCache.size is the
+# claim `ci-cache` of each unit (templates/ci-cache.yaml, on the master's local storage class): the check step
+# keeps the Go module and build caches, the helm repository cache, the pnpm content store, the npm and pub package
+# caches and the tool archives of a run there, and prints its size and what it evicted, oldest last access first, to
+# stay under it.
+ciScratch:
+  size: 10Gi
+ciCache:
+  size: 5Gi
+
 # THE CHECK STEP'S MEMORY AND VITEST WORKERS. The digita-platform cap holds its app, web and engine
 # suites to four workers through their shared VITEST_MAX_WORKERS reader. The supplied upper peak of
 # 2Gi for three workers gives ceil(2048 / 3 x 1.30) = 888Mi per worker; four need an estimated
@@ -200,7 +212,7 @@ ciCheckMemory:
 
 # WHO STARTS, CANCELS AND DELETES A CI RUN. The ci run keeper of clusters/inventories/image-builder starts
 # the waiting ci runs up to ciRunKeeper.maxRunning, cancels a ci run that a newer push to the same branch
-# replaces, and deletes the finished ci runs beyond the
+# replaces or whose `ci/` branch was deleted, and deletes the finished ci runs beyond the
 # newest 20 of each build namespace. Its grant is `patch` and `delete` on pipelineruns in the unit's
 # build namespace, rendered per unit by templates/rbac-ci-run-keeper.yaml, and named here for the same
 # reason as the release queue above. The admission policy of image-builder lets that identity set

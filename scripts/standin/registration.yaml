@@ -73,3 +73,12 @@ externalsecret-redis:
 externalsecret-mariadb:
   externalSecret:
     vaultPath: secret/dev/units/check/mariadb
+# What clusters/argocd/files/site-telemetry-registrations-appset.yaml hands clusters/units/site-telemetry-registration:
+# a tenant at one stage, the one host it is served at, and its websites.
+tenant:
+  guid: aaaaaaaaaaaa
+  stage: dev
+  host: check.dev.check.example.invalid
+  proxiedHosts: []
+  sites:
+    - {name: check, sitePath: /, main: true}

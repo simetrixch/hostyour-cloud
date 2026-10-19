@@ -101,6 +101,9 @@ DRIVER="$HERE/regenerate-driver.sh"
 . "$HERE/require-owner-only.sh" \
   || die 'require-owner-only.sh is not beside this file. It is the guard every launcher puts on a config' 66
 # shellcheck disable=SC1091
+. "$HERE/require-config-assignments.sh" \
+  || die 'require-config-assignments.sh is not beside this file. It is the check every launcher makes on the lines of a config' 66
+# shellcheck disable=SC1091
 . "$HERE/require-forgejo-destinations.sh" \
   || die 'require-forgejo-destinations.sh is not beside this file. It is the guard that asks the Forgejo destinations of a config' 66
 
@@ -177,9 +180,8 @@ fi
 # reading it is running it. A shell `.` executes every line, so a config carrying
 # a command would run it with the operator's own rights, and the same file is
 # read again by a shell on the machine.
-BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
-[ -z "$BAD" ] \
-  || die "$CONFIG carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL on both sides: $BAD" 65
+require_config_assignments "$CONFIG" "$CONFIG_EXAMPLE_KEYS" \
+  || die "$CONFIG carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL on both sides: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 
 # THE NAME THIS RUN WAS GIVEN, KEPT BEFORE THE CONFIG IS READ. The config states
 # an FQDN of its own and reading it is what puts it in this shell, so without this

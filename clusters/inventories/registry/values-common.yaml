@@ -28,7 +28,7 @@ app:
     # restart it. The value is "config-" and 12 hex digits of the git hash of the
     # config.json every stage renders. scripts/check.sh refuses any other value and
     # prints the one to set.
-    hostyour.cloud/config-revision: "config-3a7017f8a577"
+    hostyour.cloud/config-revision: "config-1ff7ca0b9cd3"
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
   # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
   # With RollingUpdate, the new pod fails to start until the old pod
@@ -342,6 +342,16 @@ configmap:
       # clusters/platform/versions.yaml can ask it. Measured against the pinned
       # binary (v2.1.22, distribution-spec 1.1.1): with the key absent
       # `zot verify` answers "config file is valid" and prints no warning.
+      #
+      # `http.writeTimeout` IS RAISED FROM ITS 60 SECONDS TO 30 MINUTES. zot ends a
+      # response that is still being written once that time has passed, whatever
+      # was sent so far (`defaultWriteTimeout` in project-zot/zot
+      # pkg/cli/server/root.go, `WriteTimeout` in pkg/api/config/config.go). A
+      # redeploy of eight app clusters fetches one 250 MB tool from this registry
+      # at the same moment, they share the master's bandwidth, and seven of the
+      # eight responses were ended at exactly 60 seconds with part of the body
+      # (curl 92). 30 minutes is far above the slowest honest download of a pinned
+      # tool and still ends a connection that stalls for good.
       config.json: |-
         {{- if eq .Values.global.registryPullUser .Values.global.registryPushUser }}
         {{- fail (printf "global.registryPullUser and global.registryPushUser are both %q, and they are two accounts distinguished by nothing else. The password file gets two lines under one name, the matcher takes the first, and the second password authenticates nothing at all — measured: the reading credential answered 401 while the writing one answered 200, so every image pull from this registry was refused and no manifest anywhere said why. Answer them differently." .Values.global.registryPullUser) }}
@@ -382,6 +392,7 @@ configmap:
             "address": "0.0.0.0",
             "port": "5000",
             "realm": "zot",
+            "writeTimeout": "30m",
             "compat": ["docker2s2"],
             "auth": {
               "htpasswd": {

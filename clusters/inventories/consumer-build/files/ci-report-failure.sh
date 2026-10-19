@@ -82,12 +82,12 @@ if get "/apis/tekton.dev/v1/namespaces/${namespace}/pipelineruns/${PIPELINE_RUN}
     [ -n "${taskrun}" ] || continue
     get "/apis/tekton.dev/v1/namespaces/${namespace}/taskruns/${taskrun}" "${work}/taskrun.json" || continue
     info="$(jq -c "${taskrun_info}" "${work}/taskrun.json")"
-    if [ "${task}" = describe-commit ]; then
+    if [ "${task}" = ci ]; then
       subject="$(jq -r '.results.subject // ""' <<<"${info}")"
       author="$(jq -r '.results.author // ""' <<<"${info}")"
     fi
     [ "$(jq -r .failed <<<"${info}")" = true ] || continue
-    [ "${task}" != clone ] || clone_failed=true
+    [ "$(jq -r .step <<<"${info}")" != clone ] || clone_failed=true
     pod="$(jq -r .pod <<<"${info}")"
     container="$(jq -r .container <<<"${info}")"
     reason="$(jq -r '.reason + ": " + .message' <<<"${info}")"
@@ -125,7 +125,7 @@ if [ -z "${subject}" ]; then
   if [ "${clone_failed}" = true ]; then
     subject="(none: the commit was not cloned)"
   else
-    subject="(none: the task describe-commit left no subject)"
+    subject="(none: the step describe left no subject)"
   fi
 fi
 [ -n "${author}" ] || author="(unknown)"

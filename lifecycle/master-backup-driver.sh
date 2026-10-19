@@ -35,6 +35,25 @@
 # so root carries them, and root lists the box back on the same config: rclone saves what it learns of
 # the box into the config it loaded, so after root's copy that file is root's and the operator cannot
 # load it. The last line this prints is that id, which is what master-restore asks for.
+#
+# ONE BACKUP AT A TIME ON A MACHINE. A second run would read a store's replicas while the first holds that
+# store at 0 and start it again with 0, and would copy a store the first has started again. So a run takes a
+# lock before it makes or stops anything, and a second run is refused with exit 75, naming the first. The lock
+# is flock on a file in /run/lock, which every account may write: /var/lib/master-backup is root's alone, and
+# the operator, who runs this, can hold no lock in it. It belongs to this process, so it is gone when the
+# process is, however it ends, and a run that died leaves nothing that blocks the next. It sits on the
+# machine, so a run started from another computer is refused too. The first is named from the record its run
+# wrote into the file, its id and its process id; that record stays after the run, and a lock held by hand writes
+# none, so the refusal names a run only while its process still has the file open, and otherwise says that no
+# run can be named.
+#
+# READ BACK BEFORE IT IS CALLED WHOLE. The count of names and the size check rclone makes while it copies
+# look at no byte of what the box keeps. So the backup is copied back from the box into a folder of root's,
+# and there its checksums are held to the manifest, the manifest's count of stores to the rows of STORES, the
+# quorum archive is opened with the passphrase, to /dev/null (the opened quorum is written nowhere, and this
+# machine's output and log hold no line of it), and the manifest itself is held to the one that was sent. That
+# last check is what makes the first one whole: a checksum line that lost its form is skipped by the filter
+# of the first, and so is the archive under it.
 # ===========================================================================
 set -uo pipefail
 
@@ -50,8 +69,30 @@ SECRETS=''
 cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-BAD=$(grep -nvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$CONFIG" | head -3)
-[ -z "$BAD" ] || die "the config carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL: $BAD" 65
+# The same function as require-config-assignments.sh, held byte-equal to it by test.sh: this
+# script arrives over one ssh session and can read no sibling. It is handed no keys, so a refused
+# line is named by its number alone and never quoted, because it may carry a credential.
+require_config_assignments() {
+  local file="$1" keys="${2:-}"
+  BAD_LINES=$(
+    export LC_ALL=C
+    grep -anvE "^[[:space:]]*(#.*)?$|^[A-Z][A-Z0-9_]*='[^']*'[[:space:]]*(#.*)?$" "$file" \
+      | tr -d '\000' \
+      | head -3 \
+      | awk -v keys=" $keys " '{
+          number = substr($0, 1, index($0, ":") - 1)
+          name = ""
+          if (match(substr($0, index($0, ":") + 1), /^[A-Z][A-Z0-9_]*=/)) {
+            name = substr($0, index($0, ":") + 1, RLENGTH - 1)
+            if (index(keys, " " name " ") == 0) name = ""
+          }
+          printf "%sline %s%s", (NR > 1 ? ", " : ""), number, (name == "" ? "" : " (" name ")")
+        }'
+  )
+  [ -z "$BAD_LINES" ]
+}
+require_config_assignments "$CONFIG" \
+  || die "the config carries lines that are neither a comment nor NAME='value', and this file is READ BY THE SHELL: $BAD_LINES. They are named and never quoted, because a line may carry a credential" 65
 . "$CONFIG"
 for named in FQDN OPERATOR_USER STAGE ELEVATION_PASSWORD STORAGE_BOX_HOST STORAGE_BOX_USER STORAGE_BOX_PASSWORD BACKUP_PASSPHRASE; do
   [ -n "${!named:-}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
@@ -116,10 +157,31 @@ export RCLONE_CONFIG="$RCLONE_CONF"
 rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was stopped" 69
 good "the storage box $STORAGE_BOX_HOST opens"
 
+# The file is opened with <> and never with >, which would wipe the record of the run that holds it before the
+# lock is tried. flock ends 75 on a lock another process holds, and any other code is its own failure.
+LOCK_FILE=/run/lock/master-backup.lock
+command -v flock >/dev/null 2>&1 || die 'flock is not on this machine, and the lock that keeps a second backup out is taken with it' 69
+exec 9<>"$LOCK_FILE" || die "the lock file $LOCK_FILE could not be opened — nothing was stopped" 78
+LOCKED=0
+flock -n -E 75 9 || LOCKED=$?
+if [ "$LOCKED" = 75 ]; then
+  # The record stays in the file when its run ends, and a lock held by hand writes none, so a record names the
+  # holder only while the process it names still has this file open as descriptor 9.
+  HOLDER_ID='' HOLDER_PID=''
+  read -r HOLDER_ID HOLDER_PID _ < "$LOCK_FILE" || true
+  if [[ "$HOLDER_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ && "$HOLDER_PID" =~ ^[0-9]+$ ]] && [ "/proc/$HOLDER_PID/fd/9" -ef "$LOCK_FILE" ]; then
+    die "another master backup holds the lock $LOCK_FILE: run $HOLDER_ID, started ${HOLDER_ID:0:4}-${HOLDER_ID:4:2}-${HOLDER_ID:6:2} ${HOLDER_ID:9:2}:${HOLDER_ID:11:2}:${HOLDER_ID:13:2} UTC. Nothing was stopped; start this again once it has ended" 75
+  fi
+  die "the lock $LOCK_FILE is held, and its record is empty or names a run that is not alive, so no run can be named. Nothing was stopped; start this again once the holder has ended" 75
+elif [ "$LOCKED" != 0 ]; then
+  die "the lock $LOCK_FILE could not be taken, flock ended $LOCKED — nothing was stopped" 78
+fi
+
 ID="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUPS="box:$FQDN/master"
 WORK="/var/lib/master-backup/$ID"
 root install -d -m 700 -o root -g root /var/lib/master-backup "$WORK" || die "could not make $WORK" 78
+printf '%s %s\n' "$ID" "$$" > "$LOCK_FILE" || die "the run's id could not be written to $LOCK_FILE, where a second run reads it" 78
 # seal OUT COMMAND...: what COMMAND writes, sealed to OUT. Both run as root inside one bash, because
 # root() hands sudo the password on standard input: nothing piped or redirected into a command it
 # starts reaches it, and under a NOPASSWD rule the command reads the password line as its data.
@@ -172,6 +234,28 @@ LISTING=$(root rclone --config "$RCLONE_CONF" lsf "$BACKUPS/$ID/") || die "the s
 LISTED=$(printf '%s\n' "$LISTING" | grep -c .)
 EXPECTED=$(( TAKEN + 2 ))
 [ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under $BACKUPS/$ID/ and $EXPECTED were sent" 69
-root rm -rf "$WORK"
+# The folder is root's, so cleanup, which runs as the operator, cannot remove it: every way out of this step
+# removes it with root. The work folder stands after a refusal, because the archives are all there is.
+READBACK="$WORK.readback"
+root install -d -m 700 -o root -g root "$READBACK" || die "could not make $READBACK" 78
+root rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet || { root rm -rf "$READBACK"; die "the archives could not be read back from $BACKUPS/$ID/ — they stand in $WORK on this machine" 69; }
+READBACK_CODE=0
+root sh -c 'cd "$1" || exit 10
+grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11
+grep -qx "STORES=$2" manifest.txt || exit 12
+gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13
+cmp -s manifest.txt "$5" || exit 14' _ "$READBACK" "${#STORES[@]}" "$PASSPHRASE_FILE" "$STAGE" "$WORK/manifest.txt" || READBACK_CODE=$?
+if [ "$READBACK_CODE" != 0 ]; then
+  root rm -rf "$READBACK"
+  case "$READBACK_CODE" in
+    11) die "the archives read back from $BACKUPS/$ID/ do not match the checksums of their manifest — what the storage box keeps is not what was sent; the archives stand in $WORK on this machine" 69 ;;
+    12) die "the manifest read back from $BACKUPS/$ID/ counts other stores than the ${#STORES[@]} rows of this backup — the archives stand in $WORK on this machine" 69 ;;
+    13) die "the quorum archive read back from $BACKUPS/$ID/ does not open with the BACKUP_PASSPHRASE of the config, and a backup that cannot open its quorum could never be restored — the archives stand in $WORK on this machine" 69 ;;
+    14) die "the manifest read back from $BACKUPS/$ID/ is not the manifest that was sent — a checksum line that lost its form on the box is a line no archive is held to; the archives stand in $WORK on this machine" 69 ;;
+    *) die "the read-back of $BACKUPS/$ID/ could not be run, it ended with $READBACK_CODE — the archives stand in $WORK on this machine" 69 ;;
+  esac
+fi
+good "read back from $BACKUPS/$ID/: the checksums hold, the manifest counts the ${#STORES[@]} stores, the quorum opens, the manifest is the one sent"
+root rm -rf "$WORK" "$READBACK"
 good "$LISTED file(s) stand under $BACKUPS/$ID/ — $TAKEN store(s), the quorum, the manifest; nothing of it is left on this machine"
 printf 'BACKUP %s\n' "$ID"
