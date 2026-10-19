@@ -2858,6 +2858,10 @@ cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 # into its destination; copy to the box puts its source into box-uploaded/ under the remote path, and ends 1
 # on a source that rootonly names unless sudo raised the caller (STANDIN_ELEVATED), as a folder of root's at
 # mode 700 is refused to any other account. lsf of a remote path that was copied to lists what it holds.
+# Every call that loads the config saves into it what rclone 1.60.1's sftp backend detects (shell_type,
+# md5sum_command, sha1sum_command) by renaming a file the caller wrote over it. So a call that sudo raised
+# leaves the config root's, at its old mode 600: rootonly names it, and any later call that sudo did not
+# raise ends 1 on it, as rclone does on a config it cannot load.
 here="$(dirname "$0")"
 printf 'rclone %s\n' "$*" >> "$here/argv.log"
 conf="${RCLONE_CONFIG:-}"
@@ -2876,9 +2880,16 @@ if [ "$1" = obscure ]; then
 fi
 { IFS= read -r host; IFS= read -r user; IFS= read -r pass; } < "$here/box.expected"
 if [ -n "$conf" ] && [ -f "$conf" ]; then
-  [ "$(sed -E 's/^([a-z]+) *= */\1=/' "$conf")" = "$(printf '[box]\ntype=sftp\nhost=%s\nuser=%s\npass=%s' "$host" "$user" "$pass")" ] \
+  if grep -qxF "$conf" "$here/rootonly" 2> /dev/null && [ -z "${STANDIN_ELEVATED:-}" ]; then
+    echo "rclone stand-in: Failed to load config file \"$conf\": permission denied" >&2; exit 1
+  fi
+  [ "$(grep -vE '^(shell_type|md5sum_command|sha1sum_command) = ' "$conf" | sed -E 's/^([a-z]+) *= */\1=/')" = "$(printf '[box]\ntype=sftp\nhost=%s\nuser=%s\npass=%s' "$host" "$user" "$pass")" ] \
     || { echo 'rclone stand-in: the config does not define the remote box' >&2; exit 1; }
   printf '%s %s %s\n' "$(stat -c %a "$(dirname "$conf")")" "$(stat -c %a "$conf")" "$(dirname "$conf")" >> "$here/secrets.seen"
+  for saved in 'shell_type = unix' 'md5sum_command = md5sum' 'sha1sum_command = sha1sum'; do
+    grep -qxF "$saved" "$conf" || printf '%s\n' "$saved" >> "$conf"
+  done
+  [ -z "${STANDIN_ELEVATED:-}" ] || printf '%s\n' "$conf" >> "$here/rootonly"
 elif [ "${RCLONE_CONFIG_BOX_TYPE:-}" = sftp ] && [ "${RCLONE_CONFIG_BOX_HOST:-}" = "$host" ] && [ "${RCLONE_CONFIG_BOX_USER:-}" = "$user" ] && [ "${RCLONE_CONFIG_BOX_PASS:-}" = "$pass" ]; then
   :
 else
@@ -3189,7 +3200,9 @@ ok 'the planted seals are caught under each sudo: the passphrase in env, the box
 # The work folder is root's at mode 700, and so is every archive and the manifest in it. The operator, who
 # runs this driver, cannot read it, so a copy run by the operator carries nothing and ends 69. The stand-ins
 # model that: install records a folder made root's, and the rclone stand-in refuses it to a caller sudo did
-# not raise. The cases run the driver's own text for the work folder, the seals and the way out against a
+# not raise. rclone saves into the config it loaded, so after root's copy the config is root's too, at its
+# old mode 600, and a listing the operator runs on it ends 1: the rclone stand-in models that the same way.
+# The cases run the driver's own text for the work folder, the seals and the way out against a
 # box the stand-in serves, then read what reached the box. The model is declared by the stand-ins; the
 # account that runs this suite owns every file in it. The real folder is the one on a master.
 CARRY_FQDN=master.example.invalid
@@ -3232,7 +3245,7 @@ for kind in nopasswd password; do
   carry_holds "$kind" "$BACKUP_TEXT" "$BACKUP_WAY_OUT" \
     || fail "backup: the archives and the manifest of a work folder only root reads did not reach the box under a sudo that reads $kind: $(cat "$OUT/verdict")"
 done
-ok 'backup: a work folder only root reads is carried to the box by root, whole, with its manifest, and removed, under a sudo that asks no password and under one that does'
+ok 'backup: a work folder only root reads is carried to the box by root, listed back by root on the config it saved into, whole, with its manifest, and removed, under a sudo that asks no password and under one that does'
 
 # planted defects: the copy as the operator runs it (the work folder is refused to it), and root's copy
 # without the config by path (sudo resets the environment, so the box is not defined for root)
@@ -3251,6 +3264,22 @@ for kind in nopasswd password; do
   caught_for 'box config written under an open umask' 'its file at 644'
 done
 ok 'the planted copies are caught under each sudo: the operator refused the work folder, root without the config by path refused the box, the box config under an open umask'
+
+# planted defects of the read-back, which follows root's copy: the copy has just saved into the config what
+# the box answered, so the config is root's, and a listing run by the operator cannot load it (it ends 1,
+# and the error stays on the screen); a listing root runs without the config by path does not know the box
+LIST_LINE='root rclone --config "$RCLONE_CONF" lsf'
+plant "$BACKUP_WAY_OUT" "$LIST_LINE" 'rclone lsf'; LIST_BY_OPERATOR="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" "$LIST_LINE" 'root rclone lsf'; LIST_WITHOUT_CONFIG="$PLANTED_TEXT"
+for kind in nopasswd password; do
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$LIST_BY_OPERATOR" || fail "the planted read-back run by the operator was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'read-back run by the operator' 'the way out ended with 69' 'Failed to load config file'
+  grep -qF 'Failed to load config file' "$OUT/verdict" || fail "the planted read-back run by the operator did not show the error rclone ended with: $(cat "$OUT/verdict")"
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$LIST_WITHOUT_CONFIG" || fail "the planted root read-back without the config by path was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'root read-back without the config by path' 'the way out ended with 69' 'the remote box is not defined'
+  grep -qF 'the remote box is not defined' "$OUT/verdict" || fail "the planted root read-back without the config by path did not show the error rclone ended with: $(cat "$OUT/verdict")"
+done
+ok 'the planted read-backs are caught under each sudo: the operator cannot load the config root saved into, root without the config by path does not know the box, and each shows the error rclone ended with'
 
 # The restore: the fetch, the clone, the fetch of the branch, the opening of the quorum and of every store,
 # as the driver's own text runs them against a backup the rclone stand-in serves.

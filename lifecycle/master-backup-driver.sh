@@ -32,7 +32,9 @@
 # It goes through the same rclone remote the Manager's relocations use (hostyour-manager
 # relocation-jobs.ts BOX_REMOTE), one directory per backup, named by the moment it was taken, with a
 # manifest of checksums beside the archives. Root made the archives in a folder that is root's alone,
-# so root carries them. The last line this prints is that id, which is what master-restore asks for.
+# so root carries them, and root lists the box back on the same config: rclone saves what it learns of
+# the box into the config it loaded, so after root's copy that file is root's and the operator cannot
+# load it. The last line this prints is that id, which is what master-restore asks for.
 # ===========================================================================
 set -uo pipefail
 
@@ -166,7 +168,8 @@ RELEASE=$(grep -E '^release:' "/srv/hostyour-cloud/clusters/active/${FQDN}.yaml"
 root sh -c "cd '$WORK' && { printf 'FQDN=%s\nSTAGE=%s\nID=%s\nRELEASE=%s\nSTORES=%s\n' '$FQDN' '$STAGE' '$ID' '$RELEASE' '$TAKEN'; sha256sum *.gpg; } > manifest.txt" || die 'the manifest could not be written' 70
 say "release on this machine: ${RELEASE:-unknown}"
 root rclone --config "$RCLONE_CONF" copy "$WORK" "$BACKUPS/$ID/" --quiet || die "the archives could not be carried to $BACKUPS/$ID/ — they stand in $WORK on this machine" 69
-LISTED=$(rclone lsf "$BACKUPS/$ID/" 2>/dev/null | wc -l | tr -d ' ')
+LISTING=$(root rclone --config "$RCLONE_CONF" lsf "$BACKUPS/$ID/") || die "the storage box could not be listed under $BACKUPS/$ID/ — the archives stand in $WORK on this machine" 69
+LISTED=$(printf '%s\n' "$LISTING" | grep -c .)
 EXPECTED=$(( TAKEN + 2 ))
 [ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under $BACKUPS/$ID/ and $EXPECTED were sent" 69
 root rm -rf "$WORK"
