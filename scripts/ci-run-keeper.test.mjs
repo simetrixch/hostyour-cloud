@@ -14,7 +14,7 @@ import {join} from 'node:path';
 
 const FILES = 'clusters/inventories/image-builder/files';
 const KEPT = 20;
-const MAX = 6;
+const MAX = 7;
 const REASON = `all ${MAX} ci slots are in use`;
 const UNIT_REASON = 'a ci run of this unit runs';
 const namespaces = (count) => Array.from({length: count}, (_, i) => `unit${i + 1}-build`);
@@ -162,7 +162,7 @@ test('a run is not cancelled when it has finished, is cancelled already, has no 
   assert.deepEqual(cancelled([first, second, run('post-build', {branch: 'main', at: 501})]), names([first, second]));
 });
 
-test('7 waiting runs of 7 units and none running start the 6 oldest, and the 7th waits with its reason', () => {
+test('8 waiting runs of 8 units and none running start the 7 oldest, and the 8th waits with its reason', () => {
   const runs = namespaces(MAX + 1).map((namespace) => waiting(namespace));
   assert.deepEqual(started(runs), names(runs.slice(0, MAX)));
   const note = decide(runs).find((c) => c.type === 'merge');
@@ -171,15 +171,15 @@ test('7 waiting runs of 7 units and none running start the 6 oldest, and the 7th
   assert.deepEqual(decide(runs).map((c) => c.type), [...Array(MAX).fill('json'), 'merge'], 'starts come before notes');
 });
 
-test('6 running runs start none, and every waiting run waits with its reason', () => {
+test('7 running runs start none, and every waiting run waits with its reason', () => {
   const waits = [waiting('shop-build'), waiting('post-build')];
   assert.deepEqual(started([...running(MAX, 'shop-build'), ...waits]), []);
   assert.deepEqual(noted([...running(MAX, 'shop-build'), ...waits]), names(waits));
 });
 
-test('a free slot is a slot: 4 running runs and 3 waiting runs start the 2 oldest', () => {
+test('a free slot is a slot: 5 running runs and 3 waiting runs start the 2 oldest', () => {
   const waits = ['a-build', 'b-build', 'c-build'].map((namespace) => waiting(namespace));
-  assert.deepEqual(started([...running(4, 'post-build'), ...waits]), names(waits.slice(0, 2)));
+  assert.deepEqual(started([...running(MAX - 2, 'post-build'), ...waits]), names(waits.slice(0, 2)));
 });
 
 test('a finished run holds no slot, and a started run holds one whatever its pods wait for', () => {
@@ -216,14 +216,14 @@ test('the note is written once, and a start takes it back', () => {
 });
 
 test('planted defect: a decision without the cap starts every waiting run, and the cap test goes red', () => {
-  const cappedAtSix = (program) => {
+  const cappedAtMax = (program) => {
     const runs = namespaces(MAX + 1).map((namespace) => waiting(namespace, {branch: null}));
     const starts = decideWith(program, runs).filter((c) => c.type === 'json');
     assert.equal(starts.length, MAX, `${starts.length} ci runs start at once`);
   };
-  cappedAtSix(PROGRAM);
+  cappedAtMax(PROGRAM);
   assert.ok(PROGRAM.includes('[:$free]) as $startable'));
-  assert.throws(() => cappedAtSix(PROGRAM.replace('[:$free]) as $startable', ') as $startable')), /7 ci runs start at once/);
+  assert.throws(() => cappedAtMax(PROGRAM.replace('[:$free]) as $startable', ') as $startable')), /8 ci runs start at once/);
 });
 
 const reasonOf = (changes, run) => changes.find((c) => c.name === run.metadata.name && c.type === 'merge')?.patch.metadata.annotations['image-builder.io/queued-behind'];
@@ -244,11 +244,11 @@ test('a unit with a started run starts none, and another unit starts its oldest'
   assert.equal(reasonOf(changes, runs[3]), UNIT_REASON, 'the second run of a unit waits for the first');
 });
 
-test('6 waiting runs of 6 units all start, and a run of a 7th unit waits for a slot', () => {
-  const six = namespaces(MAX).map((namespace) => waiting(namespace)), seventh = waiting('late-build');
-  assert.deepEqual(started([...six, seventh]), names(six));
-  assert.equal(reasonOf(decide([...six, seventh]), seventh), REASON);
-  assert.equal(reasonOf(decide([...running(MAX, 'busy-build'), seventh]), seventh), REASON, 'a unit without a started run waits for a slot, not for itself');
+test('7 waiting runs of 7 units all start, and a run of an 8th unit waits for a slot', () => {
+  const seven = namespaces(MAX).map((namespace) => waiting(namespace)), eighth = waiting('late-build');
+  assert.deepEqual(started([...seven, eighth]), names(seven));
+  assert.equal(reasonOf(decide([...seven, eighth]), eighth), REASON);
+  assert.equal(reasonOf(decide([...running(MAX, 'busy-build'), eighth]), eighth), REASON, 'a unit without a started run waits for a slot, not for itself');
 });
 
 test('planted defect: a keeper that starts two runs of one unit in one tick goes red', () => {
@@ -368,9 +368,9 @@ const steadyState = () => {
     ...units.flatMap((namespace) => finished(KEPT + 1, namespace)),
     ...finished(1, units[1], {succeeded: 'False'}),
     replacedRun, run(units[0], {branch: 'main', succeeded: 'Unknown'}),
-    ...units.slice(2, 5).flatMap((namespace) => running(1, namespace)),
-    waiting(units[5]), waiting(units[6]), waiting(units[7], {at: 0}),
-    {...waiting(units[8]), metadata: {...waiting(units[8]).metadata, annotations: {'image-builder.io/queued-behind': REASON}}},
+    ...units.slice(2, 6).flatMap((namespace) => running(1, namespace)),
+    waiting(units[6]), waiting(units[7]), waiting(units[8], {at: 0}),
+    {...waiting(units[9]), metadata: {...waiting(units[9]).metadata, annotations: {'image-builder.io/queued-behind': REASON}}},
   ].map(asServed);
 };
 

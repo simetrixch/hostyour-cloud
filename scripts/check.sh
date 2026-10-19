@@ -366,7 +366,7 @@ $found"
 }
 
 # THE PODS THE MASTER CANNOT WORK WITHOUT CARRY A CPU REQUEST. A pod with none gets the smallest share of the node
-# once the node is saturated, and the build plane saturates it: the ci check may take 12 cores, six runs at once. The
+# once the node is saturated, and the build plane saturates it: the ci check may take 12 cores, seven runs at once. The
 # ingress, the reconcilers, the certificates and the build plane's controllers are the pods that must keep working
 # then, so each container of the workloads below asks for the CPU it uses (its p95 over seven days, which the
 # comment beside each request in the values names). The names are the ones the charts render and the live pods
