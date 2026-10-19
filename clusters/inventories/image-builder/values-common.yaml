@@ -48,9 +48,10 @@ priorityClasses:
     name: image-builder-ci-report
     value: -100
 
-# The GitHub owners whose repositories run their scripts/check.sh on the build plane for every
-# push of the default branch (except one that only moves release pins) or of a `ci/` branch (templates/triggers/github-ci-push.yaml). A repository of any other owner is released
-# through the deploy trigger as before, but its check never runs here. Required: an empty list fails
+# The GitHub owners whose PUBLIC repositories run their scripts/check.sh on the build plane for every
+# push of the default branch (except one that only moves release pins) or of a `ci/` branch (templates/triggers/github-ci-push.yaml).
+# A private repository runs nothing here, whatever its owner: the trigger reads the visibility of the push. A repository of any
+# other owner is released through the deploy trigger as before, but its check never runs here. Required: an empty list fails
 # the render. digitaplatform is the owner of the product repositories and simetrixch the owner of
 # this platform's own (hostyour-*, ansiwise-*): each is an organisation of the operator, and a push
 # needs write access to its repositories.

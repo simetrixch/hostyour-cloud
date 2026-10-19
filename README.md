@@ -101,8 +101,9 @@ Run tests only on a remote runner.
 Read its runs on the master as the PipelineRuns `hostyour-cloud-ci-*` in the namespace `hostyour-cloud-build`,
 or as the commit status `tekton/ci` on the commit
 (`clusters/inventories/consumer-build/files/ci-commit-status.sh`). A push of the default branch or of a
-`ci/` branch starts a run through the Trigger `github-ci-push`
-(`clusters/inventories/image-builder/templates/triggers/github-ci-push.yaml`).
+`ci/` branch of a public repository starts a run through the Trigger `github-ci-push`
+(`clusters/inventories/image-builder/templates/triggers/github-ci-push.yaml`); a push of a private repository
+starts none and sets no `tekton/ci` status, because the trigger reads `repository.visibility` of the push.
 
 An issue branch is judged by the push gate on the machine and starts no ci run on the master.
 To run the master's ci on another commit, for example a planted defect that must show the check red,

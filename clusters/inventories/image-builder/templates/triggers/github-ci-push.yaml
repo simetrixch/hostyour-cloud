@@ -34,6 +34,15 @@ releases by. Tekton copies a Pipeline's labels onto its runs, so the ci
 Pipeline must not carry the consumer label either
 (clusters/inventories/consumer-build/templates/pipeline-ci.yaml).
 
+ONLY A PUBLIC REPOSITORY runs a check here. A private repository's push gate on the
+machine is its only check, and scripts/check.sh holds everything that check has to
+prove, so a run on the build plane would only repeat it and hold the build node. The
+filter reads repository.visibility of the push, at the moment of the push, so a
+repository that turns public starts running and one that turns private stops, with no
+list to keep. It is fail closed: a payload without the field, and a value other than
+`public` (`private`, `internal`), starts nothing. The release of a private repository
+is untouched, because the deploy and publish triggers below do not read it.
+
 ONLY THE LISTED OWNERS (ciPush.owners): a repository's check is its owner's code,
 run here with build-npmrc in reach, and only the listed owners have
 asked for it to run on this build plane. A push from any other owner, a customer
@@ -131,6 +140,7 @@ spec:
               expression: body.repository.clone_url
         - name: filter
           value: >-
+            has(body.repository.visibility) && body.repository.visibility == 'public' &&
             (body.ref == 'refs/heads/' + body.repository.default_branch || body.ref.startsWith('refs/heads/ci/')) &&
             !body.ref.startsWith('refs/heads/deploy/') &&
             body.ref != {{ printf "refs/heads/%s" $booksBranch | squote }} &&

@@ -184,10 +184,13 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
   const matches = (name, bodies, edit) => triggerMatches(builder, name, bodies, edit);
   // GitHub sends the repository's default branch with every push (repository.default_branch); `main` here, so a
   // filter that names `master` instead of reading it is seen.
-  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main'};
-  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}, default_branch: 'main'};
-  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}, default_branch: 'main'};
-  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
+  // Every repository is public unless a push says otherwise, so the owner clause is what refuses the customer's and the outsider's.
+  const repository = {name: 'Shop', clone_url: 'https://github.com/digitaplatform/shop.git', owner: {login: 'digitaplatform'}, default_branch: 'main', visibility: 'public'};
+  const customer = {name: 'swissbookai', clone_url: 'https://github.com/ahkutun/swissbookai.git', owner: {login: 'ahkutun'}, default_branch: 'main', visibility: 'public'};
+  const outsider = {name: 'tool', clone_url: 'https://github.com/someone-else/tool.git', owner: {login: 'someone-else'}, default_branch: 'main', visibility: 'public'};
+  const platform = {name: 'ansiwise-core', clone_url: 'https://github.com/simetrixch/ansiwise-core.git', owner: {login: 'simetrixch'}, default_branch: 'master', visibility: 'public'};
+  const {visibility: _public, ...undeclared} = repository;
+  const privateRepository = {...repository, visibility: 'private'};
   const SHA = 'a'.repeat(40);
   const tag = '0.8.446-stable-20261009014252';
   const pushes = {
@@ -219,15 +222,23 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     'a push of master where the default branch is main': {ref: 'refs/heads/master', after: SHA, deleted: false, repository},
     'a push of a ci/ branch': {ref: 'refs/heads/ci/issue-1-planted-1', after: SHA, deleted: false, repository},
     'a branch with ci/ inside its name': {ref: 'refs/heads/feature/ci/x', after: SHA, deleted: false, repository},
+    // A repository that is not public runs no check here: its push gate is the only check of a private repository.
+    'a push of the default branch of a private repository': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: privateRepository},
+    'a push of a ci/ branch of a private repository': {ref: 'refs/heads/ci/issue-1-planted-1', after: SHA, deleted: false, repository: privateRepository},
+    'a push of the default branch of an internal repository': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: {...repository, visibility: 'internal'}},
+    'a push of the default branch of a repository whose payload names no visibility': {ref: 'refs/heads/main', after: SHA, deleted: false, repository: undeclared},
+    // The release of a private repository is not touched: its deploy tag and its release tag still run.
+    'a deploy tag push of a private repository': {ref: `refs/tags/deploy/prod/${tag}`, after: SHA, deleted: false, repository: privateRepository},
+    'a release tag push of a private repository': {ref: `refs/tags/${tag}`, after: SHA, deleted: false, repository: privateRepository},
   };
   // GitHub sends `before` with every push; a deletion carries the deleted commit there.
   const BEFORE = 'b'.repeat(40);
   for (const push of Object.values(pushes)) push.before = BEFORE;
   const bodies = Object.values(pushes);
   const ci = matches('github-ci-push', bodies), deploy = matches('github-deploy-request', bodies), publish = matches('github-release-publish', bodies);
-  const verdicts = {ci: [false, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false],
-    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, false],
-    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false]};
+  const verdicts = {ci: [false, true, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false, false, false, false, false, false, false],
+    deploy: [false, false, true, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false],
+    publish: [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true]};
   Object.keys(pushes).forEach((name, i) => {
     assert.equal(ci[i].matched, verdicts.ci[i], `${name} on the ci trigger`);
     assert.equal(deploy[i].matched, verdicts.deploy[i], `${name} on the deploy trigger`);
@@ -285,6 +296,27 @@ test('the run the ci trigger creates is admitted, is no release, and the trigger
     assert.notEqual(edit(trigger('github-ci-push').filter), trigger('github-ci-push').filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
     assert.ok(matches('github-ci-push', [pushes[push]], edit)[0].matched, `PLANTED DEFECT: ${defect}`);
   }
+  // PLANTED DEFECTS of the visibility clause: a filter without it runs the check of a private repository, and a filter that only
+  // refuses `private` runs it for the values GitHub may add (`internal`) and for a payload that names none. Each edit must change
+  // the filter, and each edited filter matches a push the trigger refuses.
+  const publicOnly = "has(body.repository.visibility) && body.repository.visibility == 'public'";
+  assert.ok(trigger('github-ci-push').filter.includes(`${publicOnly} && `), 'the filter reads the visibility of the repository, fail closed');
+  const refusesPrivateOnly = (filter) => filter.replace(publicOnly, "!(has(body.repository.visibility) && body.repository.visibility == 'private')");
+  const visibility = {
+    'a filter without the visibility clause runs the check of a private repository': [(filter) => filter.replace(`${publicOnly} && `, ''), ['a push of the default branch of a private repository', 'a push of a ci/ branch of a private repository']],
+    'a filter that refuses only private repositories runs the check of an internal one': [refusesPrivateOnly, ['a push of the default branch of an internal repository']],
+    'a filter that refuses only private repositories runs the check where the payload names no visibility': [refusesPrivateOnly, ['a push of the default branch of a repository whose payload names no visibility']],
+  };
+  for (const [defect, [edit, names]] of Object.entries(visibility)) {
+    assert.notEqual(edit(trigger('github-ci-push').filter), trigger('github-ci-push').filter, `PLANTED DEFECT: ${defect}: the edit finds its clause`);
+    for (const name of names) {
+      assert.equal(matches('github-ci-push', [pushes[name]])[0].matched, false, `PLANTED INNOCENT: ${name} runs no check`);
+      assert.ok(matches('github-ci-push', [pushes[name]], edit)[0].matched, `PLANTED DEFECT: ${defect}`);
+    }
+  }
+  // The release of a private repository goes through the deploy and the publish trigger as before: neither reads the visibility.
+  assert.ok(!trigger('github-deploy-request').filter.includes('visibility'), 'the deploy trigger does not read the visibility');
+  assert.ok(!trigger('github-release-publish').filter.includes('visibility'), 'the publish trigger does not read the visibility');
 });
 
 // A release moves a pin by committing the new tag into clusters/inventories/<app>/values-<stage>.yaml of the default
@@ -307,7 +339,7 @@ test('the identity the ci trigger takes for a release pin is the one the release
 test('a push of the default branch that only moves release pins starts no ci run, and any other change in the push does', () => {
   const builder = imageBuilder();
   const SHA = 'a'.repeat(40), BEFORE = 'b'.repeat(40);
-  const repository = {name: 'hostyour-cloud', clone_url: 'https://github.com/simetrixch/hostyour-cloud.git', owner: {login: 'simetrixch'}, default_branch: 'master'};
+  const repository = {name: 'hostyour-cloud', clone_url: 'https://github.com/simetrixch/hostyour-cloud.git', owner: {login: 'simetrixch'}, default_branch: 'master', visibility: 'public'};
   const bump = JSON.parse(execFileSync('yq', ['-o=json', '.ciPush.pinIdentity', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}));
   const person = {name: 'Mehmet', email: 'mehmet@example.com'};
   const commit = (modified, {added = [], removed = [], message = 'release: manager 0.8.497-stable-20261015010114 — pin 0.8.497-stable-20261015010114-72bca23 (prod)', author = bump, committer = bump} = {}) =>
