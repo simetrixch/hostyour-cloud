@@ -4,8 +4,9 @@ THE FORGEJO RELEASE FLOW'S ENTRY. A Forgejo repository's own webhook, a per-repo
 http://el-image-builder.image-builder.svc:8080 that Forgejo's webhook ALLOWED_HOST_LIST admits, lands
 here. Two Triggers, and no delivery matches both:
 forgejo-tag-push — a push of a tag runs the Pipeline forgejo-release with the release and the Plane
-update. forgejo-pull-request — an opened, reopened or updated pull request of the repository's own
-branches runs the same Pipeline for its status and its image alone; a fork's pull request runs nothing.
+update. forgejo-pull-request — an opened, reopened or updated pull request from a branch of the repository
+itself runs the same Pipeline for its status and its image alone; a pull request from a fork, or one
+opened by AGit (a push to refs/for/<branch>, which read access alone allows), runs nothing.
 
 THE KEY IS FORGEJO'S OWN. Forgejo signs a delivery the way GitHub does (X-Hub-Signature-256 and
 X-GitHub-Event), so the github interceptor checks it, against the Secret
@@ -127,6 +128,7 @@ spec:
           value: >-
             body.action in ['opened', 'reopened', 'synchronized']
             && body.pull_request.head.repo_id == body.pull_request.base.repo_id
+            && body.pull_request.flow == 0.0
   bindings:
     - ref: forgejo-pull-request-binding
   template:
