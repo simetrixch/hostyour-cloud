@@ -60,7 +60,7 @@ spec:
     - missingkey=error
   generators:
     - git:
-        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        repoURL: __PLATFORM_URL__
         revision: __REVISION__  # the commit the platform Application synced, on the books branch, where the registrations stand
         files:
           - path: "registrations/*/build.yaml"
@@ -88,7 +88,7 @@ spec:
       project: builds
       sources:
         # 0. Values-only source — makes $values/... resolvable for the chart source.
-        - repoURL: &repo https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: &repo __PLATFORM_URL__
           targetRevision: &revision __REVISION__
           ref: values
         # 1. This same chart in UNIT mode: the registration's fields arrive as

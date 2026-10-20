@@ -967,17 +967,17 @@ if ! helm template argocd-apps clusters/argocd -f "$cluster_map" --set "revision
   fail "clusters/argocd does not render from the cluster map alone, which is the only chain it ever gets"
 fi
 
-refusal_said='the cluster map states no global: block'
+refusal_said='argocd-apps: global.clusterName is required'
 awk '/^global:/ { exit } { print }' "$cluster_map" > "$work/map-without-global"
 refused="$(helm template argocd-apps clusters/argocd -f "$work/map-without-global" --set "revision=$handed_revision" 2>&1)"
 case "$refused" in
   *"$refusal_said"*) ;;
   *)
     echo "$refused"
-    fail "a cluster map with no global: block is not refused by name — helm stops on a nil pointer that names neither the file nor the block"
+    fail "a cluster map with no global: block is not refused by name — helm stops on something that names neither the file nor the key"
     ;;
 esac
-echo "check: a cluster map with no global: block is refused by name, not by a nil pointer."
+echo "check: a cluster map with no global: block is refused by the key it lacks, not by a nil pointer."
 
 # ── That render read for the one relation ArgoCD refuses ─────────────────────────────────────
 # THIS IS THE RENDER THE DEFECT WOULD REACH A CLUSTER THROUGH. The loop above already reads every
@@ -997,6 +997,203 @@ if [ -n "$argocd_off_revision" ]; then
   fail "a source or a generator of clusters/argocd names this repository off the handed revision"
 fi
 echo "check: every source and generator of this repository in clusters/argocd stands at the handed revision."
+
+# ── The two repositories as the map names them, and what Argo CD reads them with ─────────────
+# global.platformUrl AND global.deployUrl ARE THE ONLY PLACES THE TREE NAMES THE PLATFORM AND THE DEPLOY
+# REPOSITORY. clusters/argocd/templates/apps.yaml writes them into every source and generator of
+# clusters/argocd/files in place of __PLATFORM_URL__ and __DEPLOY_URL__, so an installation whose repositories
+# stand on its own Forgejo is read from there, and a line that still names github.com is a repository the
+# map moved and a file did not. The scan renders the chart for a Forgejo map and reads the whole render for
+# github.com: today the tree names no third party, so any such line is a finding, and the one that adds a
+# third party's repository adds its exception here on purpose.
+#
+# THE ONE DEFAULT. clusters/argocd/values.yaml carries global.platformUrl, because a cluster map written before
+# the map carried it has none and a root chart that fails to render stops the reconciler that would deliver
+# the map that does. It must equal the platform chain's value, or a map without the key reads another
+# repository than every chart beside it.
+forge_host="$(yq '.global.repositoryCredentials.forgejo.host // ""' scripts/standin/repository-credentials.yaml)"
+[ -n "$forge_host" ] || fail "scripts/standin/repository-credentials.yaml carries no Forgejo host, and it is what lets the credential charts render for a Forgejo installation"
+forge_platform="https://$forge_host/check/hostyour-cloud.git"
+forge_deploy="https://$forge_host/check/check.git"
+
+# $1 is the default of clusters/argocd/values.yaml, $2 the platform chain's value. One finding per line on stdout.
+platform_default_findings() {
+  if [ -z "$1" ]; then
+    echo "  clusters/argocd/values.yaml carries no global.platformUrl"
+  elif [ "$1" != "$2" ]; then
+    echo "  clusters/argocd/values.yaml names $1 and clusters/platform/values-common.yaml names ${2:-nothing}"
+  fi
+}
+platform_default="$(yq '.global.platformUrl // ""' clusters/argocd/values.yaml)"
+platform_trunk="$(yq '.global.platformUrl // ""' clusters/platform/values-common.yaml)"
+found="$(platform_default_findings "$platform_default" "$platform_trunk")"
+if [ -n "$found" ]; then
+  echo "$found"
+  fail "the root chart's default for the platform repository is not the platform chain's"
+fi
+[ -n "$(platform_default_findings https://github.com/planted/other.git "$platform_trunk")" ] \
+  || fail "the comparison of the root chart's platform default stays silent on a default that names another repository"
+[ -n "$(platform_default_findings '' "$platform_trunk")" ] \
+  || fail "the comparison of the root chart's platform default stays silent on a chart that carries none"
+[ -z "$(platform_default_findings "$platform_trunk" "$platform_trunk")" ] \
+  || fail "the comparison of the root chart's platform default reports a default equal to the platform chain's"
+grep -qF "$platform_default" "$work/argocd-alone" \
+  || fail "the render of clusters/argocd from a cluster map with no platformUrl never names the product default $platform_default"
+echo "check: clusters/argocd carries the product default $platform_default for a cluster map without platformUrl, equal to the platform chain's; the comparison refuses 2 planted defaults and takes the planted innocent."
+
+# $1 is a chart directory. Renders it for a Forgejo map, and prints one finding per line on stdout.
+moved_repository_findings() {
+  local out url
+  out="$(helm template argocd-apps "$1" -f "$cluster_map" --set "revision=$handed_revision" \
+    --set "global.platformUrl=$forge_platform" --set "global.deployUrl=$forge_deploy" 2>&1)" \
+    || { printf '  the render of %s for a Forgejo map fails: %s\n' "$1" "$(printf '%s\n' "$out" | head -n 1)"; return 0; }
+  printf '%s\n' "$out" > "$work/moved-repository.render"
+  grep -n 'github\.com' "$work/moved-repository.render" | sed 's/^/  a line of the render for a Forgejo map still names github.com: /' || true
+  for url in "$forge_platform" "$forge_deploy"; do
+    grep -qF "$url" "$work/moved-repository.render" || printf '  the render for a Forgejo map never names %s\n' "$url"
+  done
+}
+found="$(moved_repository_findings clusters/argocd)"
+if [ -n "$found" ]; then
+  echo "$found"
+  fail "clusters/argocd names a repository of GitHub, or none of the Forgejo's, for a map that moved both"
+fi
+planted_tree="$work/planted-argocd-tree"
+cp -R clusters/argocd "$planted_tree" \
+  && sed -i.bak "s|__PLATFORM_URL__|https://github.com/simetrixch/hostyour-cloud.git|" "$planted_tree/files/units-appset.yaml" \
+  && rm -f "$planted_tree/files/units-appset.yaml.bak" \
+  || fail "the planted tree that names the platform repository on GitHub could not be made"
+[ -n "$(moved_repository_findings "$planted_tree")" ] \
+  || fail "the scan for a repository the map moved stays silent on a file that names the platform on github.com"
+echo "check: clusters/argocd names the repositories of a Forgejo map in every source and generator, and no github.com; the scan refuses the planted file that names the platform on github.com and takes the real tree."
+
+# THE CREDENTIALS ARGO CD READS THOSE REPOSITORIES WITH, in the master's chart and in its twin for a slave's
+# instance. An installation with installation/values/repository-credentials.yaml gets repo-creds-forgejo, whose
+# url is the Forgejo host alone, and repo-creds-owner; repo-deploy (the GitHub App's credential for one deploy
+# repository) and the slave's repo-platform (the GitHub token for the platform repository) render only while
+# their repository stands on GitHub. repo-creds-owner reads GitHub by the field `owner` of the App's Vault entry
+# on every installation: taken from global.deployUrl it would point at the Forgejo as soon as the deploy
+# repository moves, and the units of an owner that stay on GitHub would be read with no credential. A
+# render that fails is a finding too: a credential gated on nothing fails without its answers.
+# $1 says where the render came from, $2 is the chart directory, $3 the chart (argocd-secrets or slave),
+# $4 the forge the installation stands on (github or forgejo). One finding per line on stdout.
+repository_credential_findings() {
+  local expected args got owner forgejo_url keys
+  case "$3:$4" in
+    argocd-secrets:github) expected='repo-creds-owner repo-deploy' ;;
+    slave:github) expected='repo-creds-owner repo-deploy repo-platform' ;;
+    *:forgejo) expected='repo-creds-forgejo repo-creds-owner' ;;
+    *) fail "repository_credential_findings was asked for $3 on $4" ;;
+  esac
+  args=(-f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml -f "$2/values-common.yaml")
+  [ -f "$2/values-dev.yaml" ] && args+=(-f "$2/values-dev.yaml")
+  args+=(-f "$installation_values" -f "$cluster_map" -f "$registration")
+  if [ "$4" = forgejo ]; then
+    args+=(-f scripts/standin/repository-credentials.yaml --set "global.platformUrl=$forge_platform" --set "global.deployUrl=$forge_deploy")
+  fi
+  if ! helm template "$3" "$2" --namespace check "${args[@]}" > "$work/repository-credentials.render" 2>&1; then
+    printf '  %s: the %s chart does not render for an installation on %s: %s\n' "$1" "$3" "$4" "$(head -n 1 "$work/repository-credentials.render")"
+    return 0
+  fi
+  got="$(yq eval -N 'select(.kind == "ExternalSecret" and ((.metadata.name // "") | test("^repo-"))) | .metadata.name' "$work/repository-credentials.render" | sort | paste -sd' ' -)"
+  [ "$got" = "$expected" ] || printf '  %s: the %s chart renders %s for an installation on %s, which calls for %s\n' "$1" "$3" "${got:-no repository credential}" "$4" "$expected"
+  owner="$(yq eval -N 'select(.kind == "ExternalSecret" and .metadata.name == "repo-creds-owner") | .spec.target.template.data.url' "$work/repository-credentials.render")"
+  [ "$owner" = 'https://github.com/{{ .owner }}/' ] \
+    || printf '  %s: repo-creds-owner of the %s chart reads %s, and it must read GitHub by the owner field of the App entry\n' "$1" "$3" "${owner:-no url}"
+  if [ "$4" = forgejo ]; then
+    forgejo_url="$(yq eval -N 'select(.kind == "ExternalSecret" and .metadata.name == "repo-creds-forgejo") | .spec.target.template.data.url' "$work/repository-credentials.render")"
+    [ "$forgejo_url" = "https://$forge_host/" ] \
+      || printf '  %s: repo-creds-forgejo of the %s chart reads %s, and it must read the host alone, https://%s/\n' "$1" "$3" "${forgejo_url:-no url}" "$forge_host"
+    keys="$(yq eval -N 'select(.kind == "ExternalSecret" and .metadata.name == "repo-creds-forgejo") | .spec.data[] | .remoteRef.key + " " + .remoteRef.property' "$work/repository-credentials.render" | paste -sd, -)"
+    [ "$keys" = 'dev/app/argocd-forge username,dev/app/argocd-forge password' ] \
+      || printf '  %s: repo-creds-forgejo of the %s chart reads %s, and it must read the fields username and password of dev/app/argocd-forge\n' "$1" "$3" "${keys:-nothing}"
+  fi
+}
+
+# $1 is a file of a chart directory, $2 a fixed string one line of it holds, $3 the whole line to put in its place.
+replace_line_in() {
+  local n
+  n="$(grep -nF -- "$2" "$1" | head -n 1 | cut -d: -f1)"
+  [ -n "$n" ] || fail "$1 holds no line with $2, so the planted defect cannot be made"
+  { head -n $((n - 1)) "$1"; printf '%s\n' "$3"; tail -n +$((n + 1)) "$1"; } > "$1.planted" && mv "$1.planted" "$1" \
+    || fail "the planted defect in $1 could not be made"
+}
+
+secrets_chart=clusters/inventories/argocd-secrets
+slave_chart=clusters/slaves/slave
+for chart_kind in "argocd-secrets $secrets_chart" "slave $slave_chart"; do
+  for forge in github forgejo; do
+    found="$(repository_credential_findings "the ${chart_kind% *} chart on $forge" "${chart_kind#* }" "${chart_kind% *}" "$forge")"
+    if [ -n "$found" ]; then
+      echo "$found"
+      fail "the credentials of the ${chart_kind% *} chart do not follow an installation on $forge"
+    fi
+  done
+done
+
+planted_credential_defects=0
+plant_chart_defect() { # $1 the copy (a directory name under $work), $2 the chart (argocd-secrets or slave), $3 the file of it, $4 a fixed string of the line, $5 the line to put in its place, $6 the forge
+  local copy="$work/$1" source_chart
+  case "$2" in argocd-secrets) source_chart=$secrets_chart ;; *) source_chart=$slave_chart ;; esac
+  rm -rf "$copy" && cp -R "$source_chart" "$copy" || fail "the planted chart $1 could not be copied"
+  replace_line_in "$copy/templates/$3" "$4" "$5"
+  [ -n "$(repository_credential_findings "$1" "$copy" "$2" "$6")" ] \
+    || fail "the scan of the credentials stays silent on $1, planted $7"
+  planted_credential_defects=$((planted_credential_defects + 1))
+}
+plant_chart_defect planted-owner-from-deploy-url argocd-secrets externalsecret-repo-creds-owner.yaml "url: 'https://github.com/" \
+  '        url: {{ regexFind "^https://[^/]+/[^/]+/" .Values.global.deployUrl }}' forgejo "with repo-creds-owner taking its url from global.deployUrl"
+plant_chart_defect planted-deploy-credential-on-forgejo argocd-secrets externalsecret-repo-deploy.yaml 'hasPrefix "https://github.com/"' \
+  '{{- if true }}' forgejo "with repo-deploy rendering on a Forgejo installation, both credentials from one set of answers"
+plant_chart_defect planted-forgejo-credential-without-answers argocd-secrets externalsecret-repo-creds-forgejo.yaml 'if $forgejo.enabled' \
+  '{{- if true }}' github "with repo-creds-forgejo rendering where the installation has no Forgejo answers"
+plant_chart_defect planted-platform-credential-on-forgejo slave externalsecret-repo-platform.yaml 'hasPrefix "https://github.com/"' \
+  '{{- if true }}' forgejo "with the slave's repo-platform rendering on a Forgejo installation"
+plant_chart_defect planted-slave-owner-from-deploy-url slave externalsecret-repo-creds-owner.yaml "url: 'https://github.com/" \
+  '        url: {{ regexFind "^https://[^/]+/[^/]+/" .Values.global.deployUrl }}' forgejo "with the slave's repo-creds-owner taking its url from global.deployUrl"
+echo "check: the credentials of the argocd-secrets chart and of its slave twin follow an installation on GitHub and one on Forgejo; the scan refuses $planted_credential_defects planted defects and takes the GitHub-only installation."
+
+# THE GATE THE MANAGER'S ONBOARDING MUST PASS IS THE HOST THE PIPELINE CLONES THE PLATFORM FROM. Unless the operator sets
+# onboarding.gateMustPass, clusters/inventories/manager composes it from global.platformUrl (templates/deployment.yaml);
+# a literal github.com:443 stays the gate of an installation that moved the platform repository, and the
+# onboarding then passes a gate that no longer tests the clone. $1 is the chart directory, $2 the forge the
+# installation stands on, $3 an operator's gateMustPass or nothing. The three settings of the control host that
+# switch the onboarding on stand here, because the stand-in installation is no control host. One finding per
+# line on stdout.
+manager_gate_findings() {
+  local expected args got
+  case "$2" in github) expected=github.com:443 ;; *) expected="$forge_host:443" ;; esac
+  [ -z "$3" ] || expected="$3"
+  args=(-f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml -f "$1/values-common.yaml" -f "$1/values-dev.yaml" -f "$installation_values" -f "$cluster_map" -f "$registration"
+    --set master.sshUser=ops --set master.lanHost=10.0.0.1 --set onboarding.gatemanagerAddr=10.0.0.1)
+  [ "$2" = forgejo ] && args+=(--set "global.platformUrl=$forge_platform" --set "global.deployUrl=$forge_deploy")
+  [ -z "$3" ] || args+=(--set "onboarding.gateMustPass=$3")
+  if ! helm template manager "$1" --namespace manager "${args[@]}" > "$work/manager-gate.render" 2>&1; then
+    printf '  the manager chart does not render for an installation on %s: %s\n' "$2" "$(head -n 1 "$work/manager-gate.render")"
+    return 0
+  fi
+  got="$(yq eval -N 'select(.kind == "Deployment" and .metadata.name == "manager") | .spec.template.spec.containers[0].env[] | select(.name == "ONBOARD_GATE_MUST_PASS") | .value' "$work/manager-gate.render")"
+  [ "$got" = "$expected" ] || printf '  the manager chart hands the onboarding the gate %s on an installation on %s, which calls for %s\n' "${got:-nothing}" "$2" "$expected"
+}
+manager_chart=clusters/inventories/manager
+for forge in github forgejo; do
+  found="$(manager_gate_findings $manager_chart "$forge" '')"
+  if [ -n "$found" ]; then
+    echo "$found"
+    fail "the gate of the Manager's onboarding does not follow the platform repository of an installation on $forge"
+  fi
+done
+found="$(manager_gate_findings $manager_chart forgejo planted.example.invalid:8443)"
+if [ -n "$found" ]; then
+  echo "$found"
+  fail "an operator's onboarding.gateMustPass does not win over the host of the platform repository"
+fi
+planted_manager="$work/planted-manager-gate"
+rm -rf "$planted_manager" && cp -R $manager_chart "$planted_manager" || fail "the planted Manager chart could not be copied"
+replace_line_in "$planted_manager/templates/deployment.yaml" '.Values.onboarding.gateMustPass | default' '              value: {{ .Values.onboarding.gateMustPass | default "github.com:443" | quote }}'
+[ -n "$(manager_gate_findings "$planted_manager" forgejo '')" ] \
+  || fail "the scan of the Manager's onboarding gate stays silent on a chart that keeps github.com:443 for a Forgejo installation"
+echo "check: the Manager's onboarding gate is the host of the platform repository on GitHub and on Forgejo, an operator's setting wins, and the scan refuses the planted gate that stays github.com:443."
 
 # ── The per-unit fences, held to the objects they must render ────────────────────────────────
 # NOTHING ELSE HERE WOULD NOTICE ONE MISSING. The chart loop above renders every chart and reads

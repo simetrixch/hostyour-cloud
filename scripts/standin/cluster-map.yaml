@@ -38,7 +38,6 @@ global:
   acmeEabKeyId: check-eab-key-id
   alertRecipients: ['check@check.example.invalid']
   deployUrl: https://github.com/check/check.git
-  deployRepo: check/check
   vaultKubernetesAuthPath: kubernetes-check
   registryPullUser: check-pull
   registryPushUser: check-push

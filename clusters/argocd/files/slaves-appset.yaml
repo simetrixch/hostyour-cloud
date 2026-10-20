@@ -9,7 +9,7 @@ spec:
     - missingkey=error
   generators:
     - git:
-        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        repoURL: __PLATFORM_URL__
         revision: __BRANCH__
         files:
           - path: "clusters/active/*.yaml"
@@ -48,7 +48,7 @@ spec:
     spec:
       project: "{{ .values.cluster }}"
       sources:
-        - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
+        - repoURL: &repo "__PLATFORM_URL__"
           targetRevision: &branch __BRANCH__
           ref: values
         - repoURL: *repo
@@ -60,6 +60,9 @@ spec:
               - $values/clusters/platform/values-__STAGE__.yaml
               - values-common.yaml
               - values-__STAGE__.yaml
+              # The forge this installation's repositories stand on, for the credential this slave's
+              # instance reads them with: the file the platform-apps chain loads for argocd-secrets.
+              - $values/installation/values/repository-credentials.yaml
               - $values/clusters/active/__FQDN__.yaml
             # A NAMED FILE THAT DOES NOT STAND IS SKIPPED, not refused. The chain above names a
             # per-stage file for the platform and one for this chart, and a chart carries one only

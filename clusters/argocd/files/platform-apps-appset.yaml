@@ -10,7 +10,7 @@ spec:
 
   generators:
     - git:
-        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        repoURL: __PLATFORM_URL__
         # THE LIST OF APPLICATIONS STANDS ON THE SAME REF AS THEIR CHARTS. This generator decides
         # WHICH Applications exist and the chart source below builds each one's path from the same
         # parameter set, so a generator on another ref would create an Application whose path the
@@ -104,7 +104,7 @@ spec:
     spec:
       project: "{{ .project }}"
       sources:
-        - repoURL: &repo "https://github.com/simetrixch/hostyour-cloud.git"
+        - repoURL: &repo "__PLATFORM_URL__"
           targetRevision: &branch __BRANCH__
           ref: values
         - repoURL: *repo
@@ -126,6 +126,10 @@ spec:
               # Manager where it derives them from the books. The relay's RELAYHOST is the first:
               # installation/values/postfix-<stage>.yaml, `postfix.config.general.RELAYHOST`.
               - $values/installation/values/{{ .name }}-__STAGE__.yaml
+              # The forge this installation's repositories stand on, for the credential Argo CD reads
+              # them with (argocd-secrets): global.repositoryCredentials.forgejo, written by the
+              # branch program. Absent on an installation whose repositories stand on GitHub only.
+              - $values/installation/values/repository-credentials.yaml
               - $values/clusters/active/__FQDN__.yaml
             ignoreMissingValueFiles: true
             # THE COMMIT THIS APPLICATION SYNCED, which ArgoCD writes into the parameter for this

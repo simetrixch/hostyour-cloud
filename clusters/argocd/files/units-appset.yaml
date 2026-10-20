@@ -55,7 +55,7 @@ spec:
     - missingkey=error
   generators:
     - git:
-        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        repoURL: __PLATFORM_URL__
         revision: __BRANCH__  # the commit the root Application synced, on the books branch, where the registrations stand
         files:
           # The three stages named outright, as consumers-appset.yaml names them and for the reasons
@@ -81,7 +81,7 @@ spec:
     # the field names it, and clear-source takes the field off once the source Application is gone.
     # Two generators are a union; a unit is never `cluster` and `leaving` on one cluster at once.
     - git:
-        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        repoURL: __PLATFORM_URL__
         revision: __BRANCH__
         files:
           - path: "registrations/*/dev.yaml"
@@ -108,7 +108,7 @@ spec:
       # no $values chain to give it and no cluster map to load. A values-only source added here would
       # be a second ref standing on the install branch for nothing to read.
       source:
-        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        repoURL: __PLATFORM_URL__
         targetRevision: __BRANCH__
         path: clusters/units/reconciler
         helm:
@@ -147,7 +147,7 @@ spec:
     - missingkey=error
   generators:
     - git:
-        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        repoURL: __PLATFORM_URL__
         revision: __BRANCH__
         files:
           - path: "registrations/*/dev.yaml"
@@ -161,7 +161,7 @@ spec:
     # The cluster a unit is LEAVING keeps its admission policy too, for the reason the reconciler's
     # second generator states above: the fences stand until the source Application is gone.
     - git:
-        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        repoURL: __PLATFORM_URL__
         revision: __BRANCH__
         files:
           - path: "registrations/*/dev.yaml"
@@ -185,7 +185,7 @@ spec:
       project: units
       sources:
         # 0. Values-only source — makes $values/... resolvable for the chart below.
-        - repoURL: &repo https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: &repo __PLATFORM_URL__
           # TWO REFS AND NO ANCHOR BETWEEN THEM. The values chain is this installation's own and
           # stands on its branch; the chart is the product and stands on the release tag.
           targetRevision: __BRANCH__

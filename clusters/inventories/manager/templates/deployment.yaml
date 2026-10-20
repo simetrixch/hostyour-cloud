@@ -388,8 +388,10 @@ spec:
               value: {{ .Values.onboarding.gatemanagerAddr | quote }}
             - name: ONBOARD_GATE_FENCE_MUST_FAIL
               value: {{ .Values.onboarding.gateFenceMustFail | quote }}
+            # The one egress the gate pod must reach: the pipeline clones the platform repository through the
+            # fence, so unless onboarding.gateMustPass names another it is the host of global.platformUrl.
             - name: ONBOARD_GATE_MUST_PASS
-              value: {{ .Values.onboarding.gateMustPass | quote }}
+              value: {{ .Values.onboarding.gateMustPass | default (printf "%s:443" (urlParse (required "manager: global.platformUrl is required (clusters/platform/values-common.yaml)" .Values.global.platformUrl)).hostname) | quote }}
             - name: ONBOARD_KUBE_VERSION
               value: {{ .Values.onboarding.kubeVersion | quote }}
             # The setup-webhook onboard step sets this HMAC on each consumer repo's
