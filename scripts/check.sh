@@ -400,13 +400,13 @@ $found"
 
 # THE PODS THE MASTER CANNOT WORK WITHOUT CARRY A CPU REQUEST. A pod with none gets the smallest share of the node
 # once the node is saturated, and the build plane saturates it when its runs reach their CPU limits. The
-# ingress, the reconcilers, the certificates and the build plane's controllers are the pods that must keep working
+# ingress, the reconcilers, the certificates, the Git service every push goes through and the build plane's controllers are the pods that must keep working
 # then, so each container of the workloads below asks for the CPU it uses (its p95 over seven days, which the
 # comment beside each request in the values names). The names are the ones the charts render and the live pods
 # carry; traefik is the MicroK8s ingress addon's DaemonSet, which no chart of this repository renders, so it stands
 # here for the render that carries it once hostyour-deploy sets its request. The build pods and the other pods that
 # stand on the node are budgeted in clusters/inventories/consumer-build/values-common.yaml (ciCapacity).
-cpu_guaranteed='traefik|argocd-application-controller|argocd-applicationset-controller|argocd-repo-server|argocd-server|argocd-redis|argocd-dex-server|argocd-notifications-controller|cert-manager|cert-manager-cainjector|cert-manager-webhook'
+cpu_guaranteed='traefik|forgejo|argocd-application-controller|argocd-applicationset-controller|argocd-repo-server|argocd-server|argocd-redis|argocd-dex-server|argocd-notifications-controller|cert-manager|cert-manager-cainjector|cert-manager-webhook'
 
 # $1 says where the render came from, $2 is a file holding it. One line per finding on stdout. `eval` reads one document at
 # a time, which the variables of the filter need: `eval-all` would bind them across every document of the render.
@@ -619,16 +619,17 @@ fi
 echo "check: the counter-probe reports both planted Ingresses served over plain http and not the planted innocent."
 
 cpu_expected='  scripts/counter-probe.yaml: DaemonSet traefik container traefik has no CPU request
-  scripts/counter-probe.yaml: Deployment argocd-repo-server container sidecar has no CPU request'
+  scripts/counter-probe.yaml: Deployment argocd-repo-server container sidecar has no CPU request
+  scripts/counter-probe.yaml: Deployment forgejo container forgejo has no CPU request'
 cpu_reported="$(workloads_without_cpu_request 'scripts/counter-probe.yaml' "$counter_probe")"
 if [ "$cpu_reported" != "$cpu_expected" ]; then
-  echo "The counter-probe plants a Traefik without a CPU request, an Argo CD repo-server whose second container has none, and four workloads that need none. The scan had to report:"
+  echo "The counter-probe plants a Traefik without a CPU request, an Argo CD repo-server whose second container has none, a Forgejo without one, and five workloads that need none. The scan had to report:"
   echo "$cpu_expected"
   echo "and it reported:"
   echo "${cpu_reported:-  (nothing)}"
   fail "the scan for a workload without a CPU request does not report what scripts/counter-probe.yaml plants"
 fi
-echo "check: the counter-probe reports the planted Traefik and the planted second container without a CPU request, and not the planted innocents."
+echo "check: the counter-probe reports the planted Traefik, the planted second container and the planted Forgejo without a CPU request, and not the planted innocents."
 
 off_expected='  scripts/counter-probe.yaml, counter-probe/planted-defect-generator-on-a-branch.yaml: planted-defect-generator-on-a-branch names this repository at planted.example.invalid
   scripts/counter-probe.yaml, counter-probe/planted-defect-sources-on-a-branch.yaml: planted-defect-sources-on-a-branch names this repository at planted.example.invalid'

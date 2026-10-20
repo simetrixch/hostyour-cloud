@@ -95,6 +95,10 @@
 #      workload and is another one, so a scan whose names are not anchored reports it.
 #                                                                          MUST STAY UNREPORTED
 #  20. a ConfigMap named traefik, which is no workload.                    MUST STAY UNREPORTED
+#  29. a Deployment forgejo whose only container sets a memory request and no CPU request. It is the
+#      shape of the Git service every push goes through.                    MUST BE REPORTED
+#  30. a Deployment forgejo whose container carries a CPU request, the shape that stands in production.
+#                                                                          MUST STAY UNREPORTED
 #
 # WHAT THE SIXTH SCAN IS PLANTED. scripts/check.sh hands it the stage prod, so the sender it
 # expects is alertmanager-prod at the unit apex of the stand-in cluster map, check.example.invalid,
@@ -357,6 +361,38 @@ spec:
           resources:
             limits:
               cpu: 500m
+---
+# Source: counter-probe/planted-defect-forgejo-without-a-cpu-request.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forgejo
+  namespace: forgejo
+spec:
+  template:
+    spec:
+      containers:
+        - name: forgejo
+          image: forgejo:planted
+          resources:
+            requests:
+              memory: 128Mi
+---
+# Source: counter-probe/planted-innocent-forgejo-with-a-cpu-request.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forgejo
+  namespace: planted-innocent
+spec:
+  template:
+    spec:
+      containers:
+        - name: forgejo
+          image: forgejo:planted
+          resources:
+            requests:
+              cpu: 10m
 ---
 # Source: counter-probe/planted-innocent-with-a-cpu-request.yaml
 apiVersion: apps/v1
