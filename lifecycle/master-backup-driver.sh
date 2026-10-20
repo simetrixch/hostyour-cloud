@@ -17,8 +17,22 @@
 # EACH STORE IS STOPPED FOR ITS COPY. A volume copied under a running database is a volume with a
 # write in flight, and a restore that starts on one is a restore that may not start at all. So the
 # workload is scaled to nothing, its directory is taken whole, and the workload is scaled back to what
-# it was — one store at a time, so the pause each one takes is its own. The Manager is among them:
-# a run in flight when this starts is a run this interrupts, so this is started at a quiet hour.
+# it was — one store at a time, so the pause each one takes is its own. The Manager is the one that
+# does not wait for its turn: it is stopped before the first store and started after the last one, for
+# the reason below.
+#
+# THE MANAGER'S RUNS ARE HELD. A step of a run reads Vault, the Manager's database and the Git server,
+# so a step that runs while one of them is stopped fails its run, and a failed run keeps its locks and
+# holds every later run behind it. So before anything is stopped, the release queue is suspended: it is
+# the one thing that starts a release or a publish run. This waits until the queue's last job has ended
+# and no release or publish run runs, read twice in a row, for at most QUEUE_WAIT_SECONDS. Then it
+# stops the Manager, which pauses its runs between two steps and goes on with them when it starts, and
+# takes the stores. The Manager is started, and then the queue let go, only once every store this
+# stopped reads ready. A step the Manager's stop cuts off runs again from its start. What this does not
+# hold: a run in planning, which the Manager fails at every start of its own, this one included; a run
+# of the Forgejo release flow, which lands in the namespace forgejo-build with neither queue label and
+# is no step of a run of the Manager; and a run of this driver that is killed, which leaves the Manager
+# at 0 and the queue suspended, beside the store it was copying.
 #
 # SEALED BEFORE IT LEAVES. Every archive is passed through gpg with the config's BACKUP_PASSPHRASE
 # before it is written, so the storage box holds the installation's every credential and can open
@@ -65,9 +79,22 @@ die()  { printf '%s   ✗ %s%s\n' "$C_RED" "$1" "$C_OFF" >&2; exit "${2:-1}"; }
 step() { printf '\n%s══ %s%s\n' "$C_BLD" "$*" "$C_OFF"; }
 
 readonly CONFIG="${1:?the config's path is this script's only argument}"
+# The queue that starts every release and publish run, and how long this waits on it and on a store, in seconds.
+# QUEUE_WAIT_SECONDS is the pipelines' timeout of one hour (timeouts.pipeline of the release and the publish run,
+# which no run outlives) and five minutes. Each stands on a line of its own because a test moves them.
+readonly QUEUE_NAMESPACE=image-builder
+readonly QUEUE_CRONJOB=release-queue
+readonly QUEUE_POLL_SECONDS=5
+readonly QUEUE_WAIT_SECONDS=3900
+readonly STORE_POLL_SECONDS=2
+readonly STORE_WAIT_SECONDS=180
 SECRETS=''
+HELD=''
 cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; }
-trap cleanup EXIT INT TERM
+# What this run holds is let go on every way out that is not a signal, once; a signal keeps the handler it had.
+leave() { local code=$?; [ -z "$HELD" ] || release_hold || true; cleanup; exit "$code"; }
+trap leave EXIT
+trap cleanup INT TERM
 
 # The same function as require-config-assignments.sh, held byte-equal to it by test.sh: this
 # script arrives over one ssh session and can read no sibling. It is handed no keys, so a refused
@@ -194,6 +221,145 @@ passfile=$1; out=$2; shift 2
 ' _ "$PASSPHRASE_FILE" "$@"
 }
 replicas_of() { K -n "$1" get "$3/$2" -o jsonpath='{.spec.replicas}' 2>/dev/null; }
+# A store reads ready by the workload's own count of ready pods, which the Deployment and StatefulSet controllers keep
+# for every update strategy; kubectl's rollout status refuses a StatefulSet that is not a RollingUpdate, Vault's among them.
+ready_of() { K -n "$1" get "$3/$2" -o jsonpath='{.status.readyReplicas}' 2>/dev/null; }
+# stop_store NS WORKLOAD KIND: the workload is scaled to nothing and its pods are waited for until they are gone, or
+# STORE_WAIT_SECONDS have passed. The stop of the Manager and the stop of every other store are this one function.
+stop_store() {
+  local deadline=$(( SECONDS + STORE_WAIT_SECONDS ))
+  K -n "$1" scale "$3/$2" --replicas=0 >/dev/null || die "could not stop ${1}/${2}" 70
+  while [ "$(K -n "$1" get pods -o name 2>/dev/null | grep -c "^pod/${2}")" != 0 ] && [ "$SECONDS" -lt "$deadline" ]; do
+    sleep "$STORE_POLL_SECONDS"
+  done
+}
+start_store() { K -n "$1" scale "$3/$2" --replicas="$4" >/dev/null; } # NS WORKLOAD KIND REPLICAS
+# mark_started ROW: the store ROW (NS|WORKLOAD|KIND|REPLICAS) is started again, so it no longer stands among the stopped ones.
+mark_started() {
+  STOPPED=$(printf '%s\n' "$STOPPED" | grep -vxF -- "$1") || true
+  printf '%s\n' "$STARTED" | grep -qxF -- "$1" || STARTED="${STARTED:+$STARTED$'\n'}$1"
+}
+
+# WHAT THE QUEUE STILL HAS. BUSY becomes one name per line of what works for the release queue: a Job the CronJob
+# names active, a Job of the CronJob that has not finished (it carries neither condition Complete nor Failed), and a
+# release or publish run that runs (its Succeeded condition is neither True nor False, and it is not waiting on the
+# queue as PipelineRunPending). A Job is the CronJob's by its owner reference, which the CronJob controller sets.
+# Ends 1 when a read fails, because no answer is not a quiet queue.
+queue_busy() {
+  local active jobs runs label one
+  BUSY=''
+  active=$(K -n "$QUEUE_NAMESPACE" get "cronjob/$QUEUE_CRONJOB" -o jsonpath='{range .status.active[*]}{.name}{"\n"}{end}') || return 1
+  active=$(printf '%s\n' "$active" | awk -v ns="$QUEUE_NAMESPACE" 'NF > 0 { print "job " ns "/" $1 }')
+  jobs=$(K -n "$QUEUE_NAMESPACE" get jobs -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{range .metadata.ownerReferences[*]}{.kind}/{.name}{" "}{end}{"|"}{range .status.conditions[?(@.status=="True")]}{.type}{" "}{end}{"\n"}{end}') || return 1
+  jobs=$(printf '%s\n' "$jobs" | awk -F'|' -v ns="$QUEUE_NAMESPACE" -v owner="CronJob/$QUEUE_CRONJOB" '
+    $1 != "" { mine = 0; finished = 0
+      n = split($2, owners, " "); for (i = 1; i <= n; i++) if (owners[i] == owner) mine = 1
+      n = split($3, conditions, " "); for (i = 1; i <= n; i++) if (conditions[i] == "Complete" || conditions[i] == "Failed") finished = 1
+      if (mine && !finished) print "job " ns "/" $1 }')
+  runs=''
+  for label in image-builder.io/consumer image-builder.io/publish; do
+    one=$(K get pipelineruns -A -l "$label" -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"|"}{.spec.status}{"|"}{.status.conditions[?(@.type=="Succeeded")].status}{"\n"}{end}') || return 1
+    runs="$runs"$'\n'"$(printf '%s\n' "$one" | awk -F'|' '$1 != "" && $3 != "True" && $3 != "False" && $2 != "PipelineRunPending" { print "run " $1 }')"
+  done
+  BUSY=$(printf '%s\n%s\n%s\n' "$active" "$jobs" "$runs" | grep . | sort -u) || true
+}
+# wait_for_queue: ends at the second pass in a row that finds the queue quiet, because a Job the CronJob creates from a
+# read taken before the queue was held can land after one pass has looked. Each Job and run is named once, and a line is
+# written a minute. Past QUEUE_WAIT_SECONDS it lets the queue go again, stops nothing and ends 75, naming what still runs.
+wait_for_queue() {
+  local quiet=0 deadline=$(( SECONDS + QUEUE_WAIT_SECONDS )) next_line=$(( SECONDS + 60 )) named='' name
+  while :; do
+    queue_busy || die "the release queue could not be read in ${QUEUE_NAMESPACE} or in the namespaces of the pipeline runs, and a queue that cannot be read is not a quiet one — nothing was stopped" 69
+    if [ -z "$BUSY" ]; then
+      quiet=$(( quiet + 1 ))
+      [ "$quiet" -ge 2 ] && break
+    else
+      quiet=0
+      while IFS= read -r name; do
+        case "$named" in *"|$name|"*) ;; *) named="$named|$name|"; say "waiting for $name to end" ;; esac
+      done <<< "$BUSY"
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        release_hold
+        die "after ${QUEUE_WAIT_SECONDS} s the queue still has: $(printf '%s' "$BUSY" | tr '\n' ';') — nothing was stopped, and the queue was let go again" 75
+      fi
+      if [ "$SECONDS" -ge "$next_line" ]; then
+        say "still waiting for the queue: $(printf '%s' "$BUSY" | tr '\n' ';')"
+        next_line=$(( SECONDS + 60 ))
+      fi
+    fi
+    sleep "$QUEUE_POLL_SECONDS"
+  done
+}
+# release_refused WHAT: what is wrong, and the commands that let the Manager and the queue go once the store is ready.
+release_refused() {
+  warn "$1"
+  warn 'The Manager stays stopped and the queue suspended. Once the store is ready, start the Manager and let the queue go with:'
+  say "  microk8s kubectl -n manager scale ${MANAGER_KIND}/${MANAGER_WORKLOAD} --replicas=${MANAGER_WAS}"
+  say "  microk8s kubectl -n ${QUEUE_NAMESPACE} patch cronjob/${QUEUE_CRONJOB} --type=merge -p '{\"spec\":{\"suspend\":${QUEUE_WAS}}}'"
+}
+# release_hold: starts the Manager with the replicas it had and then lets the queue go, only when every store this run
+# stopped is started again and reads ready within STORE_WAIT_SECONDS. Otherwise it starts neither, says which store, and
+# ends 1. It is called once: HELD is cleared first, so the way out does not run it again after a refusal.
+release_hold() {
+  local row ns workload kind want got deadline names=''
+  HELD=''
+  if [ -n "$STOPPED" ]; then
+    for row in $STOPPED; do
+      IFS='|' read -r ns workload kind want <<< "$row"
+      names="${names} ${ns}/${kind}/${workload}"
+    done
+    release_refused "these stores stand at 0, they were not started again:${names}"
+    return 1
+  fi
+  for row in $STARTED; do
+    IFS='|' read -r ns workload kind want <<< "$row"
+    deadline=$(( SECONDS + STORE_WAIT_SECONDS ))
+    while :; do
+      got=$(ready_of "$ns" "$workload" "$kind")
+      got=${got:-0}
+      [ "$got" -ge "$want" ] 2>/dev/null && break
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        release_refused "${ns}/${kind}/${workload} reads ${got} ready replica(s) of the ${want} it had, after ${STORE_WAIT_SECONDS} s"
+        return 1
+      fi
+      sleep "$STORE_POLL_SECONDS"
+    done
+    good "${ns}/${kind}/${workload} reads ready: ${got} of ${want}"
+  done
+  if [ -n "$MANAGER_STOPPED" ]; then
+    if ! start_store manager "$MANAGER_WORKLOAD" "$MANAGER_KIND" "$MANAGER_WAS"; then
+      release_refused "manager/${MANAGER_KIND}/${MANAGER_WORKLOAD} could not be started again"
+      return 1
+    fi
+    good "manager/${MANAGER_KIND}/${MANAGER_WORKLOAD} started again with ${MANAGER_WAS} replica(s); its runs go on"
+  fi
+  if ! K -n "$QUEUE_NAMESPACE" patch "cronjob/$QUEUE_CRONJOB" --type=merge -p "{\"spec\":{\"suspend\":${QUEUE_WAS}}}" >/dev/null; then
+    warn "the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} could not be set back to suspend=${QUEUE_WAS}. Set it with:"
+    say "  microk8s kubectl -n ${QUEUE_NAMESPACE} patch cronjob/${QUEUE_CRONJOB} --type=merge -p '{\"spec\":{\"suspend\":${QUEUE_WAS}}}'"
+    return 1
+  fi
+  good "the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} is let go (suspend=${QUEUE_WAS})"
+}
+
+step "the Manager's runs, held"
+MANAGER_WORKLOAD='' MANAGER_KIND='' MANAGER_STOPPED='' STOPPED='' STARTED=''
+for row in "${STORES[@]}"; do
+  [ "${row%%|*}" = manager ] && IFS='|' read -r _ _ MANAGER_WORKLOAD MANAGER_KIND <<< "$row"
+done
+[ -n "$MANAGER_WORKLOAD" ] || die 'no row of STORES names the namespace manager, so there is no Manager whose runs could be held' 66
+MANAGER_WAS=$(replicas_of manager "$MANAGER_WORKLOAD" "$MANAGER_KIND")
+[ -n "$MANAGER_WAS" ] || die "manager/${MANAGER_KIND}/${MANAGER_WORKLOAD} is not in the cluster, so nothing could stop the Manager before its copy" 66
+QUEUE_WAS=$(K -n "$QUEUE_NAMESPACE" get "cronjob/$QUEUE_CRONJOB" -o jsonpath='{.spec.suspend}' 2>/dev/null) \
+  || die "the CronJob ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} is not in the cluster, and without it no release or publish run can be held — nothing was stopped" 66
+[ "$QUEUE_WAS" = true ] || QUEUE_WAS=false
+HELD=1
+K -n "$QUEUE_NAMESPACE" patch "cronjob/$QUEUE_CRONJOB" --type=merge -p '{"spec":{"suspend":true}}' >/dev/null || die "could not hold the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB}" 70
+good "the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} is held (it stood at suspend=${QUEUE_WAS}): no release or publish run starts until this has ended"
+wait_for_queue
+good 'no job of the queue and no release or publish run is running'
+MANAGER_STOPPED=1
+stop_store manager "$MANAGER_WORKLOAD" "$MANAGER_KIND"
+good "manager/${MANAGER_KIND}/${MANAGER_WORKLOAD} stopped (it ran with ${MANAGER_WAS} replica(s)): its runs pause between two steps"
 
 step "the stores, each stopped for its copy"
 TAKEN=0
@@ -201,25 +367,40 @@ for row in "${STORES[@]}"; do
   IFS='|' read -r ns pvc workload kind <<< "$row"
   dir=$(ls -d "$ROOT_DIR/${ns}-${pvc}-pvc-"* 2>/dev/null | head -1)
   [ -n "$dir" ] || die "no volume of ${ns}/${pvc} stands under $ROOT_DIR — the store is not there, and a backup that skipped it would be taken for whole" 66
-  before=$(replicas_of "$ns" "$workload" "$kind")
-  [ -n "$before" ] || die "${ns}/${kind}/${workload} is not in the cluster, so nothing could stop the store before its copy" 66
-  K -n "$ns" scale "$kind/$workload" --replicas=0 >/dev/null || die "could not stop ${ns}/${workload}" 70
-  K -n "$ns" rollout status "$kind/$workload" --timeout=180s >/dev/null 2>&1 || true
-  for i in $(seq 1 90); do
-    [ "$(K -n "$ns" get pods -o name 2>/dev/null | grep -c "^pod/${workload}")" = 0 ] && break
-    sleep 2
-  done
+  stopped_row=''
+  if [ "$ns" = manager ]; then
+    before=$MANAGER_WAS
+  else
+    before=$(replicas_of "$ns" "$workload" "$kind")
+    [ -n "$before" ] || die "${ns}/${kind}/${workload} is not in the cluster, so nothing could stop the store before its copy" 66
+    stopped_row="${ns}|${workload}|${kind}|${before}"
+    STOPPED="${STOPPED:+$STOPPED$'\n'}$stopped_row"
+    stop_store "$ns" "$workload" "$kind"
+  fi
   out="$WORK/${ns}--${pvc}.tar.gpg"
   if seal "$out" tar --numeric-owner -C "$dir" -cf - .; then
     good "${ns}/${pvc} taken from $(basename "$dir") — $(root du -sh "$out" | cut -f1)"
   else
-    K -n "$ns" scale "$kind/$workload" --replicas="$before" >/dev/null
-    die "the copy of ${ns}/${pvc} failed; ${workload} was started again with $before replica(s)" 70
+    if [ -z "$stopped_row" ]; then
+      die "the copy of ${ns}/${pvc} failed; ${workload} stays stopped until the rest is back" 70
+    elif start_store "$ns" "$workload" "$kind" "$before"; then
+      mark_started "$stopped_row"
+      die "the copy of ${ns}/${pvc} failed; ${workload} was started again with $before replica(s)" 70
+    fi
+    die "the copy of ${ns}/${pvc} failed, and ${workload} could not be started again — it stands at 0 replicas, start it by hand" 70
   fi
-  K -n "$ns" scale "$kind/$workload" --replicas="$before" >/dev/null || die "could not start ${ns}/${workload} again — it stands at 0 replicas, start it by hand" 70
-  say "${ns}/${workload} started again with $before replica(s)"
+  if [ -z "$stopped_row" ]; then
+    say "${ns}/${workload} stays stopped until every other store is back"
+  else
+    start_store "$ns" "$workload" "$kind" "$before" || die "could not start ${ns}/${workload} again — it stands at 0 replicas, start it by hand" 70
+    mark_started "$stopped_row"
+    say "${ns}/${workload} started again with $before replica(s)"
+  fi
   TAKEN=$(( TAKEN + 1 ))
 done
+
+step "the Manager and its queue, let go"
+release_hold || die "the Manager and the queue were not let go; the archives stand in $WORK on this machine" 70
 
 step "the host's own file"
 seal "$WORK/host--vault-${STAGE}.txt.gpg" cat "$QUORUM" || die "the quorum file could not be sealed" 70
