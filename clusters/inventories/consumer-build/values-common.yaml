@@ -114,7 +114,7 @@ releaseQueue:
 #   + standingCpuRequests
 #   <= nodeCpu
 #
-# With nine releases that is 9.9 (the nine release slots at 1.1 each, the publish pod) + 6.97 = 16.87 of 32 cores.
+# With nine releases that is 9.9 (the nine release slots at 1.1 each, the publish pod) + 6.98 = 16.88 of 32 cores.
 # nodeCpu is the allocatable CPU of master1 (32 on 2026-10-15, and again on 2026-10-19). nodeMemory is the allocatable
 # memory of master1, 62313320Ki, rounded down to the Mi (read 2026-10-19). standingCpuRequests is DECLARED, not derived: the CPU requests of the pods of the node that are
 # not in a build namespace and not finished. On 2026-10-15 they were 4.53 cores, and 72 of the pods standing there
@@ -127,6 +127,7 @@ releaseQueue:
 #   cert-manager, its cainjector and its webhook, 10m each                    30m
 #   the identity database (clusters/bootstrap/idp/values.yaml)                30m
 #   traefik, the ingress addon's DaemonSet                                   400m
+#   Forgejo, the Git service of the master (clusters/inventories/forgejo)    10m
 #
 # Traefik's request is set where the addon is patched, in hostyour-deploy, and is counted here already, so the
 # figure may be a little high until that lands, never low. scripts/build-contract.test.mjs adds the requests of the
@@ -152,7 +153,7 @@ ciCapacity:
   nodePods: 250
   standingPods: 125
   nodeCpu: "32"
-  standingCpuRequests: 6970m
+  standingCpuRequests: 6980m
 
 # WHO MAY WATCH A RUN IT DID NOT START. The manager has no task in a release cycle — the webhook
 # starts the run and the pipeline finishes it — but it reports the run's progress to the operator who

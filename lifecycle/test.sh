@@ -191,8 +191,9 @@ caught() { # what the copy is a copy of, the words planted in it
   if diff "$OUT/expected" "$OUT/actual" > "$OUT/planted.diff"; then
     fail "a copy of $1 with one line changed printed the bytes its case recorded — the comparison proves nothing"
   fi
-  if grep '^> ' "$OUT/planted.diff" | grep -vqF -- "$2"; then
-    fail "a copy of $1 printed a line the planted words are not in: $(grep '^> ' "$OUT/planted.diff" | grep -vF -- "$2")"
+  grep '^> ' "$OUT/planted.diff" > "$OUT/planted.added" || true
+  if grep -vqF -- "$2" "$OUT/planted.added"; then
+    fail "a copy of $1 printed a line the planted words are not in: $(grep -vF -- "$2" "$OUT/planted.added")"
   fi
   ok "the planted defect was caught — a copy of $1 printing '$2' differs from the recorded bytes in that line alone"
 }
@@ -341,7 +342,7 @@ ok "fixture built — one origin, one trunk, four installations and one ref that
 # script's own, and is removed straight after its commit and push, so it is measured with the
 # template taken away: one run of the script on a copy of the fixture, traced.
 pin_maintenance_starts() { # the release script to run; prints how many background maintenances its pin of apps3 started
-  local d
+  local d origin_map
   d="$(mktemp -d "$WORK/pin.XXXXXX")" || return 1
   cp -a "$ORIGIN_A" "$d/origin.git"
   git clone --quiet "$d/origin.git" "$d/checkout"
@@ -349,7 +350,7 @@ pin_maintenance_starts() { # the release script to run; prints how many backgrou
     echo "the traced release of $1 did not end clean" >&2
     return 1
   }
-  git --git-dir="$d/origin.git" show 'apps3.example.invalid:clusters/active/apps3.example.invalid.yaml' | grep -q '^release: 0.4.0-alpha-' || {
+  origin_map="$(git --git-dir="$d/origin.git" show 'apps3.example.invalid:clusters/active/apps3.example.invalid.yaml')" && grep -q '^release: 0.4.0-alpha-' <<< "$origin_map" || {
     echo "the traced release of $1 pinned nothing on origin, so a count of nothing would prove nothing" >&2
     return 1
   }
@@ -668,7 +669,7 @@ for ref in work/no-map apps5.example.invalid apps9.example.invalid; do
     || fail "the release moved $ref, which it had no business touching"
 done
 for each in apps3 apps4; do
-  git --git-dir="$ORIGIN_A" show "$each.example.invalid:clusters/active/$each.example.invalid.yaml" | grep -q '^release: 0.4.0-alpha-' \
+  origin_map="$(git --git-dir="$ORIGIN_A" show "$each.example.invalid:clusters/active/$each.example.invalid.yaml")" && grep -q '^release: 0.4.0-alpha-' <<< "$origin_map" \
     || fail "the map of $each does not record the release on origin"
 done
 ok 'the mint that names no installation reached origin, pinned the installations its channel admits, and moved nothing else'
@@ -2050,6 +2051,7 @@ GHAPP="$WORK/github-app"
 GSTUB="$GHAPP/stub"
 mkdir -p "$GSTUB" "$GHAPP/a"
 REAL_CURL="$(command -v curl)"
+command -v jq > /dev/null 2>&1 || fail 'jq is not on this path, and the stand-in GitHub pretty-prints its answers with it'
 openssl genrsa 2048 > "$GHAPP/key.pem" 2>/dev/null || fail 'openssl could not mint the fixture key'
 openssl rsa -in "$GHAPP/key.pem" -pubout > "$GHAPP/pub.pem" 2>/dev/null || fail 'openssl could not derive the public half of the fixture key'
 # The key as GitHub's JSON spells it: one line, \n for each line break.
@@ -2136,6 +2138,10 @@ case "$method $path" in
     esac ;;
   *) log "$method $path"; status=404; body='{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}' ;;
 esac
+if [ -f "$state/pretty" ]; then
+  body="$(printf '%s' "$body" | jq .)"
+  printf '%s' "$body" > "$state/last-body"
+fi
 printf '%s' "$body"
 [ "$wantstatus" = 1 ] && printf '\n%s' "$status"
 exit 0
@@ -2341,6 +2347,7 @@ create-github-app: config.apps6.env carries GITHUB_APP_ID, GITHUB_APP_INSTALLATI
 ~~~ standard error ~~~
 RECORDED
 page_holds 'the act'
+cp "$OUT/a.out" "$GHAPP/act.out"
 state="$GHAPP/state-a"
 [ "$(cat "$state/log")" = "POST /app-manifests/c0de0fthefixture/conversions
 GET /orgs/acme/installation jwt=verified iss=4711" ] || fail "the calls are not the conversion and one installation question with a verified JWT: $(tr '\n' ' ' < "$state/log")"
@@ -2463,6 +2470,74 @@ RECORDED
 [ "$(grep -c . "$GHAPP/a/config.apps6.env")" = '7' ] || fail "the config gained or lost a line"
 require_owner_only "$GHAPP/a/config.apps6.env" || fail "recording the owner took the access list off the config: it $REACH"
 ok 'a config of the three answers records the account the installation belongs to as the owner, with one signed question and no browser; an unknown installation and one without an account are refused with nothing written'
+
+# ── GitHub pretty-prints its answers: every field is read from them as from the compact ones, with the same refusals ─
+# The stand-in answers pretty-printed JSON, as GitHub does, once the state directory holds the file `pretty`.
+pretty_github() { # after seed_github, which empties the state directory
+  touch "$GHAPP/state-a/pretty"
+}
+pretty_was_served() { # what was being checked -> the last answer of the stand-in stood on lines of its own
+  grep -qxF '{' "$GHAPP/state-a/last-body" && grep -qE '^  "[a-z_]+": ' "$GHAPP/state-a/last-body" \
+    || fail "$1 — the stand-in did not answer pretty-printed JSON, so the case proves nothing about it"
+}
+blank_installation() { # the config the act filled, with its installation id and its owner taken out again
+  sed -i.bak -e "s/^GITHUB_APP_INSTALLATION_ID=.*/GITHUB_APP_INSTALLATION_ID=''/" -e "s/^GITHUB_APP_OWNER=.*/GITHUB_APP_OWNER=''/" "$GHAPP/a/config.apps6.env" && rm -f "$GHAPP/a/config.apps6.env.bak"
+  chmod 600 "$GHAPP/a/config.apps6.env"
+}
+blank_owner
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
+pretty_github
+run_app_bash config.apps6.env
+[ "$A_CODE" = '0' ] || fail "recording the owner from a pretty-printed installation must end with 0, got $A_CODE: $(cat "$OUT/a.err")"
+must 'create-github-app: installation 815 belongs to acme; GITHUB_APP_OWNER written into config.apps6.env in place' 'the owner is read off a pretty-printed installation'
+[ "$(config_line GITHUB_APP_OWNER)" = 'acme' ] || fail "the config does not carry the account a pretty-printed installation belongs to"
+grep -qxF '  "account": {' "$GHAPP/state-a/last-body" || fail 'the installation was not served with its account object on lines of its own, so the case proves nothing about it'
+pretty_was_served 'the owner off a pretty-printed installation'
+blank_owner
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" absent
+pretty_github
+run_app_bash config.apps6.env
+must 'create-github-app: GitHub does not answer the installation 815 for the App in config.apps6.env (HTTP 404: Not Found). Nothing has been changed' 'the message of a pretty-printed refusal is named'
+[ "$A_CODE" = '69' ] || fail "an unknown installation, pretty-printed, must refuse with 69, got $A_CODE"
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
+touch "$GHAPP/state-a/no-account"
+pretty_github
+run_app_bash config.apps6.env
+must "create-github-app: GitHub's answer for the installation 815 carries no account login. Nothing has been changed" 'a pretty-printed installation without its account is refused'
+[ "$A_CODE" = '69' ] || fail "a pretty-printed installation without an account must refuse with 69, got $A_CODE"
+[ "$(config_line GITHUB_APP_OWNER)" = '' ] || fail 'a pretty-printed installation without an account was refused and the owner was still written'
+pretty_was_served 'a pretty-printed installation without an account'
+
+seed_config "$GHAPP/a"
+seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" all
+pretty_github
+run_app_bash config.apps6.env
+must 'create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write and not the eight asked' 'seven permissions, pretty-printed, are refused by both lists'
+[ "$A_CODE" = '65' ] || fail "seven permissions, pretty-printed, must refuse with 65, got $A_CODE"
+nothing_written 'an App answered with seven permissions, pretty-printed'
+pretty_was_served 'an App answered with seven permissions'
+
+seed_config "$GHAPP/a"
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
+pretty_github
+run_app_bash config.apps6.env
+[ "$A_CODE" = '0' ] || fail "the act on pretty-printed answers must end with 0, got $A_CODE: $(cat "$OUT/a.err")"
+cmp -s "$GHAPP/act.out" "$OUT/a.out" || fail "the act on pretty-printed answers printed other bytes than on compact ones: $(diff "$GHAPP/act.out" "$OUT/a.out")"
+[ "$(config_line GITHUB_APP_ID)" = '4711' ] && [ "$(config_line GITHUB_APP_INSTALLATION_ID)" = '815' ] && [ "$(config_line GITHUB_APP_OWNER)" = 'acme' ] \
+  || fail 'the config does not carry the id, the installation and the owner read off pretty-printed answers'
+[ "$(config_line GITHUB_APP_PRIVATE_KEY)" = "$(cat "$GHAPP/pem.json")" ] || fail 'the config does not carry the key as one line with \n for each line break when GitHub pretty-prints its answer'
+pretty_was_served 'the act on pretty-printed answers'
+
+blank_installation
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" absent-then-all
+pretty_github
+run_app_bash config.apps6.env
+[ "$A_CODE" = '0' ] || fail "the run that only installs, on pretty-printed answers, must end with 0, got $A_CODE: $(cat "$OUT/a.err")"
+must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711)' 'the App is read off a pretty-printed answer'
+must 'create-github-app: installed in acme on all repositories, installation 815: https://github.com/organizations/acme/settings/installations/815' 'the installation is read off a pretty-printed answer'
+[ "$(config_line GITHUB_APP_INSTALLATION_ID)" = '815' ] && [ "$(config_line GITHUB_APP_OWNER)" = 'acme' ] || fail 'the config does not carry the installation and the owner read off pretty-printed answers'
+pretty_was_served 'the run that only installs'
+ok 'GitHub pretty-printed: the owner is read off the installation, the message of a refusal, a missing account and seven permissions are named as before, and the act, whole or only installing, writes what it writes off compact answers'
 
 # ===========================================================================
 # SEVEN — master-backup and master-restore, up to the session they would open
@@ -3047,14 +3122,19 @@ cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 # what it put there if that file is executable, as a box that holds other bytes than were sent would, and ends
 # 1 on a source that rootonly names unless sudo raised the caller, as a folder of root's at mode 700 is
 # refused to any other account. lsf of a remote path that was copied to lists what it holds.
-# Every call that loads the config saves into it what rclone 1.60.1's sftp backend detects (shell_type,
-# md5sum_command, sha1sum_command) by renaming a file the caller wrote over it. So a call that sudo raised
-# leaves the config root's, at its old mode 600: rootonly names it, and any later call that sudo did not
-# raise ends 1 on it, as rclone does on a config it cannot load.
+# Every call that loads the config saves into it what rclone 1.60.1's sftp backend detects (shell_type, and
+# while the hash check is on md5sum_command and sha1sum_command) by renaming a file the caller wrote over it.
+# So a call that sudo raised leaves the config root's, at its old mode 600: rootonly names it, and any later
+# call that sudo did not raise ends 1 on it, as rclone does on a config it cannot load.
+# The storage box refuses the md5sum command rclone sends it over its shell (read on the dev machine on
+# 2026-10-20: every file failed three times with the words below). So a copy from the box ends 1 with those
+# words unless the config it loaded names disable_hashcheck = true, or RCLONE_CONFIG_BOX_DISABLE_HASHCHECK=true
+# stands in its environment; a copy to the box is not refused, as the carry of 2026-10-19 was not.
 # The first copy to the box, while block-first-upload stands beside it, claims the folder blocked and then
 # waits until the file release stands (or 60 seconds pass), which is how a case holds one driver in its
-# upload. Like the microk8s stand-in it lets go of descriptor 9, the backup's lock, so that the driver alone
-# holds the lock while it waits.
+# upload; a copy from the box does the same while hang-readback stands beside it, after it wrote its process
+# id to hanging. Like the microk8s stand-in it lets go of descriptor 9, the backup's lock, so that the driver
+# alone holds the lock while it waits.
 exec 9>&-
 here="$(dirname "$0")"
 printf 'rclone %s\n' "$*" >> "$here/argv.log"
@@ -3073,19 +3153,22 @@ if [ "$1" = obscure ]; then
   exit 0
 fi
 { IFS= read -r host; IFS= read -r user; IFS= read -r pass; } < "$here/box.expected"
+hashcheck_off=''
 if [ -n "$conf" ] && [ -f "$conf" ]; then
   if grep -qxF "$conf" "$here/rootonly" 2> /dev/null && [ -z "${STANDIN_ELEVATED:-}" ]; then
     echo "rclone stand-in: Failed to load config file \"$conf\": permission denied" >&2; exit 1
   fi
-  [ "$(grep -vE '^(shell_type|md5sum_command|sha1sum_command) = ' "$conf" | sed -E 's/^([a-z]+) *= */\1=/')" = "$(printf '[box]\ntype=sftp\nhost=%s\nuser=%s\npass=%s' "$host" "$user" "$pass")" ] \
+  [ "$(grep -vE '^(shell_type|md5sum_command|sha1sum_command) = ' "$conf" | grep -vxF 'disable_hashcheck = true' | sed -E 's/^([a-z]+) *= */\1=/')" = "$(printf '[box]\ntype=sftp\nhost=%s\nuser=%s\npass=%s' "$host" "$user" "$pass")" ] \
     || { echo 'rclone stand-in: the config does not define the remote box' >&2; exit 1; }
   printf '%s %s %s\n' "$(stat -c %a "$(dirname "$conf")")" "$(stat -c %a "$conf")" "$(dirname "$conf")" >> "$here/secrets.seen"
-  for saved in 'shell_type = unix' 'md5sum_command = md5sum' 'sha1sum_command = sha1sum'; do
+  saved_keys=('shell_type = unix')
+  if grep -qxF 'disable_hashcheck = true' "$conf"; then hashcheck_off=1; else saved_keys+=('md5sum_command = md5sum' 'sha1sum_command = sha1sum'); fi
+  for saved in "${saved_keys[@]}"; do
     grep -qxF "$saved" "$conf" || printf '%s\n' "$saved" >> "$conf"
   done
   [ -z "${STANDIN_ELEVATED:-}" ] || printf '%s\n' "$conf" >> "$here/rootonly"
 elif [ "${RCLONE_CONFIG_BOX_TYPE:-}" = sftp ] && [ "${RCLONE_CONFIG_BOX_HOST:-}" = "$host" ] && [ "${RCLONE_CONFIG_BOX_USER:-}" = "$user" ] && [ "${RCLONE_CONFIG_BOX_PASS:-}" = "$pass" ]; then
-  :
+  [ "${RCLONE_CONFIG_BOX_DISABLE_HASHCHECK:-}" != true ] || hashcheck_off=1
 else
   echo 'rclone stand-in: the remote box is not defined' >&2; exit 1
 fi
@@ -3096,6 +3179,16 @@ case "$1" in
     case "$2" in
       box:*)
         from="$here/box-uploaded/${2#box:}"; [ -d "$from" ] || from="$here/box-backup"
+        if [ -z "$hashcheck_off" ]; then
+          first="$(ls "$from" | head -n 1)"
+          echo "rclone stand-in: Failed to calculate src hash: failed to calculate md5 hash: failed to run \"md5sum ${2#box:}$first\"" >&2
+          echo "rclone stand-in: corrupted on transfer: md5 hashes differ src \"\" vs dst \"$(md5sum < "$from/$first" | cut -d' ' -f1)\"" >&2
+          exit 1
+        fi
+        if [ -e "$here/hang-readback" ]; then
+          echo $$ > "$here/hanging"
+          for _ in $(seq 1 600); do [ -e "$here/release" ] && break; sleep 0.1; done
+        fi
         cp -R "$from/." "$3" ;;
       *)
         if [ -e "$here/block-first-upload" ] && mkdir "$here/blocked" 2> /dev/null; then
@@ -3165,6 +3258,7 @@ RESTORE_ROOT="$(grep '^root() ' "$HERE/master-restore-driver.sh")"
 RESTORE_STORES="$(sed -n '/^STORES=($/,/^)$/p' "$HERE/master-restore-driver.sh")"
 RESTORE_PLACEMENT="$(sed -n '/^PLACE=/,/^root chmod 700 "\$PLACE"$/p' "$HERE/master-restore-driver.sh")"
 BACKUP_CLEANUP="$(sed -n "/^SECRETS=''/,/^trap cleanup/p" "$HERE/master-backup-driver.sh")"
+BACKUP_READBACK_LIMIT="$(grep -E '^readonly READBACK_(WAIT_SECONDS|LEAST_BYTES_PER_SECOND)=' "$HERE/master-backup-driver.sh")"
 BACKUP_SECRETS="$(sed -n '/^SECRETS="\$(mktemp/,/^( umask 077/p' "$HERE/master-backup-driver.sh")"
 BACKUP_RCLONE_CONF="$(sed -n '/^RCLONE_CONF=/,/^export RCLONE_CONFIG=/p' "$HERE/master-backup-driver.sh")"
 BACKUP_WORK="$(sed -n '/^ID=/,/^root install -d -m 700/p' "$HERE/master-backup-driver.sh")"
@@ -3172,10 +3266,10 @@ BACKUP_WAY_OUT="$(sed -n '/^step "the manifest, and the way out"/,/^printf .BACK
 RESTORE_CLEANUP="$(sed -n "/^SECRETS=''/,/^trap cleanup/p" "$HERE/master-restore-driver.sh")"
 RESTORE_SECRETS="$(sed -n '/^SECRETS="\$(mktemp/,/^export RCLONE_CONFIG=/p' "$HERE/master-restore-driver.sh")"
 RESTORE_FETCHED="$(sed -n '/^step "the backup \$ID, fetched and checked"/,/^good "\${#STORES\[@\]} store(s) stand opened/p' "$HERE/master-restore-driver.sh")"
-for lifted in BACKUP_ROOT BACKUP_SEAL BACKUP_CLEANUP BACKUP_SECRETS BACKUP_RCLONE_CONF BACKUP_WORK BACKUP_WAY_OUT RESTORE_ROOT RESTORE_STORES RESTORE_PLACEMENT RESTORE_CLEANUP RESTORE_SECRETS RESTORE_FETCHED; do
+for lifted in BACKUP_ROOT BACKUP_SEAL BACKUP_CLEANUP BACKUP_READBACK_LIMIT BACKUP_SECRETS BACKUP_RCLONE_CONF BACKUP_WORK BACKUP_WAY_OUT RESTORE_ROOT RESTORE_STORES RESTORE_PLACEMENT RESTORE_CLEANUP RESTORE_SECRETS RESTORE_FETCHED; do
   [ -n "${!lifted}" ] || fail "the drivers carry no text for $lifted — nothing below measures what reaches an elevated command"
 done
-BACKUP_TEXT="$BACKUP_CLEANUP"$'\n'"$BACKUP_SECRETS"$'\n'"$BACKUP_ROOT"$'\n'"$BACKUP_RCLONE_CONF"$'\n'"$BACKUP_SEAL"
+BACKUP_TEXT="$BACKUP_CLEANUP"$'\n'"$BACKUP_READBACK_LIMIT"$'\n'"$BACKUP_SECRETS"$'\n'"$BACKUP_ROOT"$'\n'"$BACKUP_RCLONE_CONF"$'\n'"$BACKUP_SEAL"
 
 commands_wrong() { # says which planted secret stands in a line of $STANDIN/argv.log, which every stand-in writes its arguments to; ends 0
   grep -qF "$PLANTED_PASSPHRASE" "$STANDIN/argv.log" && echo 'the backup passphrase stands on a command line'
@@ -3202,7 +3296,14 @@ sealed_by() { # <sudo kind> <the text lifted first> <command line...> — its co
   ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 022
     set -uo pipefail
-    die() { echo "die: $1" >&2; exit "${2:-1}"; }; say() { echo "say: $*"; }; good() { echo "good: $*"; }; step() { echo "step: $*"; }
+    die() { echo "die: $1" >&2; exit "${2:-1}"; }; say() { echo "say: $*"; }; step() { echo "step: $*"; }
+    good() { # the claim that nothing is left on the machine is held to the folders at the moment it is made
+      echo "good: $*"
+      case "$*" in *'nothing of it is left on this machine'*)
+        [ ! -e "$WORK" ] || echo 'claim: the work folder stood' >&2
+        [ ! -e "${READBACK:-}" ] || echo 'claim: the read-back folder stood' >&2 ;;
+      esac
+    }
     CONFIG="$WORK/seal-config"; : > "$CONFIG"
     ELEVATION_PASSWORD="$PLANTED_PASSWORD"; BACKUP_PASSPHRASE="$PLANTED_PASSPHRASE"; STORAGE_BOX_PASSWORD="$PLANTED_BOX_PASSWORD"
     STORAGE_BOX_HOST="$BOX_HOST"; STORAGE_BOX_USER="$BOX_USER"
@@ -3447,6 +3548,8 @@ carry_holds() { # <sudo kind> <the text lifted first> <the way out> — ends 0 w
     [ ! -e "$SEAL_DIR/backups/$(basename "$landed")" ] || echo 'the work folder stands after the way out' >> "$OUT/verdict"
     [ ! -e "$SEAL_DIR/backups/$(basename "$landed").readback" ] || echo 'the read-back folder stands after the way out' >> "$OUT/verdict"
   fi
+  ! grep -qF -- 'claim: the work folder stood' "$OUT/sealed.err" || echo 'the way out said that nothing of it is left on this machine while the work folder stood' >> "$OUT/verdict"
+  ! grep -qF -- 'claim: the read-back folder stood' "$OUT/sealed.err" || echo 'the way out said that nothing of it is left on this machine while the read-back folder stood' >> "$OUT/verdict"
   commands_wrong >> "$OUT/verdict"
   secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
@@ -3508,13 +3611,13 @@ BOX_LOST_SHAPE_AND_FLIPPED="$BOX_LOST_SHAPE"$'\n'"$BOX_FLIPPED_BYTE"
 { printf 'sealed with: another-passphrase\n'; cat "$SEAL_DIR/quorum.txt"; } > "$STANDIN/other-quorum.gpg"
 BOX_OTHER_PASSPHRASE='cp "$(dirname "$0")/other-quorum.gpg" "$1/host--vault-prod.txt.gpg"
 ( cd "$1" && { head -n 5 manifest.txt; sha256sum -- *.gpg; } > manifest.new && mv manifest.new manifest.txt )'
-carry_refused() { # <sudo kind> <the way out> <what the box does to the upload: a script that is handed its folder> <what the refusal must say> — ends 0 when the way out ended 69 saying that, the read-back folder is gone and the work folder stands, and nothing planted was printed; what is wrong stands in $OUT/verdict
-  local kind="$1" says="$4" code=0 folders
+carry_refused() { # <sudo kind> <the way out> <what the box does to the upload: a script that is handed its folder> <what the refusal must say> [<the text lifted first>] — ends 0 when the way out ended 69 saying that, the read-back folder is gone and the work folder stands, and nothing planted was printed; what is wrong stands in $OUT/verdict
+  local kind="$1" says="$4" text="${5:-$BACKUP_TEXT}" code=0 folders
   CARRY_WAY_OUT="$2"
   : > "$OUT/verdict"
   rm -rf "$SEAL_DIR/backups"
   printf '#!/usr/bin/env bash\n%s\n' "$3" > "$STANDIN/after-upload"; chmod 700 "$STANDIN/after-upload"
-  sealed_by "$kind" "$BACKUP_TEXT" carry_run || code=$?
+  sealed_by "$kind" "$text" carry_run || code=$?
   rm -f "$STANDIN/after-upload"
   printed_wrong "$OUT/sealed.out" "$OUT/sealed.err" >> "$OUT/verdict"
   if [ "$code" = 0 ]; then
@@ -3545,7 +3648,7 @@ ok 'backup: a flipped byte in an archive on the box, a manifest that counts othe
 
 # planted defects of the read-back, each of which lets its case through (the way out ends 0), or prints, or
 # leaves its folder
-READBACK_COPY='root rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet'
+READBACK_COPY='root timeout --kill-after=30 "$READBACK_LIMIT" rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet'
 plant "$BACKUP_WAY_OUT" "$READBACK_COPY" 'root cp -R "$WORK/." "$READBACK"'; READS_WORK="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" "$READBACK_COPY" 'rclone copy "$BACKUPS/$ID/" "$READBACK" --quiet'; READS_BY_OPERATOR="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" 'grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11' 'true'; NO_CHECKSUMS="$PLANTED_TEXT"
@@ -3554,8 +3657,11 @@ plant "$BACKUP_WAY_OUT" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_MANIFEST
 plant "$NO_MANIFEST_COMPARISON" 'grep -qx "STORES=$2" manifest.txt || exit 12' 'true'; NO_STORE_COUNT="$PLANTED_TEXT"
 plant "$NO_MANIFEST_COMPARISON" 'gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13' 'true'; NO_QUORUM_OPENING="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" '-o /dev/null -d "host--vault-$4.txt.gpg"' '-d "host--vault-$4.txt.gpg"'; OPENS_TO_OUTPUT="$PLANTED_TEXT"
-plant "$BACKUP_WAY_OUT" $'  root rm -rf "$READBACK"\n  case' '  case'; KEEPS_AFTER_REFUSAL="$PLANTED_TEXT"
+TRAP_REMOVAL='if [ -n "$READBACK" ]; then root rm -rf "$READBACK" >/dev/null 2>&1; fi'
+plant "$BACKUP_TEXT" "$TRAP_REMOVAL" 'true'; KEEPS_AFTER_REFUSAL="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" 'root rm -rf "$WORK" "$READBACK"' 'root rm -rf "$WORK"'; KEEPS_AFTER_SUCCESS="$PLANTED_TEXT"
+plant "$BACKUP_TEXT" 'pass = %s\ndisable_hashcheck = true\n' 'pass = %s\n'; HASH_CHECK_ON="$PLANTED_TEXT"
+plant "$BACKUP_TEXT" '\nuser = %s' ''; CONFIG_WITHOUT_USER="$PLANTED_TEXT"
 for kind in nopasswd password; do
   ! carry_refused "$kind" "$READS_WORK" "$BOX_FLIPPED_BYTE" 'do not match the checksums' \
     || fail "the planted read-back of the work folder was not caught under a sudo that reads $kind — the probe proves nothing"
@@ -3581,14 +3687,22 @@ for kind in nopasswd password; do
   ! carry_holds "$kind" "$BACKUP_TEXT" "$OPENS_TO_OUTPUT" \
     || fail "the planted opening of the quorum to the output was not caught under a sudo that reads $kind — the probe proves nothing"
   caught_for 'opening of the quorum to the output' 'the run printed the planted line planted-unseal-key-1' 'the run printed the planted line planted-unseal-key-2'
-  ! carry_refused "$kind" "$KEEPS_AFTER_REFUSAL" "$BOX_FLIPPED_BYTE" 'do not match the checksums' \
-    || fail "the planted refusal that leaves the read-back folder was not caught under a sudo that reads $kind — the probe proves nothing"
-  caught_for 'refusal that leaves the read-back folder' 'the read-back folder stands after the way out'
+  ! carry_refused "$kind" "$BACKUP_WAY_OUT" "$BOX_FLIPPED_BYTE" 'do not match the checksums' "$KEEPS_AFTER_REFUSAL" \
+    || fail "the planted clean-up that leaves the read-back folder after a refusal was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'clean-up that leaves the read-back folder after a refusal' 'the read-back folder stands after the way out'
   ! carry_holds "$kind" "$BACKUP_TEXT" "$KEEPS_AFTER_SUCCESS" \
     || fail "the planted way out that leaves the read-back folder was not caught under a sudo that reads $kind — the probe proves nothing"
-  caught_for 'way out that leaves the read-back folder' 'the read-back folder stands after the way out'
+  caught_for 'way out that leaves the read-back folder' 'the way out said that nothing of it is left on this machine while the read-back folder stood'
+  ! carry_holds "$kind" "$HASH_CHECK_ON" "$BACKUP_WAY_OUT" \
+    || fail "the planted box config that leaves the remote hash check on was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'box config that leaves the remote hash check on' 'the way out ended with 69' 'md5 hashes differ'
+  grep -qF 'md5 hashes differ' "$OUT/verdict" || fail "the planted box config that leaves the remote hash check on was not refused for the hash the box cannot give: $(cat "$OUT/verdict")"
+  ! carry_holds "$kind" "$CONFIG_WITHOUT_USER" "$BACKUP_WAY_OUT" \
+    || fail "the planted box config without a user was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'box config without a user' 'the way out ended with 69' 'the config does not define the remote box'
+  grep -qF 'the config does not define the remote box' "$OUT/verdict" || fail "the planted box config without a user was not refused for the box it does not define: $(cat "$OUT/verdict")"
 done
-ok 'the planted read-backs are caught under each sudo: the work folder read in place of the box, the copy run by the operator, each check removed (the comparison of the manifest with the one sent among them), the quorum opened to the output, a folder left behind after a refusal and after a success'
+ok 'the planted read-backs are caught under each sudo: the work folder read in place of the box, the copy run by the operator, each check removed (the comparison of the manifest with the one sent among them), the quorum opened to the output, a folder left behind after a refusal and after a success, a box config that leaves the remote hash check on, a box config that does not define the box'
 
 # ── one backup at a time on a machine ───────────────────────────────────────────────────────────────
 # Two backups at once leave a store at 0 replicas (the second reads 0 where the first holds the store
@@ -3606,14 +3720,16 @@ while IFS='|' read -r ns pvc _ _; do
   echo planted-store > "$LOCK_DIR/storage/${ns}-${pvc}-pvc-0000/payload"
 done < <(STAGE=prod; eval "$BACKUP_STORES"; printf '%s\n' "${STORES[@]}")
 LOCK_STORES="$(ls "$LOCK_DIR/storage" | wc -l | tr -d ' ')"
-lock_reset() { # <free|block|block-upload> — the stand-ins forget the last case; block holds the first scale call of the next one, block-upload its first copy to the box
-  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$LOCK_DIR/master-backup.lock"
+lock_reset() { # <free|block|block-upload|hang-readback> — the stand-ins forget the last case; block holds the first scale call of the next one, block-upload its first copy to the box, hang-readback its copy from the box
+  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/hang-readback" "$STANDIN/hanging" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$LOCK_DIR/master-backup.lock"
   : > "$STANDIN/kubectl-calls.log"
   case "$1" in
     block) : > "$STANDIN/block-first-scale" ;;
     block-upload) : > "$STANDIN/block-first-upload" ;;
+    hang-readback) : > "$STANDIN/hang-readback" ;;
   esac
 }
+driver_names_literal() { grep -qF -- "$2" <<< "$1"; } # <the driver's text> <literal> — the text goes in as a here-string, since grep -q closes a pipe at its first match and the writer is cut off
 lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder, with the driver and its paths moved into the sandbox, the waits of its hold shortened, NAME=value moving a named value of the driver on from there, and a config beside it
   local dir="$LOCK_DIR/$1" text="$2" literal pair moved=()
   shift 2
@@ -3622,7 +3738,7 @@ lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder
   done
   rm -rf "$dir"; mkdir -p "$dir"
   for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
-    printf '%s\n' "$text" | grep -qF -- "$literal" || fail "the backup driver names no $literal — the sandbox of the lock cases proves nothing"
+    driver_names_literal "$text" "$literal" || fail "the backup driver names no $literal — the sandbox of the lock cases proves nothing"
   done
   printf '%s\n' "$text" | sed -e "s#/var/lib/master-backup#$dir/backups#g" -e "s#/var/snap/microk8s/common/default-storage#$LOCK_DIR/storage#g" \
     -e "s#/srv/hostyour-cloud#$LOCK_DIR/srv#g" -e "s#/run/lock/master-backup.lock#$LOCK_DIR/master-backup.lock#g" "${moved[@]}" > "$dir/driver.sh"
@@ -3740,6 +3856,24 @@ lock_refused_by_hand() { # <the driver's text> <none|ended|killed> — a process
   [ ! -s "$OUT/verdict" ]
 }
 LOCK_TEXT="$(cat "$HERE/master-backup-driver.sh")"
+# The literal check of lock_driver on a text larger than a pipe buffer (64 KiB on Linux) that names the literal in its first line, so grep stops at its first read while a writer would still hold the rest.
+LARGE_TEXT="$(awk 'BEGIN { print "/run/lock/master-backup.lock"; for (line = 1; line <= 2400; line++) print "readonly A_LINE_OF_THE_DRIVER_THAT_HOLDS_NO_LITERAL_" line }')"
+[ "${#LARGE_TEXT}" -ge 131072 ] || fail "backup: the text of the literal check is ${#LARGE_TEXT} bytes, not larger than 128 KiB"
+for _ in $(seq 1 3000); do
+  driver_names_literal "$LARGE_TEXT" /run/lock/master-backup.lock \
+    || fail "backup: the literal check reported /run/lock/master-backup.lock missing from a text of ${#LARGE_TEXT} bytes that names it in its first line"
+done
+CUT_OFF=0
+for _ in $(seq 1 3000); do
+  printf '%s\n' "$LARGE_TEXT" | grep -qF -- /run/lock/master-backup.lock || { CUT_OFF=1; break; }
+done
+[ "$CUT_OFF" = 1 ] || fail 'backup: the planted pipe into grep -q was not cut off once in 3000 checks of a text larger than a pipe buffer — the case proves nothing'
+if ( lock_driver without-lock "${LOCK_TEXT//\/run\/lock\/master-backup.lock/}" ) 2> "$OUT/without-lock.err"; then
+  fail 'backup: a driver text without /run/lock/master-backup.lock was taken for a sandbox of the lock cases'
+fi
+grep -qF 'the backup driver names no /run/lock/master-backup.lock — the sandbox of the lock cases proves nothing' "$OUT/without-lock.err" \
+  || fail "backup: a driver text without /run/lock/master-backup.lock was refused for another reason: $(cat "$OUT/without-lock.err")"
+ok 'backup: the literal check of the lock cases found the literal in a text of 128 KiB 3000 times, the planted pipe into grep -q was cut off, and a driver text without /run/lock/master-backup.lock is still refused'
 lock_refuses "$LOCK_TEXT" || fail "backup: a second driver was not refused while the first held the stores: $(cat "$OUT/verdict")"
 lock_refuses "$LOCK_TEXT" upload || fail "backup: a second driver was not refused while the first uploaded its archives, after its store loop: $(cat "$OUT/verdict")"
 for earlier in none ended killed; do
@@ -3803,7 +3937,7 @@ ok 'the planted drivers are caught: no lock, a lock taken after the folder, a lo
 # queue is not held, while the planted run still reads running or while the planted Job of the queue is unfinished; the
 # Manager started or the queue let go while a store this run stopped is not back and ready; and a run that ends with the
 # Manager at 0 or the queue held although every store is back and ready, are each red.
-for named in QUEUE_POLL_SECONDS QUEUE_WAIT_SECONDS STORE_POLL_SECONDS STORE_WAIT_SECONDS; do
+for named in QUEUE_POLL_SECONDS QUEUE_WAIT_SECONDS STORE_POLL_SECONDS STORE_WAIT_SECONDS READBACK_WAIT_SECONDS READBACK_LEAST_BYTES_PER_SECOND; do
   grep -q "^readonly $named=[0-9]" "$HERE/master-backup-driver.sh" || fail "the backup driver names no $named on a line of its own — the hold cases cannot move its wait into the sandbox"
 done
 hold_run() { # <the driver's text> [<knob>...] — the stand-ins forget the last case and take the knobs, then the whole driver runs once; its code stands in $LOCK_CODE. A knob is NAME (the file knob-NAME), NAME=content (the file of cluster/ so named), copy-fails=<ns>-<claim> (the copy of that store fails) or a NAME=value of the driver, which a shortened wait is
@@ -3885,7 +4019,7 @@ hold_says 'waiting for run hostyour-manager-build/hostyour-manager-release-live 
 grep -qE 'waiting for (run hostyour-manager-build/hostyour-manager-(release-done|publish-waiting|publish-done)|job image-builder/(release-queue-29874554|unrelated-job))' "$LOCK_DIR/hold/out" \
   && fail 'backup: the driver waited for a run that ended, a run that waits on the queue, a Job that finished or a Job of another CronJob'
 [ "$(grep -c ' scale ' "$STANDIN/kubectl-calls.log")" = "$(( 2 * LOCK_STORES ))" ] || fail "backup: the run did not stop and start each of the $LOCK_STORES stores once: $(scale_calls) scale call(s)"
-grep -c ' patch ' "$STANDIN/kubectl-calls.log" | grep -qx 2 || fail 'backup: the run did not hold the queue once and let it go once'
+[ "$(patch_calls)" = 2 ] || fail 'backup: the run did not hold the queue once and let it go once'
 # the order the operator reads: the queue held, the Manager stopped, each store ready, the Manager started, the queue let go
 HOLD_ORDER="$(sed -nE 's#.*(is held|manager/deployment/manager stopped|reads ready|manager/deployment/manager started again|is let go).*#\1#p' "$LOCK_DIR/hold/out" | uniq | tr '\n' ',')"
 [ "$HOLD_ORDER" = 'is held,manager/deployment/manager stopped,reads ready,manager/deployment/manager started again,is let go,' ] \
@@ -3963,7 +4097,7 @@ hold_row_wrong() { # <app.yaml> <kind> <name> <pointer> — says what is wrong w
   local rows
   [ "$(yq '.respectIgnoreDifferences' "$1")" = true ] || echo "$1 does not set respectIgnoreDifferences to true, so a sync writes the ignored field all the same"
   rows="$(yq '.ignoreDifferences | from_yaml | .[] | select(.kind == "'"$2"'" and .name == "'"$3"'") | .jsonPointers[]' "$1" 2> /dev/null || true)"
-  printf '%s\n' "$rows" | grep -qxF -- "$4" || echo "$1 has no rule that keeps $4 of the $2 $3"
+  grep -qxF -- "$4" <<< "$rows" || echo "$1 has no rule that keeps $4 of the $2 $3"
   return 0
 }
 hold_rows_wrong() { # <the Manager's app.yaml> <the image-builder's app.yaml> — what is wrong with the two rules; ends 0
@@ -4040,6 +4174,97 @@ hold_caught 'a queue let go before the stores were read ready, the Manager never
 hold_caught 'a release that trusts its record of the stopped stores instead of the cluster' "$TRUSTS_RECORD" 'knob-stop-fails=idp/idp-postgresql' 'the run ended with the Manager at 0' 'the run ended with' 'the run did not end with BACKUP'
 ok 'backup: the planted drivers are caught: no hold, the running run not read, no wait, a wait ended on one quiet pass, a wait that reads the active list alone, the Manager or the queue let go before the last store, readiness read by rollout status, an exit that does not release the hold, a failed copy that forgets its store, a release that does not read the stores ready, a queue let go before the stores were read ready, a release that trusts its record of the stopped stores'
 
+# ── the read-back ends within a limit, and what it left is removed when the ssh session that carried the driver has ended ─
+# The read-back is the one step that waits on the storage box alone. It is given READBACK_WAIT_SECONDS and one second more for each
+# READBACK_LEAST_BYTES_PER_SECOND of the backup, and after that the driver ends 69 and says so. The first case moves the two values so
+# that the limit is a second, holds the copy from the box in the rclone stand-in, and runs the whole driver. The second is the night of
+# 2026-10-19: the driver arrives over one ssh session without a terminal, the session ends while the copy hangs, and the copy is ended later
+# with TERM. Both streams of the driver then lead nowhere, so the notice bash prints for the ended copy kills it with SIGPIPE (141) before
+# any line after the copy runs, and only the trap is left to remove what the driver made. sshd starts a session with SIGPIPE at its default,
+# so the case starts the driver so, whatever disposition the runner of this suite passes on.
+readback_gives_up() { # <the driver's text> — the copy from the box never ends and the limit is a second: ends 0 when the driver ended 69 within seconds, named the limit, left the work folder with its archives and nothing else, and let the Manager and the queue go; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/stall" folders id _
+  lock_reset hang-readback
+  lock_driver stall "$text" READBACK_WAIT_SECONDS=1 READBACK_LEAST_BYTES_PER_SECOND=1073741824
+  lock_start stall
+  : > "$OUT/verdict"
+  for _ in $(seq 1 600); do [ -e "$STANDIN/hanging" ] && break; kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
+  if [ ! -e "$STANDIN/hanging" ]; then
+    echo "the driver did not reach the copy that holds it in its read-back: $(tail -n 2 "$dir/err" | tr '\n' ' ')" >> "$OUT/verdict"
+    if kill -0 "$LOCK_PID" 2> /dev/null; then kill -KILL "$LOCK_PID"; fi
+  else
+    for _ in $(seq 1 200); do kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
+    if kill -0 "$LOCK_PID" 2> /dev/null; then
+      echo 'the driver still ran 20 seconds after its copy started, with a limit of a second'
+      kill -KILL "$LOCK_PID"
+    fi >> "$OUT/verdict"
+  fi
+  : > "$STANDIN/release"
+  LOCK_CODE=0; { wait "$LOCK_PID"; } 2> /dev/null || LOCK_CODE=$?
+  [ "$LOCK_CODE" = 69 ] || echo "the driver ended with $LOCK_CODE, not 69: $(tail -n 2 "$dir/err" | tr '\n' ' ')" >> "$OUT/verdict"
+  grep -qE "reading back [0-9]+ bytes from box:$CARRY_FQDN/master/[0-9]{8}T[0-9]{6}Z/, within 1 s" "$dir/out" || echo 'the driver did not say how many bytes it reads back and within how many seconds' >> "$OUT/verdict"
+  grep -qF -- 'did not finish within 1 s' "$dir/err" || echo "the driver did not say that the read-back did not finish within its limit: $(tail -n 1 "$dir/err")" >> "$OUT/verdict"
+  folders="$(ls "$dir/backups" 2> /dev/null || true)"; id="${folders%%$'\n'*}"
+  case "$folders" in *.readback*) echo 'the read-back folder stands after the driver ended' >> "$OUT/verdict" ;; esac
+  if [ "$(grep -c '^[0-9]\{8\}T[0-9]\{6\}Z$' <<< "$folders")" != 1 ]; then
+    echo "the work folder does not stand after the driver ended: $(tr '\n' ' ' <<< "$folders")" >> "$OUT/verdict"
+  elif [ "$(ls "$dir/backups/$id" | wc -l | tr -d ' ')" != "$(( LOCK_STORES + 2 ))" ]; then
+    echo "the work folder holds $(ls "$dir/backups/$id" | wc -l | tr -d ' ') file(s), not the $LOCK_STORES stores, the quorum and the manifest" >> "$OUT/verdict"
+  fi
+  hold_wrong 1 false >> "$OUT/verdict"
+  printed_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_orphaned() { # <the driver's text> — the ssh session ends while the copy from the box hangs, then the copy is ended with TERM: ends 0 when the driver ended 141 and left the work folder with its archives and nothing else; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/orphan" session reader folders id _
+  lock_reset hang-readback
+  lock_driver orphan "$text"
+  session="$dir/session"; mkfifo "$session"
+  cat "$session" > "$dir/out" 2>&1 &
+  reader=$!
+  ( export SUDO_STANDIN=nopasswd SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
+    umask 077
+    exec env --default-signal=PIPE bash "$dir/driver.sh" "$dir/config" ) < /dev/null > "$session" 2>&1 &
+  LOCK_PID=$!
+  : > "$OUT/verdict"
+  for _ in $(seq 1 600); do [ -e "$STANDIN/hanging" ] && break; kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
+  [ -e "$STANDIN/hanging" ] || echo "the driver did not reach the copy that holds it in its read-back: $(tail -n 2 "$dir/out" | tr '\n' ' ')" >> "$OUT/verdict"
+  kill "$reader"; { wait "$reader"; } 2> /dev/null || true
+  if [ -e "$STANDIN/hanging" ]; then
+    kill -TERM "$(cat "$STANDIN/hanging")"
+    for _ in $(seq 1 100); do kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
+  fi
+  if kill -0 "$LOCK_PID" 2> /dev/null; then
+    echo 'the driver still ran 10 seconds after its copy was ended' >> "$OUT/verdict"
+    kill -KILL "$LOCK_PID"
+  fi
+  : > "$STANDIN/release"
+  LOCK_CODE=0; { wait "$LOCK_PID"; } 2> /dev/null || LOCK_CODE=$?
+  [ "$LOCK_CODE" = 141 ] || echo "the driver ended with $LOCK_CODE, not 141 — bash dies of SIGPIPE on the notice of the ended copy, and the arm after the copy ran" >> "$OUT/verdict"
+  folders="$(ls "$dir/backups" 2> /dev/null || true)"; id="${folders%%$'\n'*}"
+  case "$folders" in *.readback*) echo 'the read-back folder stands after the driver ended' >> "$OUT/verdict" ;; esac
+  if [ "$(grep -c '^[0-9]\{8\}T[0-9]\{6\}Z$' <<< "$folders")" != 1 ]; then
+    echo "the work folder does not stand after the driver ended: $(tr '\n' ' ' <<< "$folders")" >> "$OUT/verdict"
+  elif [ "$(ls "$dir/backups/$id" | wc -l | tr -d ' ')" != "$(( LOCK_STORES + 2 ))" ]; then
+    echo "the work folder holds $(ls "$dir/backups/$id" | wc -l | tr -d ' ') file(s), not the $LOCK_STORES stores, the quorum and the manifest" >> "$OUT/verdict"
+  fi
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_gives_up "$LOCK_TEXT" || fail "backup: a read-back that does not finish was not ended within its limit as it must be: $(cat "$OUT/verdict")"
+readback_orphaned "$LOCK_TEXT" || fail "backup: the read-back folder, the secrets or the work folder were left wrong when the ssh session ended during the read-back: $(cat "$OUT/verdict")"
+ok 'backup: a read-back that does not finish ends 69 once its limit has passed, drawn from the size of the backup, naming the limit, with the archives on the machine, the Manager started and the queue let go; a driver whose ssh session ended while its read-back hung, and whose copy was ended after that, leaves the work folder only, whatever line it was in'
+
+# planted defects: the copy without the time limit, and a trap that does not remove the read-back folder
+plant "$LOCK_TEXT" 'root timeout --kill-after=30 "$READBACK_LIMIT" rclone' 'root rclone'; NO_READBACK_LIMIT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$TRAP_REMOVAL" 'true'; NO_READBACK_REMOVAL="$PLANTED_TEXT"
+! readback_gives_up "$NO_READBACK_LIMIT" || fail 'the planted read-back without a time limit was not caught — the probe proves nothing'
+caught_for 'read-back without a time limit' 'the driver still ran 20 seconds after its copy started' 'the driver ended with' 'did not say that the read-back did not finish' 'stands after the driver ended' 'does not stand after the driver ended'
+! readback_orphaned "$NO_READBACK_REMOVAL" || fail 'the planted trap that does not remove the read-back folder was not caught when the ssh session ended — the probe proves nothing'
+caught_for 'trap that does not remove the read-back folder' 'the read-back folder stands after the driver ended'
+ok 'the planted drivers are caught: a read-back without a time limit runs on past it, and a trap that does not remove the read-back folder leaves it when the ssh session has ended'
+
 # The restore: the fetch, the clone, the fetch of the branch, the opening of the quorum and of every store,
 # as the driver's own text runs them against a backup the rclone stand-in serves.
 restore_rows() { ( STAGE=prod; eval "$RESTORE_STORES"; printf '%s\n' "${STORES[@]}" ); } # the restore's store rows, resolved for stage prod
@@ -4095,7 +4320,7 @@ ok 'restore: the fetch, the clone, the fetch of the branch and every opening car
 
 # planted defects, each the line as it was before it carried the secret by path
 FETCH_LINE='root rclone --config "$RCLONE_CONF" copy'
-FETCH_PRIOR='root env RCLONE_CONFIG_BOX_TYPE=sftp RCLONE_CONFIG_BOX_HOST="$STORAGE_BOX_HOST" RCLONE_CONFIG_BOX_USER="$STORAGE_BOX_USER" RCLONE_CONFIG_BOX_PASS="$(printf '"'%s\\n'"' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" rclone copy'
+FETCH_PRIOR='root env RCLONE_CONFIG_BOX_TYPE=sftp RCLONE_CONFIG_BOX_HOST="$STORAGE_BOX_HOST" RCLONE_CONFIG_BOX_USER="$STORAGE_BOX_USER" RCLONE_CONFIG_BOX_PASS="$(printf '"'%s\\n'"' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" RCLONE_CONFIG_BOX_DISABLE_HASHCHECK=true rclone copy'
 CLONE_LINE='root env GIT_CONFIG_GLOBAL="$GIT_CONF" git clone'
 CLONE_PRIOR='root git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf '"'x-access-token:%s'"' "$PLATFORM_REPO_READ_PAT" | base64 | tr -d '"'\\n'"')" clone'
 BRANCH_LINE='root -u "$OPERATOR_USER" env GIT_CONFIG_GLOBAL="$GIT_CONF" git -C "$CHECKOUT" fetch'
@@ -4136,6 +4361,10 @@ for kind in nopasswd password; do
   plant "$RESTORE_SECRETS" 'umask 077' 'true'
   ! restore_holds "$kind" "$PLANTED_TEXT" "$RESTORE_FETCHED" || fail "the planted secret files written under an open umask were not caught under a sudo that reads $kind — the probe proves nothing"
   caught_for 'secret files written under an open umask' 'its file at 644'
+  plant "$RESTORE_SECRETS" 'pass = %s\ndisable_hashcheck = true\n' 'pass = %s\n'
+  ! restore_holds "$kind" "$PLANTED_TEXT" "$RESTORE_FETCHED" || fail "the planted box config that leaves the remote hash check on was not caught in the restore under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'box config that leaves the remote hash check on, in the restore' "the restore's text ended with 69" 'did not open every store' 'did not arrive whole'
+  grep -qF 'md5 hashes differ' "$OUT/verdict" || fail "the planted box config that leaves the remote hash check on was not refused in the restore for the hash the box cannot give: $(cat "$OUT/verdict")"
 done
 # a clean-up that leaves the folder: the text lifted first is the one that changes
 plant "$RESTORE_CLEANUP" 'rm -rf "$SECRETS" 2>/dev/null || true' 'true'
@@ -4144,7 +4373,7 @@ RESTORE_CLEANUP_CLEAN="$RESTORE_CLEANUP"; RESTORE_CLEANUP="$RESTORE_KEPT"
 ! restore_holds nopasswd "$RESTORE_SECRETS" "$RESTORE_FETCHED" || fail 'the planted clean-up that leaves the folder was not caught — the probe proves nothing'
 caught_for 'clean-up that leaves the folder' 'stands after the driver ended'
 RESTORE_CLEANUP="$RESTORE_CLEANUP_CLEAN"
-ok 'the planted restore lines are caught under each sudo: the box password in env or as an argument, the token in -c, the passphrase in env for the quorum and for a store, files under an open umask, a folder left behind'
+ok 'the planted restore lines are caught under each sudo: the box password in env or as an argument, the token in -c, the passphrase in env for the quorum and for a store, files under an open umask, a box config that leaves the remote hash check on, a folder left behind'
 rm -rf "$STANDIN" "$SEAL_DIR" "$WORK"/placement-*
 
 # ===========================================================================
@@ -4228,7 +4457,7 @@ asset_text ansiwise-rest "$ENGINE_PIN" > "$SWAPPED_ASSET"; echo '# swapped after
 
 for engine_driver in driver.sh regenerate-driver.sh; do
   D="$HERE/$engine_driver"
-  check_of "$D" | grep -q 'sha256sum --check' \
+  engine_check="$(check_of "$D")" && grep -q 'sha256sum --check' <<< "$engine_check" \
     || fail "$engine_driver carries no hold_engine_against_digests that runs sha256sum --check — nothing below measures the machine"
 
   held "$D" "$PINNED_DIGESTS" || fail "$engine_driver: the pinned digests of both assets were refused: $(cat "$OUT/held.out")"
@@ -4374,7 +4603,7 @@ fi
 ok 'the planted defect was caught — a check without the lowercase rule accepts a digest in capitals'
 
 # A signal mid-program stops the heartbeat ticker: cleanup() kills the one run_program records.
-stops_the_ticker() { sed -n '/^cleanup() {/,/^}/p' "$1" | grep -q 'kill "\$TICKER"' && grep -q '^  TICKER=\$!$' "$1"; }
+stops_the_ticker() { local cleanup; cleanup="$(sed -n '/^cleanup() {/,/^}/p' "$1")" && grep -q 'kill "\$TICKER"' <<< "$cleanup" && grep -q '^  TICKER=\$!$' "$1"; }
 stops_the_ticker "$HERE/driver.sh" || fail 'driver.sh does not stop the heartbeat ticker when a signal ends the run'
 plant 'a cleanup that leaves the ticker running' 's/^  \[ -z "\${TICKER:-}" \] || kill "\$TICKER" 2>\/dev\/null || true$/  : the ticker is left running/' '^  : the ticker is left running$'
 if stops_the_ticker "$ENGINE_WORK/planted-driver.sh"; then
@@ -5703,7 +5932,8 @@ run_release_unit success manager@master.example.invalid digita-plugins-free none
 if diff <(sed -n '1,3p' "$LIBRARY_CALLS") <(sed -n '1,3p' "$RU/calls") > "$OUT/planted.diff"; then
   fail 'a copy of release-unit that sends none as the string "none" sent the calls the library case recorded — the check proves nothing'
 fi
-if grep '^[<>] ' "$OUT/planted.diff" | grep -vqF '"stage":'; then
+grep '^[<>] ' "$OUT/planted.diff" > "$OUT/planted.changed" || true
+if grep -vqF '"stage":' "$OUT/planted.changed"; then
   fail "a copy of release-unit that sends none as a string differs in a line that is not the stage: $(cat "$OUT/planted.diff")"
 fi
 grep -qF '> ' "$OUT/planted.diff" && grep -qF '"stage":"none"' "$OUT/planted.diff" \
@@ -5960,7 +6190,7 @@ shape_nul_colon_is '' \
   || fail "a NUL before a colon, under the awk on PATH: it ended with $SHAPE_RC and left '$SHAPE_GOT', and the case records 1 and 'line 1 (SECRET_X), line 2 (SECRET_X)'"
 ok "a NUL before a colon is named by its line number and key alone under the awk on PATH — '$SHAPE_GOT'"
 SHAPE_HAS_BUSYBOX_AWK=0
-if command -v busybox > /dev/null 2>&1 && busybox --list 2> /dev/null | grep -qx awk; then
+if command -v busybox > /dev/null 2>&1 && busybox_applets="$(busybox --list 2> /dev/null)" && grep -qx awk <<< "$busybox_applets"; then
   SHAPE_HAS_BUSYBOX_AWK=1
   mkdir -p "$SHAPE/busybox-awk"
   ln -sf "$(command -v busybox)" "$SHAPE/busybox-awk/awk"

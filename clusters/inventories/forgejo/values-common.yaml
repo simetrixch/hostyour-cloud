@@ -10,6 +10,17 @@ forgejo:
     rootless: true
     tag: "17.0.0"
 
+  # THE CPU REQUEST OF THE GIT SERVICE EVERY PUSH, CLONE AND RELEASE GOES THROUGH. Without one the pod gets the
+  # smallest share of a saturated node, and a busy build plane starves the service its builds wait on. Its p95
+  # over seven days is about 1.6m (1524 five-minute samples of the master's Prometheus on 2026-10-20,
+  # quantile_over_time(0.95, sum(rate(container_cpu_usage_seconds_total{namespace="forgejo",container="forgejo"}[5m]))[7d:5m])),
+  # rounded up to the next 10m, the least a request here can be, as clusters/inventories/cert-manager rounds it.
+  # scripts/check.sh fails when the pod renders without one, and the budget of the build node counts it
+  # (clusters/inventories/consumer-build/values-common.yaml, ciCapacity.standingCpuRequests).
+  resources:
+    requests:
+      cpu: 10m
+
   # SQLite and the repositories share this one volume, on global.storageClass, which the chart
   # falls back to. The chart carries no database and no cache of its own.
   persistence:

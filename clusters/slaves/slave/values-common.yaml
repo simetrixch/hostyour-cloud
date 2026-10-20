@@ -51,31 +51,33 @@ slave:
   stage: ""
 
 # ---------------------------------------------------------------------------
-# The GitOps monorepo. Used by the handoff root Application (source.repoURL)
-# and the ESO-materialized repo credential Secret. The username pairs with the
-# GITOPS_REPO_READ_PAT (Contents: read — this instance syncs and never commits)
-# exactly like the bootstrap's repo credential.
+# The GitOps monorepo's address is global.platformUrl, which the handoff root Application
+# (source.repoURL) and the ESO-materialized repo credential Secret read: the platform chain
+# carries it (clusters/platform/values-common.yaml) and the master's cluster map overrides it
+# (clusters/argocd/files/slaves-appset.yaml loads both). This block holds what only GitHub needs:
+# the username that pairs with the GITOPS_REPO_READ_PAT (Contents: read — this instance syncs
+# and never commits) exactly like the bootstrap's repo credential.
+#
+# The DEPLOY REPOSITORY — this installation's own repository, holding the tenant
+# registrations (registrations/<guid>/<stage>.yaml) and the member charts — is read by the
+# repo credential ESO twin (templates/externalsecret-repo-deploy.yaml): the tenant
+# ApplicationSets live in the books branch's argocd tree
+# (clusters/argocd/files/tenants-appset.yaml, synced by the handoff root
+# Application) and read the deploy repository through this instance's repo-server, so
+# the instance needs the credential even though no template here renders
+# them. On GitHub the credential is the platform's GitHub App, read out of
+# <stage>/app/github-app; on Forgejo it is templates/externalsecret-repo-creds-forgejo.yaml.
+#
+# WHICH repository that is, is installation state and is not settable
+# here: clusters/active/<fqdn>.yaml carries it as global.deployUrl, and
+# templates/externalsecret-repo-deploy.yaml requires it — a branch naming no
+# deploy repository fails its render instead of materializing a credential for no
+# repository. There is no per-slave override to write it into: the generator
+# clusters/argocd/files/slaves-appset.yaml names no installation/values/<app>.yaml
+# for this chart, and this file is product, byte-identical everywhere.
 # ---------------------------------------------------------------------------
 repo:
-  url: https://github.com/simetrixch/hostyour-cloud.git
   username: hostyour-cloud
-  # The DEPLOY REPOSITORY — this installation's own repository, holding the tenant
-  # registrations (registrations/<guid>/<stage>.yaml) and the member charts.
-  # Read by the repo credential ESO twin
-  # (templates/externalsecret-repo-deploy.yaml): the tenant
-  # ApplicationSets live in the books branch's argocd tree
-  # (clusters/argocd/files/tenants-appset.yaml, synced by the handoff root
-  # Application) and read the deploy repository through this instance's repo-server, so
-  # the instance needs the credential even though no template here renders
-  # them. The credential is the platform's GitHub App, read out of <stage>/app/github-app.
-  #
-  # WHICH repository that is, is installation state and is not settable
-  # here: clusters/active/<fqdn>.yaml carries it as global.deployUrl, and
-  # templates/externalsecret-repo-deploy.yaml requires it — a branch naming no
-  # deploy repository fails its render instead of materializing a credential for no
-  # repository. There is no per-slave override to write it into: the generator
-  # clusters/argocd/files/slaves-appset.yaml names no installation/values/<app>.yaml
-  # for this chart, and this file is product, byte-identical everywhere.
 
 # ---------------------------------------------------------------------------
 # kube (dashboard): deliberately NOT in this chart. ONE SHARED master Headlamp

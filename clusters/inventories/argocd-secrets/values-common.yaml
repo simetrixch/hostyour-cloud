@@ -5,8 +5,10 @@
 # clusters/platform/values-common.yaml (global.vaultKvMount).
 secret-store: {}
 
-# The deploy repository credential is templates/externalsecret-repo-deploy.yaml, the twin of the
-# slave instance's; it reads global.deployUrl off the same map and holds the platform's GitHub App.
+# The deploy repository credential on GitHub is templates/externalsecret-repo-deploy.yaml, the twin of the
+# slave instance's; it reads global.deployUrl off the same map and holds the platform's GitHub App, and it
+# renders only while that URL names GitHub. On Forgejo templates/externalsecret-repo-creds-forgejo.yaml reads
+# the platform and the deploy repository by the host.
 
 # WHERE THE CLIENT SECRET STANDS. `<env>/app/argocd` holds the reconciler's client secret alone,
 # copied there by the installer from the identity provider's bootstrap entry, which stays the

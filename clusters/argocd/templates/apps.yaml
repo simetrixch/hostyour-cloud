@@ -47,26 +47,25 @@ for this template, and all the documents come from it, so that line cannot
 tell them apart.
 */ -}}
 {{- /*
-THE BLOCK BEFORE THE KEYS IN IT. This chart is the ONE chart of this repository
+THE BLOCK IS NEVER ABSENT, AND THE KEYS IN IT ARE. This chart is the ONE chart of this repository
 whose whole values chain is a single file: root-app.yaml beside this template
 and clusters/slaves/slave/templates/root-application.yaml both hand it
 $values/clusters/active/<fqdn>.yaml and the parameter `revision` and nothing
 else, so `global` reaches it from the cluster map or from nowhere. Every other chart is handed
 clusters/platform/values-common.yaml first, and that file carries the block.
-A guard written as `required "..." .Values.global.clusterName` cannot answer for
-a map with no block at all: the dereference of the missing block fails before
-`required` is ever called, and helm stops with `nil pointer evaluating
-interface {}.clusterName`, which names neither the file nor the block. So the
-block is bound once here and every key below is read out of the binding.
+The chart's own values.yaml carries global.platformUrl, so `.Values.global` exists even for a map that states
+no block, and the dereference of every key below is safe. A map with no block is refused by the first key
+read with `required`, global.clusterName, which names the block.
 */ -}}
 {{- $stage := required "argocd-apps: stage is required (clusters/active/<fqdn>.yaml) — it is the PLATFORM'S stage: platform-apps-appset.yaml, slaves-appset.yaml and projects.yaml are cut for it. The unit sets (consumers, units, tenants) carry no stage of the cluster's: they read every stage file of a registration and take the unit's stage from its path" .Values.stage }}
 {{- $role := required "argocd-apps: role is required (clusters/active/<fqdn>.yaml) — the platform app selector admits the parts this cluster carries, and a cluster admitting no part runs no platform application" .Values.role }}
-{{- $global := required "argocd-apps: the cluster map states no global: block (clusters/active/<fqdn>.yaml), and this chart is handed that one file and nothing else. Every value below stands under global: in it. A map written before the block existed carries those values flat at the top level instead, and no chart of this tree can be rendered against it" .Values.global }}
-{{- $clusterName := required "argocd-apps: global.clusterName is required (clusters/active/<fqdn>.yaml) — this cluster registers itself under that name and the unit generators select the registrations carrying it" $global.clusterName }}
+{{- $global := .Values.global }}
+{{- $clusterName := required "argocd-apps: global.clusterName is required (clusters/active/<fqdn>.yaml) — this cluster registers itself under that name and the unit generators select the registrations carrying it. A cluster map that states no global: block is refused here, and a map written before the block existed carries those values flat at the top level instead; no chart of this tree can be rendered against either" $global.clusterName }}
 {{- $fqdn := required "argocd-apps: global.domain is required (clusters/active/<fqdn>.yaml) — this cluster's own domain, which names its cluster map, the file the value chains load last" $global.domain }}
 {{- $booksFqdn := required "argocd-apps: global.booksCluster is required (clusters/active/<fqdn>.yaml) — the install branch of the cluster holding the master role. It carries this installation's registrations AND every cluster map of it, and the deploy repository's branch is named after it: a cluster carrying only the slave part has no branch of its own" $global.booksCluster }}
 {{- $revision := required "argocd-apps: revision is required — the commit of this repository the root Application synced, which it hands this chart as the Helm parameter revision ($ARGOCD_APP_REVISION in clusters/argocd/root-app.yaml, the slave's own commit in clusters/slaves/slave/templates/root-application.yaml). Every source and generator of this repository stands at it" .Values.revision }}
-{{- $deployRepo := required "argocd-apps: global.deployRepo is required (clusters/active/<fqdn>.yaml) — the deploy repository as bare owner/name, written inside a URL these files already carry" $global.deployRepo }}
+{{- $platformUrl := required "argocd-apps: global.platformUrl is required (clusters/argocd/values.yaml carries the product default, the cluster map overrides it) — the platform repository's whole clone address, which every source and generator of this tree that reads the platform repository is written with" $global.platformUrl }}
+{{- $deployUrl := required "argocd-apps: global.deployUrl is required (clusters/active/<fqdn>.yaml) — the deploy repository's whole clone address, which every source and generator of this tree that reads the deploy repository is written with" $global.deployUrl }}
 {{- $holdsBooks := required "argocd-apps: global.servicesLocal.vault is required (clusters/active/<fqdn>.yaml) — it says whether this cluster keeps the books, and the two files below exist only on the cluster that does" (dig "servicesLocal" "vault" "" $global) }}
 {{- /* THIS CLUSTER'S TAILNET ADDRESS, read by consumers-appset.yaml alone: a unit that declares an
 SMTP entry gets it as the address its chart opens the entry on. A slave's map carries it from
@@ -156,7 +155,7 @@ syncs at once — the state the steps exist to end, arrived at in silence.
 {{- end }}
 {{- range $name := $names }}
 {{- if or $holdsBooks (not (has $name $booksOnly)) }}
-{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__DEPLOY_REPO__" $deployRepo | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__CLUSTER_ROLE_WHOLE__" $roleWhole | replace "__BRANCH__" $revision | replace "__ARGOCD_NAMESPACE__" $namespace | replace "__SYNC_WAVE_LABEL__" $waveLabel | replace "__SYNC_WAVE_STEPS__" $waveStepList | replace "__STAGE_APEX_DEV__" $stageApexDev | replace "__STAGE_APEX_TEST__" $stageApexTest | replace "__STAGE_APEX_PROD__" $stageApexProd | replace "__API_HOST__" $apiHost | replace "__PREVIOUS_STAGE_APEX_DEV__" $previousStageApexDev | replace "__PREVIOUS_STAGE_APEX_TEST__" $previousStageApexTest | replace "__PREVIOUS_STAGE_APEX_PROD__" $previousStageApexProd }}
+{{- $doc := $.Files.Get (printf "files/%s" $name) | replace "__CLUSTER_NAME__" $clusterName | replace "__STAGE__" $stage | replace "__BOOKS_FQDN__" $booksFqdn | replace "__FQDN__" $fqdn | replace "__PLATFORM_URL__" $platformUrl | replace "__DEPLOY_URL__" $deployUrl | replace "__CLUSTER_ROLE_FIRST_PART__" (first $roleParts) | replace "__CLUSTER_ROLE_LAST_PART__" (last $roleParts) | replace "__CLUSTER_ROLE_WHOLE__" $roleWhole | replace "__BRANCH__" $revision | replace "__ARGOCD_NAMESPACE__" $namespace | replace "__SYNC_WAVE_LABEL__" $waveLabel | replace "__SYNC_WAVE_STEPS__" $waveStepList | replace "__STAGE_APEX_DEV__" $stageApexDev | replace "__STAGE_APEX_TEST__" $stageApexTest | replace "__STAGE_APEX_PROD__" $stageApexProd | replace "__API_HOST__" $apiHost | replace "__PREVIOUS_STAGE_APEX_DEV__" $previousStageApexDev | replace "__PREVIOUS_STAGE_APEX_TEST__" $previousStageApexTest | replace "__PREVIOUS_STAGE_APEX_PROD__" $previousStageApexProd }}
 {{- $docs = append $docs (printf "# file: %s\n%s" $name $doc) }}
 {{- end }}
 {{- end }}

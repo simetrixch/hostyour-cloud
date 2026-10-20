@@ -60,7 +60,7 @@ metadata:
 spec:
   description: Cluster foundation — External-Secrets operator, CoreDNS, the plain-http redirect to https and the cert-manager family. Privileged (CRDs, kube-system).
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
   destinations:
     - name: __CLUSTER_NAME__
       namespace: external-secrets
@@ -127,7 +127,7 @@ metadata:
 spec:
   description: Stateful data stores — MongoDB and Redis. Namespaced only; never creates cluster-scoped resources.
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
     - oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
   destinations:
     - name: __CLUSTER_NAME__
@@ -168,7 +168,7 @@ spec:
   # reader.
   description: Supporting platform services — the mail relay, DBGate, the tailnet coordinator. Namespaced only.
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
     - oci://zot.master.digitacloud.app/simetrixch/bokysan.github.io/docker-postfix
   destinations:
     - name: __CLUSTER_NAME__
@@ -202,7 +202,7 @@ metadata:
 spec:
   description: Forgejo, the platform's own Git server, on the master. Namespaced only.
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
     - oci://code.forgejo.org/forgejo-helm
   destinations:
     - name: __CLUSTER_NAME__
@@ -226,7 +226,7 @@ metadata:
 spec:
   description: Plane, the platform's own project tracker, on the master. Namespaced only.
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
   destinations:
     - name: __CLUSTER_NAME__
       namespace: plane
@@ -249,7 +249,7 @@ metadata:
 spec:
   description: Monitoring plane — kube-prometheus-stack, Loki, Tempo, Alloy, Grafana. Cluster-wide scraper.
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
     - oci://zot.master.digitacloud.app/simetrixch/prometheus-community.github.io/helm-charts
     - oci://zot.master.digitacloud.app/simetrixch/grafana.github.io/helm-charts
     - oci://zot.master.digitacloud.app/simetrixch/grafana-community.github.io/helm-charts
@@ -289,7 +289,7 @@ metadata:
 spec:
   description: Build plane — Tekton, Zot registry, image-builder, gate-runner, e2e-runner. Centralized on ONE build cluster (promote test->prod reuses the same image); off unless this cluster's role is the one their app.yaml names. Privileged (Tekton CRDs, buildah).
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
   # cicd destinations are static.
   # The single source of truth, so a NEW build-plane component's namespace is
   # added there ONCE, not by hand in three per-stage files. The set follows the
@@ -373,7 +373,7 @@ spec:
   # Kept as a comment rather than in `description`, which the API caps at 255 bytes.
   description: "Per-unit build namespaces, one per unit, created by the fan-out."
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
   destinations:
     - name: __CLUSTER_NAME__
       namespace: '*-build'
@@ -405,7 +405,7 @@ spec:
   # Kept as a comment rather than in `description`, which the API caps at 255 bytes.
   description: "The manager, in a project of its own with its onboarding RBAC."
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
   destinations:
     # The manager's own namespace: Deployment/Service/ServiceAccount, local
     # configmap-reader Role/RoleBinding, ESO ExternalSecrets + SecretStore, the
@@ -501,7 +501,7 @@ spec:
   # Kept as a comment rather than in `description`, which the API caps at 255 bytes.
   description: "Per-unit fences, one Application per registration."
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
   destinations:
     - server: https://kubernetes.default.svc
       namespace: __ARGOCD_NAMESPACE__

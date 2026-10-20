@@ -112,7 +112,7 @@ BUILD_PLANE_FQDN=
 # The repository the DEPLOYMENT PROGRAMS are read from, written as owner/name. It is the platform's
 # own and public, the same for every installation, and the row that clones the programs checkout onto this
 # machine reads it from HERE and names no credential beside it. This installation's own deploy
-# repository is not in this file: the cluster map records it as `deployRepo`, and one key for both
+# repository is not in this file: the cluster map records it as `deployUrl`, and one key for both
 # would clone whichever repository the last writer meant.
 PROGRAMS_REPO=
 

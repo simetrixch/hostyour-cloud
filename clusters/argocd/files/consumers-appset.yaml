@@ -76,7 +76,7 @@ spec:
     - missingkey=error
   generators:
     - git:
-        repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        repoURL: __PLATFORM_URL__
         revision: __BRANCH__  # the commit the root Application synced, on the books branch, where the registrations stand
         files:
           # THE THREE STAGES, ONE PATH EACH. The generator hands a path to `git ls-files`, whose
@@ -207,7 +207,7 @@ spec:
       {{- end }}
       sources:
         # 0. Values-only source — makes $values/... resolvable for the sources below.
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           ref: values
         # 1. The consumer's CHART on its delivery branch deploy/<stage> — a
@@ -308,7 +308,7 @@ spec:
         #    registration (an empty list is allowed).
         {{- if has "postgresql" .services }}
         {{- $postgresqlSize := dig "sizes" "postgresql" .size . }}
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           path: clusters/units/postgresql
           helm:
@@ -385,7 +385,7 @@ spec:
         #    every commit.
         {{- if ne .mongodb "shared" }}
         {{- $mongodbSize := dig "sizes" "mongodb" .size . }}
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           path: clusters/units/mongodb
           helm:
@@ -450,7 +450,7 @@ spec:
         #    the maxmemory policy from the registration, which states it for every own server.
         {{- if eq (dig "redis" "shared" .) "standalone" }}
         {{- $redisSize := dig "sizes" "redis" .size . }}
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           path: clusters/units/redis
           helm:
@@ -480,7 +480,7 @@ spec:
         #    `dig` for the reason source 2 gives.
         {{- if has "mariadb" .services }}
         {{- $mariadbSize := dig "sizes" "mariadb" .size . }}
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           path: clusters/units/mariadb
           helm:
@@ -501,7 +501,7 @@ spec:
                 externalSecret:
                   vaultPath: "{{ .values.stage }}/consumer/{{ .name }}/mariadb"
         {{- end }}
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           path: clusters/units/networkpolicy
           {{- with dig "smtpEntry" "" . }}
@@ -520,7 +520,7 @@ spec:
         #    The figures come from the REGISTRATION, where the Manager resolved them from its size
         #    table when it wrote the file; no $values file and no preset name, because the table lives
         #    in the Manager's database and no cluster can read it.
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           path: clusters/units/quota
           helm:
