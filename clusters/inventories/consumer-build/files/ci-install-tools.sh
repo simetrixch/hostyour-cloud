@@ -16,7 +16,7 @@ ci_download() {
   echo "$2  $3" | sha256sum -c -
 }
 ci_tools_dir=/tmp/ci-tools
-mkdir -p "${ci_tools_dir}/bin"
+mkdir -p "${ci_tools_dir}"
 printf '%s\n' "${CI_TOOLS}" > "${ci_tools_dir}/wanted"
 printf '%s\n' "${CI_TOOLS_TABLE}" > "${ci_tools_dir}/table"
 
@@ -28,7 +28,6 @@ while read -r tool version; do
   fi
 done < "${ci_tools_dir}/wanted"
 
-PATH="${ci_tools_dir}/bin:${PATH}"
 sha256_slot='<sha256>'
 while read -r tool version sha256 url; do
   grep -qxF "${tool} ${version}" "${ci_tools_dir}/wanted" || continue
@@ -56,13 +55,6 @@ while read -r tool version sha256 url; do
     dart)
       unzip -q "${archive}" -d "${ci_tools_dir}/dart"
       PATH="${ci_tools_dir}/dart/dart-sdk/bin:${PATH}"
-      ;;
-    gitleaks | traefik)
-      tar -xzf "${archive}" -C "${ci_tools_dir}/bin" "${tool}"
-      ;;
-    kubectl)
-      # The download is the program itself, not an archive.
-      install -m 0755 "${archive}" "${ci_tools_dir}/bin/kubectl"
       ;;
     emcc)
       # The SDK release emsdk installs for this version: LLVM in bin, Binaryen's programs beside it, emcc in

@@ -18,7 +18,7 @@
 # its DNS records, its branches on origin and its books branch in the deploy repository.
 # create-github-app is what makes an installation's GitHub App: it creates the
 # App in the customer's organisation through the manifest flow, installs it
-# there, and writes the three answers into the config.
+# there, and writes its answers into the config.
 # Every case runs one of them and holds what it printed to the block recorded
 # for that case, which stands in this file at the case.
 #
@@ -1329,6 +1329,7 @@ ELEVATION_PASSWORD='elevation-test'
 FORGEJO_PLATFORM_REPOSITORY='platform-team/platform'
 FORGEJO_DEPLOY_REPOSITORY='deploy-team/deploy'
 FORGEJO_ORGANISATIONS='platform-team,deploy-team'
+FORGEJO_HOST='forgejo.master.example.invalid'
 CLUSTER_ISSUER='platform-acme'
 ACME_CREDENTIALS_JSON='{"keyId":"kid-shown-nowhere","b64MacKey":"mac-shown-nowhere"}'
 CONFIG
@@ -1377,6 +1378,7 @@ ELEVATION_PASSWORD='elevation-test'
 FORGEJO_PLATFORM_REPOSITORY='$3'
 FORGEJO_DEPLOY_REPOSITORY='$4'
 FORGEJO_ORGANISATIONS='$5'
+FORGEJO_HOST='forgejo.$2'
 CONFIG
   chmod 600 "$1"
 }
@@ -1413,7 +1415,7 @@ for launcher in install-machine regenerate-install-branch; do
     esac
   done
   # PLANTED: each destination answer left empty is refused by its name.
-  for name in FORGEJO_PLATFORM_REPOSITORY FORGEJO_DEPLOY_REPOSITORY FORGEJO_ORGANISATIONS; do
+  for name in FORGEJO_PLATFORM_REPOSITORY FORGEJO_DEPLOY_REPOSITORY FORGEJO_ORGANISATIONS FORGEJO_HOST; do
     forgejo_destinations_config "$config" "${!fqdn_of}" platform-team/platform deploy-team/deploy platform-team,deploy-team
     sed -i "s/^$name='.*'/$name=''/" "$config"
     rm -f "$ACMESSH/called"
@@ -1549,6 +1551,7 @@ ELEVATION_PASSWORD='elevation-test'
 FORGEJO_PLATFORM_REPOSITORY='platform-team/platform'
 FORGEJO_DEPLOY_REPOSITORY='deploy-team/deploy'
 FORGEJO_ORGANISATIONS='platform-team,deploy-team'
+FORGEJO_HOST='forgejo.$1'
 CONFIG
   chmod 600 "$file"
   printf '%s\n' "$file"
@@ -2120,6 +2123,17 @@ case "$method $path" in
       unauthorised) status=401; body='{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest","status":"401"}' ;;
       *) status=200; body="{\"id\":815,\"account\":{\"login\":\"$org\",\"id\":99,\"node_id\":\"O_99\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/99\",\"html_url\":\"https://github.com/$org\",\"type\":\"Organization\",\"site_admin\":false},\"repository_selection\":\"$installed\",\"access_tokens_url\":\"https://api.github.com/app/installations/815/access_tokens\",\"repositories_url\":\"https://api.github.com/installation/repositories\",\"html_url\":\"https://github.com/organizations/$org/settings/installations/815\",\"app_id\":4711,\"app_slug\":\"acme-platform-manager\",\"target_id\":99,\"target_type\":\"Organization\",\"permissions\":{$(cat "$state/permissions")},\"events\":[],\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\",\"single_file_name\":null,\"has_multiple_single_files\":false,\"single_file_paths\":[],\"suspended_by\":null,\"suspended_at\":null}" ;;
     esac ;;
+  'GET /app/installations/'*)
+    log "GET $path jwt=$verdict"
+    installed="$(cat "$state/installation")"
+    case "$verdict" in verified*) ;; *) installed=unauthorised ;; esac
+    account='"account":{"login":"acme","id":99,"node_id":"O_99","type":"Organization","site_admin":false},'
+    [ -f "$state/no-account" ] && account=''
+    case "$installed" in
+      absent|absent-then-all) status=404; body='{"message":"Not Found","documentation_url":"https://docs.github.com/rest/apps/apps#get-an-installation-for-the-authenticated-app","status":"404"}' ;;
+      unauthorised) status=401; body='{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest","status":"401"}' ;;
+      *) status=200; body="{\"id\":815,$account\"repository_selection\":\"$installed\",\"app_id\":4711,\"app_slug\":\"acme-platform-manager\",\"target_id\":99,\"target_type\":\"Organization\",\"events\":[]}" ;;
+    esac ;;
   *) log "$method $path"; status=404; body='{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}' ;;
 esac
 printf '%s' "$body"
@@ -2166,6 +2180,7 @@ seed_config() { # a directory -> config.apps6.env there, owner-only, with the th
     echo "DEPLOY_REPO='acme/deploy'"
     echo "GITHUB_APP_ID=''"
     echo "GITHUB_APP_INSTALLATION_ID=''"
+    echo "GITHUB_APP_OWNER=''"
   } > "$1/config.apps6.env"
   chmod 600 "$1/config.apps6.env"
   require_owner_only "$1/config.apps6.env" || fail "the fixture config under $1 could not be made owner-only: it $REACH"
@@ -2182,6 +2197,7 @@ nothing_written() { # what was being checked -> the config stands as seeded and 
   [ "$(config_line GITHUB_APP_ID)" = '' ] || fail "$1 — GITHUB_APP_ID was written"
   [ "$(config_line GITHUB_APP_INSTALLATION_ID)" = '' ] || fail "$1 — GITHUB_APP_INSTALLATION_ID was written"
   [ "$(config_line GITHUB_APP_PRIVATE_KEY)" = '' ] || fail "$1 — GITHUB_APP_PRIVATE_KEY was written"
+  [ "$(config_line GITHUB_APP_OWNER)" = '' ] || fail "$1 — GITHUB_APP_OWNER was written"
 }
 page_holds() { # what was being checked -> the act served a page carrying the manifest asked for
   local page="$GHAPP/state-a/page.html"
@@ -2218,13 +2234,13 @@ create-github-app: there is no config at <WORK>/there-is-no-config.env. It is th
 RECORDED
 
 FULLCFG="$GHAPP/config.full.env"
-printf "GITHUB_APP_ID='1'\nGITHUB_APP_INSTALLATION_ID='2'\nGITHUB_APP_PRIVATE_KEY='k'\nDEPLOY_REPO='acme/deploy'\nUNIT_APEX='example.invalid'\n" > "$FULLCFG"
+printf "GITHUB_APP_ID='1'\nGITHUB_APP_INSTALLATION_ID='2'\nGITHUB_APP_PRIVATE_KEY='k'\nGITHUB_APP_OWNER='acme'\nDEPLOY_REPO='acme/deploy'\nUNIT_APEX='example.invalid'\n" > "$FULLCFG"
 run_app_bash "$FULLCFG"
-must "create-github-app: $FULLCFG already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY. Nothing has been changed" 'a config carrying the three answers is refused by name'
-[ "$A_CODE" = '65' ] || fail "a config carrying the three answers must end with 65, got $A_CODE"
-expect 'a config carrying the three answers' 65 <<'RECORDED'
+must "create-github-app: $FULLCFG already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER. Nothing has been changed" 'a config carrying the four answers is refused by name'
+[ "$A_CODE" = '65' ] || fail "a config carrying the four answers must end with 65, got $A_CODE"
+expect 'a config carrying the four answers' 65 <<'RECORDED'
 ~~~ standard error ~~~
-create-github-app: <WORK>/github-app/config.full.env already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY. Nothing has been changed
+create-github-app: <WORK>/github-app/config.full.env already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER. Nothing has been changed
 RECORDED
 
 PARTCFG="$GHAPP/config.part.env"
@@ -2306,8 +2322,8 @@ must 'create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into c
 must 'create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install' 'the person is told the second click'
 must 'create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes' 'the poll is announced'
 must 'create-github-app: installed in acme on all repositories, installation 815: https://github.com/organizations/acme/settings/installations/815' 'the installation is named with its page'
-must 'create-github-app: GITHUB_APP_INSTALLATION_ID written into config.apps6.env in place' 'the installation id is written'
-must 'create-github-app: config.apps6.env carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY, and nobody but the owner can read it. The App: https://github.com/apps/acme-platform-manager. Its installation: https://github.com/organizations/acme/settings/installations/815' 'the three keys are named, never a value'
+must 'create-github-app: GITHUB_APP_INSTALLATION_ID and GITHUB_APP_OWNER (acme) written into config.apps6.env in place' 'the installation id and its owner are written'
+must 'create-github-app: config.apps6.env carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER, and nobody but the owner can read it. The App: https://github.com/apps/acme-platform-manager. Its installation: https://github.com/organizations/acme/settings/installations/815' 'the four keys are named, never a value'
 must_not 'BEGIN' 'no line of the key is printed'
 [ "$A_CODE" = '0' ] || fail "the act must end with 0, got $A_CODE"
 expect 'the act, both clicks in one run' 0 <<'RECORDED'
@@ -2320,8 +2336,8 @@ create-github-app: GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY written into config.
 create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install
 create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes
 create-github-app: installed in acme on all repositories, installation 815: https://github.com/organizations/acme/settings/installations/815
-create-github-app: GITHUB_APP_INSTALLATION_ID written into config.apps6.env in place
-create-github-app: config.apps6.env carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY, and nobody but the owner can read it. The App: https://github.com/apps/acme-platform-manager. Its installation: https://github.com/organizations/acme/settings/installations/815
+create-github-app: GITHUB_APP_INSTALLATION_ID and GITHUB_APP_OWNER (acme) written into config.apps6.env in place
+create-github-app: config.apps6.env carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER, and nobody but the owner can read it. The App: https://github.com/apps/acme-platform-manager. Its installation: https://github.com/organizations/acme/settings/installations/815
 ~~~ standard error ~~~
 RECORDED
 page_holds 'the act'
@@ -2332,9 +2348,10 @@ GET /orgs/acme/installation jwt=verified iss=4711" ] || fail "the calls are not 
 https://github.com/apps/acme-platform-manager/installations/new" ] || fail "the browser was not opened on the listener and then on the installation page: $(tr '\n' ' ' < "$state/opened")"
 [ "$(config_line GITHUB_APP_ID)" = '4711' ] || fail "the config does not carry the App id"
 [ "$(config_line GITHUB_APP_INSTALLATION_ID)" = '815' ] || fail "the config does not carry the installation id"
+[ "$(config_line GITHUB_APP_OWNER)" = 'acme' ] || fail "the config does not carry the account the installation belongs to"
 [ "$(config_line GITHUB_APP_PRIVATE_KEY)" = "$(cat "$GHAPP/pem.json")" ] || fail "the config does not carry the key as one line with \\n for each line break"
 config_line GITHUB_APP_PRIVATE_KEY | perl -pe 's/\\n/\n/g' | openssl rsa -check -noout >/dev/null 2>&1 || fail "the key in the config, its line breaks turned back, is not a key openssl reads"
-[ "$(grep -c . "$GHAPP/a/config.apps6.env")" = '6' ] || fail "the config gained or lost a line"
+[ "$(grep -c . "$GHAPP/a/config.apps6.env")" = '7' ] || fail "the config gained or lost a line"
 grep -q "^FQDN='apps6.example.invalid'\$" "$GHAPP/a/config.apps6.env" || fail "the rewrite disturbed a line of the config"
 [ "$(sed -n '2p' "$GHAPP/a/config.apps6.env" | cut -c1-24)" = "GITHUB_APP_PRIVATE_KEY='" ] || fail "the key was not written on the line the template declares it on"
 require_owner_only "$GHAPP/a/config.apps6.env" || fail "the rewrite took the access list off the config: it $REACH"
@@ -2342,11 +2359,11 @@ ok 'the act: the page, the redirect, the conversion, the two writes in place on 
 
 # ── a second run on what the first wrote refuses ────────────────────────────
 run_app_bash config.apps6.env
-must 'create-github-app: config.apps6.env already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY. Nothing has been changed' 'a second run on a config the first filled is refused'
+must 'create-github-app: config.apps6.env already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER. Nothing has been changed' 'a second run on a config the first filled is refused'
 [ "$A_CODE" = '65' ] || fail "a second run must refuse with 65, got $A_CODE"
 expect 'a second run on what the first wrote' 65 <<'RECORDED'
 ~~~ standard error ~~~
-create-github-app: config.apps6.env already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY. Nothing has been changed
+create-github-app: config.apps6.env already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER. Nothing has been changed
 RECORDED
 
 # ── an installation on selected repositories refuses, and the next run fills what is missing ─
@@ -2371,6 +2388,7 @@ RECORDED
 [ "$(config_line GITHUB_APP_ID)" = '4711' ] || fail "the config does not carry the App id after the refusal"
 [ "$(config_line GITHUB_APP_PRIVATE_KEY)" = "$(cat "$GHAPP/pem.json")" ] || fail "the config does not carry the key after the refusal"
 [ "$(config_line GITHUB_APP_INSTALLATION_ID)" = '' ] || fail "the config carries an installation id the refusal should not have written"
+[ "$(config_line GITHUB_APP_OWNER)" = '' ] || fail "the config carries an owner the refusal should not have written"
 # THE NEXT RUN finds the App in the config, asks GitHub for it with the key,
 # and installs — polling once through a 404 before the installation appears.
 seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" absent-then-all
@@ -2378,7 +2396,7 @@ run_app_bash config.apps6.env
 must 'create-github-app: config.apps6.env carries GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY and no GITHUB_APP_INSTALLATION_ID, so the App stands and this run installs it' 'a config carrying the App and no installation skips the creation'
 must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711)' 'the App is asked of GitHub with the key and named'
 must 'create-github-app: installed in acme on all repositories, installation 815: https://github.com/organizations/acme/settings/installations/815' 'the installation is found'
-must 'create-github-app: GITHUB_APP_INSTALLATION_ID written into config.apps6.env in place' 'and its id written'
+must 'create-github-app: GITHUB_APP_INSTALLATION_ID and GITHUB_APP_OWNER (acme) written into config.apps6.env in place' 'and its id and owner written'
 must_not 'the manifest page' 'no page is served on a run that only installs'
 [ "$A_CODE" = '0' ] || fail "the installing run must end with 0, got $A_CODE"
 expect 'the run that only installs' 0 <<'RECORDED'
@@ -2387,8 +2405,8 @@ create-github-app: the App stands at https://github.com/apps/acme-platform-manag
 create-github-app: opened https://github.com/apps/acme-platform-manager/installations/new in the browser. In the browser: choose All repositories and click Install
 create-github-app: asking GitHub every 5 seconds whether the App is installed in acme, for up to 10 minutes
 create-github-app: installed in acme on all repositories, installation 815: https://github.com/organizations/acme/settings/installations/815
-create-github-app: GITHUB_APP_INSTALLATION_ID written into config.apps6.env in place
-create-github-app: config.apps6.env carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY, and nobody but the owner can read it. The App: https://github.com/apps/acme-platform-manager. Its installation: https://github.com/organizations/acme/settings/installations/815
+create-github-app: GITHUB_APP_INSTALLATION_ID and GITHUB_APP_OWNER (acme) written into config.apps6.env in place
+create-github-app: config.apps6.env carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER, and nobody but the owner can read it. The App: https://github.com/apps/acme-platform-manager. Its installation: https://github.com/organizations/acme/settings/installations/815
 ~~~ standard error ~~~
 RECORDED
 state="$GHAPP/state-a"
@@ -2413,6 +2431,38 @@ A_CODE=0
   && bash "$PLANTED_G" config.apps6.env ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
 grep -q 'this run will install it' "$OUT/a.out" || fail 'the planted copy printed no installing line — the probe was aimed at a line the fixture does not reach'
 caught create-github-app.sh 'this run will install it'
+
+# ── a config that predates the owner has it recorded, and a failed lookup writes nothing ─
+blank_owner() { # the config the installing run filled, with its owner taken out again
+  sed -i.bak "s/^GITHUB_APP_OWNER=.*/GITHUB_APP_OWNER=''/" "$GHAPP/a/config.apps6.env" && rm -f "$GHAPP/a/config.apps6.env.bak"
+  chmod 600 "$GHAPP/a/config.apps6.env"
+}
+blank_owner
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" absent
+run_app_bash config.apps6.env
+must 'create-github-app: GitHub does not answer the installation 815 for the App in config.apps6.env (HTTP 404: Not Found). Nothing has been changed' 'an installation GitHub does not know is refused, named, and nothing is written'
+[ "$A_CODE" = '69' ] || fail "an unknown installation must refuse with 69, got $A_CODE"
+[ "$(config_line GITHUB_APP_OWNER)" = '' ] || fail 'an unknown installation was refused and the owner was still written'
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
+touch "$GHAPP/state-a/no-account"
+run_app_bash config.apps6.env
+must "create-github-app: GitHub's answer for the installation 815 carries no account login. Nothing has been changed" 'an installation answered without its account is refused, and nothing is written'
+[ "$A_CODE" = '69' ] || fail "an installation without an account must refuse with 69, got $A_CODE"
+[ "$(config_line GITHUB_APP_OWNER)" = '' ] || fail 'an installation without an account was refused and the owner was still written'
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
+run_app_bash config.apps6.env
+[ "$A_CODE" = '0' ] || fail "recording the owner must end with 0, got $A_CODE"
+expect 'the run that only records the owner' 0 <<'RECORDED'
+create-github-app: installation 815 belongs to acme; GITHUB_APP_OWNER written into config.apps6.env in place
+~~~ standard error ~~~
+RECORDED
+[ "$(cat "$GHAPP/state-a/log")" = 'GET /app/installations/815 jwt=verified iss=4711' ] || fail "the calls are not the one installation question with a verified JWT: $(tr '\n' ' ' < "$GHAPP/state-a/log")"
+[ ! -f "$GHAPP/state-a/opened" ] || fail 'the run that only records the owner opened a browser'
+[ "$(config_line GITHUB_APP_OWNER)" = 'acme' ] || fail "the config does not carry the account the installation belongs to"
+[ "$(config_line GITHUB_APP_INSTALLATION_ID)" = '815' ] && [ "$(config_line GITHUB_APP_ID)" = '4711' ] || fail 'recording the owner disturbed the id or the installation'
+[ "$(grep -c . "$GHAPP/a/config.apps6.env")" = '7' ] || fail "the config gained or lost a line"
+require_owner_only "$GHAPP/a/config.apps6.env" || fail "recording the owner took the access list off the config: it $REACH"
+ok 'a config of the three answers records the account the installation belongs to as the owner, with one signed question and no browser; an unknown installation and one without an account are refused with nothing written'
 
 # ===========================================================================
 # SEVEN — master-backup and master-restore, up to the session they would open
@@ -2847,30 +2897,140 @@ STANDIN_TAR
 cat > "$STANDIN/microk8s" <<'STANDIN_MICROK8S'
 #!/usr/bin/env bash
 # microk8s kubectl as the drivers call it. apply -f - (the placement script) appends what it is handed to
-# kubectl.log. Every other call is appended as it was made to kubectl-calls.log, and answers as the backup
-# needs: a node list, one replica for every workload, no pods, a rollout that is done. The first scale call,
-# while block-first-scale stands beside it, claims the folder blocked and then waits until the file release
-# stands (or 60 seconds pass), which is how a case holds one driver inside its store loop. It lets go of
-# descriptor 9, the backup's lock: a real kubectl call ends in seconds, and this one waits on purpose, so
-# it must not stand in for the holder of the lock when the case kills the driver that started it.
+# kubectl.log. Every other call is appended as it was made to kubectl-calls.log, and answers from the state of a
+# cluster that stands in cluster/ beside it: the replicas and the ready count of each workload (one replica, all
+# ready, until a scale says otherwise), the suspend of the CronJob release-queue, and the Jobs and pipeline runs
+# of the release queue. A scale sets the ready count to the new replicas, and a patch of the CronJob sets its
+# suspend; each writes the world it was made in (the Manager's replicas, the queue's suspend, whether the planted run
+# and the planted Job still work, the stores that were stopped and are not back and ready) to world.log first, and
+# the value it sets under the key to=, which is the new replicas of a scale and the new suspend of a patch.
+# A call it does not know ends 2, and a rollout status of vault/vault is refused as kubectl refuses it for a
+# StatefulSet that is not a RollingUpdate. The knobs are the files knob-* of cluster/: run-running (a release
+# run that reads running for the driver's first two looks at the release runs, then True), run-forever (one that
+# never ends), late-job (a Job of the queue that is not listed at the first look at the Jobs, is unfinished at the
+# second and third, finished from the fourth, and that .status.active names at its third and fourth look),
+# no-cronjob, not-ready (workload names, one a line, that do not read ready after a scale up), scale-fails
+# (workload names whose scale up ends 1), stop-fails (workload names whose scale to 0 ends 1 and changes nothing)
+# and stop-lost (workload names whose scale to 0 takes effect and ends 1, as an answer lost on the way back does). The first scale call, while block-first-scale stands beside it, claims
+# the folder blocked and then waits until the file release stands (or 60 seconds pass), which is how a case holds
+# one driver inside its store loop. It lets go of descriptor 9, the backup's lock: a real kubectl call ends in
+# seconds, and this one waits on purpose, so it must not stand in for the holder of the lock when the case kills
+# the driver that started it.
 exec 9>&-
 here="$(dirname "$0")"
+state="$here/cluster"
 [ "$1" = kubectl ] || { echo 'microk8s stand-in: not called as microk8s kubectl' >&2; exit 2; }
 shift
 if [ "$*" = 'apply -f -' ]; then cat >> "$here/kubectl.log"; exit 0; fi
 printf 'kubectl %s\n' "$*" >> "$here/kubectl-calls.log"
-[ "$1" != -n ] || shift 2
+mkdir -p "$state"
+namespace=''
+if [ "$1" = -n ]; then namespace="$2"; shift 2; fi
+value_of() { if [ -f "$state/$1" ]; then cat "$state/$1"; else echo "$2"; fi; } # a file of cluster/, or its default
+knob() { [ -e "$state/knob-$1" ]; }
+listed() { [ -f "$state/knob-$1" ] && grep -qxF "$2" "$state/knob-$1"; }
+look() { local n; n=$(( $(value_of "looks-$1" 0) + 1 )); echo "$n" > "$state/looks-$1"; echo "$n"; } # counts a look and answers its number
+world() {
+  local run=none job=none others='' file name replicas ready
+  if knob run-running; then if [ "$(value_of looks-runs 0)" -lt 3 ]; then run=running; else run=ended; fi; fi
+  if knob run-forever; then run=running; fi
+  if knob late-job; then if [ "$(value_of looks-jobs 0)" -lt 4 ]; then job=unfinished; else job=ended; fi; fi
+  for file in "$state"/*.replicas; do
+    [ -e "$file" ] || continue
+    name="$(basename "$file" .replicas)"
+    case "$name" in manager--*) continue ;; esac
+    replicas="$(cat "$file")"; ready="$(value_of "$name.ready" "$replicas")"
+    if [ "$replicas" -lt 1 ] || [ "$ready" -lt 1 ]; then others="$others${others:+,}$name"; fi
+  done
+  printf 'manager=%s suspend=%s run=%s job=%s others=%s' "$(value_of manager--manager.replicas 1)" "$(value_of suspend false)" "$run" "$job" "${others:-none}"
+}
+jsonpath=''; label=''; patch=''; args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) jsonpath="${2#jsonpath=}"; shift 2 ;;
+    -l) label="$2"; shift 2 ;;
+    -p) patch="$2"; shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]}"
 case "$1" in
   get)
     case "$2" in
       nodes|pods) exit 0 ;;
-      *) echo 1; exit 0 ;;
+      pvc) echo 1; exit 0 ;;
+      cronjob/release-queue)
+        if knob no-cronjob; then echo 'Error from server (NotFound): cronjobs.batch "release-queue" not found' >&2; exit 1; fi
+        case "$jsonpath" in
+          *spec.suspend*) value_of suspend false ;;
+          *status.active*)
+            looks="$(look active)"
+            if knob late-job && { [ "$looks" = 3 ] || [ "$looks" = 4 ]; }; then echo release-queue-late; fi ;;
+          *) echo "microk8s stand-in: a read of the CronJob the backup does not make: $jsonpath" >&2; exit 2 ;;
+        esac
+        exit 0 ;;
+      jobs)
+        looks="$(look jobs)"
+        echo 'release-queue-29874554|CronJob/release-queue |SuccessCriteriaMet Complete '
+        echo 'unrelated-job|CronJob/unrelated |'
+        if knob late-job; then
+          if [ "$looks" -ge 4 ]; then echo 'release-queue-late|CronJob/release-queue |Complete '
+          elif [ "$looks" -ge 2 ]; then echo 'release-queue-late|CronJob/release-queue |'; fi
+        fi
+        exit 0 ;;
+      pipelineruns)
+        case "$label" in
+          image-builder.io/consumer)
+            looks="$(look runs)"
+            echo 'hostyour-manager-build/hostyour-manager-release-done||True'
+            if knob run-running; then
+              if [ "$looks" -ge 3 ]; then echo 'hostyour-manager-build/hostyour-manager-release-live||True'
+              else echo 'hostyour-manager-build/hostyour-manager-release-live||Unknown'; fi
+            fi
+            if knob run-forever; then echo 'hostyour-manager-build/hostyour-manager-release-stuck||Unknown'; fi ;;
+          image-builder.io/publish)
+            echo 'hostyour-manager-build/hostyour-manager-publish-waiting|PipelineRunPending|'
+            echo 'hostyour-manager-build/hostyour-manager-publish-done||True' ;;
+          *) echo "microk8s stand-in: pipeline runs by a label the backup does not read: $label" >&2; exit 2 ;;
+        esac
+        exit 0 ;;
+      */*)
+        workload="${2#*/}"
+        case "$jsonpath" in
+          *spec.replicas*) value_of "$namespace--$workload.replicas" 1 ;;
+          *status.readyReplicas*)
+            ready="$(value_of "$namespace--$workload.ready" "$(value_of "$namespace--$workload.replicas" 1)")"
+            [ "$ready" = 0 ] || echo "$ready" ;;
+          *) echo "microk8s stand-in: a read of a workload the backup does not make: $jsonpath" >&2; exit 2 ;;
+        esac
+        exit 0 ;;
+      *) echo "microk8s stand-in: a get the backup does not make: $2" >&2; exit 2 ;;
     esac ;;
-  rollout) exit 0 ;;
+  rollout)
+    if [ "$namespace/${3#*/}" = vault/vault ]; then echo 'error: rollout status is only available for RollingUpdate strategy type' >&2; exit 1; fi
+    exit 0 ;;
   scale)
+    workload="${2#*/}"; wanted="${3#--replicas=}"
+    if [ "$wanted" -gt 0 ] && listed scale-fails "$namespace/$workload"; then echo 'microk8s stand-in: the server did not answer' >&2; exit 1; fi
+    if [ "$wanted" = 0 ] && listed stop-fails "$namespace/$workload"; then echo 'microk8s stand-in: the server did not answer' >&2; exit 1; fi
     if [ -e "$here/block-first-scale" ] && mkdir "$here/blocked" 2> /dev/null; then
       for _ in $(seq 1 600); do [ -e "$here/release" ] && break; sleep 0.1; done
     fi
+    printf 'scale target=%s/%s to=%s %s\n' "$namespace" "$workload" "$wanted" "$(world)" >> "$state/world.log"
+    echo "$wanted" > "$state/$namespace--$workload.replicas"
+    if [ "$wanted" -gt 0 ] && listed not-ready "$namespace/$workload"; then echo 0 > "$state/$namespace--$workload.ready"; else echo "$wanted" > "$state/$namespace--$workload.ready"; fi
+    if [ "$wanted" = 0 ] && listed stop-lost "$namespace/$workload"; then echo 'microk8s stand-in: the answer was lost' >&2; exit 1; fi
+    exit 0 ;;
+  patch)
+    [ "$namespace" = image-builder ] && [ "$2" = cronjob/release-queue ] || { echo "microk8s stand-in: a patch the backup does not make: $namespace $2" >&2; exit 2; }
+    case "$patch" in
+      '{"spec":{"suspend":true}}') suspend=true ;;
+      '{"spec":{"suspend":false}}') suspend=false ;;
+      *) echo "microk8s stand-in: a patch of the CronJob the backup does not make: $patch" >&2; exit 2 ;;
+    esac
+    printf 'patch to=%s %s\n' "$suspend" "$(world)" >> "$state/world.log"
+    echo "$suspend" > "$state/suspend"
+    echo 'cronjob.batch/release-queue patched'
     exit 0 ;;
   *) echo "microk8s stand-in: a kubectl call the backup does not make: $1" >&2; exit 2 ;;
 esac
@@ -3447,21 +3607,25 @@ while IFS='|' read -r ns pvc _ _; do
 done < <(STAGE=prod; eval "$BACKUP_STORES"; printf '%s\n' "${STORES[@]}")
 LOCK_STORES="$(ls "$LOCK_DIR/storage" | wc -l | tr -d ' ')"
 lock_reset() { # <free|block|block-upload> — the stand-ins forget the last case; block holds the first scale call of the next one, block-upload its first copy to the box
-  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$LOCK_DIR/master-backup.lock"
+  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$LOCK_DIR/master-backup.lock"
   : > "$STANDIN/kubectl-calls.log"
   case "$1" in
     block) : > "$STANDIN/block-first-scale" ;;
     block-upload) : > "$STANDIN/block-first-upload" ;;
   esac
 }
-lock_driver() { # <run> <the driver's text> — the run's folder, with the driver and its paths moved into the sandbox, and a config beside it
-  local dir="$LOCK_DIR/$1" literal
+lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder, with the driver and its paths moved into the sandbox, the waits of its hold shortened, NAME=value moving a named value of the driver on from there, and a config beside it
+  local dir="$LOCK_DIR/$1" text="$2" literal pair moved=()
+  shift 2
+  for pair in QUEUE_POLL_SECONDS=0.05 STORE_POLL_SECONDS=0.05 QUEUE_WAIT_SECONDS=20 STORE_WAIT_SECONDS=5 "$@"; do
+    moved+=(-e "s#^readonly ${pair%%=*}=.*#readonly ${pair%%=*}=${pair#*=}#")
+  done
   rm -rf "$dir"; mkdir -p "$dir"
   for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
-    printf '%s\n' "$2" | grep -qF -- "$literal" || fail "the backup driver names no $literal — the sandbox of the lock cases proves nothing"
+    printf '%s\n' "$text" | grep -qF -- "$literal" || fail "the backup driver names no $literal — the sandbox of the lock cases proves nothing"
   done
-  printf '%s\n' "$2" | sed -e "s#/var/lib/master-backup#$dir/backups#g" -e "s#/var/snap/microk8s/common/default-storage#$LOCK_DIR/storage#g" \
-    -e "s#/srv/hostyour-cloud#$LOCK_DIR/srv#g" -e "s#/run/lock/master-backup.lock#$LOCK_DIR/master-backup.lock#g" > "$dir/driver.sh"
+  printf '%s\n' "$text" | sed -e "s#/var/lib/master-backup#$dir/backups#g" -e "s#/var/snap/microk8s/common/default-storage#$LOCK_DIR/storage#g" \
+    -e "s#/srv/hostyour-cloud#$LOCK_DIR/srv#g" -e "s#/run/lock/master-backup.lock#$LOCK_DIR/master-backup.lock#g" "${moved[@]}" > "$dir/driver.sh"
   for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
     ! grep -qF -- "$literal" "$dir/driver.sh" || fail "the sandboxed backup driver still names $literal — the lock cases would reach this machine"
   done
@@ -3492,8 +3656,9 @@ lock_let_go() { # lets the held run go on, waits for it to end; its code stands 
   LOCK_CODE=0; wait "$LOCK_PID" || LOCK_CODE=$?
 }
 scale_calls() { grep -c ' scale ' "$STANDIN/kubectl-calls.log" || true; }
+patch_calls() { grep -c ' patch ' "$STANDIN/kubectl-calls.log" || true; }
 lock_refuses() { # <the driver's text> [<scale|upload>] — holds a first run in its store loop, or in the upload of its archives, and starts a second: ends 0 when the second ended 75, named the first run's id and start, scaled nothing and made no folder, and the first ran to its end once let go; what is wrong stands in $OUT/verdict
-  local text="$1" held="${2:-scale}" first_id started second scaled scaled_before
+  local text="$1" held="${2:-scale}" first_id started second scaled scaled_before patched patched_before
   : > "$OUT/verdict"
   if [ "$held" = upload ]; then lock_reset block-upload; else lock_reset block; fi
   lock_driver first "$text"; lock_driver second "$text"
@@ -3501,14 +3666,15 @@ lock_refuses() { # <the driver's text> [<scale|upload>] — holds a first run in
   first_id="$(ls "$LOCK_DIR/first/backups" 2> /dev/null | head -n 1 || true)"
   started="${first_id:0:4}-${first_id:4:2}-${first_id:6:2} ${first_id:9:2}:${first_id:11:2}:${first_id:13:2} UTC"
   [ -n "$first_id" ] || echo 'the first driver made no folder, so there is no run to name' >> "$OUT/verdict"
-  scaled_before="$(scale_calls)"
+  scaled_before="$(scale_calls)"; patched_before="$(patch_calls)"
   lock_run second; second="$LOCK_CODE"
-  scaled=$(( $(scale_calls) - scaled_before ))
+  scaled=$(( $(scale_calls) - scaled_before )); patched=$(( $(patch_calls) - patched_before ))
   lock_let_go
   [ "$second" = 75 ] || echo "the second driver ended with $second, not 75" >> "$OUT/verdict"
   { [ -n "$first_id" ] && grep -qF -- "$first_id" "$LOCK_DIR/second/err" && grep -qF -- "$started" "$LOCK_DIR/second/err"; } \
     || echo "the refusal did not name the running run $first_id, started $started: $(tail -n 1 "$LOCK_DIR/second/err")" >> "$OUT/verdict"
   [ "$scaled" = 0 ] || echo "the second driver scaled $scaled time(s) while the first held the stores" >> "$OUT/verdict"
+  [ "$patched" = 0 ] || echo "the second driver patched $patched time(s) while the first held the queue" >> "$OUT/verdict"
   [ ! -e "$LOCK_DIR/second/backups" ] || echo 'the refused driver made a folder before it was refused' >> "$OUT/verdict"
   [ "$LOCK_CODE" = 0 ] || echo "the first driver ended with $LOCK_CODE once let go" >> "$OUT/verdict"
   [ "$(tail -n 1 "$LOCK_DIR/first/out")" = "BACKUP $first_id" ] || echo 'the first driver did not end with BACKUP and its id once let go' >> "$OUT/verdict"
@@ -3610,7 +3776,7 @@ plant "$LOCK_TEXT" ' && [ "/proc/$HOLDER_PID/fd/9" -ef "$LOCK_FILE" ]' ''; TRUST
 plant "$LOCK_TEXT" 'step "the host'"'"'s own file"' $'exec 9>&-\nstep "the host\'s own file"'; LETS_GO_EARLY="$PLANTED_TEXT"
 plant "$LOCK_TEXT" '[ "/proc/$HOLDER_PID/fd/9" -ef "$LOCK_FILE" ]' 'false'; NEVER_TRUSTS_RECORD="$PLANTED_TEXT"
 ! lock_refuses "$NO_LOCK" || fail 'the planted driver without the lock was not caught — the probe proves nothing'
-caught_for 'driver without the lock' 'the second driver scaled' 'the second driver ended with 0' 'did not name the running run' 'made a folder'
+caught_for 'driver without the lock' 'the second driver scaled' 'the second driver patched' 'the second driver ended with 0' 'did not name the running run' 'made a folder'
 ! lock_refuses "$LATE_LOCK" || fail 'the planted driver that takes the lock after it made its folder was not caught — the probe proves nothing'
 caught_for 'driver that takes the lock after it made its folder' 'made a folder'
 ! lock_refuses "$TRUNCATING_LOCK" || fail 'the planted driver that opens the lock file for writing was not caught — the probe proves nothing'
@@ -3623,10 +3789,256 @@ for earlier in ended killed; do
 done
 lock_refuses "$LETS_GO_EARLY" || fail 'the planted driver that lets go of the lock after its store loop was refused while the first held the stores, so the case that holds the upload adds nothing'
 ! lock_refuses "$LETS_GO_EARLY" upload || fail 'the planted driver that lets go of the lock after its store loop was not caught while the first uploaded — the probe proves nothing'
-caught_for 'driver that lets go of the lock after its store loop' 'the second driver scaled' 'the second driver ended with 0' 'did not name the running run' 'made a folder'
+caught_for 'driver that lets go of the lock after its store loop' 'the second driver scaled' 'the second driver patched' 'the second driver ended with 0' 'did not name the running run' 'made a folder'
 ! lock_refuses "$NEVER_TRUSTS_RECORD" || fail 'the planted driver that never trusts the record was not caught — the probe proves nothing'
 caught_for 'driver that never trusts the record' 'did not name the running run'
 ok 'the planted drivers are caught: no lock, a lock taken after the folder, a lock file opened for writing, a lock that is the presence of a file, a lock let go of after the store loop, a record trusted without the process it names, a record never trusted'
+
+# ── the Manager's runs are held while the stores are taken ──────────────────────────────────────────
+# A run of the Manager that is in flight while a store it reads is stopped fails, and a failed run keeps its locks. So the
+# driver suspends the release queue, waits until no job of the queue and no release or publish run runs, stops the Manager,
+# takes the stores, and starts the Manager and lets the queue go only once every store it stopped reads ready. The cases run
+# the whole driver against the microk8s stand-in, which keeps the cluster's state, and read the world each scale and patch
+# was made in from its world.log: a store other than the Manager scaled to 0 while the Manager stands above 0, while the
+# queue is not held, while the planted run still reads running or while the planted Job of the queue is unfinished; the
+# Manager started or the queue let go while a store this run stopped is not back and ready; and a run that ends with the
+# Manager at 0 or the queue held although every store is back and ready, are each red.
+for named in QUEUE_POLL_SECONDS QUEUE_WAIT_SECONDS STORE_POLL_SECONDS STORE_WAIT_SECONDS; do
+  grep -q "^readonly $named=[0-9]" "$HERE/master-backup-driver.sh" || fail "the backup driver names no $named on a line of its own — the hold cases cannot move its wait into the sandbox"
+done
+hold_run() { # <the driver's text> [<knob>...] — the stand-ins forget the last case and take the knobs, then the whole driver runs once; its code stands in $LOCK_CODE. A knob is NAME (the file knob-NAME), NAME=content (the file of cluster/ so named), copy-fails=<ns>-<claim> (the copy of that store fails) or a NAME=value of the driver, which a shortened wait is
+  local text="$1" knob timings=()
+  shift
+  lock_reset free
+  find "$LOCK_DIR/storage" -name fails -delete
+  mkdir -p "$STANDIN/cluster"
+  for knob in "$@"; do
+    case "$knob" in
+      QUEUE_*=*|STORE_*=*) timings+=("$knob") ;;
+      copy-fails=*) : > "$(ls -d "$LOCK_DIR/storage/${knob#*=}-pvc-"* | head -n 1)/fails" ;;
+      *=*) printf '%s\n' "${knob#*=}" > "$STANDIN/cluster/${knob%%=*}" ;;
+      *) : > "$STANDIN/cluster/knob-$knob" ;;
+    esac
+  done
+  lock_driver hold "$text" ${timings[@]+"${timings[@]}"}
+  lock_run hold
+  find "$LOCK_DIR/storage" -name fails -delete
+}
+hold_wrong() { # <the Manager's replicas before the run> <the queue's suspend before the run> — says what is wrong with the world the last run left, in the order it was made; ends 0
+  local world="$STANDIN/cluster/world.log" file name replicas ready back=1
+  [ ! -f "$world" ] || awk '
+    { split("", f); for (i = 2; i <= NF; i++) { k = $i; sub(/=.*/, "", k); v = $i; sub(/^[^=]*=/, "", v); f[k] = v }
+      if ($1 == "scale" && f["to"] == 0 && f["target"] != "manager/manager") {
+        if (f["manager"] > 0) print "a store other than the Manager was scaled to 0 while the Manager stood above 0: " f["target"]
+        if (f["suspend"] != "true") print "a store other than the Manager was scaled to 0 while the queue was not held: " f["target"]
+        if (f["run"] == "running") print "a store other than the Manager was scaled to 0 while the planted run still read running: " f["target"]
+        if (f["job"] == "unfinished") print "a store other than the Manager was scaled to 0 while the planted job of the queue was unfinished: " f["target"]
+      }
+      if ($1 == "scale" && f["target"] == "manager/manager" && f["to"] > 0 && f["others"] != "none")
+        print "the Manager was started while these stores were not back and ready: " f["others"]
+      if ($1 == "patch" && f["to"] != "true" && f["others"] != "none")
+        print "the queue was let go while these stores were not back and ready: " f["others"]
+    }' "$world"
+  for file in "$STANDIN"/cluster/*.replicas; do
+    [ -e "$file" ] || continue
+    name="$(basename "$file" .replicas)"
+    case "$name" in manager--*) continue ;; esac
+    replicas="$(cat "$file")"; ready="$(cat "$STANDIN/cluster/$name.ready" 2> /dev/null || echo "$replicas")"
+    if [ "$replicas" -lt 1 ] || [ "$ready" -lt 1 ]; then back=0; fi
+  done
+  if [ "$back" = 1 ]; then
+    replicas="$(cat "$STANDIN/cluster/manager--manager.replicas" 2> /dev/null || echo 1)"
+    [ "$replicas" = "$1" ] || echo "the run ended with the Manager at $replicas, although it stood at $1 before it and every store is back and ready"
+    ready="$(cat "$STANDIN/cluster/suspend" 2> /dev/null || echo false)"
+    [ "$ready" = "$2" ] || echo "the run ended with the queue at suspend=$ready, although it stood at $2 before the run and every store is back and ready"
+  fi
+  return 0
+}
+hold_holds() { # <the driver's text> <the Manager's replicas before> <the queue's suspend before> [<knob>...] — ends 0 when the run ended 0 with a backup and left nothing wrong in the world, and printed nothing planted; what is wrong stands in $OUT/verdict
+  local text="$1" manager="$2" suspend="$3"
+  shift 3
+  hold_run "$text" "$@"
+  hold_wrong "$manager" "$suspend" > "$OUT/verdict"
+  [ "$LOCK_CODE" = 0 ] || echo "the run ended with $LOCK_CODE: $(tail -n 2 "$LOCK_DIR/hold/err" | tr '\n' ' ')" >> "$OUT/verdict"
+  [ "$(tail -n 1 "$LOCK_DIR/hold/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the run did not end with BACKUP and an id' >> "$OUT/verdict"
+  printed_wrong "$LOCK_DIR/hold/out" "$LOCK_DIR/hold/err" >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+hold_refused() { # <the driver's text> <the Manager's replicas before> <the queue's suspend before> <the code> <what the output says> [<knob>...] — ends 0 when the run ended with that code, said that, and left nothing wrong in the world; what is wrong stands in $OUT/verdict
+  local text="$1" manager="$2" suspend="$3" code="$4" said="$5"
+  shift 5
+  hold_run "$text" "$@"
+  hold_wrong "$manager" "$suspend" > "$OUT/verdict"
+  [ "$LOCK_CODE" = "$code" ] || echo "the run ended with $LOCK_CODE, not $code: $(tail -n 2 "$LOCK_DIR/hold/err" | tr '\n' ' ')" >> "$OUT/verdict"
+  hold_says "$said" || echo "the run did not say: $said" >> "$OUT/verdict"
+  printed_wrong "$LOCK_DIR/hold/out" "$LOCK_DIR/hold/err" >> "$OUT/verdict"
+  if [ -s "$STANDIN/secrets.seen" ]; then secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"; fi
+  [ ! -s "$OUT/verdict" ]
+}
+hold_says() { grep -qF -- "$1" "$LOCK_DIR/hold/out" "$LOCK_DIR/hold/err"; } # the last run printed that, to its output or its error
+
+# the whole driver, with a release run that runs for two looks: the queue is held and the run waited for before the Manager and the stores stop
+hold_holds "$LOCK_TEXT" 1 false run-running || fail "backup: a run of the queue in flight was not waited for: $(cat "$OUT/verdict")"
+hold_says 'waiting for run hostyour-manager-build/hostyour-manager-release-live to end' \
+  || fail 'backup: the driver did not name the running release run it waited for'
+grep -qE 'waiting for (run hostyour-manager-build/hostyour-manager-(release-done|publish-waiting|publish-done)|job image-builder/(release-queue-29874554|unrelated-job))' "$LOCK_DIR/hold/out" \
+  && fail 'backup: the driver waited for a run that ended, a run that waits on the queue, a Job that finished or a Job of another CronJob'
+[ "$(grep -c ' scale ' "$STANDIN/kubectl-calls.log")" = "$(( 2 * LOCK_STORES ))" ] || fail "backup: the run did not stop and start each of the $LOCK_STORES stores once: $(scale_calls) scale call(s)"
+grep -c ' patch ' "$STANDIN/kubectl-calls.log" | grep -qx 2 || fail 'backup: the run did not hold the queue once and let it go once'
+# the order the operator reads: the queue held, the Manager stopped, each store ready, the Manager started, the queue let go
+HOLD_ORDER="$(sed -nE 's#.*(is held|manager/deployment/manager stopped|reads ready|manager/deployment/manager started again|is let go).*#\1#p' "$LOCK_DIR/hold/out" | uniq | tr '\n' ',')"
+[ "$HOLD_ORDER" = 'is held,manager/deployment/manager stopped,reads ready,manager/deployment/manager started again,is let go,' ] \
+  || fail "backup: the lines of the hold are not in the order held, stopped, ready, started, let go: $HOLD_ORDER"
+hold_says 'idp/statefulset/idp-postgresql reads ready: 1 of 1' || fail 'backup: the driver did not read idp-postgresql ready'
+hold_says 'vault/statefulset/vault reads ready: 1 of 1' || fail 'backup: the driver did not read vault/vault ready, the store rollout status refuses'
+# a Job of the queue that the CronJob creates just after a look, and names active one look later than the Jobs list it
+hold_holds "$LOCK_TEXT" 1 false late-job || fail "backup: a late Job of the queue was not waited for: $(cat "$OUT/verdict")"
+hold_says 'waiting for job image-builder/release-queue-late to end' || fail 'backup: the driver did not name the late Job it waited for'
+# innocents: the Manager at 0 and no run of the queue to wait for, the queue suspended before the run
+hold_holds "$LOCK_TEXT" 0 false manager--manager.replicas=0 || fail "backup: a Manager at 0 changed the backup of the stores: $(cat "$OUT/verdict")"
+[ "$(cat "$STANDIN/cluster/manager--manager.replicas")" = 0 ] || fail 'backup: a Manager that stood at 0 was started by the run'
+[ "$(scale_calls)" = "$(( 2 * LOCK_STORES ))" ] || fail "backup: with the Manager at 0 the stores were not taken as before: $(scale_calls) scale call(s)"
+hold_holds "$LOCK_TEXT" 1 true suspend=true || fail "backup: a queue suspended before the run was not left suspended: $(cat "$OUT/verdict")"
+[ "$(cat "$STANDIN/cluster/suspend")" = true ] || fail 'backup: a queue that was suspended before the run was let go by it'
+# a store that is stopped when its copy fails is started again and the hold is let go, a store that cannot be started again is not hidden
+hold_refused "$LOCK_TEXT" 1 false 70 'the copy of mongodb/data-mongodb-prod-1 failed; mongodb-prod was started again with 1 replica(s)' copy-fails=mongodb-data-mongodb-prod-1 \
+  || fail "backup: the failed copy of a later store left the hold on, or lost the store: $(cat "$OUT/verdict")"
+[ "$(cat "$STANDIN/cluster/manager--manager.replicas")" = 1 ] || fail 'backup: the Manager was not started again after a failed copy of a later store'
+hold_refused "$LOCK_TEXT" 1 false 70 'could not be started again — it stands at 0 replicas' copy-fails=idp-data-idp-postgresql-0 knob-scale-fails=idp/idp-postgresql \
+  || fail "backup: a store whose scale back failed was not named or the Manager was started under it: $(cat "$OUT/verdict")"
+[ "$(cat "$STANDIN/cluster/manager--manager.replicas")" = 0 ] && [ "$(cat "$STANDIN/cluster/suspend")" = true ] \
+  || fail 'backup: the Manager was started or the queue let go while a store stood at 0'
+hold_says 'these stores were asked to stop and do not read the replicas they had: idp/statefulset/idp-postgresql reads 0 replica(s) of the 1 it had' || fail 'backup: the driver did not name the store at 0 with the replicas the cluster reads'
+# a scale to 0 that fails and changes nothing leaves a store that runs: it is read as it is, and the Manager and the queue go
+hold_refused "$LOCK_TEXT" 1 false 70 'could not stop idp/idp-postgresql' knob-stop-fails=idp/idp-postgresql \
+  || fail "backup: a store whose scale to 0 failed and changed nothing kept the Manager stopped and the queue held: $(cat "$OUT/verdict")"
+hold_says 'idp/statefulset/idp-postgresql reads ready: 1 of 1' || fail 'backup: the driver did not read the store whose stop failed as it stands'
+! hold_says 'asked to stop' || fail 'backup: the driver called a store at 0 that still ran'
+[ "$(cat "$STANDIN/cluster/manager--manager.replicas")" = 1 ] && [ "$(cat "$STANDIN/cluster/suspend")" = false ] \
+  || fail 'backup: a store that still ran after its failed stop left the Manager stopped or the queue held'
+# a scale to 0 that took effect and whose answer was lost leaves a store at 0: it is named with what the cluster reads, and nothing starts
+hold_refused "$LOCK_TEXT" 1 false 70 'could not stop idp/idp-postgresql' knob-stop-lost=idp/idp-postgresql \
+  || fail "backup: a store whose stop took effect and whose answer was lost was not refused as it must be: $(cat "$OUT/verdict")"
+hold_says 'these stores were asked to stop and do not read the replicas they had: idp/statefulset/idp-postgresql reads 0 replica(s) of the 1 it had' || fail 'backup: the driver did not name the store whose stop took effect'
+[ "$(cat "$STANDIN/cluster/manager--manager.replicas")" = 0 ] && [ "$(cat "$STANDIN/cluster/suspend")" = true ] \
+  || fail 'backup: the Manager was started or the queue let go while a store stood at 0 after a lost answer'
+# a store that does not read ready: neither the Manager nor the queue is let go, the store is named with the two commands, nothing is uploaded
+hold_refused "$LOCK_TEXT" 1 false 70 'idp/statefulset/idp-postgresql reads 0 ready replica(s) of the 1 it had' knob-not-ready=idp/idp-postgresql STORE_WAIT_SECONDS=1 \
+  || fail "backup: a store that does not read ready was not refused as it must be: $(cat "$OUT/verdict")"
+hold_says 'microk8s kubectl -n manager scale deployment/manager --replicas=1' || fail 'backup: the refusal did not print the command that starts the Manager'
+hold_says "microk8s kubectl -n image-builder patch cronjob/release-queue --type=merge -p '{\"spec\":{\"suspend\":false}}'" || fail 'backup: the refusal did not print the command that lets the queue go'
+[ "$(cat "$STANDIN/cluster/manager--manager.replicas")" = 0 ] && [ "$(cat "$STANDIN/cluster/suspend")" = true ] || fail 'backup: a store that did not read ready did not keep the Manager stopped and the queue held'
+[ ! -d "$STANDIN/box-uploaded" ] || fail 'backup: a store that did not read ready did not stop the upload'
+[ -n "$(ls -A "$LOCK_DIR/hold/backups")" ] || fail 'backup: the archives of a refused release do not stand on the machine'
+# no CronJob release-queue: refused before anything is held or stopped
+hold_refused "$LOCK_TEXT" 1 false 66 'the CronJob image-builder/release-queue is not in the cluster' no-cronjob \
+  || fail "backup: a cluster with no release queue was not refused as it must be: $(cat "$OUT/verdict")"
+[ "$(scale_calls)" = 0 ] && [ "$(patch_calls)" = 0 ] || fail 'backup: a driver refused for want of the queue scaled or patched'
+# a run of the queue that never ends: past the limit the queue is let go again, nothing is stopped, and the run says what still runs
+hold_refused "$LOCK_TEXT" 1 false 75 'still has: run hostyour-manager-build/hostyour-manager-release-stuck' run-forever QUEUE_WAIT_SECONDS=2 \
+  || fail "backup: a release run that never ends was not given up on as it must be: $(cat "$OUT/verdict")"
+[ "$(scale_calls)" = 0 ] && [ "$(patch_calls)" = 2 ] && [ "$(cat "$STANDIN/cluster/suspend")" = false ] || fail 'backup: past its limit the driver did not stop nothing and let the queue go'
+
+# the limit stays above what a run that runs can last: the pipelines' own timeout
+timeout_seconds() { sed -nE 's/^ +pipeline: ([0-9]+)h([0-9]+)m([0-9]+)s$/\1 \2 \3/p' "$HERE/../clusters/inventories/image-builder/templates/triggers/$1" | { read -r h m sec || true; echo $(( ${h:-0} * 3600 + ${m:-0} * 60 + ${sec:-0} )); }; }
+limit_above_timeouts() { # <the driver's text> — ends 0 when its QUEUE_WAIT_SECONDS is above the timeout of both pipelines; what is wrong stands in $OUT/verdict
+  local limit file timeout
+  : > "$OUT/verdict"
+  limit="$(printf '%s\n' "$1" | sed -n 's/^readonly QUEUE_WAIT_SECONDS=//p')"
+  for file in github-deploy-request.yaml github-release-publish.yaml; do
+    timeout="$(timeout_seconds "$file")"
+    [ "$timeout" -gt 0 ] || echo "no timeouts.pipeline stands in $file" >> "$OUT/verdict"
+    [ "$limit" -gt "$timeout" ] || echo "the driver waits ${limit} s, which is not above the ${timeout} s a run of $file can last" >> "$OUT/verdict"
+  done
+  [ ! -s "$OUT/verdict" ]
+}
+limit_above_timeouts "$LOCK_TEXT" || fail "backup: the wait of the hold is not above the timeout of the pipelines: $(cat "$OUT/verdict")"
+plant "$LOCK_TEXT" 'readonly QUEUE_WAIT_SECONDS=3900' 'readonly QUEUE_WAIT_SECONDS=3600'; SHORT_LIMIT="$PLANTED_TEXT"
+! limit_above_timeouts "$SHORT_LIMIT" || fail 'the planted wait that is not above the pipelines'"'"' timeout was not caught — the probe proves nothing'
+caught_for 'wait that is not above the pipelines'"'"' timeout' 'is not above the'
+
+# the holds stand against a sync: Argo CD keeps the replicas of the Manager's Deployment and the suspend of the queue where the driver put them
+hold_row_wrong() { # <app.yaml> <kind> <name> <pointer> — says what is wrong with the rule that keeps that field from a sync; ends 0
+  local rows
+  [ "$(yq '.respectIgnoreDifferences' "$1")" = true ] || echo "$1 does not set respectIgnoreDifferences to true, so a sync writes the ignored field all the same"
+  rows="$(yq '.ignoreDifferences | from_yaml | .[] | select(.kind == "'"$2"'" and .name == "'"$3"'") | .jsonPointers[]' "$1" 2> /dev/null || true)"
+  printf '%s\n' "$rows" | grep -qxF -- "$4" || echo "$1 has no rule that keeps $4 of the $2 $3"
+  return 0
+}
+hold_rows_wrong() { # <the Manager's app.yaml> <the image-builder's app.yaml> — what is wrong with the two rules; ends 0
+  hold_row_wrong "$1" Deployment "$(printf '%s\n' "$LOCK_TEXT" | sed -n 's/^  "manager|manager-data|\([a-z]*\)|.*/\1/p')" /spec/replicas
+  hold_row_wrong "$2" CronJob "$(printf '%s\n' "$LOCK_TEXT" | sed -n 's/^readonly QUEUE_CRONJOB=//p')" /spec/suspend
+}
+HOLD_APPS="$HERE/../clusters/inventories"
+hold_rows_wrong "$HOLD_APPS/manager/app.yaml" "$HOLD_APPS/image-builder/app.yaml" > "$OUT/verdict"
+[ ! -s "$OUT/verdict" ] || fail "backup: the two holds do not stand against a sync: $(cat "$OUT/verdict")"
+mkdir -p "$WORK/hold-apps"
+grep -v '^respectIgnoreDifferences:' "$HOLD_APPS/manager/app.yaml" > "$WORK/hold-apps/manager-no-respect.yaml"
+sed '/^ignoreDifferences:/,$d' "$HOLD_APPS/manager/app.yaml" > "$WORK/hold-apps/manager-no-row.yaml"
+sed 's#/spec/suspend#/spec/schedule#' "$HOLD_APPS/image-builder/app.yaml" > "$WORK/hold-apps/builder-other-field.yaml"
+sed '/^ignoreDifferences:/,$d' "$HOLD_APPS/image-builder/app.yaml" > "$WORK/hold-apps/builder-no-row.yaml"
+hold_rows_wrong "$WORK/hold-apps/manager-no-respect.yaml" "$HOLD_APPS/image-builder/app.yaml" > "$OUT/verdict"
+caught_for "Manager's app.yaml without respectIgnoreDifferences" 'does not set respectIgnoreDifferences to true'
+hold_rows_wrong "$WORK/hold-apps/manager-no-row.yaml" "$HOLD_APPS/image-builder/app.yaml" > "$OUT/verdict"
+caught_for "Manager's app.yaml without the row" 'does not set respectIgnoreDifferences to true' 'has no rule that keeps /spec/replicas'
+hold_rows_wrong "$HOLD_APPS/manager/app.yaml" "$WORK/hold-apps/builder-other-field.yaml" > "$OUT/verdict"
+caught_for "image-builder's app.yaml with the row for another field" 'has no rule that keeps /spec/suspend'
+hold_rows_wrong "$HOLD_APPS/manager/app.yaml" "$WORK/hold-apps/builder-no-row.yaml" > "$OUT/verdict"
+caught_for "image-builder's app.yaml without the row" 'does not set respectIgnoreDifferences to true' 'has no rule that keeps /spec/suspend'
+ok 'backup: the queue is held and the running release and publish runs and the Jobs of the queue are waited for (a late Job too) before the Manager and the stores stop; the Manager is started and the queue let go only after every store reads ready, vault/vault among them; a Manager at 0 stays at 0 and a queue suspended before the run stays suspended; a failed copy lets the hold go, a store that cannot be started or does not read ready keeps it and is named with the two commands; a cluster with no release queue is refused before anything is held; a run that never ends is given up on after a limit above the pipelines'"'"' timeout; the two app.yaml rows keep a sync from undoing either hold'
+
+# planted defects, each in a copy of the driver, each of which a case above must turn red: today's order with no hold at all; the queue
+# held but the running run not read; the wait left out, so the Manager is stopped before the running run ended and the stores right after;
+# the wait ended on one quiet pass; the wait that reads the CronJob's active list alone; the Manager started in the store loop, before the
+# last store; the queue let go in the store loop, before the last store; a release that reads readiness by rollout status, which kubectl
+# refuses for vault/vault; an exit that does not release what the run holds; a failed copy that forgets the store it could not start
+# again; a release that does not read the stores ready; a release that lets the queue go before it read the stores ready, with the
+# Manager never started; a release that trusts its record of the stopped stores instead of the cluster
+HOLD_BLOCK="$(printf '%s\n' "$LOCK_TEXT" | sed -n '/^step "the Manager.s runs, held"/,/^good "manager\/${MANAGER_KIND}\/${MANAGER_WORKLOAD} stopped/p')"
+[ -n "$HOLD_BLOCK" ] || fail 'the backup driver carries no hold — the planted defects cannot be built'
+READY_LINE="$(printf '%s\n' "$LOCK_TEXT" | grep '^ready_of() ')"
+RELEASE_CALL='release_hold || die "the Manager and the queue were not let go; the archives stand in $WORK on this machine" 70'
+STARTS_MANAGER_LATE='    say "${ns}/${workload} stays stopped until every other store is back"'
+plant "$LOCK_TEXT" "$HOLD_BLOCK" "STOPPED='' STARTED=''"; NO_HOLD="$PLANTED_TEXT"
+plant "$NO_HOLD" 'if [ "$ns" = manager ]; then' 'if false; then'; NO_HOLD="$PLANTED_TEXT"
+plant "$NO_HOLD" "$RELEASE_CALL" 'true'; NO_HOLD="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '"$active" "$jobs" "$runs"' '"$active" "$jobs" ""'; RUN_NOT_READ="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'\nwait_for_queue\n' $'\n'; NO_WAIT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '[ "$quiet" -ge 2 ] && break' '[ "$quiet" -ge 1 ] && break'; ONE_QUIET_PASS="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '"$active" "$jobs" "$runs"' '"$active" "" ""'; ACTIVE_ALONE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$STARTS_MANAGER_LATE" '    start_store manager "$MANAGER_WORKLOAD" "$MANAGER_KIND" "$MANAGER_WAS"'; MANAGER_EARLY="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$STARTS_MANAGER_LATE" '    K -n "$QUEUE_NAMESPACE" patch "cronjob/$QUEUE_CRONJOB" --type=merge -p "{\"spec\":{\"suspend\":${QUEUE_WAS}}}" >/dev/null'; QUEUE_EARLY="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$READY_LINE" 'ready_of() { if K -n "$1" rollout status "$3/$2" --timeout=180s >/dev/null 2>&1; then replicas_of "$1" "$2" "$3"; else echo 0; fi; }'; READY_BY_ROLLOUT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '[ -z "$HELD" ] || release_hold || true; ' ''; EXIT_KEEPS_HOLD="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '    die "the copy of ${ns}/${pvc} failed, and' $'    STOPPED=\'\'; die "the copy of ${ns}/${pvc} failed, and'; FORGETS_STORE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$READY_LINE" 'ready_of() { echo 99; }'; NEVER_NOT_READY="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'  for row in $STARTED; do\n' $'  K -n "$QUEUE_NAMESPACE" patch "cronjob/$QUEUE_CRONJOB" --type=merge -p "{\\"spec\\":{\\"suspend\\":${QUEUE_WAS}}}" >/dev/null\n  for row in $STARTED; do\n'; LET_GO_FIRST="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '    got=$(replicas_of "$ns" "$workload" "$kind")
+    if [ "$got" -ge "$want" ]' '    got=0
+    if [ "$got" -ge "$want" ]'; TRUSTS_RECORD="$PLANTED_TEXT"
+hold_caught() { # <the name of the planted defect> <the driver's text> <the knobs> -> <what the verdict must say first> [<what else it may say>...]
+  local name="$1" text="$2" knobs="$3"
+  shift 3
+  # shellcheck disable=SC2086 # the knobs are words
+  ! hold_holds "$text" 1 false $knobs || fail "the planted driver with $name was not caught — the probe proves nothing"
+  caught_for "driver with $name" "$@"
+}
+hold_caught 'no hold' "$NO_HOLD" run-running 'while the Manager stood above 0' 'while the queue was not held' 'while the planted run still read running'
+hold_caught 'the running run not read' "$RUN_NOT_READ" run-running 'while the planted run still read running'
+hold_caught 'no wait, so the Manager stops before the running run ended and the stores right after' "$NO_WAIT" run-running 'while the planted run still read running'
+hold_caught 'the wait ended on one quiet pass' "$ONE_QUIET_PASS" late-job 'while the planted job of the queue was unfinished'
+hold_caught 'a wait that reads the active list alone' "$ACTIVE_ALONE" late-job 'while the planted job of the queue was unfinished'
+hold_caught 'the Manager started before the last store' "$MANAGER_EARLY" '' 'while the Manager stood above 0'
+hold_caught 'the queue let go before the last store' "$QUEUE_EARLY" '' 'while the queue was not held'
+hold_caught 'readiness read by rollout status' "$READY_BY_ROLLOUT" 'STORE_WAIT_SECONDS=1' 'the run ended with the Manager at 0' 'the run ended with' 'the run did not end with BACKUP'
+hold_caught 'an exit that does not release the hold' "$EXIT_KEEPS_HOLD" 'copy-fails=mongodb-data-mongodb-prod-1' 'the run ended with the Manager at 0' 'the run ended with' 'the run did not end with BACKUP'
+hold_caught 'a failed copy that forgets the store it could not start again' "$FORGETS_STORE" 'copy-fails=idp-data-idp-postgresql-0 knob-scale-fails=idp/idp-postgresql' 'the Manager was started while these stores were not back and ready' 'the queue was let go while these stores were not back and ready' 'the run ended with' 'the run did not end with BACKUP'
+hold_caught 'a release that does not read the stores ready' "$NEVER_NOT_READY" 'knob-not-ready=idp/idp-postgresql STORE_WAIT_SECONDS=1' 'the Manager was started while these stores were not back and ready' 'the queue was let go while these stores were not back and ready'
+# the Manager is never started here, so the world rule's half for the Manager is satisfied and the let-go half has to fire on its own
+hold_caught 'a queue let go before the stores were read ready, the Manager never started' "$LET_GO_FIRST" 'knob-not-ready=idp/idp-postgresql STORE_WAIT_SECONDS=1' 'the queue was let go while these stores were not back and ready' 'the run ended with' 'the run did not end with BACKUP'
+hold_caught 'a release that trusts its record of the stopped stores instead of the cluster' "$TRUSTS_RECORD" 'knob-stop-fails=idp/idp-postgresql' 'the run ended with the Manager at 0' 'the run ended with' 'the run did not end with BACKUP'
+ok 'backup: the planted drivers are caught: no hold, the running run not read, no wait, a wait ended on one quiet pass, a wait that reads the active list alone, the Manager or the queue let go before the last store, readiness read by rollout status, an exit that does not release the hold, a failed copy that forgets its store, a release that does not read the stores ready, a queue let go before the stores were read ready, a release that trusts its record of the stopped stores'
 
 # The restore: the fetch, the clone, the fetch of the branch, the opening of the quorum and of every store,
 # as the driver's own text runs them against a backup the rclone stand-in serves.
@@ -3768,17 +4180,25 @@ SANDBOX="$ENGINE_WORK/machine"
 placed() { # <driver file> <served digests> [<the asset served in place of ansiwise-rest>] — answers the block's exit code
   local driver="$1"
   ( SERVED_DIGESTS="$2" SWAPPED="${3:-}"
+    PLATFORM_ON_FORGEJO="${PLATFORM_ON_FORGEJO:-false}" PLATFORM_REPO_READ_PAT="${PLATFORM_REPO_READ_PAT:-}"
     ENGINE="$SANDBOX/bin/ansiwise" PIN="$ENGINE_PIN" CONFIG="$ENGINE_WORK/no-config"
     FQDN='machine.example.invalid'
     RELEASES="https://${RELEASES_HOST:-registry.example.invalid}/v2/acme/ansiwise-cli/blobs" DIGESTS_URL='https://pins.example.invalid/ansiwise.sha256'
     say() { echo "say: $*"; }; good() { echo "good: $*"; }; summary() { echo 'summary'; }
     die() { echo "die: $1" >&2; exit "${2:-1}"; }
     root() { "$@" && { [ -z "${TERM_AFTER_FIRST_INSTALL:-}" ] || { TERM_AFTER_FIRST_INSTALL=''; kill -TERM "$BASHPID"; }; }; }
-    curl() { # -fsSL [-o <file>] <url> — the registry serves a blob at the SHA-256 of its bytes
-      local out='' url='' hex file
-      while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
+    curl() { # -fsSL [-o <file>] [--config -] <url> — the registry serves a blob at the SHA-256 of its bytes
+      local out='' url='' hex file config='' all="$*"
+      while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; --config) config="$(cat)"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
       case "$url" in
-        "$DIGESTS_URL") printf '%s\n' "$SERVED_DIGESTS" ;;
+        "$DIGESTS_URL") # a read on Forgejo shows its token in the config on standard input and in no argument; one on GitHub shows none
+          if [ -n "${EXPECT_PAT:-}" ]; then
+            case "$all" in *"$EXPECT_PAT"*) return 22 ;; esac
+            [ "$config" = "header = \"Authorization: token $EXPECT_PAT\"" ] || return 22
+          else
+            case "$all$config" in *Authorization*) return 22 ;; esac
+          fi
+          printf '%s\n' "$SERVED_DIGESTS" ;;
         "$RELEASES"/sha256:*)
           echo "$url" >> "$OUT/fetched.log"
           hex="${url##*/sha256:}"
@@ -3793,6 +4213,7 @@ placed() { # <driver file> <served digests> [<the asset served in place of ansiw
       esac
     }
     eval "$(sed -n '/^releases_host=/,/^readonly UNSERVED$/p' "$driver")"
+    eval "$(sed -n '/^read_platform_file() {/,/^}/p' "$driver")"
     eval "$(guard_of "$driver")"
     eval "$(check_of "$driver")"
     eval "$(sed -n '/^ENGINE_ANSWERS=\$("\$ENGINE" --version/,/^fi$/p' "$driver" | sed "s#/usr/local/bin/#$SANDBOX/bin/#g")"
@@ -3840,6 +4261,20 @@ for engine_driver in driver.sh regenerate-driver.sh; do
   [ "$(cat "$OUT/fetched.log")" = "$(blob_of ansiwise; blob_of ansiwise-rest)" ] \
     || fail "$engine_driver: the engine was not fetched from the blob address of each asset's digest: $(cat "$OUT/fetched.log" 2>/dev/null)"
   ok "$engine_driver: a clean machine is given both executables at their pinned digests, each fetched at the blob address of its digest"
+
+  # THE DIGESTS OF A PLATFORM REPOSITORY ON FORGEJO are read with its token in a curl config on standard
+  # input; a copy that puts the token in an argument is refused by the stand-in, which shows it in no argument.
+  fresh_machine
+  PLATFORM_ON_FORGEJO=true PLATFORM_REPO_READ_PAT='fixture-forgejo-read-token' EXPECT_PAT='fixture-forgejo-read-token' placed "$D" "$PINNED_DIGESTS" \
+    || fail "$engine_driver: the digests of a platform repository on Forgejo were not read with the token in the curl config: $(cat "$OUT/placed.out")"
+  [ "$(carries ansiwise)" = "$(released ansiwise)" ] || fail "$engine_driver: a machine whose platform repository is on Forgejo was not given the release's bytes"
+  sed 's#curl -fsSL --config - "\$1"#curl -fsSL -H "Authorization: token $PLATFORM_REPO_READ_PAT" "$1"#' "$D" > "$ENGINE_WORK/planted-token-in-argument.sh"
+  cmp -s "$D" "$ENGINE_WORK/planted-token-in-argument.sh" && fail "$engine_driver: the token was not moved into an argument — the probe proves nothing"
+  fresh_machine
+  CODE=0; PLATFORM_ON_FORGEJO=true PLATFORM_REPO_READ_PAT='fixture-forgejo-read-token' EXPECT_PAT='fixture-forgejo-read-token' placed "$ENGINE_WORK/planted-token-in-argument.sh" "$PINNED_DIGESTS" || CODE=$?
+  [ "$CODE" = 69 ] || fail "$engine_driver: a copy that puts the token in an argument must be refused with 69, got $CODE: $(cat "$OUT/placed.out")"
+  [ -z "$(ls -A "$SANDBOX/bin")" ] || fail "$engine_driver: a token in an argument was refused and the engine was placed all the same"
+  ok "$engine_driver: the digests on Forgejo are read with the token in the curl config on standard input, and a copy with the token in an argument is caught"
 
   fresh_machine
   CODE=0; placed "$D" "$(printf '%s\n' "$PINNED_DIGESTS" | head -1)" || CODE=$?
@@ -4068,8 +4503,8 @@ forgejo_answers_cases() { # <composer> <example config>
   python3 - "$1" "$2" "$FORGEJO_ANSWERS_WORK" <<'FORGEJO_ANSWERS_TEST'
 import json, pathlib, subprocess, sys
 composer, example, work = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
-names = ['forgejo_platform_repository', 'forgejo_deploy_repository', 'forgejo_organisations']
-expected = dict(zip(names, ['platform-team/platform', 'deploy-team/deploy', 'platform-team,deploy-team']))
+names = ['forgejo_platform_repository', 'forgejo_deploy_repository', 'forgejo_organisations', 'forgejo_host']
+expected = dict(zip(names, ['platform-team/platform', 'deploy-team/deploy', 'platform-team,deploy-team', 'forgejo.master.example.org']))
 for name in names:
     assert name.upper() + "=''" in example.read_text(), name + ' is missing from config.example.env'
 declares = work / 'declares.yaml'
@@ -4094,11 +4529,188 @@ for driver in driver.sh regenerate-driver.sh; do
     fail "$driver's projection passed with forgejo_platform_repository removed"
   fi
 done
-sed '/^FORGEJO_DEPLOY_REPOSITORY=/d' "$HERE/config.example.env" > "$FORGEJO_ANSWERS_WORK/planted.env"
-if forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/driver.sh.py" "$FORGEJO_ANSWERS_WORK/planted.env" 2>/dev/null; then
-  fail 'an example config without the deploy destination passed'
-fi
-ok 'both drivers retain the three configured Forgejo destinations with GitHub clone URLs; missing config keys and a dropped destination are caught'
+for dropped in FORGEJO_PLATFORM_REPOSITORY FORGEJO_DEPLOY_REPOSITORY FORGEJO_ORGANISATIONS FORGEJO_HOST; do
+  sed "/^$dropped=/d" "$HERE/config.example.env" > "$FORGEJO_ANSWERS_WORK/planted.env"
+  if forgejo_answers_cases "$FORGEJO_ANSWERS_WORK/driver.sh.py" "$FORGEJO_ANSWERS_WORK/planted.env" 2>/dev/null; then
+    fail "an example config without $dropped passed"
+  fi
+done
+ok 'both drivers retain the three configured Forgejo destinations and the Forgejo host with GitHub clone URLs; missing config keys and a dropped line of the example are caught'
+
+# THE EXAMPLE STATES EVERY ONE OF THE FOUR APP ANSWERS the programs require (github_app_id, github_app_installation_id,
+# github_app_private_key, github_app_owner), because a config written from it is what a first install is read from.
+app_keys_of_example() { # <example> -> 0 when it carries a line for each of the four, else the first one it lacks, named
+  local key
+  for key in GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_OWNER; do
+    grep -q "^$key=''\$" "$1" || { echo "$key is missing from config.example.env" >&2; return 1; }
+  done
+}
+app_keys_of_example "$HERE/config.example.env" || fail 'the example config lacks an App key'
+for dropped in GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_OWNER; do
+  sed "/^$dropped=/d" "$HERE/config.example.env" > "$FORGEJO_ANSWERS_WORK/planted-app.env"
+  if app_keys_of_example "$FORGEJO_ANSWERS_WORK/planted-app.env" 2>/dev/null; then
+    fail "an example config without $dropped passed"
+  fi
+done
+ok 'the example config carries a line for each of the four App answers, and a copy without any one of them is caught'
+
+# ===========================================================================
+# EIGHT, continued — which forge the drivers read the platform repository from
+# ===========================================================================
+# BOTH DRIVERS CHOOSE BY THE SAME TWO ANSWERS the programs choose their rows by: PLATFORM_REPO and
+# FORGEJO_PLATFORM_REPOSITORY naming one repository puts the tree on this installation's Forgejo, where it is
+# private. What runs is each driver's own text, taken out of the file: the block that decides, and for
+# driver.sh the block that asks which branches the repository carries. A stand-in git logs what it is
+# handed, its arguments and the variables of its environment that carry a header, so "the token stands in
+# no word of the command" is measured on the process that would be listed.
+FORGE_WORK="$WORK/forge-choice"
+mkdir -p "$FORGE_WORK/bin"
+FORGE_TOKEN='fixture-forgejo-read-token'
+FORGE_TOKEN_BASIC="$(printf 'oauth2:%s' "$FORGE_TOKEN" | base64 -w0)"
+
+block_of() { # <driver> -> the block that decides where the platform repository stands
+  case "$1" in
+    *regenerate-driver.sh) sed -n '/^readonly PLATFORM_REPO=/,/^readonly PLATFORM_ON_FORGEJO$/p' "$1" ;;
+    *) sed -n '/^readonly STAGE=/,/^readonly PLATFORM_ON_FORGEJO$/p' "$1" ;;
+  esac
+}
+decided() { # <block file> then the config as NAME=value words — the exit code, and what it said in $FORGE_WORK/decided.out
+  local block="$1"; shift
+  ( for assignment in "$@"; do export "$assignment"; done
+    die() { echo "die: $1" >&2; exit "${2:-1}"; }
+    set -uo pipefail
+    . "$block"
+    echo "PLATFORM_ON_FORGEJO=$PLATFORM_ON_FORGEJO" ) > "$FORGE_WORK/decided.out" 2>&1
+}
+decides_cases() { # <block file> — every case, or the first that fails, named on standard error
+  local block="$1" common=(STAGE=prod DEPLOY_REPO=acme/deploy PROGRAMS_REPO=acme/programs OPERATOR_USER=operator FQDN=master.example.org ROLE=master)
+  decided "$block" "${common[@]}" PLATFORM_REPO=platform-team/platform FORGEJO_PLATFORM_REPOSITORY=platform-team/platform \
+    FORGEJO_HOST=forgejo.master.example.org PLATFORM_REPO_READ_PAT="$FORGE_TOKEN" \
+    || { echo "a platform repository on Forgejo with its host and its reader was refused: $(cat "$FORGE_WORK/decided.out")" >&2; return 1; }
+  grep -qx 'PLATFORM_ON_FORGEJO=true' "$FORGE_WORK/decided.out" || { echo "the same repository under both answers was not read from Forgejo" >&2; return 1; }
+  decided "$block" "${common[@]}" PLATFORM_REPO=acme/platform FORGEJO_PLATFORM_REPOSITORY=platform-team/platform \
+    || { echo "a platform repository on GitHub, with no Forgejo host and no reader, was refused: $(cat "$FORGE_WORK/decided.out")" >&2; return 1; }
+  grep -qx 'PLATFORM_ON_FORGEJO=false' "$FORGE_WORK/decided.out" || { echo "two different repositories were not read from GitHub" >&2; return 1; }
+  local missing code
+  for missing in FORGEJO_HOST PLATFORM_REPO_READ_PAT; do
+    code=0
+    decided "$block" "${common[@]}" PLATFORM_REPO=platform-team/platform FORGEJO_PLATFORM_REPOSITORY=platform-team/platform \
+      FORGEJO_HOST=forgejo.master.example.org PLATFORM_REPO_READ_PAT="$FORGE_TOKEN" "$missing=" || code=$?
+    [ "$code" = 64 ] || { echo "a platform repository on Forgejo with $missing empty must be refused with 64, got $code" >&2; return 1; }
+    grep -q "says nothing under $missing" "$FORGE_WORK/decided.out" || { echo "the refusal does not name $missing: $(cat "$FORGE_WORK/decided.out")" >&2; return 1; }
+    if grep -qF "$FORGE_TOKEN" "$FORGE_WORK/decided.out"; then echo "the refusal prints the token" >&2; return 1; fi
+  done
+  code=0
+  decided "$block" "${common[@]}" PLATFORM_REPO=acme/platform FORGEJO_PLATFORM_REPOSITORY= || code=$?
+  [ "$code" = 64 ] || { echo "an empty FORGEJO_PLATFORM_REPOSITORY must be refused with 64, got $code" >&2; return 1; }
+  grep -q 'FORGEJO_PLATFORM_REPOSITORY' "$FORGE_WORK/decided.out" || { echo "the refusal does not name FORGEJO_PLATFORM_REPOSITORY" >&2; return 1; }
+}
+for engine_driver in driver.sh regenerate-driver.sh; do
+  block_of "$HERE/$engine_driver" > "$FORGE_WORK/$engine_driver.block"
+  [ -s "$FORGE_WORK/$engine_driver.block" ] || fail "$engine_driver carries no block that decides where the platform repository stands"
+  decides_cases "$FORGE_WORK/$engine_driver.block" 2> "$FORGE_WORK/why" || fail "$engine_driver: $(cat "$FORGE_WORK/why")"
+  # PLANTED: a block that no longer asks for the host, one that no longer asks for the reader, and one that
+  # always reads from GitHub. Each is caught, or the cases above prove nothing.
+  sed 's/for named in FORGEJO_HOST PLATFORM_REPO_READ_PAT; do/for named in PLATFORM_REPO_READ_PAT; do/' "$FORGE_WORK/$engine_driver.block" > "$FORGE_WORK/$engine_driver.no-host"
+  sed 's/for named in FORGEJO_HOST PLATFORM_REPO_READ_PAT; do/for named in FORGEJO_HOST; do/' "$FORGE_WORK/$engine_driver.block" > "$FORGE_WORK/$engine_driver.no-reader"
+  sed 's/^if \[ "\$PLATFORM_REPO" = "\$FORGEJO_PLATFORM_REPOSITORY" \]; then$/if false; then/' "$FORGE_WORK/$engine_driver.block" > "$FORGE_WORK/$engine_driver.always-github"
+  for planted in no-host no-reader always-github; do
+    ! cmp -s "$FORGE_WORK/$engine_driver.block" "$FORGE_WORK/$engine_driver.$planted" || fail "$engine_driver: the plant $planted changed nothing"
+    if decides_cases "$FORGE_WORK/$engine_driver.$planted" 2>/dev/null; then fail "$engine_driver: a block with the plant $planted passed every case"; fi
+  done
+done
+ok 'both drivers read the platform repository from Forgejo when PLATFORM_REPO and FORGEJO_PLATFORM_REPOSITORY name one repository, refuse a missing host or reader by name without showing the token, read it from GitHub with neither, and three planted blocks are caught'
+
+# THE BRANCH ASK of driver.sh: a stand-in git that answers what the case says, and logs its arguments and the
+# variables of its environment that carry a header.
+cat > "$FORGE_WORK/bin/git" <<'STUB'
+#!/usr/bin/env bash
+dir="$(dirname "$0")"
+printf '%s\n' "$*" > "$dir/arguments"
+env | grep -E '^GIT_CONFIG_(COUNT|KEY_[0-9]+|VALUE_[0-9]+)=' | sort > "$dir/environment" || true
+case "$(cat "$dir/mode")" in
+  refused) echo 'fatal: could not read Username for '"'"'https://forgejo.master.example.org'"'"': terminal prompts disabled' >&2; exit 128 ;;
+  tip) printf 'warning: redirecting to the canonical address\n' >&2
+       printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\trefs/heads/other.example.org\n'
+       printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/heads/master.example.org\n' ;;
+  none) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\trefs/heads/other.example.org\n' ;;
+esac
+STUB
+chmod +x "$FORGE_WORK/bin/git"
+branch_ask_of() { sed -n '/^# THE CREDENTIAL STANDS IN THE ENVIRONMENT/,/^BRANCH_TIP=/p' "$1"; }
+asked() { # <driver file> <mode> <true|false> — the exit code; $FORGE_WORK/asked.out holds what it said and the tip it read
+  printf '%s' "$2" > "$FORGE_WORK/bin/mode"
+  rm -f "$FORGE_WORK/bin/arguments" "$FORGE_WORK/bin/environment"
+  ( unset GIT_CONFIG_COUNT "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}" # a caller's own git configuration in the environment is no input of the case
+    export PATH="$FORGE_WORK/bin:$PATH" FQDN=master.example.org PLATFORM_REPO=platform-team/platform FORGEJO_HOST=forgejo.master.example.org \
+      PLATFORM_REPO_READ_PAT="$FORGE_TOKEN" PLATFORM_ON_FORGEJO="$3"
+    die() { echo "die: $1" >&2; exit "${2:-1}"; }
+    set -euo pipefail
+    eval "$(branch_ask_of "$1")"
+    echo "BRANCH_TIP=$BRANCH_TIP" ) > "$FORGE_WORK/asked.out" 2>&1
+}
+ask_cases() { # <driver file> — every case, or the first that fails, named on standard error
+  local code=0
+  asked "$1" refused true || code=$?
+  [ "$code" = 69 ] || { echo "a refused ask on Forgejo must end the run with 69, got $code: $(cat "$FORGE_WORK/asked.out")" >&2; return 1; }
+  grep -qF 'git could not ask platform-team/platform (https://forgejo.master.example.org/platform-team/platform.git) whether it carries a branch named master.example.org' "$FORGE_WORK/asked.out" \
+    || { echo "the refusal does not name the repository and the branch: $(cat "$FORGE_WORK/asked.out")" >&2; return 1; }
+  grep -qF 'could not read Username' "$FORGE_WORK/asked.out" || { echo "the refusal does not carry git's words" >&2; return 1; }
+  if grep -qF -e "$FORGE_TOKEN" -e "$FORGE_TOKEN_BASIC" "$FORGE_WORK/asked.out"; then echo "the refusal prints the token" >&2; return 1; fi
+  code=0; asked "$1" refused false || code=$?
+  [ "$code" = 69 ] || { echo "a refused ask on GitHub must end the run with 69, got $code" >&2; return 1; }
+  asked "$1" tip true || { echo "an ask that found the branch was refused: $(cat "$FORGE_WORK/asked.out")" >&2; return 1; }
+  grep -qx 'BRANCH_TIP=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$FORGE_WORK/asked.out" || { echo "the tip of the branch of this machine was not read: $(cat "$FORGE_WORK/asked.out")" >&2; return 1; }
+  asked "$1" none true || { echo "an ask that found no branch of this machine was refused: $(cat "$FORGE_WORK/asked.out")" >&2; return 1; }
+  grep -qx 'BRANCH_TIP=' "$FORGE_WORK/asked.out" || { echo "another branch was read as this machine's: $(cat "$FORGE_WORK/asked.out")" >&2; return 1; }
+  # THE TOKEN IS IN THE ENVIRONMENT OF THE ASK AND IN NO WORD OF IT, and goes to the Forgejo host only.
+  asked "$1" tip true || return 1
+  [ "$(cat "$FORGE_WORK/bin/arguments")" = 'ls-remote --heads https://forgejo.master.example.org/platform-team/platform.git refs/heads/master.example.org' ] \
+    || { echo "the ask on Forgejo was not git ls-remote of the Forgejo address: $(cat "$FORGE_WORK/bin/arguments")" >&2; return 1; }
+  if grep -qF -e "$FORGE_TOKEN" -e "$FORGE_TOKEN_BASIC" "$FORGE_WORK/bin/arguments"; then echo "the token stands in an argument of the ask" >&2; return 1; fi
+  [ "$(cat "$FORGE_WORK/bin/environment")" = "GIT_CONFIG_COUNT=1
+GIT_CONFIG_KEY_0=http.https://forgejo.master.example.org/.extraHeader
+GIT_CONFIG_VALUE_0=Authorization: Basic $FORGE_TOKEN_BASIC" ] \
+    || { echo "the header did not reach git through GIT_CONFIG_COUNT, KEY_0 and VALUE_0 for the Forgejo host: $(cat "$FORGE_WORK/bin/environment")" >&2; return 1; }
+  # INNOCENT: on GitHub the address is github.com and nothing is sent.
+  asked "$1" tip false || return 1
+  [ "$(cat "$FORGE_WORK/bin/arguments")" = 'ls-remote --heads https://github.com/platform-team/platform.git refs/heads/master.example.org' ] \
+    || { echo "the ask on GitHub was not git ls-remote of the github.com address: $(cat "$FORGE_WORK/bin/arguments")" >&2; return 1; }
+  [ ! -s "$FORGE_WORK/bin/environment" ] || { echo "the ask on GitHub sent a header: $(cat "$FORGE_WORK/bin/environment")" >&2; return 1; }
+}
+ask_cases "$HERE/driver.sh" 2> "$FORGE_WORK/why" || fail "driver.sh: $(cat "$FORGE_WORK/why")"
+# PLANTED: an ask whose refusal reads as "no branch stands there", one that puts the header in an argument,
+# one that sends the header to every host, and one that reads any branch as this machine's.
+sed 's/^BRANCH_ASKED=\$(ask_platform_branches) \\$/BRANCH_ASKED=$(ask_platform_branches || true) \\/' "$HERE/driver.sh" > "$FORGE_WORK/planted-ignored.sh"
+sed 's/^      git ls-remote --heads "\$PLATFORM_URL" "refs\/heads\/\$FQDN" 2>&1$/      git -c "http.extraHeader=$GIT_CONFIG_VALUE_0" ls-remote --heads "$PLATFORM_URL" "refs\/heads\/$FQDN" 2>\&1/' "$HERE/driver.sh" > "$FORGE_WORK/planted-argument.sh"
+sed 's/GIT_CONFIG_KEY_0="http.https:\/\/\$FORGEJO_HOST\/.extraHeader"/GIT_CONFIG_KEY_0="http.extraHeader"/' "$HERE/driver.sh" > "$FORGE_WORK/planted-every-host.sh"
+sed "s/awk -v ref=\"refs\/heads\/\$FQDN\" '\$2 == ref {print \$1}'/awk '{print \$1}'/" "$HERE/driver.sh" > "$FORGE_WORK/planted-any-branch.sh"
+for planted in planted-ignored planted-argument planted-every-host planted-any-branch; do
+  ! cmp -s "$HERE/driver.sh" "$FORGE_WORK/$planted.sh" || fail "the plant $planted changed nothing in driver.sh"
+  if ask_cases "$FORGE_WORK/$planted.sh" 2>/dev/null; then fail "a driver with the plant $planted passed every branch-ask case"; fi
+done
+ok 'driver.sh asks Forgejo which branches the platform repository carries with the token in the environment of that one command and in no argument, ends with 69 and git'"'"'s words on a refused ask, reads the tip of its own branch alone, asks github.com with no header; four planted asks are caught'
+
+# THE OWNER AND THE HOST REACH THE PROGRAMS: both drivers project the config keys whose lower-cased names a
+# program declares, so GITHUB_APP_OWNER and FORGEJO_HOST arrive as answers with no line of code of their own.
+cat > "$FORGE_WORK/declares.yaml" <<'DECLARES'
+answers:
+  - name: github_app_owner
+    kind: text
+  - name: forgejo_host
+    kind: text
+  - name: platform_repo_read_pat
+    kind: text
+DECLARES
+for engine_driver in driver.sh regenerate-driver.sh; do
+  printf "GITHUB_APP_OWNER='acme'\nFORGEJO_HOST='forgejo.master.example.org'\nPLATFORM_REPO_READ_PAT='%s'\nUNRELATED='innocent'\n" "$FORGE_TOKEN" > "$FORGE_WORK/projected.env"
+  python3 "$FORGEJO_ANSWERS_WORK/$engine_driver.py" "$FORGE_WORK/projected.env" "$FORGE_WORK/declares.yaml" "$FORGE_WORK/projected.json" > /dev/null \
+    || fail "$engine_driver: the projection of the owner, the host and the reader was refused"
+  [ "$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), sort_keys=True))' "$FORGE_WORK/projected.json")" \
+    = "{\"answers\": {\"forgejo_host\": \"forgejo.master.example.org\", \"github_app_owner\": \"acme\", \"platform_repo_read_pat\": \"$FORGE_TOKEN\"}}" ] \
+    || fail "$engine_driver: the owner, the host and the reader did not arrive as answers: $(cat "$FORGE_WORK/projected.json")"
+done
+ok 'both drivers hand GITHUB_APP_OWNER, FORGEJO_HOST and PLATFORM_REPO_READ_PAT to a program that declares them, and nothing it does not declare'
 
 # ===========================================================================
 # NINE — release-unit, against a stand-in Manager behind a stand-in ssh and kubectl

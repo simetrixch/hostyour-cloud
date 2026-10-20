@@ -22,16 +22,32 @@ function fields(object) {
     default: return {};
   }
 }
+// The spec fields the comparison reads for a kind, recorded by running the comparison itself on an object
+// whose spec answers undefined to every key and notes it: no second list of names exists to drift from
+// fields() and from the derivation of the Secret an ExternalSecret makes.
+function specFieldsRead(kind) {
+  const read = new Set();
+  const spec = new Proxy({}, {get: (target, key) => { if (typeof key === 'string') read.add(key); }});
+  identities([{apiVersion: 'v1', kind, metadata: {}, spec}], 'default', []);
+  return [...read];
+}
 const groupOf = apiVersion => apiVersion.includes('/') ? apiVersion.split('/')[0] : '';
 // Argo CD keeps a field its Application ignores at the live value only under RespectIgnoreDifferences;
 // without it a sync applies the rendered field and the API server refuses the change, so only then is
-// the field left out of the comparison. A rule may take out one annotation or one label and nothing
-// else, so no rule can take out a field the check compares; a rule the check cannot read the way Argo
-// CD does is refused, never skipped.
+// the field left out of the comparison. A rule may take out one annotation or one label, or a spec field
+// the comparison does not read for that kind, so no rule can take out a field the check compares, inside
+// one or around one; a rule the check cannot read the way Argo CD does is refused, never skipped.
 const IGNORABLE = [['spec', 'template', 'metadata', 'annotations'], ['spec', 'template', 'metadata', 'labels'],
   ['metadata', 'annotations'], ['metadata', 'labels']];
 const pointerSteps = pointer => pointer.startsWith('/') ? pointer.split('/').slice(1).map(step => step.replaceAll('~1', '/').replaceAll('~0', '~')) : null;
 const jqSteps = expression => /^(\.[A-Za-z_]\w*)+$/.test(expression) ? expression.slice(1).split('.') : null;
+// Why the check refuses a path, or '' when it admits it.
+function refusalOf(steps, read, kind) {
+  if (IGNORABLE.some(prefix => steps.length > prefix.length && prefix.every((step, i) => steps[i] === step))) return '';
+  if (steps[0] !== 'spec') return 'lies outside the spec, where the check reads the identity, the type and the roleRef';
+  if (steps.length < 2) return 'is the whole spec, which holds every field the check compares';
+  return read.includes(steps[1]) ? `lies in spec.${steps[1]}, which the check compares for a ${kind}` : '';
+}
 export function ignoredFields(app = {}) {
   if (app.respectIgnoreDifferences !== 'true' || app.ignoreDifferences === undefined) return [];
   const where = `the app.yaml named ${app.name}`;
@@ -44,12 +60,12 @@ export function ignoredFields(app = {}) {
     if (![rule.jsonPointers ?? [], rule.jqPathExpressions ?? []].every(Array.isArray)) refuse('lists its paths not as a list');
     const paths = [...(rule.jsonPointers ?? []).map(path => [path, pointerSteps(path)]),
       ...(rule.jqPathExpressions ?? []).map(path => [path, jqSteps(path)])];
+    const read = specFieldsRead(rule.kind);
     for (const [path, steps] of paths) {
       if (!steps) refuse(`has ${path}, which the check cannot read (a jsonPointer from /, a jq path of .key steps)`);
       if (steps.at(-1) === '-') refuse(`has ${path}, which ends in an array position`);
-      if (!IGNORABLE.some(prefix => steps.length > prefix.length && prefix.every((step, i) => steps[i] === step))) {
-        refuse(`has ${path}, which is not one annotation or label, the only fields the immutable check lets a rule take out`);
-      }
+      const why = refusalOf(steps, read, rule.kind);
+      if (why) refuse(`has ${path}, which is not one annotation or label and ${why}`);
     }
     return {...rule, paths: paths.map(([, steps]) => steps)};
   });
@@ -174,6 +190,34 @@ export function probeImmutableChanges() {
   const byJq = {...plane, ignoreDifferences: [{...jobs, jqPathExpressions: ['.spec.template.metadata.annotations.timestamp']}]};
   assert.deepEqual(immutableChanges([stamped], [restamped], 'default', ignoredFields(byJq)), []);
   assert.equal(immutableChanges([stamped], [restampedImage], 'default', ignoredFields(byJq)).length, 1);
+  // A hold a lifecycle script keeps (the Manager's replicas, the release queue's suspend) is a spec field the
+  // comparison never reads, so a rule may take it out; a spec field it does read, or the whole spec, it may not.
+  const holding = (...rules) => ({...plane, ignoreDifferences: rules});
+  const admitted = rule => ignoredFields(holding(rule));
+  const deployment = {apiVersion: 'apps/v1', kind: 'Deployment', metadata: {name: 'manager'}, spec: {replicas: 1, selector: {matchLabels: {app: 'manager'}}}};
+  const scaled = {...deployment, spec: {...deployment.spec, replicas: 0}};
+  const reselected = {...deployment, spec: {...deployment.spec, selector: {matchLabels: {app: 'other'}}}};
+  const replicas = {group: 'apps', kind: 'Deployment', name: 'manager', jsonPointers: ['/spec/replicas']};
+  assert.deepEqual(immutableChanges([deployment], [scaled], 'default', admitted(replicas)), []);
+  assert.equal(immutableChanges([deployment], [reselected], 'default', admitted(replicas)).length, 1);
+  assert.equal(withoutIgnored(scaled, 'default', admitted(replicas)).spec.replicas, undefined);
+  assert.deepEqual(withoutIgnored(reselected, 'default', admitted(replicas)).spec.selector, reselected.spec.selector);
+  admitted({group: 'batch', kind: 'CronJob', name: 'release-queue', jsonPointers: ['/spec/suspend']});
+  admitted({group: 'apps', kind: 'Deployment', jqPathExpressions: ['.spec.replicas']});
+  admitted({group: 'apps', kind: 'Deployment', jsonPointers: ['/spec/serviceName']});
+  const refreshed = {group: 'external-secrets.io', kind: 'ExternalSecret', jsonPointers: ['/spec/refreshInterval']};
+  const typed = {...eso, spec: {target: {name: 'pull', template: {type: changed.type}}}};
+  assert.equal(immutableChanges([eso], [typed], 'default', admitted(refreshed)).length, 1);
+  // Were a path under the target admitted, the derived Secret's type would leave the comparison with it.
+  assert.deepEqual(immutableChanges([eso], [typed], 'default', [{group: 'external-secrets.io', kind: 'ExternalSecret', paths: [['spec', 'target', 'template', 'type']]}]), []);
+  const compared = {group: 'apps', kind: 'StatefulSet'};
+  refused({...compared, jsonPointers: ['/spec/serviceName']}, outside);
+  refused({...compared, jsonPointers: ['/spec/volumeClaimTemplates/0/spec']}, outside);
+  refused({group: 'apps', kind: 'Deployment', jsonPointers: ['/spec']}, outside);
+  for (const jsonPointers of [['/spec/target/template/type'], ['/spec/target']]) refused({group: 'external-secrets.io', kind: 'ExternalSecret', jsonPointers}, outside);
+  refused({group: 'rbac.authorization.k8s.io', kind: 'RoleBinding', jsonPointers: ['/roleRef/name']}, outside);
+  refused({group: 'apps', kind: 'Deployment', jsonPointers: ['/metadata/name']}, outside);
+  refused({kind: 'Secret', jsonPointers: ['/type']}, outside);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv[2] === '--probe') {

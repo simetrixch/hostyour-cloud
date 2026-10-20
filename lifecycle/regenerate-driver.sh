@@ -142,6 +142,23 @@ done
 readonly PLATFORM_REPO="${PLATFORM_REPO:-}"
 [ -n "$PLATFORM_REPO" ] \
   || die 'the config says nothing under PLATFORM_REPO, and the engine pin is read off that repository' 64
+readonly FORGEJO_PLATFORM_REPOSITORY="${FORGEJO_PLATFORM_REPOSITORY:-}"
+[ -n "$FORGEJO_PLATFORM_REPOSITORY" ] \
+  || die 'the config says nothing under FORGEJO_PLATFORM_REPOSITORY, and nothing here may choose one' 64
+
+# WHICH FORGE SERVES THE PLATFORM REPOSITORY, decided as driver.sh decides it: the same repository under
+# PLATFORM_REPO and FORGEJO_PLATFORM_REPOSITORY puts it on this installation's Forgejo, where it is private
+# and the engine pin is read with the reader's token. A config that does so and states no host or no
+# reader is refused here by name, before anything is read.
+PLATFORM_ON_FORGEJO=false
+if [ "$PLATFORM_REPO" = "$FORGEJO_PLATFORM_REPOSITORY" ]; then
+  PLATFORM_ON_FORGEJO=true
+  for named in FORGEJO_HOST PLATFORM_REPO_READ_PAT; do
+    [ -n "${!named:-}" ] \
+      || die "the config names $PLATFORM_REPO as PLATFORM_REPO and as FORGEJO_PLATFORM_REPOSITORY, so the platform repository is read from Forgejo, and it says nothing under ${named}, which that read needs" 64
+  done
+fi
+readonly PLATFORM_ON_FORGEJO
 
 # Every elevated command goes through here, and the password reaches it on
 # STANDARD INPUT - never an argument list, which stands in this machine's own
@@ -220,17 +237,31 @@ fi
 [ -x "$ENGINE" ] \
   || die "there is no engine at $ENGINE, and it is what runs a program. A machine is given it by lifecycle/install-machine.sh at its birth; nothing has been changed" 66
 
-# THE ENGINE, AT THE VERSION THE PLATFORM REPOSITORY PINS. Read off the public
+# THE ENGINE, AT THE VERSION THE PLATFORM REPOSITORY PINS. Read off the
 # platform repository by this machine, fetched from the owner's registry at the
 # address of each binary's SHA-256 (driver.sh says why), placed
 # elevated and read back off the machine - the shape driver.sh gives it, so a
 # regeneration and an installation put the same engine in front of the same
 # programs checkout. Nothing is fetched where the machine already answers the pin.
 readonly RELEASES=https://zot.master.digitacloud.app/v2/simetrixch/ansiwise-cli/blobs
-readonly PIN_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/versions.yaml"
-readonly DIGESTS_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/ansiwise.sha256"
+if [ "$PLATFORM_ON_FORGEJO" = true ]; then
+  readonly PIN_URL="https://$FORGEJO_HOST/$PLATFORM_REPO/raw/branch/master/clusters/platform/versions.yaml"
+  readonly DIGESTS_URL="https://$FORGEJO_HOST/$PLATFORM_REPO/raw/branch/master/clusters/platform/ansiwise.sha256"
+else
+  readonly PIN_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/versions.yaml"
+  readonly DIGESTS_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/ansiwise.sha256"
+fi
+# ON FORGEJO THE FILE IS READ WITH THE READER'S TOKEN, as a line of a curl configuration on standard input,
+# so the token stands in no word of the command and not in this machine's process listing.
+read_platform_file() { # <url>
+  if [ "$PLATFORM_ON_FORGEJO" = true ]; then
+    printf 'header = "Authorization: token %s"\n' "$PLATFORM_REPO_READ_PAT" | curl -fsSL --config - "$1"
+  else
+    curl -fsSL "$1"
+  fi
+}
 say "reading the engine pin from $PIN_URL"
-PIN_YAML=$(curl -fsSL "$PIN_URL") || die "$PIN_URL could not be read from this machine; nothing has been changed" 69
+PIN_YAML=$(read_platform_file "$PIN_URL") || die "$PIN_URL could not be read from this machine; nothing has been changed" 69
 # SINGLE-QUOTED FOR THE SHELL, so every dollar and every quote below belongs to
 # python and not to bash. The regexes therefore use double quotes throughout and
 # never a single one.
@@ -249,7 +280,7 @@ if [ "$ENGINE_ANSWERS" = "$PIN" ] && [ "$SERVING_ANSWERS" = "$PIN" ]; then
 else
   say "$ENGINE answers ${ENGINE_ANSWERS:-nothing}, /usr/local/bin/ansiwise-rest answers ${SERVING_ANSWERS:-nothing}, and the pin is $PIN"
   say "reading the digests from $DIGESTS_URL"
-  DIGESTS=$(curl -fsSL "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine; nothing has been changed" 69
+  DIGESTS=$(read_platform_file "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine; nothing has been changed" 69
   # EVERY ADDRESS BEFORE ANY DOWNLOAD. A blob is addressed by the digest its line states, so an
   # asset with no line, or with two, has no address at all and is refused before anything is fetched.
   for tool in ansiwise ansiwise-rest; do

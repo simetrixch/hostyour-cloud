@@ -3,8 +3,8 @@
 # on the Forgejo destinations in it. SOURCED, NEVER RUN: each launcher reads it with `.` and calls
 # require_forgejo_destinations once it has read its config into the shell.
 #
-#   require_forgejo_destinations   0 when FORGEJO_PLATFORM_REPOSITORY, FORGEJO_DEPLOY_REPOSITORY and
-#                                  FORGEJO_ORGANISATIONS are stated and the owner of each repository is
+#   require_forgejo_destinations   0 when FORGEJO_PLATFORM_REPOSITORY, FORGEJO_DEPLOY_REPOSITORY,
+#                                  FORGEJO_ORGANISATIONS and FORGEJO_HOST are stated and the owner of each repository is
 #                                  one of the organisations; 1 otherwise, with REFUSAL set to the end of
 #                                  the sentence, which the launcher begins with its config's name
 #
@@ -20,7 +20,7 @@
 require_forgejo_destinations() {
   REFUSAL=''
   local name owner organisations
-  for name in FORGEJO_PLATFORM_REPOSITORY FORGEJO_DEPLOY_REPOSITORY FORGEJO_ORGANISATIONS; do
+  for name in FORGEJO_PLATFORM_REPOSITORY FORGEJO_DEPLOY_REPOSITORY FORGEJO_ORGANISATIONS FORGEJO_HOST; do
     [ -n "${!name:-}" ] || { REFUSAL="states no $name, and nothing here may choose one"; return 1; }
   done
   organisations=",$(printf '%s' "$FORGEJO_ORGANISATIONS" | tr '[:upper:]' '[:lower:]'),"
