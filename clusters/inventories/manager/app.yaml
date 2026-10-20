@@ -5,3 +5,12 @@ namespace: manager
 prune: "true"
 createNamespace: "true"
 runsOn: master
+# The backup of the master stops the Manager for its copy by scaling it to 0, and starts it again once every
+# store is back; a sync that put the replicas of the chart back in between would start it under the copy.
+ignoreDifferences: |
+  - group: apps
+    kind: Deployment
+    name: manager
+    jsonPointers:
+      - /spec/replicas
+respectIgnoreDifferences: "true"

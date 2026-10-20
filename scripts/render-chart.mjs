@@ -37,9 +37,9 @@ const leaves = (live, written, path) => live && written && typeof live === 'obje
   JSON.stringify(live) === JSON.stringify(written) ? [] : [path];
 
 // Every leaf a sync of the second render writes over what the first left live, as `<kind>/<name> <path>`.
-// The fields ArgoCD keeps at the live value are the immutable check's: only under
-// RespectIgnoreDifferences=true, without which the next sync writes an ignored field all the same, and
-// only one annotation or label per path (scripts/check-immutable.mjs).
+// The fields ArgoCD keeps at the live value are the immutable check's: the rules `ignoredFields` of
+// scripts/check-immutable.mjs admits, and only under RespectIgnoreDifferences=true, without which the
+// next sync writes an ignored field all the same.
 export function driftFindings(first, second, application) {
   const rules = ignoredFields({name: application.metadata?.name, ignoreDifferences: application.spec.ignoreDifferences,
     respectIgnoreDifferences: String((application.spec.syncPolicy?.syncOptions ?? []).includes('RespectIgnoreDifferences=true'))});

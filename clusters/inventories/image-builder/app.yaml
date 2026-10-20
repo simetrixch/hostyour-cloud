@@ -5,3 +5,12 @@ namespace: image-builder
 prune: "true"
 createNamespace: "true"
 runsOn: master
+# The backup of the master suspends the release queue while it runs and lets it go again once every store is
+# back; the chart writes no suspend, and this keeps a sync from ever writing one over the hold.
+ignoreDifferences: |
+  - group: batch
+    kind: CronJob
+    name: release-queue
+    jsonPointers:
+      - /spec/suspend
+respectIgnoreDifferences: "true"

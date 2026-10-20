@@ -24,9 +24,13 @@
 #
 # WHAT STOPS, FOR HOW LONG. Each store is scaled to nothing for its own copy and started again with
 # the replicas it had: a database copied under a running process is a copy with a write in flight.
-# The Manager is one of them, so a run in flight when this starts is a run this interrupts — start
-# this at a quiet hour. The units on the master keep running; what they read from a stopped store
-# they read again once it is back.
+# The Manager's runs are held first: the release queue is suspended and the releases that run end first
+# (up to 65 minutes, the Manager stays up meanwhile), then the Manager stops before the first store and
+# starts after the last one reads ready. A run in flight pauses between two steps and goes on after, and
+# a release or publish run that a push starts meanwhile waits in the queue. A run in planning, a run of
+# the Forgejo release flow and a backup that is killed are not held; lifecycle/README.md names them.
+# The other units on the master keep running; what they read from a stopped store they read again once
+# it is back.
 # ===========================================================================
 set -uo pipefail
 die() { printf 'backup: %s. Nothing has been changed\n' "$1" >&2; exit "${2:-65}"; }
