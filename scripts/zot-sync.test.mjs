@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
+import {cpSync, mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import test from 'node:test';
 import {renderChart} from './render-chart.mjs';
 
@@ -31,9 +34,19 @@ const reached = (registries, repositories) => {
 };
 const unreached = (registries, repositories) => repositories.filter(repo => !reached(registries, [repo]).length);
 
-// Every Docker Hub repository an `image:` of the rendered tree names (scripts/list-mirror-images.sh --hub).
-const treeHubRepositories = () => [...new Set(execFileSync('bash', ['scripts/list-mirror-images.sh', '--hub'], {encoding: 'utf8'})
-  .split('\n').filter(Boolean).map(line => line.split(' ')[0]))];
+// Every Docker Hub repository an `image:` of the rendered tree names (scripts/list-mirror-images.sh --hub). The script
+// runs `helm dependency update` in the charts it renders, so it runs on a copy of clusters/ and scripts/ of its own: the
+// other suites render the chart folders of the tree at the same time (scripts/test.sh).
+const treeHubRepositories = () => {
+  const copy = mkdtempSync(join(tmpdir(), 'zot-sync-'));
+  try {
+    for (const folder of ['clusters', 'scripts']) cpSync(folder, join(copy, folder), {recursive: true});
+    return [...new Set(execFileSync('bash', ['scripts/list-mirror-images.sh', '--hub'], {cwd: copy, encoding: 'utf8'})
+      .split('\n').filter(Boolean).map(line => line.split(' ')[0]))];
+  } finally {
+    rmSync(copy, {recursive: true, force: true});
+  }
+};
 
 test('on a miss zot asks Docker Hub for every Docker Hub image the tree names', () => {
   const repositories = treeHubRepositories();

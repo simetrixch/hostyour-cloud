@@ -95,3 +95,43 @@ JS
 run_pool 2
 [ "$(cat "$work/status")" != 0 ] || fail "PLANTED DEFECT: a node test that fails ended green"
 ok "a .mjs suite runs with node --test and its failure ends the run red"
+
+# 6. A suite may read a chart's folder in the tree and write its dependency files in a copy of its own; a suite that writes them in the tree
+# ends the run red, and the run names each path. Cases 1 to 5 have no clusters/ folder, so they also show that a missing folder holds no chart.
+fixture_chart() { # the fixture charts, whole again: one under clusters/ and one under scripts/
+  rm -rf "$repo/clusters" "$repo/scripts/fixture-chart"
+  for chart in clusters/fixture scripts/fixture-chart; do
+    mkdir -p "$repo/$chart/charts"
+    printf 'apiVersion: v2\nname: fixture\nversion: 0.1.0\n' >"$repo/$chart/Chart.yaml"
+    printf 'the dependency as fetched\n' >"$repo/$chart/charts/dep-1.0.0.tgz"
+    printf 'digest: one\n' >"$repo/$chart/Chart.lock"
+  done
+}
+suite_file reads.sh 'for chart in clusters/fixture scripts/fixture-chart; do ls "$chart/charts" >/dev/null; cat "$chart/Chart.lock" "$chart/charts/dep-1.0.0.tgz" >/dev/null; done'
+suite_file copies.sh 'copy="$(mktemp -d)"; cp -R clusters scripts "$copy"
+  sleep 0.05
+  printf "fetched again\n" >"$copy/clusters/fixture/charts/dep-1.0.0.new"; mv "$copy/clusters/fixture/charts/dep-1.0.0.new" "$copy/clusters/fixture/charts/dep-1.0.0.tgz"
+  printf "digest: two\n" >"$copy/clusters/fixture/Chart.lock"; mkdir "$copy/clusters/fixture/tmpcharts-123"
+  rm -rf "$copy"'
+fixture_chart
+build_pool suites/reads.sh suites/copies.sh
+run_pool 2
+[ "$(cat "$work/status")" = 0 ] || { cat "$work/out"; fail "a suite that only reads a chart's folder and one that writes the dependency files in a copy of its own did not end green"; }
+grep -q '^test: ok — suites/copies.sh (' "$work/out" || fail "the suite that writes in a copy of its own did not run"
+ok "a suite that reads a chart's folder, and one that writes its dependency files in a copy of its own, end green"
+
+suite_file renames.sh 'printf "fetched again\n" >"$TEST_LOGS/dep.new"; mv "$TEST_LOGS/dep.new" clusters/fixture/charts/dep-1.0.0.tgz'
+suite_file rewrites.sh 'sleep 0.05; printf "digest: two\n" >clusters/fixture/Chart.lock'
+suite_file leaves.sh 'mkdir clusters/fixture/tmpcharts-123'
+suite_file beside.sh 'printf "fetched again\n" >"$TEST_LOGS/dep.new"; mv "$TEST_LOGS/dep.new" scripts/fixture-chart/charts/dep-1.0.0.tgz'
+for planted in renames.sh:clusters/fixture/charts/dep-1.0.0.tgz rewrites.sh:clusters/fixture/Chart.lock leaves.sh:clusters/fixture/tmpcharts-123 beside.sh:scripts/fixture-chart/charts/dep-1.0.0.tgz; do
+  fixture_chart
+  build_pool "suites/${planted%%:*}" suites/reads.sh
+  run_pool 2
+  [ "$(cat "$work/status")" != 0 ] || fail "PLANTED DEFECT: ${planted%%:*}, a suite that writes a chart's dependency files in the tree, ended green"
+  [ "$(grep -c '^test: written — ' "$work/out")" = 1 ] && grep -qxF "test: written — ${planted#*:}" "$work/out" \
+    || { cat "$work/out"; fail "the run did not name ${planted#*:} alone as the path ${planted%%:*} wrote"; }
+  grep -q '^test: ok — suites/reads.sh (' "$work/out" || fail "the suite beside ${planted%%:*} did not run"
+  [ "$(tail -n 1 "$work/out")" = 'test: FAIL — a suite wrote chart dependency files in the tree' ] || fail "the last line does not say that a suite wrote chart dependency files in the tree"
+done
+ok "a suite that replaces a dependency by a rename, rewrites a Chart.lock, leaves a tmpcharts folder, or writes under scripts/, ends the run red naming that path alone"

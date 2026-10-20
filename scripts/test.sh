@@ -2,7 +2,8 @@
 # Fixture suites. scripts/check.sh runs them as its last section, after it built the dependencies of every chart, so the push gate runs every
 # suite on the machine and no two suites write one chart's charts/ directory together.
 # The suites share nothing: each works in a temporary directory of its own and listens only on a port the kernel hands it, so TEST_JOBS of them
-# run at once (4 unless set). The output of a suite is kept in a log of its own and printed in the order
+# run at once (4 unless set). The pool lists the dependency files of every chart before and after the suites and ends red naming each one a suite wrote in the tree.
+# The output of a suite is kept in a log of its own and printed in the order
 # of the list below once all have ended: a passed suite as one line with its time, a failed one in full, so the end of the output names what failed.
 # A suite that leaves no status (killed by the kernel, for one, which also stops the pool) is a failed suite.
 set -euo pipefail
@@ -67,11 +68,26 @@ if [ "${1:-}" = --suite ]; then
   exit 0
 fi
 
+# The files helm writes into a chart's folder (charts/*, Chart.lock, tmpcharts-*) for every folder with a Chart.yaml under clusters/ and scripts/: inode, modification time and path.
+# A folder that does not exist holds no chart.
+chart_dependency_files() {
+  local folder chart
+  for folder in clusters scripts; do
+    if [ -d "$folder" ]; then find "$folder" -name Chart.yaml -printf '%h\n'; fi
+  done | LC_ALL=C sort | while IFS= read -r chart; do
+    find "$chart" -mindepth 1 -maxdepth 1 \( -name Chart.lock -o -name 'tmpcharts-*' \) -printf '%i %T@ %p\n'
+    if [ -d "$chart/charts" ]; then find "$chart/charts" -mindepth 1 -printf '%i %T@ %p\n'; fi
+  done | LC_ALL=C sort
+}
+
 TEST_LOGS="$(mktemp -d)"
 export TEST_LOGS
 trap 'rm -rf "$TEST_LOGS"' EXIT
+chart_dependency_files >"$TEST_LOGS/charts.before" || fail "the dependency files of the charts could not be listed"
 # xargs ends with 125 and starts no further suite when one of them was killed; the suites without a status are named below.
 printf '%s\0' "${suite_files[@]}" | xargs -0 -n1 -P "${TEST_JOBS:-4}" bash "$root/scripts/test.sh" --suite || echo "test: the pool of suites ended with status $?, so a suite was killed"
+chart_dependency_files >"$TEST_LOGS/charts.after" || fail "the dependency files of the charts could not be listed"
+written="$(LC_ALL=C comm -3 "$TEST_LOGS/charts.before" "$TEST_LOGS/charts.after" | sed 's/^[[:space:]]*[0-9]* [0-9.]* //' | LC_ALL=C sort -u)"
 
 failed=()
 for index in "${!suite_files[@]}"; do
@@ -99,5 +115,10 @@ for file in ${failed[@]+"${failed[@]}"}; do
     echo "test: FAIL — $file left no status: it was killed, or the pool stopped before it started"
   fi
 done
+if [ -n "$written" ]; then
+  echo "test: ── the suites wrote these chart dependency files in the tree; a suite writes them in a copy of its own ──"
+  printf '%s\n' "$written" | sed 's/^/test: written — /'
+fi
 [ "${#failed[@]}" -eq 0 ] || fail "${failed[*]}"
+[ -z "$written" ] || fail 'a suite wrote chart dependency files in the tree'
 echo 'test: OK — all suites green'
