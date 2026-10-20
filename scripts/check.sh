@@ -1042,19 +1042,46 @@ grep -qF "$platform_default" "$work/argocd-alone" \
   || fail "the render of clusters/argocd from a cluster map with no platformUrl never names the product default $platform_default"
 echo "check: clusters/argocd carries the product default $platform_default for a cluster map without platformUrl, equal to the platform chain's; the comparison refuses 2 planted defaults and takes the planted innocent."
 
-# $1 is a chart directory. Renders it for a Forgejo map, and prints one finding per line on stdout.
+github_platform="$platform_trunk"
+github_deploy="$(yq '.global.deployUrl // ""' "$cluster_map")"
+[ -n "$github_deploy" ] || fail "$cluster_map carries no global.deployUrl, and it is the deploy repository on GitHub that the scan of a Forgejo map looks for"
+
+# $1 is a chart directory, $2 how the chart is handed its values: `map` for clusters/argocd, which gets the cluster map
+# alone, `chain` for every other chart, which gets the platform chain first. Renders it for a Forgejo map, keeps the
+# render in $work/moved-<directory name>.render and prints one finding per line on stdout.
 moved_repository_findings() {
-  local out url
-  out="$(helm template argocd-apps "$1" -f "$cluster_map" --set "revision=$handed_revision" \
-    --set "global.platformUrl=$forge_platform" --set "global.deployUrl=$forge_deploy" 2>&1)" \
+  local release=argocd-apps namespace url name args values out
+  args=()
+  name="$(basename "$1")"
+  case "$2" in
+    map) args=(-f "$cluster_map" --set "revision=$handed_revision") ;;
+    chain)
+      release="$name"
+      namespace="$(sed -n 's/^namespace:[[:space:]]*//p' "$1/app.yaml" 2>/dev/null | head -1)"
+      args=(--namespace "${namespace:-check}" --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1
+        -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml)
+      for values in values-common.yaml values.yaml values-dev.yaml values-size-small.yaml; do
+        [ -f "$1/$values" ] && args+=(-f "$1/$values")
+      done
+      args+=(-f "$installation_values" -f "$cluster_map" -f "$registration" -f scripts/standin/repository-credentials.yaml
+        --set global.placeholderTag=check-takes-the-placeholder-for-a-tag)
+      ;;
+    *) fail "moved_repository_findings was asked for the mode $2" ;;
+  esac
+  out="$(helm template "$release" "$1" "${args[@]}" --set "global.platformUrl=$forge_platform" --set "global.deployUrl=$forge_deploy" 2>&1)" \
     || { printf '  the render of %s for a Forgejo map fails: %s\n' "$1" "$(printf '%s\n' "$out" | head -n 1)"; return 0; }
-  printf '%s\n' "$out" > "$work/moved-repository.render"
-  grep -n 'github\.com' "$work/moved-repository.render" | sed 's/^/  a line of the render for a Forgejo map still names github.com: /' || true
-  for url in "$forge_platform" "$forge_deploy"; do
-    grep -qF "$url" "$work/moved-repository.render" || printf '  the render for a Forgejo map never names %s\n' "$url"
-  done
+  printf '%s\n' "$out" > "$work/moved-$name.render"
+  if [ "$2" = map ]; then
+    grep -n 'github\.com' "$work/moved-$name.render" | sed 's/^/  a line of the render for a Forgejo map still names github.com: /' || true
+    for url in "$forge_platform" "$forge_deploy"; do
+      grep -qF "$url" "$work/moved-$name.render" || printf '  the render for a Forgejo map never names %s\n' "$url"
+    done
+  else
+    grep -nF -e "$github_platform" -e "$github_deploy" "$work/moved-$name.render" \
+      | sed "s|^|  $1: a line of the render for a Forgejo map still names the platform or the deploy repository on GitHub: |" || true
+  fi
 }
-found="$(moved_repository_findings clusters/argocd)"
+found="$(moved_repository_findings clusters/argocd map)"
 if [ -n "$found" ]; then
   echo "$found"
   fail "clusters/argocd names a repository of GitHub, or none of the Forgejo's, for a map that moved both"
@@ -1064,7 +1091,7 @@ cp -R clusters/argocd "$planted_tree" \
   && sed -i.bak "s|__PLATFORM_URL__|https://github.com/simetrixch/hostyour-cloud.git|" "$planted_tree/files/units-appset.yaml" \
   && rm -f "$planted_tree/files/units-appset.yaml.bak" \
   || fail "the planted tree that names the platform repository on GitHub could not be made"
-[ -n "$(moved_repository_findings "$planted_tree")" ] \
+[ -n "$(moved_repository_findings "$planted_tree" map)" ] \
   || fail "the scan for a repository the map moved stays silent on a file that names the platform on github.com"
 echo "check: clusters/argocd names the repositories of a Forgejo map in every source and generator, and no github.com; the scan refuses the planted file that names the platform on github.com and takes the real tree."
 
@@ -1133,13 +1160,21 @@ for chart_kind in "argocd-secrets $secrets_chart" "slave $slave_chart"; do
 done
 
 planted_credential_defects=0
-plant_chart_defect() { # $1 the copy (a directory name under $work), $2 the chart (argocd-secrets or slave), $3 the file of it, $4 a fixed string of the line, $5 the line to put in its place, $6 the forge
-  local copy="$work/$1" source_chart
+# $1 the copy (a directory name under $work), $2 the chart (argocd-secrets or slave), $3 the file of it, $4 a fixed string of
+# the line, $5 the line to put in its place, $6 the forge, $7 what is planted, and $8 and $9 a second line and its replacement
+# where the defect needs two. A defect is shown by the scan's own rule: a copy whose render fails is no plant, the scan then
+# reports the render and not the credential.
+plant_chart_defect() {
+  local copy="$work/$1" source_chart found_planted
   case "$2" in argocd-secrets) source_chart=$secrets_chart ;; *) source_chart=$slave_chart ;; esac
   rm -rf "$copy" && cp -R "$source_chart" "$copy" || fail "the planted chart $1 could not be copied"
   replace_line_in "$copy/templates/$3" "$4" "$5"
-  [ -n "$(repository_credential_findings "$1" "$copy" "$2" "$6")" ] \
-    || fail "the scan of the credentials stays silent on $1, planted $7"
+  [ -z "${8:-}" ] || replace_line_in "$copy/templates/$3" "$8" "$9"
+  found_planted="$(repository_credential_findings "$1" "$copy" "$2" "$6")"
+  [ -n "$found_planted" ] || fail "the scan of the credentials stays silent on $1, planted $7"
+  case "$found_planted" in
+    *"chart does not render"*) fail "the plant $1 ($7) turns the scan red by a render that fails, and the scan never judged its credentials" ;;
+  esac
   planted_credential_defects=$((planted_credential_defects + 1))
 }
 plant_chart_defect planted-owner-from-deploy-url argocd-secrets externalsecret-repo-creds-owner.yaml "url: 'https://github.com/" \
@@ -1147,12 +1182,95 @@ plant_chart_defect planted-owner-from-deploy-url argocd-secrets externalsecret-r
 plant_chart_defect planted-deploy-credential-on-forgejo argocd-secrets externalsecret-repo-deploy.yaml 'hasPrefix "https://github.com/"' \
   '{{- if true }}' forgejo "with repo-deploy rendering on a Forgejo installation, both credentials from one set of answers"
 plant_chart_defect planted-forgejo-credential-without-answers argocd-secrets externalsecret-repo-creds-forgejo.yaml 'if $forgejo.enabled' \
-  '{{- if true }}' github "with repo-creds-forgejo rendering where the installation has no Forgejo answers"
+  '{{- if true }}' github "with repo-creds-forgejo rendering where the installation has no Forgejo answers" \
+  'url: https://{{ required' '        url: https://forgejo.planted.example.invalid/'
 plant_chart_defect planted-platform-credential-on-forgejo slave externalsecret-repo-platform.yaml 'hasPrefix "https://github.com/"' \
   '{{- if true }}' forgejo "with the slave's repo-platform rendering on a Forgejo installation"
 plant_chart_defect planted-slave-owner-from-deploy-url slave externalsecret-repo-creds-owner.yaml "url: 'https://github.com/" \
   '        url: {{ regexFind "^https://[^/]+/[^/]+/" .Values.global.deployUrl }}' forgejo "with the slave's repo-creds-owner taking its url from global.deployUrl"
 echo "check: the credentials of the argocd-secrets chart and of its slave twin follow an installation on GitHub and one on Forgejo; the scan refuses $planted_credential_defects planted defects and takes the GitHub-only installation."
+
+# EVERY OTHER CHART, FOR THE SAME FORGEJO MAP. clusters/argocd is the one chart that writes the repositories into the
+# Applications, but not the only one that names a repository: a chart an ApplicationSet renders reads global.platformUrl
+# and global.deployUrl from the platform chain, or is handed the URL by the ApplicationSet, and a literal in it is a
+# repository the map moved and the chart did not. The chain is the one the render loop above hands each chart at stage
+# dev. The unit mode of clusters/inventories/consumer-build is not scanned: its build plane names the platform
+# repository on GitHub until hostyour-cloud#428 moves it, and the scan would report that on every run.
+chain_charts=0
+chain_found=""
+for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/; do
+  chart="${chart%/}"
+  [ -f "$chart/Chart.yaml" ] || continue
+  grep -qE '^type:[[:space:]]*library[[:space:]]*$' "$chart/Chart.yaml" && continue
+  chain_found="$chain_found$(moved_repository_findings "$chart" chain)"$'\n'
+  chain_charts=$((chain_charts + 1))
+done
+chain_found="${chain_found//$'\n'$'\n'/$'\n'}"
+if [ -n "${chain_found//$'\n'/}" ]; then
+  printf '%s' "$chain_found"
+  fail "a chart names a repository of GitHub, or does not render, for a map that moved both"
+fi
+# The scan reads the render, so a chart that stopped writing the platform repository into it would leave the scan
+# silent for the wrong reason. These two write it into what they render.
+for chart in consumer-build slave; do
+  grep -qF "$forge_platform" "$work/moved-$chart.render" \
+    || fail "the render of $chart for a Forgejo map never names $forge_platform, so the scan of its charts proves nothing about the platform repository"
+done
+planted_reconciler="$work/planted-reconciler"
+rm -rf "$planted_reconciler" && cp -R clusters/units/reconciler "$planted_reconciler" \
+  && replace_line_in "$planted_reconciler/templates/appproject.yaml" 'platformRepoUrl is required' "    - \"$github_platform\"" \
+  || fail "the planted reconciler that names the platform repository on GitHub could not be made"
+[ -n "$(moved_repository_findings "$planted_reconciler" chain)" ] \
+  || fail "the scan of a chart stays silent on a chart that renders the platform repository on github.com"
+echo "check: $chain_charts charts name no platform or deploy repository on GitHub for a Forgejo map; the scan refuses the planted chart that renders the platform on github.com and takes the real charts."
+
+# THE PROJECT OF A UNIT, AS THE APPLICATIONSET HANDS THE RECONCILER ITS VALUES. clusters/units/reconciler is given
+# no platform chain: the unit-reconciler ApplicationSet of clusters/argocd/files/units-appset.yaml hands it the
+# platform repository its project allows, and that is a different file from the chart. Rendered from the chain, a
+# default in the chart would stand in for a value the ApplicationSet never handed, and every consumer Application
+# would be refused its platform source the moment the map moved. So the chart is rendered from what the render of
+# clusters/argocd for a Forgejo map hands it: the registration's fields of the stand-in and the static values of
+# the ApplicationSet, and its project must allow the Forgejo's platform repository and not GitHub's.
+# $1 is the render of clusters/argocd for a Forgejo map, $2 the reconciler chart. One finding per line on stdout.
+reconciler_handed_findings() {
+  local handed="$work/reconciler-handed.yaml" out sources
+  [ -n "$(yq eval -N 'select(.kind == "ApplicationSet" and .metadata.name == "unit-reconciler") | .metadata.name' "$1")" ] \
+    || { echo "  the render of clusters/argocd holds no ApplicationSet unit-reconciler, which hands the reconciler its values"; return 0; }
+  { yq '{"registration": .registration}' "$registration"
+    yq eval -N 'select(.kind == "ApplicationSet" and .metadata.name == "unit-reconciler") | (.spec.template.spec.source.helm.valuesObject // {}) | del(.registration) | del(.. | select(tag == "!!str" and test("[{][{]")))' "$1"
+  } > "$handed"
+  out="$(helm template reconciler "$2" --namespace check -f "$handed" 2>&1)" \
+    || { printf '  the reconciler chart does not render with the values its ApplicationSet hands it: %s\n' "$(printf '%s\n' "$out" | head -n 1)"; return 0; }
+  sources="$(printf '%s\n' "$out" | yq eval -N 'select(.kind == "AppProject") | .spec.sourceRepos[]' -)"
+  printf '%s\n' "$sources" | grep -qxF "$forge_platform" \
+    || printf '  the project of a unit allows %s, and it must allow the platform repository %s\n' "$(printf '%s' "$sources" | paste -sd' ' -)" "$forge_platform"
+  ! printf '%s\n' "$sources" | grep -qxF "$github_platform" \
+    || printf '  the project of a unit allows the platform repository on GitHub, %s\n' "$github_platform"
+}
+found="$(reconciler_handed_findings "$work/moved-argocd.render" clusters/units/reconciler)"
+if [ -n "$found" ]; then
+  echo "$found"
+  fail "the project of a unit does not follow the platform repository its ApplicationSet hands the reconciler"
+fi
+planted_handed_tree="$work/planted-handed-tree"
+cp -R clusters/argocd "$planted_handed_tree" \
+  && sed -i.bak '/platformRepoUrl: __PLATFORM_URL__/d' "$planted_handed_tree/files/units-appset.yaml" \
+  && rm -f "$planted_handed_tree/files/units-appset.yaml.bak" \
+  || fail "the planted tree whose ApplicationSet hands the reconciler no platform repository could not be made"
+[ -z "$(moved_repository_findings "$planted_handed_tree" map)" ] \
+  || fail "the planted tree whose ApplicationSet hands the reconciler no platform repository names github.com, and it is the chart's default that must fail the project, not this scan"
+[ -n "$(reconciler_handed_findings "$work/moved-planted-handed-tree.render" clusters/units/reconciler)" ] \
+  || fail "the scan of the reconciler stays silent on an ApplicationSet that hands it no platform repository"
+planted_default="$work/planted-reconciler-default"
+rm -rf "$planted_default" && cp -R clusters/units/reconciler "$planted_default" \
+  && replace_line_in "$planted_default/values.yaml" 'platformRepoUrl: ""' "platformRepoUrl: $github_platform" \
+  || fail "the planted reconciler that defaults the platform repository to GitHub could not be made"
+found="$(reconciler_handed_findings "$work/moved-planted-handed-tree.render" "$planted_default")"
+case "$found" in
+  *"allows the platform repository on GitHub"*) ;;
+  *) fail "the scan of the reconciler stays silent on a default that names the platform repository on GitHub behind an ApplicationSet that hands none" ;;
+esac
+echo "check: the project of a unit allows the Forgejo's platform repository as its ApplicationSet hands it; the scan refuses an ApplicationSet that hands none, behind the chart's required and behind a chart default of github.com, and takes the real chart."
 
 # THE GATE THE MANAGER'S ONBOARDING MUST PASS IS THE HOST THE PIPELINE CLONES THE PLATFORM FROM. Unless the operator sets
 # onboarding.gateMustPass, clusters/inventories/manager composes it from global.platformUrl (templates/deployment.yaml);

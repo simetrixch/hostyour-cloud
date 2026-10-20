@@ -103,10 +103,9 @@ spec:
         - resources-finalizer.argocd.argoproj.io
     spec:
       project: units
-      # ONE SOURCE, BECAUSE THIS CHART READS NO PLATFORM VALUE. Its whole content is the
-      # registration's own fields plus URLs that are the same for every installation, so there is
-      # no $values chain to give it and no cluster map to load. A values-only source added here would
-      # be a second ref standing on the install branch for nothing to read.
+      # ONE SOURCE, BECAUSE THIS CHART READS NO $values CHAIN. Everything it renders is handed in
+      # valuesObject below, the registration's fields and the platform repository the project allows,
+      # so no cluster map has to load and a values-only source would be a second ref for nothing to read.
       source:
         repoURL: __PLATFORM_URL__
         targetRevision: __BRANCH__
@@ -118,6 +117,7 @@ spec:
               stage: "{{ .values.stage }}"
               repoURL: "{{ .repoURL }}"
             argoNamespace: __ARGOCD_NAMESPACE__
+            platformRepoUrl: __PLATFORM_URL__
       destination:
         # THE CLUSTER THIS RECONCILER RUNS IN, which is where a unit's AppProject and its Application
         # CRs stand whichever cluster the unit itself runs on. See the header.

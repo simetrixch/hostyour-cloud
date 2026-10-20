@@ -603,7 +603,7 @@ spec:
             image: alpine/k8s:1.35.6
             env:
               - name: DEPLOY_URL
-                value: {{ required "consumer-build: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map's deploy-repo)" .Values.global.deployUrl | quote }}
+                value: {{ required "consumer-build: global.deployUrl is required (clusters/active/<fqdn>.yaml, written by deploy-branch as https://<forge host>/<deploy repository>.git)" .Values.global.deployUrl | quote }}
               - name: BOOKS_BRANCH
                 value: {{ required "consumer-build: global.booksCluster is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map)" .Values.global.booksCluster | quote }}
               - name: REGISTRY
@@ -924,7 +924,7 @@ spec:
               # pushed the tenant pins to a repository picked by this chart would
               # write into somebody else's deploy repository.
               - name: DEPLOY_URL
-                value: {{ required "consumer-build: global.deployUrl is required (clusters/active/<fqdn>.yaml, rendered per install branch from the cluster map's deploy-repo — the repository holding this installation's tenant charts)" .Values.global.deployUrl | quote }}
+                value: {{ required "consumer-build: global.deployUrl is required (clusters/active/<fqdn>.yaml, written by deploy-branch as https://<forge host>/<deploy repository>.git — the repository holding this installation's tenant charts)" .Values.global.deployUrl | quote }}
               # toJson for the same newline-preserving reason as in gate-stage.
               - name: CHANNEL_STAGES
                 value: {{ $channelTable | toJson }}
