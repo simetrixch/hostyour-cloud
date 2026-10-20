@@ -9,10 +9,15 @@ description: |
       `$argocd-oidc:clientSecret` in its oidc.config. Without it the sign-in reaches the token
       exchange and is answered `invalid_client`, because an unresolved reference is sent as an empty
       secret; and the local account is off, so there is no password form to fall back to.
-    * `repo-deploy`, the credential the repo-server reads the PRIVATE deploy repository with. The
-      tenants ApplicationSet generates its parameters from that repository over git; without the
-      credential GitHub answers "Repository not found", which reads like a wrong URL and is a
-      missing credential.
+    * `repo-deploy`, the credential the repo-server reads the PRIVATE deploy repository with while
+      that repository stands on GitHub. The tenants ApplicationSet generates its parameters from that
+      repository over git; without the credential GitHub answers "Repository not found", which reads
+      like a wrong URL and is a missing credential.
+    * `repo-creds-forgejo`, the credential the repo-server reads every repository of the installation's
+      Forgejo with, the platform and the deploy repository among them, where
+      installation/values/repository-credentials.yaml names that Forgejo.
+    * `repo-creds-owner`, the GitHub App's credential for every repository of its owner, which the
+      units that stay on GitHub are read with.
     * `SecretStore/vault-backend` and `ServiceAccount/external-secrets-sa`, through which both are
       read: this cluster's own auth mount, its own ServiceAccount, its own role — the shared chart,
       rendered exactly as every other workload namespace renders it.

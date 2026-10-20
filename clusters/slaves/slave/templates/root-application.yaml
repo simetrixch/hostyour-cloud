@@ -46,6 +46,7 @@ cleanup is the job of removing the slave).
 {{- $slave := .Values.slave }}
 {{- $revision := required "revision is required (clusters/argocd/files/slaves-appset.yaml hands it as the Helm parameter revision) — the commit of the books branch the master's root Application synced, the one branch an installation keeps every cluster map on" .Values.revision }}
 {{- $fqdn := required "slave.fqdn is required (clusters/argocd/files/slaves-appset.yaml valuesObject — this slave's own domain, which names its cluster map on the books branch)" $slave.fqdn }}
+{{- $platformUrl := required "slave: global.platformUrl is required (clusters/platform/values-common.yaml, or the cluster map of the master) — the platform repository the slave's tree and its cluster map are read from" .Values.global.platformUrl }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -64,10 +65,10 @@ spec:
   # master applied. Which map the chart reads is decided by the file name below rather than by the
   # revision.
   sources:
-    - repoURL: {{ .Values.repo.url }}
+    - repoURL: {{ $platformUrl }}
       targetRevision: {{ $revision }}
       ref: values
-    - repoURL: {{ .Values.repo.url }}
+    - repoURL: {{ $platformUrl }}
       targetRevision: {{ $revision }}
       # THE TREE HAS NO STAGE SEGMENT. A path carrying one — `clusters/argocd/<stage>` — names a
       # layout that does not exist: ArgoCD answers `app path does not exist`, the Application stands

@@ -29,7 +29,7 @@ metadata:
 spec:
   description: The registrations of the site statistics service, one ConfigMap per tenant and stage, in the namespace of the observability application and nowhere else.
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
   destinations:
     - name: __CLUSTER_NAME__
       namespace: observability
@@ -48,7 +48,7 @@ spec:
     - missingkey=error
   generators:  # the generator of tenants-appset.yaml: one Application per registration and stage
     - git:
-        repoURL: https://github.com/__DEPLOY_REPO__.git
+        repoURL: __DEPLOY_URL__
         revision: __BOOKS_FQDN__
         files:
           - path: "registrations/*/dev.yaml"
@@ -89,7 +89,7 @@ spec:
     {{- end }}
     spec:
       sources:
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           path: clusters/units/site-telemetry-registration
           helm:

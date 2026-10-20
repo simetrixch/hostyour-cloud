@@ -1,7 +1,7 @@
 {{- /*
 Thin wrapper, CATALOG mode only: emits the build fan-out ApplicationSet
 verbatim from files/applicationset.yaml (kept OUTSIDE templates/ so ArgoCD's
-own {{ }} goTemplate expressions survive Helm rendering untouched). Four
+own {{ }} goTemplate expressions survive Helm rendering untouched). Five
 substitutions:
 
   __STAGE__    global.env.
@@ -10,6 +10,9 @@ substitutions:
                by clusters/argocd/files/platform-apps-appset.yaml. The
                generator and every source of this repository stand at it.
   __FQDN__     global.domain — this cluster's fqdn, which names its map.
+  __PLATFORM_URL__ global.platformUrl — the platform repository's whole clone address, on GitHub
+               or on the installation's Forgejo, which the generator and every source of this
+               repository are written with.
   __CLUSTER__  global.clusterName — the cluster these build Applications deploy to, named the
                way its project allows it
 
@@ -18,5 +21,5 @@ clusters/inventories/consumer-build/app.yaml says runsOn: master, so the app gen
 it on the build plane and nowhere else.
 */ -}}
 {{- if not .Values.unit }}
-{{- .Files.Get "files/applicationset.yaml" | replace "__CLUSTER__" (required "consumer-build: global.clusterName is required (clusters/active/<fqdn>.yaml) — the build Applications name the cluster they deploy to, and their project allows that name" .Values.global.clusterName) | replace "__STAGE__" .Values.global.env | replace "__REVISION__" (required "consumer-build: revision is required — the commit of this repository the platform Application synced, which clusters/argocd/files/platform-apps-appset.yaml hands this chart as the Helm parameter revision ($ARGOCD_APP_REVISION). The generator and the sources of the build ApplicationSet stand at it" .Values.revision) | replace "__FQDN__" .Values.global.domain }}
+{{- .Files.Get "files/applicationset.yaml" | replace "__CLUSTER__" (required "consumer-build: global.clusterName is required (clusters/active/<fqdn>.yaml) — the build Applications name the cluster they deploy to, and their project allows that name" .Values.global.clusterName) | replace "__STAGE__" .Values.global.env | replace "__REVISION__" (required "consumer-build: revision is required — the commit of this repository the platform Application synced, which clusters/argocd/files/platform-apps-appset.yaml hands this chart as the Helm parameter revision ($ARGOCD_APP_REVISION). The generator and the sources of the build ApplicationSet stand at it" .Values.revision) | replace "__FQDN__" .Values.global.domain | replace "__PLATFORM_URL__" (required "consumer-build: global.platformUrl is required (clusters/platform/values-common.yaml, or the cluster map) — the platform repository the build Applications read this repository from" .Values.global.platformUrl) }}
 {{- end }}

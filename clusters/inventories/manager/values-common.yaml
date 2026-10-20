@@ -152,8 +152,10 @@ forgejo:
 # ansiwise/templates/manager-values.tpl). Kube access is IN-CLUSTER via the pod ServiceAccount
 # (grants shipped with this chart, templates/rbac.yaml — no Vault kubeconfig, nothing to seed).
 onboarding:
-  # The one egress the gate pod MUST reach (the pipeline clones from github through the fence).
-  gateMustPass: "github.com:443"
+  # The one egress the gate pod MUST reach (the pipeline clones the platform repository through the fence).
+  # Unset: the host of global.platformUrl on port 443, which templates/deployment.yaml composes. Set it to
+  # name another host:port.
+  gateMustPass: ""
   # The kubeconform target minor for the render gate (G3).
   kubeVersion: "1.30.0"
 
