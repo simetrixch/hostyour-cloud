@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Everything this repository can be held to on one machine, before anything leaves it.
 #
-# Local chart validation and credential scanning. Fixture suites run in the ci of the master (scripts/test.sh).
+# Local chart validation, credential scanning, and last the fixture suites of scripts/test.sh.
 
 set -uo pipefail
 
@@ -2214,48 +2214,14 @@ printf '%s\n' "$records" | awk -F'\t' '
   { n[$2]++; keys += split($4, k, ",") }
   END { printf "check: every key of clusters/platform/versions.yaml is one its kind takes — %d components, %d upstreams, %d stamps, %d keys; not the sites of the deploy and manager trees, nor the answers of an upstream, so a dry run can still fail on a site this tree cannot see.\n", n["component"], n["upstream"], n["stamp"], keys }'
 
-echo 'check: NOT RUN locally — lifecycle/test.sh; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the ci of the master via scripts/test.sh.'
-bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
-echo 'check: NOT RUN locally — scripts/pipeline-publish.test.sh; runs in the ci of the master via scripts/test.sh.'
-bash -n scripts/test.sh || fail 'Bash syntax: scripts/test.sh'
-bash -n scripts/test-pool.test.sh || fail 'Bash syntax: scripts/test-pool.test.sh'
-echo 'check: NOT RUN locally — scripts/test-pool.test.sh; runs in the ci of the master via scripts/test.sh.'
-bash -n scripts/check-mirror-consumers.test.sh || fail 'Bash syntax: scripts/check-mirror-consumers.test.sh'
-echo 'check: NOT RUN locally — scripts/check-mirror-consumers.test.sh; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in the ci of the master via scripts/test.sh.'
-for module in scripts/release-queue.test.mjs scripts/site-telemetry.test.mjs scripts/ci-run-keeper.test.mjs scripts/ci-green-status.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/unit-networkpolicy.test.mjs scripts/site-telemetry-registration.test.mjs scripts/site-telemetry-deployment.test.mjs; do
-  node --check "$module" || fail "Node syntax: $module"
-  echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
-done
-for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/tenant-appset-fixture.mjs scripts/unit-charts-consumer-project.test.mjs scripts/e2e-runner.test.mjs; do
-  node --check "$module" || fail "Node syntax: $module"
-done
-echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in the ci of the master via scripts/test.sh.'
-node --check scripts/manager-pat-storage.test.mjs || fail 'Manager PAT storage check syntax'
-echo 'check: NOT RUN locally — scripts/manager-pat-storage.test.mjs; runs in the ci of the master via scripts/test.sh.'
-node --check scripts/manager-cloudflare-zone-settings.test.mjs || fail 'Manager Cloudflare zone settings check syntax'
-echo 'check: NOT RUN locally — scripts/manager-cloudflare-zone-settings.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in the ci of the master via scripts/test.sh.'
-node --check scripts/zot-sync.test.mjs || fail 'Node syntax: scripts/zot-sync.test.mjs'
-echo 'check: NOT RUN locally — scripts/zot-sync.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in the ci of the master via scripts/test.sh.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
 bash -n lifecycle/check-forgejo-ssh.sh || fail 'Forgejo SSH check Bash syntax'
 bash -n lifecycle/create-origin-pull-certificate.sh || fail 'origin pull certificate Bash syntax'
 bash -n lifecycle/apply-cloudflare-zone-security.sh || fail 'Cloudflare zone security Bash syntax'
 bash -n lifecycle/release-unit.sh || fail 'release-unit Bash syntax'
-for module in lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
+for module in scripts/check-immutable.mjs lifecycle/plan-installation-domain.mjs scripts/tenant-appset-fixture.mjs lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
-for module in scripts/forgejo.test.mjs scripts/plane-test-accounts.test.mjs scripts/forward-auth-gate.test.mjs scripts/plane.test.mjs scripts/forgejo-release.test.mjs scripts/forgejo-ssh.test.mjs; do
-  node --check "$module" || fail "Node syntax: $module"
-  echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
-done
-node --check scripts/workload-label.test.mjs || fail 'Node syntax: scripts/workload-label.test.mjs'
-echo 'check: NOT RUN locally — scripts/workload-label.test.mjs; runs in the ci of the master via scripts/test.sh.'
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
 # SCANNED OVER WHAT GIT WOULD LET YOU COMMIT, and that is not the same as this directory. A
@@ -2310,5 +2276,9 @@ plant_leak third "sed -i 's|^  sentry_dsn: \"\"|  admin_secret_key: \"Zk3Qw9Lm2X
 plant_leak elsewhere "printf 'secret_key: \"60gp0byfz2dvffa45cxl20p1scy9xbpf6d8c5y0geejgkyp1b5\"\\n' > other.yaml" \
   && fail "gitleaks does not report a public default key of plane-ce written into another file"
 echo "check: the .gitleaks.toml allowlist for plane-ce's public default keys hides them in the vendored values.yaml only; gitleaks reports 2 planted defects and passes the innocent case."
+
+# ── 3. The suites ───────────────────────────────────────────────────────────────────────────
+# LAST, because they render the charts whose dependencies section 1 built, and they are the slowest part.
+bash scripts/test.sh || fail 'a suite of scripts/test.sh is red, and its output stands above'
 
 echo "check: OK — every check green"
