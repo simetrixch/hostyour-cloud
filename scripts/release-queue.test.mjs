@@ -137,13 +137,6 @@ test('runs of other pipelines neither hold a release back nor are touched', () =
   assert.deepEqual(changes.map((c) => c.name), [b.metadata.name]);
 });
 
-test('a running ci run neither holds a release back nor is touched, and the waiting release starts', () => {
-  const b = run('post-build', 'b', {pending: true});
-  const changes = decide([run('shop-build', 'c', {pipeline: 'shop-ci'}), run('post-build', 'd', {pipeline: 'post-ci'}), b]);
-  assert.deepEqual(changes.map((c) => c.name), [b.metadata.name]);
-  assert.deepEqual(started(changes), [b.metadata.name]);
-});
-
 test('a run that already notes what it waits for is not patched again, and its note goes when it starts', () => {
   const running = NAMESPACES.slice(0, MAX).map((ns, i) => run(ns, `t${i}`)), tenth = NAMESPACES[MAX];
   const note = releasesOf(running);
@@ -186,13 +179,11 @@ test('release runs are created waiting, and the queue runs every minute with rea
   assert.ok(guard.spec.validations.some((v) => v.expression.includes('variables.isReleaseQueue')));
 });
 
-test('the release queue and the ci run keeper each carry the shared lister their scripts source', () => {
+test('the release queue carries the lister its script sources', () => {
   const docs = renderChart('image-builder');
   const lister = readFileSync('clusters/inventories/image-builder/files/list-pipelineruns.sh', 'utf8');
-  for (const name of ['release-queue', 'ci-run-keeper']) {
-    const map = docs.find((d) => d.kind === 'ConfigMap' && d.metadata.name === name);
-    assert.equal(map?.data?.['list-pipelineruns.sh'], lister, `the ConfigMap ${name} does not carry files/list-pipelineruns.sh, which ${name}.sh sources`);
-  }
+  const map = docs.find((d) => d.kind === 'ConfigMap' && d.metadata.name === 'release-queue');
+  assert.equal(map?.data?.['list-pipelineruns.sh'], lister, 'the ConfigMap release-queue does not carry files/list-pipelineruns.sh, which release-queue.sh sources');
 });
 
 test('each build namespace grants the queue patch and delete on its PipelineRuns and nothing else', () => {
@@ -229,11 +220,6 @@ test('planted defect: a queue that deletes by age alone, finished or not, is cau
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
-});
-
-test('ci runs are not the queue\'s to delete, and a namespace\'s ci runs do not count against its releases', () => {
-  const changes = decide([...finished('shop-build', 30, 'shop-ci'), ...finished('shop-build', 20)]);
-  assert.deepEqual(deleted(changes), []);
 });
 
 // A publish run (clusters/inventories/consumer-build pipeline-publish.yaml) packs and pushes a release's npm
@@ -419,13 +405,13 @@ const asServed = (r) => ({...r,
   metadata: {...r.metadata, uid: `uid-${r.metadata.name}`, labels: {...r.metadata.labels, 'tekton.dev/pipeline': r.spec.pipelineRef.name}},
   spec: {...r.spec, params: [...r.spec.params, {name: 'revision', value: 'a'.repeat(40)}]},
   status: {...r.status, pipelineSpec, conditions: [...(r.status.conditions ?? []).map((c) => ({...c, reason: 'Done'})), {type: 'Ready', status: 'True'}]}});
-// 17 build namespaces, each keeping 20 finished release, publish and ci runs, with one release run past
+// 17 build namespaces, each keeping 20 finished release, publish and image runs, with one release run past
 // the twenty, one release that runs, its publish run waiting behind it and another release of another unit
 // that starts, and a waiting run elsewhere whose pipeline ends in -release: 1025 runs, 684 of them the queue's.
 const steadyState = () => {
   const units = Array.from({length: 17}, (_, i) => `unit${i}-build`);
   return [
-    ...units.flatMap((ns) => [...finished(ns, 20), ...finished(ns, 20, ns.replace(/-build$/, '-publish')), ...finished(ns, 20, ns.replace(/-build$/, '-ci'))]),
+    ...units.flatMap((ns) => [...finished(ns, 20), ...finished(ns, 20, ns.replace(/-build$/, '-publish')), ...finished(ns, 20, ns.replace(/-build$/, '-image'))]),
     ...finished(units[0], 1), run(units[1], 'a'), publish(units[1], 'a', {pending: true}), run(units[2], 'b', {pending: true}),
     run('tools', 'x', {pending: true, pipeline: 'tools-release', labels: {}}),
   ].map(asServed);
@@ -551,13 +537,9 @@ const waitingRun = () => ({
 const changed = (edit) => { const run = waitingRun(); edit(run); return run; };
 const asks = (operation, username, object, oldObject) => ({object, oldObject, request: {operation, namespace: 'shop-build', userInfo: {username}}});
 const startedRun = changed((r) => delete r.spec.status);
-const asCi = (r) => { r.spec.pipelineRef.name = 'shop-ci'; r.spec.taskRunTemplate.podTemplate.priorityClassName = 'image-builder-ci'; delete r.spec.workspaces; };
-const waitingCiRun = changed(asCi);
 const asPublish = (r) => { r.spec.pipelineRef.name = 'shop-publish'; r.metadata.labels = {'image-builder.io/publish': 'shop'}; };
-const startedCiRun = changed((r) => { asCi(r); delete r.spec.status; });
 const ADMITTED = {
   'the EventListener creates a waiting run': asks('CREATE', 'system:serviceaccount:image-builder:eventlistener-sa', waitingRun(), null),
-  'the EventListener creates a waiting ci run, which carries no workspace': asks('CREATE', 'system:serviceaccount:image-builder:eventlistener-sa', waitingCiRun, null),
   'the queue starts a waiting run': asks('UPDATE', QUEUE_SA, startedRun, waitingRun()),
   'the queue notes what a run waits for, beside other annotations': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; }), waitingRun()),
   'the queue starts a run and drops its note': asks('UPDATE', QUEUE_SA, startedRun, changed((r) => { r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; })),
@@ -570,8 +552,6 @@ const DENIED = {
   'the queue cancels a waiting run': asks('UPDATE', QUEUE_SA, changed((r) => { r.spec.status = 'Cancelled'; }), waitingRun()),
   'the queue puts a started run back to waiting': asks('UPDATE', QUEUE_SA, waitingRun(), startedRun),
   'the queue creates a run': asks('CREATE', QUEUE_SA, waitingRun(), null),
-  'the queue starts a waiting ci run': asks('UPDATE', QUEUE_SA, startedCiRun, waitingCiRun),
-  'the queue notes what a ci run waits for': asks('UPDATE', QUEUE_SA, changed((r) => { asCi(r); r.metadata.annotations['image-builder.io/queued-behind'] = 'post-build/b'; }), waitingCiRun),
   'the queue changes a label': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.labels['image-builder.io/consumer'] = 'post'; }), waitingRun()),
   'the queue adds another annotation': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['chains.tekton.dev/x'] = 'y'; }), waitingRun()),
   'the queue changes another annotation': asks('UPDATE', QUEUE_SA, changed((r) => { r.metadata.annotations['chains.tekton.dev/signed'] = 'true'; }), waitingRun()),
@@ -615,7 +595,6 @@ const DELETE_DENIED = {
   'the queue deletes a pending release run': deletes(QUEUE_SA, waitingRun()),
   'the queue deletes a release run with an empty status': deletes(QUEUE_SA, withStatus({})),
   'the queue deletes a release run with another condition only': deletes(QUEUE_SA, withStatus({conditions: [{type: 'Ready', status: 'True'}]})),
-  'the queue deletes a finished ci run': deletes(QUEUE_SA, succeeded('True', asCi)),
   'the queue deletes a finished run of another unit\'s release pipeline': deletes(QUEUE_SA, succeeded('True', (r) => { r.spec.pipelineRef.name = 'post-release'; })),
   'the queue deletes a finished run without a pipeline': deletes(QUEUE_SA, succeeded('True', (r) => { delete r.spec.pipelineRef; })),
 };

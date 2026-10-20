@@ -7,7 +7,7 @@ as it does in every <unit>-build namespace; warn and audit stay `baseline`, so w
 beyond that is recorded.
 
 NO hostyour.cloud/build. That label is admitted only on a namespace the build fan-out writes, and
-the release queue and the ci run keeper select on it. The PipelineRun guard binds this namespace by
+the release queue selects on it. The PipelineRun guard binds this namespace by
 its name instead (clusters/inventories/image-builder/templates/vap-pipelinerun-guard.yaml).
 */ -}}
 apiVersion: v1

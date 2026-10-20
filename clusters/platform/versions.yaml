@@ -172,8 +172,8 @@ images:
   # repository and tag, so no stamp writes it: the version is written BY HAND in
   # clusters/inventories/plane/values-common.yaml, as `image:` under `plane-ce.postgres`,
   # `plane-ce.redis`, `plane-ce.rabbitmq` and `plane-ce.minio`, and as `image_mc:` under
-  # `plane-ce.minio`. Nothing holds the two files to each other but scripts/plane.test.mjs, in the ci
-  # of the master; a bump edits both.
+  # `plane-ce.minio`. Nothing holds the two files to each other but scripts/plane.test.mjs, in the push
+  # gate; a bump edits both.
   # The entries carry `upstream` so the report shows how far each has fallen behind.
   plane-postgres:
     version: "18.6-alpine"
@@ -948,7 +948,7 @@ cliTools:
   # a version out of — a machine carrying it can never be reported as at the pin or
   # off it, only as absent.
   ansiwise:
-    version: "0.8.324-stable-20261019163309"
+    version: "0.8.325-stable-20261019234947"
     upstream:
       # THE TAGS OF THE MANIFESTS THE OWNER'S REGISTRY HOLDS, read without a credential:
       # every release of ansiwise-cli is published there by the master's Tekton as one

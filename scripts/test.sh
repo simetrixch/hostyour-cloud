@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Fixture suites run in the ci of the master (the check step of the ci pipeline), never on the shared workstation. The ci runs no
-# scripts/check.sh, so this file builds whatever its suites need by itself.
+# Fixture suites. scripts/check.sh runs them as its last section, so the push gate runs every suite on the machine.
 # The suites share nothing: each works in a temporary directory of its own and listens only on a port the kernel hands it, so TEST_JOBS of them
 # run at once (4 unless set). The charts they render get their dependencies first, one chart after the other, because two suites that rendered
 # one chart before its charts/ directory stood would write it together. The output of a suite is kept in a log of its own and printed in the order
@@ -22,7 +21,6 @@ suite() {
 
 suite lifecycle/test.sh 'delivery tooling, held to its recorded bytes.'
 suite scripts/build-contract.test.mjs 'production build chart and immutable-field contracts.'
-suite scripts/ci-run-keeper.test.mjs 'ci run keeper — at most 7 ci runs run at once, a newer push or a deleted branch ends the older run of its branch, and the newest 20 finished ci runs of a build namespace stay.'
 suite scripts/pipeline-publish.test.sh 'what a release tag publishes to the registry, what a packed tarball may carry, and the push.'
 suite scripts/zot-sync.test.mjs 'registry sync — zot asks Docker Hub on a miss for the Docker Hub repositories it lists, every one the tree names among them, and for no repository the platform publishes, so a missing owned version is a 404.'
 suite scripts/forgejo-ssh.test.mjs 'forge — the Forgejo SSH check reads the announced port from the install branch, is green on an SSH banner, and red on a closed, a silent or a wrong port.'
@@ -34,10 +32,7 @@ suite scripts/site-telemetry.test.mjs 'site statistics read API — the gate ref
 suite scripts/site-telemetry-registration.test.mjs 'site statistics registrations — the books render one ConfigMap per tenant and stage, with its host, proxied hosts and websites, in the namespace of the service.'
 suite scripts/site-telemetry-deployment.test.mjs 'site statistics service — the Deployment, Service, NetworkPolicy, Role, script and Ingress meet and run the tested script.'
 suite scripts/release-queue.test.mjs 'release queue — nine runs at a time on the build plane, never two of one unit, and the queue may only start a run.'
-suite scripts/ci-report-failure.test.mjs 'ci report — a failed ci run posts one alert with the last 60 lines of the failed step, and a green or cancelled run posts nothing.'
-suite scripts/ci-commit-status.test.mjs 'ci commit status — tekton/ci is pending while a run runs, then success, failure or error, and the token travels only in a header file.'
-suite scripts/ci-green-status.test.mjs 'ci green status — a commit that carries a green tekton/ci names the run that set it, and any other answer leaves the check to run.'
-suite scripts/ci-failure-mail.test.mjs 'ci failure mail — the alert reaches its own route once, and becomes a mail that carries the error and escapes it; every alert mail is sent from a domain the relay holds a key for.'
+suite scripts/alert-mail-sender.test.mjs 'alert mail sender — every alert mail is sent from a domain the relay admits and holds a key for.'
 suite scripts/manager-generator-refresh.test.mjs 'manager-generator-refresh — approved grant only.'
 suite scripts/manager-pat-storage.test.mjs
 suite scripts/manager-cloudflare-zone-settings.test.mjs 'manager Cloudflare zone settings — the settings token reaches the Manager from its own Vault entry and Secret, beside the DNS token, and no other inventory reads it.'
