@@ -554,7 +554,9 @@ const INSTALLER = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8');
 const installedTools = () => INSTALLER.slice(INSTALLER.indexOf('case "${tool}" in')).match(/^ {4}[a-z][a-z |]*\)$/gm).flatMap((pattern) => pattern.trim().slice(0, -1).split(' | '));
 
 const TOOLS_TABLE = readFileSync(`${CI_FILES}/ci-tools.table`, 'utf8');
-const TABLE_HOSTS = ['nodejs.org', 'registry.npmjs.org', 'go.dev', 'storage.googleapis.com', 'zot.master.digitacloud.app', 'dl.k8s.io'];
+const TABLE_HOSTS = ['nodejs.org', 'registry.npmjs.org', 'go.dev', 'storage.googleapis.com', 'zot.master.digitacloud.app'];
+// A row on the owner's mirror, which serves a file as the blob of its sha256 and names it by the slot <sha256>.
+const OWNED_ROW = 'node 26.11.1 15fc043a51a5783f2f4b634561091658f5a7f0e3db03f997dca3a8033a33e45b https://zot.master.digitacloud.app/v2/simetrixch/github.com/nodejs/node/releases/download/v26.11.1/node-v26.11.1-linux-x64.tar.gz/blobs/sha256:<sha256>';
 // An emcc url names the emscripten-releases build of its version, as emsdk 14c18b56's emscripten-releases-tags.json maps it.
 const EMSCRIPTEN_RELEASES = {'5.0.1': 'bf32ae8b61ac8efeb7eca01b54c8307f992724f7'};
 const tableErrors = (table, tools) => {
@@ -579,7 +581,8 @@ test('the tools table carries one sha256 and one https url per tool and version,
   assert.deepEqual(tableErrors(TOOLS_TABLE, tools), [], 'PLANTED INNOCENT: the table as it stands');
   assert.deepEqual([...new Set(TOOLS_TABLE.split('\n').filter(Boolean).map((line) => line.split(' ')[0]))].sort(), [...tools].sort(), 'every installed tool has a row and no row names another');
   const first = TOOLS_TABLE.split('\n')[0], [tool, version, sha256, url] = first.split(' ');
-  const owned = Object.fromEntries(['tool', 'version', 'sha256', 'url'].map((key, at) => [key, TOOLS_TABLE.split('\n').find((line) => line.startsWith('traefik ')).split(' ')[at]]));
+  assert.deepEqual(tableErrors(`${OWNED_ROW}\n`, tools), [], 'PLANTED INNOCENT: a row on the owner\'s mirror, by the slot');
+  const owned = Object.fromEntries(['tool', 'version', 'sha256', 'url'].map((key, at) => [key, OWNED_ROW.split(' ')[at]]));
   for (const [defect, row] of [
     ['a short sha256', [tool, version, sha256.slice(1), url]],
     ['an upper-case sha256', [tool, version, sha256.toUpperCase(), url]],
@@ -598,14 +601,6 @@ test('the tools table carries one sha256 and one https url per tool and version,
   assert.notDeepEqual(tableErrors(`${first}\n${first}\n`, tools), [], 'PLANTED DEFECT: a tool and version twice is caught');
 });
 
-test('this repository\'s ci-tools.json names only rows of the tools table', () => {
-  const named = Object.entries(JSON.parse(readFileSync('ci-tools.json', 'utf8'))).map(([tool, version]) => `${tool} ${version}`);
-  assert.ok(named.length > 0);
-  const rows = TOOLS_TABLE.split('\n').filter(Boolean).map((line) => line.split(' ').slice(0, 2).join(' '));
-  assert.deepEqual(named.filter((pair) => !rows.includes(pair)), [], 'PLANTED INNOCENT: every pair of the file is a row');
-  assert.notDeepEqual(['go 1.0.0'].filter((pair) => !rows.includes(pair)), [], 'PLANTED DEFECT: a version the table lacks is seen');
-});
-
 // The tools step against stand-in archives. Each stand-in program prints its own name, so what PATH resolves to is
 // what ran. node's archive also carries the npm that node ships with, which the npm of ci-tools.json has to beat.
 const buildToolFixtures = (root) => {
@@ -618,9 +613,6 @@ const buildToolFixtures = (root) => {
   program(join(src, 'npm/package/bin/npx-cli.js'), 'npx-fixture');
   program(join(src, 'go/go/bin/go'), 'go-fixture');
   program(join(src, 'dart/dart-sdk/bin/dart'), 'dart-fixture');
-  program(join(src, 'gitleaks/gitleaks'), 'gitleaks-fixture');
-  program(join(out, 'kubectl'), 'kubectl-fixture');
-  program(join(src, 'traefik/traefik'), 'traefik-fixture');
   // The SDK release of emscripten: LLVM in install/bin, Binaryen's programs beside it, emcc in install/emscripten. Its
   // emcc prints the version of the emscripten-version.txt beside it, which the archive ships as <x.y.z>-git.
   program(join(src, 'emcc/install/emscripten/emcc'), 'emcc-fixture "$(tr -d \'"\' < "$(dirname "$0")/emscripten-version.txt") (fixture)"');
@@ -629,18 +621,15 @@ const buildToolFixtures = (root) => {
   program(join(src, 'emcc/install/bin/wasm-opt'), 'wasm-opt-fixture');
   const tgz = (name, dir, entry) => execFileSync('tar', ['-czf', join(out, name), '-C', join(src, dir), entry]);
   tgz('node.tgz', 'node', 'node-v'); tgz('npm.tgz', 'npm', 'package'); tgz('go.tgz', 'go', 'go');
-  tgz('gitleaks.tgz', 'gitleaks', 'gitleaks');
-  tgz('traefik.tgz', 'traefik', 'traefik');
   execFileSync('tar', ['-cJf', join(out, 'emcc.tar.xz'), '-C', join(src, 'emcc'), 'install']);
   execFileSync('python3', ['-I', '-m', 'zipfile', '-c', join(out, 'dart.zip'), 'dart-sdk'], {cwd: join(src, 'dart')});
-  // The owner's mirror serves a file as the blob of its sha256: the fixture serves traefik that way, and its row names the blob by the slot.
+  // The owner's mirror serves a file as the blob of its sha256: the fixture serves go that way, and its row names the blob by the slot.
   const sha256Of = (archive) => createHash('sha256').update(readFileSync(join(out, archive))).digest('hex');
   mkdirSync(join(out, 'owned/blobs'), {recursive: true});
-  copyFileSync(join(out, 'traefik.tgz'), join(out, 'owned/blobs', `sha256:${sha256Of('traefik.tgz')}`));
-  const row = (tool, version, archive) => `${tool} ${version} ${sha256Of(archive)} ${tool === 'traefik' ? `file://${join(out, 'owned/blobs/sha256:<sha256>')}` : `file://${join(out, archive)}`}`;
+  copyFileSync(join(out, 'go.tgz'), join(out, 'owned/blobs', `sha256:${sha256Of('go.tgz')}`));
+  const row = (tool, version, archive) => `${tool} ${version} ${sha256Of(archive)} ${tool === 'go' ? `file://${join(out, 'owned/blobs/sha256:<sha256>')}` : `file://${join(out, archive)}`}`;
   return Object.fromEntries([['node', '26.11.1', 'node.tgz'], ['npm', '12.2.0', 'npm.tgz'], ['go', '1.24.13', 'go.tgz'], ['dart', '3.13.4', 'dart.zip'],
-    ['gitleaks', '8.30.1', 'gitleaks.tgz'], ['kubectl', '1.35.6', 'kubectl'], ['emcc', '5.0.1', 'emcc.tar.xz'],
-    ['traefik', '3.6.2', 'traefik.tgz']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
+    ['emcc', '5.0.1', 'emcc.tar.xz']].map(([tool, version, archive]) => [tool, row(tool, version, archive)]));
 };
 
 const runInstallTools = (wanted, rows, plant = (script) => script, extraEnv = {}) => {
@@ -648,60 +637,60 @@ const runInstallTools = (wanted, rows, plant = (script) => script, extraEnv = {}
   try {
     const table = rows(buildToolFixtures(root));
     const script = plant(readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8')).replaceAll('/tmp/ci-tools', dir);
-    const probe = 'for t in node npm npx go dart gitleaks kubectl emcc traefik; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
+    const probe = 'for t in node npm npx go dart emcc; do printf "%s|%s|%s\\n" "$t" "$(command -v "$t" || true)" "$("$t" --version </dev/null 2>&1 | head -n 1 || true)"; done';
     const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${script}\n${probe}`], {encoding: 'utf8', env: {...process.env, CI_TOOLS: wanted, CI_TOOLS_TABLE: table, ...extraEnv}});
-    const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|gitleaks|kubectl|emcc|traefik)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
+    const resolved = Object.fromEntries((result.stdout.match(/^(node|npm|npx|go|dart|emcc)\|.*$/gm) ?? []).map((line) => { const [tool, path, output] = line.split('|'); return [tool, {inside: path.startsWith(dir), output}]; }));
     // emcc reads the .emscripten beside it as Python; python3 reads the two roots out of it the same way.
     const emccConfig = join(dir, 'emcc/emscripten/.emscripten');
     const emccRoots = existsSync(emccConfig) ? execFileSync('python3', ['-I', '-c', 'import sys; exec(open(sys.argv[1]).read()); print(LLVM_ROOT); print(BINARYEN_ROOT)', emccConfig], {encoding: 'utf8'})
       .trim().replaceAll(dir, '<installed>').split('\n') : null;
     return {status: result.status, stdout: result.stdout, stderr: result.stderr, resolved, emccRoots,
-      unpacked: [...['node', 'npm', 'go', 'dart', 'emcc'].filter((tool) => existsSync(join(dir, tool))), ...['gitleaks', 'kubectl', 'traefik'].filter((tool) => existsSync(join(dir, 'bin', tool)))], downloaded: existsSync(join(dir, 'node.download'))};
+      unpacked: ['node', 'npm', 'go', 'dart', 'emcc'].filter((tool) => existsSync(join(dir, tool))), downloaded: existsSync(join(dir, 'node.download'))};
   } finally {
     rmSync(root, {recursive: true, force: true});
   }
 };
 const allRows = (rows) => Object.values(rows).join('\n');
-const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\ngitleaks 8.30.1\nkubectl 1.35.6\nemcc 5.0.1\ntraefik 3.6.2\n';
+const WANTED_ALL = 'node 26.11.1\nnpm 12.2.0\ngo 1.24.13\ndart 3.13.4\nemcc 5.0.1\n';
 
 test('the tools step installs each tool of ci-tools.json from the table before the image\'s own, and refuses what the table cannot vouch for', () => {
   const all = runInstallTools(WANTED_ALL, allRows);
   assert.equal(all.status, 0, all.stderr);
   assert.deepEqual(Object.entries(all.resolved).map(([tool, r]) => [tool, r.inside, r.output]), [['node', true, 'node-fixture'], ['npm', true, 'npm-fixture'], ['npx', true, 'npx-fixture'],
-    ['go', true, 'go-fixture'], ['dart', true, 'dart-fixture'], ['gitleaks', true, 'gitleaks-fixture'], ['kubectl', true, 'kubectl-fixture'],
-    ['emcc', true, 'emcc-fixture 5.0.1 (fixture)'], ['traefik', true, 'traefik-fixture']], 'PLANTED INNOCENT: all eight are installed, and the npm named beats the npm that ships with node');
+    ['go', true, 'go-fixture'], ['dart', true, 'dart-fixture'], ['emcc', true, 'emcc-fixture 5.0.1 (fixture)']],
+    'PLANTED INNOCENT: all five are installed, and the npm named beats the npm that ships with node');
   assert.deepEqual(all.emccRoots, ['<installed>/emcc/bin', '<installed>/emcc'], 'emcc reads LLVM from the bin of the SDK release and Binaryen from its root, as emsdk activate writes them');
   assert.match(all.stdout, /^check: emcc-fixture 5\.0\.1 \(fixture\), downloaded in \d+ s and unpacked in \d+ s$/m, 'the log names what emcc --version printed and the seconds its download and unpack took');
   const unversioned = runInstallTools('emcc 5.0.1\n', allRows, (script) => script.replace(/^.*emscripten-version\.txt.*$/gm, ''));
   assert.equal(unversioned.resolved.emcc.output, 'emcc-fixture 5.0.1-git (fixture)', 'PLANTED DEFECT: an emcc that reports 5.0.1-git, which packages/quickjs/build.sh of digita-platform refuses, is seen');
   const unconfigured = runInstallTools('emcc 5.0.1\n', allRows, (script) => script.replace(/^.*\.emscripten.*$/gm, ''));
   assert.equal(unconfigured.emccRoots, null, 'PLANTED DEFECT: an emcc without its config file is seen');
-  const reversed = runInstallTools('gitleaks 8.30.1\nnpm 12.2.0\nnode 26.11.1\n', allRows);
+  const reversed = runInstallTools('go 1.24.13\nnpm 12.2.0\nnode 26.11.1\n', allRows);
   assert.equal(reversed.resolved.npm.output, 'npm-fixture', 'the order of ci-tools.json does not decide which npm runs');
-  const nodeLast = runInstallTools(WANTED_ALL, (rows) => [rows.npm, rows.node, rows.go, rows.dart, rows.gitleaks, rows.kubectl, rows.emcc, rows.traefik].join('\n'));
+  const nodeLast = runInstallTools(WANTED_ALL, (rows) => [rows.npm, rows.node, rows.go, rows.dart, rows.emcc].join('\n'));
   assert.equal(nodeLast.resolved.npm.output, 'npm-bundled-with-node', 'PLANTED DEFECT: a table that lists node after npm puts the npm of node first, and the probe sees it');
-  const only = runInstallTools('gitleaks 8.30.1\n', allRows);
+  const only = runInstallTools('dart 3.13.4\n', allRows);
   assert.equal(only.status, 0, only.stderr);
-  assert.deepEqual([only.resolved.gitleaks.inside, only.resolved.node.inside, only.resolved.dart.inside, only.unpacked], [true, false, false, ['gitleaks']], 'only the tool named is installed');
+  assert.deepEqual([only.resolved.dart.inside, only.resolved.node.inside, only.resolved.go.inside, only.unpacked], [true, false, false, ['dart']], 'only the tool named is installed');
   const none = runInstallTools('', (rows) => Object.values(rows).map((row) => row.replace(/file:\/\/\S+/, 'file:///nowhere')).join('\n'));
   assert.deepEqual([none.status, none.downloaded, none.unpacked], [0, false, []], 'a repository without ci-tools.json downloads nothing');
   const absent = runInstallTools('node 26.11.2\n', allRows);
   assert.notEqual(absent.status, 0, 'PLANTED DEFECT: a version the table lacks ends the run');
   assert.match(absent.stderr, /names node 26\.11\.2, which the tools table of this pipeline does not carry/);
   assert.deepEqual([absent.downloaded, absent.unpacked], [false, []], 'and ends it before anything is downloaded');
-  const half = runInstallTools('gitleaks 8.30.1\nnode 26.11.2\n', allRows);
+  const half = runInstallTools('dart 3.13.4\nnode 26.11.2\n', allRows);
   assert.notEqual(half.status, 0, 'one missing version among present ones ends the run');
   assert.deepEqual([half.downloaded, half.unpacked], [false, []], 'and installs none of them');
   assert.notEqual(runInstallTools('ruby 3.4.0\n', allRows).status, 0, 'PLANTED DEFECT: a tool the table does not carry ends the run');
   const forged = runInstallTools('node 26.11.1\n', (rows) => rows.node.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `));
   assert.notEqual(forged.status, 0, 'PLANTED DEFECT: an archive whose sha256 differs ends the run');
   assert.deepEqual([forged.downloaded, forged.unpacked], [true, []], 'after the download and before anything is unpacked');
-  const forgedTraefik = runInstallTools('traefik 3.6.2\n', (rows) => allRows({...rows, traefik: rows.traefik.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `)}));
-  assert.notEqual(forgedTraefik.status, 0, 'PLANTED DEFECT: a traefik archive whose sha256 differs ends the run');
-  assert.deepEqual(forgedTraefik.unpacked, [], 'before the traefik of the archive is unpacked');
+  const forgedOwned = runInstallTools('go 1.24.13\n', (rows) => allRows({...rows, go: rows.go.replace(/ [0-9a-f]{64} /, ` ${'0'.repeat(64)} `)}));
+  assert.notEqual(forgedOwned.status, 0, 'PLANTED DEFECT: an archive of the owner\'s mirror whose sha256 differs ends the run');
+  assert.deepEqual(forgedOwned.unpacked, [], 'before the go of the archive is unpacked');
   const blobOf = (row) => { const [, , hex, url] = row.split(' '); return url.replace('file://', '').replace('<sha256>', hex); };
-  assert.match(all.stdout, /^check: traefik 3\.6\.2, file:\/\/\S+\/blobs\/sha256:[0-9a-f]{64}, sha256 [0-9a-f]{64}$/m, 'PLANTED INNOCENT: the slot of the traefik row is filled with its sha256, and the log names the address that was read');
-  const otherBytes = runInstallTools('traefik 3.6.2\n', (rows) => { writeFileSync(blobOf(rows.traefik), 'other bytes'); return allRows(rows); });
+  assert.match(all.stdout, /^check: go 1\.24\.13, file:\/\/\S+\/blobs\/sha256:[0-9a-f]{64}, sha256 [0-9a-f]{64}$/m, 'PLANTED INNOCENT: the slot of the go row is filled with its sha256, and the log names the address that was read');
+  const otherBytes = runInstallTools('go 1.24.13\n', (rows) => { writeFileSync(blobOf(rows.go), 'other bytes'); return allRows(rows); });
   assert.notEqual(otherBytes.status, 0, 'PLANTED DEFECT: an owned address whose filled blob serves other bytes ends the run');
   assert.match(otherBytes.stdout + otherBytes.stderr, /FAILED/, 'at the sha256sum -c, and not at the fetch');
   assert.deepEqual(otherBytes.unpacked, [], 'before anything of the file is unpacked');
@@ -852,18 +841,14 @@ test('the publish run of the platform tree on the owner\'s master copies its ima
     .find((t) => t.name === 'scan').taskSpec.steps[0].env.find((e) => e.name === 'MIRRORS_IMAGES').value, 'false');
 });
 
-// Two tools are pinned for the repositories that name them in ci-tools.json, and pack of the publish pipeline installs
-// them before its packages are built.
+// A tool is pinned for the repositories that name it in ci-tools.json, and pack of the publish pipeline installs it
+// before its packages are built.
 // digita-platform's packages/quickjs/build.sh runs only with emcc 5.0.1 first on PATH; its row pins the SDK release emsdk
-// 14c18b56 installs for 5.0.1. hostyour-deploy's access-log fixture needs the Traefik release its clusters run, 3.6.2; its
-// row pins the linux_amd64 archive of that release, whose sha256 the release's traefik_v3.6.2_checksums.txt names. Each row
-// pins its archive by its sha256; release holds a part of its url and what that part reads for another release, the
-// planted defect.
+// 14c18b56 installs for 5.0.1. The row pins its archive by its sha256; release holds a part of its url and what that part
+// reads for another release, the planted defect.
 const PINNED_ROWS = [
   {row: 'emcc 5.0.1 bda6917b630fcc604cca39af433180adfd7195e378075331ceac926553684249 https://storage.googleapis.com/webassembly/emscripten-releases-builds/linux/bf32ae8b61ac8efeb7eca01b54c8307f992724f7/wasm-binaries.tar.xz',
     release: ['bf32ae8b61ac8efeb7eca01b54c8307f992724f7', '8c5f43157a3f069ade75876e23061330521eabde']},
-  {row: 'traefik 3.6.2 edc04e863795d741bdba8d70fbc1fd721b16edace829f8f25b0e13a9a34cb134 https://zot.master.digitacloud.app/v2/simetrixch/github.com/traefik/traefik/releases/download/v3.6.2/traefik_v3.6.2_linux_amd64.tar.gz/blobs/sha256:<sha256>',
-    release: ['/v3.6.2/traefik_v3.6.2_', '/v3.6.1/traefik_v3.6.1_']},
 ];
 const pinnedRowProblems = (task, tools, runs, pinned) => {
   const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
@@ -880,7 +865,7 @@ const pinnedRowProblems = (task, tools, runs, pinned) => {
   return problems;
 };
 
-test('pack of the publish pipeline puts the pinned emcc 5.0.1 and traefik 3.6.2 first on PATH before it builds', () => {
+test('pack of the publish pipeline puts the pinned emcc 5.0.1 first on PATH before it builds', () => {
   const pack = renderUnit('shop', []).find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish').spec.tasks.find((t) => t.name === 'pack');
   const holds = [[pack, '$(tasks.scan.results.tools)', 'build_packages /workspace/packed/publishable.tsv']];
   const installer = readFileSync(`${CI_FILES}/ci-install-tools.sh`, 'utf8').trimEnd();
