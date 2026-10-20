@@ -18,7 +18,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `regenerate-install-branch.sh` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
-| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends |
+| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box, within a time limit drawn from its size, before it ends |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
 | `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test; the stage `none` releases a library, which has no stage |
@@ -425,10 +425,23 @@ holds the first to every archive: a checksum line that lost its form on the box 
 `sha256sum -c`, so the archive under it would never be read. The quorum is opened to `/dev/null`, so no
 line of it is written anywhere or printed. If a check fails, the driver ends with exit 69 and names the check.
 
-Root removes the read-back folder when the checks pass and when one fails. The work folder is removed
-when they pass and stays when one fails, with the sealed archives in it, as it stays after any other
-refusal. A run that is killed during the read-back leaves both folders. They are root's alone and hold
-sealed archives only.
+The storage box answers the `md5sum` command that rclone sends it over its shell with a failure, or never.
+So the hash check of the remote is off (`disable_hashcheck = true` in the `[box]` config that
+`master-backup-driver.sh` and `master-restore-driver.sh` write), for the carry, the read-back and the restore's
+fetch alike, and rclone then compares sizes only. What proves the bytes is the manifest's sha256, which the
+read-back checks for every archive.
+
+The copy back is given `READBACK_WAIT_SECONDS` (300) and one second more for each
+`READBACK_LEAST_BYTES_PER_SECOND` (one MiB) of the backup's size, and the driver says the bytes and the limit on one
+line before it copies. When the limit passes, `timeout` ends the copy, and the driver ends with exit 69, names the
+limit and leaves the archives in the work folder.
+
+The driver's clean-up removes the read-back folder, as root, on every way out, and that includes a run whose ssh
+session has ended: once the session is gone, the next line the driver prints ends it, so no line after a print is
+where the removal can rest. The work folder is removed when the checks pass and stays when one fails or the
+copy back is ended, with the sealed archives in it, as it stays after any other refusal. A run whose ssh session
+has ended during the read-back leaves the work folder only. A run that is killed with KILL leaves both folders. They
+are root's alone and hold sealed archives only.
 
 ## The identity is the name, and the name is a CNAME
 
