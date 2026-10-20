@@ -1400,17 +1400,53 @@ echo "check: ${#pinned_tags[@]} overrides carry a digest on their chart's own ta
 # HEADLAMP IS GIVEN ITS OIDC SCOPES ONLY WHERE THE VALUES SAY THE EXTERNAL SECRET HAS THEM. From chart 0.46.0 on,
 # an external secret without externalSecret.hasScopes loses the container argument -oidc-scopes, so the scopes
 # the values name (OIDC_SCOPES) are never passed and the sign-in asks the identity provider for Headlamp's own.
-# The planted defect: the key false. The innocent case is the trunk's values.
-headlamp_scopes_fault() { # <extra helm arguments...> -> what is wrong, or nothing
+# The check judges one whole render, read from a file, never a pipe: yq writes one argument per write, grep -q quits
+# at its match, and the write that follows ends yq on a closed pipe, which pipefail turns into a fault on a sound render.
+# The planted defect: the key false. The innocent cases: the trunk's values, and a reader that writes the arguments apart.
+# The planted failure: a reader that cannot read, which must end the gate as a failed read and not as a missing scope.
+headlamp_render() { # <file> <extra helm arguments...> -> the chart rendered into the file, or the gate ends
+  local file="$1"
+  shift
   helm template headlamp "$headlamp_address/headlamp" --version "$headlamp_version" -f clusters/bootstrap/headlamp/values.tpl "$@" \
-    | yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[].args[]' | grep -qxF -- '-oidc-scopes=$(OIDC_SCOPES)' \
+    > "$file" 2> "$file.err" \
+    || { cat "$file.err"; fail "the Headlamp chart $headlamp_version does not render from $headlamp_address with clusters/bootstrap/headlamp/values.tpl"; }
+}
+headlamp_arguments() { # <render file> <arguments file> -> the arguments of the Headlamp container, one per line, or the gate ends
+  yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[].args[]' "$1" > "$2" \
+    || fail "the arguments of the Headlamp container could not be read from $1"
+}
+headlamp_scopes_fault() { # <arguments file> -> what is wrong, or nothing
+  grep -qxF -- '-oidc-scopes=$(OIDC_SCOPES)' "$1" \
     || echo "the Headlamp container of chart $headlamp_version is given no -oidc-scopes argument by clusters/bootstrap/headlamp/values.tpl"
 }
-[ -z "$(headlamp_scopes_fault)" ] \
-  || fail "$(headlamp_scopes_fault) — set config.oidc.externalSecret.hasScopes to true there"
-[ -n "$(headlamp_scopes_fault --set config.oidc.externalSecret.hasScopes=false)" ] \
+headlamp_reader_pause=0.05 # seconds a reader waits after each argument: long enough for grep to quit at its match before the next write
+headlamp_render "$work/headlamp-render"
+headlamp_arguments "$work/headlamp-render" "$work/headlamp-arguments"
+fault="$(headlamp_scopes_fault "$work/headlamp-arguments")"
+[ -z "$fault" ] || fail "$fault — set config.oidc.externalSecret.hasScopes to true there"
+headlamp_render "$work/headlamp-render-planted" --set config.oidc.externalSecret.hasScopes=false
+headlamp_arguments "$work/headlamp-render-planted" "$work/headlamp-arguments-planted"
+[ -n "$(headlamp_scopes_fault "$work/headlamp-arguments-planted")" ] \
   || fail "headlamp_scopes_fault takes a Headlamp chart rendered without the -oidc-scopes argument"
-echo "check: the Headlamp container is given -oidc-scopes; the check refuses a planted external secret without hasScopes."
+mkdir "$work/slow-yq" "$work/failing-yq"
+cat > "$work/slow-yq/yq" <<EOF
+#!/usr/bin/env bash
+set -o pipefail
+: > "$work/slow-yq/ran"
+"$(command -v yq)" "\$@" | while IFS= read -r line; do printf '%s\n' "\$line"; sleep $headlamp_reader_pause; done
+EOF
+printf '#!/usr/bin/env bash\nexit 1\n' > "$work/failing-yq/yq"
+chmod +x "$work/slow-yq/yq" "$work/failing-yq/yq"
+( PATH="$work/slow-yq:$PATH"; headlamp_arguments "$work/headlamp-render" "$work/headlamp-arguments-slow" ) \
+  || fail "headlamp_arguments fails when its reader writes the arguments apart"
+[ -e "$work/slow-yq/ran" ] || fail "the reader that writes the arguments apart was never run by headlamp_arguments"
+[ -z "$(headlamp_scopes_fault "$work/headlamp-arguments-slow")" ] \
+  || fail "headlamp_scopes_fault refuses a sound render when its reader writes the arguments apart — it judges a pipe before the whole output is read"
+( PATH="$work/failing-yq:$PATH"; headlamp_arguments "$work/headlamp-render" "$work/headlamp-arguments-unread" ) > "$work/headlamp-unread.out" 2>&1 \
+  && fail "headlamp_arguments passes a render whose arguments could not be read"
+grep -qF -- 'could not be read' "$work/headlamp-unread.out" && ! grep -qF -- 'hasScopes' "$work/headlamp-unread.out" \
+  || fail "a failed read of the Headlamp arguments is not reported as a read, or is reported as the scopes remedy"
+echo "check: the Headlamp container is given -oidc-scopes, judged on one render read from a file; of 4 planted cases the check refuses the external secret without hasScopes, accepts the trunk's values and a reader that writes the arguments apart, and reports a failed read as a read."
 
 # ── The charts a cold owner's master renders before zot answers ───────────────────────────────
 # AN INVENTORY WHOSE SYNC WAVE IS AT MOST THE REGISTRY'S renders before zot serves, so a chart it fetches from
