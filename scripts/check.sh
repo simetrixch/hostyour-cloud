@@ -34,7 +34,7 @@ trap 'rm -rf "$work"' EXIT
 # Compare against the preceding stable source, never a hand-maintained snapshot.
 # A tag on a clean HEAD is the candidate itself, so its parent supplies the baseline.
 revision=HEAD
-if git diff --quiet && git diff --cached --quiet && git tag --points-at HEAD | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+-stable-'; then
+if git diff --quiet && git diff --cached --quiet && head_tags="$(git tag --points-at HEAD)" && grep -qE '^[0-9]+\.[0-9]+\.[0-9]+-stable-' <<< "$head_tags"; then
   revision=HEAD^
 fi
 baseline="$(git describe --tags --match '*-stable-*' --abbrev=0 "$revision" 2>/dev/null)" \
@@ -1242,9 +1242,9 @@ reconciler_handed_findings() {
   out="$(helm template reconciler "$2" --namespace check -f "$handed" 2>&1)" \
     || { printf '  the reconciler chart does not render with the values its ApplicationSet hands it: %s\n' "$(printf '%s\n' "$out" | head -n 1)"; return 0; }
   sources="$(printf '%s\n' "$out" | yq eval -N 'select(.kind == "AppProject") | .spec.sourceRepos[]' -)"
-  printf '%s\n' "$sources" | grep -qxF "$forge_platform" \
+  grep -qxF "$forge_platform" <<< "$sources" \
     || printf '  the project of a unit allows %s, and it must allow the platform repository %s\n' "$(printf '%s' "$sources" | paste -sd' ' -)" "$forge_platform"
-  ! printf '%s\n' "$sources" | grep -qxF "$github_platform" \
+  ! grep -qxF "$github_platform" <<< "$sources" \
     || printf '  the project of a unit allows the platform repository on GitHub, %s\n' "$github_platform"
 }
 found="$(reconciler_handed_findings "$work/moved-argocd.render" clusters/units/reconciler)"
@@ -1380,7 +1380,7 @@ helm template consumer-build clusters/inventories/consumer-build --namespace arg
 npmrc_secret="$(yq e 'select(.kind == "ExternalSecret" and .metadata.name == "build-npmrc")' "$work/fence-render")"
 [ -n "$npmrc_secret" ] || fail "unit check renders no ExternalSecret build-npmrc"
 for gone in 'npm.pkg.github.com' '{{ .packages }}' 'secretKey: packages' 'property: packages'; do
-  if printf '%s\n' "$npmrc_secret" | grep -qF -- "$gone"; then
+  if grep -qF -- "$gone" <<< "$npmrc_secret"; then
     printf '%s\n' "$npmrc_secret" | grep -nF -- "$gone"
     fail "the build .npmrc of unit check still carries '$gone' — the npm packages are read from this build plane's registry alone"
   fi
@@ -1400,10 +1400,10 @@ helm template consumer-build clusters/inventories/consumer-build --namespace arg
   || { cat "$work/publish-render"; fail "clusters/inventories/consumer-build does not render a unit that builds nothing"; }
 publish_objects="$(objects_of "$work/publish-render")"
 for object in Pipeline/check-publish ExternalSecret/image-builder-registry-push; do
-  printf '%s\n' "$publish_objects" | grep -qxF "$object" \
+  grep -qxF "$object" <<< "$publish_objects" \
     || fail "a unit that builds nothing renders no $object — its release tag would publish no npm package"
 done
-printf '%s\n' "$publish_objects" | grep -q '^ExternalSecret/image-builder-registry-pull' \
+grep -q '^ExternalSecret/image-builder-registry-pull' <<< "$publish_objects" \
   && fail "a unit that builds nothing renders the registry pull identity, which only a release reads"
 
 objects_of "$work/fence-render" \
@@ -1428,8 +1428,9 @@ helm template image-builder clusters/inventories/image-builder --namespace image
   -f clusters/inventories/image-builder/values-common.yaml -f clusters/inventories/image-builder/values-dev.yaml -f "$cluster_map" -f "$registration" \
   > "$work/builder-render" 2>&1 \
   || { cat "$work/builder-render"; fail "clusters/inventories/image-builder does not render"; }
+builder_objects="$(objects_of "$work/builder-render")" || fail "the objects of clusters/inventories/image-builder could not be read from its render"
 for object in Trigger/github-release-publish TriggerBinding/github-release-publish-binding TriggerTemplate/release-publish; do
-  objects_of "$work/builder-render" | grep -qxF "$object" || fail "clusters/inventories/image-builder renders no $object — a release tag would publish nothing"
+  grep -qxF "$object" <<< "$builder_objects" || fail "clusters/inventories/image-builder renders no $object — a release tag would publish nothing"
 done
 grep -qF -- '- triggerRef: github-release-publish' "$work/builder-render" || fail "the EventListener does not attach github-release-publish"
 grep -qF -- "body.ref.matches(r'^refs/tags/$(yq '.global.releaseTagFilter' clusters/platform/values-common.yaml)\$')" "$work/builder-render" \
@@ -2218,7 +2219,8 @@ landing_commit() {
 # commit is judged against the tip, which is what a release of it would be cut onto. An installation's
 # commit is one that holds a cluster map under clusters/active; the default branch holds none.
 default_when() { # <repo> <default branch> <commit> -> the commit of the default branch to judge it against
-  if git -C "$1" ls-tree -r --name-only "$3" -- clusters/active | grep -q '\.yaml$'; then
+  local cluster_maps
+  if cluster_maps="$(git -C "$1" ls-tree -r --name-only "$3" -- clusters/active)" && grep -q '\.yaml$' <<< "$cluster_maps"; then
     git -C "$1" rev-list -1 --first-parent --before="$(git -C "$1" log -1 --format=%cI "$3")" "$2"
   else
     git -C "$1" rev-parse "$2"
