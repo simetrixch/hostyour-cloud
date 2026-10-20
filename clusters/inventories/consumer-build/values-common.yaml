@@ -47,57 +47,24 @@ releaseQueue:
   serviceAccountName: release-queue
   namespace: image-builder
 
-# HOW MANY CI PODS A UNIT RUNS AT ONCE. templates/resourcequota-ci.yaml caps the pods of the ci priority
-# class in each build namespace; a pod over the cap waits and is retried, the run does not fail. The class
-# is created by clusters/inventories/image-builder (priorityClasses.ci) and named here for the same reason
-# as the identities above; scripts/build-contract.test.mjs renders both charts and fails when the two names
-# differ. The cap counts pods, not CPU or memory, because Tekton's own init containers carry no requests and
-# a compute quota would refuse every pod. One pod per unit means the ci runs of one repository run one
-# after the other: the run of a second branch waits for the run of the first, about 9 minutes for the
-# largest repository.
+# THE SUM OF THE LIMITS IS BOUNDED BY A BUDGET. The scheduler admits a pod by its requests, and the pods may then use
+# their whole limits at once. When the node runs out of memory the kernel kills by the QoS class of a pod and not by its
+# priority class, so the pods without requests (argocd, tekton, observability and ingress run many of them) die before a
+# build pod does. What bounds that is a sum of limits that does not grow past limitsMemoryBudget, and
+# scripts/build-contract.test.mjs fails when it does:
 #
-# THE SUM OF THE LIMITS IS BOUNDED BY A BUDGET. The scheduler admits a pod by its requests, so it admits every
-# pod that the caps allow, and the pods may then use their whole limits at once. When the node runs out of
-# memory the kernel kills by the QoS class of a pod and not by its priority class, so the pods without requests
-# (argocd, tekton, observability and ingress run many of them) die before a ci pod does. What bounds that is a
-# sum of limits that does not grow past limitsMemoryBudget, and scripts/build-contract.test.mjs fails when it
-# does:
-#
-#   the limits of the maxRunning largest distinct ci pods (the sum of each pod's steps)
-#   + the report pod of each of those ci runs (the finally task of the ci pipeline)
-#   + the releaseSlots largest distinct units, each max(the memory limits of the pods that its release run has alive at once,
-#                                                        the memory limits of the pods that its publish run has alive at once)
+#   the releaseSlots largest distinct units, each max(the memory limits of the pods that its release run has alive at once,
+#                                                     the memory limits of the pods that its publish run has alive at once)
 #   <= limitsMemoryBudget
 #
-# The budget is NOT the free memory of the node. With seven ci runs and nine releases the worst case, every pod at its
-# limit, is 54.75 GiB (3.5 + 6 x 3 + 7 x 0.25 + 9 x 3.5) on a node that allocates 62313320Ki (59.43 GiB, nodeMemory
-# below) and of which 15-23 GiB were in use by the standing pods on 2026-10-19 (peak working set of 15 days: 17.35 GiB),
-# so it exceeds what is free. The owner accepted that (decision of 2026-10-15: the platform has no customer data and
-# production may be down); the test holds the budget itself to nodeMemory, so the pods alone, at their limits, cannot
-# ask for more than the node has. The limits are close to what the pods reach (a ci check peaked at 2.97 of 3 GiB and a
-# Buildah build at 2.32 of 2.69 GiB over 15 days), so the budget is not slack: a tenth release at once (58.25 GiB), an
-# eighth ci run (58 GiB) or a larger limit raises the sum past the budget and fails the test until the owner raises the
-# budget. The budget is the exact sum and stays 4.68 GiB below nodeMemory: the release queue stops at nine because a tenth
-# release also takes the CPU requests past the 32 cores (THE CORES OF THE BUILD NODE below), not because the memory is gone.
+# The budget is the exact sum, 31.5 GiB (9 x 3.5), on a node that allocates 62313320Ki (59.43 GiB, nodeMemory below) and
+# of which 15-23 GiB were in use by the standing pods on 2026-10-19 (peak working set of 15 days: 17.35 GiB). The test
+# holds the budget itself to nodeMemory, so the pods alone, at their limits, cannot ask for more than the node has. A
+# tenth release at once or a larger limit raises the sum past the budget and fails the test until the owner raises the
+# budget.
 #
-# maxRunning is ciRunKeeper.maxRunning in clusters/inventories/image-builder: the ci run keeper starts a
-# waiting ci run only while fewer ci runs than that have started and not finished, whatever the number of
-# units. A run holds one live ci pod at a time: the task ci is one pod whose steps run one after the other (the
-# test asserts it), the finally task commit-status runs after it, and report-failure beside it only on a red run.
-#
-# podsPerUnit is 2 for that pair, not for a second live pod. Tekton creates the pod of commit-status as soon as the
-# steps of the task ci have exited, and for a moment that pod is not yet Succeeded, so the quota still counts it.
-# With a cap of 1 the next pod is refused (ExceededResourceQuota) and Tekton tries it again a minute later: a check
-# of 30 s took 5 min. The finished pod holds no running step, so the memory budget still counts one ci pod per run,
-# and the pod of the task ci weighs its largest step, the check, because Tekton gives a pod the largest request of
-# its steps and not their sum.
-#
-# The report pod carries the class image-builder-ci-report, which the quota does not count, so a red run
-# reports at once even while the next check of its unit holds the slot. Each running run has at most one,
-# so the term is bounded by the same cap.
-#
-# The third term is the runs the queue runs at once (releaseSlots is releaseQueue.maxRunning in
-# clusters/inventories/image-builder, 9). The queue runs one run of a unit at a time, so the runs in the slots belong to
+# releaseSlots is releaseQueue.maxRunning in clusters/inventories/image-builder (9), the runs the queue runs at
+# once. The queue runs one run of a unit at a time, so the runs in the slots belong to
 # different units and the stage runs of a release never add up. A slot holds the larger of the release run and the publish
 # run of its unit, and the worst case fills the slots with the largest units: the test sorts the units by that size and
 # adds the releaseSlots largest. A run holds the pods that none of its tasks waits for, which the test reads from the
@@ -116,11 +83,9 @@ releaseQueue:
 # `<unit>-release` on the master had them on 2026-10-18 (swissbookai 4, digita-platform and hostyour-manager 3,
 # digita-auth and digita-post 2, every other unit 1; digita-realtime, new, has no Pipeline yet and builds 1); the test renders a release with that many images and fails when more
 # than releaseBuildsAtOnce of them run at once. A unit that builds more images, or a new unit, is added here, and the test then checks it
-# against the budget. limitsMemoryBudget is the sum above for nine release slots of 3584Mi (the pack pod of the publish run,
-# the heaviest pod a slot holds), one 3584Mi ci check and six 3Gi ci checks, plus seven report pods of 256Mi: 54.75Gi (56064Mi)
-# exactly. A buildah pod is 3Gi, a 2752Mi build step and
-# a 320Mi push step, from the largest working sets the steps reached on the master over 15 days
-# (scripts/build-contract.test.mjs).
+# against the budget. limitsMemoryBudget is the sum above for nine release slots of 3584Mi (the pack pod of the publish
+# run, the heaviest pod a slot holds): 31.5 GiB (32256Mi) exactly. A buildah pod is 3Gi, a 2752Mi build step and a 320Mi
+# push step, from the largest working sets the steps reached on the master over 15 days (scripts/build-contract.test.mjs).
 #
 # THE PODS OF THE BUILD NODE. The kubelet of the node admits at most nodePods active pods (finished pods do
 # not count): --max-pods=250 in hostyour-deploy ansiwise/programs/deploy-cluster.yaml, held there by
@@ -128,42 +93,32 @@ releaseQueue:
 # alive at once, as for the memory above:
 #
 #   the releaseSlots largest distinct units, each max(the pods that its release run has alive at once, the pods that its publish run has alive at once)
-#   + maxRunning x (podsPerUnit + 1 report pod)
 #   + standingPods
 #   < nodePods
 #
 # One run of a unit at a time means the stages that global.channelStages in clusters/platform/values-common.yaml
 # lets a channel reach (3) never run side by side. For the nine largest units above that is
-# (5 + 4 + 4 + 3 + 3 + 4 x 3) + 7 x 3 + 125 = 177 of 250. standingPods is DECLARED,
+# (5 + 4 + 4 + 3 + 3 + 4 x 3) + 125 = 156 of 250. standingPods is DECLARED,
 # not derived: the pods of the node that are not in a build namespace and not finished, 125 at the peak of the five days
 # before 2026-10-19 (115 in the two days before; 111 running then), read from kube_pod_status_phase on the master's
 # Prometheus.
 #
 # THE CORES OF THE BUILD NODE. The scheduler admits a pod by its CPU requests, and a pod whose requests do not
-# fit what is left of the node waits Pending, so a ci run would wait for a free core. A CPU limit reserves
-# nothing: the kernel only slows the pods that ask for more than their share, in proportion to their requests.
-# So the limits may add up to more than the node has (the check step alone may take 12 of its 32 cores, and
-# seven runs at once may ask for 84), and only a single limit may not exceed the node. What must fit is the sum
-# of requests, and scripts/build-contract.test.mjs fails when it does not:
+# fit what is left of the node waits Pending. A CPU limit reserves nothing: the kernel only slows the pods that ask
+# for more than their share, in proportion to their requests. So the limits may add up to more than the node has,
+# and only a single limit may not exceed the node. What must fit is the sum of requests, and
+# scripts/build-contract.test.mjs fails when it does not:
 #
-#   maxRunning x the largest CPU request of a ci pod (the sum of its steps)
-#   + maxRunning x the CPU request of the report pod
-#   + the releaseSlots largest distinct units, each max(the CPU requests of the pods that its release run has alive at once,
-#                                                        the CPU requests of the pods that its publish run has alive at once)
+#   the releaseSlots largest distinct units, each max(the CPU requests of the pods that its release run has alive at once,
+#                                                     the CPU requests of the pods that its publish run has alive at once)
 #   + standingCpuRequests
 #   <= nodeCpu
 #
-# The check step requests the largest whole number of cores for which that still holds: the test fails when
-# the request is above it and when one more core would fit. nodeCpu is the allocatable CPU of master1 (32 on
-# 2026-10-15, and again on 2026-10-19). With seven runs and nine releases the largest whole number is 2 cores: 7 x (2 + 0.05)
-# + 9.9 (the nine release slots at 1.1 each, the publish pod) + 6.97 = 31.22 of 32, where 3 cores would ask for 38.2, and a tenth release
-# would ask for 32.32. The cores
-# are no loss in use: the master's Prometheus saw the whole node, standing pods and builds together, at 7.1 cores at most in
-# 15 days (a ci check up to 5.85, a build namespace up to 5.65 together), and a request only decides who is admitted
-# and how the cores are shared once the node is full. nodeMemory is the allocatable memory of master1, 62313320Ki,
-# rounded down to the Mi (read 2026-10-19). standingCpuRequests is DECLARED, not derived: the CPU requests of the pods of the node that are
+# With nine releases that is 9.9 (the nine release slots at 1.1 each, the publish pod) + 6.97 = 16.87 of 32 cores.
+# nodeCpu is the allocatable CPU of master1 (32 on 2026-10-15, and again on 2026-10-19). nodeMemory is the allocatable
+# memory of master1, 62313320Ki, rounded down to the Mi (read 2026-10-19). standingCpuRequests is DECLARED, not derived: the CPU requests of the pods of the node that are
 # not in a build namespace and not finished. On 2026-10-15 they were 4.53 cores, and 72 of the pods standing there
-# had no request at all, among them traefik and Argo CD, which get the smallest share while the ci pods take the
+# had no request at all, among them traefik and Argo CD, which get the smallest share while the build pods take the
 # node. The pods the master cannot work without now carry a request, each its p95 CPU use over seven days, and
 # the figure is the 4.53 cores plus them:
 #
@@ -177,8 +132,6 @@ releaseQueue:
 # figure may be a little high until that lands, never low. scripts/build-contract.test.mjs adds the requests of the
 # values files up and fails when this figure is below the sum.
 ciCapacity:
-  priorityClassName: image-builder-ci
-  podsPerUnit: 2
   releaseBuildsAtOnce: 1
   releaseUnitImages:
     digita-auth: 2
@@ -194,62 +147,12 @@ ciCapacity:
     hostyour-demo-consumer: 1
     hostyour-manager: 3
     swissbookai: 4
-  limitsMemoryBudget: 56064Mi
+  limitsMemoryBudget: 32256Mi
   nodeMemory: 60852Mi
   nodePods: 250
   standingPods: 125
   nodeCpu: "32"
   standingCpuRequests: 6970m
-
-# THE VOLUMES OF A CI RUN. The one pod of a ci run keeps the checkout on an emptyDir of its task, ciScratch.size
-# (the size of the claim a run held before it), which the kubelet evicts the pod for exceeding. ciCache.size is the
-# claim `ci-cache` of each unit (templates/ci-cache.yaml, on the master's local storage class): the check step
-# keeps the Go module and build caches, the helm repository cache, the pnpm content store, the npm and pub package
-# caches and the tool archives of a run there, and prints its size and what it evicted, oldest last access first, to
-# stay under it.
-ciScratch:
-  size: 10Gi
-ciCache:
-  size: 5Gi
-
-# THE CHECK STEP'S MEMORY AND VITEST WORKERS. The digita-platform cap holds its app, web and engine
-# suites to four workers through their shared VITEST_MAX_WORKERS reader. The supplied upper peak of
-# 2Gi for three workers gives ceil(2048 / 3 x 1.30) = 888Mi per worker; four need an estimated
-# 3552Mi including margin. The 3Gi request covers their estimated 2731Mi without margin. A complete
-# master run must still prove its duration and actual memory peak.
-ciCheckMemory:
-  default: { requests: 2Gi, limits: 3Gi }
-  units:
-    digita-platform: { requests: 3Gi, limits: 3584Mi, maxWorkers: "4" }
-
-# WHO STARTS, CANCELS AND DELETES A CI RUN. The ci run keeper of clusters/inventories/image-builder starts
-# the waiting ci runs up to ciRunKeeper.maxRunning, cancels a ci run that a newer push to the same branch
-# replaces or whose `ci/` branch was deleted, and deletes the finished ci runs beyond the
-# newest 20 of each build namespace. Its grant is `patch` and `delete` on pipelineruns in the unit's
-# build namespace, rendered per unit by templates/rbac-ci-run-keeper.yaml, and named here for the same
-# reason as the release queue above. The admission policy of image-builder lets that identity set
-# spec.status Cancelled or CancelledRunFinally on a ci run together with the annotation that names the
-# push which replaced it, drop its waiting flag and set the note of what it waits for, and change
-# nothing else.
-ciRunKeeper:
-  serviceAccountName: ci-run-keeper
-  namespace: image-builder
-
-# WHERE A FAILED CI RUN IS REPORTED. The finally task of the ci pipeline posts one alert to this
-# Alertmanager, and templates/networkpolicy.yaml opens its port to that task's pod and to no other pod
-# of the namespace: Alertmanager takes any alert from anybody, so a pod that runs a repository's code
-# must not reach it. The address is the in-cluster Service of the observability release, which stands
-# on the master cluster; a build plane on another cluster reaches nothing there, and its failed runs
-# fail the report task visibly instead of mailing. The pod labels are the ones the Prometheus operator
-# puts on the Alertmanager pod.
-ciFailureReport:
-  alertmanager:
-    namespace: observability
-    serviceName: observability-alertmanager
-    port: 9093
-    podLabels:
-      app.kubernetes.io/name: alertmanager
-      alertmanager: observability-alertmanager
 
 # WHO MAY WATCH A RUN IT DID NOT START. The manager has no task in a release cycle — the webhook
 # starts the run and the pipeline finishes it — but it reports the run's progress to the operator who
@@ -274,8 +177,7 @@ manager:
 
 # Post-DNAT API-server egress pinhole for the BUMP pod only (second
 # NetworkPolicy in templates/networkpolicy.yaml — the gate-runner
-# reportWriter pattern), and for the ci failure report pod (the policy beside
-# it, which reads the same ports): the bump's last step patches the unit's own
+# reportWriter pattern): the bump's last step patches the unit's own
 # Applications for the argo-sync, and Calico evaluates egress AFTER kube-proxy
 # DNAT, so kubernetes.default.svc resolves to the node's apiserver endpoint
 # inside the fenced private ranges. Default admits the 10/8 range on the usual

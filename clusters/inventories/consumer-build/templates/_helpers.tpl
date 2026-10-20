@@ -37,25 +37,8 @@ scope is a fact of the registration and never a value of this chart.
 {{- if gt (len (include "consumer-build.builds" . | fromJsonArray)) 0 -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
-{{/* The environment of the two commit status tasks of the ci Pipeline: the statuses token from
-     build-git-https (key `token`, which posts commit statuses on the unit's own repository and writes
-     nothing else), the repository as GitHub's API names it, the commit the gate proved and the run
-     in the Tekton Dashboard. Takes a dict of repositoryPath and runURL. */}}
-{{- define "consumer-build.ciCommitStatusEnv" -}}
-- name: GITHUB_TOKEN
-  valueFrom:
-    secretKeyRef: { name: build-git-https, key: token }
-- name: REPOSITORY_PATH
-  value: {{ .repositoryPath | quote }}
-- name: COMMIT
-  value: "$(params.commit)"
-- name: RUN_URL
-  value: {{ .runURL | quote }}
-{{- end }}
-
-{{/* The user a repository's own code runs as wherever its test suites run: the check step of the
-     ci and the build step of build-binaries, whose release/build.sh gates every part and the
-     repository before it builds. It is pptruser, the user of the check image
+{{/* The user a repository's own code runs as on the build plane: the build step of build-binaries,
+     whose release/build.sh gates every part and the repository before it builds. It is pptruser, the user of the check image
      (ghcr.io/puppeteer/puppeteer, UID 10042 in its Dockerfile), and never root: root keeps
      CAP_DAC_OVERRIDE and reads and writes through any mode, so a test that expects a directory to
      refuse a write (a record this account cannot remove) is red in a pod and green on a
@@ -117,44 +100,15 @@ allowPrivilegeEscalation: false
 
 {{/* The step that hands the folders pods of root made to that user, before a step of it writes
      into them (node_modules, build output, the test databases, the binaries). It runs as the root
-     of its image. Takes a dict of image and folders, and optionally the lines of a guard that
-     opens its script and the volumeMounts that carry the folders. */}}
+     of its image. Takes a dict of image and folders. */}}
 {{- define "consumer-build.handOverStep" -}}
 - name: hand-over
   image: {{ .image }}
   script: |
     #!/usr/bin/env sh
-{{- if .guard }}
-    {{ .guard }}
-{{- end }}
     set -eu
     chown -R -h {{ include "consumer-build.checkUser" . }} {{ .folders }}
   computeResources:
     requests: { cpu: 50m, memory: 32Mi }
     limits: { cpu: 500m, memory: 64Mi }
-{{- if .mounts }}
-  volumeMounts:
-{{ .mounts | indent 4 }}
-{{- end }}
-{{- end -}}
-
-{{/* The marker the step earlier-green of the ci Pipeline writes when the commit carries a green tekton/ci
-     already, and the first lines of every step after it: such a step ends at once, so the run clones and
-     checks nothing and posts no pending that would hide the green status. */}}
-{{- define "consumer-build.ciEarlierGreenMarker" -}}
-/workspace/earlier-green
-{{- end -}}
-{{- define "consumer-build.ciEarlierGreenGuard" -}}
-if [ -e {{ include "consumer-build.ciEarlierGreenMarker" . }} ]; then echo "skipped: the commit is green already"; exit 0; fi
-{{- end -}}
-
-{{/* The mounts of the checkout in the one pod of a ci run: both folders of the scratch volume, at the paths
-     every step and CI_SOURCES_DIR read. Takes a dict of the folders: "repository" and "sources", each "rw", "ro" or absent. */}}
-{{- define "consumer-build.ciScratchMounts" -}}
-{{- if .repository }}
-- { name: scratch, mountPath: /workspace/source, subPath: repository{{ if eq .repository "ro" }}, readOnly: true{{ end }} }
-{{- end }}
-{{- if .sources }}
-- { name: scratch, mountPath: /workspace/sources, subPath: sources{{ if eq .sources "ro" }}, readOnly: true{{ end }} }
-{{- end }}
 {{- end -}}

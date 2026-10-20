@@ -399,12 +399,12 @@ $found"
 }
 
 # THE PODS THE MASTER CANNOT WORK WITHOUT CARRY A CPU REQUEST. A pod with none gets the smallest share of the node
-# once the node is saturated, and the build plane saturates it: the ci check may take 12 cores, seven runs at once. The
+# once the node is saturated, and the build plane saturates it when its runs reach their CPU limits. The
 # ingress, the reconcilers, the certificates and the build plane's controllers are the pods that must keep working
 # then, so each container of the workloads below asks for the CPU it uses (its p95 over seven days, which the
 # comment beside each request in the values names). The names are the ones the charts render and the live pods
 # carry; traefik is the MicroK8s ingress addon's DaemonSet, which no chart of this repository renders, so it stands
-# here for the render that carries it once hostyour-deploy sets its request. The ci pods and the other pods that
+# here for the render that carries it once hostyour-deploy sets its request. The build pods and the other pods that
 # stand on the node are budgeted in clusters/inventories/consumer-build/values-common.yaml (ciCapacity).
 cpu_guaranteed='traefik|argocd-application-controller|argocd-applicationset-controller|argocd-repo-server|argocd-server|argocd-redis|argocd-dex-server|argocd-notifications-controller|cert-manager|cert-manager-cainjector|cert-manager-webhook'
 
@@ -503,9 +503,9 @@ $found"
 # WHAT IT CANNOT PROVE. The stand-in cluster map gives `domain`, `unitApex` and `platformDomain` one
 # value, so a sender built from global.domain renders the same host as one built from global.unitApex.
 # This scan proves the set of senders and that none stands at a host in front of the apex;
-# scripts/ci-failure-mail.test.mjs renders per-stage domains and proves that the sender takes its
+# scripts/alert-mail-sender.test.mjs renders per-stage domains and proves that the sender takes its
 # domain from global.unitApex. It does not prove that the apex is among the relay's
-# ALLOWED_SENDER_DOMAINS: no stand-in renders the allowlist, and ci-failure-mail.test.mjs hands it
+# ALLOWED_SENDER_DOMAINS: no stand-in renders the allowlist, and alert-mail-sender.test.mjs hands it
 # in by --set. The allowlist is declared in hostyour-deploy ansiwise/templates/postfix-values.tpl:13
 # and no test reads it yet: a template that loses the apex leaves this check green.
 #
@@ -556,10 +556,10 @@ $found"
 }
 
 # ── The awk programs of the scans read no regex interval ────────────────────────────────────
-# THE CI IMAGE'S AWK IS mawk 1.3.4 20200120, AND IT READS A BRACE EXPRESSION IN A REGEX AS TEXT. A
+# mawk 1.3.4 20200120, THE AWK OF DEBIAN BOOKWORM, READS A BRACE EXPRESSION IN A REGEX AS TEXT. A
 # regex ending in an interval (a class and a count in braces) matches nothing there and nothing
 # complains: the base64 field of the scan stayed unmatched, no value was decoded, and the
-# counter-probe below went red in the ci run and green on every workstation, whose awk reads it.
+# counter-probe below went red on that awk and green on every workstation whose awk reads it.
 # The fence reads the programs, so it is red on every machine the day one is written again. A
 # count is written as a `length()` test or as repeated classes.
 has_interval() { grep -Eq '[{][0-9]+(,[0-9]*)?[}]' <<< "$1"; }
@@ -568,7 +568,7 @@ interval_innocent='match(s, /\{\{[^{}]*\}\}/) && length(s) >= 40 && s ~ /=?=?$/'
 has_interval "$interval_planted" || fail "the fence for a regex interval does not see one planted in an awk program"
 has_interval "$interval_innocent" && fail "the fence for a regex interval reports an awk program that writes none"
 for program in scan_awk source_fields_awk revisions_awk off_revision_awk; do
-  has_interval "${!program}" && fail "the awk program $program writes a regex interval, which the ci image's mawk 1.3.4 20200120 reads as text, so its match is silently empty there"
+  has_interval "${!program}" && fail "the awk program $program writes a regex interval, which mawk 1.3.4 20200120 reads as text, so its match is silently empty there"
 done
 echo "check: no awk program of the scans writes a regex interval, and the fence reports one planted."
 
@@ -1088,23 +1088,6 @@ done
 printf '%s\n' "$publish_objects" | grep -q '^ExternalSecret/image-builder-registry-pull' \
   && fail "a unit that builds nothing renders the registry pull identity, which only a release reads"
 
-# ── The tools of this repository's own ci run ────────────────────────────────────────────────
-# ci-tools.json names the tools the ci of the master installs before it runs scripts/test.sh
-# (clusters/inventories/consumer-build/templates/pipeline-ci.yaml): the tools its suites run. Each pair has to be a
-# row of the table that pipeline installs from, or the run ends on the build plane before its suites start, so it is
-# refused here.
-tools_table=clusters/inventories/consumer-build/files/ci-tools.table
-tools_named="$(yq -p=json -o=yaml e 'to_entries | .[] | .key + " " + .value' ci-tools.json)" \
-  || fail "ci-tools.json does not parse as an object of tools and versions"
-[ -n "$tools_named" ] || fail "ci-tools.json names no tool, so the ci run of this repository would have none of the tools its suites run"
-tools_rows="$(awk '{ print $1, $2 }' "$tools_table")"
-while IFS= read -r pair; do
-  printf '%s\n' "$tools_rows" | grep -qxF "$pair" \
-    || fail "ci-tools.json names $pair, which $tools_table does not carry, so the ci run of this repository would end before its suites start"
-done <<< "$tools_named"
-[ "$(yq e 'select(.kind == "Pipeline" and .metadata.name == "check-ci") | .spec.tasks[] | select(.name == "ci") | .taskSpec.steps[] | select(.name == "check") | .env[] | select(.name == "CI_TOOLS_TABLE") | .value' "$work/publish-render")" = "$(cat "$tools_table")" ] \
-  || fail "the ci pipeline of a unit does not hand its check the table $tools_table, whole"
-echo "check: ci-tools.json names $(printf '%s\n' "$tools_named" | wc -l) tools, each a row of $tools_table, and the ci pipeline renders that table."
 objects_of "$work/fence-render" \
   | grep -E '^(Role|RoleBinding)/(eventlistener-create-pipelineruns|manager-read-pipelineruns)$' >> "$work/fences"
 fences_rendered="$(sort "$work/fences")"

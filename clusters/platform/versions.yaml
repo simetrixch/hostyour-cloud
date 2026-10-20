@@ -172,8 +172,8 @@ images:
   # repository and tag, so no stamp writes it: the version is written BY HAND in
   # clusters/inventories/plane/values-common.yaml, as `image:` under `plane-ce.postgres`,
   # `plane-ce.redis`, `plane-ce.rabbitmq` and `plane-ce.minio`, and as `image_mc:` under
-  # `plane-ce.minio`. Nothing holds the two files to each other but scripts/plane.test.mjs, in the ci
-  # of the master; a bump edits both.
+  # `plane-ce.minio`. Nothing holds the two files to each other but scripts/plane.test.mjs, in the push
+  # gate; a bump edits both.
   # The entries carry `upstream` so the report shows how far each has fallen behind.
   plane-postgres:
     version: "18.6-alpine"

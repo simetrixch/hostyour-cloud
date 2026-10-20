@@ -1016,7 +1016,7 @@ pipeline_run "$work/e5" "0.1.000-stable-$STAMP" && fail 'PLANTED DEFECT: a relea
 grep -q 'is not on the default branch of origin' "$work/run.out" && grep -qx 'run: reviewed failed at decide' "$work/run.out" \
   || fail "a release commit off the default branch was not refused at reviewed: $(cat "$work/run.out")"
 ok 'end to end: a packed tarball holding .env.local or a token, and a commit off the default branch, publish nothing'
-# A source release hands pack the tools of its ci-tools.json, as the ci check gets them: a version the table lacks ends pack
+# A source release hands pack the tools of its ci-tools.json: a version the table lacks ends pack
 # before it builds anything.
 one_package "$work/e10" @digitaplatform/e2e-tools "index.js=export {};"; printf '{"emcc": "0.0.1"}\n' > "$work/e10/ci-tools.json"
 commit_tag "$work/e10" "0.1.000-stable-$STAMP"
