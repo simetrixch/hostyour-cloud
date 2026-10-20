@@ -16,7 +16,13 @@ import {fileURLToPath} from 'node:url';
 // the source and must open it.
 const SOURCE = fileURLToPath(new URL('../clusters/inventories/observability/files/site_telemetry.py', import.meta.url));
 const NOW = Date.now();
-const minutesAgo = minutes => NOW - minutes * 60000;
+// The traffic stands on one UTC day: it ends at NOW, or, in the first hours of a day, just before that day began.
+// A visitor's hash changes with the day, so traffic across midnight would count one visitor twice.
+const OLDEST_MINUTES = 180;
+const today = new Date(NOW);
+const startOfToday = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+const TRAFFIC_END = NOW - OLDEST_MINUTES * 60000 >= startOfToday ? NOW : startOfToday - 60000;
+const minutesAgo = minutes => TRAFFIC_END - minutes * 60000;
 const keys = {shop: generateKeyPairSync('rsa', {modulusLength: 2048}), other: generateKeyPairSync('rsa', {modulusLength: 2048})};
 const encode = value => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
 
@@ -53,7 +59,7 @@ function failure({minutes, site = 'main', category = 'login_failed', service = '
 }
 
 const TRAFFIC = [
-  access({minutes: 180, path: '/?token=SECRETTOKEN', referer: 'https://news.example.org/story'}),
+  access({minutes: OLDEST_MINUTES, path: '/?token=SECRETTOKEN', referer: 'https://news.example.org/story'}),
   access({minutes: 175, path: '/angebote'}),
   access({minutes: 100, path: '/angebote'}),
   access({minutes: 90, path: '/', address: '198.51.100.9:40000', agent: PHONE, country: 'DE'}),

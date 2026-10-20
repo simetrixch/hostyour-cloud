@@ -1,9 +1,8 @@
-# Puts the tools a repository's ci-tools.json names first on PATH. The ci pipeline inlines this file in
-# its check step, and the publish pipeline in pack and in build-binaries, before the repository's own
-# install and check or release build; scripts/build-contract.test.mjs runs it against a stand-in table and
+# Puts the tools a repository's ci-tools.json names first on PATH. The publish pipeline inlines this file
+# in pack and in build-binaries, before the repository's own install and release build; scripts/build-contract.test.mjs runs it against a stand-in table and
 # stand-in archives.
 #
-# CI_TOOLS is what the list-tools step of the ci task validated, one "<tool> <version>" per line, and empty
+# CI_TOOLS is what the scan step of the publish pipeline read, one "<tool> <version>" per line, and empty
 # for a repository without ci-tools.json. CI_TOOLS_TABLE is files/ci-tools.table, one
 # "<tool> <version> <sha256> <url>" per line, where a "<sha256>" in the url stands for the row's sha256 and is filled
 # in before the download, so the hex stands once per row (the owner's mirror serves a file by the blob of its sha256).
@@ -12,31 +11,9 @@
 # check that ran with the image's own tool instead of the one it named reads exactly like a check that
 # ran with the right one. Tools are installed in the order of the table, so npm stands before node on
 # PATH, and everything installed stands before the image's own.
-#
-# CI_CACHE_DIR, where the claim ci-cache of the unit is mounted (the check step of the ci Pipeline only), keeps each archive
-# under its sha256. A kept archive is used only when its sha256 still matches; one that does not is removed, said so, and
-# downloaded again, so a cache can hold nothing the table does not vouch for.
 ci_download() {
-  local url="$1" sha256="$2" file="$3" kept=""
-  if [ -n "${CI_CACHE_DIR:-}" ]; then
-    kept="${CI_CACHE_DIR}/archives/${sha256}"
-    mkdir -p "${CI_CACHE_DIR}/archives"
-    if [ -f "${kept}" ]; then
-      if echo "${sha256}  ${kept}" | sha256sum -c --status -; then
-        cp "${kept}" "${file}"
-        touch -a "${kept}"
-        return 0
-      fi
-      echo "check: the kept archive ${sha256} no longer matches its sha256, so it is removed and downloaded again" >&2
-      rm -f "${kept}"
-    fi
-  fi
-  curl -fsSL -o "${file}" "${url}"
-  echo "${sha256}  ${file}" | sha256sum -c -
-  if [ -n "${kept}" ]; then
-    cp "${file}" "${kept}.part"
-    mv "${kept}.part" "${kept}"
-  fi
+  curl -fsSL -o "$3" "$1"
+  echo "$2  $3" | sha256sum -c -
 }
 ci_tools_dir=/tmp/ci-tools
 mkdir -p "${ci_tools_dir}/bin"

@@ -36,29 +36,29 @@ tests:
   - name: PipelineRunRunningTooLong alerts on the run that started more than 30 minutes ago and has not completed, not on a finished run, a young run, or a run whose name another cluster completed
     interval: 1m
     input_series:
-      # shop-ci-old started at second 0 and never completed: 40 minutes old at the evaluation.
-      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-old"}
+      # shop-release-old started at second 0 and never completed: 40 minutes old at the evaluation.
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-release-old"}
         values: 0x40
-      # shop-ci-done started at second 0 and completed at second 600.
-      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-done"}
+      # shop-release-done started at second 0 and completed at second 600.
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-release-done"}
         values: 0x40
-      - series: tekton_pipelinerun_completion_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-done"}
+      - series: tekton_pipelinerun_completion_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-release-done"}
         values: 600x40
-      # shop-ci-young started at second 1500, so it is 15 minutes old at the evaluation.
-      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-young"}
+      # shop-release-young started at second 1500, so it is 15 minutes old at the evaluation.
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-release-young"}
         values: 1500x40
-      # shop-ci-twin runs on master and has not completed there; the run of the same name on apps1 completed.
-      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-ci-twin"}
+      # shop-release-twin runs on master and has not completed there; the run of the same name on apps1 completed.
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="master", namespace="shop-build", pipelinerun="shop-release-twin"}
         values: 0x40
-      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="apps1", namespace="shop-build", pipelinerun="shop-ci-twin"}
+      - series: tekton_pipelinerun_start_timestamp_seconds{cluster="apps1", namespace="shop-build", pipelinerun="shop-release-twin"}
         values: 0x40
-      - series: tekton_pipelinerun_completion_timestamp_seconds{cluster="apps1", namespace="shop-build", pipelinerun="shop-ci-twin"}
+      - series: tekton_pipelinerun_completion_timestamp_seconds{cluster="apps1", namespace="shop-build", pipelinerun="shop-release-twin"}
         values: 600x40
     promql_expr_test:
       - expr: ALERTS{alertname="PipelineRunRunningTooLong"}
         eval_time: 40m
         exp_samples:
-          - labels: ALERTS{alertname="PipelineRunRunningTooLong", alertstate="firing", cluster="master", namespace="shop-build", pipelinerun="shop-ci-old", severity="warning"}
+          - labels: ALERTS{alertname="PipelineRunRunningTooLong", alertstate="firing", cluster="master", namespace="shop-build", pipelinerun="shop-release-old", severity="warning"}
             value: 1
-          - labels: ALERTS{alertname="PipelineRunRunningTooLong", alertstate="firing", cluster="master", namespace="shop-build", pipelinerun="shop-ci-twin", severity="warning"}
+          - labels: ALERTS{alertname="PipelineRunRunningTooLong", alertstate="firing", cluster="master", namespace="shop-build", pipelinerun="shop-release-twin", severity="warning"}
             value: 1
