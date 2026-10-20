@@ -1194,8 +1194,8 @@ echo "check: the credentials of the argocd-secrets chart and of its slave twin f
 # Applications, but not the only one that names a repository: a chart an ApplicationSet renders reads global.platformUrl
 # and global.deployUrl from the platform chain, or is handed the URL by the ApplicationSet, and a literal in it is a
 # repository the map moved and the chart did not. The chain is the one the render loop above hands each chart at stage
-# dev. The unit mode of clusters/inventories/consumer-build is not scanned: its build plane names the platform
-# repository on GitHub until hostyour-cloud#428 moves it, and the scan would report that on every run.
+# dev. The unit mode of clusters/inventories/consumer-build is not scanned: its build plane still names the platform
+# repository on GitHub until the build plane reads it from the map, and the scan would report that on every run.
 chain_charts=0
 chain_found=""
 for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/; do
