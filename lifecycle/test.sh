@@ -4279,7 +4279,8 @@ branch_ask_of() { sed -n '/^# THE CREDENTIAL STANDS IN THE ENVIRONMENT/,/^BRANCH
 asked() { # <driver file> <mode> <true|false> — the exit code; $FORGE_WORK/asked.out holds what it said and the tip it read
   printf '%s' "$2" > "$FORGE_WORK/bin/mode"
   rm -f "$FORGE_WORK/bin/arguments" "$FORGE_WORK/bin/environment"
-  ( export PATH="$FORGE_WORK/bin:$PATH" FQDN=master.example.org PLATFORM_REPO=platform-team/platform FORGEJO_HOST=forgejo.master.example.org \
+  ( unset GIT_CONFIG_COUNT "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}" # a caller's own git configuration in the environment is no input of the case
+    export PATH="$FORGE_WORK/bin:$PATH" FQDN=master.example.org PLATFORM_REPO=platform-team/platform FORGEJO_HOST=forgejo.master.example.org \
       PLATFORM_REPO_READ_PAT="$FORGE_TOKEN" PLATFORM_ON_FORGEJO="$3"
     die() { echo "die: $1" >&2; exit "${2:-1}"; }
     set -euo pipefail
