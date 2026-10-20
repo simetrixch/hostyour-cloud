@@ -191,8 +191,9 @@ caught() { # what the copy is a copy of, the words planted in it
   if diff "$OUT/expected" "$OUT/actual" > "$OUT/planted.diff"; then
     fail "a copy of $1 with one line changed printed the bytes its case recorded — the comparison proves nothing"
   fi
-  if grep '^> ' "$OUT/planted.diff" | grep -vqF -- "$2"; then
-    fail "a copy of $1 printed a line the planted words are not in: $(grep '^> ' "$OUT/planted.diff" | grep -vF -- "$2")"
+  grep '^> ' "$OUT/planted.diff" > "$OUT/planted.added" || true
+  if grep -vqF -- "$2" "$OUT/planted.added"; then
+    fail "a copy of $1 printed a line the planted words are not in: $(grep -vF -- "$2" "$OUT/planted.added")"
   fi
   ok "the planted defect was caught — a copy of $1 printing '$2' differs from the recorded bytes in that line alone"
 }
@@ -341,7 +342,7 @@ ok "fixture built — one origin, one trunk, four installations and one ref that
 # script's own, and is removed straight after its commit and push, so it is measured with the
 # template taken away: one run of the script on a copy of the fixture, traced.
 pin_maintenance_starts() { # the release script to run; prints how many background maintenances its pin of apps3 started
-  local d
+  local d origin_map
   d="$(mktemp -d "$WORK/pin.XXXXXX")" || return 1
   cp -a "$ORIGIN_A" "$d/origin.git"
   git clone --quiet "$d/origin.git" "$d/checkout"
@@ -349,7 +350,7 @@ pin_maintenance_starts() { # the release script to run; prints how many backgrou
     echo "the traced release of $1 did not end clean" >&2
     return 1
   }
-  git --git-dir="$d/origin.git" show 'apps3.example.invalid:clusters/active/apps3.example.invalid.yaml' | grep -q '^release: 0.4.0-alpha-' || {
+  origin_map="$(git --git-dir="$d/origin.git" show 'apps3.example.invalid:clusters/active/apps3.example.invalid.yaml')" && grep -q '^release: 0.4.0-alpha-' <<< "$origin_map" || {
     echo "the traced release of $1 pinned nothing on origin, so a count of nothing would prove nothing" >&2
     return 1
   }
@@ -668,7 +669,7 @@ for ref in work/no-map apps5.example.invalid apps9.example.invalid; do
     || fail "the release moved $ref, which it had no business touching"
 done
 for each in apps3 apps4; do
-  git --git-dir="$ORIGIN_A" show "$each.example.invalid:clusters/active/$each.example.invalid.yaml" | grep -q '^release: 0.4.0-alpha-' \
+  origin_map="$(git --git-dir="$ORIGIN_A" show "$each.example.invalid:clusters/active/$each.example.invalid.yaml")" && grep -q '^release: 0.4.0-alpha-' <<< "$origin_map" \
     || fail "the map of $each does not record the release on origin"
 done
 ok 'the mint that names no installation reached origin, pinned the installations its channel admits, and moved nothing else'
@@ -3654,6 +3655,7 @@ lock_reset() { # <free|block|block-upload|hang-readback> — the stand-ins forge
     hang-readback) : > "$STANDIN/hang-readback" ;;
   esac
 }
+driver_names_literal() { grep -qF -- "$2" <<< "$1"; } # <the driver's text> <literal> — the text goes in as a here-string, since grep -q closes a pipe at its first match and the writer is cut off
 lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder, with the driver and its paths moved into the sandbox, the waits of its hold shortened, NAME=value moving a named value of the driver on from there, and a config beside it
   local dir="$LOCK_DIR/$1" text="$2" literal pair moved=()
   shift 2
@@ -3662,7 +3664,7 @@ lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder
   done
   rm -rf "$dir"; mkdir -p "$dir"
   for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
-    printf '%s\n' "$text" | grep -qF -- "$literal" || fail "the backup driver names no $literal — the sandbox of the lock cases proves nothing"
+    driver_names_literal "$text" "$literal" || fail "the backup driver names no $literal — the sandbox of the lock cases proves nothing"
   done
   printf '%s\n' "$text" | sed -e "s#/var/lib/master-backup#$dir/backups#g" -e "s#/var/snap/microk8s/common/default-storage#$LOCK_DIR/storage#g" \
     -e "s#/srv/hostyour-cloud#$LOCK_DIR/srv#g" -e "s#/run/lock/master-backup.lock#$LOCK_DIR/master-backup.lock#g" "${moved[@]}" > "$dir/driver.sh"
@@ -3780,6 +3782,24 @@ lock_refused_by_hand() { # <the driver's text> <none|ended|killed> — a process
   [ ! -s "$OUT/verdict" ]
 }
 LOCK_TEXT="$(cat "$HERE/master-backup-driver.sh")"
+# The literal check of lock_driver on a text larger than a pipe buffer (64 KiB on Linux) that names the literal in its first line, so grep stops at its first read while a writer would still hold the rest.
+LARGE_TEXT="$(awk 'BEGIN { print "/run/lock/master-backup.lock"; for (line = 1; line <= 2400; line++) print "readonly A_LINE_OF_THE_DRIVER_THAT_HOLDS_NO_LITERAL_" line }')"
+[ "${#LARGE_TEXT}" -ge 131072 ] || fail "backup: the text of the literal check is ${#LARGE_TEXT} bytes, not larger than 128 KiB"
+for _ in $(seq 1 3000); do
+  driver_names_literal "$LARGE_TEXT" /run/lock/master-backup.lock \
+    || fail "backup: the literal check reported /run/lock/master-backup.lock missing from a text of ${#LARGE_TEXT} bytes that names it in its first line"
+done
+CUT_OFF=0
+for _ in $(seq 1 3000); do
+  printf '%s\n' "$LARGE_TEXT" | grep -qF -- /run/lock/master-backup.lock || { CUT_OFF=1; break; }
+done
+[ "$CUT_OFF" = 1 ] || fail 'backup: the planted pipe into grep -q was not cut off once in 3000 checks of a text larger than a pipe buffer — the case proves nothing'
+if ( lock_driver without-lock "${LOCK_TEXT//\/run\/lock\/master-backup.lock/}" ) 2> "$OUT/without-lock.err"; then
+  fail 'backup: a driver text without /run/lock/master-backup.lock was taken for a sandbox of the lock cases'
+fi
+grep -qF 'the backup driver names no /run/lock/master-backup.lock — the sandbox of the lock cases proves nothing' "$OUT/without-lock.err" \
+  || fail "backup: a driver text without /run/lock/master-backup.lock was refused for another reason: $(cat "$OUT/without-lock.err")"
+ok 'backup: the literal check of the lock cases found the literal in a text of 128 KiB 3000 times, the planted pipe into grep -q was cut off, and a driver text without /run/lock/master-backup.lock is still refused'
 lock_refuses "$LOCK_TEXT" || fail "backup: a second driver was not refused while the first held the stores: $(cat "$OUT/verdict")"
 lock_refuses "$LOCK_TEXT" upload || fail "backup: a second driver was not refused while the first uploaded its archives, after its store loop: $(cat "$OUT/verdict")"
 for earlier in none ended killed; do
@@ -3925,7 +3945,7 @@ hold_says 'waiting for run hostyour-manager-build/hostyour-manager-release-live 
 grep -qE 'waiting for (run hostyour-manager-build/hostyour-manager-(release-done|publish-waiting|publish-done)|job image-builder/(release-queue-29874554|unrelated-job))' "$LOCK_DIR/hold/out" \
   && fail 'backup: the driver waited for a run that ended, a run that waits on the queue, a Job that finished or a Job of another CronJob'
 [ "$(grep -c ' scale ' "$STANDIN/kubectl-calls.log")" = "$(( 2 * LOCK_STORES ))" ] || fail "backup: the run did not stop and start each of the $LOCK_STORES stores once: $(scale_calls) scale call(s)"
-grep -c ' patch ' "$STANDIN/kubectl-calls.log" | grep -qx 2 || fail 'backup: the run did not hold the queue once and let it go once'
+[ "$(patch_calls)" = 2 ] || fail 'backup: the run did not hold the queue once and let it go once'
 # the order the operator reads: the queue held, the Manager stopped, each store ready, the Manager started, the queue let go
 HOLD_ORDER="$(sed -nE 's#.*(is held|manager/deployment/manager stopped|reads ready|manager/deployment/manager started again|is let go).*#\1#p' "$LOCK_DIR/hold/out" | uniq | tr '\n' ',')"
 [ "$HOLD_ORDER" = 'is held,manager/deployment/manager stopped,reads ready,manager/deployment/manager started again,is let go,' ] \
@@ -4003,7 +4023,7 @@ hold_row_wrong() { # <app.yaml> <kind> <name> <pointer> — says what is wrong w
   local rows
   [ "$(yq '.respectIgnoreDifferences' "$1")" = true ] || echo "$1 does not set respectIgnoreDifferences to true, so a sync writes the ignored field all the same"
   rows="$(yq '.ignoreDifferences | from_yaml | .[] | select(.kind == "'"$2"'" and .name == "'"$3"'") | .jsonPointers[]' "$1" 2> /dev/null || true)"
-  printf '%s\n' "$rows" | grep -qxF -- "$4" || echo "$1 has no rule that keeps $4 of the $2 $3"
+  grep -qxF -- "$4" <<< "$rows" || echo "$1 has no rule that keeps $4 of the $2 $3"
   return 0
 }
 hold_rows_wrong() { # <the Manager's app.yaml> <the image-builder's app.yaml> — what is wrong with the two rules; ends 0
@@ -4363,7 +4383,7 @@ asset_text ansiwise-rest "$ENGINE_PIN" > "$SWAPPED_ASSET"; echo '# swapped after
 
 for engine_driver in driver.sh regenerate-driver.sh; do
   D="$HERE/$engine_driver"
-  check_of "$D" | grep -q 'sha256sum --check' \
+  engine_check="$(check_of "$D")" && grep -q 'sha256sum --check' <<< "$engine_check" \
     || fail "$engine_driver carries no hold_engine_against_digests that runs sha256sum --check — nothing below measures the machine"
 
   held "$D" "$PINNED_DIGESTS" || fail "$engine_driver: the pinned digests of both assets were refused: $(cat "$OUT/held.out")"
@@ -4509,7 +4529,7 @@ fi
 ok 'the planted defect was caught — a check without the lowercase rule accepts a digest in capitals'
 
 # A signal mid-program stops the heartbeat ticker: cleanup() kills the one run_program records.
-stops_the_ticker() { sed -n '/^cleanup() {/,/^}/p' "$1" | grep -q 'kill "\$TICKER"' && grep -q '^  TICKER=\$!$' "$1"; }
+stops_the_ticker() { local cleanup; cleanup="$(sed -n '/^cleanup() {/,/^}/p' "$1")" && grep -q 'kill "\$TICKER"' <<< "$cleanup" && grep -q '^  TICKER=\$!$' "$1"; }
 stops_the_ticker "$HERE/driver.sh" || fail 'driver.sh does not stop the heartbeat ticker when a signal ends the run'
 plant 'a cleanup that leaves the ticker running' 's/^  \[ -z "\${TICKER:-}" \] || kill "\$TICKER" 2>\/dev\/null || true$/  : the ticker is left running/' '^  : the ticker is left running$'
 if stops_the_ticker "$ENGINE_WORK/planted-driver.sh"; then
@@ -5838,7 +5858,8 @@ run_release_unit success manager@master.example.invalid digita-plugins-free none
 if diff <(sed -n '1,3p' "$LIBRARY_CALLS") <(sed -n '1,3p' "$RU/calls") > "$OUT/planted.diff"; then
   fail 'a copy of release-unit that sends none as the string "none" sent the calls the library case recorded — the check proves nothing'
 fi
-if grep '^[<>] ' "$OUT/planted.diff" | grep -vqF '"stage":'; then
+grep '^[<>] ' "$OUT/planted.diff" > "$OUT/planted.changed" || true
+if grep -vqF '"stage":' "$OUT/planted.changed"; then
   fail "a copy of release-unit that sends none as a string differs in a line that is not the stage: $(cat "$OUT/planted.diff")"
 fi
 grep -qF '> ' "$OUT/planted.diff" && grep -qF '"stage":"none"' "$OUT/planted.diff" \
@@ -6095,7 +6116,7 @@ shape_nul_colon_is '' \
   || fail "a NUL before a colon, under the awk on PATH: it ended with $SHAPE_RC and left '$SHAPE_GOT', and the case records 1 and 'line 1 (SECRET_X), line 2 (SECRET_X)'"
 ok "a NUL before a colon is named by its line number and key alone under the awk on PATH — '$SHAPE_GOT'"
 SHAPE_HAS_BUSYBOX_AWK=0
-if command -v busybox > /dev/null 2>&1 && busybox --list 2> /dev/null | grep -qx awk; then
+if command -v busybox > /dev/null 2>&1 && busybox_applets="$(busybox --list 2> /dev/null)" && grep -qx awk <<< "$busybox_applets"; then
   SHAPE_HAS_BUSYBOX_AWK=1
   mkdir -p "$SHAPE/busybox-awk"
   ln -sf "$(command -v busybox)" "$SHAPE/busybox-awk/awk"
