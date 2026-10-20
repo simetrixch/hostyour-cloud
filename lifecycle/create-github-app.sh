@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # create-github-app.sh — create the platform's GitHub App in the customer's
-# organisation, install it there, and write its three answers into the config.
+# organisation, install it there, and write its answers into the config.
 # =============================================================================
 #
 # USAGE (run from anywhere)
@@ -11,8 +11,10 @@
 #   config        — the installation's own key=value file, the one
 #                   install-machine.sh is given and in the same grammar. Read
 #                   for DEPLOY_REPO and UNIT_APEX and never run. The three
-#                   answers GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and
-#                   GITHUB_APP_PRIVATE_KEY are written into it in place.
+#                   answers GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID,
+#                   GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER are written into
+#                   it in place. The owner is the login of the account the App is
+#                   installed for, which GitHub names in the installation.
 #   organisation  — the GitHub organisation the App is created in and installed
 #                   on. Defaults to the owner of DEPLOY_REPO, because that is
 #                   the customer's organisation the tenant repositories live in.
@@ -37,7 +39,9 @@
 # The key exists in this run's memory and in that file and nowhere else, so a
 # run that ends between the two clicks leaves a config a second run picks up:
 # it finds the id and the key, skips the creation, and installs. A config
-# carrying all three refuses, so every run of this is safe to repeat.
+# carrying all three but not the owner asks GitHub for the installation it names
+# and writes the owner alone; a config carrying all four refuses, so every run of
+# this is safe to repeat.
 #
 # THE LISTENER is one perl process on 127.0.0.1 at a port the system picks,
 # and perl because it is the one interpreter Linux and macOS both
@@ -116,13 +120,16 @@ open_in_browser() { # a URL -> 0 when a browser was asked to open it
 # ================================================================== READ
 # THE THREE ANSWERS DECIDE WHAT THIS RUN IS: none of them stands and the App is
 # created; the id and the key stand and the App is installed; all three stand
-# and nothing is done. Any other mix cannot be told apart from a hand-filled
-# mistake and is refused.
+# and the owner is recorded, or nothing is done where the owner stands too. Any
+# other mix cannot be told apart from a hand-filled mistake and is refused.
 APP_ID="$(config_value GITHUB_APP_ID)"
 INSTALLATION_ID="$(config_value GITHUB_APP_INSTALLATION_ID)"
 PEM_JSON="$(config_value GITHUB_APP_PRIVATE_KEY)"
+APP_OWNER="$(config_value GITHUB_APP_OWNER)"
 if [ -n "$APP_ID" ] && [ -n "$INSTALLATION_ID" ] && [ -n "$PEM_JSON" ]; then
-  die "$CONFIG already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY. Nothing has been changed" 65
+  [ -z "$APP_OWNER" ] \
+    || die "$CONFIG already carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER. Nothing has been changed" 65
+  APP_STANDS=installed
 elif [ -n "$APP_ID" ] && [ -n "$PEM_JSON" ] && [ -z "$INSTALLATION_ID" ]; then
   APP_STANDS=yes
 elif [ -z "$APP_ID" ] && [ -z "$PEM_JSON" ] && [ -z "$INSTALLATION_ID" ]; then
@@ -230,8 +237,26 @@ RE_HTML_URL='"html_url":"([^"]+)"'
 RE_PEM='"pem":"([^"]+)"'
 RE_PERMISSIONS='"permissions":\{([^}]*)\}'
 RE_SELECTION='"repository_selection":"([a-z]+)"'
+RE_ACCOUNT_LOGIN='"account":\{[^}]*"login":"([A-Za-z0-9-]+)"'
 field() { [[ $2 =~ $1 ]] && printf '%s' "${BASH_REMATCH[1]}"; } # regex, text -> the group; 1 when the text does not carry it
 without_object() { printf '%s' "$2" | sed "s/\"$1\":{[^}]*}//"; } # key, json -> the json with that object cut out
+
+# ======================================================== RECORD THE OWNER
+# AN INSTALLATION THAT PREDATES THE OWNER: the id, the installation and the key stand and the owner does
+# not. GitHub is asked for the installation the config names, with the App's own JWT, and the account it
+# belongs to is the owner. Nothing else is read or written.
+if [ "$APP_STANDS" = installed ]; then
+  write_key_file
+  JWT="$(app_jwt)" || die "the key in $CONFIG is not a private key this can sign a JWT with. Nothing has been changed" 65
+  gh_api GET "/app/installations/$INSTALLATION_ID" "$JWT" || die "$WHY. Nothing has been changed" 69
+  [ "$STATUS" = 200 ] \
+    || die "GitHub does not answer the installation $INSTALLATION_ID for the App in $CONFIG (HTTP $STATUS$MESSAGE). Nothing has been changed" 69
+  OWNER="$(field "$RE_ACCOUNT_LOGIN" "$BODY")" \
+    || die "GitHub's answer for the installation $INSTALLATION_ID carries no account login. Nothing has been changed" 69
+  write_config_value GITHUB_APP_OWNER "$OWNER"
+  say "create-github-app: installation $INSTALLATION_ID belongs to $OWNER; GITHUB_APP_OWNER written into $CONFIG in place"
+  exit 0
+fi
 
 # ================================================================ CREATE
 if [ "$APP_STANDS" = no ]; then
@@ -392,6 +417,7 @@ while :; do
     || die "the App was not installed in $ORG within 10 minutes. $STANDS: install it at $INSTALL_URL with All repositories and run this again" 69
   sleep "$POLL_SECONDS"
 done
+OWNER="$(field "$RE_ACCOUNT_LOGIN" "$BODY")" || die "GitHub's answer for the installation in $ORG carries no account login. $STANDS: run this again" 69
 INSTALLATION="$(without_object account "$BODY")"
 INSTALLATION_ID="$(field "$RE_ID" "$INSTALLATION")" || die "GitHub's answer for the installation in $ORG carries no id. $STANDS: run this again" 69
 SELECTION="$(field "$RE_SELECTION" "$INSTALLATION")" || die "GitHub's answer for the installation in $ORG carries no repository_selection. $STANDS: run this again" 69
@@ -401,7 +427,8 @@ say "create-github-app: installed in $ORG on all repositories, installation $INS
 
 # ================================================================= WRITE
 write_config_value GITHUB_APP_INSTALLATION_ID "$INSTALLATION_ID"
+write_config_value GITHUB_APP_OWNER "$OWNER"
 require_owner_only "$CONFIG" \
   || die "$CONFIG $REACH now that it carries the App's private key. Run: $OWNER_ONLY_COMMAND" 77
-say "create-github-app: GITHUB_APP_INSTALLATION_ID written into $CONFIG in place"
-say "create-github-app: $CONFIG carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY, and nobody but the owner can read it. The App: $HTML_URL. Its installation: $SETTINGS/$INSTALLATION_ID"
+say "create-github-app: GITHUB_APP_INSTALLATION_ID and GITHUB_APP_OWNER ($OWNER) written into $CONFIG in place"
+say "create-github-app: $CONFIG carries GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_OWNER, and nobody but the owner can read it. The App: $HTML_URL. Its installation: $SETTINGS/$INSTALLATION_ID"
