@@ -66,9 +66,9 @@ ORG="${2:-}"
 [ -n "$CONFIG" ] || die 'usage: lifecycle/create-github-app.sh <config> [organisation]' 64
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for tool in curl openssl perl; do
+for tool in curl jq openssl perl; do
   command -v "$tool" >/dev/null 2>&1 \
-    || die "$tool is not on this path, and this act is curl against GitHub, openssl signing the App's JWT and perl listening for the browser"
+    || die "$tool is not on this path, and this act is curl against GitHub, jq reading its answers, openssl signing the App's JWT and perl listening for the browser"
 done
 # shellcheck disable=SC1091
 . "$HERE/require-owner-only.sh" \
@@ -189,9 +189,13 @@ trap '[ -n "$LISTENER" ] && kill "$LISTENER" 2>/dev/null; rm -rf "$WORK"' EXIT
 # through a config on its standard input so it stands in no argument list. The
 # status rides behind the body on a line of its own, because a 404 is an answer
 # here (not installed yet) and not a failure.
-RE_MESSAGE='"message":"([^"]*)"'
+# THE ANSWERS ARE READ WITH jq, whatever their whitespace: GitHub pretty-prints them. The text goes in on standard
+# input, so the key it may carry stands in no argument list. A filter selects only a value of the type and shape it
+# accepts, and `jq -e` ends 1 for a field the answer does not carry.
+json_field() { printf '%s' "$2" | jq -er "$1" 2>/dev/null; } # jq filter, json -> the value; 1 when the json does not carry it
+JQ_MESSAGE='.message | select(type == "string") | gsub("[[:cntrl:]]"; " ")'
 gh_api() { # method, path, [JWT] -> BODY and STATUS; 1 with WHY when GitHub could not be reached
-  local method="$1" path="$2" jwt="${3:-}" answer rc
+  local method="$1" path="$2" jwt="${3:-}" answer rc answered
   if [ -n "$jwt" ]; then
     answer="$(printf 'header = "Authorization: Bearer %s"\n' "$jwt" \
       | curl -sS -K - -X "$method" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' -w '\n%{http_code}' "$GITHUB_API$path" 2>&1)"
@@ -206,7 +210,7 @@ gh_api() { # method, path, [JWT] -> BODY and STATUS; 1 with WHY when GitHub coul
   STATUS="${answer##*$'\n'}"
   BODY="${answer%$'\n'*}"
   MESSAGE=''
-  [[ $BODY =~ $RE_MESSAGE ]] && MESSAGE=": ${BASH_REMATCH[1]}"
+  answered="$(json_field "$JQ_MESSAGE" "$BODY")" && MESSAGE=": $answered"
   return 0
 }
 # THE APP'S OWN JWT: RS256 over {iat, exp, iss}, iss being the App id, dated a
@@ -229,17 +233,16 @@ write_key_file() { # PEM_JSON, one line with \n for each line break -> KEYFILE h
   chmod 600 "$KEYFILE"
   printf '%s' "${PEM_JSON//'\n'/$'\n'}" > "$KEYFILE"
 }
-# The App's id and html_url stand at the top of GitHub's answer, and so do the
-# owner's under `owner`: that object is cut out before the first match is read.
-RE_ID='"id":([0-9]+)'
-RE_SLUG='"slug":"([^"]+)"'
-RE_HTML_URL='"html_url":"([^"]+)"'
-RE_PEM='"pem":"([^"]+)"'
-RE_PERMISSIONS='"permissions":\{([^}]*)\}'
-RE_SELECTION='"repository_selection":"([a-z]+)"'
-RE_ACCOUNT_LOGIN='"account":\{[^}]*"login":"([A-Za-z0-9-]+)"'
-field() { [[ $2 =~ $1 ]] && printf '%s' "${BASH_REMATCH[1]}"; } # regex, text -> the group; 1 when the text does not carry it
-without_object() { printf '%s' "$2" | sed "s/\"$1\":{[^}]*}//"; } # key, json -> the json with that object cut out
+# The id, the slug and the html_url are the App's own, at the top of its answer, and not the owner's under `owner`.
+# The key leaves as one line with \n for each line break, the form the config holds it in; the permissions as the
+# sorted `name:level` list that PERMISSIONS states.
+JQ_ID='.id | select(type == "number" and . == floor) | tostring'
+JQ_SLUG='.slug | select(type == "string" and test("^[A-Za-z0-9._-]+$"))'
+JQ_HTML_URL='.html_url | select(type == "string" and test("^https://[[:graph:]]+$"))'
+JQ_PEM='.pem | select(type == "string" and length > 0) | gsub("\n"; "\\n")'
+JQ_PERMISSIONS='.permissions | select(type == "object") | to_entries | map("\(.key):\(.value)") | sort | join(" ")'
+JQ_SELECTION='.repository_selection | select(type == "string" and test("^[a-z]+$"))'
+JQ_ACCOUNT_LOGIN='.account.login | select(type == "string" and test("^[A-Za-z0-9-]+$"))'
 
 # ======================================================== RECORD THE OWNER
 # AN INSTALLATION THAT PREDATES THE OWNER: the id, the installation and the key stand and the owner does
@@ -251,7 +254,7 @@ if [ "$APP_STANDS" = installed ]; then
   gh_api GET "/app/installations/$INSTALLATION_ID" "$JWT" || die "$WHY. Nothing has been changed" 69
   [ "$STATUS" = 200 ] \
     || die "GitHub does not answer the installation $INSTALLATION_ID for the App in $CONFIG (HTTP $STATUS$MESSAGE). Nothing has been changed" 69
-  OWNER="$(field "$RE_ACCOUNT_LOGIN" "$BODY")" \
+  OWNER="$(json_field "$JQ_ACCOUNT_LOGIN" "$BODY")" \
     || die "GitHub's answer for the installation $INSTALLATION_ID carries no account login. Nothing has been changed" 69
   write_config_value GITHUB_APP_OWNER "$OWNER"
   say "create-github-app: installation $INSTALLATION_ID belongs to $OWNER; GITHUB_APP_OWNER written into $CONFIG in place"
@@ -354,14 +357,11 @@ PERL
   gh_api POST "/app-manifests/$CODE/conversions" || die "$WHY. Nothing has been written" 69
   [ "$STATUS" = 201 ] \
     || die "GitHub refused to turn the code into an App (HTTP $STATUS$MESSAGE). Nothing has been written" 69
-  APP="$(without_object owner "$BODY")"
-  APP_ID="$(field "$RE_ID" "$APP")" || die "GitHub's answer to the conversion carries no id, so the App cannot be recorded. Nothing has been written" 69
-  SLUG="$(field "$RE_SLUG" "$APP")" || die "GitHub's answer to the conversion carries no slug, so the App cannot be recorded. Nothing has been written" 69
-  HTML_URL="$(field "$RE_HTML_URL" "$APP")" || die "GitHub's answer to the conversion carries no html_url, so the App cannot be recorded. Nothing has been written" 69
-  PEM_JSON="$(field "$RE_PEM" "$BODY")" || die "GitHub's answer to the conversion carries no pem, so the App at $HTML_URL has no key this can write. Delete it there and run this again. Nothing has been written" 69
-  ANSWERED="$(field "$RE_PERMISSIONS" "$APP")" || die "GitHub's answer to the conversion names no permissions, so the App at $HTML_URL cannot be held to the eight asked. Delete it there and run this again. Nothing has been written" 69
-  GOT="$(printf '%s' "$ANSWERED" | tr ',' '\n' | tr -d '" ' | LC_ALL=C sort | tr '\n' ' ')"
-  GOT="${GOT% }"
+  APP_ID="$(json_field "$JQ_ID" "$BODY")" || die "GitHub's answer to the conversion carries no id, so the App cannot be recorded. Nothing has been written" 69
+  SLUG="$(json_field "$JQ_SLUG" "$BODY")" || die "GitHub's answer to the conversion carries no slug, so the App cannot be recorded. Nothing has been written" 69
+  HTML_URL="$(json_field "$JQ_HTML_URL" "$BODY")" || die "GitHub's answer to the conversion carries no html_url, so the App cannot be recorded. Nothing has been written" 69
+  PEM_JSON="$(json_field "$JQ_PEM" "$BODY")" || die "GitHub's answer to the conversion carries no pem, so the App at $HTML_URL has no key this can write. Delete it there and run this again. Nothing has been written" 69
+  GOT="$(json_field "$JQ_PERMISSIONS" "$BODY")" || die "GitHub's answer to the conversion names no permissions, so the App at $HTML_URL cannot be held to the eight asked. Delete it there and run this again. Nothing has been written" 69
   [ "$GOT" = "$PERMISSIONS" ] \
     || die "the App was created at $HTML_URL with the permissions $GOT and not the eight asked: $PERMISSIONS. Delete it there and run this again. Nothing has been written" 65
   say "create-github-app: the App stands at $HTML_URL (id $APP_ID) with the eight permissions $GOT"
@@ -386,12 +386,11 @@ if [ "$APP_STANDS" = yes ]; then
   gh_api GET /app "$JWT" || die "$WHY. Nothing has been changed" 69
   [ "$STATUS" = 200 ] \
     || die "GitHub does not answer an App for the key in $CONFIG (HTTP $STATUS$MESSAGE). Nothing has been changed" 69
-  APP="$(without_object owner "$BODY")"
-  ANSWERED_ID="$(field "$RE_ID" "$APP")" || die "GitHub's answer for the App carries no id. Nothing has been changed" 69
+  ANSWERED_ID="$(json_field "$JQ_ID" "$BODY")" || die "GitHub's answer for the App carries no id. Nothing has been changed" 69
   [ "$ANSWERED_ID" = "$APP_ID" ] \
     || die "GitHub answers App $ANSWERED_ID for the key in $CONFIG, and the config states GITHUB_APP_ID='$APP_ID'. Nothing has been changed" 65
-  SLUG="$(field "$RE_SLUG" "$APP")" || die "GitHub's answer for the App carries no slug. Nothing has been changed" 69
-  HTML_URL="$(field "$RE_HTML_URL" "$APP")" || die "GitHub's answer for the App carries no html_url. Nothing has been changed" 69
+  SLUG="$(json_field "$JQ_SLUG" "$BODY")" || die "GitHub's answer for the App carries no slug. Nothing has been changed" 69
+  HTML_URL="$(json_field "$JQ_HTML_URL" "$BODY")" || die "GitHub's answer for the App carries no html_url. Nothing has been changed" 69
   say "create-github-app: the App stands at $HTML_URL (id $APP_ID)"
 else
   app_jwt >/dev/null || die "the App's key is not a private key this can sign a JWT with. $STANDS" 65
@@ -417,10 +416,9 @@ while :; do
     || die "the App was not installed in $ORG within 10 minutes. $STANDS: install it at $INSTALL_URL with All repositories and run this again" 69
   sleep "$POLL_SECONDS"
 done
-OWNER="$(field "$RE_ACCOUNT_LOGIN" "$BODY")" || die "GitHub's answer for the installation in $ORG carries no account login. $STANDS: run this again" 69
-INSTALLATION="$(without_object account "$BODY")"
-INSTALLATION_ID="$(field "$RE_ID" "$INSTALLATION")" || die "GitHub's answer for the installation in $ORG carries no id. $STANDS: run this again" 69
-SELECTION="$(field "$RE_SELECTION" "$INSTALLATION")" || die "GitHub's answer for the installation in $ORG carries no repository_selection. $STANDS: run this again" 69
+OWNER="$(json_field "$JQ_ACCOUNT_LOGIN" "$BODY")" || die "GitHub's answer for the installation in $ORG carries no account login. $STANDS: run this again" 69
+INSTALLATION_ID="$(json_field "$JQ_ID" "$BODY")" || die "GitHub's answer for the installation in $ORG carries no id. $STANDS: run this again" 69
+SELECTION="$(json_field "$JQ_SELECTION" "$BODY")" || die "GitHub's answer for the installation in $ORG carries no repository_selection. $STANDS: run this again" 69
 [ "$SELECTION" = all ] \
   || die "the App is installed in $ORG with repository_selection $SELECTION, and the Manager needs all. Choose All repositories at $SETTINGS/$INSTALLATION_ID, then run this again: $STANDS, and the next run writes GITHUB_APP_INSTALLATION_ID" 65
 say "create-github-app: installed in $ORG on all repositories, installation $INSTALLATION_ID: $SETTINGS/$INSTALLATION_ID"
