@@ -2051,6 +2051,7 @@ GHAPP="$WORK/github-app"
 GSTUB="$GHAPP/stub"
 mkdir -p "$GSTUB" "$GHAPP/a"
 REAL_CURL="$(command -v curl)"
+command -v jq > /dev/null 2>&1 || fail 'jq is not on this path, and the stand-in GitHub pretty-prints its answers with it'
 openssl genrsa 2048 > "$GHAPP/key.pem" 2>/dev/null || fail 'openssl could not mint the fixture key'
 openssl rsa -in "$GHAPP/key.pem" -pubout > "$GHAPP/pub.pem" 2>/dev/null || fail 'openssl could not derive the public half of the fixture key'
 # The key as GitHub's JSON spells it: one line, \n for each line break.
@@ -2137,6 +2138,10 @@ case "$method $path" in
     esac ;;
   *) log "$method $path"; status=404; body='{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}' ;;
 esac
+if [ -f "$state/pretty" ]; then
+  body="$(printf '%s' "$body" | jq .)"
+  printf '%s' "$body" > "$state/last-body"
+fi
 printf '%s' "$body"
 [ "$wantstatus" = 1 ] && printf '\n%s' "$status"
 exit 0
@@ -2342,6 +2347,7 @@ create-github-app: config.apps6.env carries GITHUB_APP_ID, GITHUB_APP_INSTALLATI
 ~~~ standard error ~~~
 RECORDED
 page_holds 'the act'
+cp "$OUT/a.out" "$GHAPP/act.out"
 state="$GHAPP/state-a"
 [ "$(cat "$state/log")" = "POST /app-manifests/c0de0fthefixture/conversions
 GET /orgs/acme/installation jwt=verified iss=4711" ] || fail "the calls are not the conversion and one installation question with a verified JWT: $(tr '\n' ' ' < "$state/log")"
@@ -2464,6 +2470,74 @@ RECORDED
 [ "$(grep -c . "$GHAPP/a/config.apps6.env")" = '7' ] || fail "the config gained or lost a line"
 require_owner_only "$GHAPP/a/config.apps6.env" || fail "recording the owner took the access list off the config: it $REACH"
 ok 'a config of the three answers records the account the installation belongs to as the owner, with one signed question and no browser; an unknown installation and one without an account are refused with nothing written'
+
+# ── GitHub pretty-prints its answers: every field is read from them as from the compact ones, with the same refusals ─
+# The stand-in answers pretty-printed JSON, as GitHub does, once the state directory holds the file `pretty`.
+pretty_github() { # after seed_github, which empties the state directory
+  touch "$GHAPP/state-a/pretty"
+}
+pretty_was_served() { # what was being checked -> the last answer of the stand-in stood on lines of its own
+  grep -qxF '{' "$GHAPP/state-a/last-body" && grep -qE '^  "[a-z_]+": ' "$GHAPP/state-a/last-body" \
+    || fail "$1 — the stand-in did not answer pretty-printed JSON, so the case proves nothing about it"
+}
+blank_installation() { # the config the act filled, with its installation id and its owner taken out again
+  sed -i.bak -e "s/^GITHUB_APP_INSTALLATION_ID=.*/GITHUB_APP_INSTALLATION_ID=''/" -e "s/^GITHUB_APP_OWNER=.*/GITHUB_APP_OWNER=''/" "$GHAPP/a/config.apps6.env" && rm -f "$GHAPP/a/config.apps6.env.bak"
+  chmod 600 "$GHAPP/a/config.apps6.env"
+}
+blank_owner
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
+pretty_github
+run_app_bash config.apps6.env
+[ "$A_CODE" = '0' ] || fail "recording the owner from a pretty-printed installation must end with 0, got $A_CODE: $(cat "$OUT/a.err")"
+must 'create-github-app: installation 815 belongs to acme; GITHUB_APP_OWNER written into config.apps6.env in place' 'the owner is read off a pretty-printed installation'
+[ "$(config_line GITHUB_APP_OWNER)" = 'acme' ] || fail "the config does not carry the account a pretty-printed installation belongs to"
+grep -qxF '  "account": {' "$GHAPP/state-a/last-body" || fail 'the installation was not served with its account object on lines of its own, so the case proves nothing about it'
+pretty_was_served 'the owner off a pretty-printed installation'
+blank_owner
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" absent
+pretty_github
+run_app_bash config.apps6.env
+must 'create-github-app: GitHub does not answer the installation 815 for the App in config.apps6.env (HTTP 404: Not Found). Nothing has been changed' 'the message of a pretty-printed refusal is named'
+[ "$A_CODE" = '69' ] || fail "an unknown installation, pretty-printed, must refuse with 69, got $A_CODE"
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
+touch "$GHAPP/state-a/no-account"
+pretty_github
+run_app_bash config.apps6.env
+must "create-github-app: GitHub's answer for the installation 815 carries no account login. Nothing has been changed" 'a pretty-printed installation without its account is refused'
+[ "$A_CODE" = '69' ] || fail "a pretty-printed installation without an account must refuse with 69, got $A_CODE"
+[ "$(config_line GITHUB_APP_OWNER)" = '' ] || fail 'a pretty-printed installation without an account was refused and the owner was still written'
+pretty_was_served 'a pretty-printed installation without an account'
+
+seed_config "$GHAPP/a"
+seed_github "$GHAPP/state-a" "$SEVEN_PERMISSIONS" all
+pretty_github
+run_app_bash config.apps6.env
+must 'create-github-app: the App was created at https://github.com/apps/acme-platform-manager with the permissions administration:write contents:write issues:read metadata:read packages:read webhooks:write workflows:write and not the eight asked' 'seven permissions, pretty-printed, are refused by both lists'
+[ "$A_CODE" = '65' ] || fail "seven permissions, pretty-printed, must refuse with 65, got $A_CODE"
+nothing_written 'an App answered with seven permissions, pretty-printed'
+pretty_was_served 'an App answered with seven permissions'
+
+seed_config "$GHAPP/a"
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" all
+pretty_github
+run_app_bash config.apps6.env
+[ "$A_CODE" = '0' ] || fail "the act on pretty-printed answers must end with 0, got $A_CODE: $(cat "$OUT/a.err")"
+cmp -s "$GHAPP/act.out" "$OUT/a.out" || fail "the act on pretty-printed answers printed other bytes than on compact ones: $(diff "$GHAPP/act.out" "$OUT/a.out")"
+[ "$(config_line GITHUB_APP_ID)" = '4711' ] && [ "$(config_line GITHUB_APP_INSTALLATION_ID)" = '815' ] && [ "$(config_line GITHUB_APP_OWNER)" = 'acme' ] \
+  || fail 'the config does not carry the id, the installation and the owner read off pretty-printed answers'
+[ "$(config_line GITHUB_APP_PRIVATE_KEY)" = "$(cat "$GHAPP/pem.json")" ] || fail 'the config does not carry the key as one line with \n for each line break when GitHub pretty-prints its answer'
+pretty_was_served 'the act on pretty-printed answers'
+
+blank_installation
+seed_github "$GHAPP/state-a" "$EIGHT_PERMISSIONS" absent-then-all
+pretty_github
+run_app_bash config.apps6.env
+[ "$A_CODE" = '0' ] || fail "the run that only installs, on pretty-printed answers, must end with 0, got $A_CODE: $(cat "$OUT/a.err")"
+must 'create-github-app: the App stands at https://github.com/apps/acme-platform-manager (id 4711)' 'the App is read off a pretty-printed answer'
+must 'create-github-app: installed in acme on all repositories, installation 815: https://github.com/organizations/acme/settings/installations/815' 'the installation is read off a pretty-printed answer'
+[ "$(config_line GITHUB_APP_INSTALLATION_ID)" = '815' ] && [ "$(config_line GITHUB_APP_OWNER)" = 'acme' ] || fail 'the config does not carry the installation and the owner read off pretty-printed answers'
+pretty_was_served 'the run that only installs'
+ok 'GitHub pretty-printed: the owner is read off the installation, the message of a refusal, a missing account and seven permissions are named as before, and the act, whole or only installing, writes what it writes off compact answers'
 
 # ===========================================================================
 # SEVEN — master-backup and master-restore, up to the session they would open
