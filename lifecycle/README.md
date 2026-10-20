@@ -18,7 +18,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `regenerate-install-branch.sh` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
-| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends |
+| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
 | `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test; the stage `none` releases a library, which has no stage |
@@ -373,8 +373,27 @@ host, `secrets/vault-<stage>.txt`, the file Vault's quorum was written to once. 
 exactly that set: each store is stopped for its own copy and started again with the replicas it had
 (a database copied under a running process is a copy with a write in flight), every archive is
 sealed with `BACKUP_PASSPHRASE` before it leaves, and the whole goes to the storage box under
-`<fqdn>/master/<id>/` with a manifest of checksums. The Manager is among the stores stopped, so a run
-in flight when the backup starts is a run it interrupts: start it at a quiet hour.
+`<fqdn>/master/<id>/` with a manifest of checksums.
+
+The backup holds the Manager's runs, so none of them fails because of it. First it suspends the CronJob
+`release-queue` of the namespace `image-builder`, which starts every release and publish run, and waits until
+that queue's last Job has ended and no release or publish run runs, read twice in a row. That wait can take up
+to 65 minutes: the pipelines' timeout is one hour, and the wait adds five minutes to it. Past it the backup lets
+the queue go again, stops nothing and ends 75, naming what still runs, and the Manager stays up meanwhile.
+Then it stops the Manager, which pauses a run in flight between two steps and goes on with it when it starts, and
+takes the stores. It starts the Manager, and then lets the queue go, only once every store it stopped reads ready
+by the ready count of its workload; when a store does not, it starts neither, names the store, prints the two
+commands and ends 70.
+A release or publish run that a push starts during the backup waits in the queue and starts after it, and a
+step the Manager's stop cuts off runs again from its start. The Manager's UI and API are down from its stop to
+its start. The `app.yaml` of `manager` and of `image-builder` make Argo CD ignore `/spec/replicas` of the Manager's
+Deployment and `/spec/suspend` of the queue (`respectIgnoreDifferences`), so a sync does not undo either hold.
+
+Three things are not held. A run in `planning`, which only the streaming onboarding writes, fails at every start
+of the Manager, a backup's included. A run of the Forgejo release flow lands in the namespace `forgejo-build` with
+neither queue label and starts at once; no step of the Manager waits on it, and one that reads Forgejo during
+Forgejo's copy may fail. A backup whose driver is killed leaves the Manager at 0 and the queue suspended, beside
+the store it was copying.
 
 ## One backup at a time, and a backup read back
 
