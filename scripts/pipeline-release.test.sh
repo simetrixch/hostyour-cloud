@@ -572,14 +572,14 @@ curl() { # -o <file> and -w are what carrier_credential passes; the rest is the 
 }
 VAULT_ADDR=https://vault.fixture.invalid VAULT_KV_MOUNT=secret VAULT_ROLE=fixture-bump
 CREDENTIALS_FILE="$work/carrier-credentials"
-carrier_body='{"data":{"data":{"pat":"pat-of-shop","packages":"","push":"push-of-shop","issues":"","statuses":"statuses-of-shop"}}}'
+carrier_body='{"data":{"data":{"pat":"pat-of-shop","packages":"","push":"push-of-shop"}}}'
 : > "$CREDENTIALS_FILE"
 ( carrier_credential shop https://github.com/acme/shop.git ) 2> "$work/carrier.err" || fail "an entry with push was refused: $(cat "$work/carrier.err")"
 [ "$(cat "$CREDENTIALS_FILE")" = 'https://x-access-token:push-of-shop@github.com/acme/shop.git' ] \
   || fail 'PLANTED DEFECT: the carrier record is not the push token, path-qualified to the carrier repository'
 grep -qF pat-of-shop "$CREDENTIALS_FILE" && fail 'PLANTED DEFECT: the carrier record carries the pat'
 ok 'a carrier entry with pat and push appends the push token, path-qualified to its repository, and never the pat'
-carrier_body='{"data":{"data":{"pat":"pat-of-shop","packages":"","issues":"","statuses":"statuses-of-shop"}}}'
+carrier_body='{"data":{"data":{"pat":"pat-of-shop","packages":""}}}'
 : > "$CREDENTIALS_FILE"
 ( carrier_credential shop https://github.com/acme/shop.git ) 2> "$work/carrier.err" && fail 'PLANTED DEFECT: an entry without push was taken'
 grep -qF "secret/build/shop/repo-pat carries no property 'push'" "$work/carrier.err" || fail "the refusal does not name push: $(cat "$work/carrier.err")"
