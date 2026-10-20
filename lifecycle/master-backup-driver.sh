@@ -67,7 +67,10 @@
 # quorum archive is opened with the passphrase, to /dev/null (the opened quorum is written nowhere, and this
 # machine's output and log hold no line of it), and the manifest itself is held to the one that was sent. That
 # last check is what makes the first one whole: a checksum line that lost its form is skipped by the filter
-# of the first, and so is the archive under it.
+# of the first, and so is the archive under it. The storage box answers rclone's md5sum command over its shell
+# with a failure, or never, so the remote's hash check is off and what proves the bytes is the manifest's sha256.
+# The copy back is given READBACK_WAIT_SECONDS and one second more for each READBACK_LEAST_BYTES_PER_SECOND of the
+# backup, and when that passes this ends 69 and says so.
 # ===========================================================================
 set -uo pipefail
 
@@ -81,16 +84,21 @@ step() { printf '\n%s══ %s%s\n' "$C_BLD" "$*" "$C_OFF"; }
 readonly CONFIG="${1:?the config's path is this script's only argument}"
 # The queue that starts every release and publish run, and how long this waits on it and on a store, in seconds.
 # QUEUE_WAIT_SECONDS is the pipelines' timeout of one hour (timeouts.pipeline of the release and the publish run,
-# which no run outlives) and five minutes. Each stands on a line of its own because a test moves them.
+# which no run outlives) and five minutes. Each stands on a line of its own because a test moves them. The read-back
+# from the storage box is given READBACK_WAIT_SECONDS, for the connection, the listing and the box's latency, and one
+# second more for each READBACK_LEAST_BYTES_PER_SECOND of the backup, the slowest the box is held to.
 readonly QUEUE_NAMESPACE=image-builder
 readonly QUEUE_CRONJOB=release-queue
 readonly QUEUE_POLL_SECONDS=5
 readonly QUEUE_WAIT_SECONDS=3900
 readonly STORE_POLL_SECONDS=2
 readonly STORE_WAIT_SECONDS=180
+readonly READBACK_WAIT_SECONDS=300
+readonly READBACK_LEAST_BYTES_PER_SECOND=1048576
 SECRETS=''
+READBACK=''
 HELD=''
-cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; }
+cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; if [ -n "$READBACK" ]; then root rm -rf "$READBACK" >/dev/null 2>&1; fi; }
 # What this run holds is let go on every way out that is not a signal, once; a signal keeps the handler it had.
 leave() { local code=$?; [ -z "$HELD" ] || release_hold || true; cleanup; exit "$code"; }
 trap leave EXIT
@@ -177,8 +185,9 @@ if ! command -v rclone >/dev/null 2>&1; then
   say 'rclone is not on this machine; it is what carries the archives to the storage box, so it is installed now'
   root apt-get install -y -q rclone >/dev/null 2>&1 || die 'rclone could not be installed, and nothing else here reaches the storage box' 69
 fi
+# The hash check of the remote is off for the carry and the copy back alike: the box answers rclone's md5sum command with a failure or never.
 RCLONE_CONF="$SECRETS/rclone.conf"
-( umask 077; printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF" ) \
+( umask 077; printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\ndisable_hashcheck = true\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF" ) \
   || die 'the storage box config could not be written to a file in memory' 78
 export RCLONE_CONFIG="$RCLONE_CONF"
 rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was stopped" 69
@@ -424,11 +433,21 @@ LISTING=$(root rclone --config "$RCLONE_CONF" lsf "$BACKUPS/$ID/") || die "the s
 LISTED=$(printf '%s\n' "$LISTING" | grep -c .)
 EXPECTED=$(( TAKEN + 2 ))
 [ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under $BACKUPS/$ID/ and $EXPECTED were sent" 69
-# The folder is root's, so cleanup, which runs as the operator, cannot remove it: every way out of this step
-# removes it with root. The work folder stands after a refusal, because the archives are all there is.
+# The folder is root's and cleanup removes it with root on every way out: a write after the ssh session has ended kills
+# this shell before the next line runs, so no line after a write is where the removal can rest.
+# The work folder stands after a refusal, because the archives are all there is.
 READBACK="$WORK.readback"
 root install -d -m 700 -o root -g root "$READBACK" || die "could not make $READBACK" 78
-root rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet || { root rm -rf "$READBACK"; die "the archives could not be read back from $BACKUPS/$ID/ — they stand in $WORK on this machine" 69; }
+READBACK_BYTES=$(root du -sb "$WORK" | cut -f1) || die "the size of $WORK could not be read, and the time limit of the read-back is drawn from it — the archives stand in $WORK on this machine" 69
+READBACK_LIMIT=$(( READBACK_WAIT_SECONDS + READBACK_BYTES / READBACK_LEAST_BYTES_PER_SECOND ))
+say "reading back $READBACK_BYTES bytes from $BACKUPS/$ID/, within $READBACK_LIMIT s"
+READBACK_COPY_CODE=0
+root timeout --kill-after=30 "$READBACK_LIMIT" rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet || READBACK_COPY_CODE=$?
+case "$READBACK_COPY_CODE" in
+  0) ;;
+  124) die "the read-back of $BACKUPS/$ID/ did not finish within $READBACK_LIMIT s ($READBACK_BYTES bytes, held to $READBACK_LEAST_BYTES_PER_SECOND bytes a second and $READBACK_WAIT_SECONDS s) and was ended; the archives stand in $WORK on this machine" 69 ;;
+  *) die "the archives could not be read back from $BACKUPS/$ID/ — they stand in $WORK on this machine" 69 ;;
+esac
 READBACK_CODE=0
 root sh -c 'cd "$1" || exit 10
 grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11
@@ -436,7 +455,6 @@ grep -qx "STORES=$2" manifest.txt || exit 12
 gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13
 cmp -s manifest.txt "$5" || exit 14' _ "$READBACK" "${#STORES[@]}" "$PASSPHRASE_FILE" "$STAGE" "$WORK/manifest.txt" || READBACK_CODE=$?
 if [ "$READBACK_CODE" != 0 ]; then
-  root rm -rf "$READBACK"
   case "$READBACK_CODE" in
     11) die "the archives read back from $BACKUPS/$ID/ do not match the checksums of their manifest — what the storage box keeps is not what was sent; the archives stand in $WORK on this machine" 69 ;;
     12) die "the manifest read back from $BACKUPS/$ID/ counts other stores than the ${#STORES[@]} rows of this backup — the archives stand in $WORK on this machine" 69 ;;
