@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # The pool of scripts/test.sh: its text runs here in a temporary repository, with the list of suites replaced by planted
-# ones and a stand-in helm that logs its calls. The pool must run suites at once, build every chart dependency before any
-# suite starts, print a passed suite as one line and a failed one in full, and end red for a failed suite and for one that
-# leaves no status. Each case plants the defect it must catch and has an innocent that must pass.
+# ones. The pool must run suites at once, print a passed suite as one line and a failed one in full, and end red for a
+# failed suite and for one that leaves no status. Each case plants the defect it must catch and has an innocent that must pass.
 #
 #   bash scripts/test-pool.test.sh
 set -uo pipefail
@@ -13,18 +12,8 @@ work="$(mktemp -d)" || fail "no temporary directory could be made"
 trap 'rm -rf "$work"' EXIT
 
 repo="$work/repo"
-mkdir -p "$repo/scripts" "$repo/bin" "$repo/suites"
+mkdir -p "$repo/scripts" "$repo/suites"
 git -C "$repo" init -q || fail "no repository could be made"
-dependencies="$(grep -c '^  "\(update\|build\) ' "$root/scripts/test.sh")"
-[ "$dependencies" -gt 0 ] || fail "scripts/test.sh lists no chart dependency, so the order of the dependencies and the suites is not held"
-
-# A stand-in helm: it logs "<verb> <chart>" and answers 0.
-cat >"$repo/bin/helm" <<'SH'
-#!/usr/bin/env bash
-echo "$2 $3" >>"$HELM_LOG"
-SH
-chmod +x "$repo/bin/helm"
-
 # Builds the test copy of scripts/test.sh with the suites named in "$work/planted".
 build_pool() {
   : >"$work/planted"
@@ -36,8 +25,7 @@ build_pool() {
   ' "$root/scripts/test.sh" >"$repo/scripts/test.sh"
 }
 run_pool() { # jobs -> output in $work/out, status in $work/status
-  : >"$work/helm.log"
-  (cd "$repo" && HELM_LOG="$work/helm.log" PATH="$repo/bin:$PATH" TEST_JOBS="$1" bash scripts/test.sh >"$work/out" 2>&1; echo "$?" >"$work/status")
+  (cd "$repo" && TEST_JOBS="$1" bash scripts/test.sh >"$work/out" 2>&1; echo "$?" >"$work/status")
 }
 suite_file() { # name, body
   printf '#!/usr/bin/env bash\n%s\n' "$2" >"$repo/suites/$1"
@@ -69,15 +57,7 @@ run_pool 1
 [ "$(cat "$work/status")" != 0 ] || fail "PLANTED DEFECT: suites run one after the other were not seen red"
 ok "TEST_JOBS=2 runs two suites at once; the planted defect, TEST_JOBS=1, is red because neither suite sees the other"
 
-# 3. Every chart dependency stands before the first suite starts.
-suite_file early.sh "[ \"\$(wc -l <'$work/helm.log')\" -eq $dependencies ] || { echo \"only \$(wc -l <'$work/helm.log') of $dependencies chart dependencies stood at the start\"; exit 1; }"
-build_pool suites/early.sh
-run_pool 2
-[ "$(cat "$work/status")" = 0 ] || { cat "$work/out"; fail "the chart dependencies did not all stand before the first suite"; }
-awk '{ print $1 }' "$work/helm.log" | sort -u | grep -qx 'update' || fail "the stand-in helm saw no update"
-ok "all $dependencies chart dependencies are built before a suite starts"
-
-# 4. A failed suite ends red, prints its whole output after the passed ones and names itself last; the others still ran.
+# 3. A failed suite ends red, prints its whole output after the passed ones and names itself last; the others still ran.
 suite_file bad.sh 'echo first-line-of-bad; echo last-line-of-bad >&2; exit 3'
 suite_file good.sh 'true'
 build_pool suites/bad.sh suites/good.sh
@@ -90,7 +70,7 @@ grep -q '^test: FAIL — suites/bad.sh exited 3 after ' "$work/out" || fail "a f
 grep -q 'all suites green' "$work/out" && fail "a red run says it is green"
 ok "a failed suite ends the run red, in full after the passed ones and named on the last line; the suite beside it still ran"
 
-# 5. A suite that kills the process running it leaves no status, which is a failure and not a green.
+# 4. A suite that kills the process running it leaves no status, which is a failure and not a green.
 suite_file gone.sh 'kill -9 "$PPID"'
 build_pool suites/gone.sh suites/good.sh
 run_pool 2
@@ -98,7 +78,7 @@ run_pool 2
 grep -q '^test: FAIL — suites/gone.sh left no status: it was killed' "$work/out" || fail "a suite without a status is not named"
 ok "a suite that leaves no status ends the run red"
 
-# 6. A .mjs suite runs with node --test.
+# 5. A .mjs suite runs with node --test.
 cat >"$repo/suites/node.test.mjs" <<'JS'
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

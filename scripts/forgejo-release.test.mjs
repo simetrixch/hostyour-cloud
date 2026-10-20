@@ -272,7 +272,7 @@ function namespaceFindings(docs) {
   const labels = byKind(docs, 'Namespace', 'forgejo-build')?.metadata.labels ?? {};
   const want = {'hostyour.cloud/workload': 'true', 'pod-security.kubernetes.io/enforce': 'privileged', 'pod-security.kubernetes.io/warn': 'baseline', 'pod-security.kubernetes.io/audit': 'baseline'};
   for (const [key, value] of Object.entries(want)) if (labels[key] !== value) found.push(`the namespace carries ${key}=${labels[key]}`);
-  if ('hostyour.cloud/build' in labels) found.push('the namespace carries hostyour.cloud/build, which the release queue and the ci keeper select');
+  if ('hostyour.cloud/build' in labels) found.push('the namespace carries hostyour.cloud/build, which the release queue selects');
   if (byKind(docs, 'ServiceAccount', 'pipeline-sa')?.automountServiceAccountToken !== false) found.push('pipeline-sa mounts a token');
   const role = byKind(docs, 'Role', 'eventlistener-create-pipelineruns');
   if (JSON.stringify(role?.rules) !== JSON.stringify([{apiGroups: ['tekton.dev'], resources: ['pipelineruns'], verbs: ['create']}])) found.push(`the EventListener may ${JSON.stringify(role?.rules)}`);
@@ -400,7 +400,7 @@ const GITHUB_KEY = `${STAGE}/app/image-builder:github-webhook-secret`;
 
 test('a Forgejo delivery passes the Forgejo Triggers alone, and a GitHub delivery the GitHub Triggers alone', () => {
   assert.deepEqual(admitting(builder, FORGEJO_KEY), ['forgejo-pull-request', 'forgejo-tag-push']);
-  assert.deepEqual(admitting(builder, GITHUB_KEY), ['github-ci-push', 'github-deploy-request', 'github-release-publish']);
+  assert.deepEqual(admitting(builder, GITHUB_KEY), ['github-deploy-request', 'github-release-publish']);
   const webhook = byKind(builder, 'ExternalSecret', 'image-builder-forgejo-webhook-secret');
   assert.equal(webhook.spec.target.deletionPolicy, 'Delete', 'a missing key leaves image-builder Healthy and refuses every Forgejo delivery');
 });
@@ -408,11 +408,11 @@ test('a Forgejo delivery passes the Forgejo Triggers alone, and a GitHub deliver
 test('PLANTED DEFECT: a Forgejo Trigger on GitHub\'s key, or the Forgejo key beside GitHub\'s, crosses the two', () => {
   const crossed = structuredClone(builder);
   byKind(crossed, 'Trigger', 'forgejo-tag-push').spec.interceptors[0].params[0].value = {secretName: 'image-builder-webhook-secrets', secretKey: 'github'};
-  assert.deepEqual(admitting(crossed, GITHUB_KEY), ['forgejo-tag-push', 'github-ci-push', 'github-deploy-request', 'github-release-publish']);
+  assert.deepEqual(admitting(crossed, GITHUB_KEY), ['forgejo-tag-push', 'github-deploy-request', 'github-release-publish']);
   const shared = structuredClone(builder);
   byKind(shared, 'ExternalSecret', 'image-builder-forgejo-webhook-secret').spec.data[0].remoteRef = {key: `${STAGE}/app/image-builder`, property: 'github-webhook-secret'};
   assert.equal(admitting(shared, FORGEJO_KEY).length, 0);
-  assert.equal(admitting(shared, GITHUB_KEY).length, 5);
+  assert.equal(admitting(shared, GITHUB_KEY).length, 4);
 });
 
 const evaluate = (policy, requests) => execFileSync('go', ['run', '.'], {cwd: 'scripts/vap-eval', encoding: 'utf8',
@@ -442,7 +442,7 @@ test('the run a delivery creates passes the PipelineRun guard in forgejo-build, 
   const template = byKind(builder, 'TriggerTemplate', 'forgejo-release');
   const run = JSON.parse(JSON.stringify(template.spec.resourcetemplates[0]).replace(/\$\(tt\.params\.[a-z-]+\)/g, 'x'));
   assert.equal(run.metadata.namespace, 'forgejo-build');
-  assert.ok(!Object.keys(run.metadata.labels ?? {}).some(k => k.startsWith('image-builder.io/')), 'the release queue and the ci keeper never select it');
+  assert.ok(!Object.keys(run.metadata.labels ?? {}).some(k => k.startsWith('image-builder.io/')), 'the release queue never selects it');
   const binding = builder.find(d => d.kind === 'ValidatingAdmissionPolicyBinding' && d.spec.matchResources.namespaceSelector.matchLabels?.['kubernetes.io/metadata.name'] === 'forgejo-build');
   assert.equal(binding?.spec.policyName, 'image-builder-pipelinerun-guard');
   assert.deepEqual(binding.spec.validationActions, ['Deny', 'Audit']);

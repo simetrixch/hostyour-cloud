@@ -7,7 +7,7 @@ The Subject / text / html bodies reference Go templates named
 "alert" unless the entry names another. "alert" is defined globally in
 clusters/inventories/observability/values-{env}.yaml under alertmanagerSpec.templateFiles and
 is available to every AlertmanagerConfig in the cluster; an entry with its own mail
-(the ci failure mail) names its own set, defined in the same map.
+names its own set, defined in the same map.
 
 `sendResolved` is true unless the entry says false: an entry whose alert is posted
 once and expires by its own end time has no resolved mail to send.

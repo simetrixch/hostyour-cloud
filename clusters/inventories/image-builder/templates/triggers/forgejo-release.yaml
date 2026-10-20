@@ -14,8 +14,8 @@ delivery fails here and a Forgejo delivery fails there. Without the Secret, whic
 deploy-platform-services has minted <stage>/app/forgejo-webhook, every Forgejo delivery is refused.
 
 THE RUN LANDS IN forgejo-build, where the guard of templates/vap-pipelinerun-guard.yaml binds it
-like a unit's run, and carries none of the labels image-builder.io/consumer, image-builder.io/publish
-or image-builder.io/ci, so the release queue and the ci run keeper never touch it.
+like a unit's run, and carries neither of the labels image-builder.io/consumer and image-builder.io/publish,
+so the release queue never touches it.
 */ -}}
 apiVersion: triggers.tekton.dev/v1beta1
 kind: Trigger

@@ -18,8 +18,8 @@
 # front of it; scripts/check.sh refuses a rendered ref pulled from ghcr.io.
 #
 # THE FEATURE FLAGS THIS PLATFORM DEPENDS ON, in the `feature-flags` ConfigMap of
-# templates/release-pipelines.yaml. A re-download overwrites that file verbatim, and
-# scripts/tekton-feature-flags.test.mjs goes red when a refresh reverts either of these two:
+# templates/release-pipelines.yaml. A re-download overwrites that file verbatim, so
+# a refresh must put these two back:
 #   coschedule: "disabled"     no affinity-assistant pod per PipelineRun. Each running PipelineRun
 #                              held one, and parallel releases filled the build plane's node (110
 #                              pods at the time) with them until no task pod could start. This holds only on a
@@ -139,7 +139,7 @@ monitoring:
                 severity: critical
               annotations:
                 summary: "The build plane counts more than one node while Tekton's coschedule is disabled"
-                description: "Release PipelineRuns mount a ReadWriteOnce workspace from several pods; on a second node one of them stays Pending. Set coschedule back to workspaces in clusters/inventories/tekton/templates/release-pipelines.yaml, or make the source workspace ReadWriteMany. With coschedule on workspaces, the affinity-assistant pod of each running ci run carries the ci priority class and takes one ci-pods slot for the whole run, so raise ciCapacity.podsPerUnit in clusters/inventories/consumer-build/values-common.yaml with it, or waiting runs hold every slot and none of their task pods is admitted."
+                description: "Release PipelineRuns mount a ReadWriteOnce workspace from several pods; on a second node one of them stays Pending. Set coschedule back to workspaces in clusters/inventories/tekton/templates/release-pipelines.yaml, or make the source workspace ReadWriteMany."
 
             - alert: PipelineRunRunningTooLong
               expr: >-

@@ -34,7 +34,7 @@ entries:
       external_host: !Format ["https://kube.%s", !Env IDP_DOMAIN]
       mode: forward_domain
       cookie_domain: !Format [".%s", !Env IDP_DOMAIN]
-      # The gate ends Headlamp's own session with its validity (scripts/operator-sign-in-length.test.mjs).
+      # The gate ends Headlamp's own session with its validity.
       access_token_validity: hours=24
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]

@@ -140,7 +140,7 @@ spec:
           name: $(tt.params.unit)-release
         taskRunTemplate:
           serviceAccountName: pipeline-sa
-          # Above every ci pod, so a flood of ci runs never delays a release build.
+          # Above every pod without a class, so the scheduler places a waiting release pod first.
           podTemplate:
             priorityClassName: {{ .Values.priorityClasses.release.name }}
         timeouts:

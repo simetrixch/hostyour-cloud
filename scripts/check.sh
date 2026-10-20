@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Everything this repository can be held to on one machine, before anything leaves it.
 #
-# Local chart validation and credential scanning. Fixture suites run in the ci of the master (scripts/test.sh).
+# Local chart validation, credential scanning, and last the fixture suites of scripts/test.sh.
 
 set -uo pipefail
 
@@ -399,12 +399,12 @@ $found"
 }
 
 # THE PODS THE MASTER CANNOT WORK WITHOUT CARRY A CPU REQUEST. A pod with none gets the smallest share of the node
-# once the node is saturated, and the build plane saturates it: the ci check may take 12 cores, seven runs at once. The
+# once the node is saturated, and the build plane saturates it when its runs reach their CPU limits. The
 # ingress, the reconcilers, the certificates and the build plane's controllers are the pods that must keep working
 # then, so each container of the workloads below asks for the CPU it uses (its p95 over seven days, which the
 # comment beside each request in the values names). The names are the ones the charts render and the live pods
 # carry; traefik is the MicroK8s ingress addon's DaemonSet, which no chart of this repository renders, so it stands
-# here for the render that carries it once hostyour-deploy sets its request. The ci pods and the other pods that
+# here for the render that carries it once hostyour-deploy sets its request. The build pods and the other pods that
 # stand on the node are budgeted in clusters/inventories/consumer-build/values-common.yaml (ciCapacity).
 cpu_guaranteed='traefik|argocd-application-controller|argocd-applicationset-controller|argocd-repo-server|argocd-server|argocd-redis|argocd-dex-server|argocd-notifications-controller|cert-manager|cert-manager-cainjector|cert-manager-webhook'
 
@@ -503,9 +503,9 @@ $found"
 # WHAT IT CANNOT PROVE. The stand-in cluster map gives `domain`, `unitApex` and `platformDomain` one
 # value, so a sender built from global.domain renders the same host as one built from global.unitApex.
 # This scan proves the set of senders and that none stands at a host in front of the apex;
-# scripts/ci-failure-mail.test.mjs renders per-stage domains and proves that the sender takes its
+# scripts/alert-mail-sender.test.mjs renders per-stage domains and proves that the sender takes its
 # domain from global.unitApex. It does not prove that the apex is among the relay's
-# ALLOWED_SENDER_DOMAINS: no stand-in renders the allowlist, and ci-failure-mail.test.mjs hands it
+# ALLOWED_SENDER_DOMAINS: no stand-in renders the allowlist, and alert-mail-sender.test.mjs hands it
 # in by --set. The allowlist is declared in hostyour-deploy ansiwise/templates/postfix-values.tpl:13
 # and no test reads it yet: a template that loses the apex leaves this check green.
 #
@@ -556,10 +556,10 @@ $found"
 }
 
 # ── The awk programs of the scans read no regex interval ────────────────────────────────────
-# THE CI IMAGE'S AWK IS mawk 1.3.4 20200120, AND IT READS A BRACE EXPRESSION IN A REGEX AS TEXT. A
+# mawk 1.3.4 20200120, THE AWK OF DEBIAN BOOKWORM, READS A BRACE EXPRESSION IN A REGEX AS TEXT. A
 # regex ending in an interval (a class and a count in braces) matches nothing there and nothing
 # complains: the base64 field of the scan stayed unmatched, no value was decoded, and the
-# counter-probe below went red in the ci run and green on every workstation, whose awk reads it.
+# counter-probe below went red on that awk and green on every workstation whose awk reads it.
 # The fence reads the programs, so it is red on every machine the day one is written again. A
 # count is written as a `length()` test or as repeated classes.
 has_interval() { grep -Eq '[{][0-9]+(,[0-9]*)?[}]' <<< "$1"; }
@@ -568,7 +568,7 @@ interval_innocent='match(s, /\{\{[^{}]*\}\}/) && length(s) >= 40 && s ~ /=?=?$/'
 has_interval "$interval_planted" || fail "the fence for a regex interval does not see one planted in an awk program"
 has_interval "$interval_innocent" && fail "the fence for a regex interval reports an awk program that writes none"
 for program in scan_awk source_fields_awk revisions_awk off_revision_awk; do
-  has_interval "${!program}" && fail "the awk program $program writes a regex interval, which the ci image's mawk 1.3.4 20200120 reads as text, so its match is silently empty there"
+  has_interval "${!program}" && fail "the awk program $program writes a regex interval, which mawk 1.3.4 20200120 reads as text, so its match is silently empty there"
 done
 echo "check: no awk program of the scans writes a regex interval, and the fence reports one planted."
 
@@ -1088,25 +1088,6 @@ done
 printf '%s\n' "$publish_objects" | grep -q '^ExternalSecret/image-builder-registry-pull' \
   && fail "a unit that builds nothing renders the registry pull identity, which only a release reads"
 
-# ── The tools of this repository's own ci run ────────────────────────────────────────────────
-# ci-tools.json names the tools the ci of the master installs before it runs this file and then scripts/test.sh
-# (clusters/inventories/consumer-build/templates/pipeline-ci.yaml). Each pair has to be a row of the table
-# that pipeline installs from, or the run ends on the build plane before the check starts, so it is refused here.
-# The promtool of the run is the one the master's Prometheus needs, as the one on this machine is above.
-tools_table=clusters/inventories/consumer-build/files/ci-tools.table
-tools_named="$(yq -p=json -o=yaml e 'to_entries | .[] | .key + " " + .value' ci-tools.json)" \
-  || fail "ci-tools.json does not parse as an object of tools and versions"
-[ -n "$tools_named" ] || fail "ci-tools.json names no tool, so the ci run of this repository would have no gitleaks and no promtool"
-tools_rows="$(awk '{ print $1, $2 }' "$tools_table")"
-while IFS= read -r pair; do
-  printf '%s\n' "$tools_rows" | grep -qxF "$pair" \
-    || fail "ci-tools.json names $pair, which $tools_table does not carry, so the ci run of this repository would end before its check"
-done <<< "$tools_named"
-printf '%s\n' "$tools_named" | grep -qxF "promtool $prometheus_version" \
-  || fail "ci-tools.json does not name promtool $prometheus_version, the version of the master's Prometheus, so the ci run would test its rules with another one"
-[ "$(yq e 'select(.kind == "Pipeline" and .metadata.name == "check-ci") | .spec.tasks[] | select(.name == "ci") | .taskSpec.steps[] | select(.name == "check") | .env[] | select(.name == "CI_TOOLS_TABLE") | .value' "$work/publish-render")" = "$(cat "$tools_table")" ] \
-  || fail "the ci pipeline of a unit does not hand its check the table $tools_table, whole"
-echo "check: ci-tools.json names $(printf '%s\n' "$tools_named" | wc -l) tools, each a row of $tools_table, and the ci pipeline renders that table."
 objects_of "$work/fence-render" \
   | grep -E '^(Role|RoleBinding)/(eventlistener-create-pipelineruns|manager-read-pipelineruns)$' >> "$work/fences"
 fences_rendered="$(sort "$work/fences")"
@@ -1782,28 +1763,20 @@ bootstrap_template_faults() { # <program> <tree> -> one line per template and ro
   done < <(cd "$2" && find clusters/bootstrap -name '*.tpl' | sort)
 }
 
-# THE ROWS ARE READ AT THE COMMIT ci-sources.json PINS, NEVER FROM A WORKING TREE: on the master's ci
-# out of the bare repository the sources step of the ci task makes under CI_SOURCES_DIR, on a machine out of the object
-# store of the hostyour-deploy clone beside the main checkout, which a worktree finds through its
-# common git directory. A template that needs a new binding moves the pin to the row's commit, and the
-# pin records which rows the templates were held to.
+# THE ROWS ARE READ AT THE COMMIT ci-sources.json PINS, NEVER FROM A WORKING TREE: out of the object store of the
+# hostyour-deploy clone beside the main checkout, which a worktree finds through its common git directory. A template
+# that needs a new binding moves the pin to the row's commit, and the pin records which rows the templates were held to.
 deploy_pin="$(yq -p=json -o=yaml '.git["hostyour-deploy"] // ""' ci-sources.json)" \
   || fail "ci-sources.json could not be read, so the commit of hostyour-deploy whose rows render clusters/bootstrap is not known"
 [[ "$deploy_pin" =~ ^[0-9a-f]{40}$ ]] \
   || fail "ci-sources.json pins hostyour-deploy at '$deploy_pin', not a full commit (40 lowercase hex digits)"
-if [ -n "${CI_SOURCES_DIR:-}" ]; then
-  deploy_source="$CI_SOURCES_DIR/hostyour-deploy.git"
-  deploy_from="CI_SOURCES_DIR ($deploy_source)"
-  deploy_read=(git --git-dir="$deploy_source")
-else
-  common="$(git rev-parse --git-common-dir)" || fail "the common git directory of this checkout could not be read"
-  case "$common" in /*) ;; *) common="$root/$common" ;; esac
-  deploy_source="$(cd "$common/../.." && pwd)/hostyour-deploy"
-  [ -d "$deploy_source" ] \
-    || fail "no hostyour-deploy clone at $deploy_source, beside the main checkout, and the rows that render clusters/bootstrap stand in it — clone simetrixch/hostyour-deploy there"
-  deploy_from="the clone beside the main checkout ($deploy_source)"
-  deploy_read=(git -C "$deploy_source")
-fi
+common="$(git rev-parse --git-common-dir)" || fail "the common git directory of this checkout could not be read"
+case "$common" in /*) ;; *) common="$root/$common" ;; esac
+deploy_source="$(cd "$common/../.." && pwd)/hostyour-deploy"
+[ -d "$deploy_source" ] \
+  || fail "no hostyour-deploy clone at $deploy_source, beside the main checkout, and the rows that render clusters/bootstrap stand in it — clone simetrixch/hostyour-deploy there"
+deploy_from="the clone beside the main checkout ($deploy_source)"
+deploy_read=(git -C "$deploy_source")
 "${deploy_read[@]}" show "$deploy_pin:ansiwise/programs/deploy-branch.yaml" > "$work/deploy-branch.yaml" \
   || fail "hostyour-deploy ansiwise/programs/deploy-branch.yaml at $deploy_pin, the pin of ci-sources.json, could not be read from $deploy_source — fetch that commit into it"
 bootstrap_template_faults "$work/deploy-branch.yaml" "$root" > "$work/bootstrap-faults"
@@ -2224,59 +2197,14 @@ printf '%s\n' "$records" | awk -F'\t' '
   { n[$2]++; keys += split($4, k, ",") }
   END { printf "check: every key of clusters/platform/versions.yaml is one its kind takes — %d components, %d upstreams, %d stamps, %d keys; not the sites of the deploy and manager trees, nor the answers of an upstream, so a dry run can still fail on a site this tree cannot see.\n", n["component"], n["upstream"], n["stamp"], keys }'
 
-echo 'check: NOT RUN locally — lifecycle/test.sh; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/pipeline-release.test.sh; runs in the ci of the master via scripts/test.sh.'
-bash -n scripts/pipeline-publish.test.sh || fail 'Bash syntax: scripts/pipeline-publish.test.sh'
-echo 'check: NOT RUN locally — scripts/pipeline-publish.test.sh; runs in the ci of the master via scripts/test.sh.'
-bash -n scripts/test.sh || fail 'Bash syntax: scripts/test.sh'
-bash -n scripts/test-pool.test.sh || fail 'Bash syntax: scripts/test-pool.test.sh'
-echo 'check: NOT RUN locally — scripts/test-pool.test.sh; runs in the ci of the master via scripts/test.sh.'
-bash -n scripts/check-mirror-consumers.test.sh || fail 'Bash syntax: scripts/check-mirror-consumers.test.sh'
-echo 'check: NOT RUN locally — scripts/check-mirror-consumers.test.sh; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/build-contract.test.mjs; runs in the ci of the master via scripts/test.sh.'
-for module in scripts/release-queue.test.mjs scripts/site-telemetry.test.mjs scripts/ci-run-keeper.test.mjs scripts/ci-green-status.test.mjs scripts/cloudflare-origin-pull.test.mjs scripts/tenant-limits.test.mjs scripts/unit-networkpolicy.test.mjs scripts/loki-retention.test.mjs scripts/ingress-access-log-alert.test.mjs scripts/alloy-access-log-strip.test.mjs scripts/site-telemetry-registration.test.mjs scripts/site-telemetry-deployment.test.mjs; do
-  node --check "$module" || fail "Node syntax: $module"
-  echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
-done
-for module in scripts/check-immutable.mjs scripts/build-contract.test.mjs lifecycle/plan-installation-domain.mjs scripts/installation-domain.test.mjs scripts/post-stage-callbacks.test.mjs scripts/redis-maxmemory.test.mjs scripts/coredns-cache.test.mjs scripts/tenant-appset-fixture.mjs scripts/tenant-appset.test.mjs scripts/tenant-size.test.mjs scripts/tenant-own-domain-aliases.test.mjs scripts/tenant-proxied-hosts.test.mjs scripts/unit-alerts.test.mjs scripts/unit-mongodb-exporter.test.mjs scripts/unit-charts-consumer-project.test.mjs scripts/consumer-data-sizes.test.mjs scripts/e2e-runner.test.mjs; do
-  node --check "$module" || fail "Node syntax: $module"
-done
-echo 'check: NOT RUN locally — scripts/manager-generator-refresh.test.mjs; runs in the ci of the master via scripts/test.sh.'
-node --check scripts/manager-pat-storage.test.mjs || fail 'Manager PAT storage check syntax'
-echo 'check: NOT RUN locally — scripts/manager-pat-storage.test.mjs; runs in the ci of the master via scripts/test.sh.'
-node --check scripts/manager-forge-env.test.mjs || fail 'Manager forge env check syntax'
-echo 'check: NOT RUN locally — scripts/manager-forge-env.test.mjs; runs in the ci of the master via scripts/test.sh.'
-node --check scripts/manager-cloudflare-zone-settings.test.mjs || fail 'Manager Cloudflare zone settings check syntax'
-echo 'check: NOT RUN locally — scripts/manager-cloudflare-zone-settings.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/installation-domain.test.mjs; runs in the ci of the master via scripts/test.sh.'
-node --check scripts/zot-sync.test.mjs || fail 'Node syntax: scripts/zot-sync.test.mjs'
-echo 'check: NOT RUN locally — scripts/zot-sync.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/post-stage-callbacks.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/redis-maxmemory.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/coredns-cache.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/tenant-appset.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/tenant-size.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/tenant-own-domain-aliases.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/tenant-proxied-hosts.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/unit-alerts.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/unit-mongodb-exporter.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/unit-charts-consumer-project.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/consumer-data-sizes.test.mjs; runs in the ci of the master via scripts/test.sh.'
-echo 'check: NOT RUN locally — scripts/e2e-runner.test.mjs; runs in the ci of the master via scripts/test.sh.'
 bash -n lifecycle/plan-installation-domain.sh || fail 'installation domain Bash syntax'
 bash -n lifecycle/check-forgejo-ssh.sh || fail 'Forgejo SSH check Bash syntax'
 bash -n lifecycle/create-origin-pull-certificate.sh || fail 'origin pull certificate Bash syntax'
 bash -n lifecycle/apply-cloudflare-zone-security.sh || fail 'Cloudflare zone security Bash syntax'
 bash -n lifecycle/release-unit.sh || fail 'release-unit Bash syntax'
-for module in lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
+for module in scripts/check-immutable.mjs lifecycle/plan-installation-domain.mjs scripts/tenant-appset-fixture.mjs lifecycle/apply-cloudflare-zone-security.mjs lifecycle/apply-cloudflare-zone-security.test.mjs lifecycle/create-origin-pull-certificate.test.mjs lifecycle/release-unit.mjs scripts/standin/release-unit-manager.mjs; do
   node --check "$module" || fail "Node syntax: $module"
 done
-for module in scripts/forgejo.test.mjs scripts/plane-test-accounts.test.mjs scripts/forward-auth-gate.test.mjs scripts/plane.test.mjs scripts/forgejo-release.test.mjs scripts/forgejo-ssh.test.mjs; do
-  node --check "$module" || fail "Node syntax: $module"
-  echo "check: NOT RUN locally — $module; runs in the ci of the master via scripts/test.sh."
-done
-node --check scripts/workload-label.test.mjs || fail 'Node syntax: scripts/workload-label.test.mjs'
-echo 'check: NOT RUN locally — scripts/workload-label.test.mjs; runs in the ci of the master via scripts/test.sh.'
 
 # ── 2. The credentials ──────────────────────────────────────────────────────────────────────
 # SCANNED OVER WHAT GIT WOULD LET YOU COMMIT, and that is not the same as this directory. A
@@ -2331,5 +2259,9 @@ plant_leak third "sed -i 's|^  sentry_dsn: \"\"|  admin_secret_key: \"Zk3Qw9Lm2X
 plant_leak elsewhere "printf 'secret_key: \"60gp0byfz2dvffa45cxl20p1scy9xbpf6d8c5y0geejgkyp1b5\"\\n' > other.yaml" \
   && fail "gitleaks does not report a public default key of plane-ce written into another file"
 echo "check: the .gitleaks.toml allowlist for plane-ce's public default keys hides them in the vendored values.yaml only; gitleaks reports 2 planted defects and passes the innocent case."
+
+# ── 3. The suites ───────────────────────────────────────────────────────────────────────────
+# LAST, because they render the charts whose dependencies section 1 built, and they are the slowest part.
+bash scripts/test.sh || fail 'a suite of scripts/test.sh is red, and its output stands above'
 
 echo "check: OK — every check green"

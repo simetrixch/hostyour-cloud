@@ -1,6 +1,6 @@
 {{- /*
 The unit's publish pipeline `<unit>-publish` — ONE generic pipeline, rendered
-per unit from this template beside `<unit>-ci`, also for a unit that builds
+per unit from this template, also for a unit that builds
 nothing. A push of a release tag runs it at that tag and publishes the
 repository's npm packages to this build plane's registry:
 
@@ -20,8 +20,8 @@ its runs.
 
 WHAT IS PUBLISHED, read at the tag by `scan`:
   - a tag whose tree tracks release/build.sh publishes the binaries that script
-    builds, and nothing else: `build-binaries` runs it with the tools of the
-    ci check, helm, yq and jq (files/ci-fixed-tools.sh) and those of the
+    builds, and nothing else: `build-binaries` runs it with helm, yq and jq
+    (files/ci-fixed-tools.sh) and the tools of the
     repository's ci-tools.json (files/ci-install-tools.sh), as
     `bash release/build.sh <tag> <folder>`, and every file it leaves in that
     folder is one layer of ONE manifest <owner>/<repository>:<tag> — an empty
@@ -40,7 +40,7 @@ WHAT IS PUBLISHED, read at the tag by `scan`:
     publishConfig.registry; that registry must be https://<registry>/v2/npm/, so
     a package that still names another registry fails the run. `pack` builds
     them with the tools of the repository's ci-tools.json first on PATH
-    (files/ci-install-tools.sh), as the ci check does. A repository with
+    (files/ci-install-tools.sh). A repository with
     neither publishes nothing, and the run ends after the scan.
   - the platform tree (https://github.com/simetrixch/hostyour-cloud.git) on
     the owner's master, whose registry is global.buildRegistry, publishes no
@@ -117,7 +117,7 @@ lists in its subPath packed.
 {{- /* The npm scope is the owner of the repository; a scope is written in lower case. */ -}}
 {{- $owner := include "consumer-build.repoOwner" . | lower -}}
 {{- $releaseTagRe := printf "^%s$" (required "consumer-build: global.releaseTagFilter is required (platform values chain)" .Values.global.releaseTagFilter) -}}
-{{- /* The images of the ci pipeline: git for the gate and the fetch, bash, jq and git for the scan, the decision
+{{- /* The images of this pipeline: git for the gate and the fetch, bash, jq and git for the scan, the decision
        and the push, Node 24 with pnpm for the pack, and the gitleaks of the shared credential-scan Task. */ -}}
 {{- $gitImage := "alpine/git:2.45.2@sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592" -}}
 {{- $toolsImage := include "consumer-build.toolsImage" . -}}
@@ -133,7 +133,7 @@ lists in its subPath packed.
 {{- $packed := "[\"source\"]" -}}
 {{- /* The repository the binaries of a release are pushed to: <owner>/<repository name>, read off the repoURL like the owner. */ -}}
 {{- $binariesRepository := printf "%s/%s" $owner (regexReplaceAll "^https://github\\.com/[^/]+/([^/]+?)(\\.git)?$" $repoURL "${1}" | lower) -}}
-{{- /* The tools table pack and the build of the binaries install the repository's ci-tools.json from, as the ci pipeline does. */ -}}
+{{- /* The tools table pack and the build of the binaries install the repository's ci-tools.json from. */ -}}
 {{- $toolsTable := .Files.Get "files/ci-tools.table" -}}
 apiVersion: tekton.dev/v1
 kind: Pipeline
@@ -389,7 +389,7 @@ spec:
           - name: source
           - name: packed
         volumes:
-          # The unit's authenticated .npmrc, mounted as the ci check mounts it.
+          # The unit's authenticated .npmrc.
           - name: npmrc
             secret:
               secretName: build-npmrc
@@ -428,7 +428,7 @@ spec:
                 mountPath: /pnpm-store
               - name: scratch
                 mountPath: /scratch
-            # The install and build of the ci check, without its test suites. The
+            # The install and build of the repository, without its test suites. The
             # cpu and memory budgets of ciCapacity (values-common.yaml) count this pod.
             computeResources:
               requests: { cpu: "1", memory: 2Gi }
@@ -518,7 +518,7 @@ spec:
                 echo "pack: every tarball holds files under package/ only, and no .npmrc or .env file"
               }
               VERSION="$(release_version "${RELEASE_TAG}")"
-              # pnpm 11.7.0, as the ci check; a package.json that names packageManager overrides it.
+              # pnpm 11.7.0; a package.json that names packageManager overrides it.
               corepack enable
               corepack prepare pnpm@11.7.0 --activate
 
@@ -548,10 +548,9 @@ spec:
     # ── 5b. build-binaries — release/build.sh at the tag, with no credential ─
     # The repository's own code runs here, as it does in pack, and holds no
     # credential at all: its git dependencies are fetched the way a person's
-    # machine fetches them. The tools of ci-tools.json go first on PATH, as in the
-    # ci pipeline, so release/build.sh refuses or accepts the same Dart there and
-    # here. release/build.sh runs the test suites of every part and of the
-    # repository, so it runs as the user the ci check runs them as
+    # machine fetches them. The tools of ci-tools.json go first on PATH, as in
+    # pack. release/build.sh runs the test suites of every part and of the
+    # repository, so it runs as a user that is not root
     # (consumer-build.checkUser), and the clone and the folder the binaries go
     # to, which pods of root made, are handed to that user first.
     - name: build-binaries

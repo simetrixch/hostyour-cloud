@@ -17,7 +17,7 @@ altered by whoever the guard is aimed at.
 A SECOND BINDING guards forgejo-build, the namespace of the Forgejo release flow
 (clusters/inventories/forgejo-build), by its name, which the API server sets and
 nobody can change. That namespace carries no hostyour.cloud/build, because the
-release queue and the ci run keeper select on it; its runs pass the same clauses
+release queue selects on it; its runs pass the same clauses
 as a unit's: its one Pipeline is forgejo-release, which clause 5 reads as the
 namespace's own, under pipeline-sa, with one new source claim.
 
@@ -32,39 +32,28 @@ WHAT IT BINDS (CEL, fail-closed logic):
      this rule is about which Pipeline runs, not which Tasks it uses);
   4. taskRunTemplate.serviceAccountName == pipeline-sa — the isolation SA;
   5. the referenced Pipeline is the NAMESPACE's own: in <unit>-build only
-     <unit>-release, <unit>-ci, <unit>-image and <unit>-publish may run. This is the ownership binding — a
+     <unit>-release, <unit>-image and <unit>-publish may run. This is the ownership binding — a
      PipelineRun smuggled into a foreign build namespace cannot start that
      unit's pipeline under its credentials;
   6. no taskRunSpecs entry names another ServiceAccount. Without this, clause
      4 says nothing: a per-task override picks the SA the task pods actually
      run as;
-  6a. taskRunSpecs is refused altogether, with one exception: a ci run may
-     carry exactly one entry, for the task report-failure, whose only field
-     besides pipelineTaskName is a podTemplate that sets priorityClassName to
-     the report class. That pod must not take a slot of the ci quota
-     (the quota counts the ci class only), or the failure mail of a run waits
-     for the check of another branch. Every other key of the entry is refused,
-     among them serviceAccountName, stepSpecs, sidecarSpecs, metadata,
-     computeResources and timeout, and so is any other field of its
-     podTemplate;
+  6a. taskRunSpecs is refused altogether: no per-task pod, step, sidecar,
+     metadata, compute, timeout or account override;
   7. the release queue (templates/release-queue.yaml) changes a run only by
      dropping spec.status PipelineRunPending, which starts it, and by its own
      annotation image-builder.io/queued-behind. Its RBAC grant is `patch`, and a patch can rewrite any field;
      without this clause the identity that only starts runs could change what
-     they run. It touches release and publish runs only: the ci runs have their own
-     identity (clause 9), so the same grant cannot be turned on them.
+     they run. It touches release and publish runs only.
      Its grant also holds `delete`, for the finished release runs and the
      finished publish runs beyond the newest 20 of each, and a delete by it is
      admitted only for a run of this namespace's own release or publish Pipeline
      whose Succeeded condition, read from
      oldObject at the moment of the delete, is True or False. So a defect in
-     files/release-queue.jq cannot delete a run that waits or runs, nor a ci
-     run.
-  8. the only podTemplate a run may carry sets priorityClassName, to the class
-     of its pipeline: the ci class on a ci run, the release class on a
-     release run, an image run and a publish run. A ci run MUST carry it, because the capacity quota of the build
-     namespace counts the pods of that class and no others, and a ci run
-     without the class would run outside the cap. Every other field is refused,
+     files/release-queue.jq cannot delete a run that waits or runs, nor a run
+     of another Pipeline.
+  8. the only podTemplate a run may carry sets priorityClassName, to the
+     release class. Every other field is refused,
      among them automountServiceAccountToken: pipeline-sa ships it off
      (clusters/inventories/consumer-build/templates/serviceaccount.yaml) so the
      step that runs the unit's own build holds no API credential, and a pod
@@ -72,24 +61,7 @@ WHAT IT BINDS (CEL, fail-closed logic):
      podTemplate are listed here one by one because CEL cannot ask an object
      which fields it has; scripts/build-contract.test.mjs checks the list
      against the Tekton CRD the repository renders.
-  9. the ci run keeper (templates/ci-run-keeper.yaml) changes a run only on a
-     ci run, and only in one of two ways: by setting spec.status to Cancelled or
-     CancelledRunFinally (a started run, so its finally tasks set its commit status) and
-     writing the annotation image-builder.io/cancelled-by, which names the push that replaced
-     the run, or image-builder.io/branch-deleted, which names the `ci/` branch that no longer
-     exists on the run's remote, or
-     as the release queue does in clause 7, by dropping spec.status
-     PipelineRunPending, which starts the run, and by its own annotation
-     image-builder.io/queued-behind. Its RBAC grant is `patch` and `delete`; a
-     patch can rewrite any field, so without this clause the identity that only
-     cancels, starts and notes could change what the runs run, and the cap on
-     the ci runs that run at once could be lifted by starting a run it did not
-     count. Starting a release run stays the queue's alone. A delete by it,
-     for the finished ci runs beyond the newest 20, is admitted only for a
-     run of this namespace's own ci Pipeline that has finished, the same way
-     as in clause 7, so a defect in files/ci-run-keeper.jq cannot delete a
-     run that waits or runs, nor a release run.
- 10. a delete by any other identity, the Tekton Dashboard's among them, is not
+  9. a delete by any other identity, the Tekton Dashboard's among them, is not
      this policy's concern. On a delete `object` is null, so every clause that
      reads it steps aside with `request.operation == 'DELETE' ||`: an
      evaluation error is a refusal under failurePolicy Fail and would block
@@ -116,22 +88,18 @@ spec:
       expression: >-
         (has(object.spec.pipelineRef) && has(object.spec.pipelineRef.name))
           ? object.spec.pipelineRef.name : ''
-    # <unit>-build -> <unit>-release, <unit>-ci, <unit>-image and <unit>-publish: the pipelines this namespace owns.
+    # <unit>-build -> <unit>-release, <unit>-image and <unit>-publish: the pipelines this namespace owns.
     - name: ownPipelines
       expression: >-
         request.namespace.endsWith('-build')
           ? [request.namespace.substring(0, request.namespace.size() - 6) + '-release',
-             request.namespace.substring(0, request.namespace.size() - 6) + '-ci',
              request.namespace.substring(0, request.namespace.size() - 6) + '-image',
              request.namespace.substring(0, request.namespace.size() - 6) + '-publish'] : []
     - name: isReleaseQueue
       expression: >-
         request.userInfo.username == 'system:serviceaccount:' + {{ .Release.Namespace | squote }} + ':release-queue'
-    - name: isCiRunKeeper
-      expression: >-
-        request.userInfo.username == 'system:serviceaccount:' + {{ .Release.Namespace | squote }} + ':ci-run-keeper'
     # The run a delete removes, read from oldObject: its Pipeline, and whether it has finished, which the
-    # jq programs of both keepers count as a Succeeded condition that is True or False.
+    # jq program of the release queue counts as a Succeeded condition that is True or False.
     - name: deletedRefName
       expression: >-
         (has(oldObject.spec.pipelineRef) && has(oldObject.spec.pipelineRef.name))
@@ -140,13 +108,6 @@ spec:
       expression: >-
         has(oldObject.status) && has(oldObject.status.conditions) &&
         oldObject.status.conditions.exists(c, c.type == 'Succeeded' && (c.status == 'True' || c.status == 'False'))
-    # The workspaces of the run, as oldObject had them, on an update. Tekton lets nothing but spec.status change on a run, so an
-    # update of a ci run that was created with the source claim of the earlier Trigger keeps carrying it, and the keeper that starts
-    # or cancels such a waiting run must not be refused for it.
-    - name: sameWorkspaces
-      expression: >-
-        request.operation == 'UPDATE' && has(object.spec.workspaces) == has(oldObject.spec.workspaces) &&
-          (!has(object.spec.workspaces) || object.spec.workspaces == oldObject.spec.workspaces)
     # Every field but spec.status and the annotations, unchanged by an update.
     - name: sameBody
       expression: >-
@@ -159,7 +120,8 @@ spec:
           (!has(object.spec.taskRunTemplate) || object.spec.taskRunTemplate == oldObject.spec.taskRunTemplate) &&
           has(object.spec.timeouts) == has(oldObject.spec.timeouts) &&
           (!has(object.spec.timeouts) || object.spec.timeouts == oldObject.spec.timeouts) &&
-          variables.sameWorkspaces &&
+          has(object.spec.workspaces) == has(oldObject.spec.workspaces) &&
+          (!has(object.spec.workspaces) || object.spec.workspaces == oldObject.spec.workspaces) &&
           has(object.spec.taskRunSpecs) == has(oldObject.spec.taskRunSpecs) &&
           (!has(object.spec.taskRunSpecs) || object.spec.taskRunSpecs == oldObject.spec.taskRunSpecs) &&
           has(object.spec.managedBy) == has(oldObject.spec.managedBy) &&
@@ -168,17 +130,7 @@ spec:
           (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) &&
           has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
           (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers))
-    # Every annotation but the two that say why a ci run was cancelled (the push that replaced it, the branch that was
-    # deleted), unchanged by an update.
-    - name: sameAnnotationsButCancelNote
-      expression: >-
-        request.operation != 'UPDATE' || (
-          (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k in ['image-builder.io/cancelled-by', 'image-builder.io/branch-deleted'] ||
-            (has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations &&
-             oldObject.metadata.annotations[k] == object.metadata.annotations[k]))) &&
-          (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k in ['image-builder.io/cancelled-by', 'image-builder.io/branch-deleted'] ||
-            (has(object.metadata.annotations) && k in object.metadata.annotations))))
-    # Every field but spec.status and the annotation of the queue and the keeper, unchanged by an update.
+    # Every field but spec.status and the annotation of the queue, unchanged by an update.
     - name: unchangedButStatus
       expression: >-
         variables.sameBody && (request.operation != 'UPDATE' || (
@@ -194,23 +146,7 @@ spec:
           has(object.spec.status)
             ? (has(oldObject.spec.status) && object.spec.status == oldObject.spec.status)
             : (!has(oldObject.spec.status) || oldObject.spec.status == 'PipelineRunPending'))
-    # The class a run of this pipeline carries in its podTemplate.
-    - name: priorityClass
-      expression: >-
-        variables.refName.endsWith('-ci')
-          ? {{ .Values.priorityClasses.ci.name | squote }} : {{ .Values.priorityClasses.release.name | squote }}
-    # The one per-task override a run may carry: the report class on the task report-failure of a ci run.
 {{- $otherFields := list "affinity" "automountServiceAccountToken" "dnsConfig" "dnsPolicy" "enableServiceLinks" "env" "hostAliases" "hostNetwork" "hostUsers" "imagePullSecrets" "nodeSelector" "runtimeClassName" "schedulerName" "securityContext" "tolerations" "topologySpreadConstraints" "volumes" }}
-{{- $otherEntryFields := list "computeResources" "metadata" "serviceAccountName" "sidecarSpecs" "stepSpecs" "timeout" }}
-    - name: onlyReportOverride
-      expression: >-
-        !has(object.spec.taskRunSpecs) || object.spec.taskRunSpecs.size() == 0 || (
-          variables.refName.endsWith('-ci') && object.spec.taskRunSpecs.size() == 1 &&
-          object.spec.taskRunSpecs.all(s, has(s.pipelineTaskName) && s.pipelineTaskName == 'report-failure' &&
-            {{ range $field := $otherEntryFields }}!has(s.{{ $field }}) && {{ end }}
-            has(s.podTemplate) && has(s.podTemplate.priorityClassName) &&
-            s.podTemplate.priorityClassName == {{ .Values.priorityClasses.ciReport.name | squote }} &&
-            {{ range $index, $field := $otherFields }}{{ if $index }} && {{ end }}!has(s.podTemplate.{{ $field }}){{ end }}))
     - name: carriedPriorityClass
       expression: >-
         (has(object.spec.taskRunTemplate) && has(object.spec.taskRunTemplate.podTemplate)
@@ -242,44 +178,32 @@ spec:
       message: "PipelineRuns must run under taskRunTemplate.serviceAccountName: pipeline-sa."
       reason: Forbidden
     - expression: "request.operation == 'DELETE' || variables.refName in variables.ownPipelines"
-      message: "a build namespace runs only its own release, ci, image and publish Pipelines."
+      message: "a build namespace runs only its own release, image and publish Pipelines."
       reason: Forbidden
     - expression: "request.operation == 'DELETE' || variables.overrideSAs.all(n, n == 'pipeline-sa')"
       message: "taskRunSpecs may not run a task under another ServiceAccount — every task pod runs as pipeline-sa."
       reason: Forbidden
-    - expression: "request.operation == 'DELETE' || variables.onlyReportOverride"
-      message: "per-task pod, step, sidecar, metadata and account overrides are not allowed, except the report class on the task report-failure of a ci run."
+    - expression: "request.operation == 'DELETE' || !has(object.spec.taskRunSpecs) || object.spec.taskRunSpecs.size() == 0"
+      message: "per-task pod, step, sidecar, metadata and account overrides are not allowed."
       reason: Forbidden
-    - expression: "request.operation == 'DELETE' || !has(object.spec.taskRunTemplate) || !has(object.spec.taskRunTemplate.podTemplate) || (variables.onlyPriorityClass && variables.carriedPriorityClass == variables.priorityClass)"
+    - expression: "request.operation == 'DELETE' || !has(object.spec.taskRunTemplate) || !has(object.spec.taskRunTemplate.podTemplate) || (variables.onlyPriorityClass && variables.carriedPriorityClass == {{ .Values.priorityClasses.release.name | squote }})"
       message: "a managed run's podTemplate sets priorityClassName to the class of its pipeline and nothing else."
-      reason: Forbidden
-    - expression: "request.operation == 'DELETE' || !variables.refName.endsWith('-ci') || variables.carriedPriorityClass == variables.priorityClass"
-      message: "a ci run carries the ci priority class: the capacity quota of its build namespace counts the pods of that class only."
       reason: Forbidden
     - expression: "request.operation == 'DELETE' || !has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('tekton.dev/') || k == 'tekton.dev/pipeline')"
       message: "caller labels may not impersonate Tekton task or pod identities."
       reason: Forbidden
     - expression: >-
-        request.operation == 'DELETE' || (variables.refName.endsWith('-ci') ? (!has(object.spec.workspaces) || variables.sameWorkspaces) :
-        (has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
+        request.operation == 'DELETE' || (has(object.spec.workspaces) && object.spec.workspaces.size() == 1 &&
         object.spec.workspaces.all(w, w.name == 'source' &&
           !has(w.subPath) && !has(w.persistentVolumeClaim) && !has(w.secret) && !has(w.configMap) &&
-          !has(w.emptyDir) && !has(w.projected) && !has(w.csi))))
-      message: "a ci run is created with no workspace and an update leaves its workspaces as they were, its one pod keeps the checkout on a volume of its own task; every other managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace."
+          !has(w.emptyDir) && !has(w.projected) && !has(w.csi)))
+      message: "a managed run uses only a new source PVC, with no secret, projected, CSI or shared-claim workspace."
       reason: Forbidden
     - expression: "!variables.isReleaseQueue || request.operation == 'DELETE' || (request.operation == 'UPDATE' && (variables.refName.endsWith('-release') || variables.refName.endsWith('-publish')) && variables.unchangedButStatus && variables.startsOrKeepsStatus)"
       message: "the release queue may only start a waiting release or publish run or note what it waits for."
       reason: Forbidden
     - expression: "!variables.isReleaseQueue || request.operation != 'DELETE' || (variables.deletedRefName in variables.ownPipelines && (variables.deletedRefName.endsWith('-release') || variables.deletedRefName.endsWith('-publish')) && variables.deletedRunIsFinished)"
       message: "the release queue may only delete a finished release or publish run of its own namespace."
-      reason: Forbidden
-    - expression: "!variables.isCiRunKeeper || request.operation == 'DELETE' || (request.operation == 'UPDATE' && variables.refName.endsWith('-ci') && (
-        (variables.sameBody && variables.sameAnnotationsButCancelNote && has(object.spec.status) && object.spec.status in ['Cancelled', 'CancelledRunFinally']) ||
-        (variables.unchangedButStatus && variables.startsOrKeepsStatus)))"
-      message: "the ci run keeper may only cancel a ci run and name the push that replaced it or the branch that was deleted, start a waiting one, or note what it waits for."
-      reason: Forbidden
-    - expression: "!variables.isCiRunKeeper || request.operation != 'DELETE' || (variables.deletedRefName in variables.ownPipelines && variables.deletedRefName.endsWith('-ci') && variables.deletedRunIsFinished)"
-      message: "the ci run keeper may only delete a finished ci run of its own namespace."
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

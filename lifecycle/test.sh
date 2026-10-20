@@ -2722,7 +2722,7 @@ ok 'backup: no quorum file ends with 66 and says it is not on this host'
 
 RUNNER="$(id -un 2>/dev/null || true)"
 if [ "$(id -u)" = 0 ] || [ -z "$RUNNER" ]; then
-  echo 'test: NOT RUN — the quorum file the runner cannot read: uid 0 reads a file of mode 000, and an account without a name cannot be named, so this run plants and names nothing; the ci check step runs as a named user that is not root'
+  echo 'test: NOT RUN — the quorum file the runner cannot read: uid 0 reads a file of mode 000, and an account without a name cannot be named, so this run plants and names nothing; a run as a named user that is not root checks it'
 else
   Q_CODE=0; quorum_checked "$BACKUP_CHECK" "$QUORUM_DIR/closed.txt" || Q_CODE=$?
   [ "$Q_CODE" = 66 ] || fail "backup: a quorum file the runner cannot read must end with 66, got $Q_CODE: $(cat "$OUT/quorum.err")"
