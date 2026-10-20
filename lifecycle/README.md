@@ -378,11 +378,12 @@ sealed with `BACKUP_PASSPHRASE` before it leaves, and the whole goes to the stor
 The backup holds the Manager's runs, so none of them fails because of it. First it suspends the CronJob
 `release-queue` of the namespace `image-builder`, which starts every release and publish run, and waits until
 that queue's last Job has ended and no release or publish run runs, read twice in a row. That wait can take up
-to 65 minutes, the pipelines' timeout of one hour and five minutes; past it the backup lets the queue go again,
-stops nothing and ends 75, naming what still runs, and the Manager stays up meanwhile. Then it stops the Manager,
-which pauses a run in flight between two steps and goes on with it when it starts, and takes the stores. It
-starts the Manager, and then lets the queue go, only once every store it stopped reads ready by the ready count
-of its workload; when a store does not, it starts neither, names the store, prints the two commands and ends 70.
+to 65 minutes: the pipelines' timeout is one hour, and the wait adds five minutes to it. Past it the backup lets
+the queue go again, stops nothing and ends 75, naming what still runs, and the Manager stays up meanwhile.
+Then it stops the Manager, which pauses a run in flight between two steps and goes on with it when it starts, and
+takes the stores. It starts the Manager, and then lets the queue go, only once every store it stopped reads ready
+by the ready count of its workload; when a store does not, it starts neither, names the store, prints the two
+commands and ends 70.
 A release or publish run that a push starts during the backup waits in the queue and starts after it, and a
 step the Manager's stop cuts off runs again from its start. The Manager's UI and API are down from its stop to
 its start. The `app.yaml` of `manager` and of `image-builder` make Argo CD ignore `/spec/replicas` of the Manager's

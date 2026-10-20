@@ -2902,14 +2902,16 @@ cat > "$STANDIN/microk8s" <<'STANDIN_MICROK8S'
 # ready, until a scale says otherwise), the suspend of the CronJob release-queue, and the Jobs and pipeline runs
 # of the release queue. A scale sets the ready count to the new replicas, and a patch of the CronJob sets its
 # suspend; each writes the world it was made in (the Manager's replicas, the queue's suspend, whether the planted run
-# and the planted Job still work, the stores that were stopped and are not back and ready) to world.log first.
+# and the planted Job still work, the stores that were stopped and are not back and ready) to world.log first, and
+# the value it sets under the key to=, which is the new replicas of a scale and the new suspend of a patch.
 # A call it does not know ends 2, and a rollout status of vault/vault is refused as kubectl refuses it for a
 # StatefulSet that is not a RollingUpdate. The knobs are the files knob-* of cluster/: run-running (a release
 # run that reads running for the driver's first two looks at the release runs, then True), run-forever (one that
 # never ends), late-job (a Job of the queue that is not listed at the first look at the Jobs, is unfinished at the
 # second and third, finished from the fourth, and that .status.active names at its third and fourth look),
-# no-cronjob, not-ready (workload names, one a line, that do not read ready after a scale up) and scale-fails
-# (workload names whose scale up ends 1). The first scale call, while block-first-scale stands beside it, claims
+# no-cronjob, not-ready (workload names, one a line, that do not read ready after a scale up), scale-fails
+# (workload names whose scale up ends 1), stop-fails (workload names whose scale to 0 ends 1 and changes nothing)
+# and stop-lost (workload names whose scale to 0 takes effect and ends 1, as an answer lost on the way back does). The first scale call, while block-first-scale stands beside it, claims
 # the folder blocked and then waits until the file release stands (or 60 seconds pass), which is how a case holds
 # one driver inside its store loop. It lets go of descriptor 9, the backup's lock: a real kubectl call ends in
 # seconds, and this one waits on purpose, so it must not stand in for the holder of the lock when the case kills
@@ -3010,12 +3012,14 @@ case "$1" in
   scale)
     workload="${2#*/}"; wanted="${3#--replicas=}"
     if [ "$wanted" -gt 0 ] && listed scale-fails "$namespace/$workload"; then echo 'microk8s stand-in: the server did not answer' >&2; exit 1; fi
+    if [ "$wanted" = 0 ] && listed stop-fails "$namespace/$workload"; then echo 'microk8s stand-in: the server did not answer' >&2; exit 1; fi
     if [ -e "$here/block-first-scale" ] && mkdir "$here/blocked" 2> /dev/null; then
       for _ in $(seq 1 600); do [ -e "$here/release" ] && break; sleep 0.1; done
     fi
     printf 'scale target=%s/%s to=%s %s\n' "$namespace" "$workload" "$wanted" "$(world)" >> "$state/world.log"
     echo "$wanted" > "$state/$namespace--$workload.replicas"
     if [ "$wanted" -gt 0 ] && listed not-ready "$namespace/$workload"; then echo 0 > "$state/$namespace--$workload.ready"; else echo "$wanted" > "$state/$namespace--$workload.ready"; fi
+    if [ "$wanted" = 0 ] && listed stop-lost "$namespace/$workload"; then echo 'microk8s stand-in: the answer was lost' >&2; exit 1; fi
     exit 0 ;;
   patch)
     [ "$namespace" = image-builder ] && [ "$2" = cronjob/release-queue ] || { echo "microk8s stand-in: a patch the backup does not make: $namespace $2" >&2; exit 2; }
@@ -3024,7 +3028,7 @@ case "$1" in
       '{"spec":{"suspend":false}}') suspend=false ;;
       *) echo "microk8s stand-in: a patch of the CronJob the backup does not make: $patch" >&2; exit 2 ;;
     esac
-    printf 'patch suspend=%s %s\n' "$suspend" "$(world)" >> "$state/world.log"
+    printf 'patch to=%s %s\n' "$suspend" "$(world)" >> "$state/world.log"
     echo "$suspend" > "$state/suspend"
     echo 'cronjob.batch/release-queue patched'
     exit 0 ;;
@@ -3830,9 +3834,10 @@ hold_wrong() { # <the Manager's replicas before the run> <the queue's suspend be
         if (f["run"] == "running") print "a store other than the Manager was scaled to 0 while the planted run still read running: " f["target"]
         if (f["job"] == "unfinished") print "a store other than the Manager was scaled to 0 while the planted job of the queue was unfinished: " f["target"]
       }
-      if (($1 == "scale" && f["target"] == "manager/manager" && f["to"] > 0) || ($1 == "patch" && f["suspend"] != "true")) {
-        if (f["others"] != "none") print "the Manager was started, or the queue let go, while these stores were not back and ready: " f["others"]
-      }
+      if ($1 == "scale" && f["target"] == "manager/manager" && f["to"] > 0 && f["others"] != "none")
+        print "the Manager was started while these stores were not back and ready: " f["others"]
+      if ($1 == "patch" && f["to"] != "true" && f["others"] != "none")
+        print "the queue was let go while these stores were not back and ready: " f["others"]
     }' "$world"
   for file in "$STANDIN"/cluster/*.replicas; do
     [ -e "$file" ] || continue
@@ -3904,7 +3909,20 @@ hold_refused "$LOCK_TEXT" 1 false 70 'could not be started again — it stands a
   || fail "backup: a store whose scale back failed was not named or the Manager was started under it: $(cat "$OUT/verdict")"
 [ "$(cat "$STANDIN/cluster/manager--manager.replicas")" = 0 ] && [ "$(cat "$STANDIN/cluster/suspend")" = true ] \
   || fail 'backup: the Manager was started or the queue let go while a store stood at 0'
-hold_says 'these stores stand at 0, they were not started again: idp/statefulset/idp-postgresql' || fail 'backup: the driver did not name the store at 0'
+hold_says 'these stores were asked to stop and do not read the replicas they had: idp/statefulset/idp-postgresql reads 0 replica(s) of the 1 it had' || fail 'backup: the driver did not name the store at 0 with the replicas the cluster reads'
+# a scale to 0 that fails and changes nothing leaves a store that runs: it is read as it is, and the Manager and the queue go
+hold_refused "$LOCK_TEXT" 1 false 70 'could not stop idp/idp-postgresql' knob-stop-fails=idp/idp-postgresql \
+  || fail "backup: a store whose scale to 0 failed and changed nothing kept the Manager stopped and the queue held: $(cat "$OUT/verdict")"
+hold_says 'idp/statefulset/idp-postgresql reads ready: 1 of 1' || fail 'backup: the driver did not read the store whose stop failed as it stands'
+! hold_says 'asked to stop' || fail 'backup: the driver called a store at 0 that still ran'
+[ "$(cat "$STANDIN/cluster/manager--manager.replicas")" = 1 ] && [ "$(cat "$STANDIN/cluster/suspend")" = false ] \
+  || fail 'backup: a store that still ran after its failed stop left the Manager stopped or the queue held'
+# a scale to 0 that took effect and whose answer was lost leaves a store at 0: it is named with what the cluster reads, and nothing starts
+hold_refused "$LOCK_TEXT" 1 false 70 'could not stop idp/idp-postgresql' knob-stop-lost=idp/idp-postgresql \
+  || fail "backup: a store whose stop took effect and whose answer was lost was not refused as it must be: $(cat "$OUT/verdict")"
+hold_says 'these stores were asked to stop and do not read the replicas they had: idp/statefulset/idp-postgresql reads 0 replica(s) of the 1 it had' || fail 'backup: the driver did not name the store whose stop took effect'
+[ "$(cat "$STANDIN/cluster/manager--manager.replicas")" = 0 ] && [ "$(cat "$STANDIN/cluster/suspend")" = true ] \
+  || fail 'backup: the Manager was started or the queue let go while a store stood at 0 after a lost answer'
 # a store that does not read ready: neither the Manager nor the queue is let go, the store is named with the two commands, nothing is uploaded
 hold_refused "$LOCK_TEXT" 1 false 70 'idp/statefulset/idp-postgresql reads 0 ready replica(s) of the 1 it had' knob-not-ready=idp/idp-postgresql STORE_WAIT_SECONDS=1 \
   || fail "backup: a store that does not read ready was not refused as it must be: $(cat "$OUT/verdict")"
@@ -3975,7 +3993,8 @@ ok 'backup: the queue is held and the running release and publish runs and the J
 # the wait ended on one quiet pass; the wait that reads the CronJob's active list alone; the Manager started in the store loop, before the
 # last store; the queue let go in the store loop, before the last store; a release that reads readiness by rollout status, which kubectl
 # refuses for vault/vault; an exit that does not release what the run holds; a failed copy that forgets the store it could not start
-# again; a release that does not read the stores ready
+# again; a release that does not read the stores ready; a release that lets the queue go before it read the stores ready, with the
+# Manager never started; a release that trusts its record of the stopped stores instead of the cluster
 HOLD_BLOCK="$(printf '%s\n' "$LOCK_TEXT" | sed -n '/^step "the Manager.s runs, held"/,/^good "manager\/${MANAGER_KIND}\/${MANAGER_WORKLOAD} stopped/p')"
 [ -n "$HOLD_BLOCK" ] || fail 'the backup driver carries no hold — the planted defects cannot be built'
 READY_LINE="$(printf '%s\n' "$LOCK_TEXT" | grep '^ready_of() ')"
@@ -3994,6 +4013,10 @@ plant "$LOCK_TEXT" "$READY_LINE" 'ready_of() { if K -n "$1" rollout status "$3/$
 plant "$LOCK_TEXT" '[ -z "$HELD" ] || release_hold || true; ' ''; EXIT_KEEPS_HOLD="$PLANTED_TEXT"
 plant "$LOCK_TEXT" '    die "the copy of ${ns}/${pvc} failed, and' $'    STOPPED=\'\'; die "the copy of ${ns}/${pvc} failed, and'; FORGETS_STORE="$PLANTED_TEXT"
 plant "$LOCK_TEXT" "$READY_LINE" 'ready_of() { echo 99; }'; NEVER_NOT_READY="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'  for row in $STARTED; do\n' $'  K -n "$QUEUE_NAMESPACE" patch "cronjob/$QUEUE_CRONJOB" --type=merge -p "{\\"spec\\":{\\"suspend\\":${QUEUE_WAS}}}" >/dev/null\n  for row in $STARTED; do\n'; LET_GO_FIRST="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '    got=$(replicas_of "$ns" "$workload" "$kind")
+    if [ "$got" -ge "$want" ]' '    got=0
+    if [ "$got" -ge "$want" ]'; TRUSTS_RECORD="$PLANTED_TEXT"
 hold_caught() { # <the name of the planted defect> <the driver's text> <the knobs> -> <what the verdict must say first> [<what else it may say>...]
   local name="$1" text="$2" knobs="$3"
   shift 3
@@ -4010,9 +4033,12 @@ hold_caught 'the Manager started before the last store' "$MANAGER_EARLY" '' 'whi
 hold_caught 'the queue let go before the last store' "$QUEUE_EARLY" '' 'while the queue was not held'
 hold_caught 'readiness read by rollout status' "$READY_BY_ROLLOUT" 'STORE_WAIT_SECONDS=1' 'the run ended with the Manager at 0' 'the run ended with' 'the run did not end with BACKUP'
 hold_caught 'an exit that does not release the hold' "$EXIT_KEEPS_HOLD" 'copy-fails=mongodb-data-mongodb-prod-1' 'the run ended with the Manager at 0' 'the run ended with' 'the run did not end with BACKUP'
-hold_caught 'a failed copy that forgets the store it could not start again' "$FORGETS_STORE" 'copy-fails=idp-data-idp-postgresql-0 knob-scale-fails=idp/idp-postgresql' 'the Manager was started, or the queue let go, while these stores were not back and ready' 'the run ended with' 'the run did not end with BACKUP'
-hold_caught 'a release that does not read the stores ready' "$NEVER_NOT_READY" 'knob-not-ready=idp/idp-postgresql STORE_WAIT_SECONDS=1' 'the Manager was started, or the queue let go, while these stores were not back and ready'
-ok 'backup: the planted drivers are caught: no hold, the running run not read, no wait, a wait ended on one quiet pass, a wait that reads the active list alone, the Manager or the queue let go before the last store, readiness read by rollout status, an exit that does not release the hold, a failed copy that forgets its store, a release that does not read the stores ready'
+hold_caught 'a failed copy that forgets the store it could not start again' "$FORGETS_STORE" 'copy-fails=idp-data-idp-postgresql-0 knob-scale-fails=idp/idp-postgresql' 'the Manager was started while these stores were not back and ready' 'the queue was let go while these stores were not back and ready' 'the run ended with' 'the run did not end with BACKUP'
+hold_caught 'a release that does not read the stores ready' "$NEVER_NOT_READY" 'knob-not-ready=idp/idp-postgresql STORE_WAIT_SECONDS=1' 'the Manager was started while these stores were not back and ready' 'the queue was let go while these stores were not back and ready'
+# the Manager is never started here, so the world rule's half for the Manager is satisfied and the let-go half has to fire on its own
+hold_caught 'a queue let go before the stores were read ready, the Manager never started' "$LET_GO_FIRST" 'knob-not-ready=idp/idp-postgresql STORE_WAIT_SECONDS=1' 'the queue was let go while these stores were not back and ready' 'the run ended with' 'the run did not end with BACKUP'
+hold_caught 'a release that trusts its record of the stopped stores instead of the cluster' "$TRUSTS_RECORD" 'knob-stop-fails=idp/idp-postgresql' 'the run ended with the Manager at 0' 'the run ended with' 'the run did not end with BACKUP'
+ok 'backup: the planted drivers are caught: no hold, the running run not read, no wait, a wait ended on one quiet pass, a wait that reads the active list alone, the Manager or the queue let go before the last store, readiness read by rollout status, an exit that does not release the hold, a failed copy that forgets its store, a release that does not read the stores ready, a queue let go before the stores were read ready, a release that trusts its record of the stopped stores'
 
 # The restore: the fetch, the clone, the fetch of the branch, the opening of the quorum and of every store,
 # as the driver's own text runs them against a backup the rclone stand-in serves.

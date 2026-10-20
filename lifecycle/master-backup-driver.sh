@@ -298,17 +298,26 @@ release_refused() {
   say "  microk8s kubectl -n ${QUEUE_NAMESPACE} patch cronjob/${QUEUE_CRONJOB} --type=merge -p '{\"spec\":{\"suspend\":${QUEUE_WAS}}}'"
 }
 # release_hold: starts the Manager with the replicas it had and then lets the queue go, only when every store this run
-# stopped is started again and reads ready within STORE_WAIT_SECONDS. Otherwise it starts neither, says which store, and
-# ends 1. It is called once: HELD is cleared first, so the way out does not run it again after a refusal.
+# stopped reads the replicas it had and ready within STORE_WAIT_SECONDS. Otherwise it starts neither, says which
+# store, and ends 1. It is called once: HELD is cleared first, so the way out does not run it again after a refusal.
+# A store asked to stop is read from the cluster, not from the record: a scale to 0 that failed may have changed
+# nothing, and a scale back that failed may have worked.
 release_hold() {
   local row ns workload kind want got deadline names=''
   HELD=''
-  if [ -n "$STOPPED" ]; then
-    for row in $STOPPED; do
-      IFS='|' read -r ns workload kind want <<< "$row"
-      names="${names} ${ns}/${kind}/${workload}"
-    done
-    release_refused "these stores stand at 0, they were not started again:${names}"
+  for row in $STOPPED; do
+    IFS='|' read -r ns workload kind want <<< "$row"
+    got=$(replicas_of "$ns" "$workload" "$kind")
+    if [ "$got" -ge "$want" ] 2>/dev/null; then
+      mark_started "$row"
+    elif [ -n "$got" ]; then
+      names="${names}${names:+; }${ns}/${kind}/${workload} reads ${got} replica(s) of the ${want} it had"
+    else
+      names="${names}${names:+; }${ns}/${kind}/${workload} could not be read"
+    fi
+  done
+  if [ -n "$names" ]; then
+    release_refused "these stores were asked to stop and do not read the replicas they had: ${names}"
     return 1
   fi
   for row in $STARTED; do
