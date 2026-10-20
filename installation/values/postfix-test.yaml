@@ -4,7 +4,7 @@
 postfix:
   config:
     general:
-      RELAYHOST: "[100.64.0.2]:2525"
+      RELAYHOST: "[100.64.0.2]:2526"
 relayTarget:
   address: "100.64.0.2"
-  port: 2525
+  port: 2526

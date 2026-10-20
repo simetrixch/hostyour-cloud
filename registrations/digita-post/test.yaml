@@ -15,4 +15,4 @@ size: "small"
 mongodb: "shared"
 quota: {"requestsCpu":"400m","requestsMemory":"1Gi","limitsCpu":"1500m","limitsMemory":"2Gi","pods":8,"persistentVolumeClaims":1}
 host: "post"
-smtpEntry: {"service":"digita-post-mta","port":2525,"dkimKey":"MAIL_DKIM_PRIVATE_KEY"}
+smtpEntry: {"service":"digita-post-mta","port":2526,"dkimKey":"MAIL_DKIM_PRIVATE_KEY"}
