@@ -506,8 +506,10 @@ $found"
 # scripts/alert-mail-sender.test.mjs renders per-stage domains and proves that the sender takes its
 # domain from global.unitApex. It does not prove that the apex is among the relay's
 # ALLOWED_SENDER_DOMAINS: no stand-in renders the allowlist, and alert-mail-sender.test.mjs hands it
-# in by --set. The allowlist is declared in hostyour-deploy ansiwise/templates/postfix-values.tpl:13
-# and no test reads it yet: a template that loses the apex leaves this check green.
+# in by --set. The allowlist is declared in hostyour-deploy ansiwise/templates/postfix-values.tpl,
+# and hostyour-deploy scripts/postfix-values.test.mjs holds it to the platform domain and the unit
+# apex the branch row binds; alert-mail-sender.test.mjs hands the same two domains in by --set on
+# the same key path.
 #
 # `eval` reads one document at a time, which the name bound in its filter needs.
 # $1 says where the render came from, $2 is a file holding it, $3 is the stage. One line per finding
