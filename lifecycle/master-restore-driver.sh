@@ -133,7 +133,8 @@ GIT_CONF="$SECRETS/git.conf"
 (
   umask 077
   printf '%s' "$BACKUP_PASSPHRASE" > "$PASSPHRASE_FILE"
-  printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF"
+  # The hash check of the remote is off, as where the backup was written: the box answers rclone's md5sum command with a failure or never.
+  printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\ndisable_hashcheck = true\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF"
   printf '[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic %s\n' "$(printf 'x-access-token:%s' "$PLATFORM_REPO_READ_PAT" | base64 | tr -d '\n')" > "$GIT_CONF"
 ) || die 'the secrets could not be written to files in memory' 78
 export RCLONE_CONFIG="$RCLONE_CONF"
