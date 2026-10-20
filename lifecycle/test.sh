@@ -4374,6 +4374,30 @@ RESTORE_CLEANUP_CLEAN="$RESTORE_CLEANUP"; RESTORE_CLEANUP="$RESTORE_KEPT"
 caught_for 'clean-up that leaves the folder' 'stands after the driver ended'
 RESTORE_CLEANUP="$RESTORE_CLEANUP_CLEAN"
 ok 'the planted restore lines are caught under each sudo: the box password in env or as an argument, the token in -c, the passphrase in env for the quorum and for a store, files under an open umask, a box config that leaves the remote hash check on, a folder left behind'
+# the storage box is named "the storage box" and nothing more in what both drivers print, whether it opens or does not
+box_opening_of() { sed -n '/^rclone lsd box:/,/^good .the storage box opens/p' "$HERE/$1"; } # the lines of a driver that try the box and say so
+box_account_in_output() { # <lifted text> <what rclone ends with> — ends 0 when the fixture's host or user stands in what the text prints; that output stands in $OUT/box.out
+  ( die() { echo "die: $1"; exit "${2:-1}"; }; good() { echo "good: $*"; }
+    STORAGE_BOX_HOST="$BOX_HOST"; STORAGE_BOX_USER="$BOX_USER"; RCLONE_ENDS="$2"
+    rclone() { return "$RCLONE_ENDS"; }
+    eval "$1" ) > "$OUT/box.out" 2>&1 || true
+  grep -qF -e "$BOX_HOST" -e "$BOX_USER" "$OUT/box.out"
+}
+for driver in master-backup-driver.sh master-restore-driver.sh; do
+  BOX_OPENING="$(box_opening_of "$driver")"
+  [ -n "$BOX_OPENING" ] || fail "$driver carries no line that tries the storage box — nothing below measures what it prints about it"
+  for rclone_ends in 0 1; do
+    ! box_account_in_output "$BOX_OPENING" "$rclone_ends" || fail "$driver names the storage box account when rclone ends $rclone_ends: $(cat "$OUT/box.out")"
+    grep -qF 'the storage box' "$OUT/box.out" || fail "$driver says nothing of the storage box when rclone ends $rclone_ends — the case would pass on an empty output"
+    PLANTED_OPENS="the storage box '\"\$STORAGE_BOX_HOST\"' opens"
+    PLANTED_REFUSES="the storage box does not open to '\"\$STORAGE_BOX_USER\"'"
+    PLANTED_OPENING="${BOX_OPENING//the storage box opens/$PLANTED_OPENS}"
+    PLANTED_OPENING="${PLANTED_OPENING//the storage box does not open/$PLANTED_REFUSES}"
+    [ "$PLANTED_OPENING" != "$BOX_OPENING" ] || fail "$driver: the planted lines changed nothing — the planted defect proves nothing"
+    box_account_in_output "$PLANTED_OPENING" "$rclone_ends" || fail "$driver: the planted host and user in the box lines were not caught when rclone ends $rclone_ends — the probe proves nothing"
+  done
+done
+ok 'both drivers print "the storage box" without the host or user of the box, when it opens and when it does not, and a planted host or user in those lines is caught'
 rm -rf "$STANDIN" "$SEAL_DIR" "$WORK"/placement-*
 
 # ===========================================================================

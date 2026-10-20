@@ -190,8 +190,8 @@ RCLONE_CONF="$SECRETS/rclone.conf"
 ( umask 077; printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\ndisable_hashcheck = true\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF" ) \
   || die 'the storage box config could not be written to a file in memory' 78
 export RCLONE_CONFIG="$RCLONE_CONF"
-rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was stopped" 69
-good "the storage box $STORAGE_BOX_HOST opens"
+rclone lsd box: >/dev/null 2>&1 || die 'the storage box does not open — nothing was stopped' 69
+good 'the storage box opens'
 
 # The file is opened with <> and never with >, which would wipe the record of the run that holds it before the
 # lock is tried. flock ends 75 on a lock another process holds, and any other code is its own failure.

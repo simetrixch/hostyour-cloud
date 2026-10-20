@@ -138,8 +138,8 @@ GIT_CONF="$SECRETS/git.conf"
   printf '[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic %s\n' "$(printf 'x-access-token:%s' "$PLATFORM_REPO_READ_PAT" | base64 | tr -d '\n')" > "$GIT_CONF"
 ) || die 'the secrets could not be written to files in memory' 78
 export RCLONE_CONFIG="$RCLONE_CONF"
-rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was placed" 69
-good "the storage box $STORAGE_BOX_HOST opens"
+rclone lsd box: >/dev/null 2>&1 || die 'the storage box does not open — nothing was placed' 69
+good 'the storage box opens'
 
 BACKUPS="box:$FQDN/master"
 if [ -z "$ID" ]; then
