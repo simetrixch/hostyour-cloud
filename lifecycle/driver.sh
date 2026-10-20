@@ -298,13 +298,31 @@ readonly STAGE="${STAGE:-}"
 readonly DEPLOY_REPO="${DEPLOY_REPO:-}"
 readonly PROGRAMS_REPO="${PROGRAMS_REPO:-}"
 readonly PLATFORM_REPO="${PLATFORM_REPO:-}"
+readonly FORGEJO_PLATFORM_REPOSITORY="${FORGEJO_PLATFORM_REPOSITORY:-}"
 readonly OPERATOR="${OPERATOR_USER:-}"
 readonly FQDN="${FQDN:-}"
 readonly ROLE="${ROLE:-}"
 
-for named in STAGE DEPLOY_REPO PROGRAMS_REPO PLATFORM_REPO OPERATOR FQDN ROLE; do
+for named in STAGE DEPLOY_REPO PROGRAMS_REPO PLATFORM_REPO FORGEJO_PLATFORM_REPOSITORY OPERATOR FQDN ROLE; do
   [ -n "${!named}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
+
+# WHICH FORGE SERVES THE PLATFORM REPOSITORY. PLATFORM_REPO names it on github.com until the tree has moved;
+# once it names the same repository as FORGEJO_PLATFORM_REPOSITORY it is read from this installation's
+# Forgejo, where it is private. The two answers deploy-host and deploy-branch choose their rows by are
+# these two, so this run and those programs cannot disagree about where the tree stands.
+#
+# A PRIVATE REPOSITORY IS READ WITH A CREDENTIAL, so a config that puts the tree on Forgejo and states no
+# host or no reader is refused here, by name, before a probe that would only fail as "not found".
+PLATFORM_ON_FORGEJO=false
+if [ "$PLATFORM_REPO" = "$FORGEJO_PLATFORM_REPOSITORY" ]; then
+  PLATFORM_ON_FORGEJO=true
+  for named in FORGEJO_HOST PLATFORM_REPO_READ_PAT; do
+    [ -n "${!named:-}" ] \
+      || die "the config names $PLATFORM_REPO as PLATFORM_REPO and as FORGEJO_PLATFORM_REPOSITORY, so the platform repository is read from Forgejo, and it says nothing under ${named}, which that read needs" 64
+  done
+fi
+readonly PLATFORM_ON_FORGEJO
 
 # WHERE A RELEASED EXECUTABLE IS FETCHED FROM: the owner's registry, which serves every
 # binary of a release as a raw blob at the address of its SHA-256 and answers an anonymous
@@ -388,14 +406,32 @@ good 'the elevation password raises a command'
 # what a restore left behind. Only the operator knows which, so both are said and the
 # run stops.
 #
-# NO CREDENTIAL, AND DELIBERATELY SO. The platform repository is the one this machine
-# already reads its pin out of over plain HTTPS, so asking github whether a ref exists
-# needs nothing — and a token would have to stand in this command's own words, which is
-# the one thing nothing here does. GIT_TERMINAL_PROMPT=0 keeps a repository that is NOT
-# public from turning this into a prompt nobody can see.
-BRANCH_TIP=$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads \
-  "https://github.com/$PLATFORM_REPO.git" "refs/heads/$FQDN" 2>/dev/null | awk '{print $1}')
-STATUS=$?
+# THE CREDENTIAL STANDS IN THE ENVIRONMENT OF THIS ONE COMMAND AND IN NO WORD OF IT, which is the
+# rule this probe keeps: a token in an argument stands in this machine's own process listing. On
+# github.com the repository is public and nothing is sent. On Forgejo the reader's token travels as the
+# Basic header git is handed through GIT_CONFIG_COUNT/KEY_0/VALUE_0, the way deploy-host's clone sends it,
+# and only to that host. GIT_TERMINAL_PROMPT=0 keeps a repository that refuses the read from turning this
+# into a prompt nobody can see.
+#
+# A REFUSED OR UNREACHED ASK IS NOT AN ANSWER. "No branch stands there" is what lets this run cut the
+# branch fresh, so an ask that failed must not read as that answer: it ends the run, with git's words.
+if [ "$PLATFORM_ON_FORGEJO" = true ]; then
+  PLATFORM_URL="https://$FORGEJO_HOST/$PLATFORM_REPO.git"
+else
+  PLATFORM_URL="https://github.com/$PLATFORM_REPO.git"
+fi
+ask_platform_branches() {
+  if [ "$PLATFORM_ON_FORGEJO" = true ]; then
+    GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://$FORGEJO_HOST/.extraHeader" \
+      GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'oauth2:%s' "$PLATFORM_REPO_READ_PAT" | base64 -w0)" \
+      git ls-remote --heads "$PLATFORM_URL" "refs/heads/$FQDN" 2>&1
+  else
+    GIT_TERMINAL_PROMPT=0 git ls-remote --heads "$PLATFORM_URL" "refs/heads/$FQDN" 2>&1
+  fi
+}
+BRANCH_ASKED=$(ask_platform_branches) \
+  || die "git could not ask $PLATFORM_REPO ($PLATFORM_URL) whether it carries a branch named $FQDN: $BRANCH_ASKED" 69
+BRANCH_TIP=$(printf '%s\n' "$BRANCH_ASKED" | awk -v ref="refs/heads/$FQDN" '$2 == ref {print $1}')
 FIRST=''
 
 if [ -n "$BRANCH_TIP" ]; then
@@ -478,8 +514,6 @@ WHICH OF THESE IT IS, ONLY YOU KNOW:
   else
     good "$FQDN stands at ${BRANCH_TIP:0:7} and this machine wrote it — deploy-branch stands the checkout on it and its push will fast-forward"
   fi
-elif [ $STATUS -ne 0 ]; then
-  warn "could not ask whether $PLATFORM_REPO already carries a branch named $FQDN. If it does, deploy-branch is refused at its last step"
 else
   FIRST=1
   good "$PLATFORM_REPO carries no branch named $FQDN — this machine's is cut fresh"
@@ -690,14 +724,30 @@ fi
 # =============================================================================
 phase '1 / 4   the engine, at the version the platform repository pins'
 # =============================================================================
-# READ OFF THE PUBLIC PLATFORM REPOSITORY BY THIS MACHINE. The pin is one fact of
+# READ OFF THE PLATFORM REPOSITORY BY THIS MACHINE. The pin is one fact of
 # an installation (clusters/platform/versions.yaml, cliTools.ansiwise.version) and
 # no caller states a version: a machine carrying one no file names is a machine
 # nobody can say anything about afterwards.
-readonly PIN_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/versions.yaml"
-readonly DIGESTS_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/ansiwise.sha256"
+#
+# ON FORGEJO THE FILE IS READ WITH THE READER'S TOKEN, because the repository is private there. The
+# header reaches curl as a line of a configuration it reads from standard input, so the token stands in
+# no word of the command and not in this machine's process listing.
+if [ "$PLATFORM_ON_FORGEJO" = true ]; then
+  readonly PIN_URL="https://$FORGEJO_HOST/$PLATFORM_REPO/raw/branch/master/clusters/platform/versions.yaml"
+  readonly DIGESTS_URL="https://$FORGEJO_HOST/$PLATFORM_REPO/raw/branch/master/clusters/platform/ansiwise.sha256"
+else
+  readonly PIN_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/versions.yaml"
+  readonly DIGESTS_URL="https://raw.githubusercontent.com/$PLATFORM_REPO/master/clusters/platform/ansiwise.sha256"
+fi
+read_platform_file() { # <url>
+  if [ "$PLATFORM_ON_FORGEJO" = true ]; then
+    printf 'header = "Authorization: token %s"\n' "$PLATFORM_REPO_READ_PAT" | curl -fsSL --config - "$1"
+  else
+    curl -fsSL "$1"
+  fi
+}
 say "reading the pin from $PIN_URL"
-PIN_YAML=$(curl -fsSL "$PIN_URL") || die "$PIN_URL could not be read from this machine" 69
+PIN_YAML=$(read_platform_file "$PIN_URL") || die "$PIN_URL could not be read from this machine" 69
 # SINGLE-QUOTED FOR THE SHELL, so every dollar and every quote below belongs to
 # python and not to bash. The regexes therefore use double quotes throughout and
 # never a single one.
@@ -723,7 +773,7 @@ else
   [ "$ENGINE_ANSWERS" = "$PIN" ] || say "$ENGINE answers ${ENGINE_ANSWERS:-nothing}, which is not the pin"
   [ "$SERVING_ANSWERS" = "$PIN" ] || say "/usr/local/bin/ansiwise-rest answers ${SERVING_ANSWERS:-nothing}, which is not the pin"
   say "reading the digests from $DIGESTS_URL"
-  DIGESTS=$(curl -fsSL "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine" 69
+  DIGESTS=$(read_platform_file "$DIGESTS_URL") || die "$DIGESTS_URL could not be read from this machine" 69
   # EVERY ADDRESS BEFORE ANY DOWNLOAD. A blob is addressed by the digest its line states, so an
   # asset with no line, or with two, has no address at all and is refused before anything is fetched.
   for tool in ansiwise ansiwise-rest; do
