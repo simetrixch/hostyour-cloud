@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Fixture suites. scripts/check.sh runs them as its last section, so the push gate runs every suite on the machine.
+# Fixture suites. scripts/check.sh runs them as its last section, after it built the dependencies of every chart, so the push gate runs every
+# suite on the machine and no two suites write one chart's charts/ directory together.
 # The suites share nothing: each works in a temporary directory of its own and listens only on a port the kernel hands it, so TEST_JOBS of them
-# run at once (4 unless set). The charts they render get their dependencies first, one chart after the other, because two suites that rendered
-# one chart before its charts/ directory stood would write it together. The output of a suite is kept in a log of its own and printed in the order
+# run at once (4 unless set). The output of a suite is kept in a log of its own and printed in the order
 # of the list below once all have ended: a passed suite as one line with its time, a failed one in full, so the end of the output names what failed.
 # A suite that leaves no status (killed by the kernel, for one, which also stops the pool) is a failed suite.
 set -euo pipefail
@@ -24,7 +24,7 @@ suite scripts/build-contract.test.mjs 'production build chart and immutable-fiel
 suite scripts/pipeline-publish.test.sh 'what a release tag publishes to the registry, what a packed tarball may carry, and the push.'
 suite scripts/zot-sync.test.mjs 'registry sync — zot asks Docker Hub on a miss for the Docker Hub repositories it lists, every one the tree names among them, and for no repository the platform publishes, so a missing owned version is a 404.'
 suite scripts/forgejo-ssh.test.mjs 'forge — the Forgejo SSH check reads the announced port from the install branch, is green on an SSH banner, and red on a closed, a silent or a wrong port.'
-suite scripts/test-pool.test.sh 'the pool of this script runs suites at once, builds the chart dependencies first, and ends red for a failed suite and for one that left no status.'
+suite scripts/test-pool.test.sh 'the pool of this script runs suites at once and ends red for a failed suite and for one that left no status.'
 suite scripts/plane.test.mjs 'forge — Plane waits for the forward auth on every page but /api/v1, keeps its data beside it, and renders no public default.'
 suite scripts/pipeline-release.test.sh 'release pipeline decisions.'
 suite scripts/check-mirror-consumers.test.sh 'a consumer of the owner'\''s mirror that names an upstream, or a version, a sha256, a chart or an allowlist entry the table does not hold, is refused by file:line.'
@@ -66,16 +66,6 @@ if [ "${1:-}" = --suite ]; then
   echo "$status $((SECONDS - started))" >"$log.status"
   exit 0
 fi
-
-# The dependencies of every chart, by the rule of scripts/check.sh: update every chart whose dependencies name a
-# repository, and leave a vendored one alone. The suites render charts from every folder, and a hand-kept list of
-# them misses the next one a suite starts to render.
-for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/ clusters/argocd/; do
-  chart="${chart%/}"
-  [ -f "$chart/Chart.yaml" ] || continue
-  grep -qE '^[[:space:]]+repository:' "$chart/Chart.yaml" || continue
-  out="$(helm dependency update "$chart" 2>&1)" || { echo "$out"; fail "helm dependency update $chart"; }
-done
 
 TEST_LOGS="$(mktemp -d)"
 export TEST_LOGS
