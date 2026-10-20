@@ -424,7 +424,7 @@ const celOf = name => {
 };
 const repository = {name: 'Shop', full_name: 'Owner/Shop'};
 
-test('a tag push and an opened or updated pull request start a run; a branch, a deleted tag, a closed pull request do not', () => {
+test('a tag push and an opened or updated pull request of the repository\'s own start a run; a branch, a deleted tag, a closed pull request, a fork\'s pull request, an AGit pull request do not', () => {
   const tags = evaluate(celOf('forgejo-tag-push'), [
     {body: {ref: 'refs/tags/v0.0.1', after: SHA, repository}},
     {body: {ref: 'refs/heads/main', after: SHA, repository}},
@@ -432,9 +432,9 @@ test('a tag push and an opened or updated pull request start a run; a branch, a 
     {body: {ref: 'refs/tags/a/b', after: SHA, repository}}]);
   assert.deepEqual(tags.map(v => v.denied.length === 0), [true, false, false, false]);
   assert.deepEqual(tags[0].variables, {repository: 'Owner/Shop', 'image-name': 'forgejo/owner/shop', commit: SHA, revision: 'refs/tags/v0.0.1', tag: 'v0.0.1'});
-  const pulls = evaluate(celOf('forgejo-pull-request'), ['opened', 'synchronized', 'reopened', 'closed'].map(action =>
-    ({body: {action, number: 7, pull_request: {head: {sha: SHA}}, repository}})));
-  assert.deepEqual(pulls.map(v => v.denied.length === 0), [true, true, true, false]);
+  const pull = (action, headRepoId, flow) => ({body: {action, number: 7, pull_request: {flow, base: {repo_id: 1}, head: {sha: SHA, repo_id: headRepoId}}, repository}});
+  const pulls = evaluate(celOf('forgejo-pull-request'), [...['opened', 'synchronized', 'reopened', 'closed'].map(action => pull(action, 1, 0)), pull('opened', 2, 0), pull('opened', 1, 1)]);
+  assert.deepEqual(pulls.map(v => v.denied.length === 0), [true, true, true, false, false, false]);
   assert.deepEqual(pulls[0].variables, {repository: 'Owner/Shop', 'image-name': 'forgejo/owner/shop', commit: SHA, revision: 'refs/pull/7/head'});
 });
 
