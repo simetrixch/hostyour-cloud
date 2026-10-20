@@ -24,7 +24,7 @@ metadata:
 spec:
   description: The targets of the E2E runner, one ExternalSecret per demo tenant and stage, in the runner's namespace and nowhere else.
   sourceRepos:
-    - https://github.com/simetrixch/hostyour-cloud.git
+    - __PLATFORM_URL__
   destinations:
     - name: __CLUSTER_NAME__
       namespace: e2e-runner
@@ -43,7 +43,7 @@ spec:
     - missingkey=error
   generators:  # the generator of tenants-appset.yaml: one Application per registration and stage
     - git:
-        repoURL: https://github.com/__DEPLOY_REPO__.git
+        repoURL: __DEPLOY_URL__
         revision: __BOOKS_FQDN__
         files:
           - path: "registrations/*/dev.yaml"
@@ -80,10 +80,10 @@ spec:
     {{- $zone := printf "%s.%s" .subdomain (index (dict "dev" "__STAGE_APEX_DEV__" "test" "__STAGE_APEX_TEST__" "prod" "__STAGE_APEX_PROD__") .values.stage) }}
     spec:
       sources:
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           ref: values
-        - repoURL: https://github.com/simetrixch/hostyour-cloud.git
+        - repoURL: __PLATFORM_URL__
           targetRevision: __BRANCH__
           path: clusters/units/e2e-target
           helm:

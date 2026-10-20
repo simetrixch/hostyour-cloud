@@ -33,6 +33,10 @@ registration:
 # what a cluster carrying the master part answers; on a pure slave the ApplicationSet fills the
 # slave's own short name instead.
 argoNamespace: argocd
+# The platform repository the unit's AppProject allows beside the unit's own, as units-appset.yaml hands it
+# from global.platformUrl. A name under .invalid, so it is neither the product default nor a Forgejo's, and
+# scripts/check.sh renders the reconciler from what the ApplicationSet hands, not from this file.
+platformRepoUrl: https://platform.check.example.invalid/check/hostyour-cloud.git
 quota:
   requestsCpu: "1"
   requestsMemory: 1Gi
