@@ -30,6 +30,8 @@ tool https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_amd64 fa
 tool https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64 b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f
 tool https://github.com/argoproj/argo-cd/releases/download/v3.5.5/argocd-linux-amd64 c3ddfa606fc3e89ab14f55bda6600b207c355b028f8eaabe69b817a4c4621aba
 tool https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
+tool https://github.com/rclone/rclone/releases/download/v1.75.2/rclone-v1.75.2-linux-amd64.deb efbfe852181f7191eb3c9043ed1ab49c9b2d0ba045c61c926a5da111c939ec5c
+tool https://github.com/rclone/rclone/releases/download/v1.75.2/rclone-v1.75.2-linux-arm64.deb b8ba161d5c837206fad79ff1aabf0a81aa02a5fb164cdbc0ff5db4160aecd278
 chart https://prometheus-community.github.io/helm-charts kube-prometheus-stack 87.21.0 05eae98df0ff6c21877a26a4400780e4bbff248bc3b88694ef8d08b273ed6815
 chart https://prometheus-community.github.io/helm-charts kube-state-metrics 8.0.0 e9a119672c0764580ff8739c11a88dad5a9822607ea10b7e2475b207f8c39f41
 chart https://prometheus-community.github.io/helm-charts prometheus-mongodb-exporter 3.20.0 260da83dad29bae6d232c19b4183b2c3322cff700d6ced2d0c99bb9dcfd72eb6
