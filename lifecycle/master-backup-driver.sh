@@ -69,8 +69,14 @@
 # last check is what makes the first one whole: a checksum line that lost its form is skipped by the filter
 # of the first, and so is the archive under it. The storage box answers rclone's md5sum command over its shell
 # with a failure, or never, so the remote's hash check is off and what proves the bytes is the manifest's sha256.
-# The copy back is given READBACK_WAIT_SECONDS and one second more for each READBACK_LEAST_BYTES_PER_SECOND of the
-# backup, and when that passes this ends 69 and says so.
+# The rate of the copy back is measured, not assumed: for its first READBACK_WAIT_SECONDS the bytes rclone reports
+# received are held against rclone's own elapsed time, the floor is that rate divided by READBACK_SLOWDOWN_FACTOR,
+# and the rest of the copy is given the time the whole backup takes at the floor, counted from the end of that
+# measurement and never moved again. A copy that moves no byte for READBACK_WAIT_SECONDS, or passes its allowance,
+# is ended and this ends 69, saying how many bytes were read and at what rate. A rate below the floor that never
+# stands still is ended by that allowance alone, so a very slow box is not waited on past it.
+# THE STORAGE BOX IS NAMED "the storage box" AND NOTHING MORE in what this prints. rclone's own messages carry the
+# account, so none of them reaches a stream: its errors are dropped and its statistics are read as three numbers.
 # ===========================================================================
 set -uo pipefail
 
@@ -85,8 +91,10 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 # The queue that starts every release and publish run, and how long this waits on it and on a store, in seconds.
 # QUEUE_WAIT_SECONDS is the pipelines' timeout of one hour (timeouts.pipeline of the release and the publish run,
 # which no run outlives) and five minutes. Each stands on a line of its own because a test moves them. The read-back
-# from the storage box is given READBACK_WAIT_SECONDS, for the connection, the listing and the box's latency, and one
-# second more for each READBACK_LEAST_BYTES_PER_SECOND of the backup, the slowest the box is held to.
+# from the storage box measures its own rate for READBACK_WAIT_SECONDS, the connection, the listing and the box's
+# latency among them, and ends a copy that moves no byte for as long. READBACK_POLL_SECONDS is how often it looks at
+# rclone's statistics, READBACK_REPORT_SECONDS how often it prints them, READBACK_GRACE_SECONDS how long a copy asked
+# to end has before it is killed, and READBACK_SLOWDOWN_FACTOR how many times slower than measured the box may get.
 readonly QUEUE_NAMESPACE=image-builder
 readonly QUEUE_CRONJOB=release-queue
 readonly QUEUE_POLL_SECONDS=5
@@ -94,11 +102,20 @@ readonly QUEUE_WAIT_SECONDS=3900
 readonly STORE_POLL_SECONDS=2
 readonly STORE_WAIT_SECONDS=180
 readonly READBACK_WAIT_SECONDS=300
-readonly READBACK_LEAST_BYTES_PER_SECOND=1048576
+readonly READBACK_POLL_SECONDS=5
+readonly READBACK_REPORT_SECONDS=30
+readonly READBACK_GRACE_SECONDS=30
+readonly READBACK_SLOWDOWN_FACTOR=2
 SECRETS=''
 READBACK=''
 HELD=''
-cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; if [ -n "$READBACK" ]; then root rm -rf "$READBACK" >/dev/null 2>&1; fi; }
+TRANSFER_JOB='' TRANSFER_CODE=''
+cleanup() {
+  rm -f "$CONFIG" 2>/dev/null || true
+  [ -z "$TRANSFER_JOB" ] || readback_end
+  [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true
+  if [ -n "$READBACK" ]; then root rm -rf "$READBACK" >/dev/null 2>&1; fi
+}
 # What this run holds is let go on every way out that is not a signal, once; a signal keeps the handler it had.
 leave() { local code=$?; [ -z "$HELD" ] || release_hold || true; cleanup; exit "$code"; }
 trap leave EXIT
@@ -190,8 +207,8 @@ RCLONE_CONF="$SECRETS/rclone.conf"
 ( umask 077; printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\ndisable_hashcheck = true\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF" ) \
   || die 'the storage box config could not be written to a file in memory' 78
 export RCLONE_CONFIG="$RCLONE_CONF"
-rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was stopped" 69
-good "the storage box $STORAGE_BOX_HOST opens"
+rclone lsd box: >/dev/null 2>&1 || die 'the storage box does not open — nothing was stopped' 69
+good 'the storage box opens'
 
 # The file is opened with <> and never with >, which would wipe the record of the run that holds it before the
 # lock is tried. flock ends 75 on a lock another process holds, and any other code is its own failure.
@@ -428,8 +445,8 @@ step "the manifest, and the way out"
 RELEASE=$(grep -E '^release:' "/srv/hostyour-cloud/clusters/active/${FQDN}.yaml" 2>/dev/null | head -1 | sed 's/^release:[[:space:]]*//' | tr -d '"'"'")
 root sh -c "cd '$WORK' && { printf 'FQDN=%s\nSTAGE=%s\nID=%s\nRELEASE=%s\nSTORES=%s\n' '$FQDN' '$STAGE' '$ID' '$RELEASE' '$TAKEN'; sha256sum *.gpg; } > manifest.txt" || die 'the manifest could not be written' 70
 say "release on this machine: ${RELEASE:-unknown}"
-root rclone --config "$RCLONE_CONF" copy "$WORK" "$BACKUPS/$ID/" --quiet || die "the archives could not be carried to $BACKUPS/$ID/ — they stand in $WORK on this machine" 69
-LISTING=$(root rclone --config "$RCLONE_CONF" lsf "$BACKUPS/$ID/") || die "the storage box could not be listed under $BACKUPS/$ID/ — the archives stand in $WORK on this machine" 69
+root rclone --config "$RCLONE_CONF" copy "$WORK" "$BACKUPS/$ID/" --quiet 2>/dev/null || die "the archives could not be carried to $BACKUPS/$ID/ (rclone ended $?) — they stand in $WORK on this machine" 69
+LISTING=$(root rclone --config "$RCLONE_CONF" lsf "$BACKUPS/$ID/" 2>/dev/null) || die "the storage box could not be listed under $BACKUPS/$ID/ (rclone ended $?) — the archives stand in $WORK on this machine" 69
 LISTED=$(printf '%s\n' "$LISTING" | grep -c .)
 EXPECTED=$(( TAKEN + 2 ))
 [ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under $BACKUPS/$ID/ and $EXPECTED were sent" 69
@@ -438,16 +455,125 @@ EXPECTED=$(( TAKEN + 2 ))
 # The work folder stands after a refusal, because the archives are all there is.
 READBACK="$WORK.readback"
 root install -d -m 700 -o root -g root "$READBACK" || die "could not make $READBACK" 78
-READBACK_BYTES=$(root du -sb "$WORK" | cut -f1) || die "the size of $WORK could not be read, and the time limit of the read-back is drawn from it — the archives stand in $WORK on this machine" 69
-READBACK_LIMIT=$(( READBACK_WAIT_SECONDS + READBACK_BYTES / READBACK_LEAST_BYTES_PER_SECOND ))
-say "reading back $READBACK_BYTES bytes from $BACKUPS/$ID/, within $READBACK_LIMIT s"
-READBACK_COPY_CODE=0
-root timeout --kill-after=30 "$READBACK_LIMIT" rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet || READBACK_COPY_CODE=$?
-case "$READBACK_COPY_CODE" in
-  0) ;;
-  124) die "the read-back of $BACKUPS/$ID/ did not finish within $READBACK_LIMIT s ($READBACK_BYTES bytes, held to $READBACK_LEAST_BYTES_PER_SECOND bytes a second and $READBACK_WAIT_SECONDS s) and was ended; the archives stand in $WORK on this machine" 69 ;;
-  *) die "the archives could not be read back from $BACKUPS/$ID/ — they stand in $WORK on this machine" 69 ;;
+# What the files sent weigh, by rclone's own count of the files it sends (no directory among them): the total the read-back is measured against.
+READBACK_EXPECTED=$(root rclone --config "$RCLONE_CONF" size "$WORK" --json 2>/dev/null | sed -n 's/^.*"bytes":\([0-9][0-9]*\).*$/\1/p')
+case "$READBACK_EXPECTED" in
+  ''|*[!0-9]*|0) die "the size of the files in $WORK could not be read, and the read-back is measured against it — the archives stand in $WORK on this machine" 69 ;;
 esac
+
+# rate_of BYTES MILLISECONDS: bytes a second to three places, and "unavailable" where no time has passed.
+rate_of() {
+  local milli
+  [ "$2" -gt 0 ] || { printf unavailable; return 0; }
+  milli=$(( $1 * 1000000 / $2 ))
+  printf '%d.%03d' $(( milli / 1000 )) $(( milli % 1000 ))
+}
+seconds_of() { printf '%d.%03d' $(( $1 / 1000 )) $(( $1 % 1000 )); } # MILLISECONDS as seconds
+# readback_allowance_seconds EXPECTED BYTES MILLISECONDS: the seconds the whole backup takes at the floor, which is the
+# rate BYTES in MILLISECONDS divided by READBACK_SLOWDOWN_FACTOR, rounded up so that a positive rate never gives none.
+readback_allowance_seconds() { printf '%d' $(( ($1 * READBACK_SLOWDOWN_FACTOR * $3 + $2 * 1000 - 1) / ($2 * 1000) )); }
+# readback_sample: the newest statistics line the transfer wrote, as "BYTES MILLISECONDS" in digits and nothing else;
+# nothing when no line holds both. rclone's other messages stay in the file, which is not printed and is gone at the end.
+readback_sample() {
+  grep -a '"stats":{"bytes":' "$READBACK_STATS" 2>/dev/null | tail -n 1 | awk '
+    !match($0, /"stats":\{"bytes":[0-9]+,/) { next }
+    { bytes = substr($0, RSTART + 17, RLENGTH - 18) }
+    !match($0, /"elapsedTime":[0-9]+(\.[0-9]+)?,/) { next }
+    { split(substr($0, RSTART + 14, RLENGTH - 15), part, ".")
+      millis = part[1] substr(part[2] "000", 1, 3)
+      if (length(bytes) <= 12 && length(millis) <= 8) print bytes, millis }'
+}
+readback_read() { # the newest sample into SAMPLE_BYTES and SAMPLE_MILLIS; ends 1 when there is none
+  local sample
+  sample=$(readback_sample)
+  [ -n "$sample" ] || return 1
+  read -r SAMPLE_BYTES SAMPLE_MILLIS <<< "$sample"
+  SAMPLE_BYTES=$(( 10#$SAMPLE_BYTES )) SAMPLE_MILLIS=$(( 10#$SAMPLE_MILLIS ))
+}
+readback_state() { # what the transfer had read, in the words of every failure and of the last line
+  if readback_read; then
+    printf 'read %s of %s expected bytes in %s s, %s bytes a second' "$SAMPLE_BYTES" "$READBACK_EXPECTED" "$(seconds_of "$SAMPLE_MILLIS")" "$(rate_of "$SAMPLE_BYTES" "$SAMPLE_MILLIS")"
+  else
+    printf 'no statistics were read of %s expected bytes' "$READBACK_EXPECTED"
+  fi
+  [ -z "$TRANSFER_CODE" ] || printf ', transfer exit status %s' "$TRANSFER_CODE"
+}
+# The transfer is root's, so root ends it: the pid it wrote is asked to end, and killed once READBACK_GRACE_SECONDS have passed.
+readback_end() {
+  local pid limit
+  [ -n "$TRANSFER_JOB" ] || return 0
+  if kill -0 "$TRANSFER_JOB" 2>/dev/null; then
+    pid=$(cat "$READBACK_PID" 2>/dev/null) || pid=''
+    case "$pid" in *[!0-9]*) pid='' ;; esac
+    [ -z "$pid" ] || root kill -TERM "$pid" >/dev/null 2>&1
+    limit=$(( SECONDS + READBACK_GRACE_SECONDS ))
+    while kill -0 "$TRANSFER_JOB" 2>/dev/null && [ "$SECONDS" -lt "$limit" ]; do sleep 0.1; done
+    if kill -0 "$TRANSFER_JOB" 2>/dev/null && [ -n "$pid" ]; then root kill -KILL "$pid" >/dev/null 2>&1; fi
+  fi
+  wait "$TRANSFER_JOB"; TRANSFER_CODE=$?
+  TRANSFER_JOB=''
+}
+readback_fail() { # WHAT HAPPENED — the transfer is ended and reaped, then this ends 69 naming it and what was read
+  readback_end
+  die "the read-back of $BACKUPS/$ID/ $1: $(readback_state); the archives stand in $WORK on this machine" 69
+}
+# readback_follow: the transfer runs in the background with its statistics in a file that only this reads. The first
+# READBACK_WAIT_SECONDS measure the rate; a transfer that moves no byte for that long is ended, and so is one that passes
+# the allowance the measured rate gives it, which is fixed at the end of the measurement. A transfer that ended while the
+# poll slept is judged by its exit status alone, never by a rule for one that still runs. Ends 0 when the transfer ended
+# 0 and left a statistics line; otherwise it ends the run.
+readback_follow() {
+  local started=$SECONDS progress=$SECONDS next_report now seen='' last=0 frozen='' deadline=0
+  next_report=$(( SECONDS + READBACK_REPORT_SECONDS ))
+  while kill -0 "$TRANSFER_JOB" 2>/dev/null; do
+    sleep "$READBACK_POLL_SECONDS"
+    now=$SECONDS
+    kill -0 "$TRANSFER_JOB" 2>/dev/null || break
+    if readback_read; then
+      seen=1
+      if [ "$SAMPLE_BYTES" -gt "$last" ]; then last=$SAMPLE_BYTES progress=$now; fi
+    fi
+    if [ -z "$seen" ] && [ $(( now - started )) -ge "$READBACK_WAIT_SECONDS" ]; then
+      readback_fail "gave no statistics within $READBACK_WAIT_SECONDS s, so its rate could not be measured"
+    fi
+    if [ -n "$seen" ] && [ $(( now - progress )) -ge "$READBACK_WAIT_SECONDS" ]; then
+      readback_fail "moved no byte for $READBACK_WAIT_SECONDS s and was ended"
+    fi
+    if [ -z "$frozen" ] && [ $(( now - started )) -ge "$READBACK_WAIT_SECONDS" ]; then
+      if [ "$SAMPLE_BYTES" -le 0 ] || [ "$SAMPLE_MILLIS" -le 0 ] || [ "${#READBACK_EXPECTED}" -gt 11 ] || [ "${#SAMPLE_MILLIS}" -gt 7 ]; then
+        readback_fail "gave statistics that cannot be measured and was ended"
+      fi
+      READBACK_LEAST_BYTES_PER_SECOND=$(rate_of "$SAMPLE_BYTES" $(( SAMPLE_MILLIS * READBACK_SLOWDOWN_FACTOR )))
+      READBACK_ALLOWED_SECONDS=$(readback_allowance_seconds "$READBACK_EXPECTED" "$SAMPLE_BYTES" "$SAMPLE_MILLIS")
+      deadline=$(( now + READBACK_ALLOWED_SECONDS )) frozen=1
+      say "measured $SAMPLE_BYTES bytes in $(seconds_of "$SAMPLE_MILLIS") s, $(rate_of "$SAMPLE_BYTES" "$SAMPLE_MILLIS") bytes a second; policy: a floor of 1/$READBACK_SLOWDOWN_FACTOR of it, $READBACK_LEAST_BYTES_PER_SECOND bytes a second; the $READBACK_EXPECTED bytes are given $READBACK_ALLOWED_SECONDS s more (backup $ID)"
+    fi
+    if [ -n "$frozen" ] && [ "$now" -ge "$deadline" ]; then
+      readback_fail "did not finish within the $READBACK_ALLOWED_SECONDS s its measured rate allows and was ended"
+    fi
+    if [ "$now" -ge "$next_report" ]; then
+      next_report=$(( now + READBACK_REPORT_SECONDS ))
+      if [ -n "$seen" ]; then
+        say "read back $SAMPLE_BYTES of $READBACK_EXPECTED bytes in $(seconds_of "$SAMPLE_MILLIS") s, $(rate_of "$SAMPLE_BYTES" "$SAMPLE_MILLIS") bytes a second (backup $ID)"
+      else
+        say "read back: no statistics yet (backup $ID)"
+      fi
+    fi
+  done
+  wait "$TRANSFER_JOB"; TRANSFER_CODE=$?
+  TRANSFER_JOB=''
+  [ "$TRANSFER_CODE" = 0 ] || die "the archives could not be read back from $BACKUPS/$ID/: $(readback_state); they stand in $WORK on this machine" 69
+  readback_read || die "the read-back of $BACKUPS/$ID/ ended without a statistics line, so what it read could not be counted; the archives stand in $WORK on this machine" 69
+}
+READBACK_STATS="$SECRETS/readback.stats" READBACK_PID="$SECRETS/readback.pid"
+( umask 077; : > "$READBACK_STATS"; : > "$READBACK_PID" ) || die 'the files for the read-back could not be made in memory' 78
+say "reading back $READBACK_EXPECTED bytes from $BACKUPS/$ID/; the first $READBACK_WAIT_SECONDS s measure the rate, and a copy that moves no byte for $READBACK_WAIT_SECONDS s is ended"
+root bash -c 'echo "$$" > "$1"; shift; exec "$@"' _ "$READBACK_PID" \
+  rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --use-json-log --stats "${READBACK_POLL_SECONDS}s" --stats-log-level NOTICE 2> "$READBACK_STATS" &
+TRANSFER_JOB=$!
+for _ in $(seq 1 100); do [ -s "$READBACK_PID" ] && break; kill -0 "$TRANSFER_JOB" 2>/dev/null || break; sleep 0.1; done
+readback_follow
+good "read back $SAMPLE_BYTES of $READBACK_EXPECTED expected bytes in $(seconds_of "$SAMPLE_MILLIS") s, $(rate_of "$SAMPLE_BYTES" "$SAMPLE_MILLIS") bytes a second (backup $ID)"
 READBACK_CODE=0
 root sh -c 'cd "$1" || exit 10
 grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11
@@ -465,5 +591,8 @@ if [ "$READBACK_CODE" != 0 ]; then
 fi
 good "read back from $BACKUPS/$ID/: the checksums hold, the manifest counts the ${#STORES[@]} stores, the quorum opens, the manifest is the one sent"
 root rm -rf "$WORK" "$READBACK"
+if root test -e "$WORK" || root test -e "$READBACK"; then
+  die "the backup stands whole on the storage box, but $WORK or $READBACK could not be removed from this machine" 70
+fi
 good "$LISTED file(s) stand under $BACKUPS/$ID/ — $TAKEN store(s), the quorum, the manifest; nothing of it is left on this machine"
 printf 'BACKUP %s\n' "$ID"

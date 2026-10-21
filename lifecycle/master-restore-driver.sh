@@ -138,8 +138,8 @@ GIT_CONF="$SECRETS/git.conf"
   printf '[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic %s\n' "$(printf 'x-access-token:%s' "$PLATFORM_REPO_READ_PAT" | base64 | tr -d '\n')" > "$GIT_CONF"
 ) || die 'the secrets could not be written to files in memory' 78
 export RCLONE_CONFIG="$RCLONE_CONF"
-rclone lsd box: >/dev/null 2>&1 || die "the storage box $STORAGE_BOX_HOST does not open to $STORAGE_BOX_USER — nothing was placed" 69
-good "the storage box $STORAGE_BOX_HOST opens"
+rclone lsd box: >/dev/null 2>&1 || die 'the storage box does not open — nothing was placed' 69
+good 'the storage box opens'
 
 BACKUPS="box:$FQDN/master"
 if [ -z "$ID" ]; then
@@ -156,7 +156,7 @@ rclone lsf "$BACKUPS/$ID/manifest.txt" >/dev/null 2>&1 \
 root install -d -m 700 -o root -g root "$STAGING" "$STAGING/$ID" || die "could not make $STAGING/$ID" 78
 FETCH="$STAGING/$ID/sealed"
 root install -d -m 700 "$FETCH"
-root rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$FETCH/" --quiet || die "the backup $ID could not be fetched" 69
+root rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$FETCH/" --quiet 2>/dev/null || die "the backup $ID could not be fetched (rclone ended $?)" 69
 root sh -c "cd '$FETCH' && grep -E '^[0-9a-f]{64}  ' manifest.txt | sha256sum -c --quiet" \
   || die "the checksums in manifest.txt of backup $ID do not hold — the archives are not what was written, and nothing of them is placed" 65
 BACKED_FQDN=$(root grep -E '^FQDN=' "$FETCH/manifest.txt" | cut -d= -f2-)

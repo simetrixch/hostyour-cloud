@@ -18,7 +18,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `regenerate-install-branch.sh` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
-| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box, within a time limit drawn from its size, before it ends |
+| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends, ending a read that stands still or falls behind the rate it measured on that same read |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
 | `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test; the stage `none` releases a library, which has no stage |
@@ -62,17 +62,15 @@ config are what the Manager creates a tenant's own apps repository under, and no
 App from nothing or installs one on an organisation. This act does what an API can do and leaves the
 two clicks GitHub keeps for a person. It starts a listener on `127.0.0.1`, opens the browser on a page
 that posts the App's manifest to the organisation's new-App page — the name `<organisation>-platform-manager`,
-the homepage `https://manager.<UNIT_APEX>`, the eight repository permissions `administration`,
-`contents`, `statuses`, `webhooks` and `workflows` at write and `issues`, `metadata` and `packages` at read,
+the homepage `https://manager.<UNIT_APEX>`, the six repository permissions `administration`,
+`contents`, `webhooks` and `workflows` at write and `metadata` and `packages` at read,
 no webhook, private — and waits. No `actions`: the Manager starts no workflow, it writes a release's tag and
-deploy ref itself. `issues` at read lets the Manager mint each unit's ci check a token that
-reads the issues of the unit's own repository and nothing else; `statuses` at write lets it mint each
-unit's ci run a token that posts the commit status on the unit's own repository and writes nothing else. `packages` at read does NOT let the App's token install a private npm package: GitHub
+deploy ref itself. `packages` at read does NOT let the App's token install a private npm package: GitHub
 grants an installation token no access to a private package whatever the App's permissions say, and
 a build reads its npm packages from the build plane's registry with the registry's pull identity,
 while the App stays the identity of every repository.
 The first click is GitHub's own **Create GitHub App**. GitHub sends the browser back with a code, the
-act turns the code into the App, refuses when the answered permissions are not the eight asked, and
+act turns the code into the App, refuses when the answered permissions are not the six asked, and
 writes `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` into the config at once, in place, the key as one
 line with `\n` for each line break. It then opens the App's installation page for the second click,
 **Install** with **All repositories**, asks GitHub every five seconds with a JWT signed by the key
@@ -431,17 +429,39 @@ So the hash check of the remote is off (`disable_hashcheck = true` in the `[box]
 fetch alike, and rclone then compares sizes only. What proves the bytes is the manifest's sha256, which the
 read-back checks for every archive.
 
-The copy back is given `READBACK_WAIT_SECONDS` (300) and one second more for each
-`READBACK_LEAST_BYTES_PER_SECOND` (one MiB) of the backup's size, and the driver says the bytes and the limit on one
-line before it copies. When the limit passes, `timeout` ends the copy, and the driver ends with exit 69, names the
-limit and leaves the archives in the work folder.
+The copy back is measured, not assumed. Before it copies, the driver asks rclone for the size of the files in the
+work folder (`rclone size --json`): the bytes it expects. The copy then runs as a background job of root, and
+rclone writes its own statistics (`--use-json-log --stats`, every `READBACK_POLL_SECONDS`, 5) into a file in the
+driver's in-memory folder. The driver reads only two numbers from the newest line of that file, the bytes
+received and rclone's elapsed time, as digits, and prints a line with them every `READBACK_REPORT_SECONDS` (30).
 
-The driver's clean-up removes the read-back folder, as root, on every way out, and that includes a run whose ssh
-session has ended: once the session is gone, the next line the driver prints ends it, so no line after a print is
-where the removal can rest. The work folder is removed when the checks pass and stays when one fails or the
-copy back is ended, with the sealed archives in it, as it stays after any other refusal. A run whose ssh session
-has ended during the read-back leaves the work folder only. A run that is killed with KILL leaves both folders. They
-are root's alone and hold sealed archives only.
+For the first `READBACK_WAIT_SECONDS` (300) the driver measures: bytes received over elapsed time. At the end of
+that time it freezes the floor at the measured rate divided by `READBACK_SLOWDOWN_FACTOR` (2), the policy, and gives
+the copy `ceil(expected bytes / floor)` more seconds, counted from the end of the measurement and never extended.
+One line says the bytes and seconds measured, the measured rate, the floor and the seconds given. A copy that ends
+within the measurement goes straight to the checks, and its bytes and duration are stated. A copy that has ended
+when the driver next looks is judged by its exit status alone, whatever its allowance: 0 goes to the checks, anything
+else ends the run. Only a copy that still runs is ended for its allowance. A copy that receives no
+byte for `READBACK_WAIT_SECONDS`, from the start or after some progress, is ended, and so is one that gives no
+statistics a number can be read from within that time or passes its allowance. A rate far below the floor that
+still moves a byte at a time is ended by the allowance alone, so a very slow box is waited on for the allowance
+and no longer.
+
+A copy is ended with TERM, then killed after `READBACK_GRACE_SECONDS` (30), and always reaped. The driver then
+ends with exit 69 and says what happened, the bytes read of the bytes expected, the seconds and the average rate
+(`unavailable` where no time passed, which is not a rate of 0), the exit status of the transfer where it has one,
+and the work folder, which keeps the sealed archives. No message of rclone reaches the terminal or a log: its
+statistics stay in the file the driver reads and removes, and the errors of the upload, the listing, the copy back
+and the restore's fetch are dropped, the driver naming the operation and rclone's exit status instead.
+
+The driver's clean-up ends a transfer that still runs and removes the read-back folder, as root, on every way out,
+and that includes a run whose ssh session has ended: once the session is gone, the next line the driver prints
+ends it, so no line after a print is where the removal can rest. The work folder is removed when the checks pass,
+and the driver looks that both folders are gone before it says that nothing of the backup is left on the machine
+(exit 70 where one stands). The work folder stays when a check fails or the copy back is ended, with the sealed
+archives in it, as it stays after any other refusal. A run whose ssh session has ended during the read-back leaves
+the work folder only. A run that is killed with KILL leaves both folders. They are root's alone and hold sealed
+archives only.
 
 ## The identity is the name, and the name is a CNAME
 
