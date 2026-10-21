@@ -6064,16 +6064,47 @@ GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 RECORDED
 no_session 'a prod whose pins name two releases'
 
-run_release_unit wrong-steps manager@master.example.invalid shop --prod-to-test
-expect 'a prod-to-test plan that is more than the one put-release' 1 <<'RECORDED'
+run_release_unit promotion-reattest manager@master.example.invalid shop --prod-to-test
+expect 'a prod-to-test plan with a step of its own besides the put-release' 0 <<'RECORDED'
 source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
-run run_1: planning (mint-release pending, watch-release-build pending)
-run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: planning (put-release pending, reattest-smtp-entry pending)
+run run_1: planned (put-release pending, reattest-smtp-entry pending)
+run run_1: queued (put-release pending, reattest-smtp-entry pending)
+run run_1: running (put-release running, reattest-smtp-entry running)
+run run_1: succeeded (put-release ok, reattest-smtp-entry ok)
+run run_1 succeeded
+no following tenant at test renders shop
 ~~~ standard error ~~~
-release-unit: run run_1 plans mint-release, watch-release-build, and a release from prod to test is the one put-release; it is not approved. Discard it on /runs/run_1
 RECORDED
-calls 'a prod-to-test plan that is more than the one put-release' <<'RECORDED'
+calls 'a prod-to-test plan with a step of its own besides the put-release' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+RECORDED
+no_session 'a prod-to-test plan with a step of its own besides the put-release'
+
+run_release_unit promotion-mints manager@master.example.invalid shop --prod-to-test
+expect 'a prod-to-test plan that mints a release' 1 <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (mint-release pending)
+run run_1: planned (mint-release pending)
+~~~ standard error ~~~
+release-unit: run run_1 plans mint-release, and a release from prod to test mints and builds nothing; it is not approved. Discard it on /runs/run_1
+RECORDED
+calls 'a prod-to-test plan that mints a release' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
@@ -6082,7 +6113,27 @@ POST /api/units/shop/release cookie=current origin=ok
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 RECORDED
-no_session 'a prod-to-test plan that is more than the one put-release'
+no_session 'a prod-to-test plan that mints a release'
+
+run_release_unit promotion-builds manager@master.example.invalid shop --prod-to-test
+expect 'a prod-to-test plan that watches a release build' 1 <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run: run_1
+run run_1: planning (watch-release-build pending)
+run run_1: planned (watch-release-build pending)
+~~~ standard error ~~~
+release-unit: run run_1 plans watch-release-build, and a release from prod to test mints and builds nothing; it is not approved. Discard it on /runs/run_1
+RECORDED
+calls 'a prod-to-test plan that watches a release build' <<'RECORDED'
+MINT
+GET /api/units/shop/release?stage=prod cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+no_session 'a prod-to-test plan that watches a release build'
 
 run_release_unit secrets manager@master.example.invalid shop prod stable 0.3.004 $B
 expect 'a plan that asks for a secret to be typed' 1 <<'RECORDED'
@@ -7480,8 +7531,8 @@ echo "test: GREEN — every case above printed the bytes and ended with the code
 echo "test:   with the fixture root, this folder, the home folder, a mint stamp and a resolver's"
 echo "test:   reason for a host name it cannot resolve normalised, in the C locale."
 echo "test:   release-unit, run whole against a stand-in Manager behind a stand-in ssh and kubectl:"
-echo "test:   prod's release put on test as its one put-release, an explicit release, the three"
-echo "test:   refusals of the plan and two of the source read, a plan that is more than the put-release,"
+echo "test:   prod's release put on test as its one put-release and with a step of its own, an explicit release, the three"
+echo "test:   refusals of the plan and two of the source read, a prod-to-test plan that mints and one that watches a build,"
 echo "test:   a failed and a cancelled run, relays lost to a rollout or hanging on one session, a watch that"
 echo "test:   stops, an expired session, a lost release request and approve never sent again, a plan"
 echo "test:   that asks for a secret left unapproved, the following tenants of the stage waited for until they"
