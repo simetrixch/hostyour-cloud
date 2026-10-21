@@ -154,10 +154,12 @@ monitoring:
                 summary: "MongoDB {{ $labels.pod }} on {{ $labels.cluster }} runs without its rseq workaround on a kernel that needs it"
 
             # A KERNEL NOBODY READ IS NOT A SAFE KERNEL. The workaround may only come out where the machine's own
-            # reading says 7.0.14 or later, so a mongod on a machine that reports no kernel is reported.
+            # reading says 7.0.14 or later, so a mongod pod on a machine that reports no kernel is reported, also
+            # while it crash-loops (the left side is the container's existence by the labels of the pod, as in
+            # the alert above).
             - alert: MongoDBKernelUnread
               expr: >-
-                kube_pod_container_status_running{namespace="mongodb", container="mongodb"} == 1
+                max by (cluster, namespace, pod, container) (kube_pod_container_info{namespace="mongodb", container="mongodb"})
                 unless on (cluster)
                 hostyour_kernel_info
               for: 15m

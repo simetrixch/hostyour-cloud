@@ -118,16 +118,28 @@ tests:
           - labels: ALERTS{alertname="MongoDBRseqWorkaroundMissing", alertstate="firing", cluster="apps5", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="critical"}
             value: 1
 
-  - name: MongoDBKernelUnread alerts on a running mongod of a cluster that reports no kernel, and not on one that does
+  - name: MongoDBKernelUnread alerts on a mongod pod of a cluster that reports no kernel, running or crash-looping, and not on one that does
     interval: 1m
     input_series:
-      - series: kube_pod_container_status_running{cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+      - series: kube_pod_container_info{cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
         values: 1x40
       - series: hostyour_kernel_info{cluster="master", release="7.0.0-31.31-generic", upstream="7.0.13"}
         values: 1x40
       # apps1 reports no kernel at all; the kernel of master must not stand in for it.
-      - series: kube_pod_container_status_running{cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+      - series: kube_pod_container_info{cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
         values: 1x40
+      # apps2 reports no kernel and mongod crash-loops: the container is never Running for 15 minutes in a row
+      # while the pod, and its container, stand the whole time, and every start has a container_id of its own.
+      - series: kube_pod_container_info{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", container_id="containerd://c1"}
+        values: 1x9 stale
+      - series: kube_pod_container_info{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", container_id="containerd://c2"}
+        values: _x9 1x9 stale
+      - series: kube_pod_container_info{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", container_id="containerd://c3"}
+        values: _x19 1x9 stale
+      - series: kube_pod_container_info{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", container_id="containerd://c4"}
+        values: _x29 1x10
+      - series: kube_pod_container_status_running{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1 0 1 0 1 0 0 1 0 0 0 1 0 0 0 0 0 0 1 0x21
     promql_expr_test:
       - expr: ALERTS{alertname="MongoDBKernelUnread", alertstate="firing"}
         eval_time: 10m
@@ -135,4 +147,6 @@ tests:
         eval_time: 25m
         exp_samples:
           - labels: ALERTS{alertname="MongoDBKernelUnread", alertstate="firing", cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="warning"}
+            value: 1
+          - labels: ALERTS{alertname="MongoDBKernelUnread", alertstate="firing", cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="warning"}
             value: 1
