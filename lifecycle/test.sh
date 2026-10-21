@@ -7017,7 +7017,8 @@ RECORDED
 # is then waited for until the limit); the second lets the generic failure of a run speak before the known
 # reason; the third attributes a refusal to the unit by the words of its reason; the fourth reads the
 # prod view for the tenants of test; the fifth lets a stage that moved on keep its list in use; the sixth
-# takes a response without the list for an empty one.
+# takes a response without the list for an empty one. A copy that crashes or is killed by the time limit
+# was not caught by its change, so it fails the case instead of passing it.
 plant_refusal() { # what the copy does; the sed expression that makes it; the scenario; the exit code and the last line the act records; the act's arguments
   local what="$1" expression="$2" scenario="$3" recorded="$4" line="$5" ended
   shift 5
@@ -7030,6 +7031,8 @@ plant_refusal() { # what the copy does; the sed expression that makes it; the sc
   FOLLOW_SECONDS="${PLANT_FOLLOW_SECONDS:-0}" run_release_unit "$scenario" "$@"
   RELEASE_UNIT="$HERE/release-unit.sh"
   ended="$(normalise < "$OUT/a.err" | tail -n 1)"
+  ! grep -qE '^Node\.js v[0-9]' "$OUT/a.err" || fail "a copy of release-unit that $what crashed instead of running: $(grep -m1 -E '^[A-Za-z]*Error' "$OUT/a.err")"
+  [ "$A_CODE" != 124 ] || fail "a copy of release-unit that $what did not end within the time limit of the case"
   { [ "$A_CODE" != "$recorded" ] || [ "$ended" != "$line" ]; } || fail "a copy of release-unit that $what ended as the act does, with $recorded on '$line'"
   ok "the planted defect was caught — a copy of release-unit that $what ends with $A_CODE on '$(printf '%.70s' "${ended#release-unit: }")' where the act ends with $recorded on '$(printf '%.70s' "${line#release-unit: }")'"
   rm -rf "$PLANT"
@@ -7037,9 +7040,9 @@ plant_refusal() { # what the copy does; the sed expression that makes it; the sc
 plant_refusal 'never reads the list of refused follows' '/^    if (refused.length > 0) stop/d' follow-refused-platform-cached 1 "$REFUSAL_LINE" "${PLATFORM_ARGS[@]}"
 plant_refusal 'lets the generic failure of a run win over the known reason' '/^    if (refused.length > 0) stop/{h;d};/^    if (seen.failed.length > 0) stop/{G}' follow-refused-platform-failed 1 "$REFUSAL_LINE" "${PLATFORM_ARGS[@]}"
 plant_refusal 'attributes a refusal to the unit by the words of its reason' 's|notLanded.has(r.tenantId)|(r.planError ?? "").includes(unit)|' follow-refused-platform-cached 1 "$REFUSAL_LINE" "${PLATFORM_ARGS[@]}"
-plant_refusal 'reads the prod view for the tenants of test' 's|readStageRelease(stage, unit, on)|readStageRelease("prod", unit, on)|' follow-refused-prod 0 '' manager@master.example.invalid shop --prod-to-test
+plant_refusal 'reads the prod view for the tenants of test' 's|await readStageRelease(stage, unit, on)|await readStageRelease("prod", unit, on)|g' follow-refused-prod 0 '' manager@master.example.invalid shop --prod-to-test
 PLANT_FOLLOW_SECONDS=60 plant_refusal 'keeps using the list of a stage that moved on' '/^    if (view.tag !== standing.tag/d' follow-refused-raced 1 "release-unit: test no longer runs the release of shop that was waited for: it was 0.3.004-stable-TS14 on $B and the Manager now names 0.3.005-stable-TS14 on $B, so the tenants are not waited for. The run run_1 succeeded: open /runs" "${FOLLOW_ARGS[@]}"
-plant_refusal 'takes a response without the list for an empty one' 's|const refused = standing.followRefused;|const refused = standing.followRefused ?? [];|' follow-refused-missing 75 "$MISSING_LINE" "${FOLLOW_ARGS[@]}"
+plant_refusal 'takes a response without the list for an empty one' 's|const refused = standing.followRefused;|const refused = standing.followRefused ??= [];|' follow-refused-missing 75 "$MISSING_LINE" "${FOLLOW_ARGS[@]}"
 
 # PLANTED: a copy of the act that ends at `run succeeded`, as it did before, must end 0 where the
 # tenant that never moves is recorded to end 75, and print none of the tenant lines.
