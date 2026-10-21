@@ -5469,8 +5469,8 @@ no_session() { # what was being checked
 B="$(printf 'b%.0s' $(seq 40))"; C="$(printf 'c%.0s' $(seq 40))"; D="$(printf 'd%.0s' $(seq 40))"
 
 run_release_unit success manager@master.example.invalid shop --prod-to-test
-expect 'the release prod runs, put on test as its one put-release' 0 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+expect 'the prod release, put on test as its one put-release' 0 <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -5481,7 +5481,7 @@ run run_1 succeeded
 no following tenant at test renders shop
 ~~~ standard error ~~~
 RECORDED
-calls 'the release prod runs, put on test as its one put-release' <<'RECORDED'
+calls 'the prod release, put on test as its one put-release' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
@@ -5497,7 +5497,7 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 RECORDED
-no_session 'the release prod runs, put on test as its one put-release'
+no_session 'the prod release, put on test as its one put-release'
 
 run_release_unit success manager@master.example.invalid shop test stable 0.3.004 $B
 expect 'an explicit release of a commit, its plan approved as it stands' 0 <<'RECORDED'
@@ -5581,7 +5581,7 @@ no_session 'a version that stands on another commit, refused at its plan'
 run_release_unit success manager@master.example.invalid ghost --prod-to-test
 expect 'a unit with no release at prod to read' 1 <<'RECORDED'
 ~~~ standard error ~~~
-release-unit: the release prod runs of ghost could not be read: the Manager answered 404 NOT_FOUND: no unit "ghost" is registered, so there is nothing to release; nothing was planned
+release-unit: the prod release of ghost could not be read: the Manager answered 404 NOT_FOUND: no unit "ghost" is registered, so there is nothing to release; nothing was planned
 RECORDED
 calls 'a unit with no release at prod to read' <<'RECORDED'
 MINT
@@ -5592,7 +5592,7 @@ no_session 'a unit with no release at prod to read'
 run_release_unit mixed manager@master.example.invalid shop --prod-to-test
 expect 'a prod whose pins name two releases' 1 <<'RECORDED'
 ~~~ standard error ~~~
-release-unit: the release prod runs of shop could not be read: the Manager answered 400 VALIDATION: the release "shop" runs at prod cannot be read: its pins name 2 image tags, and one release is one image tag; nothing was planned
+release-unit: the prod release of shop could not be read: the Manager answered 400 VALIDATION: the release "shop" runs at prod cannot be read: its pins name 2 image tags, and one release is one image tag; nothing was planned
 RECORDED
 calls 'a prod whose pins name two releases' <<'RECORDED'
 MINT
@@ -5602,7 +5602,7 @@ no_session 'a prod whose pins name two releases'
 
 run_release_unit wrong-steps manager@master.example.invalid shop --prod-to-test
 expect 'a prod-to-test plan that is more than the one put-release' 1 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
@@ -5639,7 +5639,7 @@ no_session 'a plan that asks for a secret to be typed'
 
 run_release_unit failed manager@master.example.invalid shop --prod-to-test
 expect 'a release run that fails' 1 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -5666,7 +5666,7 @@ no_session 'a release run that fails'
 
 run_release_unit cancelled manager@master.example.invalid shop --prod-to-test
 expect 'a release run that is cancelled' 1 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -5693,7 +5693,7 @@ no_session 'a release run that is cancelled'
 
 run_release_unit relay-lost manager@master.example.invalid shop --prod-to-test
 expect 'three relays lost to a rollout while the run goes on' 0 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -5726,7 +5726,7 @@ ok 'three relays lost to a rollout — the watch read through them on the one se
 
 run_release_unit relay-hangs manager@master.example.invalid shop --prod-to-test
 expect 'two relays that hang past the bound of an exchange' 0 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -5772,7 +5772,7 @@ rm -rf "$PLANT"
 
 run_release_unit watch-exhausted manager@master.example.invalid shop --prod-to-test
 expect 'relays lost for longer than the watch waits' 75 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -5793,7 +5793,7 @@ no_session 'relays lost for longer than the watch waits'
 
 run_release_unit expired manager@master.example.invalid shop --prod-to-test
 expect 'a session that expires while the run goes on' 75 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -5817,7 +5817,7 @@ no_session 'a session that expires while the run goes on'
 
 run_release_unit lost-post manager@master.example.invalid shop --prod-to-test
 expect 'a release request whose answer is lost' 75 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 ~~~ standard error ~~~
 release-unit: the release request of shop got no answer, so whether the Manager made a run of it is not known; it is not sent again. Read the Runs page
 RECORDED
@@ -5832,7 +5832,7 @@ no_session 'a release request whose answer is lost'
 
 run_release_unit lost-approve manager@master.example.invalid shop --prod-to-test
 expect 'an approval whose answer is lost after it took' 0 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -5864,7 +5864,7 @@ no_session 'an approval whose answer is lost after it took'
 
 run_release_unit dropped-approve manager@master.example.invalid shop --prod-to-test
 expect 'an approval that never reached the Manager' 1 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -5899,12 +5899,31 @@ no_session 'a run naming a unit and nothing else'
 # THE TENANTS THAT FOLLOW RELEASES. A succeeded release run proves only that the stage pin stands; the
 # act then waits until every active following tenant at the stage that renders the unit runs the
 # stage's release tag, and prints one line for each. The stand-in plays a world of tenants per
-# scenario named follow-*: each look of the act at GET /api/runs moves it one round on, and the
-# decoys (suspended, not following, on another stage, not active, rendering no part of the unit)
-# stay in the call lists as the calls the act must not make for them. A wait that may not take
-# longer than FOLLOW_SECONDS=0 is one look, which is how a tenant that never moves is told apart
-# from one that is late without a clock in a recorded block.
+# scenario named follow-*: each read of GET /api/tenants/<id>/versions moves that tenant one round on,
+# and the decoys (suspended, not following, on another stage, not active, rendering no part of the unit)
+# stay in the call lists as the calls the act must not make for them. A tenant is judged by its own
+# reads: the Versions run that moved its part to the release's image tag (the part's `runs`). A wait that may not take longer than
+# FOLLOW_SECONDS=0 is one look, which is how a tenant that never moves is told apart from one that is
+# late without a clock in a recorded block.
 FOLLOW_ARGS=(manager@master.example.invalid shop test stable 0.3.004 "$B")
+# THE COMPACT FORM of a case in the tenants' world holds the exit code, the lines the act printed about
+# the source and the tenants (standard input), the last line of standard error ('-' for none), and that
+# the act never read the global list of runs, which holds every run of every tenant and kind and answers
+# the newest hundred: a tenant is judged by its own reads.
+follow_case() { # what was being checked; the exit code; the last line of standard error; the lines on standard input
+  local label="$1" code="$2" last="$3" ended
+  cat > "$OUT/expected"
+  normalise < "$OUT/a.out" | grep -E '^(source:|tenant |waiting for |no following tenant )' > "$OUT/actual" || true
+  diff -u "$OUT/expected" "$OUT/actual" || fail "$label — the run printed other lines about the tenants than the case records"
+  [ "$A_CODE" = "$code" ] || fail "$label — the run ended with $A_CODE, and its case records $code"
+  ended="$(normalise < "$OUT/a.err" | tail -n 1)"
+  [ "$last" != '-' ] || last=''
+  [ "$ended" = "$last" ] || fail "$label — the run ended on '$ended', and its case records '$last'"
+  ! grep -q '^GET /api/runs cookie' "$RU/calls" || fail "$label — the act read the global list of runs"
+  no_session "$label"
+  ok "$label — the recorded lines, exit $code, and no read of the global list of runs"
+}
+
 run_release_unit follow-moves "${FOLLOW_ARGS[@]}"
 expect 'a following tenant that moves after the release, beside the tenants that are not waited for' 0 <<'RECORDED'
 run: run_1
@@ -5931,10 +5950,9 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_other/versions?offered=false cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 RECORDED
 no_session 'a following tenant that moves after the release, beside the tenants that are not waited for'
@@ -5950,7 +5968,7 @@ run run_1: succeeded (mint-release ok, watch-release-build ok)
 run run_1 succeeded
 waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
 ~~~ standard error ~~~
-release-unit: tnt_1 (it runs 0.3.003-stable-TS14-1111111, and no Versions run followed this release) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
+release-unit: tnt_1 (it runs 0.3.003-stable-TS14-1111111, and no Versions run after this release started has moved it to 0.3.004-stable-TS14) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
 RECORDED
 calls 'a following tenant that never moves' <<'RECORDED'
 MINT
@@ -5965,7 +5983,6 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 RECORDED
 no_session 'a following tenant that never moves'
@@ -5996,41 +6013,10 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_2/versions?offered=false cookie=current origin=n/a
 RECORDED
 no_session 'a following tenant whose Versions run failed, beside one that landed'
-
-run_release_unit follow-superseded "${FOLLOW_ARGS[@]}"
-expect 'a failed Versions run that a newer one superseded' 0 <<'RECORDED'
-run: run_1
-run run_1: planning (mint-release pending, watch-release-build pending)
-run run_1: planned (mint-release pending, watch-release-build pending)
-run run_1: queued (mint-release pending, watch-release-build pending)
-run run_1: running (mint-release running, watch-release-build running)
-run run_1: succeeded (mint-release ok, watch-release-build ok)
-run run_1 succeeded
-tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v2 succeeded)
-~~~ standard error ~~~
-RECORDED
-calls 'a failed Versions run that a newer one superseded' <<'RECORDED'
-MINT
-POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
-GET /api/runs/run_1 cookie=current origin=n/a
-GET /api/runs/run_1 cookie=current origin=n/a
-POST /api/runs/run_1/approve cookie=current origin=ok
-GET /api/runs/run_1 cookie=current origin=n/a
-GET /api/runs/run_1 cookie=current origin=n/a
-GET /api/runs/run_1 cookie=current origin=n/a
-GET /api/runs/run_1 cookie=current origin=n/a
-GET /api/units/shop/release?stage=test cookie=current origin=n/a
-GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
-GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
-RECORDED
-no_session 'a failed Versions run that a newer one superseded'
 
 run_release_unit follow-line "${FOLLOW_ARGS[@]}"
 expect 'a following tenant on another version line than the release' 0 <<'RECORDED'
@@ -6057,7 +6043,6 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 RECORDED
 no_session 'a following tenant on another version line than the release'
@@ -6087,7 +6072,6 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_other/versions?offered=false cookie=current origin=n/a
 RECORDED
 no_session 'a unit that no following tenant renders'
@@ -6118,36 +6102,62 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 RECORDED
 no_session 'three relays lost while the following tenants are read'
 [ "$(cat "$RU/relay-fails")" = '0' ] || fail 'three relays lost while the following tenants are read — the stand-in kubectl did not fail the three exchanges it was told to'
 ok 'three relays lost while the following tenants are read — the reads were repeated on the one session'
 
+run_release_unit follow-discarded "${FOLLOW_ARGS[@]}"
+follow_case 'a Versions run discarded after the release started, then the run that moves the tag' 0 - <<'RECORDED'
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v1 succeeded)
+RECORDED
+
+run_release_unit follow-other-tag "${FOLLOW_ARGS[@]}"
+follow_case 'a failed move to another tag, then the run that moves this one' 0 - <<'RECORDED'
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v1 succeeded)
+RECORDED
+
+run_release_unit follow-many-runs "${FOLLOW_ARGS[@]}"
+follow_case 'the run that moved the tag, older than a hundred other runs' 0 - <<'RECORDED'
+tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v1 succeeded)
+RECORDED
+
+run_release_unit follow-cancelled "${FOLLOW_ARGS[@]}"
+follow_case 'a cancelled move to the tag while the tenant is off it' 1 'release-unit: tenant tnt_1: its Versions run run_v1 cancelled: open /runs/run_v1' <<'RECORDED'
+RECORDED
+
+run_release_unit follow-no-runs "${FOLLOW_ARGS[@]}"
+follow_case 'a Manager that names no Versions runs for a part' 75 'release-unit: the versions of tenant tnt_1 carry no Versions runs for shop, so a run that moved it to 0.3.004-stable-TS14-bbbbbbb cannot be told from one that did not. The run run_1 succeeded; whether the following tenants run it is not known: open /runs' <<'RECORDED'
+RECORDED
+
+run_release_unit follow-no-commit "${FOLLOW_ARGS[@]}"
+follow_case 'a Manager that names no commit for the release the stage runs' 75 'release-unit: the Manager names no full commit for the release of shop, so the image tag its tenants run cannot be told. The run run_1 succeeded; whether the following tenants run it is not known: open /runs' <<'RECORDED'
+RECORDED
+
 # THE COPY FROM PROD TO TEST reads the same rule before the release request: a tenant that records the
-# tag while its newest Versions run failed is the retry after a red copy, which the Manager's put-release
-# would end green without changing anything for it.
+# tag while its newest move failed and whose Application does not render it is the retry after a red
+# copy, which the Manager's put-release would end green without changing anything for it.
 run_release_unit follow-held manager@master.example.invalid shop --prod-to-test
-expect 'a tenant that records the tag while its newest Versions run failed' 1 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+expect 'a tenant that records the tag while the Versions run that moved it to the tag failed' 1 <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 ~~~ standard error ~~~
 release-unit: tenant tnt_1: its Versions run run_v1 failed: open /runs/run_v1; the release would change nothing for it, so nothing was planned
 RECORDED
-calls 'a tenant that records the tag while its newest Versions run failed' <<'RECORDED'
+calls 'a tenant that records the tag while the Versions run that moved it to the tag failed' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 RECORDED
-no_session 'a tenant that records the tag while its newest Versions run failed'
+no_session 'a tenant that records the tag while the Versions run that moved it to the tag failed'
 
-run_release_unit follow-held-superseded manager@master.example.invalid shop --prod-to-test
-expect 'the same tenant after a newer Versions run succeeded' 0 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run_release_unit follow-held-succeeded manager@master.example.invalid shop --prod-to-test
+expect 'the same tenant after a Versions run of it succeeded, with its Application Synced and Healthy' 0 <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 tenant tnt_1: already runs 0.3.004-stable-TS14
 run: run_1
 run run_1: planning (put-release pending)
@@ -6158,11 +6168,10 @@ run run_1: succeeded (put-release ok)
 run run_1 succeeded
 ~~~ standard error ~~~
 RECORDED
-calls 'the same tenant after a newer Versions run succeeded' <<'RECORDED'
+calls 'the same tenant after a Versions run of it succeeded, with its Application Synced and Healthy' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_1/live cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
@@ -6177,11 +6186,11 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 RECORDED
-no_session 'the same tenant after a newer Versions run succeeded'
+no_session 'the same tenant after a Versions run of it succeeded, with its Application Synced and Healthy'
 
 FOLLOW_SECONDS=0 run_release_unit follow-unsynced manager@master.example.invalid shop --prod-to-test
 expect 'a tenant that records the tag while its Application is not Synced' 75 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -6197,7 +6206,6 @@ calls 'a tenant that records the tag while its Application is not Synced' <<'REC
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_1/live cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
@@ -6211,10 +6219,28 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 RECORDED
 no_session 'a tenant that records the tag while its Application is not Synced'
+
+# THE PROMOTION AFTER A RELEASE WITH A LAGGING TENANT. The release of the unit to prod ends once its
+# tenant runs the tag; the next invocation copies prod's release to test, reads the release prod offers
+# (with the tenant still on the earlier tag among its carriers), reaches its release request and its
+# approval, and ends once the tenant at test runs the tag. No step between the two is done by hand.
+run_release_unit follow-promotion manager@master.example.invalid shop prod stable 0.3.004 $B
+follow_case 'the release to prod, whose tenant is still on the earlier tag when the run succeeds' 0 - <<'RECORDED'
+waiting for 1 following tenant at prod to run 0.3.004-stable-TS14: tnt_prod
+tenant tnt_prod: runs 0.3.004-stable-TS14 (Versions run run_p1 succeeded)
+RECORDED
+run_release_unit follow-promotion manager@master.example.invalid shop --prod-to-test
+follow_case 'the copy to test right after it, with the tenant at test on the earlier tag' 0 - <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v1 succeeded)
+RECORDED
+grep -q '^POST /api/units/shop/release ' "$RU/calls" && grep -q '^POST /api/runs/run_1/approve ' "$RU/calls" \
+  || fail 'the copy to test right after the release to prod did not reach its release request and its approval'
+ok 'the copy to test right after the release to prod reached its release request and its approval'
 
 # THE TAG THE STAGE PINS must be the release this run put there. Another release of the unit that reaches
 # the stage between the run's `succeeded` and the read of the stage would otherwise be waited for and
@@ -6248,7 +6274,7 @@ no_session 'a stage that pins another release than the one this run put there'
 
 FOLLOW_SECONDS=0 run_release_unit follow-raced manager@master.example.invalid shop --prod-to-test
 expect 'the copy from prod, where test pins another release than prod runs' 1 <<'RECORDED'
-source: prod runs 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 run: run_1
 run run_1: planning (put-release pending)
 run run_1: planned (put-release pending)
@@ -6263,7 +6289,6 @@ calls 'the copy from prod, where test pins another release than prod runs' <<'RE
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sourceStage":"prod","sourceTag":"0.3.004-stable-20261010101010"}
@@ -6279,9 +6304,8 @@ RECORDED
 no_session 'the copy from prod, where test pins another release than prod runs'
 
 # A RECORD IS NOT A RUN. After `run succeeded`, a tenant whose part already records the tag but whose
-# Versions run did not follow this release is not proven by the record, which turns at the pin write, nor
-# by one look at a live Application that may still show the revision from before the write: the act
-# waits for the run, and names the tenant when none comes.
+# Versions run did not follow this release is not proven by the record, which turns at the pin write:
+# the act waits for the run, and names the tenant when none comes.
 FOLLOW_SECONDS=0 run_release_unit follow-recorded "${FOLLOW_ARGS[@]}"
 expect 'a tenant that records the tag after the release, with no Versions run after it' 75 <<'RECORDED'
 run: run_1
@@ -6308,7 +6332,6 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
-GET /api/runs cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 RECORDED
 no_session 'a tenant that records the tag after the release, with no Versions run after it'
@@ -6327,6 +6350,25 @@ RELEASE_UNIT="$HERE/release-unit.sh"
 ! grep -q '^tenant ' "$OUT/a.out" || fail 'a copy of release-unit that ends at run succeeded printed a tenant line'
 ok 'the planted defect was caught — a copy of release-unit that ends at run succeeded reports green with a tenant that never moved'
 rm -rf "$PLANT"
+
+# PLANTED: a copy of the act with one rule of the judgment of a tenant changed must end other than the case
+# that holds the rule records: one that takes the first run of the part for the run that moves the tag.
+plant_judgment() { # what the copy does; the sed expression that makes it; the scenario; the exit code the act records; the act's arguments
+  local what="$1" expression="$2" scenario="$3" recorded="$4"
+  shift 4
+  PLANT="$WORK/release-unit-judgment"
+  mkdir -p "$PLANT"
+  cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
+  sed -e "$expression" "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+  ! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail "the plant that $what changed nothing in release-unit.mjs"
+  RELEASE_UNIT="$PLANT/release-unit.sh"
+  FOLLOW_SECONDS=0 run_release_unit "$scenario" "$@"
+  RELEASE_UNIT="$HERE/release-unit.sh"
+  [ "$A_CODE" != "$recorded" ] || fail "a copy of release-unit that $what ended with $recorded, as the act that does not does"
+  ok "the planted defect was caught — a copy of release-unit that $what ends with $A_CODE where the act ends with $recorded"
+  rm -rf "$PLANT"
+}
+plant_judgment 'takes the first run of a part for the run that moves the tag' 's|const moved = part.runs.find((r) => r.tag === image);|const moved = part.runs[0];|' follow-other-tag 0 "${FOLLOW_ARGS[@]}"
 
 # THE STAGE WORD none is the release of a library: the Manager plans only its tag and the publish of
 # its package, and takes no stage, so the request carries a JSON null. A stage word that is none of

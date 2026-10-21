@@ -7,12 +7,18 @@
 // Each sentinel carries SENTINEL_RUN, so a scan of a shared folder finds only this suite's.
 //
 // THE TENANTS. After a run succeeds the act reads the tenants that follow releases. A scenario named
-// follow-* plays one world of tenants: each GET /api/runs is one look of the act and moves the world to
-// its next round (the last round repeats), and the versions, runs and live reads answer from the round
-// they stand in. Every other scenario has no tenant at all. The decoy tenants are suspended, not
-// following, on another stage, not active, or render no part of the unit, and run an old version: a
-// call that names one is a defect of the act, and the call list shows it. A world with a stageTag
-// answers the release read of the stage test with that tag, as another release would have left it.
+// follow-* plays one world of tenants: each GET /api/tenants/<id>/versions is one look of the act at
+// that tenant and moves the tenant to its next round (the last round repeats), and the versions and
+// live reads of the tenant answer from the round it stands in. A part carries `runs`, the Versions runs
+// that moved it to an image tag as the Manager projects them (the newest per tag). The global list of runs,
+// GET /api/runs, answers the newest hundred of `globalRuns` and moves nothing: it holds the runs the act
+// must not judge a tenant by, a discarded run of nothing to change among them, and a call that reads it
+// is a defect of the act, which the call list shows. Every other scenario has no tenant at all. The
+// decoy tenants are suspended, not following, on another stage, not active, or render no part of the
+// unit, and run an old version: a call that names one is a defect of the act, and the call list shows
+// it. A world with a stageTag answers the release read of the stage test with that tag, as another
+// release would have left it, and one with carriers adds them to that answer, as the Manager does for a
+// build-only unit.
 import { createServer } from "node:http";
 import { appendFileSync, writeFileSync } from "node:fs";
 
@@ -30,52 +36,88 @@ const AFTER = 1000;
 const BEFORE = -1000;
 const SOURCE = { stage: "prod", tag: "0.3.004-stable-20261010101010", version: "0.3.004", channel: "stable", commit: "b".repeat(40) };
 const OLD = "0.3.003-stable-20261001101010-1111111";
-const NEW = `${SOURCE.tag}-abc1234`;
+/** The image tag of the release: its tag and the first seven digits of its commit. */
+const NEW = `${SOURCE.tag}-bbbbbbb`;
+/** The image tag of another release of the unit. */
+const OTHER = "0.3.006-stable-20261012101010-ccccccc";
 /** The tag another release of the unit put on the stage between this run and the act's read of it. */
 const RACED = "0.3.005-stable-20261011101010";
 const tenant = (id, over = {}) => ({ id, guid: `guid-${id}`, subdomain: id, stage: "test", status: "active", suspended: false, followReleases: true, members: ["auth"], ...over });
-const versionsRun = (id, tenantId, status, when) => ({ id, kind: "tenant-refresh-members", targetKind: "tenant", targetId: tenantId, status, creation: START + when });
-const part = (running, name = "shop") => ({ name, builds: [name], running, versions: [] });
+const ended = (status) => ["succeeded", "failed", "cancelled"].includes(status);
+/** A Versions run that moved the part to the image tag `tag`, as the Manager projects it into the part. */
+const move = (id, status, when, tag = NEW) => ({ id, tag, status, creation: START + when, startedAt: START + when + 10, endedAt: ended(status) ? START + when + 20 : null });
+/** A Versions run of a tenant as the global list of runs holds it, whether or not it moved the part. */
+const globalRun = (id, tenantId, status, when) => ({ id, kind: "tenant-refresh-members", targetKind: "tenant", targetId: tenantId, status, creation: START + when });
+const part = (running, { name = "shop", builds = [name], runs = [] } = {}) => ({ name, builds, running, versions: [], runs });
+/** The live answer of a tenant: its Application. */
+const synced = { ok: true, sync: "Synced", health: "Healthy", syncRevision: "r" };
+const live = (versions, argo = synced) => ({ argo, versions });
+/** A round of one tenant: the parts it answers, and its live answer. */
+const round = (parts, liveAnswer = live(null)) => ({ parts, live: liveAnswer });
+/** The runs the global list holds besides the tenant's own: another tenant's, another kind's, and the newest hundred of noise. */
+const noise = (count) => Array.from({ length: count }, (_, i) => ({ id: `run_n${i}`, kind: "unit-release", targetKind: "cluster", targetId: "cls_1", status: "succeeded", creation: START + AFTER + 10_000 + i }));
 const DECOYS = [
   tenant("tnt_suspended", { suspended: true }), tenant("tnt_unfollowing", { followReleases: false }),
   tenant("tnt_prod", { stage: "prod" }), tenant("tnt_provisioning", { status: "provisioning" }), tenant("tnt_other"),
 ];
-const SYNCED = { argo: { ok: true, sync: "Synced", health: "Healthy", syncRevision: "r" } };
-const lineMoveRun = (status, when) => ({ ...versionsRun("run_l1", "tnt_1", status, when), kind: "tenant-line-move" });
-/** The worlds: the tenants, then per round the runs the Manager lists, each tenant's parts and live state. */
+/** A world with one following tenant, tnt_1, whose rounds are given. */
+const single = (rounds, over = {}) => ({ tenants: [tenant("tnt_1")], rounds: { tnt_1: rounds }, ...over });
+/** The worlds: the tenants, per tenant the rounds its reads walk through, the global runs and the stage's tag. */
 const WORLDS = {
-  "follow-moves": { tenants: [tenant("tnt_1"), ...DECOYS], rounds: [
-    { runs: [versionsRun("run_v1", "tnt_1", "running", AFTER + 500), lineMoveRun("failed", AFTER + 900)], parts: { tnt_1: [part([OLD])] } },
-    { runs: [versionsRun("run_v1", "tnt_1", "succeeded", AFTER + 500), lineMoveRun("failed", AFTER + 900)], parts: { tnt_1: [part([NEW])] } },
-  ] },
-  "follow-relay-lost": { tenants: [tenant("tnt_1")], rounds: [
-    { runs: [versionsRun("run_v1", "tnt_1", "running", AFTER)], parts: { tnt_1: [part([OLD])] } },
-    { runs: [versionsRun("run_v1", "tnt_1", "succeeded", AFTER)], parts: { tnt_1: [part([NEW])] } },
-  ] },
-  "follow-unrelated": { tenants: [tenant("tnt_other")], rounds: [{ runs: [], parts: {} }] },
-  "follow-never": { tenants: [tenant("tnt_1")], rounds: [{ runs: [], parts: { tnt_1: [part([OLD])] } }] },
-  "follow-failed": { tenants: [tenant("tnt_1"), tenant("tnt_2")], rounds: [
-    { runs: [versionsRun("run_v1", "tnt_1", "failed", AFTER), versionsRun("run_v2", "tnt_2", "succeeded", AFTER)], parts: { tnt_1: [part([OLD])], tnt_2: [part([NEW])] } },
-  ] },
-  "follow-superseded": { tenants: [tenant("tnt_1")], rounds: [
-    { runs: [versionsRun("run_v2", "tnt_1", "succeeded", AFTER + 2000), versionsRun("run_v1", "tnt_1", "failed", AFTER + 1000)], parts: { tnt_1: [part([NEW])] } },
-  ] },
-  "follow-line": { tenants: [tenant("tnt_1")], rounds: [{ runs: [], parts: { tnt_1: [part(["0.2.007-stable-20260901101010-2222222"])] } }] },
-  "follow-held": { tenants: [tenant("tnt_1")], rounds: [{ runs: [versionsRun("run_v1", "tnt_1", "failed", BEFORE)], parts: { tnt_1: [part([NEW])] } }] },
-  "follow-held-superseded": { tenants: [tenant("tnt_1")], live: SYNCED, rounds: [
-    { runs: [versionsRun("run_v2", "tnt_1", "succeeded", BEFORE + 500), versionsRun("run_v1", "tnt_1", "failed", BEFORE)], parts: { tnt_1: [part([NEW])] } },
-  ] },
-  "follow-raced": { tenants: [tenant("tnt_1")], stageTag: RACED, rounds: [
-    { runs: [versionsRun("run_v1", "tnt_1", "succeeded", AFTER)], parts: { tnt_1: [part([`${RACED}-abc1234`])] } },
-  ] },
-  "follow-recorded": { tenants: [tenant("tnt_1")], rounds: [{ runs: [], parts: { tnt_1: [part([NEW])] } }] },
-  "follow-unsynced": { tenants: [tenant("tnt_1")], live: { argo: { ok: true, sync: "OutOfSync", health: "Healthy", syncRevision: "r" } }, rounds: [
-    { runs: [versionsRun("run_v1", "tnt_1", "succeeded", BEFORE)], parts: { tnt_1: [part([NEW])] } },
-  ] },
+  "follow-moves": { tenants: [tenant("tnt_1"), ...DECOYS], globalRuns: [globalRun("run_d1", "tnt_1", "cancelled", AFTER + 300), { ...globalRun("run_l1", "tnt_1", "failed", AFTER + 900), kind: "tenant-line-move" }], rounds: { tnt_1: [
+    round([part([OLD])]),
+    round([part([OLD], { runs: [move("run_v1", "running", AFTER + 500)] })]),
+    round([part([NEW], { runs: [move("run_v1", "succeeded", AFTER + 500)] })]),
+  ] } },
+  "follow-relay-lost": single([
+    round([part([OLD], { runs: [move("run_v1", "running", AFTER)] })]),
+    round([part([NEW], { runs: [move("run_v1", "succeeded", AFTER)] })]),
+  ]),
+  "follow-unrelated": { tenants: [tenant("tnt_other")], rounds: {} },
+  "follow-never": single([round([part([OLD])])]),
+  "follow-failed": { tenants: [tenant("tnt_1"), tenant("tnt_2")], rounds: {
+    tnt_1: [round([part([OLD], { runs: [move("run_v1", "failed", AFTER)] })])],
+    tnt_2: [round([part([NEW], { runs: [move("run_v2", "succeeded", AFTER)] })])],
+  } },
+  "follow-cancelled": single([round([part([OLD], { runs: [move("run_v1", "cancelled", AFTER)] })])]),
+  "follow-discarded": single([
+    round([part([OLD])]),
+    round([part([OLD], { runs: [move("run_v1", "running", AFTER + 500)] })]),
+    round([part([NEW], { runs: [move("run_v1", "succeeded", AFTER + 500)] })]),
+  ], { globalRuns: [globalRun("run_d1", "tnt_1", "cancelled", AFTER + 300)] }),
+  "follow-other-tag": single([
+    round([part([OLD], { runs: [move("run_x1", "failed", AFTER + 100, OTHER)] })]),
+    round([part([OLD], { runs: [move("run_x1", "failed", AFTER + 100, OTHER), move("run_v1", "running", AFTER + 500)] })]),
+    round([part([NEW], { runs: [move("run_x1", "failed", AFTER + 100, OTHER), move("run_v1", "succeeded", AFTER + 500)] })]),
+  ]),
+  "follow-many-runs": single([round([part([NEW], { runs: [move("run_v1", "succeeded", AFTER + 500)] })])], { globalRuns: [globalRun("run_v1", "tnt_1", "succeeded", AFTER + 500), ...noise(105)] }),
+  "follow-no-runs": single([round([{ name: "shop", builds: ["shop"], running: [OLD], versions: [] }])]),
+  "follow-no-commit": single([round([part([OLD])])], { noCommit: true }),
+  "follow-line": single([round([part(["0.2.007-stable-20260901101010-2222222"])])]),
+  "follow-recorded": single([round([part([NEW])])]),
+  "follow-unsynced": single([round([part([NEW], { runs: [move("run_v1", "succeeded", BEFORE)] })], live(null, { ok: true, sync: "OutOfSync", health: "Healthy", syncRevision: "r" }))]),
+  "follow-held": single([round([part([NEW], { runs: [move("run_v1", "failed", BEFORE)] })])]),
+  "follow-held-succeeded": single([round([part([NEW], { runs: [move("run_v1", "succeeded", BEFORE)] })])]),
+  "follow-raced": single([round([part([`${RACED}-bbbbbbb`], { runs: [move("run_v1", "succeeded", AFTER, `${RACED}-bbbbbbb`)] })])], { stageTag: RACED }),
+  "follow-promotion": { tenants: [tenant("tnt_prod", { stage: "prod" }), tenant("tnt_1")], carriers: true, rounds: {
+    tnt_prod: [
+      round([part([OLD])]),
+      round([part([NEW], { runs: [move("run_p1", "succeeded", AFTER + 500)] })]),
+    ],
+    tnt_1: [
+      round([part([OLD])]),
+      round([part([OLD], { runs: [move("run_v1", "running", AFTER + 500)] })]),
+      round([part([NEW], { runs: [move("run_v1", "succeeded", AFTER + 500)] })]),
+    ],
+  } },
 };
 const world = WORLDS[SCENARIO];
-let looks = 0;
-const round = () => world.rounds[Math.min(Math.max(looks, 1), world.rounds.length) - 1];
+/** How often the act has read each tenant's versions: the round it stands in. */
+const looks = new Map();
+const standingOf = (tenantId) => {
+  const rounds = world?.rounds[tenantId] ?? [round([part([OLD], { name: tenantId === "tnt_other" ? "other" : "shop" })])];
+  return rounds[Math.min(Math.max(looks.get(tenantId) ?? 0, 1), rounds.length) - 1];
+};
 /** The runs, each a script of the statuses its reads walk through. */
 const runs = new Map();
 const after = { failed: ["running", "failed"], cancelled: ["running", "cancelled"] }[SCENARIO] ?? ["running", "running", "succeeded"];
@@ -103,22 +145,25 @@ const api = createServer((req, res) => {
       return json(res, 200, world?.tenants ?? [], refresh);
     }
     if (req.method === "GET" && url.pathname === "/api/runs") {
-      looks += 1;
-      return json(res, 200, round().runs, refresh);
+      const newest = [...(world?.globalRuns ?? [])].sort((a, b) => b.creation - a.creation).slice(0, 100);
+      return json(res, 200, newest, refresh);
     }
     const versions = /^\/api\/tenants\/([a-z0-9_]+)\/versions$/.exec(url.pathname);
     if (versions && req.method === "GET") {
-      const parts = round().parts[versions[1]] ?? [versions[1] === "tnt_other" ? part([OLD], "other") : part([OLD])];
-      return json(res, 200, { stage: "test", members: ["auth"], parts }, refresh);
+      looks.set(versions[1], (looks.get(versions[1]) ?? 0) + 1);
+      return json(res, 200, { stage: "test", members: ["auth"], parts: standingOf(versions[1]).parts }, refresh);
     }
-    const live = /^\/api\/tenants\/([a-z0-9_]+)\/live$/.exec(url.pathname);
-    if (live && req.method === "GET") return json(res, 200, { row: { id: live[1] }, ...(world?.live ?? SYNCED) }, refresh);
+    const liveRead = /^\/api\/tenants\/([a-z0-9_]+)\/live$/.exec(url.pathname);
+    if (liveRead && req.method === "GET") return json(res, 200, { row: { id: liveRead[1] }, ...standingOf(liveRead[1]).live }, refresh);
     const release = /^\/api\/units\/([a-z0-9-]+)\/release$/.exec(url.pathname);
     if (release && req.method === "GET") {
       if (release[1] === "ghost") return json(res, 404, { code: "NOT_FOUND", message: 'no unit "ghost" is registered, so there is nothing to release' }, refresh);
       if (SCENARIO === "mixed") return json(res, 400, { code: "VALIDATION", message: 'the release "shop" runs at prod cannot be read: its pins name 2 image tags, and one release is one image tag' }, refresh);
-      const standing = url.searchParams.get("stage") === "test" && world?.stageTag ? { ...SOURCE, tag: world.stageTag } : SOURCE;
-      return json(res, 200, { unit: release[1], version: "0.3.006", standing }, refresh);
+      const stage = url.searchParams.get("stage");
+      const lagging = { carrier: "tenant tnt_prod", pin: { name: "shop", image: "shop", tag: OLD } };
+      const carriers = { pins: stage === "prod" ? [{ carrier: "deploy chart", pin: { name: "shop", image: "shop", tag: NEW } }] : [], tenants: stage === "prod" ? [lagging] : [] };
+      const { commit, ...unnamed } = { ...SOURCE, ...(stage === "test" && world?.stageTag ? { tag: world.stageTag } : {}), ...(world?.carriers ? { carriers } : {}) };
+      return json(res, 200, { unit: release[1], version: "0.3.006", standing: world?.noCommit ? unnamed : { ...unnamed, commit } }, refresh);
     }
     if (release && req.method === "POST") {
       log(`  body ${body}`);

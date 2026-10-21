@@ -22,22 +22,28 @@
 // row. The run id is printed as soon as it is known and named in every later line.
 //
 // THE TENANTS THAT FOLLOW. A succeeded release run proves only that the stage pin stands: the tenants
-// that follow releases move afterwards, each in its own Versions run (tenant-refresh-members), and
-// that run may fail. So after `run succeeded` the script waits for every active tenant at the stage
-// that follows releases and renders the unit, and exits 0 only when each runs the stage's release tag.
-// The tag is the one the stage pins after the run, and it must be the release this run put there: with
-// --prod-to-test prod's tag, else the version and channel of the arguments. A tenant counts as landed
-// when the part's running versions are all `<tag>-<sha7>` AND its newest Versions run ended succeeded
-// after this release run started (the Manager ends that run only when ArgoCD rendered the versions).
-// The record of the running versions turns at the pin write, and one look at the live Application may
-// still show the revision from before it, so neither proves a tenant without that run. Only the newest
-// Versions run counts: an older failed one that a later run superseded never blocks. A tenant on
-// another version line than the release is left to Move to line and not waited for. With
-// --prod-to-test the same rule is read before the release request, where nothing is in flight: a
-// tenant that records the tag while its newest Versions run failed ends the script there, because
-// planning the release again would change nothing for it, and one whose newest Versions run succeeded
-// (or that has none) and whose live Application is Synced and Healthy already runs the tag and is not
-// waited for.
+// that follow releases move afterwards, each in its own Versions run (tenant-refresh-members), and that
+// run may fail. So after `run succeeded` the script waits for every active tenant at the stage that
+// follows releases and renders the unit, and exits 0 only when each runs the stage's release. The
+// release is the one the stage pins after the run, and it must be the release this run put there: with
+// --prod-to-test prod's tag, else the version and channel of the arguments. Its image tag is that tag
+// and the first seven digits of its commit.
+//
+// A TENANT IS JUDGED BY ITS OWN READS, never by the list of all runs. The part's `runs` in
+// GET /api/tenants/<id>/versions name the Versions run that moved the part to an image tag. A tenant has
+// landed when every version of its part is the image tag and the run that moved the part to it succeeded
+// after this release run started (the Manager ends that run only when ArgoCD rendered the versions): the
+// record of the running versions turns at the pin write, and one look at an Application that may still
+// show the revision from before it proves nothing. A run that moved the part to the image tag and failed
+// or was cancelled ends the script, when it ran after this release started or the tenant records the tag.
+// A run that moved nothing to the image tag, one discarded because its plan changed nothing among them,
+// is not a run of this release and is never read. Where the Manager names no `runs` for the part the
+// script stops, and it never falls back to the newest run. A tenant on another version line than the
+// release is left to Move to line and not waited for. With --prod-to-test the same rule is read before
+// the release request, where nothing is in flight: a tenant that records the tag while the run that
+// moved it failed ends the script there, because planning the release again would change nothing for
+// it, and one that records the tag and whose live Application is Synced and Healthy already runs it and
+// is not waited for.
 import { spawn } from "node:child_process";
 
 const USAGE = [
@@ -48,7 +54,6 @@ const USAGE = [
  *  reached, a watch that stopped or a wait for the following tenants that ran out. */
 const EXIT = { failed: 1, usage: 64, unavailable: 69, watchStopped: 75 };
 const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
-const VERSIONS_RUN = "tenant-refresh-members";
 
 /** A whole number of an operator's setting, or its default. */
 function setting(name, fallback) {
@@ -196,15 +201,15 @@ const lineOf = (tag) => /^(\d+\.\d+)\./.exec(tag)?.[1];
 const literal = (text) => text.replace(/[^A-Za-z0-9]/g, "\\$&");
 
 /** One look at the following tenants in `pending`: each is landed, failed, still waited for, left to
- *  Move to line, or renders no part of the unit. `since` is when the release run started, and absent
- *  before the release request, where no Versions run can follow it yet and the live Application is
- *  the proof for a tenant without one; after the request only a Versions run proves a tenant. */
-async function look(pending, unit, tag, since, on) {
+ *  Move to line, or renders no part of the unit. `standing` is the release they must run; `since` is when
+ *  the release run started, and absent before the release request, where no Versions run can follow it
+ *  yet and the live Application is the proof for a tenant without one. */
+async function look(pending, unit, standing, since, on) {
   const seen = { landed: [], failed: [], waiting: [], left: [], unrelated: [] };
   if (pending.length === 0) return seen;
-  const imageOfTag = new RegExp(`^${literal(tag)}-[0-9a-f]{7}$`);
-  const runs = await read("/api/runs", "the runs could not be read", on.code, on.ending);
-  if (!Array.isArray(runs)) stop(`the runs could not be read: the Manager answered no list${on.ending}`, on.code);
+  const tag = standing.tag;
+  if (!/^[0-9a-f]{40}$/.test(standing.commit ?? "")) stop(`the Manager names no full commit for the release of ${unit}, so the image tag its tenants run cannot be told${on.ending}`, on.code);
+  const image = `${tag}-${standing.commit.slice(0, 7)}`;
   for (const tenant of pending) {
     const view = await read(`/api/tenants/${encodeURIComponent(tenant.id)}/versions?offered=false`, `the versions of tenant ${tenant.id} could not be read`, on.code, on.ending);
     const part = (view.parts ?? []).find((p) => p.name === unit);
@@ -212,21 +217,24 @@ async function look(pending, unit, tag, since, on) {
       seen.unrelated.push(tenant);
       continue;
     }
+    if (!Array.isArray(part.runs)) stop(`the versions of tenant ${tenant.id} carry no Versions runs for ${unit}, so a run that moved it to ${image} cannot be told from one that did not${on.ending}`, on.code);
     const running = part.running ?? [];
-    const runsTag = running.length > 0 && running.every((r) => imageOfTag.test(r));
-    const newest = runs.filter((r) => r.kind === VERSIONS_RUN && r.targetId === tenant.id).sort((a, b) => b.creation - a.creation)[0];
-    const after = newest !== undefined && since !== undefined && newest.creation > since;
-    const note = { tenant, ...(newest ? { run: newest.id } : {}) };
-    if (running.length > 0 && !runsTag && running.every((r) => lineOf(r) !== lineOf(tag))) {
-      seen.left.push({ ...note, line: lineOf(running[0]) });
-    } else if (newest && newest.status !== "succeeded" && TERMINAL.has(newest.status) && (after || runsTag)) {
-      seen.failed.push({ ...note, status: newest.status });
-    } else if (newest && !TERMINAL.has(newest.status)) {
-      seen.waiting.push({ ...note, why: `its Versions run ${newest.id} is ${newest.status}` });
-    } else if (!runsTag) {
-      seen.waiting.push({ ...note, why: `it runs ${running.join(", ") || "no release"}${after ? "" : ", and no Versions run followed this release"}` });
+    const runsImage = running.length > 0 && running.every((r) => r === image);
+    if (running.length > 0 && !runsImage && running.every((r) => lineOf(r) !== lineOf(tag))) {
+      seen.left.push({ tenant, line: lineOf(running[0]) });
+      continue;
+    }
+    const moved = part.runs.find((r) => r.tag === image);
+    const after = moved !== undefined && since !== undefined && moved.creation > since;
+    const note = { tenant, ...(moved ? { run: moved.id } : {}) };
+    if (moved && TERMINAL.has(moved.status) && moved.status !== "succeeded" && (after || runsImage)) {
+      seen.failed.push({ ...note, status: moved.status });
+    } else if (moved && !TERMINAL.has(moved.status)) {
+      seen.waiting.push({ ...note, why: `its Versions run ${moved.id} is ${moved.status}` });
+    } else if (!runsImage) {
+      seen.waiting.push({ ...note, why: `it runs ${running.join(", ") || "no release"}, and no Versions run after this release started has moved it to ${tag}` });
     } else if (after) {
-      seen.landed.push({ ...note, line: `runs ${tag} (Versions run ${newest.id} succeeded)` });
+      seen.landed.push({ ...note, line: `runs ${tag} (Versions run ${moved.id} succeeded)` });
     } else if (since !== undefined) {
       seen.waiting.push({ ...note, why: "it records the release, and no Versions run followed this release to prove it" });
     } else {
@@ -247,12 +255,13 @@ async function followingTenants(stage, on) {
 
 const failedLine = (f) => `tenant ${f.tenant.id}: its Versions run ${f.run} ${f.status}: open /runs/${f.run}`;
 
-/** Before the release request: a tenant that records the tag while its newest Versions run failed ends
- *  the script. The tenants that already run the tag are printed and returned, because the follower plans
- *  no Versions run for them and the wait after the release would never see one. */
-async function refuseHeldTenants(stage, unit, tag) {
+/** Before the release request: a tenant that records the tag while the run that moved it failed ends
+ *  the script. The tenants that already run the tag are printed and
+ *  returned, because the follower plans no Versions run for them and the wait after the release would
+ *  never see one. */
+async function refuseHeldTenants(stage, unit, standing) {
   const on = { code: EXIT.unavailable, ending: "; nothing was planned" };
-  const seen = await look(await followingTenants(stage, on), unit, tag, undefined, on);
+  const seen = await look(await followingTenants(stage, on), unit, standing, undefined, on);
   if (seen.failed.length > 0) stop(`${seen.failed.map(failedLine).join("; ")}; the release would change nothing for it, so nothing was planned`, EXIT.failed);
   for (const l of seen.landed) say(`tenant ${l.tenant.id}: ${l.line}`);
   return seen.landed.map((l) => l.tenant.id);
@@ -274,7 +283,7 @@ async function waitForFollowing(stage, unit, since, runId, wanted, alreadyRunnin
   let rendering = alreadyRunning.length > 0;
   let announced = false;
   for (;;) {
-    const seen = await look(pending, unit, tag, since, on);
+    const seen = await look(pending, unit, standing, since, on);
     rendering = rendering || seen.unrelated.length < pending.length;
     for (const l of seen.landed) say(`tenant ${l.tenant.id}: ${l.line}`);
     for (const l of seen.left) say(`tenant ${l.tenant.id}: stays on line ${l.line}, and ${tag} is on line ${lineOf(tag)}; Move to line on /tenants/${l.tenant.id}, not waited for`);
@@ -323,13 +332,13 @@ held.add(session);
 
 if (PROD_TO_TEST) {
   const offer = await call("GET", `/api/units/${UNIT}/release?stage=prod`);
-  if (!offer) stop(`the release prod runs of ${UNIT} could not be read: the relay gave no answer; nothing was planned`, EXIT.unavailable);
+  if (!offer) stop(`the prod release of ${UNIT} could not be read: the relay gave no answer; nothing was planned`, EXIT.unavailable);
   const standing = offer.status === 200 ? parsed(offer)?.standing : undefined;
-  if (!standing) stop(`the release prod runs of ${UNIT} could not be read: the Manager answered ${refusal(offer)}; nothing was planned`, EXIT.failed);
-  say(`source: prod runs ${standing.tag} of ${UNIT} on ${standing.commit}`);
+  if (!standing) stop(`the prod release of ${UNIT} could not be read: the Manager answered ${refusal(offer)}; nothing was planned`, EXIT.failed);
+  say(`source: prod release ${standing.tag} of ${UNIT} on ${standing.commit}`);
   release = { stage: "test", channel: standing.channel, version: standing.version, commit: standing.commit, sourceStage: "prod", sourceTag: standing.tag };
   wanted = { pattern: new RegExp(`^${literal(standing.tag)}$`), text: standing.tag };
-  alreadyRunning = await refuseHeldTenants("test", UNIT, standing.tag);
+  alreadyRunning = await refuseHeldTenants("test", UNIT, standing);
 }
 
 const planned = await call("POST", `/api/units/${UNIT}/release`, release);
