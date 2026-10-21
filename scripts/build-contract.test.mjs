@@ -15,7 +15,8 @@ test('no Tekton test resources are rendered and production readers remain', () =
     (d.kind === 'Task' && d.metadata.name.startsWith('test-')) || d.metadata.name.endsWith('-test-push')));
   assert.deepEqual(builder.find(d => d.kind === 'EventListener').spec.triggers,
     [{triggerRef: 'github-deploy-request'}, {triggerRef: 'github-release-publish'},
-      {triggerRef: 'forgejo-tag-push'}, {triggerRef: 'forgejo-pull-request'}]);
+      {triggerRef: 'forgejo-tag-push'}, {triggerRef: 'forgejo-pull-request'},
+      {triggerRef: 'forgejo-deploy-request'}, {triggerRef: 'forgejo-release-publish'}]);
   const guard = builder.find(d => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
   assert.ok(!JSON.stringify(guard).includes('op3-input'));
   const fanout = renderChart('consumer-build').find(d => d.kind === 'ApplicationSet');
@@ -543,6 +544,56 @@ test('the bump reads the platform credentials from build-platform/, and units na
   assert.notDeepEqual(bumpReadFindings({...cloud, 'cloud-pat': 'build/hostyour-cloud/repo-pat#pat'}, 'hostyour-cloud'), [], 'PLANTED DEFECT: the old hostyour-cloud leaf, the entry a unit named hostyour-cloud owns, is caught');
   const shop = bumpReads(renderUnit('shop'));
   assert.notDeepEqual(bumpReadFindings({...shop, 'unit-pat': 'build/shop/repo-pat#pat'}, 'shop'), [], 'PLANTED DEFECT: the unit\'s record back on its pat, the token that reaches more than its own repository, is caught');
+});
+
+// ── The bump on an installation with a Forgejo ────────────────────────────────────────
+// scripts/standin/repository-credentials.yaml is the file the branch program writes beside the cluster map of an
+// installation whose repositories stand on its own Forgejo; the two URLs are the repositories that map names.
+const FORGE_HOST = 'forgejo.check.example.invalid';
+const FORGE = ['-f', 'scripts/standin/repository-credentials.yaml',
+  '--set', `global.platformUrl=https://${FORGE_HOST}/check/hostyour-cloud.git`, '--set', `global.deployUrl=https://${FORGE_HOST}/check/check.git`];
+const renderOn = (extra, name, repoURL, builds = ['app']) => renderChart('consumer-build', [...extra, '--set-json', 'unit=' + JSON.stringify({name, repoURL, buildsJson: JSON.stringify(builds)})]);
+const forgeShapes = {
+  today: {forge: false, unitOnForge: false, url: 'https://github.com/check/shop.git', extra: []},
+  github: {forge: true, unitOnForge: false, url: 'https://github.com/check/shop.git', extra: FORGE},
+  forgejo: {forge: true, unitOnForge: true, url: `https://${FORGE_HOST}/check/shop.git`, extra: FORGE}
+};
+const credentialUser = (host) => host === 'github.com' ? 'x-access-token' : 'oauth2';
+const cloneCredential = (docs) => docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-git-https').spec.target.template.data.GITCREDENTIALS;
+
+test('the clone credential of a unit names the host of its repository, with the user of that forge', () => {
+  const docs = Object.fromEntries(Object.entries(forgeShapes).map(([name, shape]) => [name, renderOn(shape.extra, 'shop', shape.url)]));
+  const findings = (credential, host) => credential === `https://${credentialUser(host)}:{{ .pat }}@${host}` ? [] : [`${credential} for ${host}`];
+  assert.deepEqual(findings(cloneCredential(docs.github), 'github.com'), [], 'PLANTED INNOCENT: a github.com unit on a plane with a Forgejo');
+  assert.deepEqual(findings(cloneCredential(docs.forgejo), FORGE_HOST), [], 'PLANTED INNOCENT: a Forgejo unit');
+  assert.notDeepEqual(findings(cloneCredential(docs.github), FORGE_HOST), [], 'PLANTED DEFECT: the Forgejo host on a github.com unit');
+  assert.notDeepEqual(findings(cloneCredential(docs.today), FORGE_HOST), [], 'PLANTED DEFECT: github.com for a Forgejo unit');
+  assert.notDeepEqual(findings(cloneCredential(docs.forgejo), 'github.com'), [], 'PLANTED DEFECT: the user of GitHub on a Forgejo host');
+});
+
+test('a unit is on github.com or on the Forgejo of its plane, and its publish run follows the owner and the repository off either host', () => {
+  const refusal = (extra, url) => { try { renderOn(extra, 'shop', url); return ''; } catch (error) { return String(error.stderr); } };
+  assert.equal(refusal([], 'https://github.com/check/shop.git'), '', 'PLANTED INNOCENT: github.com on today\'s chain');
+  assert.equal(refusal(FORGE, `https://${FORGE_HOST}/check/shop.git`), '', 'PLANTED INNOCENT: the Forgejo of the plane');
+  assert.match(refusal(FORGE, 'https://elsewhere.example.invalid/check/shop.git'), /unit\.repoURL "https:\/\/elsewhere\.example\.invalid\/check\/shop\.git" is not .* on github\.com or forgejo\.check\.example\.invalid/,
+    'PLANTED DEFECT: a third host is refused by name');
+  assert.match(refusal([], `https://${FORGE_HOST}/check/shop.git`), /is not .* on github\.com/, 'PLANTED DEFECT: a Forgejo unit on a plane with no Forgejo is refused by name');
+  const binaries = (docs) => docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish').spec.tasks.find((t) => t.name === 'push')
+    .taskSpec.steps[0].env.find((e) => e.name === 'BINARIES_REPOSITORY').value;
+  assert.equal(binaries(renderOn(FORGE, 'shop', `https://${FORGE_HOST}/check/shop.git`, [])), 'check/shop');
+  assert.equal(binaries(renderOn([], 'shop', 'https://github.com/check/shop.git', [])), 'check/shop');
+});
+
+test('the platform tree and the engine are the repositories global.platformUrl names, on GitHub or on a Forgejo', () => {
+  const tasks = (docs, unit) => docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === `${unit}-publish`).spec.tasks.map((t) => t.name);
+  const mirrors = (extra, owner, url) => tasks(renderOn([...extra, '--set', `global.buildRegistry=zot.check.example.invalid/${owner}`], 'hostyour-cloud', url, []), 'hostyour-cloud').includes('mirror');
+  const exports = (extra, owner, url) => tasks(renderOn([...extra, '--set', `global.buildRegistry=zot.check.example.invalid/${owner}`], 'ansiwise-cli', url, []), 'ansiwise-cli').includes('tag');
+  assert.equal(mirrors([], 'simetrixch', 'https://github.com/simetrixch/hostyour-cloud.git'), true, 'PLANTED INNOCENT: the platform tree on GitHub');
+  assert.equal(mirrors(FORGE, 'check', `https://${FORGE_HOST}/check/hostyour-cloud.git`), true, 'the platform tree on the Forgejo of the plane mirrors');
+  assert.equal(mirrors(FORGE, 'simetrixch', 'https://github.com/simetrixch/hostyour-cloud.git'), false, 'PLANTED DEFECT: the old GitHub address of the platform tree mirrors once the plane names another');
+  assert.equal(exports([], 'simetrixch', 'https://github.com/simetrixch/ansiwise-cli.git'), true, 'PLANTED INNOCENT: the engine on GitHub');
+  assert.equal(exports(FORGE, 'check', `https://${FORGE_HOST}/check/ansiwise-cli.git`), true, 'the engine beside the platform tree on the Forgejo exports');
+  assert.equal(exports(FORGE, 'simetrixch', 'https://github.com/simetrixch/ansiwise-cli.git'), false, 'PLANTED DEFECT: the old GitHub address of the engine exports once the plane names another');
 });
 
 // ci-tools.json at a repository's root names the tools its release build runs with, {"<tool>": "<x.y.z>"}: the scan of

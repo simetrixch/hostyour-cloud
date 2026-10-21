@@ -3,8 +3,8 @@
 THE FORGEJO RELEASE FLOW'S ENTRY. A Forgejo repository's own webhook, a per-repository webhook to
 http://el-image-builder.image-builder.svc:8080 that Forgejo's webhook ALLOWED_HOST_LIST admits, lands
 here. Two Triggers, and no delivery matches both:
-forgejo-tag-push — a push of a tag runs the Pipeline forgejo-release with the release and the Plane
-update. forgejo-pull-request — an opened, reopened or updated pull request from a branch of the repository
+forgejo-tag-push — a push of a tag, a unit's release tag aside, runs the Pipeline forgejo-release with the
+release and the Plane update. forgejo-pull-request — an opened, reopened or updated pull request from a branch of the repository
 itself runs the same Pipeline for its status and its image alone; a pull request from a fork, or one
 opened by AGit (a push to refs/for/<branch>, which read access alone allows), runs nothing.
 
@@ -53,10 +53,12 @@ spec:
               expression: body.ref
             - key: tag
               expression: body.ref.substring(10)
-        # A tag that is also a valid image tag, and not its deletion.
+        # A tag that is also a valid image tag, and not its deletion, and not a release tag of a unit:
+        # a unit on Forgejo is a Forgejo repository too, and its release tag is forgejo-release-publish's.
         - name: filter
           value: >-
             body.ref.matches(r'^refs/tags/[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$') &&
+            !body.ref.matches(r'^refs/tags/{{ .Values.global.releaseTagFilter }}$') &&
             !body.after.matches(r'^0+$')
   bindings:
     - ref: forgejo-tag-push-binding

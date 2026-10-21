@@ -90,7 +90,6 @@ metadata:
   labels:
     app.kubernetes.io/name: image-builder
     app.kubernetes.io/component: trigger
-    provider: github
 spec:
   params:
     - name: unit
