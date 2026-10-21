@@ -30,20 +30,22 @@
 // and the first seven digits of its commit.
 //
 // A TENANT IS JUDGED BY ITS OWN READS, never by the list of all runs. The part's `runs` in
-// GET /api/tenants/<id>/versions name the Versions run that moved the part to an image tag. A tenant has
-// landed when every version of its part is the image tag and the run that moved the part to it succeeded
-// after this release run started (the Manager ends that run only when ArgoCD rendered the versions): the
-// record of the running versions turns at the pin write, and one look at an Application that may still
-// show the revision from before it proves nothing. A run that moved the part to the image tag and failed
-// or was cancelled ends the script, when it ran after this release started or the tenant records the tag.
-// A run that moved nothing to the image tag, one discarded because its plan changed nothing among them,
-// is not a run of this release and is never read. Where the Manager names no `runs` for the part the
-// script stops, and it never falls back to the newest run. A tenant on another version line than the
-// release is left to Move to line and not waited for. With --prod-to-test the same rule is read before
-// the release request, where nothing is in flight: a tenant that records the tag while the run that
-// moved it failed ends the script there, because planning the release again would change nothing for
-// it, and one that records the tag and whose live Application is Synced and Healthy already runs it and
-// is not waited for.
+// GET /api/tenants/<id>/versions name the Versions run that moved the part to an image tag, and
+// GET /api/tenants/<id>/live names the tags the tenant's Application last rendered. A tenant whose part
+// records the image tag has landed when its Application renders that tag for every build of the part,
+// whatever its move ended as. Otherwise it has landed when the run that moved the part to the image tag
+// succeeded after this release run started (the Manager ends that run only when ArgoCD rendered the
+// versions): the record of the running versions turns at the pin write, and neither it nor one look at
+// an Application that may still show the revision from before proves a tenant. A run that moved the part
+// to the image tag and failed or was cancelled ends the script, when it ran after this release started or
+// the tenant records the tag. A run that moved nothing to the image tag, one discarded because its plan
+// changed nothing among them, is not a run of this release and is never read. Where the Manager names
+// none of this evidence the script stops, and it never falls back to the newest run. A tenant on another
+// version line than the release is left to Move to line and not waited for. With --prod-to-test the same
+// rule is read before the release request, where nothing is in flight: a tenant that records the tag,
+// whose Application does not render it and whose move failed, ends the script there, because planning
+// the release again would change nothing for it, and one whose Application renders the tag already runs
+// it and is not waited for.
 import { spawn } from "node:child_process";
 
 const USAGE = [
@@ -200,10 +202,19 @@ const lineOf = (tag) => /^(\d+\.\d+)\./.exec(tag)?.[1];
 /** A text as a pattern that matches only itself. */
 const literal = (text) => text.replace(/[^A-Za-z0-9]/g, "\\$&");
 
+/** Whether the Application of `tenant` renders `image` for every build of `part`, off the tags the
+ *  Manager projects from its last comparison. A Manager that projects none ends the script. */
+async function rendersImage(tenant, part, image, on) {
+  const live = await read(`/api/tenants/${encodeURIComponent(tenant.id)}/live`, `the live state of tenant ${tenant.id} could not be read`, on.code, on.ending);
+  if (live.versions === undefined) stop(`the live state of tenant ${tenant.id} names no rendered versions, so whether its Application renders ${image} cannot be told${on.ending}`, on.code);
+  const builds = Array.isArray(part.builds) ? part.builds : [];
+  return live.versions !== null && builds.length > 0 && builds.every((build) => live.versions[build] === image);
+}
+
 /** One look at the following tenants in `pending`: each is landed, failed, still waited for, left to
  *  Move to line, or renders no part of the unit. `standing` is the release they must run; `since` is when
  *  the release run started, and absent before the release request, where no Versions run can follow it
- *  yet and the live Application is the proof for a tenant without one. */
+ *  yet and the Application of the tenant is the only proof. */
 async function look(pending, unit, standing, since, on) {
   const seen = { landed: [], failed: [], waiting: [], left: [], unrelated: [] };
   if (pending.length === 0) return seen;
@@ -227,7 +238,9 @@ async function look(pending, unit, standing, since, on) {
     const moved = part.runs.find((r) => r.tag === image);
     const after = moved !== undefined && since !== undefined && moved.creation > since;
     const note = { tenant, ...(moved ? { run: moved.id } : {}) };
-    if (moved && TERMINAL.has(moved.status) && moved.status !== "succeeded" && (after || runsImage)) {
+    if (runsImage && await rendersImage(tenant, part, image, on)) {
+      seen.landed.push({ ...note, line: since === undefined ? `already runs ${tag}` : `runs ${tag} (its Application renders it)` });
+    } else if (moved && TERMINAL.has(moved.status) && moved.status !== "succeeded" && (after || runsImage)) {
       seen.failed.push({ ...note, status: moved.status });
     } else if (moved && !TERMINAL.has(moved.status)) {
       seen.waiting.push({ ...note, why: `its Versions run ${moved.id} is ${moved.status}` });
@@ -235,12 +248,8 @@ async function look(pending, unit, standing, since, on) {
       seen.waiting.push({ ...note, why: `it runs ${running.join(", ") || "no release"}, and no Versions run after this release started has moved it to ${tag}` });
     } else if (after) {
       seen.landed.push({ ...note, line: `runs ${tag} (Versions run ${moved.id} succeeded)` });
-    } else if (since !== undefined) {
-      seen.waiting.push({ ...note, why: "it records the release, and no Versions run followed this release to prove it" });
     } else {
-      const live = await read(`/api/tenants/${encodeURIComponent(tenant.id)}/live`, `the live state of tenant ${tenant.id} could not be read`, on.code, on.ending);
-      if (live.argo?.ok === true && live.argo.sync === "Synced" && live.argo.health === "Healthy") seen.landed.push({ ...note, line: `already runs ${tag}` });
-      else seen.waiting.push({ ...note, why: "it records the release, and its Application is not Synced and Healthy" });
+      seen.waiting.push({ ...note, why: "it records the release, and neither its Application nor a Versions run of this release proves it" });
     }
   }
   return seen;
@@ -255,8 +264,8 @@ async function followingTenants(stage, on) {
 
 const failedLine = (f) => `tenant ${f.tenant.id}: its Versions run ${f.run} ${f.status}: open /runs/${f.run}`;
 
-/** Before the release request: a tenant that records the tag while the run that moved it failed ends
- *  the script. The tenants that already run the tag are printed and
+/** Before the release request: a tenant that records the tag, whose Application does not render it and
+ *  whose move to it failed, ends the script. The tenants that already run the tag are printed and
  *  returned, because the follower plans no Versions run for them and the wait after the release would
  *  never see one. */
 async function refuseHeldTenants(stage, unit, standing) {

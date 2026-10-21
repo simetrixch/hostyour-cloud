@@ -5902,7 +5902,8 @@ no_session 'a run naming a unit and nothing else'
 # scenario named follow-*: each read of GET /api/tenants/<id>/versions moves that tenant one round on,
 # and the decoys (suspended, not following, on another stage, not active, rendering no part of the unit)
 # stay in the call lists as the calls the act must not make for them. A tenant is judged by its own
-# reads: the Versions run that moved its part to the release's image tag (the part's `runs`). A wait that may not take longer than
+# reads: the Versions run that moved its part to the release's image tag (the part's `runs`) and the
+# tags its Application renders (the live answer's `versions`). A wait that may not take longer than
 # FOLLOW_SECONDS=0 is one look, which is how a tenant that never moves is told apart from one that is
 # late without a clock in a recorded block.
 FOLLOW_ARGS=(manager@master.example.invalid shop test stable 0.3.004 "$B")
@@ -5954,6 +5955,7 @@ GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_other/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
 no_session 'a following tenant that moves after the release, beside the tenants that are not waited for'
 
@@ -6015,6 +6017,7 @@ GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_2/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_2/live cookie=current origin=n/a
 RECORDED
 no_session 'a following tenant whose Versions run failed, beside one that landed'
 
@@ -6104,10 +6107,12 @@ GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
 no_session 'three relays lost while the following tenants are read'
 [ "$(cat "$RU/relay-fails")" = '0' ] || fail 'three relays lost while the following tenants are read — the stand-in kubectl did not fail the three exchanges it was told to'
 ok 'three relays lost while the following tenants are read — the reads were repeated on the one session'
+
 
 run_release_unit follow-discarded "${FOLLOW_ARGS[@]}"
 follow_case 'a Versions run discarded after the release started, then the run that moves the tag' 0 - <<'RECORDED'
@@ -6130,8 +6135,39 @@ run_release_unit follow-cancelled "${FOLLOW_ARGS[@]}"
 follow_case 'a cancelled move to the tag while the tenant is off it' 1 'release-unit: tenant tnt_1: its Versions run run_v1 cancelled: open /runs/run_v1' <<'RECORDED'
 RECORDED
 
+run_release_unit follow-rendered-cancelled "${FOLLOW_ARGS[@]}"
+follow_case 'a tenant that renders the tag, whose move was cancelled' 0 - <<'RECORDED'
+tenant tnt_1: runs 0.3.004-stable-TS14 (its Application renders it)
+RECORDED
+
+run_release_unit follow-rendered-failed "${FOLLOW_ARGS[@]}"
+follow_case 'a tenant that renders the tag, whose move failed' 0 - <<'RECORDED'
+tenant tnt_1: runs 0.3.004-stable-TS14 (its Application renders it)
+RECORDED
+
+run_release_unit follow-rendered "${FOLLOW_ARGS[@]}"
+follow_case 'a tenant that renders the tag, with no move at all' 0 - <<'RECORDED'
+tenant tnt_1: runs 0.3.004-stable-TS14 (its Application renders it)
+RECORDED
+
+FOLLOW_SECONDS=0 run_release_unit follow-builds "${FOLLOW_ARGS[@]}"
+follow_case 'a tenant that renders every build of its part, beside one that lacks a build' 75 'release-unit: tnt_2 (it records the release, and neither its Application nor a Versions run of this release proves it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs' <<'RECORDED'
+tenant tnt_1: runs 0.3.004-stable-TS14 (its Application renders it)
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_2
+RECORDED
+
+FOLLOW_SECONDS=0 run_release_unit follow-bundle "${FOLLOW_ARGS[@]}"
+follow_case 'a tenant whose bundle renders the tag, beside one whose bundle renders the old tag' 75 'release-unit: tnt_2 (it records the release, and neither its Application nor a Versions run of this release proves it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs' <<'RECORDED'
+tenant tnt_1: runs 0.3.004-stable-TS14 (its Application renders it)
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_2
+RECORDED
+
 run_release_unit follow-no-runs "${FOLLOW_ARGS[@]}"
 follow_case 'a Manager that names no Versions runs for a part' 75 'release-unit: the versions of tenant tnt_1 carry no Versions runs for shop, so a run that moved it to 0.3.004-stable-TS14-bbbbbbb cannot be told from one that did not. The run run_1 succeeded; whether the following tenants run it is not known: open /runs' <<'RECORDED'
+RECORDED
+
+run_release_unit follow-no-versions "${FOLLOW_ARGS[@]}"
+follow_case 'a Manager that names no rendered versions for a tenant' 75 'release-unit: the live state of tenant tnt_1 names no rendered versions, so whether its Application renders 0.3.004-stable-TS14-bbbbbbb cannot be told. The run run_1 succeeded; whether the following tenants run it is not known: open /runs' <<'RECORDED'
 RECORDED
 
 run_release_unit follow-no-commit "${FOLLOW_ARGS[@]}"
@@ -6140,7 +6176,8 @@ RECORDED
 
 # THE COPY FROM PROD TO TEST reads the same rule before the release request: a tenant that records the
 # tag while its newest move failed and whose Application does not render it is the retry after a red
-# copy, which the Manager's put-release would end green without changing anything for it.
+# copy, which the Manager's put-release would end green without changing anything for it. A tenant whose
+# Application renders the tag is not waited for, whatever its move ended as.
 run_release_unit follow-held manager@master.example.invalid shop --prod-to-test
 expect 'a tenant that records the tag while the Versions run that moved it to the tag failed' 1 <<'RECORDED'
 source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -6152,11 +6189,12 @@ MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
 no_session 'a tenant that records the tag while the Versions run that moved it to the tag failed'
 
 run_release_unit follow-held-succeeded manager@master.example.invalid shop --prod-to-test
-expect 'the same tenant after a Versions run of it succeeded, with its Application Synced and Healthy' 0 <<'RECORDED'
+expect 'the same tenant after its Application rendered the tag and a Versions run of it succeeded' 0 <<'RECORDED'
 source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 tenant tnt_1: already runs 0.3.004-stable-TS14
 run: run_1
@@ -6168,7 +6206,7 @@ run run_1: succeeded (put-release ok)
 run run_1 succeeded
 ~~~ standard error ~~~
 RECORDED
-calls 'the same tenant after a Versions run of it succeeded, with its Application Synced and Healthy' <<'RECORDED'
+calls 'the same tenant after its Application rendered the tag and a Versions run of it succeeded' <<'RECORDED'
 MINT
 GET /api/units/shop/release?stage=prod cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
@@ -6186,7 +6224,7 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 RECORDED
-no_session 'the same tenant after a Versions run of it succeeded, with its Application Synced and Healthy'
+no_session 'the same tenant after its Application rendered the tag and a Versions run of it succeeded'
 
 FOLLOW_SECONDS=0 run_release_unit follow-unsynced manager@master.example.invalid shop --prod-to-test
 expect 'a tenant that records the tag while its Application is not Synced' 75 <<'RECORDED'
@@ -6200,7 +6238,7 @@ run run_1: succeeded (put-release ok)
 run run_1 succeeded
 waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
 ~~~ standard error ~~~
-release-unit: tnt_1 (it records the release, and no Versions run followed this release to prove it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
+release-unit: tnt_1 (it records the release, and neither its Application nor a Versions run of this release proves it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
 RECORDED
 calls 'a tenant that records the tag while its Application is not Synced' <<'RECORDED'
 MINT
@@ -6220,8 +6258,34 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
 no_session 'a tenant that records the tag while its Application is not Synced'
+
+
+run_release_unit follow-held-rendered-failed manager@master.example.invalid shop --prod-to-test
+follow_case 'a tenant that renders the tag, whose newest move failed' 0 - <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+tenant tnt_1: already runs 0.3.004-stable-TS14
+RECORDED
+
+run_release_unit follow-held-rendered-cancelled manager@master.example.invalid shop --prod-to-test
+follow_case 'a tenant that renders the tag, whose newest move was cancelled' 0 - <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+tenant tnt_1: already runs 0.3.004-stable-TS14
+RECORDED
+
+FOLLOW_SECONDS=0 run_release_unit follow-old-render manager@master.example.invalid shop --prod-to-test
+follow_case 'a tenant whose Application is Synced and Healthy on the old tag' 75 'release-unit: tnt_1 (it records the release, and neither its Application nor a Versions run of this release proves it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs' <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+RECORDED
+
+FOLLOW_SECONDS=0 run_release_unit follow-unreadable manager@master.example.invalid shop --prod-to-test
+follow_case 'a tenant whose Application cannot be read' 75 'release-unit: tnt_1 (it records the release, and neither its Application nor a Versions run of this release proves it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs' <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+RECORDED
 
 # THE PROMOTION AFTER A RELEASE WITH A LAGGING TENANT. The release of the unit to prod ends once its
 # tenant runs the tag; the next invocation copies prod's release to test, reads the release prod offers
@@ -6303,11 +6367,12 @@ GET /api/units/shop/release?stage=test cookie=current origin=n/a
 RECORDED
 no_session 'the copy from prod, where test pins another release than prod runs'
 
-# A RECORD IS NOT A RUN. After `run succeeded`, a tenant whose part already records the tag but whose
-# Versions run did not follow this release is not proven by the record, which turns at the pin write:
-# the act waits for the run, and names the tenant when none comes.
+
+# A RECORD IS NOT A RUN, AND NOT A RENDERING. After `run succeeded`, a tenant whose part already records
+# the tag, but whose Application does not render it and whose move did not follow this release, is not
+# proven by the record, which turns at the pin write: the act waits, and names the tenant when none comes.
 FOLLOW_SECONDS=0 run_release_unit follow-recorded "${FOLLOW_ARGS[@]}"
-expect 'a tenant that records the tag after the release, with no Versions run after it' 75 <<'RECORDED'
+expect 'a tenant that records the tag after the release, with no Versions run after it and no rendered tag' 75 <<'RECORDED'
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
@@ -6317,9 +6382,9 @@ run run_1: succeeded (mint-release ok, watch-release-build ok)
 run run_1 succeeded
 waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
 ~~~ standard error ~~~
-release-unit: tnt_1 (it records the release, and no Versions run followed this release to prove it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
+release-unit: tnt_1 (it records the release, and neither its Application nor a Versions run of this release proves it) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs
 RECORDED
-calls 'a tenant that records the tag after the release, with no Versions run after it' <<'RECORDED'
+calls 'a tenant that records the tag after the release, with no Versions run after it and no rendered tag' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
   body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
@@ -6333,8 +6398,10 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
-no_session 'a tenant that records the tag after the release, with no Versions run after it'
+no_session 'a tenant that records the tag after the release, with no Versions run after it and no rendered tag'
+
 
 # PLANTED: a copy of the act that ends at `run succeeded`, as it did before, must end 0 where the
 # tenant that never moves is recorded to end 75, and print none of the tenant lines.
@@ -6352,7 +6419,9 @@ ok 'the planted defect was caught — a copy of release-unit that ends at run su
 rm -rf "$PLANT"
 
 # PLANTED: a copy of the act with one rule of the judgment of a tenant changed must end other than the case
-# that holds the rule records: one that takes the first run of the part for the run that moves the tag.
+# that holds the rule records: one that takes the first run of the part for the run that moves the tag, one
+# that does not read what the Application renders, and one that takes a Synced Application for one that
+# renders the tag.
 plant_judgment() { # what the copy does; the sed expression that makes it; the scenario; the exit code the act records; the act's arguments
   local what="$1" expression="$2" scenario="$3" recorded="$4"
   shift 4
@@ -6369,6 +6438,8 @@ plant_judgment() { # what the copy does; the sed expression that makes it; the s
   rm -rf "$PLANT"
 }
 plant_judgment 'takes the first run of a part for the run that moves the tag' 's|const moved = part.runs.find((r) => r.tag === image);|const moved = part.runs[0];|' follow-other-tag 0 "${FOLLOW_ARGS[@]}"
+plant_judgment 'does not read what the Application renders' 's|if (runsImage && await rendersImage(tenant, part, image, on)) {|if (false) {|' follow-rendered-cancelled 0 "${FOLLOW_ARGS[@]}"
+plant_judgment 'takes a Synced Application for one that renders the tag' 's|return live.versions !== null .*$|return live.argo?.sync === "Synced";|' follow-old-render 75 manager@master.example.invalid shop --prod-to-test
 
 # THE STAGE WORD none is the release of a library: the Manager plans only its tag and the publish of
 # its package, and takes no stage, so the request carries a JSON null. A stage word that is none of

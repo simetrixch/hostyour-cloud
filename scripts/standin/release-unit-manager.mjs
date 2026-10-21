@@ -10,7 +10,8 @@
 // follow-* plays one world of tenants: each GET /api/tenants/<id>/versions is one look of the act at
 // that tenant and moves the tenant to its next round (the last round repeats), and the versions and
 // live reads of the tenant answer from the round it stands in. A part carries `runs`, the Versions runs
-// that moved it to an image tag as the Manager projects them (the newest per tag). The global list of runs,
+// that moved it to an image tag as the Manager projects them (the newest per tag), and a live answer
+// carries `versions`, the tags the Application's last comparison rendered. The global list of runs,
 // GET /api/runs, answers the newest hundred of `globalRuns` and moves nothing: it holds the runs the act
 // must not judge a tenant by, a discarded run of nothing to change among them, and a call that reads it
 // is a defect of the act, which the call list shows. Every other scenario has no tenant at all. The
@@ -49,7 +50,7 @@ const move = (id, status, when, tag = NEW) => ({ id, tag, status, creation: STAR
 /** A Versions run of a tenant as the global list of runs holds it, whether or not it moved the part. */
 const globalRun = (id, tenantId, status, when) => ({ id, kind: "tenant-refresh-members", targetKind: "tenant", targetId: tenantId, status, creation: START + when });
 const part = (running, { name = "shop", builds = [name], runs = [] } = {}) => ({ name, builds, running, versions: [], runs });
-/** The live answer of a tenant: its Application. */
+/** The live answer of a tenant: its Application, and the tags its last comparison rendered. */
 const synced = { ok: true, sync: "Synced", health: "Healthy", syncRevision: "r" };
 const live = (versions, argo = synced) => ({ argo, versions });
 /** A round of one tenant: the parts it answers, and its live answer. */
@@ -62,6 +63,7 @@ const DECOYS = [
 ];
 /** A world with one following tenant, tnt_1, whose rounds are given. */
 const single = (rounds, over = {}) => ({ tenants: [tenant("tnt_1")], rounds: { tnt_1: rounds }, ...over });
+const RENDERED = live({ shop: NEW });
 /** The worlds: the tenants, per tenant the rounds its reads walk through, the global runs and the stage's tag. */
 const WORLDS = {
   "follow-moves": { tenants: [tenant("tnt_1"), ...DECOYS], globalRuns: [globalRun("run_d1", "tnt_1", "cancelled", AFTER + 300), { ...globalRun("run_l1", "tnt_1", "failed", AFTER + 900), kind: "tenant-line-move" }], rounds: { tnt_1: [
@@ -92,12 +94,28 @@ const WORLDS = {
   ]),
   "follow-many-runs": single([round([part([NEW], { runs: [move("run_v1", "succeeded", AFTER + 500)] })])], { globalRuns: [globalRun("run_v1", "tnt_1", "succeeded", AFTER + 500), ...noise(105)] }),
   "follow-no-runs": single([round([{ name: "shop", builds: ["shop"], running: [OLD], versions: [] }])]),
+  "follow-no-versions": single([round([part([NEW], { runs: [move("run_v1", "succeeded", AFTER)] })], { argo: { ok: true, sync: "Synced", health: "Healthy", syncRevision: "r" } })]),
   "follow-no-commit": single([round([part([OLD])])], { noCommit: true }),
   "follow-line": single([round([part(["0.2.007-stable-20260901101010-2222222"])])]),
+  "follow-rendered-cancelled": single([round([part([NEW], { runs: [move("run_v1", "cancelled", AFTER)] })], RENDERED)]),
+  "follow-rendered-failed": single([round([part([NEW], { runs: [move("run_v1", "failed", AFTER)] })], RENDERED)]),
+  "follow-rendered": single([round([part([NEW])], RENDERED)]),
+  "follow-builds": { tenants: [tenant("tnt_1"), tenant("tnt_2")], rounds: {
+    tnt_1: [round([part([NEW, NEW], { builds: ["shop", "shop-worker"] })], live({ shop: NEW, "shop-worker": NEW }))],
+    tnt_2: [round([part([NEW, NEW], { builds: ["shop", "shop-worker"] })], live({ shop: NEW }))],
+  } },
+  "follow-bundle": { tenants: [tenant("tnt_1"), tenant("tnt_2")], rounds: {
+    tnt_1: [round([part([NEW], { builds: ["shop-apps"] })], live({ "shop-apps": NEW }))],
+    tnt_2: [round([part([NEW], { builds: ["shop-apps"] })], live({ "shop-apps": OLD }))],
+  } },
   "follow-recorded": single([round([part([NEW])])]),
+  "follow-old-render": single([round([part([NEW], { runs: [move("run_v1", "succeeded", BEFORE)] })], live({ shop: OLD }))]),
   "follow-unsynced": single([round([part([NEW], { runs: [move("run_v1", "succeeded", BEFORE)] })], live(null, { ok: true, sync: "OutOfSync", health: "Healthy", syncRevision: "r" }))]),
+  "follow-unreadable": single([round([part([NEW], { runs: [move("run_v1", "succeeded", BEFORE)] })], live(null, { ok: false, error: "the Application could not be read" }))]),
   "follow-held": single([round([part([NEW], { runs: [move("run_v1", "failed", BEFORE)] })])]),
-  "follow-held-succeeded": single([round([part([NEW], { runs: [move("run_v1", "succeeded", BEFORE)] })])]),
+  "follow-held-rendered-failed": single([round([part([NEW], { runs: [move("run_v1", "failed", BEFORE)] })], RENDERED)]),
+  "follow-held-rendered-cancelled": single([round([part([NEW], { runs: [move("run_v1", "cancelled", BEFORE)] })], RENDERED)]),
+  "follow-held-succeeded": single([round([part([NEW], { runs: [move("run_v1", "succeeded", BEFORE)] })], RENDERED)]),
   "follow-raced": single([round([part([`${RACED}-bbbbbbb`], { runs: [move("run_v1", "succeeded", AFTER, `${RACED}-bbbbbbb`)] })])], { stageTag: RACED }),
   "follow-promotion": { tenants: [tenant("tnt_prod", { stage: "prod" }), tenant("tnt_1")], carriers: true, rounds: {
     tnt_prod: [

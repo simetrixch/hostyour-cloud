@@ -117,38 +117,42 @@ script then reads the release the stage has put, lists the active tenants of the
 releases, and waits until each one that renders the unit runs it. It prints one line per tenant. The
 image tag of the release is its tag and the first seven digits of its commit.
 
-A tenant is judged by its own reads and never by the list of all runs: `parts[].runs` in
+A tenant is judged by its own reads and never by the list of all runs. `parts[].runs` in
 `GET /api/tenants/<id>/versions?offered=false` name the Versions run that moved the part to an image
-tag. A tenant has landed when every version of its part of the unit is the release's image tag and the
-Versions run that moved the part to it ended `succeeded` after the release run started; the Manager ends
-that run only once ArgoCD rendered the versions. The record of the versions alone proves nothing, because
-it turns when the pin is written, so a tenant without such a run is not landed and is named when the wait
-runs out. A Versions run that moved nothing to the image tag is not a run of this release and is never
-read: not one the follower discarded because its plan changed nothing, not one that moved only the
-members, not one that moved another tag. The script keeps waiting for the run that moves the tag. A run
-that moved the part to the image tag and ended `failed` or `cancelled` ends the script with exit 1 and
-that run's `/runs/<id>`; it counts when it was created after the release run started or the tenant
-records the tag. Where the Manager names no `runs` for the part, the script stops with exit 75 (69 before
-the release request) and says so, and it never reads the newest run in their place. The release the stage
-pins must be the one the run put there (with `--prod-to-test` prod's tag, else the version and channel
-given), or the script ends with exit 1 and names what the stage pins. A tenant on another version line
-than the release is named with its line and left to `Move to line` on `/tenants/<id>`; it is not waited
-for. When no following tenant renders the unit the script prints `no following tenant at <stage> renders
-<unit>`.
+tag, and `versions` in `GET /api/tenants/<id>/live` names the tags the tenant's Application last
+rendered. A tenant whose part records the image tag has landed when its Application renders that tag
+for every build of the part, whatever its Versions run ended as. Otherwise it has landed when the
+Versions run that moved the part to the image tag ended `succeeded` after the release run started; the
+Manager ends that run only once ArgoCD rendered the versions. The record of the versions alone proves
+nothing, because it turns when the pin is written, so a tenant with neither proof is not landed and is
+named when the wait runs out. A Versions run that moved nothing to the image tag is not a run of this
+release and is never read: not one the follower discarded because its plan changed nothing, not one
+that moved only the members, not one that moved another tag. The script keeps waiting for the run
+that moves the tag. A run that moved the part to the image tag and ended `failed` or `cancelled` ends
+the script with exit 1 and that run's `/runs/<id>`, unless the Application renders the tag; it counts
+when it was created after the release run started or the tenant records the tag. Where the Manager
+names no `runs` for the part, or no `versions` for the Application, the script stops with exit 75 (69
+before the release request) and says which, and it never reads the newest run in their place. The
+release the stage pins must be the one the run put there (with `--prod-to-test` prod's tag, else the
+version and channel given), or the script ends with exit 1 and names what the stage pins. A tenant
+on another version line than the release is named with its line and left to `Move to line` on
+`/tenants/<id>`; it is not waited for. When no following tenant renders the unit the script prints
+`no following tenant at <stage> renders <unit>`.
 
-With `--prod-to-test` the same rule is read before the release request: a tenant that records the tag
-while the Versions run that moved it to the tag failed or was cancelled ends the script with exit 1 and
-that run's `/runs/<id>`, and nothing is planned, because planning the release again would change nothing
-for it. A tenant that records the tag and whose live Application is `Synced` and `Healthy` already runs
-the tag: it is printed there and not waited for.
+With `--prod-to-test` the same rule is read before the release request: a tenant that records the
+tag, whose Application does not render it and whose Versions run that moved it to the tag failed or
+was cancelled ends the script with exit 1 and that run's `/runs/<id>`, and nothing is planned,
+because planning the release again would change nothing for it. A tenant that records the tag and
+whose Application renders it already runs the tag, whatever its Versions run ended as: it is printed
+there and not waited for.
 
 | exit | what it means |
 |---|---|
 | 0 | the run succeeded |
 | 1 | the plan was refused, or the run failed or was cancelled, or a plan or an approval did not take, or the Versions run that moved a following tenant to the tag failed or was cancelled; the run, where there is one, is named |
 | 64 | the arguments are not one of the two forms, or a setting below is not a whole number |
-| 69 | `node` or `ssh` is missing, no session could be minted over the admin socket, or the following tenants or their Versions runs could not be read before the release request; nothing was planned |
-| 75 | the watch stopped while the run may go on: the session expired or was revoked, the relay gave no answer too often in a row, or a release request got no answer; or the run succeeded and a following tenant did not run the tag within `RELEASE_UNIT_FOLLOW_SECONDS`, or could not be read, or the Manager named no Versions runs for it; the run, where there is one, is named |
+| 69 | `node` or `ssh` is missing, no session could be minted over the admin socket, or the following tenants, their Versions runs or their rendered versions could not be read before the release request; nothing was planned |
+| 75 | the watch stopped while the run may go on: the session expired or was revoked, the relay gave no answer too often in a row, or a release request got no answer; or the run succeeded and a following tenant did not run the tag within `RELEASE_UNIT_FOLLOW_SECONDS`, or could not be read, or the Manager named no Versions runs or rendered versions for it; the run, where there is one, is named |
 
 `RELEASE_UNIT_POLL_SECONDS` (10) is the pause between two reads of the run, and
 `RELEASE_UNIT_RETRIES` (30) the number of reads in a row that may get no answer before the watch
