@@ -21,7 +21,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends, ending a read that stands still or falls behind the rate it measured on that same read |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
-| `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact release prod runs on test; the stage `none` releases a library, which has no stage |
+| `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact prod release on test; the stage `none` releases a library, which has no stage |
 | `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network, in a clone whose origin carries the install branch (exit 69 otherwise). `status.sh` calls it as one `forgejo-ssh:` row of every installation whose branch runs Forgejo, and `install-machine.sh` at its end after an installation that ended well: green on a banner, RED on none, `not asked` where it could not ask; 66 (no Forgejo on the branch) is no row. Tekton does not call it: it runs inside the network |
 | `create-origin-pull-certificate.sh` | makes the CA and the client certificate Cloudflare presents to the origins of proxied hosts, and writes `CLOUDFLARE_ORIGIN_PULL_CA`, `CLOUDFLARE_ORIGIN_PULL_CERTIFICATE` and `CLOUDFLARE_ORIGIN_PULL_PRIVATE_KEY` into the config; a second run is a rotation |
 | `apply-cloudflare-zone-security.sh` | previews or applies, and reads back, the Cloudflare Free controls of the installation's two zones, among them the minimum TLS version of 1.2 and Email Obfuscation off |
@@ -92,8 +92,10 @@ bash lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test
 bash lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit>
 ```
 
-The first form reads the release prod runs (`GET /api/units/<unit>/release?stage=prod`: its tag,
-version, channel and full commit) and puts exactly that release on test. The Manager plans it as the
+The first form reads the prod release (`GET /api/units/<unit>/release?stage=prod`: its tag,
+version, channel and full commit) and puts exactly that release on test. The prod release is the
+release prod has put: it does not say that a tenant at prod runs it, and a tenant that has not adopted
+it yet does not block the copy. The Manager plans it as the
 one `put-release` step and reads prod again before it pushes the deploy ref, so a prod that moved in
 between writes nothing. The script approves no other plan of this form. The second form plans the
 release the dialog would plan for that stage, channel, version and full commit.
@@ -111,32 +113,46 @@ steps. The run is the one `/runs/<run-id>` shows in the Manager.
 
 A succeeded run proves only that the stage pin stands. The tenants that follow releases move
 afterwards, each in its own Versions run, and that run can fail. So at a stage (not `none`) the
-script then reads the release the stage runs, lists the active tenants of the stage that follow
-releases, and waits until each one that renders the unit runs that release. It prints one line per
-tenant. A tenant has landed when every version of its part of the unit is the release's image tag and
-its newest Versions run ended `succeeded` after the release run started; the Manager ends that run
-only once ArgoCD rendered the versions. The record of the versions alone proves nothing, because it
-turns when the pin is written, so a tenant without such a run is not landed and is named when the wait
-runs out. The release the stage pins must be the one the run put there (with `--prod-to-test` prod's
-tag, else the version and channel given), or the script ends with exit 1 and names what the stage pins.
-Only the newest Versions run of a tenant counts, so a failed run that a later one superseded blocks
-nothing. A tenant on another version line than the release is named with its
-line and left to `Move to line` on `/tenants/<id>`; it is not waited for. When no following tenant
-renders the unit the script prints `no following tenant at <stage> renders <unit>`.
+script then reads the release the stage has put, lists the active tenants of the stage that follow
+releases, and waits until each one that renders the unit runs it. It prints one line per tenant. The
+image tag of the release is its tag and the first seven digits of its commit.
+
+A tenant is judged by its own reads and never by the list of all runs. `parts[].runs` in
+`GET /api/tenants/<id>/versions?offered=false` name the Versions run that moved the part to an image
+tag, and `versions` in `GET /api/tenants/<id>/live` names the tags the tenant's Application last
+rendered. A tenant whose part records the image tag has landed when its Application renders that tag
+for every build of the part, whatever its Versions run ended as. Otherwise it has landed when the
+Versions run that moved the part to the image tag ended `succeeded` after the release run started; the
+Manager ends that run only once ArgoCD rendered the versions. The record of the versions alone proves
+nothing, because it turns when the pin is written, so a tenant with neither proof is not landed and is
+named when the wait runs out. A Versions run that moved nothing to the image tag is not a run of this
+release and is never read: not one the follower discarded because its plan changed nothing, not one
+that moved only the members, not one that moved another tag. The script keeps waiting for the run
+that moves the tag. A run that moved the part to the image tag and ended `failed` or `cancelled` ends
+the script with exit 1 and that run's `/runs/<id>`, unless the Application renders the tag; it counts
+when it was created after the release run started or the tenant records the tag. Where the Manager
+names no `runs` for the part, or no `versions` for the Application, the script stops with exit 75 (69
+before the release request) and says which, and it never reads the newest run in their place. The
+release the stage pins must be the one the run put there (with `--prod-to-test` prod's tag, else the
+version and channel given), or the script ends with exit 1 and names what the stage pins. A tenant
+on another version line than the release is named with its line and left to `Move to line` on
+`/tenants/<id>`; it is not waited for. When no following tenant renders the unit the script prints
+`no following tenant at <stage> renders <unit>`.
 
 With `--prod-to-test` the same rule is read before the release request: a tenant that records the
-tag while its newest Versions run failed ends the script with exit 1 and that run's `/runs/<id>`,
-and nothing is planned, because planning the release again would change nothing for it. A tenant
-that records the tag, whose newest Versions run succeeded or that has none, and whose live Application
-is `Synced` and `Healthy`, already runs the tag: it is printed there and not waited for.
+tag, whose Application does not render it and whose Versions run that moved it to the tag failed or
+was cancelled ends the script with exit 1 and that run's `/runs/<id>`, and nothing is planned,
+because planning the release again would change nothing for it. A tenant that records the tag and
+whose Application renders it already runs the tag, whatever its Versions run ended as: it is printed
+there and not waited for.
 
 | exit | what it means |
 |---|---|
 | 0 | the run succeeded |
-| 1 | the plan was refused, or the run failed or was cancelled, or a plan or an approval did not take, or the Versions run of a following tenant failed or was cancelled; the run, where there is one, is named |
+| 1 | the plan was refused, or the run failed or was cancelled, or a plan or an approval did not take, or the Versions run that moved a following tenant to the tag failed or was cancelled; the run, where there is one, is named |
 | 64 | the arguments are not one of the two forms, or a setting below is not a whole number |
-| 69 | `node` or `ssh` is missing, no session could be minted over the admin socket, or the following tenants could not be read before the release request; nothing was planned |
-| 75 | the watch stopped while the run may go on: the session expired or was revoked, the relay gave no answer too often in a row, or a release request got no answer; or the run succeeded and a following tenant did not run the tag within `RELEASE_UNIT_FOLLOW_SECONDS`, or could not be read; the run, where there is one, is named |
+| 69 | `node` or `ssh` is missing, no session could be minted over the admin socket, or the following tenants, their Versions runs or their rendered versions could not be read before the release request; nothing was planned |
+| 75 | the watch stopped while the run may go on: the session expired or was revoked, the relay gave no answer too often in a row, or a release request got no answer; or the run succeeded and a following tenant did not run the tag within `RELEASE_UNIT_FOLLOW_SECONDS`, or could not be read, or the Manager named no Versions runs or rendered versions for it; the run, where there is one, is named |
 
 `RELEASE_UNIT_POLL_SECONDS` (10) is the pause between two reads of the run, and
 `RELEASE_UNIT_RETRIES` (30) the number of reads in a row that may get no answer before the watch
