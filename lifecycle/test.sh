@@ -3138,7 +3138,7 @@ cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 # upload. Like the microk8s stand-in it lets go of descriptor 9, the backup's lock, so that the driver
 # alone holds the lock while it waits.
 # Every refusal goes to standard error and to rclone-errors.log, which is where a case reads what refused a call: the drivers
-# print nothing of rclone's own words. Where the file box-fails names a call (lsd, lsf, upload or download), that call ends 1
+# print nothing of rclone's own words, except the wording of its message templates in the diagnosis of the read-back. Where the file box-fails names a call (lsd, lsf, upload or download), that call ends 1
 # with the words rclone gives a box that refuses it, the host and the user of the box among them. size answers the bytes
 # of the files under a path, as rclone size --json does. A copy to a path that is not on the box is a local copy. With
 # --use-json-log, a copy prints the statistics line rclone 1.60.1 prints (the key order of its output) when it ends.
@@ -3150,6 +3150,17 @@ cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 # with that code and an error once its segments are used up; without it, the rest is moved at once), "every SECONDS"
 # (a tick after that long, whatever --stats says) or "slow SECONDS" (every tick takes that long more, as on a machine
 # under load). The last line it printed is kept in readback-emitted, and its pid in transfer.pid.
+# Once the plan has moved every byte, the copy has written every file whole and reports the same count. "hold SECONDS|forever"
+# keeps it running that long, a statistics line after each tick, and then it ends 0, or with the code "finish CODE" gives and
+# an error. While it holds, "over N" reports N bytes more than the box holds, "over grow" one more at each tick, "reset" a
+# count of zero, "silent" no line at all, "flip" one byte of an archive changed to another at the same size, "field NAME VALUE" sets a counter of the statistics from the start and
+# "held-field NAME VALUE" from the hold on, "active transferring|checking NAME" names a file the statistics list as in
+# progress from the start and "held-active" from the hold on (@archive is the first archive of the backup, @manifest its
+# manifest). "log start|before|after|end RECORD" prints that line as it
+# stands: at the start, just before the first statistics line that holds every byte, right after it, or when the copy ends.
+# readback-timeline holds the nanosecond clock of the start, of the first statistics line that held every byte
+# ("complete") and of a natural end ("exit"): a killed copy leaves no "exit". readback-stats-path holds the file its standard
+# error was, which is where the driver keeps the log of the copy. A record that starts with STDOUT: is written to standard output.
 exec 9>&-
 here="$(dirname "$0")"
 printf 'rclone %s\n' "$*" >> "$here/argv.log"
@@ -3198,13 +3209,38 @@ box_fails() { [ -f "$here/box-fails" ] && grep -qxF "$1" "$here/box-fails"; }
 box_refuses() {
   err "Failed to create file system for \"box:\": sftp: dial tcp $host:22: ssh: handshake failed for user $user: unable to authenticate"; exit 1
 }
-stats_line() { # BYTES TOTAL MILLISECONDS
-  printf '{"level":"warning","msg":"\\nTransferred: %s bytes\\n","source":"accounting/stats.go:482","stats":{"bytes":%d,"checks":0,"deletedDirs":0,"deletes":0,"elapsedTime":%d.%03d,"errors":0,"eta":null,"fatalError":false,"renames":0,"retryError":false,"speed":0,"totalBytes":%d,"totalChecks":0,"totalTransfers":1,"transferTime":0,"transfers":0},"time":"2026-10-21T00:00:00+00:00"}\n' "$1" "$1" $(( $3 / 1000 )) $(( $3 % 1000 )) "$2" >&2
+timeline() { echo "$1 $(date +%s%N)" >> "$here/readback-timeline"; } # the real time of an event of the copy, in nanoseconds
+emit_logs() { local line; for line; do case "$line" in STDOUT:*) printf '%s\n' "${line#STDOUT:}" ;; *) printf '%s\n' "$line" >&2 ;; esac; done; } # the records the plan gives, on standard error as rclone writes its log, or on standard output where the record starts with STDOUT:
+json_names() { local item out='' sep=''; for item; do out="$out$sep\"$item\""; sep=,; done; printf '[%s]' "$out"; }
+json_transfers() { local item out='' sep=''; for item; do out="$out$sep{\"bytes\":0,\"eta\":null,\"name\":\"$item\",\"percentage\":50,\"size\":2,\"speed\":0,\"speedAvg\":0}"; sep=,; done; printf '[%s]' "$out"; }
+f_checks=0 f_deletedDirs=0 f_deletes=0 f_errors=0 f_fatalError=false f_retryError=false f_totalChecks=0 f_totalTransfers=1 f_transfers=0
+act_checking=() act_transferring=()
+stats_line() { # BYTES TOTAL MILLISECONDS — the statistics record of rclone 1.60.1 (the key order of its output) with the fields and the active files the plan gives
+  local pairs='' key value
+  for key in bytes checking checks deletedDirs deletes elapsedTime errors eta fatalError lastError renames retryError speed totalBytes totalChecks totalTransfers transferTime transferring transfers; do
+    value=''
+    case "$key" in
+      bytes) value="$1" ;;
+      checking) [ "${#act_checking[@]}" -eq 0 ] || value="$(json_names "${act_checking[@]}")" ;;
+      elapsedTime) value="$(( $3 / 1000 )).$(printf '%03d' $(( $3 % 1000 )))" ;;
+      eta) value=null ;;
+      lastError) [ "$f_errors" = 0 ] || value="\"sftp: dial tcp $host:22: connection to $user lost\"" ;;
+      renames|speed|transferTime) value=0 ;;
+      totalBytes) value="$2" ;;
+      transferring) [ "${#act_transferring[@]}" -eq 0 ] || value="$(json_transfers "${act_transferring[@]}")" ;;
+      *) eval "value=\${f_$key}" ;;
+    esac
+    if [ -n "$value" ] && [ "$value" != - ]; then pairs="$pairs${pairs:+,}\"$key\":$value"; fi
+  done
+  printf '{"level":"warning","msg":"\\nTransferred: %s bytes\\n%s","source":"accounting/stats.go:482","stats":{%s},"time":"2026-10-21T00:00:00+00:00"}\n' "$1" "$([ "$f_errors" = 0 ] || printf 'Errors: %s, last at %s as %s\\n' "$f_errors" "$host" "$user")" "$pairs" >&2
   echo "$1 $3" > "$here/readback-emitted"
 }
 bytes_under() { find "$1" -type f -exec cat {} + | wc -c | tr -d ' '; }
 progressive() { # FROM TO — the copy of the plan: each tick has moved what the plan gives for the real time since the copy started
   local from="$1" to="$2" kind a b rates=() spans=() code='' garbage='' slow='' every="$stats_every" file total=0 sent=0 tick=0 started elapsed due at span len n take index=0 offset=0 files=() sizes=() segment used_up
+  local hold='' finish=0 over='' reset='' silent='' flip='' completed='' first_complete='' held_since beat shown pair bit
+  named() { case "$1" in @archive) ls "$from" | grep -vx manifest.txt | head -n 1 ;; @manifest) echo manifest.txt ;; *) echo "$1" ;; esac; } # the first archive of the backup, its manifest, or the name as it stands
+  local log_start=() log_before=() log_after=() log_end=() held=() held_transferring=() held_checking=() held_set_transferring='' held_set_checking=''
   while read -r kind a b; do
     case "$kind" in
       rate) rates+=("$a"); spans+=("$b") ;;
@@ -3213,14 +3249,28 @@ progressive() { # FROM TO — the copy of the plan: each tick has moved what the
       exit) code="$a" ;;
       slow) slow="$a" ;;
       every) every="$a" ;;
+      hold) hold="$a" ;;
+      finish) finish="$a" ;;
+      over) over="$a" ;;
+      reset) reset=1 ;;
+      silent) silent=1 ;;
+      flip) flip=1 ;;
+      field) case "$a" in checks|deletedDirs|deletes|errors|fatalError|retryError|totalChecks|totalTransfers|transfers) printf -v "f_$a" '%s' "$b" ;; *) echo "rclone stand-in: the plan sets no field $a" >&2; exit 2 ;; esac ;;
+      held-field) held+=("$a=$b") ;;
+      active) case "$a" in transferring) act_transferring+=("$(named "$b")") ;; checking) act_checking+=("$(named "$b")") ;; esac ;;
+      held-active) case "$a" in transferring) held_transferring+=("$(named "$b")"); held_set_transferring=1 ;; checking) held_checking+=("$(named "$b")"); held_set_checking=1 ;; esac ;;
+      log) case "$a" in start) log_start+=("$b") ;; before) log_before+=("$b") ;; after) log_after+=("$b") ;; end) log_end+=("$b") ;; esac ;;
     esac
   done < "$here/readback-plan"
   echo $$ > "$here/transfer.pid"
+  readlink "/proc/$$/fd/2" > "$here/readback-stats-path"
   while IFS= read -r file; do
     files+=("$file"); sizes+=("$(wc -c < "$from/$file" | tr -d ' ')"); total=$(( total + ${sizes[${#sizes[@]} - 1]} ))
     : > "$to/$file"
   done < <(cd "$from" && find . -type f | sort)
   started=$(date +%s%N)
+  timeline start
+  emit_logs "${log_start[@]}"
   while :; do
     sleep "$every"
     [ -z "$slow" ] || sleep "$slow"
@@ -3249,9 +3299,47 @@ progressive() { # FROM TO — the copy of the plan: each tick has moved what the
       tail -c +$(( offset + 1 )) "$from/${files[$index]}" | head -c "$take" >> "$to/${files[$index]}"
       offset=$(( offset + take )); n=$(( n - take ))
     done
+    first_complete=''
+    if [ "$sent" -ge "$total" ] && [ -z "$completed" ]; then
+      completed=1 first_complete=1
+      if [ -n "$flip" ]; then
+        for file in "${files[@]}"; do
+          [ "$file" != ./manifest.txt ] || continue
+          bit=$(head -c 1 "$to/$file" | od -An -tu1 | tr -d ' ')
+          printf "\\$(printf '%03o' $(( (bit + 1) % 256 )))" | dd of="$to/$file" bs=1 count=1 conv=notrunc 2> /dev/null
+          break
+        done
+      fi
+      emit_logs "${log_before[@]}"
+    fi
     stats_line "$sent" "$total" "$elapsed"
+    if [ -n "$first_complete" ]; then
+      timeline complete
+      emit_logs "${log_after[@]}"
+      if [ -n "$hold" ]; then
+        for pair in "${held[@]}"; do printf -v "f_${pair%%=*}" '%s' "${pair#*=}"; done
+        [ -z "$held_set_transferring" ] || act_transferring=("${held_transferring[@]}")
+        [ -z "$held_set_checking" ] || act_checking=("${held_checking[@]}")
+        held_since=$(date +%s%N); beat=0
+        while [ "$hold" = forever ] || [ $(( ($(date +%s%N) - held_since) / 1000000 )) -lt $(( hold * 1000 )) ]; do
+          sleep "$every"
+          [ -z "$slow" ] || sleep "$slow"
+          tick=$(( tick + 1 )); beat=$(( beat + 1 ))
+          [ "$tick" -le 3000 ] || exit 1
+          [ -z "$silent" ] || continue
+          shown="$total"
+          case "$over" in grow) shown=$(( total + beat )) ;; '') ;; *) shown=$(( total + over )) ;; esac
+          [ -z "$reset" ] || shown=0
+          stats_line "$shown" "$total" $(( ($(date +%s%N) - started) / 1000000 ))
+        done
+        emit_logs "${log_end[@]}"
+        timeline exit
+        if [ "$finish" != 0 ]; then err "Failed to copy: sftp: dial tcp $host:22: connection to $user lost"; exit "$finish"; fi
+        exit 0
+      fi
+    fi
     if [ -n "$used_up" ] && [ -n "$code" ]; then err "Failed to copy: sftp: dial tcp $host:22: connection to $user lost"; exit "$code"; fi
-    [ "$sent" -lt "$total" ] || exit 0
+    [ "$sent" -lt "$total" ] || { emit_logs "${log_end[@]}"; timeline exit; exit 0; }
   done
 }
 case "$1" in
@@ -3339,7 +3427,15 @@ done
 exec "$real" "${args[@]}"
 STANDIN_INSTALL
 printf '%s\n' '#!/usr/bin/env bash' '# chown as the restore calls it as root: an account that is not root cannot give a file away.' 'exit 0' > "$STANDIN/chown"
-chmod 700 "$STANDIN/sudo" "$STANDIN/gpg" "$STANDIN/tar" "$STANDIN/microk8s" "$STANDIN/rclone" "$STANDIN/git" "$STANDIN/install" "$STANDIN/chown"
+cat > "$STANDIN/awk" <<'STANDIN_AWK'
+#!/usr/bin/env bash
+# awk as the backup driver reads the log of the copy with it: its arguments go to argv.log, the machine's own awk does the work.
+here="$(dirname "$0")"
+printf 'awk %s\n' "$*" >> "$here/argv.log"
+exec REAL_AWK "$@"
+STANDIN_AWK
+sed -i "s#REAL_AWK#$(command -v awk)#" "$STANDIN/awk"
+chmod 700 "$STANDIN/sudo" "$STANDIN/gpg" "$STANDIN/tar" "$STANDIN/microk8s" "$STANDIN/rclone" "$STANDIN/git" "$STANDIN/install" "$STANDIN/chown" "$STANDIN/awk"
 
 BACKUP_ROOT="$(grep '^root() ' "$HERE/master-backup-driver.sh")"
 BACKUP_SEAL="$(sed -n '/^seal() {/,/^}/p' "$HERE/master-backup-driver.sh")"
@@ -3819,7 +3915,7 @@ while IFS='|' read -r ns pvc _ _; do
 done < <(STAGE=prod; eval "$BACKUP_STORES"; printf '%s\n' "${STORES[@]}")
 LOCK_STORES="$(ls "$LOCK_DIR/storage" | wc -l | tr -d ' ')"
 lock_reset() { # <free|block|block-upload> — the stand-ins forget the last case; block holds the first scale call of the next one, block-upload its first copy to the box
-  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/readback-plan" "$STANDIN/readback-emitted" "$STANDIN/transfer.pid" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$STANDIN/box-fails" "$STANDIN/rclone-errors.log" "$LOCK_DIR/master-backup.lock"
+  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/readback-plan" "$STANDIN/readback-emitted" "$STANDIN/readback-timeline" "$STANDIN/readback-stats-path" "$STANDIN/transfer.pid" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$STANDIN/box-fails" "$STANDIN/rclone-errors.log" "$LOCK_DIR/master-backup.lock"
   : > "$STANDIN/kubectl-calls.log"
   case "$1" in
     block) : > "$STANDIN/block-first-scale" ;;
@@ -4034,7 +4130,7 @@ ok 'the planted drivers are caught: no lock, a lock taken after the folder, a lo
 # queue is not held, while the planted run still reads running or while the planted Job of the queue is unfinished; the
 # Manager started or the queue let go while a store this run stopped is not back and ready; and a run that ends with the
 # Manager at 0 or the queue held although every store is back and ready, are each red.
-for named in QUEUE_POLL_SECONDS QUEUE_WAIT_SECONDS STORE_POLL_SECONDS STORE_WAIT_SECONDS READBACK_WAIT_SECONDS READBACK_POLL_SECONDS READBACK_REPORT_SECONDS READBACK_GRACE_SECONDS READBACK_SLOWDOWN_FACTOR; do
+for named in QUEUE_POLL_SECONDS QUEUE_WAIT_SECONDS STORE_POLL_SECONDS STORE_WAIT_SECONDS READBACK_WAIT_SECONDS READBACK_POLL_SECONDS READBACK_REPORT_SECONDS READBACK_GRACE_SECONDS READBACK_FINISH_SECONDS READBACK_SLOWDOWN_FACTOR; do
   grep -q "^readonly $named=[0-9]" "$HERE/master-backup-driver.sh" || fail "the backup driver names no $named on a line of its own — the hold cases cannot move its wait into the sandbox"
 done
 hold_run() { # <the driver's text> [<knob>...] — the stand-ins forget the last case and take the knobs, then the whole driver runs once; its code stands in $LOCK_CODE. A knob is NAME (the file knob-NAME), NAME=content (the file of cluster/ so named), copy-fails=<ns>-<claim> (the copy of that store fails) or a NAME=value of the driver, which a shortened wait is
@@ -4281,7 +4377,8 @@ ok 'backup: the planted drivers are caught: no hold, the running run not read, n
 # ── the read-back measures the box's rate and ends a copy that stands still or falls behind, and what it left is removed when the ssh session ends ─
 # The read-back is the one step that waits on the storage box alone. The driver reads rclone's own statistics of the copy: the bytes it has
 # moved and the time it has run. After READBACK_WAIT_SECONDS it freezes a floor of half the rate it measured, and gives the whole backup the
-# time it takes at that floor, counted from there; a copy that moves no byte for READBACK_WAIT_SECONDS is ended. The cases run the whole driver
+# time it takes at that floor, counted from there; a copy that moves no byte for READBACK_WAIT_SECONDS is ended. Once a statistics line holds
+# every expected byte, none of that applies and READBACK_FINISH_SECONDS is the only bound. The cases run the whole driver
 # against the rclone stand-in, whose copy from the box follows a plan: it prints the statistics line rclone 1.60.1 prints after each tick, with
 # the real time since the copy started and the bytes the plan has moved by then, so the driver's measurement reads what it reads in production
 # and its clock and the stand-in's are one clock: no case depends on how long a tick takes. RB_SLOW is the seconds a tick takes longer, and the
@@ -4484,11 +4581,11 @@ readback_late() { # <the driver's text> — a copy that ends 0 inside the last p
   readback_wrong late >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
 }
-readback_orphaned() { # <the driver's text> — the ssh session ends while the copy runs: ends 0 when the driver ended 141, the copy was ended with it and the work folder stands with its archives; what is wrong stands in $OUT/verdict
-  local text="$1" dir="$LOCK_DIR/orphaned" session reader _
+readback_orphaned() { # <the driver's text> [<the plan>] — the ssh session ends while the copy runs, or after it has read every byte and runs on: ends 0 when the driver ended 141, the copy was ended with it and the work folder stands with its archives; what is wrong stands in $OUT/verdict
+  local text="$1" plan="${2:-rate 524288 forever}" dir="$LOCK_DIR/orphaned" session reader _
   : > "$OUT/verdict"
   lock_reset free
-  printf '%s\n' 'rate 524288 forever' > "$STANDIN/readback-plan"
+  printf '%s\n' "$plan" > "$STANDIN/readback-plan"
   : > "$STANDIN/argv.log"
   volume_padded on
   lock_driver orphaned "$text" READBACK_POLL_SECONDS=0.1 READBACK_REPORT_SECONDS=1 READBACK_WAIT_SECONDS=2
@@ -4502,6 +4599,7 @@ readback_orphaned() { # <the driver's text> — the ssh session ends while the c
   RB_STARTED=$SECONDS
   for _ in $(seq 1 600); do [ -s "$STANDIN/transfer.pid" ] && break; kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
   [ -s "$STANDIN/transfer.pid" ] || echo "the driver did not start the copy back: $(tail -n 2 "$dir/out" | tr '\n' ' ' | cut -c1-300)" >> "$OUT/verdict"
+  case "$plan" in *hold*) for _ in $(seq 1 100); do [ -z "$(timeline_ms complete)" ] || break; sleep 0.1; done; sleep 1.5 ;; esac
   kill "$reader"; { wait "$reader"; } 2> /dev/null || true
   readback_finish 1 15
   [ "$LOCK_CODE" = 141 ] || echo "the driver ended with $LOCK_CODE, not 141 — bash dies of SIGPIPE on the next line it prints once the session has ended" >> "$OUT/verdict"
@@ -4509,6 +4607,289 @@ readback_orphaned() { # <the driver's text> — the ssh session ends while the c
   [ ! -s "$OUT/verdict" ]
 }
 
+# What follows the last byte: a copy that has read every expected byte and still runs is given READBACK_FINISH_SECONDS, one wait that
+# starts when a statistics line first holds every byte and that nothing restarts; none of the rules for a copy that is still reading
+# applies in it. The stand-in writes every file whole, reports the same count and then holds, and the clock of its events stands in
+# readback-timeline.
+timeline_ms() { # <event> — the milliseconds from the start of the copy to the event, or nothing where the copy never reached it
+  awk -v want="$1" '$1 == "start" { s = $2 } $1 == want && s != "" { printf "%d", ($2 - s) / 1000000; exit }' "$STANDIN/readback-timeline" 2> /dev/null || true
+}
+readback_held() { # <the driver's text> <run> <the plan> <READBACK_FINISH_SECONDS> <the least seconds the copy runs on after its last byte> <measured: yes|no> [<knob>...] — a copy that reads every byte, runs on and then ends 0: ends 0 when the driver let it end and went on to the checks; what is wrong stands in $OUT/verdict, the real times in $RB_TIMES
+  local text="$1" run="$2" plan="$3" finish="$4" least="$5" measured="$6" dir="$LOCK_DIR/$2" complete exit_ms
+  shift 6
+  : > "$OUT/verdict"
+  readback_start "$run" "$text" 1 "$plan" READBACK_FINISH_SECONDS="$finish" "$@"
+  readback_finish 1 "$RB_LIMIT"
+  complete="$(timeline_ms complete)"; exit_ms="$(timeline_ms exit)"
+  RB_TIMES="every byte read ${complete:-never} ms and the copy ended ${exit_ms:-never} ms after its start, the driver ran ${RB_RAN} s"
+  if [ -z "$complete" ] || [ -z "$exit_ms" ]; then
+    echo "the copy did not read every byte and end by itself, so the case holds nothing: $RB_TIMES" >> "$OUT/verdict"
+  elif [ $(( exit_ms - complete )) -lt $(( least * 1000 )) ]; then
+    echo "the copy ran on $(( exit_ms - complete )) ms after its last byte, not the $least s this case holds it" >> "$OUT/verdict"
+  fi
+  [ "$LOCK_CODE" = 0 ] || echo "the driver ended with $LOCK_CODE, not 0, on a copy that read every byte and ended 0 by itself: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
+  [ "$(tail -n 1 "$dir/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the driver did not end with BACKUP and an id' >> "$OUT/verdict"
+  grep -qF -- 'the checksums hold' "$dir/out" || echo 'the driver did not reach the checksums of the manifest' >> "$OUT/verdict"
+  grep -qF -- 'the transfer was seen to have ended' "$dir/out" || echo 'the driver did not say that the copy that had read every byte ended' >> "$OUT/verdict"
+  if [ "$measured" = no ]; then
+    ! grep -qF -- 'measured ' "$dir/out" || echo 'the driver froze a rate for a copy that had read every byte before the measurement was over' >> "$OUT/verdict"
+  else
+    readback_measured "$run"
+    if [ -n "$M_ALLOWED" ] && [ -n "$exit_ms" ] && [ "$exit_ms" -le $(( (RB_WAIT + M_ALLOWED) * 1000 )) ]; then
+      echo "the copy ended $exit_ms ms after its start, inside the $(( RB_WAIT + M_ALLOWED )) s the measured rate gave it, so the case does not hold a copy past that deadline" >> "$OUT/verdict"
+    fi
+  fi
+  readback_wrong "$run" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+RB_WAIT=2 # READBACK_WAIT_SECONDS of every case here, as readback_start sets it
+readback_bounded() { # <the driver's text> <run> <the plan> <the bound in seconds> <the exit status of the ended copy: 143|137> [<knob>...] — a copy that has read every byte and runs on past READBACK_FINISH_SECONDS: ends 0 when the driver ended 69 with the named failure once the bound passed, the copy ended and reaped and no checksum run; what is wrong stands in $OUT/verdict
+  local text="$1" run="$2" plan="$3" bound="$4" status="$5" dir="$LOCK_DIR/$2" line fields counted total waited stated_bound stated_id stated_status
+  shift 5
+  : > "$OUT/verdict"
+  readback_start "$run" "$text" 1 "$plan" READBACK_FINISH_SECONDS="$bound" "$@"
+  readback_finish 1 "$RB_LIMIT"
+  readback_refused "$run" 'read-back completion did not finish'
+  line="$(tail -n 1 "$dir/err")"
+  fields="$(sed -n 's/.*rclone reported every expected byte read (\([0-9]*\) of \([0-9]*\)), the completion wait ran \([0-9]*\) s to its bound of \([0-9]*\) s with the transfer still running, and it was ended (backup \([0-9]\{8\}T[0-9]\{6\}Z\)); .*transfer exit status \([0-9]*\);.*/\1 \2 \3 \4 \5 \6/p' <<< "$line")"
+  if [ -z "$fields" ]; then
+    echo "the error does not say that rclone reported every expected byte, how long the wait ran, its bound, the backup and the exit status: $(cut -c1-400 <<< "$line")" >> "$OUT/verdict"
+  else
+    read -r counted total waited stated_bound stated_id stated_status <<< "$fields"
+    [ "$total" = "$(backup_bytes)" ] || echo "the error states $total expected bytes, and the box holds $(backup_bytes)" >> "$OUT/verdict"
+    [ "$counted" -ge "$total" ] || echo "the error states $counted bytes reported, fewer than the $total expected" >> "$OUT/verdict"
+    [ "$stated_bound" = "$bound" ] || echo "the error states a bound of $stated_bound s, not the $bound s of the case" >> "$OUT/verdict"
+    { [ "$waited" -ge "$bound" ] && [ "$waited" -le $(( bound + 3 )) ]; } || echo "the error states a wait of $waited s, not one of $bound s to $(( bound + 3 )) s" >> "$OUT/verdict"
+    [ "$stated_status" = "$status" ] || echo "the error states the exit status $stated_status of the ended copy, not $status" >> "$OUT/verdict"
+    grep -qF -- "$stated_id" "$dir/out" || echo "the backup $stated_id of the error is not the backup the run made" >> "$OUT/verdict"
+  fi
+  case "$line" in *box:*) echo "the error names the path on the box: $(cut -c1-300 <<< "$line")" >> "$OUT/verdict" ;; esac
+  case "$line" in *"the archives stand in "*) ;; *) echo 'the error does not say where the archives stand' >> "$OUT/verdict" ;; esac
+  case "$plan" in *active*) ;; *) case "$line" in *'an empty list does not show that rclone is idle'*) ;; *) echo 'the failure of a copy whose statistics list no active file does not say that an empty list is no proof that rclone is idle' >> "$OUT/verdict" ;; esac ;; esac
+  [ -z "$(timeline_ms exit)" ] || echo 'the copy ended by itself, so the driver did not end it' >> "$OUT/verdict"
+  ! grep -qF -- 'the checksums hold' "$dir/out" || echo 'the driver ran the checksums of the manifest on a copy it had ended' >> "$OUT/verdict"
+  ! grep -qF -- 'do not match the checksums' "$dir/err" || echo 'the driver ran the checksums of the manifest on a copy it had ended' >> "$OUT/verdict"
+  grep -qF -- 'read-back completion (backup ' "$dir/out" || echo 'the driver printed nothing of what rclone reported before it ended the copy' >> "$OUT/verdict"
+  [ ! -e "$(cat "$STANDIN/readback-stats-path")" ] || echo 'the file with the log of the copy stands after the driver ended' >> "$OUT/verdict"
+  readback_wrong "$run" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+# The log of the copy is read for a diagnosis that is printed before the copy is ended, or when it ends by itself. Whatever rclone writes is
+# data from outside: the diagnosis shows its message templates (the cases write them as rclone 1.60.1 does, with the host, the user, the
+# account and the path of the box planted where rclone puts a value it took from outside), numbers, times, the version and the names of
+# this backup's files, and nothing else.
+PLANTED_ACCOUNT=planted-box-account
+PLANTED_REMOTE_PATH="/home/$PLANTED_ACCOUNT/secret-backups/planted-backup-id"
+rb_record() { # <second> <level> <source> <message> [<object>] — a log record as rclone 1.60.1 writes it: compact JSON, the keys in alphabetical order, the time to the microsecond
+  local message="${4//\\/\\\\}" object=''
+  message="${message//\"/\\\"}"; message="${message//$'\n'/\\n}"
+  if [ -n "${5:-}" ]; then object=",\"object\":\"$5\",\"objectType\":\"*sftp.Object\""; fi
+  printf '{"level":"%s","msg":"%s"%s,"source":"%s","time":"2026-10-21T08:%02d:%02d.123456+00:00"}' "$2" "$message" "$object" "$3" $(( $1 / 60 )) $(( $1 % 60 ))
+}
+retry_line_wrong() { # <the plain output> <retry records> <log records> <least unreadable lines> <the rest of the line> — says what is wrong with "retry records: R of L log record(s) read (U line(s) unreadable, 0 statistics record(s) not valid); REST"; U may be more than the lines the case wrote, because whatever a loaded machine writes beside rclone's records is counted as unreadable too; ends 0
+  local line unreadable
+  line="$(grep -a '^retry records: ' "$1" | head -n 1)"
+  unreadable="$(sed -n 's/^retry records: [0-9]* of [0-9]* log record(s) read (\([0-9]*\) line(s) unreadable, .*/\1/p' <<< "$line")"
+  case "$line" in
+    "retry records: $2 of $3 log record(s) read ("[0-9]*" line(s) unreadable, 0 statistics record(s) not valid); $5") ;;
+    *) echo "the driver did not print the retry records as 'retry records: $2 of $3 log record(s) read (N line(s) unreadable, 0 statistics record(s) not valid); $5'; it printed '$(cut -c1-400 <<< "$line")'"; return 0 ;;
+  esac
+  [ "$unreadable" -ge "$4" ] || echo "the driver counted $unreadable unreadable lines, fewer than the $4 the case wrote"
+  return 0
+}
+rb_time() { printf '2026-10-21T08:%02d:%02d.123456+00:00' $(( $1 / 60 )) $(( $1 % 60 )); } # <second> — the time rb_record writes
+plain_of() { sed 's/\x1b\[[0-9;]*m//g; s/^ *//' "$1" > "$1.plain"; } # <file> — the file without its colors and indents, in <file>.plain
+rb_planted="sftp: dial tcp $BOX_HOST:22: ssh: handshake failed for user $BOX_USER: $PLANTED_ACCOUNT $PLANTED_REMOTE_PATH"
+# one row for each message template of rclone 1.60.1 the driver shows: level|source|message as rclone writes it|message as the driver shows it|object
+RB_ROWS=(
+  'info|cmd/cmd.go:263|Attempt 1/3 succeeded|Attempt 1/3 succeeded|'
+  "error|cmd/cmd.go:283|Attempt 2/3 failed with 1 errors and: $rb_planted|Attempt 2/3 failed with 1 errors and: [redacted]|"
+  'error|cmd/cmd.go:285|Attempt 2/3 failed with 1 errors|Attempt 2/3 failed with 1 errors|'
+  'error|cmd/cmd.go:268|Fatal error received - not attempting retries|Fatal error received - not attempting retries|'
+  "error|cmd/cmd.go:272|Can't retry any of the errors - not attempting retries|Can't retry any of the errors - not attempting retries|"
+  'info|cmd/cmd.go:298|7 go routines active\n|7 go routines active|'
+  "debug|cmd/cmd.go:414|Version \"v1.60.1\" starting with parameters [\"rclone\" \"--config\" \"$PLANTED_REMOTE_PATH/rclone.conf\" \"copy\" \"box:$BOX_HOST/$PLANTED_REMOTE_PATH/\" \"/dev/shm/x\"]|Version \"v1.60.1\" starting with parameters [redacted]|"
+  "error|operations/operations.go:529|Received error: $rb_planted - low level retry 1/10|Received error: [redacted] - low level retry 1/10|"
+  "error|operations/operations.go:538|Failed to copy: $rb_planted|Failed to copy: [redacted]|"
+  "error|operations/operations.go:103|Failed to calculate src hash: failed to run \"md5sum $PLANTED_REMOTE_PATH/a.tar.gpg\" for $BOX_USER|Failed to calculate src hash: [redacted]|"
+  "error|operations/operations.go:107|Failed to calculate dst hash: $rb_planted|Failed to calculate dst hash: [redacted]|"
+  'error|operations/operations.go:545|corrupted on transfer: sizes differ 3147722 vs 3147721|corrupted on transfer: sizes differ 3147722 vs 3147721|'
+  'info|operations/operations.go:566|Copied (new)|Copied (new)|manifest.txt'
+  'info|operations/operations.go:566|Copied (replaced existing)|Copied (replaced existing)|manifest.txt'
+  'info|operations/operations.go:566|Copied (server-side copy)|Copied (server-side copy)|manifest.txt'
+  'info|operations/operations.go:566|Multi-thread Copied (new)|Multi-thread Copied (new)|manifest.txt'
+  'info|operations/operations.go:566|Multi-thread Copied (replaced existing)|Multi-thread Copied (replaced existing)|manifest.txt'
+  'info|operations/operations.go:566|Copied (Rcat, new)|Copied (Rcat, new)|manifest.txt'
+  'info|operations/operations.go:566|Copied (Rcat, replaced existing)|Copied (Rcat, replaced existing)|manifest.txt'
+  'info|sync/sync.go:441|Waiting for checks to finish|Waiting for checks to finish|'
+  'info|sync/sync.go:457|Waiting for transfers to finish|Waiting for transfers to finish|'
+  'info|sync/sync.go:479|Waiting for renames to finish|Waiting for renames to finish|'
+  'info|sync/sync.go:891|Checks finished, now starting transfers|Checks finished, now starting transfers|'
+)
+readback_private_wrong() { # <run> — says which planted value of the box stands in the output of the run, on either stream, and which stands on the command line of awk, which reads the log of the copy; ends 0
+  local dir="$LOCK_DIR/$1" planted
+  for planted in "$BOX_HOST" "$BOX_USER" "$PLANTED_ACCOUNT" "$PLANTED_REMOTE_PATH" "$PLANTED_BOX_PASSWORD" "$PLANTED_PASSPHRASE" "$PLANTED_PASSWORD"; do
+    ! grep -qaF -- "$planted" "$dir/out" "$dir/err" || echo "the run printed the planted value $planted"
+    ! grep -a '^awk ' "$STANDIN/argv.log" | grep -qaF -- "$planted" || echo "the planted value $planted stands on the command line of awk"
+  done
+  return 0
+}
+readback_templates() { # <the driver's text> — every message template the driver shows, written as rclone 1.60.1 writes it with the host, the user, the account and the path of the box planted in it: ends 0 when each comes out as its template with the planted values gone, and each that carries none as it went in; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/templates" plan=$'rate 4194304 forever\nhold forever' row level source message expected object n=0 want
+  : > "$OUT/verdict"
+  for row in "${RB_ROWS[@]}"; do
+    n=$(( n + 1 ))
+    IFS='|' read -r level source message expected object <<< "$row"
+    message="${message//\\n/$'\n'}"
+    plan+=$'\n'"log after $(rb_record "$n" "$level" "$source" "$message" "$object")"
+  done
+  readback_start templates "$text" 1 "$plan" READBACK_FINISH_SECONDS=3
+  readback_finish 1 "$RB_LIMIT"
+  plain_of "$dir/out"
+  n=0
+  for row in "${RB_ROWS[@]}"; do
+    n=$(( n + 1 ))
+    IFS='|' read -r level source message expected object <<< "$row"
+    want="$(rb_time "$n") $level $source $expected${object:+ [$object]}"
+    grep -qxF -- "$want" "$dir/out.plain" || echo "the driver did not show the record of $source as '$want'" >> "$OUT/verdict"
+  done
+  grep -qF -- "log of the completion phase, ${#RB_ROWS[@]} of ${#RB_ROWS[@]} record(s)" "$dir/out.plain" || echo "the driver did not say that it shows all ${#RB_ROWS[@]} records of the completion phase" >> "$OUT/verdict"
+  readback_private_wrong templates >> "$OUT/verdict"
+  readback_wrong templates >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_diagnosed() { # <the driver's text> — a copy that has read every byte with work still listed, a retry counter, an error, 36 log records after its last byte, one before it and lines that are no record: ends 0 when the driver printed the first and the last record of the completion phase with their counters, the active files, the retry figures, the last 30 log records in order, the record before as prior context only, and the last record of the log as what is unfinished; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/diagnosed" total plan n=0 archive ring want_ring want
+  local -a ring_lines=()
+  : > "$OUT/verdict"
+  plan=$'rate 4194304 forever\nfield totalTransfers 2\nfield totalChecks 3\nheld-field checks 1\nheld-field transfers 1\nheld-field errors 1\nheld-field retryError true\nheld-active transferring @archive\nheld-active checking @manifest\nhold forever'
+  plan+=$'\n'"log start $(rb_record 1 debug cmd/cmd.go:414 'Version "v1.60.1" starting with parameters ["rclone" "copy"]')"
+  plan+=$'\n'"log before $(rb_record 2 info sync/sync.go:441 'Waiting for checks to finish')"
+  plan+=$'\n'"log after $(rb_record 3 error cmd/cmd.go:283 "Attempt 1/3 failed with 1 errors and: $rb_planted")"
+  plan+=$'\n'"log after not json: $BOX_USER at $BOX_HOST"
+  plan+=$'\n'"log after STDOUT:$(rb_record 4 info sync/sync.go:457 'Waiting for transfers to finish')"
+  plan+=$'\n'"log after {\"level\":\"info\",\"msg\":\"cut off $BOX_HOST"
+  plan+=$'\n'"log after $(rb_record 5 error cmd/cmd.go:285 'Attempt 1/3 failed with 1 errors')"
+  plan+=$'\n'"log after $(rb_record 6 info cmd/cmd.go:263 'Attempt 2/3 succeeded')"
+  ring_lines+=("$(rb_time 3) error cmd/cmd.go:283 Attempt 1/3 failed with 1 errors and: [redacted]" "$(rb_time 4) info sync/sync.go:457 Waiting for transfers to finish" "$(rb_time 5) error cmd/cmd.go:285 Attempt 1/3 failed with 1 errors")
+  ring_lines+=("$(rb_time 6) info cmd/cmd.go:263 Attempt 2/3 succeeded")
+  for n in $(seq 7 36); do
+    plan+=$'\n'"log after $(rb_record "$n" info operations/operations.go:566 'Copied (new)' manifest.txt)"
+    ring_lines+=("$(rb_time "$n") info operations/operations.go:566 Copied (new) [manifest.txt]")
+  done
+  plan+=$'\n'"log after $(rb_record 37 error operations/operations.go:529 "Received error: $rb_planted - low level retry 2/10")"
+  plan+=$'\n'"log after $(rb_record 38 info operations/operations.go:566 'Copied (replaced existing)' manifest.txt)"
+  ring_lines+=("$(rb_time 37) error operations/operations.go:529 Received error: [redacted] - low level retry 2/10" "$(rb_time 38) info operations/operations.go:566 Copied (replaced existing) [manifest.txt]")
+  readback_start diagnosed "$text" 1 "$plan" READBACK_FINISH_SECONDS=3
+  readback_finish 1 "$RB_LIMIT"
+  total="$(backup_bytes)"
+  readback_refused diagnosed 'read-back completion did not finish'
+  plain_of "$dir/out"
+  archive="$(find "$STANDIN/box-uploaded" -type f | head -n 1)"
+  archive="$(ls "${archive%/*}" | grep -vx manifest.txt | head -n 1)"
+  for want in \
+    'rclone version: v1.60.1' \
+    "first complete record: $total of $total bytes, transfers 0/2, checks 0/3, errors 0, deletes 0, deletedDirs 0, elapsedTime " \
+    'active in it: no file transferring listed, no file checking listed' \
+    "$total of $total bytes, transfers 1/2, checks 1/3, errors 1, deletes 0, deletedDirs 0, elapsedTime " \
+    ", retryError true, fatalError false, written at 2026-10-21T00:00:00+00:00" \
+    "active in it: 1 file(s) transferring [$archive], 1 file(s) checking [manifest.txt]" \
+    "prior context, the record before the byte count was complete (not proof that its operation is still running): $(rb_time 2) info sync/sync.go:441 Waiting for checks to finish" \
+    "unfinished: the last statistics record reports 1 file(s) transferring [$archive], 1 file(s) checking [manifest.txt]; the last log record reads: $(rb_time 38) info operations/operations.go:566 Copied (replaced existing) [manifest.txt]" \
+    'log of the completion phase, 30 of 36 record(s), oldest first:'; do
+    case "$want" in unfinished:*) grep -qF -- "${want#unfinished: }" "$LOCK_DIR/diagnosed/err" || echo "the error does not say '${want#unfinished: }'" >> "$OUT/verdict" ;; *) grep -qF -- "$want" "$dir/out.plain" || echo "the driver did not print '$want'; it printed '$(grep -aF -- "${want:0:14}" "$dir/out.plain" | head -n 1 | cut -c1-400)'" >> "$OUT/verdict" ;; esac
+  done
+  retry_line_wrong "$dir/out.plain" 4 38 2 'attempts 3: 1/3 failed with 1 errors; 1/3 failed with 1 errors; 2/3 succeeded; low-level retries 1, the latest 2/10' >> "$OUT/verdict"
+  ring="$(sed -n '/^log of the completion phase, /,$p' "$dir/out.plain" | sed '1d')"
+  want_ring="$(printf '%s\n' "${ring_lines[@]:6}")"
+  [ "$ring" = "$want_ring" ] || echo "the 30 records of the completion phase are not the last 30 of the 36, in order: $(head -n 2 <<< "$ring" | cut -c1-200 | tr '\n' ' ')" >> "$OUT/verdict"
+  readback_private_wrong diagnosed >> "$OUT/verdict"
+  readback_wrong diagnosed >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_private() { # <the driver's text> <run> <the end: success|failure|bound> — a copy whose log and statistics carry the host, the user, the account, the path and the passwords of the box in every field, in escaped forms and in lines that are no record: ends 0 when the driver ended as that end says, showed what is safe of the log and printed nothing planted on either stream or on the command line of awk (the failure end counts one more unreadable line, the error the stand-in itself writes); what is wrong stands in $OUT/verdict
+  local text="$1" run="$2" end="$3" dir="$LOCK_DIR/$2" plan line finish=20 unreadable=3
+  : > "$OUT/verdict"
+  plan=$'rate 4194304 forever\nfield errors 1\nfield retryError true'
+  plan+=$'\n'"active transferring $PLANTED_REMOTE_PATH/a.tar.gpg"$'\n'"active checking $BOX_HOST"$'\n'"held-active transferring $PLANTED_ACCOUNT"$'\n'"held-active checking $BOX_USER"
+  case "$end" in
+    success) plan+=$'\nhold 3' ;;
+    failure) plan+=$'\nhold 3\nfinish 7' ;;
+    bound) plan+=$'\nhold forever'; finish=3 ;;
+  esac
+  plan+=$'\n'"log start $(rb_record 1 debug cmd/cmd.go:414 "Version \"v1.60.1\" starting with parameters [\"rclone\" \"--config\" \"$PLANTED_REMOTE_PATH/rclone.conf\" \"copy\" \"box:$BOX_HOST/$PLANTED_REMOTE_PATH/\" \"$BOX_USER\"]")"
+  plan+=$'\n'"log before {\"level\":\"info\",\"msg\":\"$PLANTED_REMOTE_PATH\",\"object\":\"$PLANTED_REMOTE_PATH\",\"source\":\"$PLANTED_REMOTE_PATH.go:3\",\"time\":\"$BOX_HOST\"}"
+  plan+=$'\n'"log after $(rb_record 2 error operations/operations.go:538 "Failed to copy: dial $BOX_HOST as $BOX_USER ($PLANTED_ACCOUNT) $PLANTED_REMOTE_PATH password $PLANTED_BOX_PASSWORD passphrase $PLANTED_PASSPHRASE elevation $PLANTED_PASSWORD")"
+  plan+=$'\n'"log after $(rb_record 3 info operations/operations.go:566 'Copied (new)' "$PLANTED_REMOTE_PATH/manifest.txt")"
+  plan+=$'\n'"log after $(rb_record 4 info operations/operations.go:566 'Copied (new)' "$PLANTED_ACCOUNT")"
+  plan+=$'\n''log after {"level":"info","msg":"Failed to copy: boxuser at box.example.invalid","object":"planted-box-account","source":"operations/operations.go:538","time":"2026-10-21T08:00:05.123456+00:00"}'
+  plan+=$'\n'"log after not json: user $BOX_USER at $BOX_HOST password $PLANTED_BOX_PASSWORD"
+  plan+=$'\n'"log after {\"level\":\"info\",\"msg\":\"cut off $BOX_HOST"
+  plan+=$'\n'"log after {\"level\":\"info\",\"msg\":\"tab"$'\t'"here $BOX_USER\"}"
+  plan+=$'\n'"log after {\"level\":\"$BOX_USER\",\"msg\":\"Copied (new)\",\"object\":\"manifest.txt\",\"source\":\"$BOX_HOST/x.go:1\",\"time\":\"$PLANTED_ACCOUNT\",\"user\":\"$BOX_USER\",\"host\":\"$BOX_HOST\",\"extra\":{\"a\":\"$PLANTED_ACCOUNT\"}}"
+  plan+=$'\n'"log after $(rb_record 6 error cmd/cmd.go:283 "Attempt 1/3 failed with 1 errors and: $PLANTED_REMOTE_PATH")"
+  readback_start "$run" "$text" 1 "$plan" READBACK_FINISH_SECONDS="$finish"
+  readback_finish 1 "$RB_LIMIT"
+  plain_of "$dir/out"
+  case "$end" in
+    success)
+      [ "$LOCK_CODE" = 0 ] || echo "the driver ended with $LOCK_CODE, not 0: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
+      [ "$(tail -n 1 "$dir/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the driver did not end with BACKUP and an id' >> "$OUT/verdict" ;;
+    failure) unreadable=4; readback_refused "$run" 'could not be read back'; grep -qF -- 'transfer exit status 7' "$dir/err" || echo 'the error does not state the exit status 7 of the transfer' >> "$OUT/verdict" ;;
+    bound) readback_refused "$run" 'read-back completion did not finish' ;;
+  esac
+  for line in \
+    'rclone version: v1.60.1' \
+    'errors 1, deletes 0, deletedDirs 0, elapsedTime ' \
+    ', retryError true, fatalError false' \
+    '1 file(s) transferring [1 name(s) not shown], 1 file(s) checking [1 name(s) not shown]' \
+    'time unavailable info source unavailable [text redacted]' \
+    "$(rb_time 2) error operations/operations.go:538 Failed to copy: [redacted]" \
+    "$(rb_time 3) info operations/operations.go:566 Copied (new)" \
+    "$(rb_time 4) info operations/operations.go:566 Copied (new)" \
+    "$(rb_time 5) info operations/operations.go:538 Failed to copy: [redacted]" \
+    'time unavailable level unavailable source unavailable Copied (new) [manifest.txt]' \
+    "$(rb_time 6) error cmd/cmd.go:283 Attempt 1/3 failed with 1 errors and: [redacted]"; do
+    grep -qF -- "$line" "$dir/out.plain" || echo "the driver did not print '$line'" >> "$OUT/verdict"
+  done
+  retry_line_wrong "$dir/out.plain" 1 8 "$unreadable" 'attempts 1: 1/3 failed with 1 errors; low-level retries 0' >> "$OUT/verdict"
+  for line in "$(rb_time 3) info operations/operations.go:566 Copied (new) [" "$(rb_time 4) info operations/operations.go:566 Copied (new) ["; do
+    ! grep -qF -- "$line" "$dir/out.plain" || echo "the driver printed an object that is no file of the backup: $line" >> "$OUT/verdict"
+  done
+  readback_private_wrong "$run" >> "$OUT/verdict"
+  readback_wrong "$run" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_ended_badly() { # <the driver's text> <run> <the plan> <what the error says> <the exit status of the copy> — a copy that has read every byte and then ends by itself with an error, or with the bytes of an archive changed at the same size: ends 0 when the driver ended 69 saying so, and ran the checksums only where the copy ended 0; what is wrong stands in $OUT/verdict
+  local text="$1" run="$2" dir="$LOCK_DIR/$2"
+  : > "$OUT/verdict"
+  readback_start "$run" "$text" 1 "$3" READBACK_FINISH_SECONDS=20
+  readback_finish 1 "$RB_LIMIT"
+  readback_refused "$run" "$4"
+  [ -n "$(timeline_ms exit)" ] || echo 'the copy was ended by the driver, it did not end by itself' >> "$OUT/verdict"
+  if [ "$5" != 0 ]; then
+    grep -qF -- "transfer exit status $5" "$dir/err" || echo "the error does not state the exit status $5 of the transfer: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
+    ! grep -qF -- 'the checksums hold' "$dir/out" || echo 'the driver ran the checksums of the manifest on a copy that ended with an error' >> "$OUT/verdict"
+    ! grep -qF -- 'do not match the checksums' "$dir/err" || echo 'the driver ran the checksums of the manifest on a copy that ended with an error' >> "$OUT/verdict"
+  fi
+  grep -qF -- 'read-back completion (backup ' "$dir/out" || echo 'the driver printed nothing of what rclone reported' >> "$OUT/verdict"
+  readback_wrong "$run" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+
+readback_unavailable() { # <the driver's text> — statistics from the hold on that lack a counter or carry one that is no count: ends 0 when the driver ended 69 at the bound and printed each such counter as unavailable, not as 0 or as a ratio, and the other figures as they are; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/unavailable" total
+  : > "$OUT/verdict"
+  readback_start unavailable "$text" 1 $'rate 4194304 forever\nheld-field transfers -\nheld-field checks "seven"\nheld-field errors 1.5\nheld-field deletes -1\nheld-field deletedDirs -\nheld-field retryError "yes"\nhold forever' READBACK_FINISH_SECONDS=3
+  readback_finish 1 "$RB_LIMIT"
+  total="$(backup_bytes)"
+  readback_refused unavailable 'read-back completion did not finish'
+  plain_of "$dir/out"
+  grep -qF -- "$total of $total bytes, transfers unavailable, checks unavailable, errors unavailable, deletes unavailable, deletedDirs unavailable, elapsedTime " "$dir/out.plain" || echo 'the driver did not print the counters that are missing or no count as unavailable' >> "$OUT/verdict"
+  grep -qF -- ', retryError unavailable, fatalError false, written at 2026-10-21T00:00:00+00:00' "$dir/out.plain" || echo 'the driver did not print a retry flag that is no boolean as unavailable' >> "$OUT/verdict"
+  readback_wrong unavailable >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
 readback_paced "$LOCK_TEXT" || fail "backup: a read-back at half a MiB a second, which the old fixed floor would have ended, was not finished as it must be: $(cat "$OUT/verdict")"
 readback_quick "$LOCK_TEXT" || fail "backup: a read-back that ends before its measurement is over was not taken to the checks as it must be: $(cat "$OUT/verdict")"
 readback_stalled "$LOCK_TEXT" 'rate 0 forever' 0 zero || fail "backup: a read-back that moved no byte at all was not ended as it must be: $(cat "$OUT/verdict")"
@@ -4523,6 +4904,27 @@ readback_paced "$LOCK_TEXT" || fail "backup: a read-back at half a MiB a second,
 readback_stalled "$LOCK_TEXT" $'rate 524288 300\nrate 0 forever' 1 some || fail "backup: a read-back that stood still after some progress, when every tick of the copy took 0.4 s longer, was not ended as it must be: $(cat "$OUT/verdict")"
 RB_SLOW=''
 readback_orphaned "$LOCK_TEXT" || fail "backup: the transfer, the read-back folder, the secrets or the work folder were left wrong when the ssh session ended during the read-back: $(cat "$OUT/verdict")"
+readback_orphaned "$LOCK_TEXT" $'rate 4194304 forever\nhold forever' || fail "backup: the transfer, the read-back folder, the secrets or the work folder were left wrong when the ssh session ended while the copy that had read every byte ran on: $(cat "$OUT/verdict")"
+readback_held "$LOCK_TEXT" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail "backup: a read-back that reads every byte and then runs on for longer than READBACK_WAIT_SECONDS was not taken to the checksums: $(cat "$OUT/verdict")"
+HELD_TIMES="$RB_TIMES"
+RB_LIMIT=45 readback_held "$LOCK_TEXT" held_past_old_deadline $'rate 786432 forever\nhold 12' 30 11 yes || fail "backup: a read-back that reads every byte and ends after the time its measured rate gave it was not taken to the checksums: $(cat "$OUT/verdict")"
+RB_LIMIT=45 readback_held "$LOCK_TEXT" held_at_deadline $'rate 600000 5000\nrate 17400 forever\nevery 0.1\nhold 6' 30 5 yes READBACK_POLL_SECONDS=3 || fail "backup: a read-back that is first seen to have read every byte when its measured deadline has passed was not taken to the checksums: $(cat "$OUT/verdict")"
+readback_held "$LOCK_TEXT" held_late_completed $'rate 4194304 forever\nevery 0.1\nhold 6' 5 5 no READBACK_POLL_SECONDS=3 || fail "backup: a read-back whose copy ended inside the last poll period before its completion bound was not taken as finished: $(cat "$OUT/verdict")"
+readback_held "$LOCK_TEXT" held_over $'rate 4194304 forever\nhold 4\nover 100' 20 3 no || fail "backup: a read-back whose count rose above the expected bytes was not taken to the checksums: $(cat "$OUT/verdict")"
+readback_bounded "$LOCK_TEXT" bounded_repeated $'rate 4194304 forever\nhold forever' 3 143 || fail "backup: a read-back that repeats every byte read and never ends was not ended at its completion bound: $(cat "$OUT/verdict")"
+readback_bounded "$LOCK_TEXT" bounded_ignores_term $'rate 4194304 forever\nhold forever\nignore-term' 3 137 READBACK_GRACE_SECONDS=1 || fail "backup: a read-back at its completion bound that ignores TERM was not killed after its grace: $(cat "$OUT/verdict")"
+readback_bounded "$LOCK_TEXT" bounded_growing $'rate 4194304 forever\nhold forever\nover grow' 3 143 || fail "backup: a read-back whose count grows after every byte was read, and never ends, did not end at its first completion bound: $(cat "$OUT/verdict")"
+readback_bounded "$LOCK_TEXT" bounded_reset $'rate 4194304 forever\nhold forever\nreset' 3 143 || fail "backup: a read-back whose count falls to zero after every byte was read, and never ends, was not ended at its completion bound: $(cat "$OUT/verdict")"
+readback_bounded "$LOCK_TEXT" bounded_silent $'rate 4194304 forever\nhold forever\nsilent' 3 143 || fail "backup: a read-back that writes no statistics after every byte was read, and never ends, was not ended at its completion bound: $(cat "$OUT/verdict")"
+readback_ended_badly "$LOCK_TEXT" ended_with_error $'rate 4194304 forever\nhold 3\nfinish 7' 'could not be read back' 7 || fail "backup: a read-back that read every byte and ended 7 was not ended as a failure: $(cat "$OUT/verdict")"
+readback_ended_badly "$LOCK_TEXT" ended_flipped $'rate 4194304 forever\nflip\nhold 2' 'do not match the checksums of their manifest' 0 || fail "backup: a read-back that read every byte of an archive changed at the same size and ended 0 did not reach the checksums that refuse it: $(cat "$OUT/verdict")"
+readback_templates "$LOCK_TEXT" || fail "backup: the records of the message templates of rclone 1.60.1, with the host, the user, the account and the path of the box in them, were not shown as their templates: $(cat "$OUT/verdict")"
+readback_diagnosed "$LOCK_TEXT" || fail "backup: the diagnosis of a copy that read every byte and did not end was not printed as it must be: $(cat "$OUT/verdict")"
+readback_private "$LOCK_TEXT" private_success success || fail "backup: the log and the statistics of a copy that ended 0 carried what the operator must not see, or the diagnosis was not shown: $(cat "$OUT/verdict")"
+readback_private "$LOCK_TEXT" private_failure failure || fail "backup: the log and the statistics of a copy that ended 7 carried what the operator must not see, or the diagnosis was not shown: $(cat "$OUT/verdict")"
+readback_private "$LOCK_TEXT" private_bound bound || fail "backup: the log and the statistics of a copy ended at its completion bound carried what the operator must not see, or the diagnosis was not shown: $(cat "$OUT/verdict")"
+readback_unavailable "$LOCK_TEXT" || fail "backup: statistics that lack a counter or carry one that is no count were not printed as unavailable: $(cat "$OUT/verdict")"
+ok "backup: a copy that has read every expected byte and runs on is given READBACK_FINISH_SECONDS once, and no rule for a copy that is still reading ends it: it is taken to the checksums when it ends 0 by itself after 5 s with READBACK_WAIT_SECONDS at 2 s ($HELD_TIMES), before the measurement, after the measured deadline, first seen after that deadline, inside the last poll period before the bound, with a count above the expected bytes; a copy that runs on past the bound, with its count repeating, growing, falling to zero or no longer written, ends 69 with 'read-back completion did not finish', TERM or KILL and reaped, the archives kept and no checksum run; one that ends 7 or ends 0 with an archive changed at the same size is refused, the second by the checksums; the diagnosis shows a counter that is missing or no count as unavailable, the first and the last record of the completion phase, the active files, the retry figures and the last 30 log records of 36, shows the message templates of rclone 1.60.1 with the host, the user, the account and the path of the box planted in them as the templates alone, and prints nothing planted on either stream or on the command line of awk when the copy ends 0, 7 or at the bound; a driver whose session ended while the copy ran on ends its copy and leaves the work folder only"
 ok 'backup: a read-back at half a MiB a second, slower than the old floor of a MiB a second, is finished, with the rate it measured, the floor of half of it and the time the whole backup takes at that floor stated; a copy that ends within the measurement goes straight to the checks, stating its bytes and time, and so does one that ends inside the last poll period before its deadline; the cases that hold a rate or a stall give the same answers when every tick of the copy takes 0.4 s longer; a copy that moves no byte for READBACK_WAIT_SECONDS, from the first byte or after some, one that slows past its allowance, one whose statistics hold no number, one whose transfer fails and one that ignores TERM each end 69 stating the bytes read of the bytes expected, the time, the rate and the transfer exit status, with the transfer ended and reaped, the archives on the machine, the Manager started and the queue let go; a driver whose ssh session ended during the read-back ends its transfer and leaves the work folder only'
 
 # The arithmetic of the measurement: rate to three places, seconds to three places, and the allowance rounded up, on the vectors below.
@@ -4576,8 +4978,6 @@ caught_for 'read-back without the stall rule' 'moved no byte for 2 s and was end
 caught_for 'read-back without the stall rule' "${DRIVER_RAN_ON[@]}"
 ! readback_slowed "$NO_DEADLINE" || fail 'the planted read-back without the deadline was not caught on a copy that slowed after its measurement — the probe proves nothing'
 caught_for 'read-back without the deadline' "${DRIVER_RAN_ON[@]}"
-! readback_late "$JUDGES_ENDED_COPY_AS_RUNNING" || fail 'the planted read-back that judges a copy that ended while the poll slept by the rules for a running one was not caught on a copy that ended inside the last poll period before its deadline — the probe proves nothing'
-caught_for 'read-back that judges an ended copy by the rules for a running one' 'the driver ended a copy that had finished' 'the driver ended with 69, not 0' 'the driver did not end with BACKUP' 'the driver did not say that it read back'
 ! readback_killed "$NO_KILL" || fail 'the planted read-back that never kills was not caught on a copy that ignores TERM — the probe proves nothing'
 caught_for 'read-back that never kills' "${DRIVER_RAN_ON[@]}"
 ! readback_stalled "$FALSE_BYTE_COUNT" $'rate 524288 300\nrate 0 forever' 1 some || fail 'the planted false byte count was not caught — the probe proves nothing'
@@ -4594,6 +4994,70 @@ plant "$READBACK_ARITHMETIC" '{ printf unavailable; return 0; }' '{ printf 0.000
 for planted in TRUNCATED_ALLOWANCE WHOLE_BYTES_RATE UNAVAILABLE_AS_ZERO; do
   [ -n "$(arithmetic_wrong "${!planted}")" ] || fail "the planted arithmetic $planted was not caught by the vectors — the probe proves nothing"
 done
+# planted defects of what follows the last byte: no completion bound, a bound that every poll restarts, a count that falls clearing it, the rules
+# for a copy that is still reading applied after the last byte, a bound that ends the copy and calls the backup whole, and the ways the diagnosis
+# could disclose what rclone wrote: its raw statistics or log, a file name or object nobody approved, a secret handed to awk, and a filter that
+# knows only the wording of the cases; each is refused for its own defect only
+HELD_FRAGMENTS=('the driver ended with' 'the driver did not end with BACKUP' 'the driver did not reach the checksums' 'the driver did not say that the copy' 'the copy did not read every byte' 'the driver still ran' 'the transfer still ran after' 'stands after the driver ended' 'the driver froze a rate' 'the copy ended')
+BOUNDED_FRAGMENTS=('the driver ended with' 'the driver did not say' 'the error' 'the work folder' 'the driver still ran' 'the transfer still ran after' 'stands after the driver ended' 'the copy ended by itself' 'the driver ran the checksums' 'the driver printed nothing' 'the backup' 'the file with the log' 'the failure of a copy whose statistics')
+LEAK_FRAGMENTS=('the run printed the planted value' 'stands on standard output' 'stands on standard error' 'stands on the command line of awk' 'on a command line' 'the driver did not print' 'the driver printed an object' 'the driver did not say' 'the error' 'the driver ended with')
+FINISH_BOUND='if [ $(( now - READBACK_COMPLETE_AT )) -ge "$READBACK_FINISH_SECONDS" ]; then readback_unfinished; fi'
+COMPLETE_SEEN='if [ -z "$READBACK_COMPLETE_AT" ] && [ "$SAMPLE_BYTES" -ge "$READBACK_EXPECTED" ]; then'
+plant "$LOCK_TEXT" "$FINISH_BOUND" ':'; NO_COMPLETION_BOUND="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$COMPLETE_SEEN" 'if [ "$SAMPLE_BYTES" -ge "$READBACK_EXPECTED" ]; then'; REFRESHED_COMPLETION_WAIT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$COMPLETE_SEEN" $'[ "$SAMPLE_BYTES" -ge "$READBACK_EXPECTED" ] || READBACK_COMPLETE_AT=\'\'\n      '"$COMPLETE_SEEN"; COUNT_BELOW_CLEARS_WAIT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'    if [ -n "$READBACK_COMPLETE_AT" ]; then\n      if [ $(( now - READBACK_COMPLETE_AT ))' $'    if false; then\n      if [ $(( now - READBACK_COMPLETE_AT ))'; RULES_FOR_READING_AFTER_LAST_BYTE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$FINISH_BOUND" "$FINISH_BOUND"$'\n      if [ $(( now - progress )) -ge "$READBACK_WAIT_SECONDS" ]; then readback_fail "moved no byte for $READBACK_WAIT_SECONDS s and was ended"; fi'; STALL_RULE_AFTER_LAST_BYTE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$FINISH_BOUND" "$FINISH_BOUND"$'\n      if [ -n "$frozen" ] && [ "$now" -ge "$deadline" ]; then readback_fail "did not finish within the $READBACK_ALLOWED_SECONDS s its measured rate allows and was ended"; fi'; RATE_DEADLINE_AFTER_LAST_BYTE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$FINISH_BOUND" 'if [ $(( now - READBACK_COMPLETE_AT )) -ge "$READBACK_FINISH_SECONDS" ]; then readback_end; return 0; fi'; ENDS_COPY_AND_CALLS_IT_WHOLE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'  readback_say_diagnosis\n  readback_end\n  die "read-back completion did not finish' $'  readback_say_diagnosis\n  say "raw: $(tail -n 1 "$READBACK_STATS")"\n  readback_end\n  die "read-back completion did not finish'; PRINTS_RAW_STATISTICS="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'  readback_say_diagnosis\n  readback_end\n  die "read-back completion did not finish' $'  readback_say_diagnosis\n  say "log: $(tail -n 8 "$READBACK_STATS")"\n  readback_end\n  die "read-back completion did not finish'; PRINTS_RAW_LOG_TAIL="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'index(known, "|" D[path] "|") > 0' '1'; PRINTS_ANY_FILE_NAME="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'  return "[text redacted]"\n}\nfunction render' $'  return msg\n}\nfunction render'; PRINTS_ANY_MESSAGE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'o = name_of("object")' 'o = D["object"]'; PRINTS_ANY_OBJECT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'LC_ALL=C awk -v expected="$READBACK_EXPECTED"' 'LC_ALL=C awk -v secret="$STORAGE_BOX_PASSWORD" -v expected="$READBACK_EXPECTED"'; HANDS_SECRET_TO_AWK="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'and it was ended (backup $ID); $state,' 'and it was ended (backup $ID); $(grep -a '"'"'"stats":{'"'"' "$READBACK_STATS" | tail -n 1) $state,'; RAW_STATISTICS_IN_ERROR="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'function project(msg,   cut, version) {\n  RECOG = ""' $'function project(msg) {\n  RECOG = ""\n  if (msg == "PLANTED-OPERATION") return msg\n  return "[text redacted]"\n}\nfunction project_unused(msg,   cut, version) {\n  RECOG = ""'; KNOWS_ONLY_THE_WORDING_OF_THE_CASES="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '> "$READBACK_STATS" 2>&1 &' '2> "$READBACK_STATS" &'; KEEPS_STANDARD_ERROR_ONLY="$PLANTED_TEXT"
+plant "$LOCK_TEXT" ' (S["L", "transferring"] == 0 && S["L", "checking"] == 0 ? " (an empty list does not show that rclone is idle)" : "")' ''; EMPTY_LIST_AS_IDLE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'function show(v) { return (v == "" ? "unavailable" : v) }' 'function show(v) { return (v == "" ? "0" : v) }'
+plant "$PLANTED_TEXT" '"unavailable" : a "/" b }' '"0" : a "/" b }'; MISSING_COUNTER_AS_ZERO="$PLANTED_TEXT"
+! readback_bounded "$NO_COMPLETION_BOUND" bounded_repeated $'rate 4194304 forever\nhold forever' 3 143 || fail 'the planted read-back without the completion bound was not caught on a copy that read every byte and never ends — the probe proves nothing'
+caught_for 'read-back without the completion bound' 'the driver still ran' "${BOUNDED_FRAGMENTS[@]}"
+! readback_bounded "$REFRESHED_COMPLETION_WAIT" bounded_repeated $'rate 4194304 forever\nhold forever' 3 143 || fail 'the planted completion wait that every poll restarts was not caught on a copy that repeats its count and never ends — the probe proves nothing'
+caught_for 'completion wait that every poll restarts' 'the driver still ran' "${BOUNDED_FRAGMENTS[@]}"
+! readback_bounded "$REFRESHED_COMPLETION_WAIT" bounded_growing $'rate 4194304 forever\nhold forever\nover grow' 3 143 || fail 'the planted completion wait that every poll restarts was not caught on a copy whose count grows — the probe proves nothing'
+caught_for 'completion wait that every poll restarts, on a growing count' 'the driver still ran' "${BOUNDED_FRAGMENTS[@]}"
+! readback_bounded "$COUNT_BELOW_CLEARS_WAIT" bounded_reset $'rate 4194304 forever\nhold forever\nreset' 3 143 || fail 'the planted completion wait that a falling count clears was not caught on a copy whose count falls to zero — the probe proves nothing'
+caught_for 'completion wait that a falling count clears' 'the driver did not say' "${BOUNDED_FRAGMENTS[@]}"
+! readback_bounded "$ENDS_COPY_AND_CALLS_IT_WHOLE" bounded_repeated $'rate 4194304 forever\nhold forever' 3 143 || fail 'the planted bound that ends the copy and goes on to the checksums was not caught — the probe proves nothing'
+caught_for 'bound that ends the copy and goes on to the checksums' 'the driver ended with' "${BOUNDED_FRAGMENTS[@]}"
+! readback_bounded "$EMPTY_LIST_AS_IDLE" bounded_repeated $'rate 4194304 forever\nhold forever' 3 143 || fail 'the planted failure that does not say an empty list is no proof of idleness was not caught — the probe proves nothing'
+caught_for 'failure that does not say an empty list is no proof of idleness' 'the failure of a copy whose statistics'
+! readback_held "$RULES_FOR_READING_AFTER_LAST_BYTE" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted read-back that applies the rules for a copy that is still reading after the last byte was not caught — the probe proves nothing'
+caught_for 'read-back that applies the rules for a copy that is still reading after the last byte' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
+! readback_held "$STALL_RULE_AFTER_LAST_BYTE" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted stall rule after the last byte was not caught — the probe proves nothing'
+caught_for 'stall rule after the last byte' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
+! RB_LIMIT=45 readback_held "$RATE_DEADLINE_AFTER_LAST_BYTE" held_past_old_deadline $'rate 786432 forever\nhold 12' 30 11 yes || fail 'the planted measured deadline after the last byte was not caught — the probe proves nothing'
+caught_for 'measured deadline after the last byte' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
+! readback_held "$JUDGES_ENDED_COPY_AS_RUNNING" held_late_completed $'rate 4194304 forever\nevery 0.1\nhold 6' 5 5 no READBACK_POLL_SECONDS=3 || fail 'the planted read-back that judges a copy that ended while the poll slept by the rules for a running one was not caught on a copy that ended inside the last poll period before its completion bound — the probe proves nothing'
+caught_for 'read-back that judges an ended copy by the rules for a running one' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
+for planted in PRINTS_RAW_STATISTICS PRINTS_RAW_LOG_TAIL PRINTS_ANY_FILE_NAME PRINTS_ANY_MESSAGE PRINTS_ANY_OBJECT HANDS_SECRET_TO_AWK RAW_STATISTICS_IN_ERROR; do
+  ! readback_private "${!planted}" private_bound bound || fail "the planted driver $planted was not caught when the log of the copy carries the host, the user, the account, the path and the passwords of the box — the probe proves nothing"
+  while IFS= read -r line; do
+    said=''
+    for fragment in "${LEAK_FRAGMENTS[@]}"; do case "$line" in *"$fragment"*) said=1 ;; esac; done
+    [ -n "$said" ] || fail "the planted driver $planted was refused for more than it is: $line"
+  done < "$OUT/verdict"
+  grep -qF -e 'the run printed the planted value' -e 'stands on the command line of awk' -e 'on a command line' -e 'the driver printed an object' "$OUT/verdict" \
+    || fail "the planted driver $planted was refused, but not for what it disclosed: $(cat "$OUT/verdict")"
+done
+! readback_templates "$KNOWS_ONLY_THE_WORDING_OF_THE_CASES" || fail 'the planted filter that knows only the wording of the cases was not caught on the records of rclone 1.60.1 — the probe proves nothing'
+caught_for 'filter that knows only the wording of the cases' 'the driver did not show the record of' 'the driver did not say that it shows all'
+! readback_diagnosed "$KEEPS_STANDARD_ERROR_ONLY" || fail 'the planted copy that keeps standard error only was not caught on a record rclone wrote to standard output — the probe proves nothing'
+caught_for 'copy that keeps standard error only' 'the driver did not print' 'the 30 records of the completion phase'
+! readback_unavailable "$MISSING_COUNTER_AS_ZERO" || fail 'the planted driver that prints a counter that is missing as 0 was not caught — the probe proves nothing'
+caught_for 'driver that prints a counter that is missing as 0' 'the driver did not print'
 ok 'the planted drivers are caught, each for its own defect: the old fixed floor ends a box that gives half a MiB a second, a read-back without the stall rule or without the deadline runs on past it, one that judges a copy that ended while the poll slept by the rules for a running one ends a finished copy with 69, one that never kills a copy that ignores TERM waits on it, a byte count that is not the transfer'"'"'s, a cleanup that leaves the transfer or the read-back folder when the ssh session ended, a statistics line in the error names the box'"'"'s account, and an allowance that truncates, a rate in whole bytes and an unavailable rate stated as zero are answered wrongly by the vectors'
 lock_reset free # the plan of the last case must not pace the restore's fetch
 
@@ -4812,7 +5276,7 @@ caught_for 'backup carry that lets rclone speak' 'the host of the box stands on 
 plant "$LOCK_TEXT" 'lsf "$BACKUPS/$ID/" 2>/dev/null)' 'lsf "$BACKUPS/$ID/")'
 ! backup_box_holds "$PLANTED_TEXT" 69 'could not be listed' lsf || fail 'the planted listing that lets rclone speak was not caught in the backup — the probe proves nothing'
 caught_for 'backup listing that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
-plant "$LOCK_TEXT" '--stats-log-level NOTICE 2> "$READBACK_STATS" &' '--stats-log-level NOTICE &'
+plant "$LOCK_TEXT" '--stats-log-level NOTICE > "$READBACK_STATS" 2>&1 &' '--stats-log-level NOTICE &'
 ! backup_box_holds "$PLANTED_TEXT" 69 'could not be read back' download || fail 'the planted copy back that lets rclone speak was not caught in the backup — the probe proves nothing'
 caught_for 'backup copy back that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
 plant "$RESTORE_TEXT" 'rclone lsd box: >/dev/null 2>&1' 'rclone lsd box: >/dev/null'
