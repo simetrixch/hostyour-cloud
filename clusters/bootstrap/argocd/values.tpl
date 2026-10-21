@@ -49,7 +49,7 @@ global:
 #   server 2m -> 10m                       redis 2m -> 10m               dex 0m -> 10m      notifications 1m -> 10m
 #
 # scripts/check.sh fails when one of these renders without its request, and clusters/inventories/consumer-build
-# (ciCapacity.standingCpuRequests) counts them in the budget of the node's cores.
+# (releaseCapacity.standingCpuRequests) counts them in the budget of the node's cores.
 
 # Server Configuration
 server:
