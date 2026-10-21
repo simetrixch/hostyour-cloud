@@ -3,7 +3,6 @@ import {generateKeyPairSync, sign} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {createServer} from 'node:http';
-import {createServer as createSocketServer} from 'node:net';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {after, before, test} from 'node:test';
@@ -91,7 +90,6 @@ const ROTATION = [noon(2), noon(2) + 300000, noon(1)]
 const TRAFFIC_BY_HOST = [['big\\.example\\.test', BULK], ['days\\.example\\.test', ROTATION]];
 
 const listen = handler => new Promise(resolve => { const server = createServer(handler).listen(0, '127.0.0.1', () => resolve(server)); });
-const freePort = () => new Promise(resolve => { const server = createSocketServer().listen(0, '127.0.0.1', () => { const {port} = server.address(); server.close(() => resolve(port)); }); });
 const json = (response, body) => { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(body)); };
 
 let folder;
@@ -136,21 +134,44 @@ before(async () => {
 });
 after(() => { servers.forEach(server => server.close()); rmSync(folder, {recursive: true, force: true}); });
 
+// The service binds the port the system gives it and the launcher says which one, on the first line of its stdout once it
+// listens, so no port is chosen first and taken by another process before the service binds it. The service itself runs
+// unchanged, as the pod runs it.
+const LAUNCHER = [
+  'import runpy, socketserver, sys',
+  'listen = socketserver.TCPServer.server_activate',
+  'def report(server):',
+  '    listen(server)',
+  '    print(server.server_address[1], flush=True)',
+  'socketserver.TCPServer.server_activate = report',
+  'runpy.run_path(sys.argv[1], run_name="__main__")'].join('\n');
+const START_MILLISECONDS = 10000;
+
+/** The port a started service listens on: the first line it said. A service that ends or stays silent fails the wait with what it wrote to stderr. */
+async function portOf(child, exited, stderr, startMilliseconds) {
+  let stdout = '';
+  const said = new Promise(resolve => child.stdout.on('data', chunk => { stdout += chunk; if (stdout.includes('\n')) resolve(Number(stdout.split('\n')[0])); }));
+  let timer;
+  const silent = new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error(`the service said no port within ${startMilliseconds / 1000} s:\n${stderr()}`)), startMilliseconds); });
+  const ended = exited.then(({code, signal, error}) => { throw new Error(`the service ended (${error?.message ?? signal ?? `exit ${code}`}) before it listened:\n${stderr()}`); });
+  try {
+    return await Promise.race([said, silent, ended]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Starts the service from [source] with the settings [environment] changes and runs [use] against it. */
-async function serving(source, use, environment = {}) {
-  const port = await freePort();
-  const child = spawn('python3', ['-I', source], {stdio: ['ignore', 'ignore', 'pipe'], env: {
-    POD_NAMESPACE: 'observability', LISTEN_PORT: String(port), KUBERNETES_API_URL: urls.kubernetes, KUBERNETES_TOKEN_FILE: join(folder, 'token'),
+async function serving(source, use, environment = {}, startMilliseconds = START_MILLISECONDS) {
+  const child = spawn('python3', ['-I', '-c', LAUNCHER, source], {stdio: ['ignore', 'pipe', 'pipe'], env: {
+    POD_NAMESPACE: 'observability', LISTEN_PORT: '0', KUBERNETES_API_URL: urls.kubernetes, KUBERNETES_TOKEN_FILE: join(folder, 'token'),
     LOKI_URL: urls.loki, JWKS_URL_TEMPLATE: `${urls.identity}/{host}/jwks.json`, CACHE_SECONDS: '0', PATH: process.env.PATH, ...environment}});
+  // Listened to from the start: a child that ends before the cleanup below is told of at once, and never waited for.
+  const exited = new Promise(resolve => { child.once('close', (code, signal) => resolve({code, signal})); child.once('error', error => resolve({error})); });
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
   try {
-    for (let tries = 0; ; tries++) {
-      const ready = await fetch(`http://127.0.0.1:${port}/healthz`).then(answer => answer.ok, () => false);
-      if (ready) break;
-      assert.ok(tries < 100, `the service never answered:\n${stderr}`);
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
+    const port = await portOf(child, exited, () => stderr, startMilliseconds);
     return await use(async (kind, query, bearer, extra = {}, method = 'GET') => {
       const parameters = new URLSearchParams({tenant: 'aaaa-prod', site: 'main', range: '24h', ...query});
       const answer = await fetch(`http://127.0.0.1:${port}/api/v1/site-telemetry/${kind}?${parameters}`, {method, headers: {...(bearer ? {authorization: `Bearer ${bearer}`} : {}), ...extra}});
@@ -158,7 +179,7 @@ async function serving(source, use, environment = {}) {
     });
   } finally {
     child.kill();
-    await new Promise(resolve => child.once('exit', resolve));
+    await exited;
   }
 }
 const read = (kind, query, bearer, extra) => serving(SOURCE, ask => ask(kind, query, bearer, extra));
@@ -395,4 +416,16 @@ test('PLANTED DEFECT: counting another tenant\'s hosts, a query string or a raw 
   assert.notEqual((await reads(mutated('if host not in hosts or not', 'if False or not'))).kpis.pageviews, 4, 'a spoofed host is counted');
   assert.notEqual((await reads(mutated('.split("?", 1)[0]', ''))).topPages.length, 2, 'the query stays in the path');
   assert.match((await serving(mutated('hashlib.sha256(salt + host.encode()).hexdigest()[:12]', 'host'), ask => ask('visitors', {}, bearer))).text, /203\.0\.113\.7/, 'the raw address leaves');
+});
+
+test('a service that ends before it listens fails the test at once with what it wrote, and one that says no port is not waited for for ever', {timeout: 30000}, async () => {
+  const dies = join(folder, 'dies.py');
+  writeFileSync(dies, 'import sys\nsys.stderr.write("planted startup failure\\n")\nsys.exit(3)\n');
+  const started = Date.now();
+  await assert.rejects(serving(dies, ask => ask('visitors', {}, token(admin))), /the service ended \(exit 3\) before it listened:\nplanted startup failure/, 'PLANTED DEFECT: a service that dies before it answers');
+  assert.ok(Date.now() - started < 10000, 'the failure came within seconds');
+  const silent = join(folder, 'silent.py');
+  writeFileSync(silent, 'import time\ntime.sleep(60)\n');
+  await assert.rejects(serving(silent, ask => ask('visitors', {}, token(admin)), {}, 1500), /the service said no port within 1\.5 s/, 'PLANTED DEFECT: a service that lives and says no port');
+  assert.equal((await serving(SOURCE, ask => ask('visitors', {}, token(admin)))).status, 200, 'PLANTED INNOCENT: the real service is served as before');
 });

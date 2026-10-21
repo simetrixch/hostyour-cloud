@@ -132,7 +132,7 @@ lists in its subPath packed.
 {{- $exportsEngine := eq (include "consumer-build.isPlatformEngine" .) "true" -}}
 {{- $packed := "[\"source\"]" -}}
 {{- /* The repository the binaries of a release are pushed to: <owner>/<repository name>, read off the repoURL like the owner. */ -}}
-{{- $binariesRepository := printf "%s/%s" $owner (regexReplaceAll "^https://github\\.com/[^/]+/([^/]+?)(\\.git)?$" $repoURL "${1}" | lower) -}}
+{{- $binariesRepository := printf "%s/%s" $owner (regexReplaceAll "^https://[^/]+/[^/]+/([^/]+?)(\\.git)?$" $repoURL "${1}" | lower) -}}
 {{- /* The tools table pack and the build of the binaries install the repository's ci-tools.json from. */ -}}
 {{- $toolsTable := .Files.Get "files/ci-tools.table" -}}
 apiVersion: tekton.dev/v1

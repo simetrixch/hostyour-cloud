@@ -19,7 +19,7 @@ fail() { echo "pipeline-release.test: RED — $*" >&2; exit 1; }
 ok() { echo "pipeline-release.test: ok — $*"; }
 command -v yq >/dev/null 2>&1 || fail "yq is not on this path, and the functions under test run it"
 work="$(mktemp -d)" || fail "no temporary directory could be made"
-trap 'rm -rf "$work"' EXIT
+trap 'kill "${sshd_pid:-}" 2>/dev/null; rm -rf "$work"' EXIT
 # No git call of a fixture leaves a process behind it, which a case removing its repository would
 # race: scripts/standin/git-quiet.sh sets the template that prevents it and measures that it does.
 # shellcheck disable=SC1091
@@ -35,7 +35,7 @@ extract() { # function name -> its text out of the template
     on && /^ *\}$/ && match($0, /[^ ]/) == indent { exit }
   ' "$template"
 }
-for fn in concurrent_push_refusal commit_push bump_file pin_bundles carrier_credential own_stage_values; do
+for fn in concurrent_push_refusal commit_push bump_file pin_bundles carrier_credential own_stage_values push_url own_checkout place_delivery_branch vault_logout forge_ssh_setup; do
   extract "$fn" > "$work/$fn.sh"
   [ -s "$work/$fn.sh" ] || fail "the template carries no $fn function"
   # shellcheck source=/dev/null
@@ -564,11 +564,15 @@ ok 'the appsBundle of the manifest is read once, by the builds task, whose resul
 # body in the file the function names with -o. Each call runs in a subshell, because the function
 # turns errexit on as it returns from its curl.
 vault_login() { VAULT_CLIENT_TOKEN=fixture-vault-token; }
-curl() { # -o <file> and -w are what carrier_credential passes; the rest is the request
-  local out=''
-  while [ "$#" -gt 0 ]; do [ "$1" = -o ] && { out="$2"; shift; }; shift; done
+curl() { # -o <file> and -w are what carrier_credential passes; the last argument is the URL
+  local out='' url='' format=''
+  while [ "$#" -gt 0 ]; do
+    case "$1" in -o) out="$2"; shift ;; -w) format="$2"; shift ;; -H|-X|--connect-timeout|--max-time) shift ;; -*) ;; *) url="$1" ;; esac
+    shift
+  done
+  printf '%s\n' "$url" >> "$work/curl.log"
   printf '%s' "$carrier_body" > "$out"
-  printf 200
+  [ -z "$format" ] || printf 200
 }
 VAULT_ADDR=https://vault.fixture.invalid VAULT_KV_MOUNT=secret VAULT_ROLE=fixture-bump
 CREDENTIALS_FILE="$work/carrier-credentials"
@@ -585,6 +589,213 @@ carrier_body='{"data":{"data":{"pat":"pat-of-shop"}}}'
 grep -qF "secret/build/shop/repo-pat carries no property 'push'" "$work/carrier.err" || fail "the refusal does not name push: $(cat "$work/carrier.err")"
 [ -s "$CREDENTIALS_FILE" ] && fail 'an entry without push appended a record'
 ok 'a carrier entry without push is refused by name, and appends nothing'
+
+# ── Forgejo: the URL a push goes to, the key of a unit, the SSH files of the step ─────────────────
+# A forge URL is pushed over SSH with a deploy key the step reads from Vault at run time; github.com stays HTTPS.
+for tool in ssh ssh-keygen sshd python3 helm; do command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on this path, and the Forgejo cases run it"; done
+# plant_function <function> <new name> <needle> <replacement> — the template function under a new name, with one text of it changed;
+# the planted defect is made of the real function, and refused when the text it changes is no longer in it.
+plant_function() {
+  local text
+  text="$(extract "$1")"
+  [[ "$text" == *"$3"* ]] || fail "the planted $2 was not made from the template function: $1 holds no $3"
+  text="${text//"$3"/"$4"}"
+  printf '%s\n' "${text/"$1() {"/"$2() {"}" > "$work/$2.sh"
+  # shellcheck source=/dev/null
+  . "$work/$2.sh"
+}
+
+FORGEJO_HOST=forgejo.example.invalid
+[ "$(push_url https://forgejo.example.invalid/acme/shop.git)" = ssh://git@forgejo.example.invalid/acme/shop.git ] \
+  || fail 'the push URL of a Forgejo repository is not ssh://git@<host>/<owner>/<repository>.git'
+[ "$(push_url https://github.com/acme/shop.git)" = https://github.com/acme/shop.git ] || fail 'PLANTED INNOCENT: a github.com repository is pushed over HTTPS, as it is'
+OUT="$(push_url https://elsewhere.example.invalid/acme/shop.git 2>&1)" && fail 'PLANTED DEFECT: a host that is neither github.com nor the Forgejo of the plane was given a push URL'
+grep -qF "bump: FAIL — https://elsewhere.example.invalid/acme/shop.git is on neither github.com nor this installation's Forgejo forgejo.example.invalid" <<<"$OUT" || fail "the refusal does not name the host: $OUT"
+FORGEJO_HOST=
+OUT="$(push_url https://forgejo.example.invalid/acme/shop.git 2>&1)" && fail 'PLANTED DEFECT: a forge URL on a plane that names no forge was pushed, over HTTPS'
+grep -qF 'bump: FAIL — https://forgejo.example.invalid/acme/shop.git is on a forge and this plane names none' <<<"$OUT" || fail "the refusal does not say the plane names no forge: $OUT"
+[ "$(push_url https://github.com/acme/shop.git)" = https://github.com/acme/shop.git ] || fail 'PLANTED INNOCENT: a github.com repository on a plane with no forge'
+FORGEJO_HOST=forgejo.example.invalid
+ok 'push_url: a Forgejo repository over SSH, github.com as it is; any other host, and a forge on a plane that names none, refused by name'
+
+# The key of a Forgejo carrier is written as a file of mode 600 that ssh-keygen loads, named in GIT_SSH_COMMAND, and never enters the credential store.
+SSH_DIR="$work/ssh"; mkdir -m 700 "$SSH_DIR"
+ssh-keygen -q -t ed25519 -N '' -f "$work/push-key" -C fixture
+# The body Vault answers with carries the key as `$(yq …)` hands it over: without its final newline.
+forge_body() { PUSH="$(cat "$work/push-key")" yq -n -o=json -I=0 '.data.data.pat = "pat-of-shop" | .data.data.push = strenv(PUSH)'; }
+forge_carrier_findings() { # <function> <repoURL> -> one finding per line of what the carrier left in front of git
+  local fn="$1" url="$2" mode
+  rm -f "$SSH_DIR"/*.key "$work/ssh-command"; : > "$CREDENTIALS_FILE"
+  carrier_body="$(forge_body)"
+  ( "$fn" shop "$url"; printf '%s' "${GIT_SSH_COMMAND:-}" > "$work/ssh-command" ) 2> "$work/carrier.err" || { echo "$fn was refused: $(cat "$work/carrier.err")"; return; }
+  [ -f "$SSH_DIR/shop.key" ] || { echo 'no key file'; return; }
+  mode="$(stat -c %a "$SSH_DIR/shop.key")"
+  [ "$mode" = 600 ] || echo "the key file is mode $mode"
+  [ "$(ssh-keygen -y -f "$SSH_DIR/shop.key" 2>/dev/null | cut -d' ' -f1,2)" = "$(cut -d' ' -f1,2 "$work/push-key.pub")" ] || echo 'ssh-keygen cannot load the key file'
+  cmp -s "$SSH_DIR/shop.key" "$work/push-key" || echo 'the key file is not the key with exactly one final newline'
+  [ ! -s "$CREDENTIALS_FILE" ] || echo 'the credential store holds a record of a carrier that is pushed over SSH'
+  [ "$(cat "$work/ssh-command")" = "ssh -F ${SSH_DIR}/ssh_config -o IdentitiesOnly=yes -i ${SSH_DIR}/shop.key" ] || echo "GIT_SSH_COMMAND is $(cat "$work/ssh-command")"
+}
+FORGE_URL=https://forgejo.example.invalid/acme/shop.git
+found="$(forge_carrier_findings carrier_credential "$FORGE_URL")"
+[ -z "$found" ] || fail "a Forgejo carrier was not left as a key file of mode 600 named in GIT_SSH_COMMAND, none in the store: $found"
+ok 'a Forgejo carrier: the key, as $(yq …) hands it over without its final newline, stands in a file of mode 600 that ssh-keygen loads and that is the key with its final newline; GIT_SSH_COMMAND names it, and the store holds nothing'
+plant_function carrier_credential planted_https_carrier_credential 'ssh://*)' 'never-an-ssh-url)'
+plant_function carrier_credential planted_unterminated_carrier_credential "printf '%s\\n' \"\${push}\"" "printf '%s' \"\${push}\""
+[ -n "$(forge_carrier_findings planted_https_carrier_credential "$FORGE_URL")" ] || fail 'PLANTED DEFECT: an HTTPS record for a Forgejo carrier, the key in the credential store, was not seen'
+[ -n "$(forge_carrier_findings planted_unterminated_carrier_credential "$FORGE_URL")" ] || fail 'PLANTED DEFECT: a key file written without its final newline was not seen'
+printf '%s' "$(cat "$work/push-key")" > "$work/no-newline.key"; chmod 600 "$work/no-newline.key"
+ssh-keygen -y -f "$work/no-newline.key" > /dev/null 2>&1 && fail 'this OpenSSH loads a key without its final newline, so the planted case above proves nothing'
+ok 'PLANTED DEFECT: an HTTPS record for the forge carrier, and a key file written without its final newline (which ssh-keygen refuses), are each seen'
+carrier_body='{"data":{"data":{"pat":"pat-of-shop","push":"push-of-shop"}}}'
+: > "$CREDENTIALS_FILE"
+( carrier_credential shop https://github.com/acme/shop.git ) 2> "$work/carrier.err" || fail "PLANTED INNOCENT: a github.com carrier was refused on a plane with a Forgejo: $(cat "$work/carrier.err")"
+[ "$(cat "$CREDENTIALS_FILE")" = 'https://x-access-token:push-of-shop@github.com/acme/shop.git' ] || fail 'PLANTED INNOCENT: a github.com carrier is no longer an HTTPS record'
+ok 'PLANTED INNOCENT: a github.com carrier on a plane with a Forgejo is still an HTTPS record'
+
+# The own repository of a unit: cloned over SSH for a Forgejo unit with the unit's own key, over HTTPS for a github.com unit.
+UNIT=shop; RELEASE_TAG=0.8.540-stable-20261021010202; STAGE=prod
+own_forge_findings() { # <function> <REPO_URL> <expected clone URL> <yes|no: the unit has a key> -> one finding per line
+  local fn="$1" url="$2" want="$3" key="$4" identity=''
+  [ "$key" = yes ] && identity="ssh -F ${SSH_DIR}/ssh_config -o IdentitiesOnly=yes -i ${SSH_DIR}/shop.key"
+  rm -f "$SSH_DIR"/*.key "$work/git.log"; : > "$work/curl.log"
+  carrier_body="$(forge_body)"
+  ( REPO_URL="$url"
+    git() { printf '%s | %s\n' "$*" "${GIT_SSH_COMMAND:-}" >> "$work/git.log"; [ "$1" != clone ] || mkdir -p "${@: -1}"; }
+    "$fn" "$work/own-checkout" && place_delivery_branch "$work/own-checkout" ) > "$work/own.out" 2> "$work/own.err" || { echo "$fn was refused: $(cat "$work/own.err")"; return; }
+  grep -qxF "clone -q --depth 1 --branch ${RELEASE_TAG} ${want} $work/own-checkout | ${identity}" "$work/git.log" \
+    || echo "the clone was not ${want} with the identity of the unit: $(cat "$work/git.log")"
+  grep -q '^push -q --force origin HEAD:refs/heads/deploy/prod | ' "$work/git.log" || echo "the delivery branch was not pushed to origin: $(cat "$work/git.log")"
+  if [ "$key" = yes ]; then [ -f "$SSH_DIR/shop.key" ] || echo 'the unit has no key file'
+  else { [ ! -s "$work/curl.log" ] && [ ! -e "$SSH_DIR/shop.key" ]; } || echo 'a github.com unit dialled Vault or wrote a key'; fi
+}
+found="$(own_forge_findings own_checkout "$FORGE_URL" ssh://git@forgejo.example.invalid/acme/shop.git yes)"
+[ -z "$found" ] || fail "a Forgejo unit was not cloned over SSH with its own key: $found"
+found="$(own_forge_findings own_checkout https://github.com/acme/shop.git https://github.com/acme/shop.git no)"
+[ -z "$found" ] || fail "PLANTED INNOCENT: a github.com unit was not cloned over HTTPS without Vault: $found"
+plant_function own_checkout planted_https_own_checkout 'remote="$(push_url "${REPO_URL}")" || exit 1' 'remote="${REPO_URL}"'
+[ -n "$(own_forge_findings planted_https_own_checkout "$FORGE_URL" ssh://git@forgejo.example.invalid/acme/shop.git yes)" ] \
+  || fail 'PLANTED DEFECT: a Forgejo unit cloned over HTTPS was not seen'
+ok 'own_checkout: a Forgejo unit is cloned over SSH with its own key and its delivery branch pushed to that clone; a github.com unit over HTTPS without Vault; the planted HTTPS clone is seen'
+
+# vault_logout hands the login back once, and dials nothing where there was none.
+: > "$work/curl.log"
+( VAULT_CLIENT_TOKEN=held; vault_logout; printf '%s' "${VAULT_CLIENT_TOKEN}" > "$work/token-after" )
+[ "$(cat "$work/curl.log")" = "$VAULT_ADDR/v1/auth/token/revoke-self" ] && [ ! -s "$work/token-after" ] || fail "vault_logout did not revoke the login once and forget it: $(cat "$work/curl.log")"
+: > "$work/curl.log"
+( VAULT_CLIENT_TOKEN=''; vault_logout )
+[ ! -s "$work/curl.log" ] || fail 'PLANTED INNOCENT: vault_logout dialled Vault without a login'
+ok 'vault_logout revokes a login once, and dials nothing without one'
+
+# The SSH files the step writes, against a one-shot sshd that holds a host key of its own: the stored key gets as far as the
+# public-key refusal, and another host's key is refused before any key is offered.
+sshd_dir="$work/sshd"; mkdir -p "$sshd_dir"
+ssh-keygen -q -t rsa -b 2048 -N '' -f "$sshd_dir/host_rsa" -C ''
+ssh-keygen -q -t rsa -b 2048 -N '' -f "$sshd_dir/other_rsa" -C ''
+port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+cat > "$sshd_dir/sshd_config" <<SSHD
+Port $port
+ListenAddress 127.0.0.1
+HostKey $sshd_dir/host_rsa
+PidFile $sshd_dir/sshd.pid
+AuthorizedKeysFile none
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+UsePAM no
+StrictModes no
+LogLevel ERROR
+SSHD
+"$(command -v sshd)" -D -e -f "$sshd_dir/sshd_config" 2> "$sshd_dir/sshd.log" &
+sshd_pid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break; sleep 0.1; done
+(exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null || fail "the one-shot sshd did not listen on $port: $(cat "$sshd_dir/sshd.log")"
+ssh_through_the_step_files() { # <host key as the chart delivers it> -> what ssh says
+  ( FORGEJO_HOST=forgejo.example.invalid FORGEJO_SSH_HOSTNAME=127.0.0.1 FORGEJO_SSH_PORT="$port" FORGEJO_HOST_KEY="$1"
+    forge_ssh_setup 2>&1 || exit 1
+    ssh -F "$SSH_DIR/ssh_config" -o IdentitiesOnly=yes -o BatchMode=yes -i "$work/push-key" git@forgejo.example.invalid true 2>&1 )
+}
+OUT="$(ssh_through_the_step_files "$(cut -d' ' -f1,2 "$sshd_dir/host_rsa.pub")")"
+grep -qF 'Permission denied (publickey)' <<<"$OUT" || fail "PLANTED INNOCENT: the stored host key did not get ssh as far as the public-key refusal: $OUT"
+OUT="$(ssh_through_the_step_files "$(cut -d' ' -f1,2 "$sshd_dir/other_rsa.pub")")"
+grep -qF 'Host key verification failed' <<<"$OUT" || fail "PLANTED DEFECT: another host's key was not refused as a host key: $OUT"
+grep -qF 'Permission denied' <<<"$OUT" && fail 'PLANTED DEFECT: a key was offered to a host whose key did not verify'
+OUT="$(ssh_through_the_step_files '')" && fail 'PLANTED DEFECT: the step went on with no host key while the plane names a forge'
+grep -qF 'bump: FAIL — bump-git-https holds no FORGEJO_HOST_KEY while this plane names the forge forgejo.example.invalid' <<<"$OUT" || fail "the refusal does not name the missing host key: $OUT"
+kill "$sshd_pid" 2>/dev/null; wait "$sshd_pid" 2>/dev/null
+ok "the step writes ssh_config and known_hosts; the stored host key reaches the public-key refusal of a one-shot sshd, another host's key is refused as a host key, and no host key stops the step by name"
+
+# ── a release that declares no builds runs: the step defines every function before the first arm that calls it ──
+# The script is the one the chart renders, run with a stand-in for git and for curl on its path, over a manifest with a chart and no builds.
+render_step() { # <unit> <repoURL> -> the script of the step search-and-write of that unit's release pipeline
+  helm template consumer-build "$root/clusters/inventories/consumer-build" --namespace argocd \
+    -f "$root/clusters/platform/values-common.yaml" -f "$root/clusters/platform/values-prod.yaml" \
+    -f "$root/clusters/inventories/consumer-build/values-common.yaml" -f "$root/scripts/standin/cluster-map.yaml" -f "$root/scripts/standin/registration.yaml" \
+    --set-json "unit={\"name\":\"$1\",\"repoURL\":\"$2\",\"buildsJson\":\"[\\\"app\\\"]\"}" \
+    | yq "select(.kind == \"Pipeline\" and .metadata.name == \"$1-release\") | .spec.tasks[] | select(.name == \"bump\") | .taskSpec.steps[] | select(.name == \"search-and-write\") | .script"
+}
+render_step shop https://github.com/acme/shop.git > "$work/step.sh"
+[ -s "$work/step.sh" ] || fail 'the chart renders no script for the step search-and-write'
+step_bin="$work/step-bin"; mkdir -p "$step_bin"
+cat > "$step_bin/git" <<'STAND_IN'
+#!/usr/bin/env bash
+printf '%s | %s\n' "$*" "${GIT_SSH_COMMAND:-}" >> "$GIT_LOG"
+if [ "${1:-}" = clone ]; then mkdir -p "${@: -1}"; fi
+exit 0
+STAND_IN
+cat > "$step_bin/curl" <<'STAND_IN'
+#!/usr/bin/env bash
+out=''; url=''; format=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in -o) out="$2"; shift ;; -w) format="$2"; shift ;; -H|-X|--connect-timeout|--max-time|--data-binary) shift ;; -*) ;; *) url="$1" ;; esac
+  shift
+done
+printf '%s\n' "$url" >> "$CURL_LOG"
+case "$url" in
+  */auth/*/login) body='{"auth":{"client_token":"fixture-vault-token"}}' ;;
+  */repo-pat) body="$PUSH_BODY" ;;
+  *) body='' ;;
+esac
+[ -z "$out" ] || printf '%s' "$body" > "$out"
+[ -z "$format" ] || printf 200
+STAND_IN
+chmod +x "$step_bin/git" "$step_bin/curl"
+run_step() { # <script> <REPO_URL> [NAME=value…] -> the exit status of the script; its output stands in $work/step.out, the calls in $work/step/*.log
+  local script="$1" url="$2"
+  shift 2
+  rm -rf "$work/step"; mkdir -p "$work/step/src/deploy" "$work/step/home"
+  printf 'name: shop\nchart:\n  path: chart\n' > "$work/step/src/deploy/platform.yaml"
+  printf 'fixture-jwt' > "$work/step/jwt"
+  : > "$work/step/git.log"; : > "$work/step/curl.log"
+  sed "s#/tmp/git-credentials#$work/step/git-credentials#" "$script" > "$work/step/run.sh"
+  env -i PATH="$step_bin:$PATH" HOME="$work/step/home" GIT_LOG="$work/step/git.log" CURL_LOG="$work/step/curl.log" PUSH_BODY="$(forge_body)" \
+    UNIT=shop CLOUD_URL=https://forgejo.example.invalid/acme/hostyour-cloud.git BOOKS_BRANCH=books DEPLOY_URL=https://forgejo.example.invalid/acme/deploy.git \
+    CHANNEL_STAGES='stable dev test prod' SRC="$work/step/src" STAGE=prod RELEASE_TAG=0.8.540-stable-20261021010202 IMAGE_TAG=0.8.540-stable-20261021010202-fixture \
+    APPS_BUNDLE='' PLACEHOLDER_TAG=placeholder CLUSTER_NAME=fixture HITS_FILE="$work/step/hits" PLATFORM_COMMIT_FILE="$work/step/platform-commit" \
+    VAULT_ADDR=https://vault.fixture.invalid VAULT_AUTH_MOUNT=kubernetes VAULT_KV_MOUNT=secret VAULT_ROLE=build-bump VAULT_TOKEN_FILE="$work/step/jwt" \
+    REPO_URL="$url" "$@" bash "$work/step/run.sh" > "$work/step.out" 2>&1
+}
+FORGE_ENV=(FORGEJO_HOST=forgejo.example.invalid FORGEJO_SSH_HOSTNAME=127.0.0.1 FORGEJO_SSH_PORT=22 'FORGEJO_HOST_KEY=ssh-rsa AAAAfixture')
+run_step "$work/step.sh" "$FORGE_URL" "${FORGE_ENV[@]}" || fail "a release of a Forgejo unit that declares no builds ended in error: $(tail -n 5 "$work/step.out")"
+grep -q "^clone -q --depth 1 --branch 0.8.540-stable-20261021010202 ssh://git@forgejo.example.invalid/acme/shop.git .* | ssh -F .*/ssh_config -o IdentitiesOnly=yes -i .*/shop.key\$" "$work/step/git.log" \
+  || fail "the no-builds arm did not clone the Forgejo unit over SSH with its own key: $(cat "$work/step/git.log")"
+grep -q '^push -q --force origin HEAD:refs/heads/deploy/prod | ssh -F ' "$work/step/git.log" || fail "the no-builds arm did not push the delivery branch with the key of the unit: $(cat "$work/step/git.log")"
+[ "$(sed 's#^https://vault.fixture.invalid##' "$work/step/curl.log" | paste -sd' ' -)" = '/v1/auth/kubernetes/login /v1/secret/data/build/shop/repo-pat /v1/auth/token/revoke-self' ] \
+  || fail "the no-builds arm of a Forgejo unit did not log in, read its key and hand the login back: $(cat "$work/step/curl.log")"
+run_step "$work/step.sh" https://github.com/acme/shop.git || fail "PLANTED INNOCENT: a release of a github.com unit that declares no builds ended in error: $(tail -n 5 "$work/step.out")"
+grep -q '^clone -q --depth 1 --branch 0.8.540-stable-20261021010202 https://github.com/acme/shop.git ' "$work/step/git.log" && [ ! -s "$work/step/curl.log" ] \
+  || fail "PLANTED INNOCENT: the no-builds arm of a github.com unit left HTTPS or dialled Vault: $(cat "$work/step/git.log" "$work/step/curl.log")"
+# PLANTED DEFECT: the order the step had, the Vault block after the no-builds arm that calls it.
+awk '
+  /^VAULT_CLIENT_TOKEN=""$/ { held = 1 }
+  held { block = block $0 "\n"; if ($0 ~ /^vault_logout\(\) \{$/) seen = 1; if (seen && $0 == "}") held = 0; next }
+  /^# ── class \(a\): every registration with a chartPath/ { printf "%s\n", block }
+  { print }
+' "$work/step.sh" > "$work/step-late.sh"
+! cmp -s "$work/step.sh" "$work/step-late.sh" && grep -q '^carrier_credential() {' "$work/step-late.sh" || fail 'the planted order was not made from the rendered script'
+if run_step "$work/step-late.sh" "$FORGE_URL" "${FORGE_ENV[@]}"; then fail 'PLANTED DEFECT: the Vault block defined after the no-builds arm was not seen'; fi
+grep -qF 'carrier_credential: command not found' "$work/step.out" || fail "PLANTED DEFECT: the planted order failed, but not on the missing function: $(tail -n 5 "$work/step.out")"
+ok 'a release that declares no builds runs: a Forgejo unit logs in, reads its key, clones and pushes over SSH and hands the login back; a github.com unit stays on HTTPS without Vault; the Vault block after the arm that calls it is seen'
 
 # ── own_stage_values: a stage file the release tree lacks is named, with the tag that was read ──
 # The tree of the tag holds the dev and test files only, as hostyour-demo-consumer's tag did. The
