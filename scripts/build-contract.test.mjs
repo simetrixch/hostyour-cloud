@@ -1060,13 +1060,13 @@ test('build-binaries runs release/build.sh as the user of its image, after a ste
 
 // The scheduler admits a pod by its requests, and the kernel kills by QoS class when the node runs out of
 // memory, so what bounds the damage to the platform pods is a sum of limits that stays within a budget
-// (ciCapacity.limitsMemoryBudget).
+// (releaseCapacity.limitsMemoryBudget).
 // The sum is the pods that the queue's runs have alive at once. The queue runs one release or publish run per unit and
 // releaseSlots runs in all (queueStartsOf below proves that on the queue's own decision), so the slots hold the
 // releaseSlots largest distinct units, each the larger of its release run and its publish run. What a run has alive at
 // once is the heaviest set of its tasks that none waits for another, read from the rendered runAfter, result and when
 // references and the finally tasks (peakConcurrent), not every task of every stage. A unit builds the number of images
-// that ciCapacity.releaseUnitImages declares for it.
+// that releaseCapacity.releaseUnitImages declares for it.
 // The same sum of CPU requests, with the requests of the pods that stand on the node on top, is held to the cores of
 // the node by the test of the cores below.
 const BYTES = {Gi: 1024 ** 3, Mi: 1024 ** 2};
@@ -1135,7 +1135,7 @@ const CORES = {pod: podRequest, standing: (capacity) => milliCores(capacity.stan
 const largestQueued = (capacity, units, weigh) => units.map(({release, publish}) => Math.max(peakConcurrent(release, weigh), peakConcurrent(publish, weigh)))
   .sort((a, b) => b - a).slice(0, capacity.releaseSlots).reduce((sum, weight) => sum + weight, 0);
 const fitsBudget = (capacity, shared, units, size = MEMORY) => largestQueued(capacity, units, (task) => size.pod(task, shared)) + size.standing(capacity) <= size.budget(capacity);
-const readCiCapacity = () => ({...JSON.parse(execFileSync('yq', ['-o=json', '.ciCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'})),
+const readReleaseCapacity = () => ({...JSON.parse(execFileSync('yq', ['-o=json', '.releaseCapacity', 'clusters/inventories/consumer-build/values-common.yaml'], {encoding: 'utf8'})),
   releaseSlots: Number(execFileSync('yq', ['.releaseQueue.maxRunning', 'clusters/inventories/image-builder/values-common.yaml'], {encoding: 'utf8'}))});
 const imageNames = (count) => Array.from({length: count}, (_, i) => `image-${i + 1}`);
 const pipelineOf = (docs, name) => docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === name);
@@ -1168,7 +1168,7 @@ const queueStartsOf = (units, stages, slots, edit = (program) => program) => {
 const channelStageCount = () => Math.max(...Object.values(JSON.parse(execFileSync('yq', ['-o=json', '.global.channelStages', 'clusters/platform/values-common.yaml'], {encoding: 'utf8'}))).map((reached) => reached.length));
 
 test('the nine largest releases or publish runs fit the 31.5Gi memory budget, which stays within the memory of the node', () => {
-  const capacity = readCiCapacity();
+  const capacity = readReleaseCapacity();
   assert.ok(declaresEveryCount(capacity.releaseUnitImages), 'every declared unit names how many images it builds');
   assert.equal(capacity.releaseUnitImages['digita-realtime'], 1, 'digita-realtime builds its one image after the scan');
   assert.ok(declaresEveryCount({...capacity.releaseUnitImages, 'digita-realtime': 1}), 'PLANTED INNOCENT: the row of digita-realtime with its count');
@@ -1225,7 +1225,7 @@ test('the nine largest releases or publish runs fit the 31.5Gi memory budget, wh
 const BUILDAH_PEAK = {build: {peak: 2321 * BYTES.Mi, margin: 1.18}, push: {peak: 248 * BYTES.Mi, margin: 1.29}};
 
 test('each step of the Buildah pod limits its memory above the measured peak with a margin, requests no more than its limit, and the pod is 3Gi', () => {
-  const {shared} = releasePlane(readCiCapacity());
+  const {shared} = releasePlane(readReleaseCapacity());
   const stepsOfBuildah = (task) => Object.fromEntries(task.spec.steps.map((step) => [step.name, step.computeResources]));
   const covers = (task) => Object.entries(BUILDAH_PEAK).every(([name, {peak, margin}]) => {
     const {requests, limits} = stepsOfBuildah(task)[name];
@@ -1243,7 +1243,7 @@ test('each step of the Buildah pod limits its memory above the measured peak wit
 });
 
 test('the queue runs one run of a unit and releaseSlots runs in all, which the capacity sums count', () => {
-  const capacity = readCiCapacity(), stages = channelStageCount();
+  const capacity = readReleaseCapacity(), stages = channelStageCount();
   const units = Array.from({length: capacity.releaseSlots + 2}, (_, i) => `unit${i}`);
   assert.ok(stages > 1, 'the channel table reaches several stages, and a stage run is a run of its own');
   const startsOf = (edit) => queueStartsOf(units, stages, capacity.releaseSlots, edit);
@@ -1253,7 +1253,7 @@ test('the queue runs one run of a unit and releaseSlots runs in all, which the c
 });
 
 test('the nine largest releases or publish runs and the pods that stand on the build node fit its cores', () => {
-  const capacity = readCiCapacity();
+  const capacity = readReleaseCapacity();
   const {shared, units} = releasePlane(capacity);
   const [{publish}] = units;
   const fits = (limit = capacity, tasks = shared, releaseUnits = units) => fitsBudget(limit, tasks, releaseUnits, CORES);
@@ -1269,7 +1269,7 @@ test('the nine largest releases or publish runs and the pods that stand on the b
 });
 
 // The pods the master cannot work without carry a CPU request, which scripts/check.sh holds for every render. What the
-// budget of the cores counts of them is ciCapacity.standingCpuRequests: the 4530m the node held on 2026-10-15, before
+// budget of the cores counts of them is releaseCapacity.standingCpuRequests: the 4530m the node held on 2026-10-15, before
 // they had requests, their own requests, which this test reads from the
 // values that carry them, Forgejo's among them, and the 400m of traefik that hostyour-deploy sets on the addon's DaemonSet. The 8 slave
 // instances are the app clusters apps1 to apps8, one Argo CD each on the master.
@@ -1282,7 +1282,7 @@ const requestAt = (file, path) => {
 const requestsOf = (file, paths) => paths.reduce((total, path) => total + requestAt(file, path), 0);
 
 test('the standing CPU requests of the budget count the requests of the pods the master cannot work without', () => {
-  const capacity = readCiCapacity();
+  const capacity = readReleaseCapacity();
   const argoComponents = ['.controller', '.server', '.repoServer', '.redis', '.applicationSet'];
   const master = requestsOf('clusters/bootstrap/argocd/values.tpl', [...argoComponents, '.dex', '.notifications']);
   const slave = requestsOf('clusters/slaves/slave/values-common.yaml', argoComponents.map((component) => `.["argo-cd"]${component}`));
@@ -1306,7 +1306,7 @@ test('the standing CPU requests of the budget count the requests of the pods the
 const podsOnNode = (capacity, units) => largestQueued(capacity, units, () => 1) + capacity.standingPods;
 
 test('the pods of the nine largest releases or publish runs, with the pods that stand on the build node, stay below its pod limit', () => {
-  const capacity = readCiCapacity();
+  const capacity = readReleaseCapacity();
   const {units} = releasePlane(capacity);
   const below = (counted) => counted < capacity.nodePods;
   for (const unit of units) {

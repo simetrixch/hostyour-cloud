@@ -132,7 +132,7 @@ releaseQueue:
 # Traefik's request is set where the addon is patched, in hostyour-deploy, and is counted here already, so the
 # figure may be a little high until that lands, never low. scripts/build-contract.test.mjs adds the requests of the
 # values files up and fails when this figure is below the sum.
-ciCapacity:
+releaseCapacity:
   releaseBuildsAtOnce: 1
   releaseUnitImages:
     digita-auth: 2
