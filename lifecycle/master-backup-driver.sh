@@ -75,8 +75,18 @@
 # measurement and never moved again. A copy that moves no byte for READBACK_WAIT_SECONDS, or passes its allowance,
 # is ended and this ends 69, saying how many bytes were read and at what rate. A rate below the floor that never
 # stands still is ended by that allowance alone, so a very slow box is not waited on past it.
+# ONCE EVERY EXPECTED BYTE IS READ the rate and the stall no longer apply, because no byte can move after the last one.
+# The first statistics that report the expected bytes start one completion wait of READBACK_FINISH_SECONDS, counted
+# on this script's clock and never restarted. A copy that ends inside it is judged by its exit status like any other.
+# One that still runs when it passes is ended and this ends 69, "read-back completion did not finish". That bound is
+# a diagnostic outer limit, not a measured one: nothing yet says why rclone runs on after its last byte.
+# WHAT RCLONE REPORTS AFTER ITS LAST BYTE is printed, at the end of a copy and before an unfinished one is ended: the
+# statistics records it wrote and the last 30 of its log records, read from its DEBUG output in the private file.
 # THE STORAGE BOX IS NAMED "the storage box" AND NOTHING MORE in what this prints. rclone's own messages carry the
-# account, so none of them reaches a stream: its errors are dropped and its statistics are read as three numbers.
+# account, so a line of its output is printed only as parts that are each checked: its time, its level and its source
+# location by their shape, its message by the fixed wording of the rclone template that wrote it with every value
+# the template takes from outside replaced by [redacted], numbers as digits, and the name of a file only where it is
+# one of the files this run made.
 # ===========================================================================
 set -uo pipefail
 
@@ -95,6 +105,8 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 # latency among them, and ends a copy that moves no byte for as long. READBACK_POLL_SECONDS is how often it looks at
 # rclone's statistics, READBACK_REPORT_SECONDS how often it prints them, READBACK_GRACE_SECONDS how long a copy asked
 # to end has before it is killed, and READBACK_SLOWDOWN_FACTOR how many times slower than measured the box may get.
+# READBACK_FINISH_SECONDS is how long a copy that reported every expected byte may run on before it is ended: a finite
+# stop that leaves room for the diagnosis to be printed, not a measured or derived limit.
 readonly QUEUE_NAMESPACE=image-builder
 readonly QUEUE_CRONJOB=release-queue
 readonly QUEUE_POLL_SECONDS=5
@@ -105,6 +117,7 @@ readonly READBACK_WAIT_SECONDS=300
 readonly READBACK_POLL_SECONDS=5
 readonly READBACK_REPORT_SECONDS=30
 readonly READBACK_GRACE_SECONDS=30
+readonly READBACK_FINISH_SECONDS=7200
 readonly READBACK_SLOWDOWN_FACTOR=2
 SECRETS=''
 READBACK=''
@@ -498,13 +511,226 @@ readback_state() { # what the transfer had read, in the words of every failure a
   fi
   [ -z "$TRANSFER_CODE" ] || printf ', transfer exit status %s' "$TRANSFER_CODE"
 }
+# readback_known_names: the files this run made, as "|name|name|": the only file names the diagnosis prints.
+readback_known_names() {
+  local row ns pvc names='|'
+  for row in "${STORES[@]}"; do
+    IFS='|' read -r ns pvc _ <<< "$row"
+    names+="${ns}--${pvc}.tar.gpg|"
+  done
+  printf '%s' "$names" "host--vault-${STAGE}.txt.gpg|manifest.txt|"
+}
+# readback_project: rclone's output on standard input, one JSON record a line, projected to what may be printed. Every byte
+# it prints is a fixed word of this program, a number checked as digits, a time, level or source location checked by its
+# shape, the version of rclone, a file name of readback_known_names, or the wording of the rclone message template that
+# wrote the record (rclone v1.60.1: fs/accounting/stats.go:482, cmd/cmd.go:263,283,285,298,414, fs/operations/operations.go:103,
+# 107,529,538,544-545,566, fs/sync/sync.go:441,457,479,891) with each value the template takes from outside replaced by [redacted].
+# Whatever else a record holds, and any line that is not a whole JSON record, is counted and never printed. The first line it
+# prints, "unfinished: ...", is for the failure message. It prints nothing when no statistics record reports the expected bytes.
+readback_project() {
+  LC_ALL=C awk -v expected="$READBACK_EXPECTED" -v known="$(readback_known_names)" '
+function hexvalue(h,   i, n) {
+  n = 0; h = tolower(h)
+  for (i = 1; i <= 4; i++) n = n * 16 + index("0123456789abcdef", substr(h, i, 1)) - 1
+  return n
+}
+# A strict reader of the compact JSON that logrus writes: a key must be a plain word, a character outside printable
+# ASCII becomes UNSHOWN (which no check below accepts), and anything it cannot read whole makes the line unreadable.
+function parse_string(   out, rest, at, c, code) {
+  if (substr(J, P, 1) != "\"") { bad = 1; return "" }
+  P++; out = ""
+  while (!bad) {
+    rest = substr(J, P)
+    at = match(rest, /["\\]/)
+    if (at == 0) { bad = 1; return "" }
+    out = out substr(rest, 1, at - 1); P += at - 1
+    if (substr(J, P, 1) == "\"") { P++; return out }
+    c = substr(J, P + 1, 1)
+    if (c == "\"" || c == "\\" || c == "/") { out = out c; P += 2 }
+    else if (c == "n") { out = out "\n"; P += 2 }
+    else if (c == "b" || c == "f" || c == "r" || c == "t") { out = out UNSHOWN; P += 2 }
+    else if (c == "u" && substr(J, P + 2, 4) ~ /^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]$/) {
+      code = hexvalue(substr(J, P + 2, 4))
+      out = out ((code >= 32 && code < 127) ? ascii[code] : UNSHOWN); P += 6
+    } else bad = 1
+  }
+  return ""
+}
+function parse_value(path, depth,   c, rest) {
+  if (depth > 5) { bad = 1; return }
+  c = substr(J, P, 1)
+  if (c == "\"") { D[path] = parse_string(); T[path] = "s"; return }
+  if (c == "{") { parse_object(path, depth); return }
+  if (c == "[") { parse_array(path, depth); return }
+  rest = substr(J, P, 40)
+  if (match(rest, /^(true|false|null)/)) { D[path] = substr(rest, 1, RLENGTH); T[path] = "k"; P += RLENGTH; return }
+  if (match(rest, /^-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?/)) { D[path] = substr(rest, 1, RLENGTH); T[path] = "n"; P += RLENGTH; return }
+  bad = 1
+}
+function parse_object(path, depth,   key, c) {
+  P++; T[path] = "o"
+  if (substr(J, P, 1) == "}") { P++; return }
+  while (!bad) {
+    key = parse_string()
+    if (bad) return
+    if (key !~ /^[A-Za-z][A-Za-z0-9_]*$/ || substr(J, P, 1) != ":") { bad = 1; return }
+    P++
+    parse_value((path == "" ? "" : path ".") key, depth + 1)
+    if (bad) return
+    c = substr(J, P, 1); P++
+    if (c == "}") return
+    if (c != ",") { bad = 1; return }
+  }
+}
+function parse_array(path, depth,   n, c) {
+  P++; T[path] = "a"; N[path] = 0; n = 0
+  if (substr(J, P, 1) == "]") { P++; return }
+  while (!bad) {
+    parse_value(path "." n, depth + 1)
+    if (bad) return
+    n++; N[path] = n
+    c = substr(J, P, 1); P++
+    if (c == "]") return
+    if (c != ",") { bad = 1; return }
+  }
+}
+function parse_line(s) {
+  split("", D); split("", T); split("", N)
+  bad = 0
+  if (s ~ /[\001-\037\177]/) return 0
+  gsub(/[^ -~]/, UNSHOWN, s)
+  J = s; P = 1
+  if (substr(J, 1, 1) != "{") return 0
+  parse_object("", 0)
+  return (!bad && P == length(J) + 1)
+}
+function count_of(path) { return (T[path] == "n" && D[path] ~ /^[0-9]+$/ && length(D[path]) <= 15) ? D[path] : "" }
+function seconds_of(path) { return (T[path] == "n" && D[path] ~ /^[0-9]+(\.[0-9]+)?$/ && length(D[path]) <= 20) ? D[path] : "" }
+function bool_of(path) { return (T[path] == "k" && (D[path] == "true" || D[path] == "false")) ? D[path] : "" }
+function time_of() { return (T["time"] == "s" && length(D["time"]) <= 40 && D["time"] ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9](\.[0-9]+)?([+-][0-9][0-9]:[0-9][0-9]|Z)$/) ? D["time"] : "" }
+function level_of() { return (T["level"] == "s" && D["level"] ~ /^(panic|fatal|error|warning|info|debug|trace)$/) ? D["level"] : "" }
+function source_of() { return (T["source"] == "s" && length(D["source"]) <= 60 && D["source"] ~ /^[a-z]+\/[a-z_]+\.go:[0-9]+$/) ? D["source"] : "" }
+function name_of(path) { return (T[path] == "s" && D[path] ~ /^[A-Za-z0-9._-]+$/ && index(known, "|" D[path] "|") > 0) ? D[path] : "" }
+# The message of a record, by the template that wrote it. RECOG says which kind of record it was.
+function project(msg,   cut, version) {
+  RECOG = ""
+  if (length(msg) > 300) return "[text redacted]"
+  sub(/\n$/, "", msg)
+  if (msg ~ /^Attempt [0-9]+\/[0-9]+ succeeded$/ || msg ~ /^Attempt [0-9]+\/[0-9]+ failed with [0-9]+ errors$/) { RECOG = "attempt"; ATTEMPT = substr(msg, 9); return msg }
+  if (match(msg, /^Attempt [0-9]+\/[0-9]+ failed with [0-9]+ errors and: /)) { RECOG = "attempt"; ATTEMPT = substr(msg, 9, RLENGTH - 14); return substr(msg, 1, RLENGTH) "[redacted]" }
+  if (msg == "Fatal error received - not attempting retries" || msg == "Can\047t retry any of the errors - not attempting retries") { RECOG = "noretry"; return msg }
+  if (match(msg, /^Received error: /)) {
+    cut = RLENGTH
+    if (match(msg, / - low level retry [0-9]+\/[0-9]+$/) && RSTART > cut) { RECOG = "lowlevel"; LOWLEVEL = substr(msg, RSTART + 19); return "Received error: [redacted]" substr(msg, RSTART) }
+  }
+  if (match(msg, /^Failed to (copy|calculate (src|dst) hash): /)) return substr(msg, 1, RLENGTH) "[redacted]"
+  if (msg ~ /^corrupted on transfer: sizes differ [0-9]+ vs [0-9]+$/) return msg
+  if (msg ~ /^(Multi-thread )?Copied \((new|replaced existing|server-side copy|Rcat, new|Rcat, replaced existing)\)$/) return msg
+  if (msg == "Waiting for checks to finish" || msg == "Waiting for transfers to finish" || msg == "Waiting for renames to finish" || msg == "Checks finished, now starting transfers") return msg
+  if (msg ~ /^[0-9]+ go routines active$/) return msg
+  if (match(msg, /^Version "v[0-9]+\.[0-9]+\.[0-9]+([-+.][A-Za-z0-9]+)*" starting with parameters /)) {
+    version = substr(msg, 10, RLENGTH - 36)
+    VERSION = version
+    return "Version \"" version "\" starting with parameters [redacted]"
+  }
+  return "[text redacted]"
+}
+function render(   t, l, s, m, o) {
+  t = time_of(); l = level_of(); s = source_of(); o = name_of("object")
+  m = (T["msg"] == "s") ? project(D["msg"]) : "[no message]"
+  return (t == "" ? "time unavailable" : t) " " (l == "" ? "level unavailable" : l) " " (s == "" ? "source unavailable" : s) " " m (o == "" ? "" : " [" o "]")
+}
+function listed_names(p, kind,   n, i, nm, names, hidden, path) {
+  names = ""; hidden = 0
+  if (!(("stats." kind) in T)) n = 0
+  else if (T["stats." kind] == "a") n = N["stats." kind]
+  else n = -1
+  if (n > 1000) n = 1000
+  for (i = 0; i < n; i++) {
+    path = "stats." kind "." i (kind == "transferring" ? ".name" : "")
+    nm = name_of(path)
+    if (nm == "") hidden++; else names = names (names == "" ? "" : ", ") nm
+  }
+  S[p, kind] = n; S[p, kind "names"] = names; S[p, kind "hidden"] = hidden
+}
+function capture(p) {
+  S[p, "bytes"] = count_of("stats.bytes"); S[p, "elapsed"] = seconds_of("stats.elapsedTime"); S[p, "time"] = time_of()
+  S[p, "transfers"] = count_of("stats.transfers"); S[p, "totalTransfers"] = count_of("stats.totalTransfers")
+  S[p, "checks"] = count_of("stats.checks"); S[p, "totalChecks"] = count_of("stats.totalChecks")
+  S[p, "errors"] = count_of("stats.errors"); S[p, "deletes"] = count_of("stats.deletes"); S[p, "deletedDirs"] = count_of("stats.deletedDirs")
+  S[p, "retryError"] = bool_of("stats.retryError"); S[p, "fatalError"] = bool_of("stats.fatalError")
+  listed_names(p, "transferring"); listed_names(p, "checking")
+}
+function show(v) { return (v == "" ? "unavailable" : v) }
+function ratio(a, b) { return (a == "" || b == "") ? "unavailable" : a "/" b }
+function snapshot_line(p, label) {
+  return label ": " show(S[p, "bytes"]) " of " expected " bytes, transfers " ratio(S[p, "transfers"], S[p, "totalTransfers"]) ", checks " ratio(S[p, "checks"], S[p, "totalChecks"]) ", errors " show(S[p, "errors"]) ", deletes " show(S[p, "deletes"]) ", deletedDirs " show(S[p, "deletedDirs"]) ", elapsedTime " show(S[p, "elapsed"]) " s, retryError " show(S[p, "retryError"]) ", fatalError " show(S[p, "fatalError"]) ", written " (S[p, "time"] == "" ? "at a time that is unavailable" : "at " S[p, "time"])
+}
+function listing(p, kind,   words) {
+  if (S[p, kind] < 0) return kind " unavailable"
+  if (S[p, kind] == 0) return "no file " kind " listed"
+  words = S[p, kind] " file(s) " kind
+  if (S[p, kind "names"] != "" || S[p, kind "hidden"] > 0) words = words " [" S[p, kind "names"] (S[p, kind "names"] != "" && S[p, kind "hidden"] > 0 ? "; " : "") (S[p, kind "hidden"] > 0 ? S[p, kind "hidden"] " name(s) not shown" : "") "]"
+  return words
+}
+function active_words(p) { return listing(p, "transferring") ", " listing(p, "checking") }
+function statistics_record(   b, e) {
+  b = count_of("stats.bytes"); e = seconds_of("stats.elapsedTime")
+  if (T["stats"] != "o" || b == "" || length(b) > 12 || e == "") { invalid++; return }
+  if (!phase && b + 0 >= expected + 0) { phase = 1; prior = latest; capture("F") }
+  if (phase) { capture("L"); phase_stats++ }
+}
+function log_record(   line) {
+  logs++
+  line = render()
+  if (RECOG == "attempt") { attempts++; outcome[attempts % 10] = ATTEMPT }
+  if (RECOG == "lowlevel") { lowlevel++; latest_lowlevel = LOWLEVEL }
+  if (RECOG == "noretry") noretry++
+  if (phase) { ring[ringed % KEEP] = line; ringed++ } else latest = line
+}
+BEGIN { UNSHOWN = "\001"; KEEP = 30; for (i = 32; i < 127; i++) ascii[i] = sprintf("%c", i) }
+{ if (length($0) > 100000 || !parse_line($0)) unreadable++; else if ("stats" in T) statistics_record(); else log_record() }
+END {
+  if (!phase) exit
+  print "unfinished: the last statistics record reports " active_words("L") (S["L", "transferring"] == 0 && S["L", "checking"] == 0 ? " (an empty list does not show that rclone is idle)" : "") "; " (ringed > 0 ? "the last log record reads: " ring[(ringed - 1) % KEEP] : "no operation was reported in the completion phase")
+  print "rclone version: " (VERSION == "" ? "unavailable, no startup record was read" : VERSION)
+  print snapshot_line("F", "first complete record")
+  print "  active in it: " active_words("F")
+  print snapshot_line("L", "last record read (" phase_stats " statistics record(s) in the completion phase)")
+  print "  active in it: " active_words("L")
+  shown = ""
+  for (i = (attempts > 10 ? attempts - 9 : 1); i <= attempts; i++) shown = shown (shown == "" ? "" : "; ") outcome[i % 10]
+  print "retry records: " (attempts + lowlevel + noretry) " of " logs + 0 " log record(s) read (" unreadable + 0 " line(s) unreadable, " invalid + 0 " statistics record(s) not valid); attempts " attempts + 0 (attempts > 0 ? ": " shown : "") "; low-level retries " lowlevel + 0 (lowlevel > 0 ? ", the latest " latest_lowlevel : "")
+  print (prior == "" ? "prior context: none, no log record came before the byte count was complete" : "prior context, the record before the byte count was complete (not proof that its operation is still running): " prior)
+  first = (ringed > KEEP ? ringed - KEEP : 0)
+  print "log of the completion phase, " (ringed - first) " of " ringed + 0 " record(s), oldest first:"
+  for (i = first; i < ringed; i++) print "  " ring[i % KEEP]
+}'
+}
+# readback_diagnose: what rclone wrote since its byte count was complete, in READBACK_DIAGNOSIS (empty where it never was), and what it still reports unfinished, in READBACK_UNFINISHED.
+readback_diagnose() {
+  READBACK_DIAGNOSIS=$(tr -d '\000' < "$READBACK_STATS" | readback_project)
+  READBACK_UNFINISHED=$(sed -n 's/^unfinished: //p' <<< "$READBACK_DIAGNOSIS")
+  READBACK_DIAGNOSIS=$(sed '/^unfinished: /d' <<< "$READBACK_DIAGNOSIS")
+}
+readback_say_diagnosis() {
+  local line
+  [ -n "$READBACK_DIAGNOSIS" ] || return 0
+  say "read-back completion (backup $ID), from rclone's records; of its own text only the wording of its message templates, checked numbers and the names of this backup's files are shown:"
+  while IFS= read -r line; do say "  $line"; done <<< "$READBACK_DIAGNOSIS"
+}
+readback_pid() { # the pid the transfer wrote, as digits, or nothing
+  local pid
+  pid=$(cat "$READBACK_PID" 2>/dev/null) || pid=''
+  case "$pid" in *[!0-9]*) pid='' ;; esac
+  printf '%s' "$pid"
+}
 # The transfer is root's, so root ends it: the pid it wrote is asked to end, and killed once READBACK_GRACE_SECONDS have passed.
 readback_end() {
   local pid limit
   [ -n "$TRANSFER_JOB" ] || return 0
   if kill -0 "$TRANSFER_JOB" 2>/dev/null; then
-    pid=$(cat "$READBACK_PID" 2>/dev/null) || pid=''
-    case "$pid" in *[!0-9]*) pid='' ;; esac
+    pid=$(readback_pid)
     [ -z "$pid" ] || root kill -TERM "$pid" >/dev/null 2>&1
     limit=$(( SECONDS + READBACK_GRACE_SECONDS ))
     while kill -0 "$TRANSFER_JOB" 2>/dev/null && [ "$SECONDS" -lt "$limit" ]; do sleep 0.1; done
@@ -517,13 +743,31 @@ readback_fail() { # WHAT HAPPENED — the transfer is ended and reaped, then thi
   readback_end
   die "the read-back of $BACKUPS/$ID/ $1: $(readback_state); the archives stand in $WORK on this machine" 69
 }
+# readback_unfinished: the copy reported every expected byte and still runs READBACK_FINISH_SECONDS later. What rclone
+# reports is read and printed before it is ended, because ending it changes the statistics it writes; the copy is then ended
+# and reaped, and this ends 69.
+readback_unfinished() {
+  local waited=$(( SECONDS - READBACK_COMPLETE_AT )) job=no process=no pid state
+  state=$(readback_state)
+  kill -0 "$TRANSFER_JOB" 2>/dev/null && job=yes
+  pid=$(readback_pid)
+  if [ -n "$pid" ] && root kill -0 "$pid" >/dev/null 2>&1; then process=yes; fi
+  readback_diagnose
+  say "read-back completion (backup $ID): every expected byte was first seen read $(( READBACK_COMPLETE_AT - READBACK_STARTED_AT )) s into the read-back; the completion wait ran $waited s of its $READBACK_FINISH_SECONDS s; the newest statistics were seen to change $(( SECONDS - READBACK_FRESH_AT )) s ago; the transfer job still runs: $job; the recorded rclone process still runs: $process"
+  readback_say_diagnosis
+  readback_end
+  die "read-back completion did not finish: rclone reported every expected byte read ($READBACK_COMPLETE_BYTES of $READBACK_EXPECTED), the completion wait ran $waited s to its bound of $READBACK_FINISH_SECONDS s with the transfer still running, and it was ended (backup $ID); $state, transfer exit status $TRANSFER_CODE; ${READBACK_UNFINISHED:-no statistics record of the completion could be read}; the archives stand in $WORK on this machine" 69
+}
 # readback_follow: the transfer runs in the background with its statistics in a file that only this reads. The first
 # READBACK_WAIT_SECONDS measure the rate; a transfer that moves no byte for that long is ended, and so is one that passes
-# the allowance the measured rate gives it, which is fixed at the end of the measurement. A transfer that ended while the
-# poll slept is judged by its exit status alone, never by a rule for one that still runs. Ends 0 when the transfer ended
-# 0 and left a statistics line; otherwise it ends the run.
+# the allowance the measured rate gives it, which is fixed at the end of the measurement. None of those rules applies once
+# a statistics sample reports every expected byte: from the poll that sees it first, one completion wait of
+# READBACK_FINISH_SECONDS runs, which no later sample restarts or extends, and a transfer still running at its end is
+# ended. A transfer that ended while the poll slept is judged by its exit status alone, never by a rule for one that still
+# runs. Ends 0 when the transfer ended 0 and left a statistics line; otherwise it ends the run.
 readback_follow() {
-  local started=$SECONDS progress=$SECONDS next_report now seen='' last=0 frozen='' deadline=0
+  local started=$SECONDS progress=$SECONDS next_report now seen='' last=0 frozen='' deadline=0 changed=''
+  READBACK_STARTED_AT=$SECONDS READBACK_FRESH_AT=$SECONDS READBACK_COMPLETE_AT='' READBACK_COMPLETE_BYTES=''
   next_report=$(( SECONDS + READBACK_REPORT_SECONDS ))
   while kill -0 "$TRANSFER_JOB" 2>/dev/null; do
     sleep "$READBACK_POLL_SECONDS"
@@ -532,24 +776,33 @@ readback_follow() {
     if readback_read; then
       seen=1
       if [ "$SAMPLE_BYTES" -gt "$last" ]; then last=$SAMPLE_BYTES progress=$now; fi
-    fi
-    if [ -z "$seen" ] && [ $(( now - started )) -ge "$READBACK_WAIT_SECONDS" ]; then
-      readback_fail "gave no statistics within $READBACK_WAIT_SECONDS s, so its rate could not be measured"
-    fi
-    if [ -n "$seen" ] && [ $(( now - progress )) -ge "$READBACK_WAIT_SECONDS" ]; then
-      readback_fail "moved no byte for $READBACK_WAIT_SECONDS s and was ended"
-    fi
-    if [ -z "$frozen" ] && [ $(( now - started )) -ge "$READBACK_WAIT_SECONDS" ]; then
-      if [ "$SAMPLE_BYTES" -le 0 ] || [ "$SAMPLE_MILLIS" -le 0 ] || [ "${#READBACK_EXPECTED}" -gt 11 ] || [ "${#SAMPLE_MILLIS}" -gt 7 ]; then
-        readback_fail "gave statistics that cannot be measured and was ended"
+      if [ "$SAMPLE_MILLIS" != "$changed" ]; then changed=$SAMPLE_MILLIS READBACK_FRESH_AT=$now; fi
+      if [ -z "$READBACK_COMPLETE_AT" ] && [ "$SAMPLE_BYTES" -ge "$READBACK_EXPECTED" ]; then
+        READBACK_COMPLETE_AT=$now READBACK_COMPLETE_BYTES=$SAMPLE_BYTES
+        say "read back: rclone reports $SAMPLE_BYTES of $READBACK_EXPECTED expected bytes, so the transfer is given $READBACK_FINISH_SECONDS s to end (backup $ID)"
       fi
-      READBACK_LEAST_BYTES_PER_SECOND=$(rate_of "$SAMPLE_BYTES" $(( SAMPLE_MILLIS * READBACK_SLOWDOWN_FACTOR )))
-      READBACK_ALLOWED_SECONDS=$(readback_allowance_seconds "$READBACK_EXPECTED" "$SAMPLE_BYTES" "$SAMPLE_MILLIS")
-      deadline=$(( now + READBACK_ALLOWED_SECONDS )) frozen=1
-      say "measured $SAMPLE_BYTES bytes in $(seconds_of "$SAMPLE_MILLIS") s, $(rate_of "$SAMPLE_BYTES" "$SAMPLE_MILLIS") bytes a second; policy: a floor of 1/$READBACK_SLOWDOWN_FACTOR of it, $READBACK_LEAST_BYTES_PER_SECOND bytes a second; the $READBACK_EXPECTED bytes are given $READBACK_ALLOWED_SECONDS s more (backup $ID)"
     fi
-    if [ -n "$frozen" ] && [ "$now" -ge "$deadline" ]; then
-      readback_fail "did not finish within the $READBACK_ALLOWED_SECONDS s its measured rate allows and was ended"
+    if [ -n "$READBACK_COMPLETE_AT" ]; then
+      if [ $(( now - READBACK_COMPLETE_AT )) -ge "$READBACK_FINISH_SECONDS" ]; then readback_unfinished; fi
+    else
+      if [ -z "$seen" ] && [ $(( now - started )) -ge "$READBACK_WAIT_SECONDS" ]; then
+        readback_fail "gave no statistics within $READBACK_WAIT_SECONDS s, so its rate could not be measured"
+      fi
+      if [ -n "$seen" ] && [ $(( now - progress )) -ge "$READBACK_WAIT_SECONDS" ]; then
+        readback_fail "moved no byte for $READBACK_WAIT_SECONDS s and was ended"
+      fi
+      if [ -z "$frozen" ] && [ $(( now - started )) -ge "$READBACK_WAIT_SECONDS" ]; then
+        if [ "$SAMPLE_BYTES" -le 0 ] || [ "$SAMPLE_MILLIS" -le 0 ] || [ "${#READBACK_EXPECTED}" -gt 11 ] || [ "${#SAMPLE_MILLIS}" -gt 7 ]; then
+          readback_fail "gave statistics that cannot be measured and was ended"
+        fi
+        READBACK_LEAST_BYTES_PER_SECOND=$(rate_of "$SAMPLE_BYTES" $(( SAMPLE_MILLIS * READBACK_SLOWDOWN_FACTOR )))
+        READBACK_ALLOWED_SECONDS=$(readback_allowance_seconds "$READBACK_EXPECTED" "$SAMPLE_BYTES" "$SAMPLE_MILLIS")
+        deadline=$(( now + READBACK_ALLOWED_SECONDS )) frozen=1
+        say "measured $SAMPLE_BYTES bytes in $(seconds_of "$SAMPLE_MILLIS") s, $(rate_of "$SAMPLE_BYTES" "$SAMPLE_MILLIS") bytes a second; policy: a floor of 1/$READBACK_SLOWDOWN_FACTOR of it, $READBACK_LEAST_BYTES_PER_SECOND bytes a second; the $READBACK_EXPECTED bytes are given $READBACK_ALLOWED_SECONDS s more (backup $ID)"
+      fi
+      if [ -n "$frozen" ] && [ "$now" -ge "$deadline" ]; then
+        readback_fail "did not finish within the $READBACK_ALLOWED_SECONDS s its measured rate allows and was ended"
+      fi
     fi
     if [ "$now" -ge "$next_report" ]; then
       next_report=$(( now + READBACK_REPORT_SECONDS ))
@@ -562,14 +815,19 @@ readback_follow() {
   done
   wait "$TRANSFER_JOB"; TRANSFER_CODE=$?
   TRANSFER_JOB=''
+  readback_diagnose
+  if [ -n "$READBACK_COMPLETE_AT" ]; then
+    say "read-back completion (backup $ID): every expected byte was first seen read $(( READBACK_COMPLETE_AT - READBACK_STARTED_AT )) s into the read-back; the transfer was seen to have ended $(( SECONDS - READBACK_COMPLETE_AT )) s later with exit status $TRANSFER_CODE"
+  fi
+  readback_say_diagnosis
   [ "$TRANSFER_CODE" = 0 ] || die "the archives could not be read back from $BACKUPS/$ID/: $(readback_state); they stand in $WORK on this machine" 69
   readback_read || die "the read-back of $BACKUPS/$ID/ ended without a statistics line, so what it read could not be counted; the archives stand in $WORK on this machine" 69
 }
 READBACK_STATS="$SECRETS/readback.stats" READBACK_PID="$SECRETS/readback.pid"
 ( umask 077; : > "$READBACK_STATS"; : > "$READBACK_PID" ) || die 'the files for the read-back could not be made in memory' 78
-say "reading back $READBACK_EXPECTED bytes from $BACKUPS/$ID/; the first $READBACK_WAIT_SECONDS s measure the rate, and a copy that moves no byte for $READBACK_WAIT_SECONDS s is ended"
+say "reading back $READBACK_EXPECTED bytes from $BACKUPS/$ID/; the first $READBACK_WAIT_SECONDS s measure the rate, a copy that moves no byte for $READBACK_WAIT_SECONDS s is ended, and one that has read every byte is given $READBACK_FINISH_SECONDS s to end"
 root bash -c 'echo "$$" > "$1"; shift; exec "$@"' _ "$READBACK_PID" \
-  rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --use-json-log --stats "${READBACK_POLL_SECONDS}s" --stats-log-level NOTICE 2> "$READBACK_STATS" &
+  rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --use-json-log --log-level DEBUG --stats "${READBACK_POLL_SECONDS}s" --stats-log-level NOTICE > "$READBACK_STATS" 2>&1 &
 TRANSFER_JOB=$!
 for _ in $(seq 1 100); do [ -s "$READBACK_PID" ] && break; kill -0 "$TRANSFER_JOB" 2>/dev/null || break; sleep 0.1; done
 readback_follow
