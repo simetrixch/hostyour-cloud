@@ -18,7 +18,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `regenerate-install-branch.sh` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
-| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends, ending a read that stands still or falls behind the rate it measured on that same read |
+| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends, ending a read that stands still or falls behind the rate it measured on that same read, or that has read every byte and does not end |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
 | `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact prod release on test; the stage `none` releases a library, which has no stage |
@@ -447,9 +447,10 @@ read-back checks for every archive.
 
 The copy back is measured, not assumed. Before it copies, the driver asks rclone for the size of the files in the
 work folder (`rclone size --json`): the bytes it expects. The copy then runs as a background job of root, and
-rclone writes its own statistics (`--use-json-log --stats`, every `READBACK_POLL_SECONDS`, 5) into a file in the
-driver's in-memory folder. The driver reads only two numbers from the newest line of that file, the bytes
-received and rclone's elapsed time, as digits, and prints a line with them every `READBACK_REPORT_SECONDS` (30).
+rclone writes its log at debug level as JSON, on both of its streams, and its statistics (`--use-json-log
+--log-level DEBUG --stats`, every `READBACK_POLL_SECONDS`, 5) into a file in the driver's in-memory folder, mode
+600. To supervise the copy the driver reads only two numbers from the newest statistics record of that file, the
+bytes received and rclone's elapsed time, as digits, and prints a line with them every `READBACK_REPORT_SECONDS` (30).
 
 For the first `READBACK_WAIT_SECONDS` (300) the driver measures: bytes received over elapsed time. At the end of
 that time it freezes the floor at the measured rate divided by `READBACK_SLOWDOWN_FACTOR` (2), the policy, and gives
@@ -463,12 +464,38 @@ statistics a number can be read from within that time or passes its allowance. A
 still moves a byte at a time is ended by the allowance alone, so a very slow box is waited on for the allowance
 and no longer.
 
+Once a statistics record reports every expected byte, another rule holds. From the poll that first sees it, one
+completion wait of `READBACK_FINISH_SECONDS` (7200) runs on the driver's own clock. It is counted once: later
+records, a count that repeats, grows or falls, records that stop and retries do not restart or extend it. While it
+runs, the rules above do not end the copy, because a copy that has read its last byte moves no byte any more. A
+copy that ends by itself inside the wait is judged by its exit status alone: 0 goes to the checks of the manifest,
+anything else ends the run. A copy that still runs when the wait is over is ended with TERM, killed after
+`READBACK_GRACE_SECONDS` and reaped, and the driver ends with exit 69 and the failure `read-back completion did
+not finish`. It says that rclone reported every expected byte, how many, how long the wait ran, and what the last
+record still reports unfinished, and it names no path on the box. A complete count, an ended copy or the end of
+the wait never reaches the checks of the manifest by itself: only a copy that ended by itself with exit status 0
+does.
+
+When the records show that every expected byte was read, the driver prints a diagnosis before it ends the copy, and
+also when the copy ends by itself, with 0 or not. It shows the first and the last statistics record since the count
+was complete (bytes of the expected bytes, transfers and checks of their totals, errors, deletes, deleted
+directories, elapsed time, the retry-error and fatal-error flags, the files listed as being transferred or checked),
+when it saw the last record change, whether the transfer job and the recorded rclone process still run, how many
+retry records the log holds of how many records it read, the numbered attempts and low-level retries, the version
+of rclone, and the last 30 log records since the count was complete, oldest first, with the record before them as
+prior context. An empty list of active files in the last record is no proof that rclone is idle, and the failure
+says so. Nothing of rclone's text is printed but the
+wording of its message templates, with each value rclone took from outside (an error from the box, a path, a host)
+shown as `[redacted]`; numbers checked as digits; a time, a level and a source location checked by their shape; the
+version of rclone; and the names of this backup's own archives and manifest. A number that is missing or malformed
+reads `unavailable`, never 0. A line that is no whole JSON record is counted and not shown.
+
 A copy is ended with TERM, then killed after `READBACK_GRACE_SECONDS` (30), and always reaped. The driver then
 ends with exit 69 and says what happened, the bytes read of the bytes expected, the seconds and the average rate
 (`unavailable` where no time passed, which is not a rate of 0), the exit status of the transfer where it has one,
-and the work folder, which keeps the sealed archives. No message of rclone reaches the terminal or a log: its
-statistics stay in the file the driver reads and removes, and the errors of the upload, the listing, the copy back
-and the restore's fetch are dropped, the driver naming the operation and rclone's exit status instead.
+and the work folder, which keeps the sealed archives. No other message of rclone reaches the terminal or a log: its
+output stays in the file the driver reads and removes, and the errors of the upload, the listing and the restore's
+fetch are dropped, the driver naming the operation and rclone's exit status instead.
 
 The driver's clean-up ends a transfer that still runs and removes the read-back folder, as root, on every way out,
 and that includes a run whose ssh session has ended: once the session is gone, the next line the driver prints
