@@ -997,3 +997,14 @@ cliTools:
         file: ansiwise/programs/deploy-cluster.yaml
         anchor: 'tools:'
         entry: ansiwise
+  # THE MASTER'S BACKUP AND RESTORE CLIENT. lifecycle/require-rclone.sh puts this release on a machine from the
+  # package of its row in clusters/platform/mirror-sources.table, and holds the package to that row's digest, so
+  # the pin carries none of its own and no stamp: the two rows are the one place a digest is kept. Both lifecycle
+  # launchers read this version from the released tree they run from (lifecycle/read-rclone-pin.sh).
+  rclone:
+    version: "v1.75.2"
+    upstream:
+      kind: git_tags
+      project: rclone/rclone
+      # Stable only, as the pins above: every release is vX.Y.Z and a candidate carries a suffix.
+      matching: '^v[0-9]+\.[0-9]+\.[0-9]+$'

@@ -926,6 +926,44 @@ if (cd "$planted" && promtool test rules rules.test.yaml >/dev/null 2>&1); then
 fi
 echo "check: the rule test goes red at stage dev with cluster taken out of PodNotReady's on (cluster, namespace, pod)."
 
+# THE PLANTED DEFECT of PodOOMKilled is the state form: the dev rules run once more with its expression set back to
+# the container's last termination reason alone, which fires for as long as that state stands, and that run fails.
+planted="$work/rules-planted-oomkilled"
+cp -R "$work/rules/observability/dev" "$planted" \
+  || fail "the planted run of the PodOOMKilled rule test needs the rules of observability at stage dev"
+planted_rules="$(grep -l 'alert: PodOOMKilled' "$planted"/rule-*.yml)" \
+  && yq -i '(.groups[].rules[] | select(.alert == "PodOOMKilled") | .expr) = "kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"} == 1"' "$planted_rules" \
+  || fail "PodOOMKilled could not be planted with the state form of its expression"
+if (cd "$planted" && promtool test rules rules.test.yaml >/dev/null 2>&1); then
+  fail "the rule test clusters/inventories/observability/rules.test.yaml passes at stage dev with PodOOMKilled set back to the state kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"} == 1, so it cannot catch an alert that outlives the kill, or PodOOMKilled carries that expression no more"
+fi
+echo "check: the rule test goes red at stage dev with PodOOMKilled set back to the state of the last termination reason."
+
+# THE MASTER'S alloy ASKS FOR 1Gi AND IS LIMITED TO 2Gi, after its use: 970 MiB resident today and 1290 MiB at its peak in
+# 14 days. The slaves run the same alloy at 450Mi and 1Gi (observability-agent), so the two values are not one. $1 is a
+# render of observability. One line per finding on stdout.
+master_alloy_memory_off() {
+  yq eval -N 'select(.kind == "DaemonSet" and .metadata.name == "alloy") | .spec.template.spec.containers[] | select(.name == "alloy")
+    | "requests " + (.resources.requests.memory // "none") + ", limits " + (.resources.limits.memory // "none")' "$1" \
+    | grep -vx 'requests 1Gi, limits 2Gi' || [ $? -eq 1 ] || fail "the render of observability could not be read for alloy's memory"
+}
+for stage in $stages; do
+  alloy_off="$(master_alloy_memory_off "$work/rules/observability/$stage/render")"
+  [ -z "$alloy_off" ] || fail "alloy of the master at stage $stage renders $alloy_off, and not requests 1Gi, limits 2Gi"
+  [ -n "$(yq eval -N 'select(.kind == "DaemonSet" and .metadata.name == "alloy") | .metadata.name' "$work/rules/observability/$stage/render")" ] \
+    || fail "the render of observability at stage $stage holds no DaemonSet alloy, so its memory was not read"
+done
+echo "check: alloy of the master renders requests 1Gi, limits 2Gi at every stage."
+
+# THE PLANTED DEFECT is the slaves' size on the master: the dev render once more with alloy set back to 450Mi and 1Gi.
+planted="$work/render-planted-alloy-memory"
+yq eval '(select(.kind == "DaemonSet" and .metadata.name == "alloy") | .spec.template.spec.containers[] | select(.name == "alloy") | .resources) = {"requests": {"memory": "450Mi"}, "limits": {"memory": "1Gi"}}' \
+  "$work/rules/observability/dev/render" > "$planted" \
+  || fail "alloy could not be planted at 450Mi and 1Gi"
+[ -n "$(master_alloy_memory_off "$planted")" ] \
+  || fail "the check of alloy's memory passes the master's render with alloy at requests 450Mi, limits 1Gi, so it cannot catch the slaves' size on the master"
+echo "check: the check of alloy's memory goes red at stage dev with alloy of the master at requests 450Mi, limits 1Gi."
+
 # THE PLANTED DEFECTS OF THE PIPELINERUN ALERTS are the two shapes of a wrong join between the start series and the
 # completion series: cluster taken out of the `on` list, which lets a run of another cluster that carries the same
 # name hide a run that has not completed, and the `unless` clause taken out, which alerts on a run that completed. The
