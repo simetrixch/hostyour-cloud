@@ -108,6 +108,11 @@ true
 {{- define "consumer-build.toolsImage" -}}
 alpine/k8s:1.35.6@sha256:b7a12c5ddf261994c33d2eaaa06fd69a0803ff6b38683bfa3d30a76dcdf92807
 {{- end -}}
+{{/* The image of the bump's search-and-write step, which pushes over SSH as well as over HTTPS: bash, git, openssh, curl, yq and
+     helm, pinned by the digest of its index. */}}
+{{- define "consumer-build.bumpImage" -}}
+dtzar/helm-kubectl:4.3.0@sha256:d5ecd564b636549b4f20012e713dcbac7af4dcac20665e2ca87663452d6654e6
+{{- end -}}
 {{- define "consumer-build.skopeoImage" -}}
 quay.io/skopeo/stable:v1.22.3-immutable@sha256:c0ee1f4edca5c01cb8d5611124f92f3cc47196ecab68aee5d0f90834e00574d5
 {{- end -}}
