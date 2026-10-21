@@ -6417,7 +6417,9 @@ GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_other/versions?offered=false cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
@@ -6570,6 +6572,7 @@ GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
 GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
 GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
@@ -6866,6 +6869,177 @@ GET /api/tenants/tnt_1/live cookie=current origin=n/a
 RECORDED
 no_session 'a tenant that records the tag after the release, with no Versions run after it and no rendered tag'
 
+
+# A REFUSED FOLLOW ENDS THE WAIT. A tenant whose Versions request was refused at its plan has no run of
+# the release to wait for, and the request may be one that moves other parts than the unit's: a bundle
+# that links a website the tenant does not run holds the platform release back with it. The Manager names
+# each such tenant in `standing.followRefused` of the stage's release view, with its run and the reason of
+# the run's record, and the act reads that view again on every look. The first look that finds a tenant
+# which has not landed in the list ends the act with 1, the tenant, the run, the reason and the run's link:
+# a refusal predating the invocation is named as the one that follows it, and a tenant that renders the
+# release is not called refused. The stand-in proves what the act does with the answers; the Manager's
+# own route test proves that the Manager gives them.
+REFUSAL_REASON='release 0.4.002 of shop-apps links members the tenant does not run: the site news-web, linked from the card of the app shop: run tenant-add-app with the website {folder: web, site: news-web} before the bundle moves'
+REFUSAL_LINE="release-unit: tenant tnt_1: its Versions run run_r1 was refused at its plan, so it does not move to 0.3.004-stable-TS14: $REFUSAL_REASON; open /runs/run_r1"
+MISSING_LINE='release-unit: the release test runs of shop names no list of the follows that were refused. The run run_1 succeeded; whether the following tenants run it is not known: open /runs'
+PLATFORM_ARGS=(manager@master.example.invalid platform test stable 0.3.004 "$B")
+
+run_release_unit follow-refused "${FOLLOW_ARGS[@]}"
+expect 'a refusal that stood before the act looked, named at the first look' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+~~~ standard error ~~~
+release-unit: tenant tnt_1: its Versions run run_r1 was refused at its plan, so it does not move to 0.3.004-stable-TS14: release 0.4.002 of shop-apps links members the tenant does not run: the site news-web, linked from the card of the app shop: run tenant-add-app with the website {folder: web, site: news-web} before the bundle moves; open /runs/run_r1
+RECORDED
+calls 'a refusal that stood before the act looked, named at the first look' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a refusal that stood before the act looked, named at the first look'
+
+run_release_unit follow-refused-lag "${FOLLOW_ARGS[@]}"
+expect 'a refusal that appears after the first look, named at the next one' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+~~~ standard error ~~~
+release-unit: tenant tnt_1: its Versions run run_r1 was refused at its plan, so it does not move to 0.3.004-stable-TS14: release 0.4.002 of shop-apps links members the tenant does not run: the site news-web, linked from the card of the app shop: run tenant-add-app with the website {folder: web, site: news-web} before the bundle moves; open /runs/run_r1
+RECORDED
+calls 'a refusal that appears after the first look, named at the next one' <<'RECORDED'
+MINT
+POST /api/units/shop/release cookie=current origin=ok
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+GET /api/units/shop/release?stage=test cookie=current origin=n/a
+GET /api/tenants/tnt_1/versions?offered=false cookie=current origin=n/a
+RECORDED
+no_session 'a refusal that appears after the first look, named at the next one'
+
+# THE PLATFORM CASES. The unit released is the platform part, and the refused request is the tenant's one
+# combined request, refused for the bundle's website. The refusal predating the invocation leaves the
+# tenant waiting under the old reader; the failed run that follows the invocation is the newest failed
+# exact-tag run of the platform part, which the generic failure of a run named without its reason.
+run_release_unit follow-refused-platform-cached "${PLATFORM_ARGS[@]}"
+follow_case 'the platform release, whose tenant met a cached refusal of the combined request for the bundle' 1 "${REFUSAL_LINE}" <<'RECORDED'
+RECORDED
+
+run_release_unit follow-refused-platform-failed "${PLATFORM_ARGS[@]}"
+follow_case 'the platform release, whose tenant met a refusal that is its newest failed run of the platform tag' 1 "${REFUSAL_LINE}" <<'RECORDED'
+RECORDED
+
+# The same stand-in whose response omits the list's entry: the tenant is then only late, and the act waits
+# as it did, so the two platform cases above rest on the response and on nothing else.
+FOLLOW_SECONDS=0 run_release_unit follow-refused-platform-omitted "${PLATFORM_ARGS[@]}"
+follow_case 'the platform release, where the Manager names no refusal for the tenant' 75 'release-unit: tnt_1 (it runs 0.3.003-stable-TS14-1111111, and no Versions run after this release started has moved it to 0.3.004-stable-TS14) did not run 0.3.004-stable-TS14 within 0 seconds. The run run_1 succeeded: open /runs' <<'RECORDED'
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+RECORDED
+
+# THE INNOCENTS. A tenant whose Application renders the release has landed, whatever else the view says,
+# and a refusal of a tenant the act does not wait for (another stage, suspended, rendering no part of the
+# unit) is no refusal of this wait. A prod view that names a refusal is the source of the copy to test and
+# is not read for the tenants of test.
+run_release_unit follow-refused-rendered "${FOLLOW_ARGS[@]}"
+follow_case 'a tenant that renders the tag and failed its move, which the view names as refused' 0 - <<'RECORDED'
+tenant tnt_1: runs 0.3.004-stable-TS14 (its Application renders it)
+RECORDED
+
+run_release_unit follow-refused-elsewhere "${FOLLOW_ARGS[@]}"
+follow_case 'refusals of tenants that are not waited for, beside a tenant that moves' 0 - <<'RECORDED'
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v1 succeeded)
+RECORDED
+
+run_release_unit follow-refused-prod manager@master.example.invalid shop --prod-to-test
+follow_case 'the copy to test, where the prod view names a refusal of the tenant at test' 0 - <<'RECORDED'
+source: prod release 0.3.004-stable-TS14 of shop on bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+tenant tnt_1: runs 0.3.004-stable-TS14 (Versions run run_v1 succeeded)
+RECORDED
+
+# THE RELEASE VIEW MUST BE READABLE AND STILL BE THE RELEASE AWAITED. A stage response without the list,
+# with a list that is none, or with an entry that names no run is an unreadable view and stops the watch
+# as every unreadable read does; so is a list that goes missing between two looks. A stage that pins another
+# release when the view is read again ends the act with the tag it now pins, and its list is not used.
+run_release_unit follow-refused-missing "${FOLLOW_ARGS[@]}"
+follow_case 'a stage response with no list of refused follows' 75 "$MISSING_LINE" <<'RECORDED'
+RECORDED
+
+run_release_unit follow-refused-malformed "${FOLLOW_ARGS[@]}"
+follow_case 'a stage response whose list of refused follows is a string' 75 "$MISSING_LINE" <<'RECORDED'
+RECORDED
+
+run_release_unit follow-refused-nameless "${FOLLOW_ARGS[@]}"
+follow_case 'a stage response whose entry names a tenant and no run' 75 "$MISSING_LINE" <<'RECORDED'
+RECORDED
+
+run_release_unit follow-refused-lost "${FOLLOW_ARGS[@]}"
+follow_case 'a list of refused follows that goes missing at the next look' 75 "$MISSING_LINE" <<'RECORDED'
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+RECORDED
+
+run_release_unit follow-refused-raced "${FOLLOW_ARGS[@]}"
+follow_case 'a stage that pins another release at the next look, whose view names a refusal' 1 "release-unit: test no longer runs the release of shop that was waited for: it was 0.3.004-stable-TS14 on $B and the Manager now names 0.3.005-stable-TS14 on $B, so the tenants are not waited for. The run run_1 succeeded: open /runs" <<'RECORDED'
+waiting for 1 following tenant at test to run 0.3.004-stable-TS14: tnt_1
+RECORDED
+
+# PLANTED: a copy of the act with one rule of the refusal changed must end other than the case that holds
+# the rule records, in its exit code or in the last line it says. The first never reads the list (a tenant
+# is then waited for until the limit); the second lets the generic failure of a run speak before the known
+# reason; the third attributes a refusal to the unit by the words of its reason; the fourth reads the
+# prod view for the tenants of test; the fifth lets a stage that moved on keep its list in use; the sixth
+# takes a response without the list for an empty one.
+plant_refusal() { # what the copy does; the sed expression that makes it; the scenario; the exit code and the last line the act records; the act's arguments
+  local what="$1" expression="$2" scenario="$3" recorded="$4" line="$5" ended
+  shift 5
+  PLANT="$WORK/release-unit-refusal"
+  mkdir -p "$PLANT"
+  cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
+  sed -e "$expression" "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+  ! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail "the plant that $what changed nothing in release-unit.mjs"
+  RELEASE_UNIT="$PLANT/release-unit.sh"
+  FOLLOW_SECONDS="${PLANT_FOLLOW_SECONDS:-0}" run_release_unit "$scenario" "$@"
+  RELEASE_UNIT="$HERE/release-unit.sh"
+  ended="$(normalise < "$OUT/a.err" | tail -n 1)"
+  { [ "$A_CODE" != "$recorded" ] || [ "$ended" != "$line" ]; } || fail "a copy of release-unit that $what ended as the act does, with $recorded on '$line'"
+  ok "the planted defect was caught — a copy of release-unit that $what ends with $A_CODE on '$(printf '%.70s' "${ended#release-unit: }")' where the act ends with $recorded on '$(printf '%.70s' "${line#release-unit: }")'"
+  rm -rf "$PLANT"
+}
+plant_refusal 'never reads the list of refused follows' '/^    if (refused.length > 0) stop/d' follow-refused-platform-cached 1 "$REFUSAL_LINE" "${PLATFORM_ARGS[@]}"
+plant_refusal 'lets the generic failure of a run win over the known reason' '/^    if (refused.length > 0) stop/{h;d};/^    if (seen.failed.length > 0) stop/{G}' follow-refused-platform-failed 1 "$REFUSAL_LINE" "${PLATFORM_ARGS[@]}"
+plant_refusal 'attributes a refusal to the unit by the words of its reason' 's|notLanded.has(r.tenantId)|(r.planError ?? "").includes(unit)|' follow-refused-platform-cached 1 "$REFUSAL_LINE" "${PLATFORM_ARGS[@]}"
+plant_refusal 'reads the prod view for the tenants of test' 's|readStageRelease(stage, unit, on)|readStageRelease("prod", unit, on)|' follow-refused-prod 0 '' manager@master.example.invalid shop --prod-to-test
+PLANT_FOLLOW_SECONDS=60 plant_refusal 'keeps using the list of a stage that moved on' '/^    if (view.tag !== standing.tag/d' follow-refused-raced 1 "release-unit: test no longer runs the release of shop that was waited for: it was 0.3.004-stable-TS14 on $B and the Manager now names 0.3.005-stable-TS14 on $B, so the tenants are not waited for. The run run_1 succeeded: open /runs" "${FOLLOW_ARGS[@]}"
+plant_refusal 'takes a response without the list for an empty one' 's|const refused = standing.followRefused;|const refused = standing.followRefused ?? [];|' follow-refused-missing 75 "$MISSING_LINE" "${FOLLOW_ARGS[@]}"
 
 # PLANTED: a copy of the act that ends at `run succeeded`, as it did before, must end 0 where the
 # tenant that never moves is recorded to end 75, and print none of the tenant lines.

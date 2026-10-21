@@ -19,7 +19,11 @@
 // unit, and run an old version: a call that names one is a defect of the act, and the call list shows
 // it. A world with a stageTag answers the release read of the stage test with that tag, as another
 // release would have left it, and one with carriers adds them to that answer, as the Manager does for a
-// build-only unit.
+// build-only unit. Every answer to a stage's release read carries `standing.followRefused`, the follows of
+// the stage's tenants that were refused at their plan: a world's `views` are the rounds of the test stage's
+// answer (the last repeats), each with its `followRefused` list, which is empty where the round names none
+// and absent where the round has the key set to undefined, and `prodRefused` is the list of the prod
+// stage's answer, which the act reads for its source and must not apply to the tenants of test.
 import { createServer } from "node:http";
 import { appendFileSync, writeFileSync } from "node:fs";
 
@@ -50,6 +54,8 @@ const move = (id, status, when, tag = NEW) => ({ id, tag, status, creation: STAR
 /** A Versions run of a tenant as the global list of runs holds it, whether or not it moved the part. */
 const globalRun = (id, tenantId, status, when) => ({ id, kind: "tenant-refresh-members", targetKind: "tenant", targetId: tenantId, status, creation: START + when });
 const part = (running, { name = "shop", builds = [name], runs = [] } = {}) => ({ name, builds, running, versions: [], runs });
+/** The parts of a tenant that runs the platform and a bundle: the unit released is the platform. */
+const platform = (runs) => [part([OLD], { name: "platform", runs }), part([OLD], { name: "shop-apps" })];
 /** The live answer of a tenant: its Application, and the tags its last comparison rendered. */
 const synced = { ok: true, sync: "Synced", health: "Healthy", syncRevision: "r" };
 const live = (versions, argo = synced) => ({ argo, versions });
@@ -61,6 +67,10 @@ const DECOYS = [
   tenant("tnt_suspended", { suspended: true }), tenant("tnt_unfollowing", { followReleases: false }),
   tenant("tnt_prod", { stage: "prod" }), tenant("tnt_provisioning", { status: "provisioning" }), tenant("tnt_other"),
 ];
+/** A follow refused at its plan, as the release view of the stage names it: the tenant, its run and the reason of the run's record. */
+const REASON = "release 0.4.002 of shop-apps links members the tenant does not run: the site news-web, linked from the card of the app shop: run tenant-add-app with the website {folder: web, site: news-web} before the bundle moves";
+const refusedFollow = (tenantId, runId, planError = REASON) => ({ tenantId, runId, planError });
+const REFUSED = refusedFollow("tnt_1", "run_r1");
 /** A world with one following tenant, tnt_1, whose rounds are given. */
 const single = (rounds, over = {}) => ({ tenants: [tenant("tnt_1")], rounds: { tnt_1: rounds }, ...over });
 const RENDERED = live({ shop: NEW });
@@ -117,6 +127,20 @@ const WORLDS = {
   "follow-held-rendered-cancelled": single([round([part([NEW], { runs: [move("run_v1", "cancelled", BEFORE)] })], RENDERED)]),
   "follow-held-succeeded": single([round([part([NEW], { runs: [move("run_v1", "succeeded", BEFORE)] })], RENDERED)]),
   "follow-raced": single([round([part([`${RACED}-bbbbbbb`], { runs: [move("run_v1", "succeeded", AFTER, `${RACED}-bbbbbbb`)] })])], { stageTag: RACED }),
+  "follow-refused": single([round([part([OLD])])], { views: [{ followRefused: [REFUSED] }] }),
+  "follow-refused-lag": single([
+    round([part([OLD])]),
+    round([part([OLD], { runs: [move("run_r1", "failed", AFTER + 500)] })]),
+  ], { views: [{}, { followRefused: [REFUSED] }] }),
+  "follow-refused-platform-cached": single([round(platform([move("run_r1", "failed", BEFORE)]))], { views: [{ followRefused: [REFUSED] }] }),
+  "follow-refused-platform-failed": single([round(platform([move("run_r1", "failed", AFTER)]))], { views: [{ followRefused: [REFUSED] }] }),
+  "follow-refused-platform-omitted": single([round(platform([move("run_r1", "failed", BEFORE)]))]),
+  "follow-refused-rendered": single([round([part([NEW], { runs: [move("run_v1", "failed", AFTER)] })], RENDERED)], { views: [{ followRefused: [REFUSED] }] }),
+  "follow-refused-raced": single([round([part([OLD])])], { views: [{}, { tag: RACED, followRefused: [REFUSED] }] }),
+  "follow-refused-missing": single([round([part([OLD])])], { views: [{ followRefused: undefined }] }),
+  "follow-refused-malformed": single([round([part([OLD])])], { views: [{ followRefused: "tnt_1" }] }),
+  "follow-refused-nameless": single([round([part([OLD])])], { views: [{ followRefused: [{ tenantId: "tnt_1" }] }] }),
+  "follow-refused-lost": single([round([part([OLD])])], { views: [{}, { followRefused: undefined }] }),
   "follow-promotion": { tenants: [tenant("tnt_prod", { stage: "prod" }), tenant("tnt_1")], carriers: true, rounds: {
     tnt_prod: [
       round([part([OLD])]),
@@ -129,9 +153,15 @@ const WORLDS = {
     ],
   } },
 };
+/** Another tenant's refusals, none of them a tenant the act waits for, beside one that moves after the release. */
+WORLDS["follow-refused-elsewhere"] = { ...WORLDS["follow-moves"], views: [{ followRefused: [refusedFollow("tnt_prod", "run_r2"), refusedFollow("tnt_suspended", "run_r3"), refusedFollow("tnt_other", "run_r4")] }] };
+/** The copy from prod, where prod's own view names a refusal of the tenant that test waits for. */
+WORLDS["follow-refused-prod"] = { ...WORLDS["follow-promotion"], prodRefused: [REFUSED] };
 const world = WORLDS[SCENARIO];
 /** How often the act has read each tenant's versions: the round it stands in. */
 const looks = new Map();
+/** How often the act has read the release view of each stage: the round of `views` it stands in. */
+const stageReads = new Map();
 const standingOf = (tenantId) => {
   const rounds = world?.rounds[tenantId] ?? [round([part([OLD], { name: tenantId === "tnt_other" ? "other" : "shop" })])];
   return rounds[Math.min(Math.max(looks.get(tenantId) ?? 0, 1), rounds.length) - 1];
@@ -180,7 +210,11 @@ const api = createServer((req, res) => {
       const stage = url.searchParams.get("stage");
       const lagging = { carrier: "tenant tnt_prod", pin: { name: "shop", image: "shop", tag: OLD } };
       const carriers = { pins: stage === "prod" ? [{ carrier: "deploy chart", pin: { name: "shop", image: "shop", tag: NEW } }] : [], tenants: stage === "prod" ? [lagging] : [] };
-      const { commit, ...unnamed } = { ...SOURCE, ...(stage === "test" && world?.stageTag ? { tag: world.stageTag } : {}), ...(world?.carriers ? { carriers } : {}) };
+      stageReads.set(stage, (stageReads.get(stage) ?? 0) + 1);
+      const views = stage === "prod" ? [{ followRefused: world?.prodRefused ?? [] }] : world?.views ?? [{}];
+      const view = views[Math.min(stageReads.get(stage), views.length) - 1];
+      const followRefused = "followRefused" in view ? view.followRefused : [];
+      const { commit, ...unnamed } = { ...SOURCE, ...(stage === "test" && world?.stageTag ? { tag: world.stageTag } : {}), ...(stage === "test" && view.tag ? { tag: view.tag } : {}), ...(world?.carriers ? { carriers } : {}), followRefused };
       return json(res, 200, { unit: release[1], version: "0.3.006", standing: world?.noCommit ? unnamed : { ...unnamed, commit } }, refresh);
     }
     if (release && req.method === "POST") {
