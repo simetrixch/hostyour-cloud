@@ -13,10 +13,12 @@
 # installation that can no longer be opened. This takes that set, sealed with BACKUP_PASSPHRASE, to
 # the storage box under <fqdn>/master/<id>/, and master-restore brings it back onto a bare machine.
 #
-# ONE SESSION, THE CONFIG AHEAD OF THE DRIVER. master-backup-driver.sh is the backup itself and runs
+# ONE SESSION, THE CONFIG AND THE RCLONE AHEAD OF THE DRIVER. master-backup-driver.sh is the backup itself and runs
 # on the machine; this only opens the session and carries it over, the config inside a quoted
 # heredoc on the same standard input, exactly as install-machine does. The passphrase and the storage
-# box's credentials travel that way and land in no file on either side.
+# box's credentials travel that way and land in no file on either side. Behind the config come require-rclone.sh
+# and the pin, digests and owned addresses of the rclone that read-rclone-pin.sh took from this released tree, so
+# the machine runs the same rclone this tree names (the driver says why it must be that one).
 #
 # THE DOOR IS THE OPERATOR KEY ALONE. A master carries it — deploy-host put it there — and
 # disable-password-login has shut the other door. A machine that refuses the key is not an installed
@@ -47,6 +49,11 @@ DRIVER="$HERE/master-backup-driver.sh"
   || die 'require-owner-only.sh is not beside this file. It is the guard every launcher puts on a config' 66
 . "$HERE/require-config-assignments.sh" \
   || die 'require-config-assignments.sh is not beside this file. It is the check every launcher makes on the lines of a config' 66
+. "$HERE/read-rclone-pin.sh" \
+  || die 'read-rclone-pin.sh is not beside this file. It is what tells the machine which rclone to run' 66
+RCLONE_HELPER="$HERE/require-rclone.sh"
+[ -r "$RCLONE_HELPER" ] \
+  || die 'require-rclone.sh is not beside this file. It is what puts the pinned rclone on the machine, and the machine can read no sibling' 66
 command -v ssh >/dev/null 2>&1 \
   || die 'ssh is not on this path, and the backup is one session to the machine'
 
@@ -72,6 +79,9 @@ for named in STORAGE_BOX_HOST STORAGE_BOX_USER STORAGE_BOX_PASSWORD; do
 done
 [ -n "${BACKUP_PASSPHRASE:-}" ] \
   || die "$CONFIG states no BACKUP_PASSPHRASE, and a backup of a master's every credential leaves the machine sealed or not at all" 65
+
+read_rclone_pin "$HERE/.." \
+  || die "the rclone this backup runs is not stated by the tree it was released in: $RCLONE_METADATA_ERROR" 65
 
 # The door is MACHINE_HOST where the config states one — a standby master kept through its own name
 # while the identity points at the live one (install-machine.sh says why) — and the identity where not.
@@ -100,6 +110,8 @@ say "backup: $TARGET opens to the operator key; the backup of $FQDN starts"
   printf 'umask 077\ncat > "$1" <<%sAW_CONFIG_END%s\n' "'" "'"
   tr -d $'\r' < "$CONFIG"
   printf 'AW_CONFIG_END\n'
+  tr -d $'\r' < "$RCLONE_HELPER"
+  printf '%s\n' "$RCLONE_METADATA"
   tr -d $'\r' < "$DRIVER"
 } | ssh "${BASE[@]}" "$TARGET" 'bash -s -- "$HOME/.aw-backup.env"'
 TAKEN=${PIPESTATUS[1]}

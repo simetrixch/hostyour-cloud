@@ -27,6 +27,10 @@
 #      program creates binds to the volume already holding the store instead of being provisioned
 #      empty. The mark /var/lib/master-restore/pending is what tells the driver to do that.
 #
+# THE RCLONE IS THE PINNED ONE. The rclone that Ubuntu packages leaves a multi-thread copy from the storage box open after
+# its last byte, so the machine is given the release the platform pins (require-rclone.sh, sent ahead of this driver) before
+# the box is opened; master-restore.sh says where its package comes from.
+#
 # WHAT IS MEASURED FIRST. A mark already standing is refused (a restore is staged once); a machine
 # already carrying the platform's claims is refused (a restore comes before the services, and an
 # installation that already stands is not this act's to overwrite); a backup whose checksums do not
@@ -47,7 +51,7 @@ step() { printf '\n%s══ %s%s\n' "$C_BLD" "$*" "$C_OFF"; }
 readonly CONFIG="${1:?the config's path is this script's first argument}"
 ID="${2:-}"
 SECRETS=''
-cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; }
+cleanup() { rm -f "$CONFIG" 2>/dev/null || true; [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true; rclone_cleanup; }
 trap cleanup EXIT INT TERM
 
 # The same function as require-config-assignments.sh, held byte-equal to it by test.sh: this
@@ -117,10 +121,9 @@ for tool in git tar gpg; do
     root apt-get install -y -q "$tool" >/dev/null 2>&1 || die "$tool could not be installed" 69
   fi
 done
-if ! command -v rclone >/dev/null 2>&1; then
-  say 'rclone is not on this machine; it is what fetches the archives from the storage box, so it is installed now'
-  root apt-get install -y -q rclone >/dev/null 2>&1 || die 'rclone could not be installed, and nothing else here reaches the storage box' 69
-fi
+# THE PINNED RCLONE, from the shared helper the launcher sent ahead of this driver: from the owner's mirror, or from the package the
+# operator carried with --rclone-package where the mirror stands on the machine that is lost. Nothing is placed before it answers the pin.
+require_rclone || die "rclone $AW_RCLONE_PIN could not be put on this machine, and nothing else here reaches the storage box: $RCLONE_REFUSAL. Nothing was placed" 69
 # A SECRET AN ELEVATED COMMAND NEEDS IS A FILE, never an argument: sudo writes every command it runs, with
 # its arguments, to the system log, and any local account reads an argument in the process list. This
 # shell's own printf is no process, so it writes each secret to a file of mode 600 in a folder in memory

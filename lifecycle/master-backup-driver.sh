@@ -105,8 +105,9 @@ readonly CONFIG="${1:?the config's path is this script's only argument}"
 # latency among them, and ends a copy that moves no byte for as long. READBACK_POLL_SECONDS is how often it looks at
 # rclone's statistics, READBACK_REPORT_SECONDS how often it prints them, READBACK_GRACE_SECONDS how long a copy asked
 # to end has before it is killed, and READBACK_SLOWDOWN_FACTOR how many times slower than measured the box may get.
-# READBACK_FINISH_SECONDS is how long a copy that reported every expected byte may run on before it is ended: a finite
-# stop that leaves room for the diagnosis to be printed, not a measured or derived limit.
+# READBACK_FINISH_SECONDS is how long a copy that reported every expected byte may run on before it is ended, and the --timeout
+# (rclone's idle limit of one I/O, default five minutes) the copy itself runs under: an outer policy of one such interval,
+# not a measured or derived limit, and not proof that every retry or close ends inside it.
 readonly QUEUE_NAMESPACE=image-builder
 readonly QUEUE_CRONJOB=release-queue
 readonly QUEUE_POLL_SECONDS=5
@@ -117,7 +118,7 @@ readonly READBACK_WAIT_SECONDS=300
 readonly READBACK_POLL_SECONDS=5
 readonly READBACK_REPORT_SECONDS=30
 readonly READBACK_GRACE_SECONDS=30
-readonly READBACK_FINISH_SECONDS=7200
+readonly READBACK_FINISH_SECONDS=300
 readonly READBACK_SLOWDOWN_FACTOR=2
 SECRETS=''
 READBACK=''
@@ -128,6 +129,7 @@ cleanup() {
   [ -z "$TRANSFER_JOB" ] || readback_end
   [ -z "$SECRETS" ] || rm -rf "$SECRETS" 2>/dev/null || true
   if [ -n "$READBACK" ]; then root rm -rf "$READBACK" >/dev/null 2>&1; fi
+  rclone_cleanup
 }
 # What this run holds is let go on every way out that is not a signal, once; a signal keeps the handler it had.
 leave() { local code=$?; [ -z "$HELD" ] || release_hold || true; cleanup; exit "$code"; }
@@ -211,18 +213,7 @@ ROOT_DIR="$(readlink -f "$STORAGE_ROOT")"
 [ -d "$ROOT_DIR" ] || die "$STORAGE_ROOT does not lead to a directory, so the stores' volumes cannot be found" 69
 good "the stores' volumes stand under $ROOT_DIR"
 for tool in tar gpg; do command -v "$tool" >/dev/null 2>&1 || die "$tool is not on this machine, and every archive is made with it" 69; done
-if ! command -v rclone >/dev/null 2>&1; then
-  say 'rclone is not on this machine; it is what carries the archives to the storage box, so it is installed now'
-  root apt-get install -y -q rclone >/dev/null 2>&1 || die 'rclone could not be installed, and nothing else here reaches the storage box' 69
-fi
-# The hash check of the remote is off for the carry and the copy back alike: the box answers rclone's md5sum command with a failure or never.
-RCLONE_CONF="$SECRETS/rclone.conf"
-( umask 077; printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\ndisable_hashcheck = true\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF" ) \
-  || die 'the storage box config could not be written to a file in memory' 78
-export RCLONE_CONFIG="$RCLONE_CONF"
-rclone lsd box: >/dev/null 2>&1 || die 'the storage box does not open — nothing was stopped' 69
-good 'the storage box opens'
-
+# The lock comes before rclone is replaced or the storage box is reached: a second backup ends 75 without having changed the executable the first one runs.
 # The file is opened with <> and never with >, which would wipe the record of the run that holds it before the
 # lock is tried. flock ends 75 on a lock another process holds, and any other code is its own failure.
 LOCK_FILE=/run/lock/master-backup.lock
@@ -242,6 +233,15 @@ if [ "$LOCKED" = 75 ]; then
 elif [ "$LOCKED" != 0 ]; then
   die "the lock $LOCK_FILE could not be taken, flock ended $LOCKED — nothing was stopped" 78
 fi
+# THE PINNED RCLONE, from the shared helper the launcher sent ahead of this driver: an old or absent rclone is replaced before any store is stopped.
+require_rclone || die "rclone $AW_RCLONE_PIN could not be put on this machine, and nothing else here reaches the storage box: $RCLONE_REFUSAL. Nothing was stopped" 69
+# The hash check of the remote is off for the carry and the copy back alike: the box answers rclone's md5sum command with a failure or never.
+RCLONE_CONF="$SECRETS/rclone.conf"
+( umask 077; printf '[box]\ntype = sftp\nhost = %s\nuser = %s\npass = %s\ndisable_hashcheck = true\n' "$STORAGE_BOX_HOST" "$STORAGE_BOX_USER" "$(printf '%s\n' "$STORAGE_BOX_PASSWORD" | rclone obscure -)" > "$RCLONE_CONF" ) \
+  || die 'the storage box config could not be written to a file in memory' 78
+export RCLONE_CONFIG="$RCLONE_CONF"
+rclone lsd box: >/dev/null 2>&1 || die 'the storage box does not open — nothing was stopped' 69
+good 'the storage box opens'
 
 ID="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUPS="box:$FQDN/master"
@@ -608,12 +608,17 @@ function count_of(path) { return (T[path] == "n" && D[path] ~ /^[0-9]+$/ && leng
 function seconds_of(path) { return (T[path] == "n" && D[path] ~ /^[0-9]+(\.[0-9]+)?$/ && length(D[path]) <= 20) ? D[path] : "" }
 function bool_of(path) { return (T[path] == "k" && (D[path] == "true" || D[path] == "false")) ? D[path] : "" }
 function time_of() { return (T["time"] == "s" && length(D["time"]) <= 40 && D["time"] ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9](\.[0-9]+)?([+-][0-9][0-9]:[0-9][0-9]|Z)$/) ? D["time"] : "" }
-function level_of() { return (T["level"] == "s" && D["level"] ~ /^(panic|fatal|error|warning|info|debug|trace)$/) ? D["level"] : "" }
+function level_of() { return (T["level"] == "s" && D["level"] ~ /^(panic|fatal|error|warning|notice|info|debug|trace)$/) ? D["level"] : "" }
 function source_of() { return (T["source"] == "s" && length(D["source"]) <= 60 && D["source"] ~ /^[a-z]+\/[a-z_]+\.go:[0-9]+$/) ? D["source"] : "" }
 function name_of(path) { return (T[path] == "s" && D[path] ~ /^[A-Za-z0-9._-]+$/ && index(known, "|" D[path] "|") > 0) ? D[path] : "" }
 # The message of a record, by the template that wrote it. RECOG says which kind of record it was.
 function project(msg,   cut, version) {
   RECOG = ""
+  if (match(msg, /^Version "v[0-9]+\.[0-9]+\.[0-9]+([-+.][A-Za-z0-9]+)*" starting with parameters /)) {
+    version = substr(msg, 10, RLENGTH - 36)
+    VERSION = version
+    return "Version \"" version "\" starting with parameters [redacted]"
+  }
   if (length(msg) > 300) return "[text redacted]"
   sub(/\n$/, "", msg)
   if (msg ~ /^Attempt [0-9]+\/[0-9]+ succeeded$/ || msg ~ /^Attempt [0-9]+\/[0-9]+ failed with [0-9]+ errors$/) { RECOG = "attempt"; ATTEMPT = substr(msg, 9); return msg }
@@ -628,11 +633,6 @@ function project(msg,   cut, version) {
   if (msg ~ /^(Multi-thread )?Copied \((new|replaced existing|server-side copy|Rcat, new|Rcat, replaced existing)\)$/) return msg
   if (msg == "Waiting for checks to finish" || msg == "Waiting for transfers to finish" || msg == "Waiting for renames to finish" || msg == "Checks finished, now starting transfers") return msg
   if (msg ~ /^[0-9]+ go routines active$/) return msg
-  if (match(msg, /^Version "v[0-9]+\.[0-9]+\.[0-9]+([-+.][A-Za-z0-9]+)*" starting with parameters /)) {
-    version = substr(msg, 10, RLENGTH - 36)
-    VERSION = version
-    return "Version \"" version "\" starting with parameters [redacted]"
-  }
   return "[text redacted]"
 }
 function render(   t, l, s, m, o) {
@@ -827,7 +827,7 @@ READBACK_STATS="$SECRETS/readback.stats" READBACK_PID="$SECRETS/readback.pid"
 ( umask 077; : > "$READBACK_STATS"; : > "$READBACK_PID" ) || die 'the files for the read-back could not be made in memory' 78
 say "reading back $READBACK_EXPECTED bytes from $BACKUPS/$ID/; the first $READBACK_WAIT_SECONDS s measure the rate, a copy that moves no byte for $READBACK_WAIT_SECONDS s is ended, and one that has read every byte is given $READBACK_FINISH_SECONDS s to end"
 root bash -c 'echo "$$" > "$1"; shift; exec "$@"' _ "$READBACK_PID" \
-  rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --use-json-log --log-level DEBUG --stats "${READBACK_POLL_SECONDS}s" --stats-log-level NOTICE > "$READBACK_STATS" 2>&1 &
+  rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --use-json-log --log-level DEBUG --stats "${READBACK_POLL_SECONDS}s" --stats-log-level NOTICE --timeout "${READBACK_FINISH_SECONDS}s" > "$READBACK_STATS" 2>&1 &
 TRANSFER_JOB=$!
 for _ in $(seq 1 100); do [ -s "$READBACK_PID" ] && break; kill -0 "$TRANSFER_JOB" 2>/dev/null || break; sleep 0.1; done
 readback_follow
