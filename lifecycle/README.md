@@ -19,7 +19,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
 | `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends, ending a read that stands still or falls behind the rate it measured on that same read, or that has read every byte and does not end |
-| `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing |
+| `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing; it puts the pinned rclone on the machine first, from the owner's mirror or, with `--rclone-package <local .deb>`, from the package the operator kept |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
 | `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact prod release on test; the stage `none` releases a library, which has no stage |
 | `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network, in a clone whose origin carries the install branch (exit 69 otherwise). `status.sh` calls it as one `forgejo-ssh:` row of every installation whose branch runs Forgejo, and `install-machine.sh` at its end after an installation that ended well: green on a banner, RED on none, `not asked` where it could not ask; 66 (no Forgejo on the branch) is no row. Tekton does not call it: it runs inside the network |
@@ -394,6 +394,7 @@ The third only answers, and writes nothing at all.
 bash lifecycle/master-backup.sh  lifecycle/config.master.env                      # prints BACKUP <id>
 bash lifecycle/master-restore.sh lifecycle/config.master.env                      # lists the backups
 bash lifecycle/master-restore.sh lifecycle/config.master.env 20260922T031500Z     # stages one
+bash lifecycle/master-restore.sh lifecycle/config.master.env 20260922T031500Z --rclone-package ~/rclone-v1.75.2-linux-amd64.deb   # the same, when the mirror is the master that is lost
 bash lifecycle/install-machine.sh lifecycle/config.master.env                     # installs onto it
 ```
 
@@ -428,6 +429,35 @@ of the Manager, a backup's included. A run of the Forgejo release flow lands in 
 neither queue label and starts at once; no step of the Manager waits on it, and one that reads Forgejo during
 Forgejo's copy may fail. A backup whose driver is killed leaves the Manager at 0 and the queue suspended, beside
 the store it was copying.
+
+## The pinned rclone
+
+The rclone that Ubuntu 26.04 packages (1.60.1) leaves the last file of a multi-thread copy from the storage box open
+after its last byte, so a read-back whose every byte arrived never ends (`lifecycle/rclone.test.sh` shows it against a
+loopback SFTP server and shows the pinned release ending 0). Both drivers therefore run the release pinned in
+`cliTools.rclone.version` of `clusters/platform/versions.yaml`, and the two rows of `clusters/platform/mirror-sources.table`
+for the amd64 and arm64 `.deb` of that release are the only place its digest is kept.
+
+The launcher reads the pin and the rows from the released tree it runs from (`read-rclone-pin.sh`, with plain shell: the
+shape of each scalar is checked, and `lifecycle/rclone.test.sh` holds the result to `yq` and to
+`scripts/list-mirror-sources.sh`), and sends them with `require-rclone.sh` through the same ssh session, between the config and the
+driver, because a driver can read no sibling. A missing, doubled or malformed row ends the launcher before a session opens.
+`require_rclone` of that file leaves an rclone alone that answers the pinned version both as the operator and as root, and
+downloads nothing then. Otherwise it fetches the package of this machine's architecture from the owned address of its row,
+with a connection limit of 20 s and a total limit of 900 s, or takes the package the launcher carried. It copies the bytes into a folder of root's,
+holds that copy to the row's sha256, installs it from there with `dpkg -i`, and asks the operator's and root's rclone for the
+version again. An unsupported architecture, other bytes, a failed installation or another version afterwards ends the run with a
+named refusal before a store is stopped or a byte is placed; there is no fallback to an upstream address, to apt or to a version of
+another pin. The backup takes its lock first, so a second backup ends 75 without having touched the executable the first runs.
+
+`master-restore.sh <config> [<id>] --rclone-package <local .deb>`: on a bare machine the mirror is the master that is lost. The operator keeps
+the package of the pin for the architecture outside that master (it is the file the mirror serves at the owned address of its row, and
+its sha256 is the row's). The launcher checks the file against the rows with `openssl dgst -sha256` (macOS carries that, not `sha256sum`; a digest it cannot compute ends the
+launcher with 65), sends it as base64 behind a quoted heredoc delimiter, as data, and the machine checks it again before it
+installs it, with no request to the mirror or to GitHub. A restore without the option that finds the mirror lost ends 69 before it places anything,
+and its refusal names this option. A file that is no package of the pin, one for another architecture or one damaged in the
+session is refused. Keeping that file is a prerequisite of a recovery without the master. It solves the rclone of the restore only: the
+engine and the images a full recovery needs are not provided by it (`driver.sh` names that problem).
 
 ## One backup at a time, and a backup read back
 
@@ -485,16 +515,25 @@ still moves a byte at a time is ended by the allowance alone, so a very slow box
 and no longer.
 
 Once a statistics record reports every expected byte, another rule holds. From the poll that first sees it, one
-completion wait of `READBACK_FINISH_SECONDS` (7200) runs on the driver's own clock. It is counted once: later
+completion wait of `READBACK_FINISH_SECONDS` (300) runs on the driver's own clock, and the copy itself runs under rclone's
+`--timeout` of the same length, its idle limit for one I/O. One such interval after the first complete sample is an outer policy, not proof that every retry
+or close of rclone ends inside it. It is counted once: later
 records, a count that repeats, grows or falls, records that stop and retries do not restart or extend it. While it
 runs, the rules above do not end the copy, because a copy that has read its last byte moves no byte any more. A
 copy that ends by itself inside the wait is judged by its exit status alone: 0 goes to the checks of the manifest,
 anything else ends the run. A copy that still runs when the wait is over is ended with TERM, killed after
 `READBACK_GRACE_SECONDS` and reaped, and the driver ends with exit 69 and the failure `read-back completion did
-not finish`. It says that rclone reported every expected byte, how many, how long the wait ran, and what the last
-record still reports unfinished, and it names no path on the box. A complete count, an ended copy or the end of
+not finish`. It says that rclone reported every expected byte, how long the wait ran, the first complete sample (its bytes, rclone's own
+elapsed time for them and their rate, taken from one statistics record) and, separately, the latest sample with its rate, and what the last
+record still reports unfinished, and it names no path on the box. The line that starts the wait and the line that reports a copy that ended inside it
+carry the same first complete sample and rate. A complete count, an ended copy or the end of
 the wait never reaches the checks of the manifest by itself: only a copy that ended by itself with exit status 0
 does.
+
+Only when all four checks hold (the sha256 of every archive, the manifest's store count, the quorum opening to `/dev/null` and the returned
+manifest equal to the one sent) the driver prints the checksum coverage: how many archives were held to their checksum, of how many the backup
+must hold (one for every store and the quorum's, counted from the stores and from the manifest, not from a constant), and their names. A
+checksum line that is missing, or an answer for another name, ends the run 69 with the archives kept, and no `BACKUP` line is printed.
 
 When the records show that every expected byte was read, the driver prints a diagnosis before it ends the copy, and
 also when the copy ends by itself, with 0 or not. It shows the first and the last statistics record since the count

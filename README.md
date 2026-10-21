@@ -83,8 +83,7 @@ They come from the owner's registry under the owner's name: `simetrixch/manager`
 (`global.buildRegistry` in `clusters/platform/values-common.yaml`). The owner's master builds them
 with its own release pipeline, because `hostyour-manager` is a unit there (`global.buildRegistryUnit`),
 and the registry answers an anonymous pull under `simetrixch/**` and nowhere else. So a fresh
-installation fetches them with no credential and no request to GitHub. The owner's master itself,
-rebuilt from nothing, gets them back with the backup of its registry (`lifecycle/master-restore-driver.sh`).
+installation fetches them with no credential and no request to GitHub.
 
 ## Checks
 
