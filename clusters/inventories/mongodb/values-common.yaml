@@ -129,14 +129,19 @@ monitoring:
                 summary: "MongoDB {{ $labels.pod }} on {{ $labels.cluster }} restarted or was last terminated by SIGSEGV (exit 139)"
 
             # THE WORKAROUND IS BOUND TO THE KERNEL, read on the machine (hostyour_kernel_info, written by
-            # hostyour-deploy's kernel-reading timer from /proc/version_signature). A running mongod without the
+            # hostyour-deploy's kernel-reading timer from /proc/version_signature). A mongod pod without the
             # pod label that says it carries the workaround, on a machine whose upstream kernel is 6.19.x or
-            # 7.0.0 through 7.0.13, is the crash loop above waiting to start. Every join is on (cluster): each
-            # cluster has its own machine, and a kernel of one must not speak for the pod of another.
+            # 7.0.0 through 7.0.13, is the crash loop above waiting to start, or already in it. The left side is
+            # the container's existence and not its running state: a crash-looping container is Running for
+            # half a minute between back-offs, and a left side that drops out at every back-off resets `for`
+            # and never fires. It keeps the labels of the pod alone, because container_id and image_id of
+            # kube_pod_container_info change at every start and an alert whose labels change starts `for` again.
+            # Every join is on (cluster): each cluster has its own machine, and a kernel of one must not speak
+            # for the pod of another.
             - alert: MongoDBRseqWorkaroundMissing
               expr: >-
                 (
-                  kube_pod_container_status_running{namespace="mongodb", container="mongodb"} == 1
+                  max by (cluster, namespace, pod, container) (kube_pod_container_info{namespace="mongodb", container="mongodb"})
                   unless on (cluster, namespace, pod)
                   kube_pod_labels{namespace="mongodb", label_hostyour_cloud_mongod_rseq_workaround="true"}
                 )

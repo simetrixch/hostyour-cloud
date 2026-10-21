@@ -57,36 +57,52 @@ tests:
     interval: 1m
     input_series:
       # master: no workaround, kernel 7.0.13, the last one in the range.
-      - series: kube_pod_container_status_running{cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+      - series: kube_pod_container_info{cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
         values: 1x30
       - series: hostyour_kernel_info{cluster="master", release="7.0.0-31.31-generic", upstream="7.0.13"}
         values: 1x30
       # apps1: no workaround, kernel 7.0.14, the first one past it. The pod has the name of master's.
-      - series: kube_pod_container_status_running{cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+      - series: kube_pod_container_info{cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
         values: 1x30
       - series: hostyour_kernel_info{cluster="apps1", release="7.0.0-33.33-generic", upstream="7.0.14"}
         values: 1x30
       # apps2: the workaround stands, kernel 7.0.12.
-      - series: kube_pod_container_status_running{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+      - series: kube_pod_container_info{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
         values: 1x30
       - series: kube_pod_labels{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", label_hostyour_cloud_mongod_rseq_workaround="true"}
         values: 1x30
       - series: hostyour_kernel_info{cluster="apps2", release="7.0.0-31.31-generic", upstream="7.0.12"}
         values: 1x30
       # apps3: no workaround, kernel 6.19.2, the lower end of the range.
-      - series: kube_pod_container_status_running{cluster="apps3", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+      - series: kube_pod_container_info{cluster="apps3", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
         values: 1x30
       - series: hostyour_kernel_info{cluster="apps3", release="6.19.0-5.5-generic", upstream="6.19.2"}
         values: 1x30
       # apps4: no workaround, kernel 6.18.9, before the range.
-      - series: kube_pod_container_status_running{cluster="apps4", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+      - series: kube_pod_container_info{cluster="apps4", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
         values: 1x30
       - series: hostyour_kernel_info{cluster="apps4", release="6.18.0-9.9-generic", upstream="6.18.9"}
         values: 1x30
-      # apps5: no workaround, kernel 7.0.9, in the range with one digit, and the pod runs for 3 minutes only.
+      # apps5: no workaround, kernel 7.0.9, in the range with one digit, and mongod crash-loops: the container
+      # runs for 30 seconds between back-offs that double from 10 s to 300 s, so it is never Running for 5 minutes
+      # in a row while the pod, and its container, stand the whole time. Every start has a container_id of its
+      # own, as kube-state-metrics exports it, and the alert must not take it for a new alert.
+      - series: kube_pod_container_info{cluster="apps5", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", container_id="containerd://c1"}
+        values: 1x4 stale
+      - series: kube_pod_container_info{cluster="apps5", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", container_id="containerd://c2"}
+        values: _x4 1x4 stale
+      - series: kube_pod_container_info{cluster="apps5", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", container_id="containerd://c3"}
+        values: _x9 1x7 stale
+      - series: kube_pod_container_info{cluster="apps5", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", container_id="containerd://c4"}
+        values: _x17 1x12
       - series: kube_pod_container_status_running{cluster="apps5", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
-        values: 1x3 0x27
+        values: 1 0 1 0 1 0 0 1 0 0 0 1 0 0 0 0 0 0 1 0x11
       - series: hostyour_kernel_info{cluster="apps5", release="7.0.0-20.20-generic", upstream="7.0.9"}
+        values: 1x30
+      # apps6: no workaround, kernel 7.0.9, and the pod is gone after 3 minutes, as a scale to 0 leaves it.
+      - series: kube_pod_container_info{cluster="apps6", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x3 stale
+      - series: hostyour_kernel_info{cluster="apps6", release="7.0.0-20.20-generic", upstream="7.0.9"}
         values: 1x30
     promql_expr_test:
       # The alert is pending for the 5 minutes the rule waits, and not yet firing.
@@ -98,6 +114,8 @@ tests:
           - labels: ALERTS{alertname="MongoDBRseqWorkaroundMissing", alertstate="firing", cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="critical"}
             value: 1
           - labels: ALERTS{alertname="MongoDBRseqWorkaroundMissing", alertstate="firing", cluster="apps3", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="critical"}
+            value: 1
+          - labels: ALERTS{alertname="MongoDBRseqWorkaroundMissing", alertstate="firing", cluster="apps5", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="critical"}
             value: 1
 
   - name: MongoDBKernelUnread alerts on a running mongod of a cluster that reports no kernel, and not on one that does
