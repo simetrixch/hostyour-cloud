@@ -3142,11 +3142,14 @@ cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 # with the words rclone gives a box that refuses it, the host and the user of the box among them. size answers the bytes
 # of the files under a path, as rclone size --json does. A copy to a path that is not on the box is a local copy. With
 # --use-json-log, a copy prints the statistics line rclone 1.60.1 prints (the key order of its output) when it ends.
-# Where the file readback-plan stands, a copy from the box moves its bytes tick by tick, one tick for each --stats
-# interval, and prints a statistics line after each; a line of the plan is "rate BYTES_A_SECOND MILLISECONDS|forever"
-# (the segments in order), "garbage" (statistics that no number can be read from), "ignore-term" (a copy that ignores
-# TERM) or "exit CODE" (the copy ends with that code and an error once its segments are used up; without it, the rest
-# is moved at once). The last line it printed is kept in readback-emitted, and its pid in transfer.pid.
+# Where the file readback-plan stands, a copy from the box prints a statistics line after each tick, one tick for each
+# --stats interval. The clock is the machine's: the line says the real time since the copy started and the bytes the plan
+# has moved by then, so the rate a driver measures is the plan's however long a tick takes. A line of the plan is
+# "rate BYTES_A_SECOND MILLISECONDS|forever" (the segments in order, counted from the start of the copy), "garbage"
+# (statistics that no number can be read from), "ignore-term" (a copy that ignores TERM), "exit CODE" (the copy ends
+# with that code and an error once its segments are used up; without it, the rest is moved at once), "every SECONDS"
+# (a tick after that long, whatever --stats says) or "slow SECONDS" (every tick takes that long more, as on a machine
+# under load). The last line it printed is kept in readback-emitted, and its pid in transfer.pid.
 exec 9>&-
 here="$(dirname "$0")"
 printf 'rclone %s\n' "$*" >> "$here/argv.log"
@@ -3200,15 +3203,16 @@ stats_line() { # BYTES TOTAL MILLISECONDS
   echo "$1 $3" > "$here/readback-emitted"
 }
 bytes_under() { find "$1" -type f -exec cat {} + | wc -c | tr -d ' '; }
-progressive() { # FROM TO — the copy of the plan, tick by tick
-  local from="$1" to="$2" every_ms kind a b rates=() spans=() code='' garbage='' file total=0 sent=0 tick=0 elapsed at rate n take index=0 offset=0 files=() sizes=() segment
-  every_ms=$(awk -v s="$stats_every" 'BEGIN { printf "%d", s * 1000 }')
+progressive() { # FROM TO — the copy of the plan: each tick has moved what the plan gives for the real time since the copy started
+  local from="$1" to="$2" kind a b rates=() spans=() code='' garbage='' slow='' every="$stats_every" file total=0 sent=0 tick=0 started elapsed due at span len n take index=0 offset=0 files=() sizes=() segment used_up
   while read -r kind a b; do
     case "$kind" in
       rate) rates+=("$a"); spans+=("$b") ;;
       garbage) garbage=1 ;;
       ignore-term) trap '' TERM ;;
       exit) code="$a" ;;
+      slow) slow="$a" ;;
+      every) every="$a" ;;
     esac
   done < "$here/readback-plan"
   echo $$ > "$here/transfer.pid"
@@ -3216,9 +3220,11 @@ progressive() { # FROM TO — the copy of the plan, tick by tick
     files+=("$file"); sizes+=("$(wc -c < "$from/$file" | tr -d ' ')"); total=$(( total + ${sizes[${#sizes[@]} - 1]} ))
     : > "$to/$file"
   done < <(cd "$from" && find . -type f | sort)
+  started=$(date +%s%N)
   while :; do
-    sleep "$stats_every"
-    tick=$(( tick + 1 )); elapsed=$(( tick * every_ms ))
+    sleep "$every"
+    [ -z "$slow" ] || sleep "$slow"
+    tick=$(( tick + 1 )); elapsed=$(( ($(date +%s%N) - started) / 1000000 ))
     [ "$tick" -le 3000 ] || exit 1
     if [ -n "$garbage" ]; then
       echo "not json: user $user at $host" >&2
@@ -3227,15 +3233,16 @@ progressive() { # FROM TO — the copy of the plan, tick by tick
       echo "{\"stats\":{\"bytes\":7,\"elapsedTime\":\"$user\",\"totalBytes\":9}}" >&2
       continue
     fi
-    rate=''; at=0
+    due=0 at=0 used_up=1
     for segment in "${!rates[@]}"; do
-      if [ "${spans[$segment]}" = forever ] || [ "$elapsed" -le $(( at + spans[segment] )) ]; then rate="${rates[$segment]}"; break; fi
-      at=$(( at + spans[segment] ))
+      span="${spans[$segment]}"; [ "$span" != forever ] || span=999999999999
+      len=$(( elapsed - at )); [ "$len" -le "$span" ] || len="$span"; [ "$len" -ge 0 ] || len=0
+      due=$(( due + rates[segment] * len / 1000 )); at=$(( at + span ))
+      [ "$elapsed" -ge "$at" ] || used_up=''
     done
-    if [ -z "$rate" ] && [ -n "$code" ]; then err "Failed to copy: sftp: dial tcp $host:22: connection to $user lost"; exit "$code"; fi
-    n=$(( total - sent ))
-    if [ -n "$rate" ] && [ $(( rate * every_ms / 1000 )) -lt "$n" ]; then n=$(( rate * every_ms / 1000 )); fi
-    sent=$(( sent + n ))
+    if [ -n "$used_up" ] && [ -z "$code" ]; then due="$total"; fi
+    [ "$due" -le "$total" ] || due="$total"
+    n=$(( due - sent )); sent="$due"
     while [ "$n" -gt 0 ]; do
       if [ "$offset" -ge "${sizes[$index]}" ]; then index=$(( index + 1 )); offset=0; continue; fi
       take=$(( ${sizes[$index]} - offset )); [ "$take" -le "$n" ] || take="$n"
@@ -3243,6 +3250,7 @@ progressive() { # FROM TO — the copy of the plan, tick by tick
       offset=$(( offset + take )); n=$(( n - take ))
     done
     stats_line "$sent" "$total" "$elapsed"
+    if [ -n "$used_up" ] && [ -n "$code" ]; then err "Failed to copy: sftp: dial tcp $host:22: connection to $user lost"; exit "$code"; fi
     [ "$sent" -lt "$total" ] || exit 0
   done
 }
@@ -4274,12 +4282,15 @@ ok 'backup: the planted drivers are caught: no hold, the running run not read, n
 # The read-back is the one step that waits on the storage box alone. The driver reads rclone's own statistics of the copy: the bytes it has
 # moved and the time it has run. After READBACK_WAIT_SECONDS it freezes a floor of half the rate it measured, and gives the whole backup the
 # time it takes at that floor, counted from there; a copy that moves no byte for READBACK_WAIT_SECONDS is ended. The cases run the whole driver
-# against the rclone stand-in, whose copy from the box follows a plan: it moves bytes tick by tick (one tick for each --stats interval) at a
-# rate, and prints the statistics line rclone 1.60.1 prints after each tick, so the driver's measurement reads what it reads in production.
-# One volume weighs about 3 MiB more in the cases that need a backup that takes seconds. The waits are shortened as the lock cases shorten
-# theirs, READBACK_WAIT_SECONDS to two seconds: the driver counts whole seconds, and two are at least one real second.
+# against the rclone stand-in, whose copy from the box follows a plan: it prints the statistics line rclone 1.60.1 prints after each tick, with
+# the real time since the copy started and the bytes the plan has moved by then, so the driver's measurement reads what it reads in production
+# and its clock and the stand-in's are one clock: no case depends on how long a tick takes. RB_SLOW is the seconds a tick takes longer, and the
+# cases that hold a rate or a stall run once more with it set. One volume weighs about 3 MiB more in the cases that need a backup that takes
+# seconds. The waits are shortened as the lock cases shorten theirs, READBACK_WAIT_SECONDS to two seconds: the driver counts whole seconds,
+# and two are at least one real second.
 READBACK_PAD=3145728
 RB_LIMIT=25
+RB_SLOW=''
 volume_padded() { # <on|off> — one volume of the lock cases weighs about 3 MiB more, or is put back
   local payload
   payload="$LOCK_DIR/storage/$(ls "$LOCK_DIR/storage" | head -n 1)/payload"
@@ -4291,6 +4302,7 @@ readback_start() { # <run> <the driver's text> <padded: 0|1> <the plan, one line
   shift 4
   lock_reset free
   if [ -n "$plan" ]; then printf '%s\n' "$plan" > "$STANDIN/readback-plan"; fi
+  if [ -n "$plan" ] && [ -n "$RB_SLOW" ]; then printf 'slow %s\n' "$RB_SLOW" >> "$STANDIN/readback-plan"; fi
   : > "$STANDIN/argv.log"
   if [ "$padded" = 1 ]; then volume_padded on; fi
   lock_driver "$run" "$text" READBACK_POLL_SECONDS=0.1 READBACK_REPORT_SECONDS=1 READBACK_WAIT_SECONDS=2 "$@"
@@ -4348,10 +4360,30 @@ readback_figures() { # <run> <the bytes the transfer had moved, or any> — chec
   return 0
 }
 emitted_bytes() { cut -d' ' -f1 "$STANDIN/readback-emitted"; } # the bytes of the last statistics line the stand-in printed
-allowance_of() { awk -v expected="$1" -v rate="$2" 'BEGIN { x = expected * 2 / rate; printf "%d", (x == int(x)) ? x : int(x) + 1 }'; } # <expected bytes> <measured rate> — the seconds the whole backup takes at half the rate, rounded up
+allowance_of() { # <expected bytes> <bytes read> <seconds, to three places> — the seconds the whole backup takes at half the rate those give, rounded up
+  local milli="${3/./}"
+  milli=$(( 10#$milli ))
+  printf '%d' $(( ($1 * 2 * milli + $2 * 1000 - 1) / ($2 * 1000) ))
+}
+rate_near() { awk -v got="$1" -v want="$2" 'BEGIN { d = got - want; if (d < 0) d = -d; exit !(d <= want / 1000) }'; } # <rate stated> <rate planned> — ends 0 when they differ by no more than a thousandth
+readback_measured() { # <run> — reads the line "measured N bytes in S s, R bytes a second; policy: a floor of 1/2 of it, F bytes a second; the T bytes are given A s more" of the run into M_BYTES M_SECONDS M_RATE M_FLOOR M_TOTAL M_ALLOWED; what is wrong with its figures is added to $OUT/verdict; ends 0
+  local dir="$LOCK_DIR/$1" line
+  M_BYTES='' M_SECONDS='' M_RATE='' M_FLOOR='' M_TOTAL='' M_ALLOWED=''
+  line="$(sed -n 's/.*measured \([0-9]*\) bytes in \([0-9.]*\) s, \([0-9.]*\) bytes a second; policy: a floor of 1\/2 of it, \([0-9.]*\) bytes a second; the \([0-9]*\) bytes are given \([0-9]*\) s more.*/\1 \2 \3 \4 \5 \6/p' "$dir/out" | head -n 1)"
+  if [ -z "$line" ]; then
+    echo "the driver did not print the rate it measured, the floor it froze and the time it gave the rest: $(grep -a 'measured' "$dir/out" | head -n 1 | cut -c1-300)" >> "$OUT/verdict"
+    return 0
+  fi
+  read -r M_BYTES M_SECONDS M_RATE M_FLOOR M_TOTAL M_ALLOWED <<< "$line"
+  rate_agrees "$M_BYTES" "$M_SECONDS" "$M_RATE" || echo "the driver states $M_RATE bytes a second for $M_BYTES bytes in $M_SECONDS s" >> "$OUT/verdict"
+  rate_agrees "$M_BYTES" "$(awk -v s="$M_SECONDS" 'BEGIN { printf "%.3f", s * 2 }')" "$M_FLOOR" || echo "the driver froze a floor of $M_FLOOR bytes a second, not half of the $M_RATE it measured" >> "$OUT/verdict"
+  [ "$M_TOTAL" = "$(backup_bytes)" ] || echo "the driver expected $M_TOTAL bytes, and the box holds $(backup_bytes)" >> "$OUT/verdict"
+  [ "$M_ALLOWED" = "$(allowance_of "$M_TOTAL" "$M_BYTES" "$M_SECONDS")" ] || echo "the driver gave the rest $M_ALLOWED s, not the $(allowance_of "$M_TOTAL" "$M_BYTES" "$M_SECONDS") s the whole backup takes at the floor" >> "$OUT/verdict"
+  return 0
+}
 
 readback_paced() { # <the driver's text> — a copy back at half a MiB a second, three times the old floor's pace of the size of the backup: ends 0 when the driver ended 0 after the old size-derived limit, read every byte, and said what it measured; what is wrong stands in $OUT/verdict
-  local text="$1" dir="$LOCK_DIR/paced" total old_limit measured rate floor expected allowed
+  local text="$1" dir="$LOCK_DIR/paced" total old_limit
   : > "$OUT/verdict"
   readback_start paced "$text" 1 'rate 524288 forever'
   readback_finish 1 $RB_LIMIT
@@ -4360,16 +4392,8 @@ readback_paced() { # <the driver's text> — a copy back at half a MiB a second,
   [ "$LOCK_CODE" = 0 ] || echo "the driver ended with $LOCK_CODE, not 0, on a box that gives half a MiB a second: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
   [ "$(tail -n 1 "$dir/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the driver did not end with BACKUP and an id' >> "$OUT/verdict"
   [ "$RB_RAN" -gt "$old_limit" ] || echo "the driver ran $RB_RAN s, not past the $old_limit s the old rule gave this backup, so the case does not hold a slow box that the old rule ended" >> "$OUT/verdict"
-  measured="$(sed -n 's/.*measured [0-9]* bytes in [0-9.]* s, \([0-9.]*\) bytes a second; policy: a floor of 1\/2 of it, \([0-9.]*\) bytes a second; the \([0-9]*\) bytes are given \([0-9]*\) s more.*/\1 \2 \3 \4/p' "$dir/out" | head -n 1)"
-  if [ -z "$measured" ]; then
-    echo "the driver did not print the rate it measured, the floor it froze and the time it gave the rest: $(grep -a 'measured' "$dir/out" | head -n 1 | cut -c1-300)" >> "$OUT/verdict"
-  else
-    read -r rate floor expected allowed <<< "$measured"
-    [ "$rate" = 524280.000 ] || echo "the driver measured $rate bytes a second, not the 524280.000 the stand-in moved" >> "$OUT/verdict"
-    [ "$floor" = 262140.000 ] || echo "the driver froze a floor of $floor bytes a second, not half of the measured rate, 262140.000" >> "$OUT/verdict"
-    [ "$expected" = "$total" ] || echo "the driver expected $expected bytes, and the box holds $total" >> "$OUT/verdict"
-    [ "$allowed" = "$(allowance_of "$total" 524280)" ] || echo "the driver gave the rest $allowed s, not the $(allowance_of "$total" 524280) s the whole backup takes at the floor" >> "$OUT/verdict"
-  fi
+  readback_measured paced
+  if [ -n "$M_RATE" ]; then rate_near "$M_RATE" 524288 || echo "the driver measured $M_RATE bytes a second, not the 524288 the stand-in moves" >> "$OUT/verdict"; fi
   grep -qF -- "read back $total of $total expected bytes in " "$dir/out" || echo "the driver did not say that it read back $total of $total expected bytes" >> "$OUT/verdict"
   readback_wrong paced >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
@@ -4387,15 +4411,14 @@ readback_stalled() { # <the driver's text> <the plan> <padded: 0|1> <moved: zero
   readback_wrong stalled >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
 }
-readback_slowed() { # <the driver's text> — a copy that falls to a thousandth of its rate after the measurement and still moves a byte every tick: ends 0 when the driver ended 69 once the time the measured rate gave the whole backup had passed; what is wrong stands in $OUT/verdict
-  local text="$1" dir="$LOCK_DIR/slowed" total allowed
+readback_slowed() { # <the driver's text> — a copy that falls to a four-hundredth of its rate after the measurement and still moves a byte every tick: ends 0 when the driver ended 69 once the time the measured rate gave the whole backup had passed; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/slowed"
   : > "$OUT/verdict"
-  readback_start slowed "$text" 1 $'rate 1048576 2500\nrate 2048 forever'
+  readback_start slowed "$text" 1 $'rate 786432 3500\nrate 2048 forever'
   readback_finish 1 $RB_LIMIT
-  total="$(backup_bytes)"
-  allowed="$(allowance_of "$total" 1048570)"
-  readback_refused slowed "did not finish within the $allowed s its measured rate allows and was ended"
-  grep -qF -- "bytes a second; policy: a floor of 1/2 of it, 524285.000 bytes a second; the $total bytes are given $allowed s more" "$dir/out" || echo "the driver did not freeze the floor of half the 1048570.000 bytes a second of the fast part, which it does when it ends the measurement before the fast part ends: $(grep -a 'measured' "$dir/out" | head -n 1 | cut -c1-300)" >> "$OUT/verdict"
+  readback_measured slowed
+  if [ -n "$M_RATE" ]; then rate_near "$M_RATE" 786432 || echo "the driver measured $M_RATE bytes a second, not the 786432 of the fast part, so it did not end the measurement before the fast part ended" >> "$OUT/verdict"; fi
+  readback_refused slowed "did not finish within the $M_ALLOWED s its measured rate allows and was ended"
   readback_figures slowed any
   readback_wrong slowed >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
@@ -4445,6 +4468,22 @@ readback_quick() { # <the driver's text> — a copy that ends before the measure
   readback_wrong quick >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
 }
+readback_late() { # <the driver's text> — a copy that ends 0 inside the last poll period before the deadline its measured rate gave it: ends 0 when the driver took it for one that ended, read every byte and went on to the checks; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/late" total
+  : > "$OUT/verdict"
+  readback_start late "$text" 1 $'rate 600000 5000\nrate 17400 forever\nevery 0.1' READBACK_POLL_SECONDS=3
+  readback_finish 1 $RB_LIMIT
+  total="$(backup_bytes)"
+  readback_measured late
+  if [ -n "$M_RATE" ]; then rate_near "$M_RATE" 600000 || echo "the driver measured $M_RATE bytes a second, not the 600000 of the fast part, so it did not end the measurement before the fast part ended" >> "$OUT/verdict"; fi
+  [ "$M_ALLOWED" = 11 ] || echo "the driver gave the rest $M_ALLOWED s, not the 11 s this case is cut for, so its copy does not end in the last poll period before the deadline" >> "$OUT/verdict"
+  if grep -qF -- 'transfer exit status 0' "$dir/err"; then echo "the driver ended a copy that had finished, as one that passed its allowance: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"; fi
+  [ "$LOCK_CODE" = 0 ] || echo "the driver ended with $LOCK_CODE, not 0, on a copy that finished inside its allowance: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
+  [ "$(tail -n 1 "$dir/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the driver did not end with BACKUP and an id' >> "$OUT/verdict"
+  grep -qF -- "read back $total of $total expected bytes in " "$dir/out" || echo "the driver did not say that it read back $total of $total expected bytes" >> "$OUT/verdict"
+  readback_wrong late >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
 readback_orphaned() { # <the driver's text> — the ssh session ends while the copy runs: ends 0 when the driver ended 141, the copy was ended with it and the work folder stands with its archives; what is wrong stands in $OUT/verdict
   local text="$1" dir="$LOCK_DIR/orphaned" session reader _
   : > "$OUT/verdict"
@@ -4478,8 +4517,13 @@ readback_slowed "$LOCK_TEXT" || fail "backup: a read-back that slowed after its 
 readback_unmeasured "$LOCK_TEXT" || fail "backup: a read-back whose statistics hold no number was not ended as it must be: $(cat "$OUT/verdict")"
 readback_failed "$LOCK_TEXT" || fail "backup: a read-back whose transfer failed was not reported as it must be: $(cat "$OUT/verdict")"
 readback_killed "$LOCK_TEXT" || fail "backup: a read-back that ignores TERM was not killed after its grace as it must be: $(cat "$OUT/verdict")"
+readback_late "$LOCK_TEXT" || fail "backup: a read-back that ended inside the last poll period before its deadline was not taken as finished: $(cat "$OUT/verdict")"
+RB_SLOW=0.4
+readback_paced "$LOCK_TEXT" || fail "backup: a read-back at half a MiB a second, when every tick of the copy took 0.4 s longer, was not finished as it must be: $(cat "$OUT/verdict")"
+readback_stalled "$LOCK_TEXT" $'rate 524288 300\nrate 0 forever' 1 some || fail "backup: a read-back that stood still after some progress, when every tick of the copy took 0.4 s longer, was not ended as it must be: $(cat "$OUT/verdict")"
+RB_SLOW=''
 readback_orphaned "$LOCK_TEXT" || fail "backup: the transfer, the read-back folder, the secrets or the work folder were left wrong when the ssh session ended during the read-back: $(cat "$OUT/verdict")"
-ok 'backup: a read-back at half a MiB a second, slower than the old floor of a MiB a second, is finished, with the rate it measured, the floor of half of it and the time the whole backup takes at that floor stated; a copy that ends within the measurement goes straight to the checks, stating its bytes and time; a copy that moves no byte for READBACK_WAIT_SECONDS, from the first byte or after some, one that slows past its allowance, one whose statistics hold no number, one whose transfer fails and one that ignores TERM each end 69 stating the bytes read of the bytes expected, the time, the rate and the transfer exit status, with the transfer ended and reaped, the archives on the machine, the Manager started and the queue let go; a driver whose ssh session ended during the read-back ends its transfer and leaves the work folder only'
+ok 'backup: a read-back at half a MiB a second, slower than the old floor of a MiB a second, is finished, with the rate it measured, the floor of half of it and the time the whole backup takes at that floor stated; a copy that ends within the measurement goes straight to the checks, stating its bytes and time, and so does one that ends inside the last poll period before its deadline; the cases that hold a rate or a stall give the same answers when every tick of the copy takes 0.4 s longer; a copy that moves no byte for READBACK_WAIT_SECONDS, from the first byte or after some, one that slows past its allowance, one whose statistics hold no number, one whose transfer fails and one that ignores TERM each end 69 stating the bytes read of the bytes expected, the time, the rate and the transfer exit status, with the transfer ended and reaped, the archives on the machine, the Manager started and the queue let go; a driver whose ssh session ended during the read-back ends its transfer and leaves the work folder only'
 
 # The arithmetic of the measurement: rate to three places, seconds to three places, and the allowance rounded up, on the vectors below.
 READBACK_ARITHMETIC="$(sed -n '/^rate_of() {/,/^}/p;/^seconds_of() /p;/^readback_allowance_seconds() /p' "$HERE/master-backup-driver.sh")"
@@ -4509,9 +4553,9 @@ VECTORS
 [ -z "$(arithmetic_wrong "$READBACK_ARITHMETIC")" ] || fail "backup: the arithmetic of the read-back answers wrongly: $(arithmetic_wrong "$READBACK_ARITHMETIC")"
 ok 'backup: the rate and the seconds of the read-back are stated to three places, a rate below one byte a second is stated as it is and not as none, no time passed is "unavailable" and not 0.000, the allowance is rounded up, and the largest figures the driver accepts do not overflow'
 
-# planted defects of the read-back: the old fixed floor, a stall that is not ended, a deadline that is not enforced, a transfer that is not killed after its
-# grace, a byte count that is not the transfer's, a cleanup that leaves the transfer, an access value in the statistics line, and the three
-# arithmetic mistakes; each is refused for its own defect only
+# planted defects of the read-back: the old fixed floor, a stall that is not ended, a deadline that is not enforced, a copy that ended while the poll
+# slept and is judged by the rules for a running one, a transfer that is not killed after its grace, a byte count that is not the transfer's, a cleanup
+# that leaves the transfer, an access value in the statistics line, and the three arithmetic mistakes; each is refused for its own defect only
 ALLOWANCE_LINE='readback_allowance_seconds() { printf '"'"'%d'"'"' $(( ($1 * READBACK_SLOWDOWN_FACTOR * $3 + $2 * 1000 - 1) / ($2 * 1000) )); }'
 # a driver that is ended by the case after the seconds it was given, with what that leaves behind
 DRIVER_RAN_ON=('the driver still ran' 'the transfer still ran after the driver ended' 'the driver ended with' 'the driver did not say' 'the error does not state' 'stands after the driver ended')
@@ -4520,6 +4564,7 @@ plant "$LOCK_TEXT" 'readback_fail "moved no byte for $READBACK_WAIT_SECONDS s an
 plant "$LOCK_TEXT" 'readback_fail "did not finish within the $READBACK_ALLOWED_SECONDS s its measured rate allows and was ended"' 'true'; NO_DEADLINE="$PLANTED_TEXT"
 plant "$LOCK_TEXT" 'root kill -KILL "$pid" >/dev/null 2>&1;' 'true;'; NO_KILL="$PLANTED_TEXT"
 plant "$LOCK_TEXT" "expected bytes in %s s, %s bytes a second' \"\$SAMPLE_BYTES\" \"\$READBACK_EXPECTED\"" "expected bytes in %s s, %s bytes a second' \"\$READBACK_EXPECTED\" \"\$READBACK_EXPECTED\""; FALSE_BYTE_COUNT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'now=$SECONDS\n    kill -0 "$TRANSFER_JOB" 2>/dev/null || break' 'now=$SECONDS'; JUDGES_ENDED_COPY_AS_RUNNING="$PLANTED_TEXT"
 plant "$LOCK_TEXT" '[ -z "$TRANSFER_JOB" ] || readback_end' 'true'; KEEPS_TRANSFER="$PLANTED_TEXT"
 plant "$LOCK_TEXT" "$TRAP_REMOVAL" 'true'; NO_READBACK_REMOVAL="$PLANTED_TEXT"
 plant "$LOCK_TEXT" 'die "the archives could not be read back from $BACKUPS/$ID/: $(readback_state); they stand in $WORK on this machine" 69' 'die "the archives could not be read back from $BACKUPS/$ID/: $(readback_state) $(tail -n 1 "$READBACK_STATS"); they stand in $WORK on this machine" 69'; PRINTS_STATISTICS="$PLANTED_TEXT"
@@ -4531,6 +4576,8 @@ caught_for 'read-back without the stall rule' 'moved no byte for 2 s and was end
 caught_for 'read-back without the stall rule' "${DRIVER_RAN_ON[@]}"
 ! readback_slowed "$NO_DEADLINE" || fail 'the planted read-back without the deadline was not caught on a copy that slowed after its measurement — the probe proves nothing'
 caught_for 'read-back without the deadline' "${DRIVER_RAN_ON[@]}"
+! readback_late "$JUDGES_ENDED_COPY_AS_RUNNING" || fail 'the planted read-back that judges a copy that ended while the poll slept by the rules for a running one was not caught on a copy that ended inside the last poll period before its deadline — the probe proves nothing'
+caught_for 'read-back that judges an ended copy by the rules for a running one' 'the driver ended a copy that had finished' 'the driver ended with 69, not 0' 'the driver did not end with BACKUP' 'the driver did not say that it read back'
 ! readback_killed "$NO_KILL" || fail 'the planted read-back that never kills was not caught on a copy that ignores TERM — the probe proves nothing'
 caught_for 'read-back that never kills' "${DRIVER_RAN_ON[@]}"
 ! readback_stalled "$FALSE_BYTE_COUNT" $'rate 524288 300\nrate 0 forever' 1 some || fail 'the planted false byte count was not caught — the probe proves nothing'
@@ -4547,7 +4594,7 @@ plant "$READBACK_ARITHMETIC" '{ printf unavailable; return 0; }' '{ printf 0.000
 for planted in TRUNCATED_ALLOWANCE WHOLE_BYTES_RATE UNAVAILABLE_AS_ZERO; do
   [ -n "$(arithmetic_wrong "${!planted}")" ] || fail "the planted arithmetic $planted was not caught by the vectors — the probe proves nothing"
 done
-ok 'the planted drivers are caught, each for its own defect: the old fixed floor ends a box that gives half a MiB a second, a read-back without the stall rule or without the deadline runs on past it, one that never kills a copy that ignores TERM waits on it, a byte count that is not the transfer'"'"'s, a cleanup that leaves the transfer or the read-back folder when the ssh session ended, a statistics line in the error names the box'"'"'s account, and an allowance that truncates, a rate in whole bytes and an unavailable rate stated as zero are answered wrongly by the vectors'
+ok 'the planted drivers are caught, each for its own defect: the old fixed floor ends a box that gives half a MiB a second, a read-back without the stall rule or without the deadline runs on past it, one that judges a copy that ended while the poll slept by the rules for a running one ends a finished copy with 69, one that never kills a copy that ignores TERM waits on it, a byte count that is not the transfer'"'"'s, a cleanup that leaves the transfer or the read-back folder when the ssh session ended, a statistics line in the error names the box'"'"'s account, and an allowance that truncates, a rate in whole bytes and an unavailable rate stated as zero are answered wrongly by the vectors'
 lock_reset free # the plan of the last case must not pace the restore's fetch
 
 # The restore: the fetch, the clone, the fetch of the branch, the opening of the quorum and of every store,

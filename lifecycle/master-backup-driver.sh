@@ -519,7 +519,8 @@ readback_fail() { # WHAT HAPPENED — the transfer is ended and reaped, then thi
 }
 # readback_follow: the transfer runs in the background with its statistics in a file that only this reads. The first
 # READBACK_WAIT_SECONDS measure the rate; a transfer that moves no byte for that long is ended, and so is one that passes
-# the allowance the measured rate gives it, which is fixed at the end of the measurement. Ends 0 when the transfer ended
+# the allowance the measured rate gives it, which is fixed at the end of the measurement. A transfer that ended while the
+# poll slept is judged by its exit status alone, never by a rule for one that still runs. Ends 0 when the transfer ended
 # 0 and left a statistics line; otherwise it ends the run.
 readback_follow() {
   local started=$SECONDS progress=$SECONDS next_report now seen='' last=0 frozen='' deadline=0
@@ -527,6 +528,7 @@ readback_follow() {
   while kill -0 "$TRANSFER_JOB" 2>/dev/null; do
     sleep "$READBACK_POLL_SECONDS"
     now=$SECONDS
+    kill -0 "$TRANSFER_JOB" 2>/dev/null || break
     if readback_read; then
       seen=1
       if [ "$SAMPLE_BYTES" -gt "$last" ]; then last=$SAMPLE_BYTES progress=$now; fi

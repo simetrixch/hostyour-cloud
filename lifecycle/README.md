@@ -439,7 +439,9 @@ For the first `READBACK_WAIT_SECONDS` (300) the driver measures: bytes received 
 that time it freezes the floor at the measured rate divided by `READBACK_SLOWDOWN_FACTOR` (2), the policy, and gives
 the copy `ceil(expected bytes / floor)` more seconds, counted from the end of the measurement and never extended.
 One line says the bytes and seconds measured, the measured rate, the floor and the seconds given. A copy that ends
-within the measurement goes straight to the checks, and its bytes and duration are stated. A copy that receives no
+within the measurement goes straight to the checks, and its bytes and duration are stated. A copy that has ended
+when the driver next looks is judged by its exit status alone, whatever its allowance: 0 goes to the checks, anything
+else ends the run. Only a copy that still runs is ended for its allowance. A copy that receives no
 byte for `READBACK_WAIT_SECONDS`, from the start or after some progress, is ended, and so is one that gives no
 statistics a number can be read from within that time or passes its allowance. A rate far below the floor that
 still moves a byte at a time is ended by the allowance alone, so a very slow box is waited on for the allowance
