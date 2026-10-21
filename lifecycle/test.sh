@@ -2580,6 +2580,15 @@ MREACH="$MASTER/config.reach.env"
 cp "$MCFG" "$MREACH"
 chmod 644 "$MREACH"
 
+# plant_tree DIR: DIR/lifecycle holds the launchers and what they source, and DIR/clusters the files read_rclone_pin reads
+# from the tree above its folder, so a copy of a launcher runs as the released one does.
+plant_tree() {
+  mkdir -p "$1/lifecycle" "$1/clusters/platform" "$1/clusters/inventories/consumer-build/files"
+  cp "$HERE/master-backup.sh" "$HERE/master-restore.sh" "$HERE/master-backup-driver.sh" "$HERE/master-restore-driver.sh" \
+    "$HERE/require-owner-only.sh" "$HERE/require-config-assignments.sh" "$HERE/read-rclone-pin.sh" "$HERE/require-rclone.sh" "$1/lifecycle/"
+  cp "$HERE/../clusters/platform/versions.yaml" "$HERE/../clusters/platform/mirror-sources.table" "$HERE/../clusters/platform/values-common.yaml" "$1/clusters/platform/"
+  cp "$HERE/../clusters/inventories/consumer-build/files/mirror-sources.sh" "$1/clusters/inventories/consumer-build/files/"
+}
 run_master_bash() { # script base name, then its arguments
   local base="$1"; shift
   A_CODE=0
@@ -2597,7 +2606,7 @@ backup: usage: lifecycle/master-backup.sh <config>. Nothing has been changed
 RECORDED
     master-restore) expect "$act: a run naming no config" 64 <<'RECORDED' ;;
 ~~~ standard error ~~~
-restore: usage: lifecycle/master-restore.sh <config> [backup-id]. Nothing has been changed
+restore: usage: lifecycle/master-restore.sh <config> [backup-id] [--rclone-package <local .deb>]. Nothing has been changed
 RECORDED
   esac
 
@@ -2648,13 +2657,12 @@ RECORDED
   # The planted defect for the guard: a copy of the launcher and its driver beside a
   # guard with one word changed. The refusal must carry the changed word, which proves
   # the launcher reads the guard beside itself, and differ from the recorded bytes.
-  mkdir -p "$MASTER/planted-guard"
-  cp "$HERE/$act.sh" "$HERE/$act-driver.sh" "$HERE/require-config-assignments.sh" "$MASTER/planted-guard/"
-  sed 's/is mode /has mode /' "$HERE/require-owner-only.sh" > "$MASTER/planted-guard/require-owner-only.sh"
-  grep -q 'has mode ' "$MASTER/planted-guard/require-owner-only.sh" \
+  plant_tree "$MASTER/planted-guard"
+  sed 's/is mode /has mode /' "$HERE/require-owner-only.sh" > "$MASTER/planted-guard/lifecycle/require-owner-only.sh"
+  grep -q 'has mode ' "$MASTER/planted-guard/lifecycle/require-owner-only.sh" \
     || fail 'the planted line was not planted in require-owner-only.sh — the probe proves nothing'
   A_CODE=0
-  ( cd "$MASTER" && bash "$MASTER/planted-guard/$act.sh" "$MREACH" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
+  ( cd "$MASTER" && bash "$MASTER/planted-guard/lifecycle/$act.sh" "$MREACH" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
   grep -q "$MREACH has mode 644" "$OUT/a.err" \
     || fail "$act beside the planted guard printed no planted mode line — it does not read the guard beside itself"
   caught "the guard beside $act.sh" 'has mode 644'
@@ -2691,9 +2699,9 @@ RECORDED
   esac
 
   # The planted defect for this act: a copy with its reach sentence changed, beside its driver.
-  PLANTED_M="$MASTER/planted-$act.sh"
+  plant_tree "$MASTER/planted-reach"
+  PLANTED_M="$MASTER/planted-reach/lifecycle/$act.sh"
   sed 's/could not be reached: /could not be reached — /' "$HERE/$act.sh" > "$PLANTED_M"
-  cp "$HERE/$act-driver.sh" "$HERE/require-owner-only.sh" "$HERE/require-config-assignments.sh" "$MASTER/"
   grep -q 'could not be reached — ' "$PLANTED_M" || fail "the planted line was not planted in $act — the probe proves nothing"
   A_CODE=0
   ( cd "$MASTER" && bash "$PLANTED_M" "$MCFG" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
@@ -3164,6 +3172,11 @@ cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 exec 9>&-
 here="$(dirname "$0")"
 printf 'rclone %s\n' "$*" >> "$here/argv.log"
+# --version answers what rclone-answer holds, and what rclone-answer-root holds where sudo raised the caller, as the executable of each account would.
+if [ "${1:-}" = --version ]; then
+  if [ -n "${STANDIN_ELEVATED:-}" ] && [ -f "$here/rclone-answer-root" ]; then cat "$here/rclone-answer-root"; else cat "$here/rclone-answer"; fi
+  exit 0
+fi
 err() { echo "rclone stand-in: $*" >&2; echo "$*" >> "$here/rclone-errors.log"; }
 conf="${RCLONE_CONFIG:-}"
 args=()
@@ -3435,7 +3448,41 @@ printf 'awk %s\n' "$*" >> "$here/argv.log"
 exec REAL_AWK "$@"
 STANDIN_AWK
 sed -i "s#REAL_AWK#$(command -v awk)#" "$STANDIN/awk"
-chmod 700 "$STANDIN/sudo" "$STANDIN/gpg" "$STANDIN/tar" "$STANDIN/microk8s" "$STANDIN/rclone" "$STANDIN/git" "$STANDIN/install" "$STANDIN/chown" "$STANDIN/awk"
+ # the rclone the platform pins answers its version, and the stand-ins of the package manager and of the fetch log what they are asked
+RCLONE_PIN_OF_TREE="$(yq e '.cliTools.rclone.version' "$HERE/../clusters/platform/versions.yaml")"
+[ -n "$RCLONE_PIN_OF_TREE" ] && [ "$RCLONE_PIN_OF_TREE" != null ] || fail 'clusters/platform/versions.yaml states no cliTools.rclone.version yq could read'
+printf 'rclone %s\n- os/version: stand-in\n' "$RCLONE_PIN_OF_TREE" > "$STANDIN/rclone-answer"
+cat > "$STANDIN/dpkg" <<'STANDIN_DPKG'
+#!/usr/bin/env bash
+# dpkg as require-rclone.sh calls it: --print-architecture answers the file dpkg-arch (amd64 if there is none); -i FILE logs the call
+# and, unless the file dpkg-fails stands, puts the rclone stand-in back where it was hidden as rclone.hidden, and makes rclone answer
+# what dpkg-installs-answer holds to both accounts (rclone-answer-root goes), as an installed package would.
+here="$(dirname "$0")"
+printf 'dpkg %s\n' "$*" >> "$here/dpkg.log"
+case "$1" in
+  --print-architecture) cat "$here/dpkg-arch" 2> /dev/null || echo amd64 ;;
+  -i) [ ! -e "$here/dpkg-fails" ] || { echo 'dpkg: error processing archive (stand-in)' >&2; exit 1; }
+      [ ! -e "$here/rclone.hidden" ] || mv "$here/rclone.hidden" "$here/rclone"
+      [ ! -e "$here/dpkg-installs-answer" ] || { cp "$here/dpkg-installs-answer" "$here/rclone-answer"; rm -f "$here/rclone-answer-root"; } ;;
+  *) echo "dpkg stand-in: a call the driver does not make: $*" >&2; exit 2 ;;
+esac
+STANDIN_DPKG
+cat > "$STANDIN/curl" <<'STANDIN_CURL'
+#!/usr/bin/env bash
+# curl as require-rclone.sh calls it: every call is logged with its arguments. Where the file curl-serves stands it is the answer to the call,
+# written to the --output file; where it does not, the machine has no route to the mirror.
+here="$(dirname "$0")"
+printf 'curl %s\n' "$*" >> "$here/curl.log"
+if [ -f "$here/curl-serves" ]; then
+  out=''; previous=''
+  for argument in "$@"; do [ "$previous" != --output ] || out="$argument"; previous="$argument"; done
+  [ -n "$out" ] || { echo 'curl stand-in: a call without --output' >&2; exit 2; }
+  exec cp "$here/curl-serves" "$out"
+fi
+echo 'curl: (6) Could not resolve host (stand-in)' >&2
+exit 6
+STANDIN_CURL
+chmod 700 "$STANDIN/sudo" "$STANDIN/dpkg" "$STANDIN/curl" "$STANDIN/gpg" "$STANDIN/tar" "$STANDIN/microk8s" "$STANDIN/rclone" "$STANDIN/git" "$STANDIN/install" "$STANDIN/chown" "$STANDIN/awk"
 
 BACKUP_ROOT="$(grep '^root() ' "$HERE/master-backup-driver.sh")"
 BACKUP_SEAL="$(sed -n '/^seal() {/,/^}/p' "$HERE/master-backup-driver.sh")"
@@ -3492,6 +3539,7 @@ sealed_by() { # <sudo kind> <the text lifted first> <command line...> — its co
     CONFIG="$WORK/seal-config"; : > "$CONFIG"
     ELEVATION_PASSWORD="$PLANTED_PASSWORD"; BACKUP_PASSPHRASE="$PLANTED_PASSPHRASE"; STORAGE_BOX_PASSWORD="$PLANTED_BOX_PASSWORD"
     STORAGE_BOX_HOST="$BOX_HOST"; STORAGE_BOX_USER="$BOX_USER"
+    . "$HERE/require-rclone.sh"
     eval "$text"
     "$@" ) < /dev/null > "$OUT/sealed.out" 2> "$OUT/sealed.err"
 }
@@ -3841,12 +3889,16 @@ ok 'backup: a flipped byte in an archive on the box, a manifest that counts othe
 # leaves its folder
 plant "$BACKUP_WAY_OUT" 'copy "$BACKUPS/$ID/" "$READBACK" --use-json-log' 'copy "$WORK" "$READBACK" --use-json-log'; READS_WORK="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" "root bash -c 'echo \"\$\$\" > \"\$1\"; shift; exec \"\$@\"'" "bash -c 'echo \"\$\$\" > \"\$1\"; shift; exec \"\$@\"'"; READS_BY_OPERATOR="$PLANTED_TEXT"
-plant "$BACKUP_WAY_OUT" 'grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11' 'true'; NO_CHECKSUMS="$PLANTED_TEXT"
-plant "$BACKUP_WAY_OUT" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_MANIFEST_COMPARISON="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" 'sha256sum -c) || exit 11' 'sed "s/^[0-9a-f]*  //; s/\$/: OK/") || exit 11'; NO_CHECKSUMS="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_COMPARISON_ONLY="$PLANTED_TEXT"
+# the coverage refuses a manifest that lost the form of a checksum line as well, so the comparison is planted away in a driver without it
+plant "$BACKUP_WAY_OUT" 'if [ "$READBACK_VERIFIED" != "$READBACK_EXPECTED_ARCHIVES" ] || [ "$READBACK_OTHER" != 0 ]; then' 'if false; then'; NO_COVERAGE="$PLANTED_TEXT"
+plant "$NO_COVERAGE" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_MANIFEST_COMPARISON="$PLANTED_TEXT"
 # the comparison would refuse the damage of the next two cases first, so they are planted in a driver without it
 plant "$NO_MANIFEST_COMPARISON" 'grep -qx "STORES=$2" manifest.txt || exit 12' 'true'; NO_STORE_COUNT="$PLANTED_TEXT"
 plant "$NO_MANIFEST_COMPARISON" 'gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13' 'true'; NO_QUORUM_OPENING="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" '-o /dev/null -d "host--vault-$4.txt.gpg"' '-d "host--vault-$4.txt.gpg"'; OPENS_TO_OUTPUT="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" '-o /dev/null -d "host--vault-$4.txt.gpg"' '-d "host--vault-$4.txt.gpg" >&2'; OPENS_TO_TERMINAL="$PLANTED_TEXT"
 TRAP_REMOVAL='if [ -n "$READBACK" ]; then root rm -rf "$READBACK" >/dev/null 2>&1; fi'
 plant "$BACKUP_TEXT" "$TRAP_REMOVAL" 'true'; KEEPS_AFTER_REFUSAL="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" 'root rm -rf "$WORK" "$READBACK"' 'root rm -rf "$WORK"'; KEEPS_AFTER_SUCCESS="$PLANTED_TEXT"
@@ -3866,6 +3918,8 @@ for kind in nopasswd password; do
   ! carry_refused "$kind" "$NO_MANIFEST_COMPARISON" "$BOX_LOST_SHAPE" 'is not the manifest that was sent' \
     || fail "the planted read-back without the comparison of the manifest was not caught under a sudo that reads $kind — the probe proves nothing"
   caught_for 'read-back without the comparison of the manifest' 'the way out ended with 0'
+  carry_refused "$kind" "$NO_COMPARISON_ONLY" "$BOX_LOST_SHAPE" 'archives of this backup' \
+    || fail "the planted read-back without the comparison of the manifest let a checksum line that lost its form through the coverage under a sudo that reads $kind: $(cat "$OUT/verdict")"
   ! carry_refused "$kind" "$NO_MANIFEST_COMPARISON" "$BOX_LOST_SHAPE_AND_FLIPPED" 'is not the manifest that was sent' \
     || fail "the planted read-back without the comparison of the manifest was not caught on a flipped archive under a sudo that reads $kind — the probe proves nothing"
   caught_for 'read-back without the comparison of the manifest, on a flipped archive' 'the way out ended with 0'
@@ -3875,9 +3929,11 @@ for kind in nopasswd password; do
   ! carry_refused "$kind" "$NO_QUORUM_OPENING" "$BOX_OTHER_PASSPHRASE" 'does not open' \
     || fail "the planted read-back without the opening of the quorum was not caught under a sudo that reads $kind — the probe proves nothing"
   caught_for 'read-back without the opening of the quorum' 'the way out ended with 0'
-  ! carry_holds "$kind" "$BACKUP_TEXT" "$OPENS_TO_OUTPUT" \
-    || fail "the planted opening of the quorum to the output was not caught under a sudo that reads $kind — the probe proves nothing"
-  caught_for 'opening of the quorum to the output' 'the run printed the planted line planted-unseal-key-1' 'the run printed the planted line planted-unseal-key-2'
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$OPENS_TO_TERMINAL" \
+    || fail "the planted opening of the quorum to the terminal was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'opening of the quorum to the terminal' 'the run printed the planted line planted-unseal-key-1' 'the run printed the planted line planted-unseal-key-2'
+  carry_refused "$kind" "$OPENS_TO_OUTPUT" 'true' 'other answer(s)' \
+    || fail "the planted opening of the quorum to the output of the read-back was not refused as an answer that is no checksum, and unprinted, under a sudo that reads $kind: $(cat "$OUT/verdict")"
   ! carry_refused "$kind" "$BACKUP_WAY_OUT" "$BOX_FLIPPED_BYTE" 'do not match the checksums' "$KEEPS_AFTER_REFUSAL" \
     || fail "the planted clean-up that leaves the read-back folder after a refusal was not caught under a sudo that reads $kind — the probe proves nothing"
   caught_for 'clean-up that leaves the read-back folder after a refusal' 'the read-back folder stands after the way out'
@@ -3923,6 +3979,11 @@ lock_reset() { # <free|block|block-upload> — the stand-ins forget the last cas
   esac
 }
 driver_names_literal() { grep -qF -- "$2" <<< "$1"; } # <the driver's text> <literal> — the text goes in as a here-string, since grep -q closes a pipe at its first match and the writer is cut off
+PREAMBLE_TREE="$HERE/.." # the tree the metadata is read from: this one, or a copy whose rclone rows hold the digests of a fixture package
+rclone_preamble() { # what a launcher sends ahead of a driver: the helper that puts the pinned rclone on the machine, and the metadata read from the tree
+  tr -d $'\r' < "$HERE/require-rclone.sh"
+  ( . "$HERE/read-rclone-pin.sh"; read_rclone_pin "$PREAMBLE_TREE" && printf '%s\n' "$RCLONE_METADATA" ) || fail 'read-rclone-pin.sh could not read the pin of the tree'
+}
 lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder, with the driver and its paths moved into the sandbox, the waits of its hold shortened, NAME=value moving a named value of the driver on from there, and a config beside it
   local dir="$LOCK_DIR/$1" text="$2" literal pair moved=()
   shift 2
@@ -3933,7 +3994,7 @@ lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder
   for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
     driver_names_literal "$text" "$literal" || fail "the backup driver names no $literal — the sandbox of the lock cases proves nothing"
   done
-  printf '%s\n' "$text" | sed -e "s#/var/lib/master-backup#$dir/backups#g" -e "s#/var/snap/microk8s/common/default-storage#$LOCK_DIR/storage#g" \
+  { rclone_preamble; printf '%s\n' "$text"; } | sed -e "s#/var/lib/master-backup#$dir/backups#g" -e "s#/var/snap/microk8s/common/default-storage#$LOCK_DIR/storage#g" \
     -e "s#/srv/hostyour-cloud#$LOCK_DIR/srv#g" -e "s#/run/lock/master-backup.lock#$LOCK_DIR/master-backup.lock#g" "${moved[@]}" > "$dir/driver.sh"
   for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
     ! grep -qF -- "$literal" "$dir/driver.sh" || fail "the sandboxed backup driver still names $literal — the lock cases would reach this machine"
@@ -4108,6 +4169,27 @@ caught_for 'driver without the lock' 'the second driver scaled' 'the second driv
 caught_for 'driver that takes the lock after it made its folder' 'made a folder'
 ! lock_refuses "$TRUNCATING_LOCK" || fail 'the planted driver that opens the lock file for writing was not caught — the probe proves nothing'
 caught_for 'driver that opens the lock file for writing' 'did not name the running run'
+lock_precedes_provisioning() { # <the driver's text> — a first run holds the lock inside its store loop, then the machine's rclone is old and a second run starts: ends 0 when the second ended 75 without a request for a package or an installation, and the first went on to its end; what is wrong stands in $OUT/verdict
+  local text="$1"
+  : > "$OUT/verdict"
+  lock_reset block
+  lock_driver first "$text"; lock_driver second "$text"
+  lock_start first; lock_held first
+  echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer"; : > "$STANDIN/dpkg.log"; : > "$STANDIN/curl.log"
+  lock_run second
+  printf 'rclone %s\n- os/version: stand-in\n' "$RCLONE_PIN_OF_TREE" > "$STANDIN/rclone-answer"
+  [ "$LOCK_CODE" = 75 ] || echo "the second driver ended with $LOCK_CODE, not 75, on an old rclone while the first held the lock" >> "$OUT/verdict"
+  [ ! -s "$STANDIN/curl.log" ] || echo 'the second driver asked for a package while the first held the lock' >> "$OUT/verdict"
+  ! grep -q '^dpkg -i ' "$STANDIN/dpkg.log" || echo 'the second driver installed a package while the first held the lock' >> "$OUT/verdict"
+  lock_let_go
+  [ "$LOCK_CODE" = 0 ] || echo "the first driver ended with $LOCK_CODE once let go" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+lock_precedes_provisioning "$LOCK_TEXT" || fail "backup: a second driver reached the provisioning of rclone while the first held the lock: $(cat "$OUT/verdict")"
+plant "$LOCK_TEXT" 'LOCK_FILE=/run/lock/master-backup.lock' 'require_rclone || die "rclone could not be provided: $RCLONE_REFUSAL" 69
+LOCK_FILE=/run/lock/master-backup.lock'; PROVISIONING_BEFORE_LOCK="$PLANTED_TEXT"
+! lock_precedes_provisioning "$PROVISIONING_BEFORE_LOCK" || fail 'the planted driver that provisions rclone before it takes the lock was not caught — the probe proves nothing'
+ok 'backup: a second driver started while the first holds the lock, on a machine whose rclone is old, ends 75 before it asks for a package or installs one, and the first goes on to its end; a driver that provisions rclone before it takes the lock is caught'
 ! lock_frees_on_death "$FILE_AS_LOCK" || fail 'the planted driver whose lock is the presence of a file was not caught — the probe proves nothing'
 caught_for 'driver whose lock is the presence of a file' 'ended with 75'
 for earlier in ended killed; do
@@ -4615,9 +4697,10 @@ timeline_ms() { # <event> — the milliseconds from the start of the copy to the
   awk -v want="$1" '$1 == "start" { s = $2 } $1 == want && s != "" { printf "%d", ($2 - s) / 1000000; exit }' "$STANDIN/readback-timeline" 2> /dev/null || true
 }
 readback_held() { # <the driver's text> <run> <the plan> <READBACK_FINISH_SECONDS> <the least seconds the copy runs on after its last byte> <measured: yes|no> [<knob>...] — a copy that reads every byte, runs on and then ends 0: ends 0 when the driver let it end and went on to the checks; what is wrong stands in $OUT/verdict, the real times in $RB_TIMES
-  local text="$1" run="$2" plan="$3" finish="$4" least="$5" measured="$6" dir="$LOCK_DIR/$2" complete exit_ms
+  local text="$1" run="$2" plan="$3" finish="$4" least="$5" measured="$6" dir="$LOCK_DIR/$2" complete exit_ms coverage covered covered_of covered_names
   shift 6
   : > "$OUT/verdict"
+  : > "$STANDIN/argv.log"
   readback_start "$run" "$text" 1 "$plan" READBACK_FINISH_SECONDS="$finish" "$@"
   readback_finish 1 "$RB_LIMIT"
   complete="$(timeline_ms complete)"; exit_ms="$(timeline_ms exit)"
@@ -4631,6 +4714,13 @@ readback_held() { # <the driver's text> <run> <the plan> <READBACK_FINISH_SECOND
   [ "$(tail -n 1 "$dir/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the driver did not end with BACKUP and an id' >> "$OUT/verdict"
   grep -qF -- 'the checksums hold' "$dir/out" || echo 'the driver did not reach the checksums of the manifest' >> "$OUT/verdict"
   grep -qF -- 'the transfer was seen to have ended' "$dir/out" || echo 'the driver did not say that the copy that had read every byte ended' >> "$OUT/verdict"
+  grep -qE 'read back: first complete sample: [0-9]+ of [0-9]+ expected bytes in [0-9.]+ s, [0-9.]+ bytes a second, so the transfer is given' "$dir/out" || echo 'the line of the first complete sample states no bytes, time and rate' >> "$OUT/verdict"
+  grep -qE 'first complete sample: [0-9]+ of [0-9]+ expected bytes in [0-9.]+ s, [0-9.]+ bytes a second; the transfer was seen to have ended' "$dir/out" || echo 'the line of the end of the copy states no first complete sample with its rate' >> "$OUT/verdict"
+  grep -qE "copy .* --timeout ${finish}s( |\$)" "$STANDIN/argv.log" || echo "the read-back was not run under --timeout ${finish}s, the idle limit of rclone that READBACK_FINISH_SECONDS sets" >> "$OUT/verdict"
+  coverage="$(sed -n 's/.*the checksums hold for \([0-9]*\) of \([0-9]*\) archives (\(.*\)), the manifest counts.*/\1 \2 \3/p' "$dir/out")"
+  read -r covered covered_of covered_names <<< "$coverage"
+  { [ -n "$coverage" ] && [ "$covered" = "$covered_of" ] && [ "$covered_of" = $(( LOCK_STORES + 1 )) ] && [[ "$covered_names" == *"host--vault-prod.txt.gpg"* ]] && [[ "$covered_names" != *manifest* ]]; } \
+    || echo "the checksum coverage is not every archive of the backup, the stores and the quorum, by name: $coverage" >> "$OUT/verdict"
   if [ "$measured" = no ]; then
     ! grep -qF -- 'measured ' "$dir/out" || echo 'the driver froze a rate for a copy that had read every byte before the measurement was over' >> "$OUT/verdict"
   else
@@ -4644,18 +4734,22 @@ readback_held() { # <the driver's text> <run> <the plan> <READBACK_FINISH_SECOND
 }
 RB_WAIT=2 # READBACK_WAIT_SECONDS of every case here, as readback_start sets it
 readback_bounded() { # <the driver's text> <run> <the plan> <the bound in seconds> <the exit status of the ended copy: 143|137> [<knob>...] — a copy that has read every byte and runs on past READBACK_FINISH_SECONDS: ends 0 when the driver ended 69 with the named failure once the bound passed, the copy ended and reaped and no checksum run; what is wrong stands in $OUT/verdict
-  local text="$1" run="$2" plan="$3" bound="$4" status="$5" dir="$LOCK_DIR/$2" line fields counted total waited stated_bound stated_id stated_status
+  local text="$1" run="$2" plan="$3" bound="$4" status="$5" dir="$LOCK_DIR/$2" line fields latest counted total waited stated_bound stated_id stated_status first_seconds first_rate latest_bytes latest_seconds latest_rate
   shift 5
   : > "$OUT/verdict"
   readback_start "$run" "$text" 1 "$plan" READBACK_FINISH_SECONDS="$bound" "$@"
   readback_finish 1 "$RB_LIMIT"
   readback_refused "$run" 'read-back completion did not finish'
   line="$(tail -n 1 "$dir/err")"
-  fields="$(sed -n 's/.*rclone reported every expected byte read (\([0-9]*\) of \([0-9]*\)), the completion wait ran \([0-9]*\) s to its bound of \([0-9]*\) s with the transfer still running, and it was ended (backup \([0-9]\{8\}T[0-9]\{6\}Z\)); .*transfer exit status \([0-9]*\);.*/\1 \2 \3 \4 \5 \6/p' <<< "$line")"
+  fields="$(sed -n 's/.*rclone reported every expected byte read, the completion wait ran \([0-9]*\) s to its bound of \([0-9]*\) s with the transfer still running, and it was ended (backup \([0-9]\{8\}T[0-9]\{6\}Z\)); first complete sample: \([0-9]*\) of \([0-9]*\) expected bytes in \([0-9.]*\) s, \([0-9.]*\) bytes a second; latest sample: read \([0-9]*\) of [0-9]* expected bytes in .*/\1 \2 \3 \4 \5 \6 \7 \8/p' <<< "$line")"
+  latest="$(sed -n 's/.*latest sample: read \([0-9]*\) of [0-9]* expected bytes in \([0-9.]*\) s, \([0-9.]*\) bytes a second, transfer exit status \([0-9]*\);.*/\1 \2 \3 \4/p' <<< "$line")"
   if [ -z "$fields" ]; then
-    echo "the error does not say that rclone reported every expected byte, how long the wait ran, its bound, the backup and the exit status: $(cut -c1-400 <<< "$line")" >> "$OUT/verdict"
+    echo "the error does not say that rclone reported every expected byte, how long the wait ran, its bound, the backup, the first complete sample with its rate, and the latest sample with the exit status: $(cut -c1-400 <<< "$line")" >> "$OUT/verdict"
   else
-    read -r counted total waited stated_bound stated_id stated_status <<< "$fields"
+    read -r waited stated_bound stated_id counted total first_seconds first_rate _ <<< "$fields"
+    read -r latest_bytes latest_seconds latest_rate stated_status <<< "$latest"
+    rate_agrees "$counted" "$first_seconds" "$first_rate" || echo "the error states $first_rate bytes a second for the first complete sample of $counted bytes in $first_seconds s" >> "$OUT/verdict"
+    rate_agrees "${latest_bytes:-0}" "${latest_seconds:-1}" "${latest_rate:-x}" || echo "the error states ${latest_rate:-no rate} bytes a second for the latest sample of ${latest_bytes:-no} bytes in ${latest_seconds:-no} s" >> "$OUT/verdict"
     [ "$total" = "$(backup_bytes)" ] || echo "the error states $total expected bytes, and the box holds $(backup_bytes)" >> "$OUT/verdict"
     [ "$counted" -ge "$total" ] || echo "the error states $counted bytes reported, fewer than the $total expected" >> "$OUT/verdict"
     [ "$stated_bound" = "$bound" ] || echo "the error states a bound of $stated_bound s, not the $bound s of the case" >> "$OUT/verdict"
@@ -4998,7 +5092,7 @@ done
 # for a copy that is still reading applied after the last byte, a bound that ends the copy and calls the backup whole, and the ways the diagnosis
 # could disclose what rclone wrote: its raw statistics or log, a file name or object nobody approved, a secret handed to awk, and a filter that
 # knows only the wording of the cases; each is refused for its own defect only
-HELD_FRAGMENTS=('the driver ended with' 'the driver did not end with BACKUP' 'the driver did not reach the checksums' 'the driver did not say that the copy' 'the copy did not read every byte' 'the driver still ran' 'the transfer still ran after' 'stands after the driver ended' 'the driver froze a rate' 'the copy ended')
+HELD_FRAGMENTS=('the driver ended with' 'the driver did not end with BACKUP' 'the driver did not reach the checksums' 'the driver did not say that the copy' 'the copy did not read every byte' 'the driver still ran' 'the transfer still ran after' 'stands after the driver ended' 'the driver froze a rate' 'the copy ended' 'the line of the first complete sample' 'the line of the end of the copy' 'the read-back was not run under --timeout' 'the checksum coverage')
 BOUNDED_FRAGMENTS=('the driver ended with' 'the driver did not say' 'the error' 'the work folder' 'the driver still ran' 'the transfer still ran after' 'stands after the driver ended' 'the copy ended by itself' 'the driver ran the checksums' 'the driver printed nothing' 'the backup' 'the file with the log' 'the failure of a copy whose statistics')
 LEAK_FRAGMENTS=('the run printed the planted value' 'stands on standard output' 'stands on standard error' 'stands on the command line of awk' 'on a command line' 'the driver did not print' 'the driver printed an object' 'the driver did not say' 'the error' 'the driver ended with')
 FINISH_BOUND='if [ $(( now - READBACK_COMPLETE_AT )) -ge "$READBACK_FINISH_SECONDS" ]; then readback_unfinished; fi'
@@ -5016,7 +5110,7 @@ plant "$LOCK_TEXT" 'index(known, "|" D[path] "|") > 0' '1'; PRINTS_ANY_FILE_NAME
 plant "$LOCK_TEXT" $'  return "[text redacted]"\n}\nfunction render' $'  return msg\n}\nfunction render'; PRINTS_ANY_MESSAGE="$PLANTED_TEXT"
 plant "$LOCK_TEXT" 'o = name_of("object")' 'o = D["object"]'; PRINTS_ANY_OBJECT="$PLANTED_TEXT"
 plant "$LOCK_TEXT" 'LC_ALL=C awk -v expected="$READBACK_EXPECTED"' 'LC_ALL=C awk -v secret="$STORAGE_BOX_PASSWORD" -v expected="$READBACK_EXPECTED"'; HANDS_SECRET_TO_AWK="$PLANTED_TEXT"
-plant "$LOCK_TEXT" 'and it was ended (backup $ID); $state,' 'and it was ended (backup $ID); $(grep -a '"'"'"stats":{'"'"' "$READBACK_STATS" | tail -n 1) $state,'; RAW_STATISTICS_IN_ERROR="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'latest sample: $state,' 'latest sample: $(grep -a '"'"'"stats":{'"'"' "$READBACK_STATS" | tail -n 1) $state,'; RAW_STATISTICS_IN_ERROR="$PLANTED_TEXT"
 plant "$LOCK_TEXT" $'function project(msg,   cut, version) {\n  RECOG = ""' $'function project(msg) {\n  RECOG = ""\n  if (msg == "PLANTED-OPERATION") return msg\n  return "[text redacted]"\n}\nfunction project_unused(msg,   cut, version) {\n  RECOG = ""'; KNOWS_ONLY_THE_WORDING_OF_THE_CASES="$PLANTED_TEXT"
 plant "$LOCK_TEXT" '> "$READBACK_STATS" 2>&1 &' '2> "$READBACK_STATS" &'; KEEPS_STANDARD_ERROR_ONLY="$PLANTED_TEXT"
 plant "$LOCK_TEXT" ' (S["L", "transferring"] == 0 && S["L", "checking"] == 0 ? " (an empty list does not show that rclone is idle)" : "")' ''; EMPTY_LIST_AS_IDLE="$PLANTED_TEXT"
@@ -5042,6 +5136,23 @@ caught_for 'stall rule after the last byte' 'the driver ended with' "${HELD_FRAG
 caught_for 'measured deadline after the last byte' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
 ! readback_held "$JUDGES_ENDED_COPY_AS_RUNNING" held_late_completed $'rate 4194304 forever\nevery 0.1\nhold 6' 5 5 no READBACK_POLL_SECONDS=3 || fail 'the planted read-back that judges a copy that ended while the poll slept by the rules for a running one was not caught on a copy that ended inside the last poll period before its completion bound — the probe proves nothing'
 caught_for 'read-back that judges an ended copy by the rules for a running one' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
+# planted defects of the completion bound's report and of the integrity verdict: a first complete sample without its rate, a copy without --timeout,
+# a coverage that expects fewer archives than the backup holds, and a bound that is still the diagnostic two hours
+plant "$LOCK_TEXT" '"$(rate_of "$READBACK_COMPLETE_BYTES" "$READBACK_COMPLETE_MILLIS")"' 'unavailable'; MISSING_RATE="$PLANTED_TEXT"
+! readback_bounded "$MISSING_RATE" bounded_repeated $'rate 4194304 forever\nhold forever' 3 143 || fail 'the planted failure whose first complete sample states no rate was not caught — the probe proves nothing'
+caught_for 'failure whose first complete sample states no rate' 'the error does not say that rclone reported every expected byte'
+! readback_held "$MISSING_RATE" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted completion line without a rate was not caught — the probe proves nothing'
+caught_for 'completion line without a rate' 'the line of the first complete sample' "${HELD_FRAGMENTS[@]}"
+plant "$LOCK_TEXT" ' --timeout "${READBACK_FINISH_SECONDS}s"' ''; NO_TIMEOUT="$PLANTED_TEXT"
+! readback_held "$NO_TIMEOUT" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted read-back without --timeout was not caught — the probe proves nothing'
+caught_for 'read-back without --timeout' 'the read-back was not run under --timeout' "${HELD_FRAGMENTS[@]}"
+plant "$LOCK_TEXT" 'READBACK_EXPECTED_ARCHIVES=$(( ${#STORES[@]} + 1 ))' 'READBACK_EXPECTED_ARCHIVES=$(( ${#STORES[@]} + 0 ))'; FEWER_ARCHIVES="$PLANTED_TEXT"
+! readback_held "$FEWER_ARCHIVES" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted coverage that expects fewer archives than the backup holds was not caught — the probe proves nothing'
+caught_for 'coverage that expects fewer archives' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
+finish_is_300() { [ "$(sed -n 's/^readonly READBACK_FINISH_SECONDS=//p' <<< "$1")" = 300 ]; }
+finish_is_300 "$LOCK_TEXT" || fail 'READBACK_FINISH_SECONDS of the backup driver is not 300 s, the one idle interval of rclone'
+plant "$LOCK_TEXT" 'readonly READBACK_FINISH_SECONDS=300' 'readonly READBACK_FINISH_SECONDS=7200'
+! finish_is_300 "$PLANTED_TEXT" || fail 'the planted completion bound of two hours was not caught — the probe proves nothing'
 for planted in PRINTS_RAW_STATISTICS PRINTS_RAW_LOG_TAIL PRINTS_ANY_FILE_NAME PRINTS_ANY_MESSAGE PRINTS_ANY_OBJECT HANDS_SECRET_TO_AWK RAW_STATISTICS_IN_ERROR; do
   ! readback_private "${!planted}" private_bound bound || fail "the planted driver $planted was not caught when the log of the copy carries the host, the user, the account, the path and the passwords of the box — the probe proves nothing"
   while IFS= read -r line; do
@@ -5089,6 +5200,7 @@ restore_holds() { # <sudo kind> <the secrets text> <the fetch text> — ends 0 w
     STORAGE_BOX_HOST="$BOX_HOST" STORAGE_BOX_USER="$BOX_USER" STORAGE_BOX_PASSWORD="$PLANTED_BOX_PASSWORD"
     BACKUP_PASSPHRASE="$PLANTED_PASSPHRASE" ELEVATION_PASSWORD="$PLANTED_PASSWORD"
     STAGING="$dir/staging" CHECKOUT="$dir/checkout/platform" BACKUPS="box:$FQDN/master"
+    . "$HERE/require-rclone.sh"
     eval "$RESTORE_CLEANUP"
     eval "$RESTORE_ROOT"
     eval "$RESTORE_STORES"
@@ -5199,6 +5311,7 @@ backup_box_holds() { # <driver text> <the code it ends with> <what it says> <the
   [ ! -s "$OUT/verdict" ]
 }
 RESTORE_TEXT="$(cat "$HERE/master-restore-driver.sh")"
+RESTORE_CARRIED='' # the lines a launcher adds for --rclone-package, or nothing
 restore_box_holds() { # <driver text> <the code it ends with> <what it says> <the box's refused call>... — the same for the whole restore driver, with its three paths moved into the sandbox; what is wrong stands in $OUT/verdict
   local text="$1" code="$2" says="$3" dir="$WORK/restore-whole" literal restore_code=0
   shift 3
@@ -5211,7 +5324,7 @@ restore_box_holds() { # <driver text> <the code it ends with> <what it says> <th
   for literal in /var/lib/master-restore /srv/hostyour-cloud /var/snap/microk8s/common/default-storage; do
     driver_names_literal "$text" "$literal" || fail "the restore driver names no $literal — the sandbox of the whole-driver cases proves nothing"
   done
-  printf '%s\n' "$text" | sed -e "s#/var/lib/master-restore#$dir/staging#g" -e "s#/srv/hostyour-cloud#$dir/checkout/platform#g" \
+  { rclone_preamble; printf '%s\n' "$RESTORE_CARRIED"; printf '%s\n' "$text"; } | sed -e "s#/var/lib/master-restore#$dir/staging#g" -e "s#/srv/hostyour-cloud#$dir/checkout/platform#g" \
     -e "s#/var/snap/microk8s/common/default-storage#$dir/storage#g" > "$dir/driver.sh"
   for literal in /var/lib/master-restore /srv/hostyour-cloud /var/snap/microk8s/common/default-storage; do
     ! grep -qF -- "$literal" "$dir/driver.sh" || fail "the sandboxed restore driver still names $literal — the whole-driver cases would reach this machine"
@@ -5233,6 +5346,127 @@ restore_box_holds() { # <driver text> <the code it ends with> <what it says> <th
 }
 BACKUP_AFTER_OPENING='say "release on this machine: ${RELEASE:-unknown}"'
 RESTORE_AFTER_OPENING='good "backup $ID of $FQDN ($STAGE) fetched — every checksum holds"'
+# A BARE TARGET: no rclone on the machine and no route to the mirror (the curl stand-in refuses every request). The package the operator carried is installed by dpkg after
+# the helper held it to the digest of its row, and the restore goes on to open the box and fetch the backup.
+BARE_TREE="$WORK/bare-tree"
+mkdir -p "$BARE_TREE/clusters/platform" "$BARE_TREE/clusters/inventories/consumer-build/files"
+cp "$HERE/../clusters/platform/versions.yaml" "$HERE/../clusters/platform/values-common.yaml" "$BARE_TREE/clusters/platform/"
+cp "$HERE/../clusters/inventories/consumer-build/files/mirror-sources.sh" "$BARE_TREE/clusters/inventories/consumer-build/files/"
+printf 'a package of the pinned rclone, carried to a machine that has no route to the mirror\n' > "$WORK/carried-rclone.deb"
+BARE_DIGEST="$(sha256sum "$WORK/carried-rclone.deb" | cut -d' ' -f1)"
+sed -e "s#^\(tool [^ ]*/rclone/rclone/[^ ]*/rclone-$RCLONE_PIN_OF_TREE-linux-amd64.deb\) .*#\1 $BARE_DIGEST#" "$HERE/../clusters/platform/mirror-sources.table" > "$BARE_TREE/clusters/platform/mirror-sources.table"
+bare_restore() { # <the carried package: the file | none> — the whole restore driver on a machine without rclone; what is wrong stands in $OUT/verdict
+  local carried="$1"
+  mv "$STANDIN/rclone" "$STANDIN/rclone.hidden"
+  : > "$STANDIN/dpkg.log"; : > "$STANDIN/curl.log"
+  RESTORE_CARRIED=''
+  if [ "$carried" != none ]; then
+    RESTORE_CARRIED="AW_RCLONE_CARRIED_ARCH='amd64'"$'\n'"aw_rclone_carried_package() { base64 -d; } <<'AW_RCLONE_PACKAGE_END'"$'\n'"$(base64 < "$carried" | fold -w 76)"$'\n'"AW_RCLONE_PACKAGE_END"
+  fi
+  PREAMBLE_TREE="$BARE_TREE" restore_box_holds "$RESTORE_TEXT" "${2:-0}" "${3:-the storage box opens}" || true
+  [ -e "$STANDIN/rclone" ] || mv "$STANDIN/rclone.hidden" "$STANDIN/rclone"
+  RESTORE_CARRIED=''
+}
+bare_restore "$WORK/carried-rclone.deb"
+[ ! -s "$OUT/verdict" ] || fail "restore: the whole driver on a bare machine with a carried package: $(cat "$OUT/verdict")"
+grep -q '^dpkg -i ' "$STANDIN/dpkg.log" && [ ! -s "$STANDIN/curl.log" ] && grep -qx "STAGED $RESTORED_ID" "$WORK/restore-whole/out" \
+  || fail 'restore: a bare machine with a carried package did not install it with no request to the mirror and go on to fetch and stage the backup'
+bare_restore none 69 'could not be put on this machine'
+grep -qF -- '--rclone-package <the .deb of the pin that the operator kept>' "$WORK/restore-whole/err" || fail "restore: the refusal of a bare machine with no carried package and no route to the mirror does not name --rclone-package, the way out: $(tail -n 1 "$WORK/restore-whole/err" | cut -c1-300)"
+# The refusal comes before the passphrase is used, so the one complaint of the case is that no passphrase reached gpg.
+[ "$(cat "$OUT/verdict")" = 'no passphrase reached gpg through a file' ] && ! grep -q '^dpkg -i ' "$STANDIN/dpkg.log" && [ -s "$STANDIN/curl.log" ] \
+  || fail "restore: a bare machine with no carried package and no route to the mirror was not refused before the box was opened: $(cat "$OUT/verdict")"
+ok 'restore: on a bare machine with no rclone and no route to the mirror, the package carried with the session is installed with no request and the restore goes on to fetch and stage the backup; with no carried package the restore ends 69 naming rclone before the box is opened'
+# ── the backup driver puts the pinned rclone on the machine itself, before it stops a store ──
+# The driver is run whole with the helper and the metadata of the bare machine's tree ahead of it, as the launcher sends them. The stand-ins of the package
+# manager and of the fetch answer what each case writes; the machine of every case starts with an rclone that answers the pin and no route to the mirror.
+PROVISION_CALL="$(grep -m1 '^require_rclone || die ' "$HERE/master-backup-driver.sh" || true)"
+[ -n "$PROVISION_CALL" ] || fail 'the backup driver carries no line that calls require_rclone and dies with its refusal — the cases of its provisioning prove nothing'
+BARE_AMD64_ADDRESS="$( . "$HERE/read-rclone-pin.sh"; read_rclone_pin "$BARE_TREE" && awk '$1 == "amd64" { print $3 }' <<< "$RCLONE_ROWS" )"
+[[ "$BARE_AMD64_ADDRESS" == https://*"/blobs/sha256:$BARE_DIGEST" ]] || fail "the owned address of the amd64 row of the bare machine's tree is not the address of the fixture package: $BARE_AMD64_ADDRESS"
+provisioning_machine() { # <pinned|old|root-old|offline|install-fails|still-old|no-architecture> — the stand-ins as the machine of that case has them
+  local pin_answer
+  pin_answer="$(printf 'rclone %s\n- os/version: stand-in\n' "$RCLONE_PIN_OF_TREE")"
+  rm -f "$STANDIN/rclone-answer-root" "$STANDIN/dpkg-arch" "$STANDIN/dpkg-fails" "$STANDIN/dpkg-installs-answer" "$STANDIN/curl-serves"
+  printf '%s\n' "$pin_answer" > "$STANDIN/rclone-answer"
+  : > "$STANDIN/dpkg.log"; : > "$STANDIN/curl.log"
+  case "$1" in
+    pinned) ;;
+    old) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer"; printf '%s\n' "$pin_answer" > "$STANDIN/dpkg-installs-answer"; cp "$WORK/carried-rclone.deb" "$STANDIN/curl-serves" ;;
+    root-old) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer-root"; printf '%s\n' "$pin_answer" > "$STANDIN/dpkg-installs-answer"; cp "$WORK/carried-rclone.deb" "$STANDIN/curl-serves" ;;
+    offline) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer" ;;
+    install-fails) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer"; : > "$STANDIN/dpkg-fails"; cp "$WORK/carried-rclone.deb" "$STANDIN/curl-serves" ;;
+    still-old) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer"; cp "$WORK/carried-rclone.deb" "$STANDIN/curl-serves" ;;
+    no-architecture) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer"; echo riscv64 > "$STANDIN/dpkg-arch" ;;
+    *) fail "provisioning_machine knows no machine named $1" ;;
+  esac
+}
+provisioning_holds() { # <the driver's text> <the machine's case> — the whole backup driver on that machine: ends 0 when the pinned rclone was put on it before the first store was stopped, or the driver was refused with 69 before any store, the queue or a folder was touched, as the case says; what is wrong stands in $OUT/verdict
+  local text="$1" kind="$2" installs requests says want_installs want_requests first_id
+  : > "$OUT/verdict"
+  provisioning_machine "$kind"
+  case "$kind" in
+    pinned|old|root-old)
+      want_installs=0 want_requests=0
+      [ "$kind" = pinned ] || want_installs=1 want_requests=1
+      lock_reset block
+      lock_driver provisioned "$text"
+      lock_start provisioned; lock_held provisioned
+      installs="$(grep -c '^dpkg -i ' "$STANDIN/dpkg.log" || true)"; requests="$(grep -c '^curl ' "$STANDIN/curl.log" || true)"
+      [ "$installs" = "$want_installs" ] || echo "$installs package(s) were installed before the first store was stopped, not $want_installs" >> "$OUT/verdict"
+      [ "$requests" = "$want_requests" ] || echo "the mirror was asked $requests time(s) before the first store was stopped, not $want_requests" >> "$OUT/verdict"
+      if [ "$want_requests" = 1 ] && ! grep -qF -- "$BARE_AMD64_ADDRESS" "$STANDIN/curl.log"; then
+        echo "the request made before the first store was stopped was not for the owned address of the amd64 row: $(cut -c1-300 "$STANDIN/curl.log")" >> "$OUT/verdict"
+      fi
+      first_id="$(ls "$LOCK_DIR/provisioned/backups" 2> /dev/null | head -n 1 || true)"
+      lock_let_go
+      [ "$LOCK_CODE" = 0 ] || echo "the driver ended with $LOCK_CODE once let go: $(tail -n 1 "$LOCK_DIR/provisioned/err" | cut -c1-200)" >> "$OUT/verdict"
+      { [ -n "$first_id" ] && [ "$(tail -n 1 "$LOCK_DIR/provisioned/out")" = "BACKUP $first_id" ]; } || echo 'the driver did not end with BACKUP and its id once let go' >> "$OUT/verdict"
+      secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict" ;;
+    *)
+      case "$kind" in
+        offline) says='could not be fetched from the mirror' want_installs=0 want_requests=1 ;;
+        install-fails) says='could not be installed' want_installs=1 want_requests=1 ;;
+        still-old) says='after the installation rclone answers' want_installs=1 want_requests=1 ;;
+        no-architecture) says='has no rclone package among the rows' want_installs=0 want_requests=0 ;;
+      esac
+      lock_reset free
+      lock_driver provisioned "$text"
+      lock_run provisioned
+      installs="$(grep -c '^dpkg -i ' "$STANDIN/dpkg.log" || true)"; requests="$(grep -c '^curl ' "$STANDIN/curl.log" || true)"
+      [ "$LOCK_CODE" = 69 ] || echo "the driver ended with $LOCK_CODE, not 69: $(tail -n 1 "$LOCK_DIR/provisioned/err" | cut -c1-200)" >> "$OUT/verdict"
+      grep -qF -- 'Nothing was stopped' "$LOCK_DIR/provisioned/err" || echo "the refusal did not say 'Nothing was stopped': $(tail -n 1 "$LOCK_DIR/provisioned/err" | cut -c1-200)" >> "$OUT/verdict"
+      grep -qF -- "$says" "$LOCK_DIR/provisioned/err" || echo "the refusal did not say '$says': $(tail -n 1 "$LOCK_DIR/provisioned/err" | cut -c1-200)" >> "$OUT/verdict"
+      [ "$(scale_calls)" = 0 ] || echo "a store was stopped before the refusal: $(scale_calls) scale call(s)" >> "$OUT/verdict"
+      [ "$(patch_calls)" = 0 ] || echo "the Manager's queue was suspended before the refusal: $(patch_calls) patch call(s)" >> "$OUT/verdict"
+      [ ! -e "$LOCK_DIR/provisioned/backups" ] || echo 'a folder of the backup was made before the refusal' >> "$OUT/verdict"
+      [ "$installs" = "$want_installs" ] || echo "$installs package(s) were installed, not $want_installs" >> "$OUT/verdict"
+      [ "$requests" = "$want_requests" ] || echo "the mirror was asked $requests time(s), not $want_requests" >> "$OUT/verdict" ;;
+  esac
+  printed_wrong "$LOCK_DIR/provisioned/out" "$LOCK_DIR/provisioned/err" >> "$OUT/verdict"
+  provisioning_machine pinned
+  [ ! -s "$OUT/verdict" ]
+}
+for kind in pinned old root-old offline install-fails still-old no-architecture; do
+  PREAMBLE_TREE="$BARE_TREE" provisioning_holds "$LOCK_TEXT" "$kind" || fail "backup: the driver on a machine of the case '$kind' did not provision rclone before it stopped a store, or refuse: $(cat "$OUT/verdict")"
+done
+plant "$LOCK_TEXT" "$PROVISION_CALL" 'true'; NO_PROVISION="$PLANTED_TEXT"
+plant "$NO_PROVISION" 'step "the host'"'"'s own file"' "$PROVISION_CALL"$'\n''step "the host'"'"'s own file"'; LATE_PROVISION="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$PROVISION_CALL" 'require_rclone || true'; IGNORES_REFUSAL="$PLANTED_TEXT"
+REFUSAL_WORDS=('the driver ended with' 'the refusal did not say' 'a store was stopped' 'the Manager' 'a folder of the backup' 'the mirror was asked' 'package(s)')
+for planted in NO_PROVISION LATE_PROVISION; do
+  for kind in old root-old; do
+    ! PREAMBLE_TREE="$BARE_TREE" provisioning_holds "${!planted}" "$kind" || fail "the planted driver $planted was not caught on a machine of the case '$kind' — the probe proves nothing"
+    caught_for "driver $planted on a machine of the case '$kind'" 'before the first store was stopped'
+  done
+done
+! PREAMBLE_TREE="$BARE_TREE" provisioning_holds "$NO_PROVISION" offline || fail 'the planted driver without the call was not caught on a machine with an old rclone and no route to the mirror — the probe proves nothing'
+caught_for 'driver without the call on a machine with an old rclone and no route to the mirror' 'the driver ended with 0, not 69' "${REFUSAL_WORDS[@]}"
+! PREAMBLE_TREE="$BARE_TREE" provisioning_holds "$LATE_PROVISION" offline || fail 'the planted driver that provisions after its store loop was not caught on a machine with an old rclone and no route to the mirror — the probe proves nothing'
+caught_for 'driver that provisions after its store loop on a machine with an old rclone and no route to the mirror' 'a store was stopped before the refusal' "${REFUSAL_WORDS[@]}"
+! PREAMBLE_TREE="$BARE_TREE" provisioning_holds "$IGNORES_REFUSAL" offline || fail 'the planted driver that goes on after a refusal of its provisioning was not caught — the probe proves nothing'
+caught_for 'driver that goes on after a refusal of its provisioning' 'the driver ended with 0, not 69' "${REFUSAL_WORDS[@]}"
+ok 'backup: the driver puts the pinned rclone on the machine before it stops a store: on a machine that answers the pin it asks for nothing, on one whose rclone is old, or whose root runs an old one, it fetches the owned address of the amd64 row and installs the package first; with no route to the mirror, a failed installation, an installation that leaves rclone old or an architecture no row has, it ends 69 saying nothing was stopped, with no store scaled, no queue suspended and no folder made; a driver without the call, one with it after the store loop and one that goes on after its refusal are caught'
 backup_box_holds "$LOCK_TEXT" 0 'the storage box opens' || fail "backup: the whole driver names the storage box account on a box that opens: $(cat "$OUT/verdict")"
 backup_box_holds "$LOCK_TEXT" 69 'the storage box does not open' lsd || fail "backup: the whole driver names the storage box account when the box refuses its opening: $(cat "$OUT/verdict")"
 backup_box_holds "$LOCK_TEXT" 69 'could not be carried' upload || fail "backup: the whole driver names the storage box account when the box refuses the carry: $(cat "$OUT/verdict")"
@@ -5276,7 +5510,7 @@ caught_for 'backup carry that lets rclone speak' 'the host of the box stands on 
 plant "$LOCK_TEXT" 'lsf "$BACKUPS/$ID/" 2>/dev/null)' 'lsf "$BACKUPS/$ID/")'
 ! backup_box_holds "$PLANTED_TEXT" 69 'could not be listed' lsf || fail 'the planted listing that lets rclone speak was not caught in the backup — the probe proves nothing'
 caught_for 'backup listing that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
-plant "$LOCK_TEXT" '--stats-log-level NOTICE > "$READBACK_STATS" 2>&1 &' '--stats-log-level NOTICE &'
+plant "$LOCK_TEXT" ' > "$READBACK_STATS" 2>&1 &' ' &'
 ! backup_box_holds "$PLANTED_TEXT" 69 'could not be read back' download || fail 'the planted copy back that lets rclone speak was not caught in the backup — the probe proves nothing'
 caught_for 'backup copy back that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
 plant "$RESTORE_TEXT" 'rclone lsd box: >/dev/null 2>&1' 'rclone lsd box: >/dev/null'
@@ -7603,3 +7837,4 @@ echo "test:   and the restore themselves on a machine — the drill on two maste
 
 node --test "$HERE/create-origin-pull-certificate.test.mjs" || fail 'origin pull certificate'
 node --test "$HERE/apply-cloudflare-zone-security.test.mjs" || fail 'Cloudflare zone security'
+bash "$HERE/rclone.test.sh" || fail 'the rclone of the master backup and restore (lifecycle/rclone.test.sh)'

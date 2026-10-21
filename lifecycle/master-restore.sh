@@ -2,8 +2,14 @@
 # ===========================================================================
 # master-restore.sh — stages a master's backup on a bare machine, from an operator's machine.
 #
-#   bash lifecycle/master-restore.sh lifecycle/config.<machine>.env <backup-id>
+#   bash lifecycle/master-restore.sh lifecycle/config.<machine>.env <backup-id> [--rclone-package <local .deb>]
 #   bash lifecycle/master-restore.sh lifecycle/config.<machine>.env          # lists the backups
+#
+# THE RCLONE OF A BARE MACHINE. The machine needs the rclone this released tree pins (cliTools.rclone) to reach the storage
+# box. Without --rclone-package it is fetched from the owner's mirror, which is the master that is lost on a full recovery.
+# With it, the operator names the .deb of this pin for the machine's architecture that they kept outside the master (it was
+# read from the mirror and is held to the digest of its row in mirror-sources.table); this verifies it here, sends it as data
+# through the session, and the machine verifies it again before it installs it, with no request to the mirror or to GitHub.
 #
 # WHAT A RESTORE IS HERE. Not a machine put back, an installation put back: the same identity
 # (FQDN), the same branch on origin, the same stores — on a different machine, reached through its
@@ -26,10 +32,25 @@ set -uo pipefail
 die() { printf 'restore: %s. Nothing has been changed\n' "$1" >&2; exit "${2:-65}"; }
 say() { printf '%s\n' "$1"; }
 
-CONFIG="${1:-}"
-ID="${2:-}"
-[ $# -le 2 ] || die "lifecycle/master-restore.sh was given more than it takes: $3" 64
-[ -n "$CONFIG" ] || die 'usage: lifecycle/master-restore.sh <config> [backup-id]' 64
+USAGE='usage: lifecycle/master-restore.sh <config> [backup-id] [--rclone-package <local .deb>]'
+CONFIG='' ID='' RCLONE_PACKAGE='' TAKEN_ARGS=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --rclone-package)
+      [ $# -ge 2 ] && [ -n "$2" ] || die "--rclone-package names no file. $USAGE" 64
+      [ -z "$RCLONE_PACKAGE" ] || die "--rclone-package was given twice. $USAGE" 64
+      RCLONE_PACKAGE="$2"; shift 2 ;;
+    *)
+      TAKEN_ARGS=$(( TAKEN_ARGS + 1 ))
+      case "$TAKEN_ARGS" in
+        1) CONFIG="$1" ;;
+        2) ID="$1" ;;
+        *) die "lifecycle/master-restore.sh was given more than it takes: $1" 64 ;;
+      esac
+      shift ;;
+  esac
+done
+[ -n "$CONFIG" ] || die "$USAGE" 64
 case "$ID" in
   ''|[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
   *) die "a backup is named by the moment it was taken, like 20260922T031500Z, and \"$ID\" is not one. Run this without an id to see the ones the storage box holds" 64 ;;
@@ -42,6 +63,11 @@ DRIVER="$HERE/master-restore-driver.sh"
   || die 'require-owner-only.sh is not beside this file. It is the guard every launcher puts on a config' 66
 . "$HERE/require-config-assignments.sh" \
   || die 'require-config-assignments.sh is not beside this file. It is the check every launcher makes on the lines of a config' 66
+. "$HERE/read-rclone-pin.sh" \
+  || die 'read-rclone-pin.sh is not beside this file. It is what tells the machine which rclone to run' 66
+RCLONE_HELPER="$HERE/require-rclone.sh"
+[ -r "$RCLONE_HELPER" ] \
+  || die 'require-rclone.sh is not beside this file. It is what puts the pinned rclone on the machine, and the machine can read no sibling' 66
 command -v ssh >/dev/null 2>&1 \
   || die 'ssh is not on this path, and the staging is one session to the machine'
 
@@ -69,6 +95,14 @@ for named in STORAGE_BOX_HOST STORAGE_BOX_USER STORAGE_BOX_PASSWORD; do
 done
 [ -n "${BACKUP_PASSPHRASE:-}" ] \
   || die "$CONFIG states no BACKUP_PASSPHRASE, and a backup is opened with it or not at all" 65
+
+if [ -n "$RCLONE_PACKAGE" ]; then
+  carry_rclone_package "$HERE/.." "$RCLONE_PACKAGE" \
+    || die "the package named by --rclone-package is refused: $RCLONE_METADATA_ERROR" 65
+else
+  read_rclone_pin "$HERE/.." \
+    || die "the rclone this restore runs is not stated by the tree it was released in: $RCLONE_METADATA_ERROR" 65
+fi
 
 # The door is MACHINE_HOST where the config states one — a standby master reached through its own
 # name while the identity points at the live one (install-machine.sh says why) — and the identity where not.
@@ -102,6 +136,14 @@ fi
   printf 'umask 077\ncat > "$1" <<%sAW_CONFIG_END%s\n' "'" "'"
   tr -d $'\r' < "$CONFIG"
   printf 'AW_CONFIG_END\n'
+  tr -d $'\r' < "$RCLONE_HELPER"
+  printf '%s\n' "$RCLONE_METADATA"
+  if [ -n "$RCLONE_PACKAGE" ]; then
+    # The package is data: base64 holds no character a shell reads, and the quoted delimiter is not in its alphabet.
+    printf "AW_RCLONE_CARRIED_ARCH='%s'\naw_rclone_carried_package() { base64 -d; } <<%sAW_RCLONE_PACKAGE_END%s\n" "$RCLONE_CARRIED_ARCH" "'" "'"
+    base64 < "$RCLONE_PACKAGE" | fold -w 76
+    printf 'AW_RCLONE_PACKAGE_END\n'
+  fi
   tr -d $'\r' < "$DRIVER"
 } | ssh "${BASE[@]}" "${DOOR[@]}" "$TARGET" "bash -s -- \"\$HOME/.aw-restore.env\" $ID"
 STAGED=${PIPESTATUS[1]}
