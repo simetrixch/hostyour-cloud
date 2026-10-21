@@ -69,6 +69,8 @@
 # last check is what makes the first one whole: a checksum line that lost its form is skipped by the filter
 # of the first, and so is the archive under it. The storage box answers rclone's md5sum command over its shell
 # with a failure, or never, so the remote's hash check is off and what proves the bytes is the manifest's sha256.
+# THE STORAGE BOX IS NAMED "the storage box" AND NOTHING MORE in what this prints. rclone's own messages carry the
+# account, so none of them reaches a stream: every call of it that is not read as data has its errors dropped.
 # The copy back is given READBACK_WAIT_SECONDS and one second more for each READBACK_LEAST_BYTES_PER_SECOND of the
 # backup, and when that passes this ends 69 and says so.
 # ===========================================================================
@@ -428,8 +430,8 @@ step "the manifest, and the way out"
 RELEASE=$(grep -E '^release:' "/srv/hostyour-cloud/clusters/active/${FQDN}.yaml" 2>/dev/null | head -1 | sed 's/^release:[[:space:]]*//' | tr -d '"'"'")
 root sh -c "cd '$WORK' && { printf 'FQDN=%s\nSTAGE=%s\nID=%s\nRELEASE=%s\nSTORES=%s\n' '$FQDN' '$STAGE' '$ID' '$RELEASE' '$TAKEN'; sha256sum *.gpg; } > manifest.txt" || die 'the manifest could not be written' 70
 say "release on this machine: ${RELEASE:-unknown}"
-root rclone --config "$RCLONE_CONF" copy "$WORK" "$BACKUPS/$ID/" --quiet || die "the archives could not be carried to $BACKUPS/$ID/ — they stand in $WORK on this machine" 69
-LISTING=$(root rclone --config "$RCLONE_CONF" lsf "$BACKUPS/$ID/") || die "the storage box could not be listed under $BACKUPS/$ID/ — the archives stand in $WORK on this machine" 69
+root rclone --config "$RCLONE_CONF" copy "$WORK" "$BACKUPS/$ID/" --quiet 2>/dev/null || die "the archives could not be carried to $BACKUPS/$ID/ (rclone ended $?) — they stand in $WORK on this machine" 69
+LISTING=$(root rclone --config "$RCLONE_CONF" lsf "$BACKUPS/$ID/" 2>/dev/null) || die "the storage box could not be listed under $BACKUPS/$ID/ (rclone ended $?) — the archives stand in $WORK on this machine" 69
 LISTED=$(printf '%s\n' "$LISTING" | grep -c .)
 EXPECTED=$(( TAKEN + 2 ))
 [ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under $BACKUPS/$ID/ and $EXPECTED were sent" 69
@@ -442,11 +444,11 @@ READBACK_BYTES=$(root du -sb "$WORK" | cut -f1) || die "the size of $WORK could 
 READBACK_LIMIT=$(( READBACK_WAIT_SECONDS + READBACK_BYTES / READBACK_LEAST_BYTES_PER_SECOND ))
 say "reading back $READBACK_BYTES bytes from $BACKUPS/$ID/, within $READBACK_LIMIT s"
 READBACK_COPY_CODE=0
-root timeout --kill-after=30 "$READBACK_LIMIT" rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet || READBACK_COPY_CODE=$?
+root timeout --kill-after=30 "$READBACK_LIMIT" rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet 2>/dev/null || READBACK_COPY_CODE=$?
 case "$READBACK_COPY_CODE" in
   0) ;;
   124) die "the read-back of $BACKUPS/$ID/ did not finish within $READBACK_LIMIT s ($READBACK_BYTES bytes, held to $READBACK_LEAST_BYTES_PER_SECOND bytes a second and $READBACK_WAIT_SECONDS s) and was ended; the archives stand in $WORK on this machine" 69 ;;
-  *) die "the archives could not be read back from $BACKUPS/$ID/ — they stand in $WORK on this machine" 69 ;;
+  *) die "the archives could not be read back from $BACKUPS/$ID/ (rclone ended $READBACK_COPY_CODE) — they stand in $WORK on this machine" 69 ;;
 esac
 READBACK_CODE=0
 root sh -c 'cd "$1" || exit 10

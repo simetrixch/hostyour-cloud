@@ -156,7 +156,7 @@ rclone lsf "$BACKUPS/$ID/manifest.txt" >/dev/null 2>&1 \
 root install -d -m 700 -o root -g root "$STAGING" "$STAGING/$ID" || die "could not make $STAGING/$ID" 78
 FETCH="$STAGING/$ID/sealed"
 root install -d -m 700 "$FETCH"
-root rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$FETCH/" --quiet || die "the backup $ID could not be fetched" 69
+root rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$FETCH/" --quiet 2>/dev/null || die "the backup $ID could not be fetched (rclone ended $?)" 69
 root sh -c "cd '$FETCH' && grep -E '^[0-9a-f]{64}  ' manifest.txt | sha256sum -c --quiet" \
   || die "the checksums in manifest.txt of backup $ID do not hold — the archives are not what was written, and nothing of them is placed" 65
 BACKED_FQDN=$(root grep -E '^FQDN=' "$FETCH/manifest.txt" | cut -d= -f2-)

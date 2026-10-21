@@ -2984,7 +2984,7 @@ cat > "$STANDIN/microk8s" <<'STANDIN_MICROK8S'
 # run that reads running for the driver's first two looks at the release runs, then True), run-forever (one that
 # never ends), late-job (a Job of the queue that is not listed at the first look at the Jobs, is unfinished at the
 # second and third, finished from the fourth, and that .status.active names at its third and fourth look),
-# no-cronjob, not-ready (workload names, one a line, that do not read ready after a scale up), scale-fails
+# no-cronjob, no-claims (a get of a claim ends 1, as on a machine that stands bare), not-ready (workload names, one a line, that do not read ready after a scale up), scale-fails
 # (workload names whose scale up ends 1), stop-fails (workload names whose scale to 0 ends 1 and changes nothing)
 # and stop-lost (workload names whose scale to 0 takes effect and ends 1, as an answer lost on the way back does). The first scale call, while block-first-scale stands beside it, claims
 # the folder blocked and then waits until the file release stands (or 60 seconds pass), which is how a case holds
@@ -3033,7 +3033,9 @@ case "$1" in
   get)
     case "$2" in
       nodes|pods) exit 0 ;;
-      pvc) echo 1; exit 0 ;;
+      pvc)
+        if knob no-claims; then echo 'Error from server (NotFound): persistentvolumeclaims "data-vault-0" not found' >&2; exit 1; fi
+        echo 1; exit 0 ;;
       cronjob/release-queue)
         if knob no-cronjob; then echo 'Error from server (NotFound): cronjobs.batch "release-queue" not found' >&2; exit 1; fi
         case "$jsonpath" in
@@ -3135,9 +3137,13 @@ cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 # upload; a copy from the box does the same while hang-readback stands beside it, after it wrote its process
 # id to hanging. Like the microk8s stand-in it lets go of descriptor 9, the backup's lock, so that the driver
 # alone holds the lock while it waits.
+# Every refusal goes to standard error and to rclone-errors.log, which is where a case reads what refused a call: the drivers
+# print nothing of rclone's own words. Where the file box-fails names a call (lsd, lsf, upload or download), that call ends 1
+# with the words rclone gives a box that refuses it, the host and the user of the box among them.
 exec 9>&-
 here="$(dirname "$0")"
 printf 'rclone %s\n' "$*" >> "$here/argv.log"
+err() { echo "rclone stand-in: $*" >&2; echo "$*" >> "$here/rclone-errors.log"; }
 conf="${RCLONE_CONFIG:-}"
 args=()
 while [ "$#" -gt 0 ]; do
@@ -3156,10 +3162,10 @@ fi
 hashcheck_off=''
 if [ -n "$conf" ] && [ -f "$conf" ]; then
   if grep -qxF "$conf" "$here/rootonly" 2> /dev/null && [ -z "${STANDIN_ELEVATED:-}" ]; then
-    echo "rclone stand-in: Failed to load config file \"$conf\": permission denied" >&2; exit 1
+    err "Failed to load config file \"$conf\": permission denied"; exit 1
   fi
   [ "$(grep -vE '^(shell_type|md5sum_command|sha1sum_command) = ' "$conf" | grep -vxF 'disable_hashcheck = true' | sed -E 's/^([a-z]+) *= */\1=/')" = "$(printf '[box]\ntype=sftp\nhost=%s\nuser=%s\npass=%s' "$host" "$user" "$pass")" ] \
-    || { echo 'rclone stand-in: the config does not define the remote box' >&2; exit 1; }
+    || { err 'the config does not define the remote box'; exit 1; }
   printf '%s %s %s\n' "$(stat -c %a "$(dirname "$conf")")" "$(stat -c %a "$conf")" "$(dirname "$conf")" >> "$here/secrets.seen"
   saved_keys=('shell_type = unix')
   if grep -qxF 'disable_hashcheck = true' "$conf"; then hashcheck_off=1; else saved_keys+=('md5sum_command = md5sum' 'sha1sum_command = sha1sum'); fi
@@ -3170,19 +3176,24 @@ if [ -n "$conf" ] && [ -f "$conf" ]; then
 elif [ "${RCLONE_CONFIG_BOX_TYPE:-}" = sftp ] && [ "${RCLONE_CONFIG_BOX_HOST:-}" = "$host" ] && [ "${RCLONE_CONFIG_BOX_USER:-}" = "$user" ] && [ "${RCLONE_CONFIG_BOX_PASS:-}" = "$pass" ]; then
   [ "${RCLONE_CONFIG_BOX_DISABLE_HASHCHECK:-}" != true ] || hashcheck_off=1
 else
-  echo 'rclone stand-in: the remote box is not defined' >&2; exit 1
+  err 'the remote box is not defined'; exit 1
 fi
+box_fails() { [ -f "$here/box-fails" ] && grep -qxF "$1" "$here/box-fails"; }
+box_refuses() {
+  err "Failed to create file system for \"box:\": sftp: dial tcp $host:22: ssh: handshake failed for user $user: unable to authenticate"; exit 1
+}
 case "$1" in
-  lsd) exit 0 ;;
-  lsf) if [ -d "$here/box-uploaded/${2#box:}" ]; then ls "$here/box-uploaded/${2#box:}"; fi; exit 0 ;;
+  lsd) if box_fails lsd; then box_refuses; fi; exit 0 ;;
+  lsf) if box_fails lsf; then box_refuses; fi; if [ -d "$here/box-uploaded/${2#box:}" ]; then ls "$here/box-uploaded/${2#box:}"; fi; exit 0 ;;
   copy)
     case "$2" in
       box:*)
+        if box_fails download; then box_refuses; fi
         from="$here/box-uploaded/${2#box:}"; [ -d "$from" ] || from="$here/box-backup"
         if [ -z "$hashcheck_off" ]; then
           first="$(ls "$from" | head -n 1)"
-          echo "rclone stand-in: Failed to calculate src hash: failed to calculate md5 hash: failed to run \"md5sum ${2#box:}$first\"" >&2
-          echo "rclone stand-in: corrupted on transfer: md5 hashes differ src \"\" vs dst \"$(md5sum < "$from/$first" | cut -d' ' -f1)\"" >&2
+          err "Failed to calculate src hash: failed to calculate md5 hash: failed to run \"md5sum ${2#box:}$first\""
+          err "corrupted on transfer: md5 hashes differ src \"\" vs dst \"$(md5sum < "$from/$first" | cut -d' ' -f1)\""
           exit 1
         fi
         if [ -e "$here/hang-readback" ]; then
@@ -3191,11 +3202,12 @@ case "$1" in
         fi
         cp -R "$from/." "$3" ;;
       *)
+        if box_fails upload; then box_refuses; fi
         if [ -e "$here/block-first-upload" ] && mkdir "$here/blocked" 2> /dev/null; then
           for _ in $(seq 1 600); do [ -e "$here/release" ] && break; sleep 0.1; done
         fi
         if grep -qxF "$2" "$here/rootonly" 2> /dev/null && [ -z "${STANDIN_ELEVATED:-}" ]; then
-          echo "rclone stand-in: open $2: permission denied" >&2; exit 1
+          err "open $2: permission denied"; exit 1
         fi
         mkdir -p "$here/box-uploaded/${3#box:}" && cp -R "$2/." "$here/box-uploaded/${3#box:}" || exit 1
         if [ -x "$here/after-upload" ]; then "$here/after-upload" "$here/box-uploaded/${3#box:}" || exit 1; fi ;;
@@ -3292,7 +3304,7 @@ secrets_wrong() { # <secrets.seen> — says what is wrong with the folders the g
 # shellcheck disable=SC2034 # the lifted text reads these
 sealed_by() { # <sudo kind> <the text lifted first> <command line...> — its code is the command line's; what it printed stands in $OUT/sealed.out and $OUT/sealed.err, what every stand-in was handed in $STANDIN/argv.log
   local kind="$1" text="$2"; shift 2
-  rm -rf "$STANDIN/secrets.seen" "$STANDIN/rootonly" "$STANDIN/box-uploaded"; : > "$STANDIN/argv.log"
+  rm -rf "$STANDIN/secrets.seen" "$STANDIN/rootonly" "$STANDIN/box-uploaded" "$STANDIN/rclone-errors.log"; : > "$STANDIN/argv.log"
   ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 022
     set -uo pipefail
@@ -3516,6 +3528,10 @@ carry_run() { # the driver's own lines: the work folder made, one store and the 
   seal "$WORK/host--vault-${STAGE}.txt.gpg" cat "$SEAL_DIR/quorum.txt"
   eval "$CARRY_WAY_OUT"
 }
+refusals_said() { # says what the rclone stand-in refused in the case just run, in one line, since the drivers print none of rclone's words; ends 0
+  if [ -s "$STANDIN/rclone-errors.log" ]; then echo "the rclone stand-in refused: $(tr '\n' ' ' < "$STANDIN/rclone-errors.log")"; fi
+  return 0
+}
 printed_wrong() { # <file>... — says which planted line stands in those files, whole: the quorum, the passphrase and the passwords reach the operator's terminal and the log of the run, so none may; ends 0
   local planted
   for planted in planted-unseal-key-1 planted-unseal-key-2 "$PLANTED_PASSPHRASE" "$PLANTED_BOX_PASSWORD" "$PLANTED_PASSWORD"; do
@@ -3530,6 +3546,7 @@ carry_holds() { # <sudo kind> <the text lifted first> <the way out> — ends 0 w
   rm -rf "$SEAL_DIR/backups"
   sealed_by "$kind" "$text" carry_run || code=$?
   printed_wrong "$OUT/sealed.out" "$OUT/sealed.err" >> "$OUT/verdict"
+  refusals_said >> "$OUT/verdict"
   ! grep -q 'command not found' "$OUT/sealed.err" || echo "the way out called a command the case does not define: $(grep 'command not found' "$OUT/sealed.err" | head -n 1)" >> "$OUT/verdict"
   if [ "$code" != 0 ]; then
     echo "the way out ended with $code: $(tail -n 2 "$OUT/sealed.err" | tr '\n' ' ')" >> "$OUT/verdict"
@@ -3620,6 +3637,7 @@ carry_refused() { # <sudo kind> <the way out> <what the box does to the upload: 
   sealed_by "$kind" "$text" carry_run || code=$?
   rm -f "$STANDIN/after-upload"
   printed_wrong "$OUT/sealed.out" "$OUT/sealed.err" >> "$OUT/verdict"
+  refusals_said >> "$OUT/verdict"
   if [ "$code" = 0 ]; then
     echo 'the way out ended with 0 although the box holds other bytes than were sent' >> "$OUT/verdict"
   else
@@ -3721,7 +3739,7 @@ while IFS='|' read -r ns pvc _ _; do
 done < <(STAGE=prod; eval "$BACKUP_STORES"; printf '%s\n' "${STORES[@]}")
 LOCK_STORES="$(ls "$LOCK_DIR/storage" | wc -l | tr -d ' ')"
 lock_reset() { # <free|block|block-upload|hang-readback> — the stand-ins forget the last case; block holds the first scale call of the next one, block-upload its first copy to the box, hang-readback its copy from the box
-  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/hang-readback" "$STANDIN/hanging" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$LOCK_DIR/master-backup.lock"
+  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/hang-readback" "$STANDIN/hanging" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$STANDIN/box-fails" "$STANDIN/rclone-errors.log" "$LOCK_DIR/master-backup.lock"
   : > "$STANDIN/kubectl-calls.log"
   case "$1" in
     block) : > "$STANDIN/block-first-scale" ;;
@@ -4281,7 +4299,7 @@ restore_holds() { # <sudo kind> <the secrets text> <the fetch text> — ends 0 w
   local kind="$1" secrets_text="$2" fetched_text="$3" dir="$WORK/restore-$1" code=0 row ns pvc size stores
   : > "$OUT/verdict"
   rm -rf "$dir"; mkdir -p "$dir/staging" "$dir/checkout"
-  rm -f "$STANDIN/secrets.seen"; : > "$STANDIN/argv.log"
+  rm -f "$STANDIN/secrets.seen" "$STANDIN/rclone-errors.log"; : > "$STANDIN/argv.log"
   ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 022
     set -uo pipefail
@@ -4299,6 +4317,7 @@ restore_holds() { # <sudo kind> <the secrets text> <the fetch text> — ends 0 w
     eval "$secrets_text"
     eval "$fetched_text" ) < /dev/null > "$OUT/restore.out" 2> "$OUT/restore.err" || code=$?
   [ "$code" = 0 ] || echo "the restore's text ended with $code: $(tail -n 2 "$OUT/restore.err" | tr '\n' ' ')" >> "$OUT/verdict"
+  refusals_said >> "$OUT/verdict"
   stores="$(restore_rows | wc -l | tr -d ' ')"
   grep -qF "good: $stores store(s) stand opened" "$OUT/restore.out" || echo 'the restore did not open every store' >> "$OUT/verdict"
   cmp -s "$dir/checkout/platform/secrets/vault-prod.txt" "$SEAL_DIR/quorum.txt" || echo 'the quorum did not arrive whole beside the checkout' >> "$OUT/verdict"
@@ -4363,7 +4382,7 @@ for kind in nopasswd password; do
   caught_for 'secret files written under an open umask' 'its file at 644'
   plant "$RESTORE_SECRETS" 'pass = %s\ndisable_hashcheck = true\n' 'pass = %s\n'
   ! restore_holds "$kind" "$PLANTED_TEXT" "$RESTORE_FETCHED" || fail "the planted box config that leaves the remote hash check on was not caught in the restore under a sudo that reads $kind — the probe proves nothing"
-  caught_for 'box config that leaves the remote hash check on, in the restore' "the restore's text ended with 69" 'did not open every store' 'did not arrive whole'
+  caught_for 'box config that leaves the remote hash check on, in the restore' "the restore's text ended with 69" 'did not open every store' 'did not arrive whole' 'md5 hashes differ'
   grep -qF 'md5 hashes differ' "$OUT/verdict" || fail "the planted box config that leaves the remote hash check on was not refused in the restore for the hash the box cannot give: $(cat "$OUT/verdict")"
 done
 # a clean-up that leaves the folder: the text lifted first is the one that changes
@@ -4374,30 +4393,131 @@ RESTORE_CLEANUP_CLEAN="$RESTORE_CLEANUP"; RESTORE_CLEANUP="$RESTORE_KEPT"
 caught_for 'clean-up that leaves the folder' 'stands after the driver ended'
 RESTORE_CLEANUP="$RESTORE_CLEANUP_CLEAN"
 ok 'the planted restore lines are caught under each sudo: the box password in env or as an argument, the token in -c, the passphrase in env for the quorum and for a store, files under an open umask, a box config that leaves the remote hash check on, a folder left behind'
-# the storage box is named "the storage box" and nothing more in what both drivers print, whether it opens or does not
-box_opening_of() { sed -n '/^rclone lsd box:/,/^good .the storage box opens/p' "$HERE/$1"; } # the lines of a driver that try the box and say so
-box_account_in_output() { # <lifted text> <what rclone ends with> — ends 0 when the fixture's host or user stands in what the text prints; that output stands in $OUT/box.out
-  ( die() { echo "die: $1"; exit "${2:-1}"; }; good() { echo "good: $*"; }
-    STORAGE_BOX_HOST="$BOX_HOST"; STORAGE_BOX_USER="$BOX_USER"; RCLONE_ENDS="$2"
-    rclone() { return "$RCLONE_ENDS"; }
-    eval "$1" ) > "$OUT/box.out" 2>&1 || true
-  grep -qF -e "$BOX_HOST" -e "$BOX_USER" "$OUT/box.out"
+# ── the storage box is "the storage box" and nothing more, in what either driver prints ─────────────────────
+# rclone words a refused box with its host and its user, and the host carries the account number. Each driver runs whole against the
+# stand-ins, on a box that opens and on a box that refuses one call (the opening, the listing, the carry to the box or the copy
+# back from it), and what it printed on each stream is kept in a file of its own. Neither file may hold the host or the user of the
+# fixture, however far into the run they would be said: a planted host or user is put after the opening span, on both streams, and
+# an rclone error that is let through carries both.
+box_account_wrong() { # <standard output file> <standard error file> — says on which stream the host and the user of the fixture stand; ends 0
+  grep -qF -- "$BOX_HOST" "$1" && echo 'the host of the box stands on standard output'
+  grep -qF -- "$BOX_HOST" "$2" && echo 'the host of the box stands on standard error'
+  grep -qF -- "$BOX_USER" "$1" && echo 'the user of the box stands on standard output'
+  grep -qF -- "$BOX_USER" "$2" && echo 'the user of the box stands on standard error'
+  return 0
 }
-for driver in master-backup-driver.sh master-restore-driver.sh; do
-  BOX_OPENING="$(box_opening_of "$driver")"
-  [ -n "$BOX_OPENING" ] || fail "$driver carries no line that tries the storage box — nothing below measures what it prints about it"
-  for rclone_ends in 0 1; do
-    ! box_account_in_output "$BOX_OPENING" "$rclone_ends" || fail "$driver names the storage box account when rclone ends $rclone_ends: $(cat "$OUT/box.out")"
-    grep -qF 'the storage box' "$OUT/box.out" || fail "$driver says nothing of the storage box when rclone ends $rclone_ends — the case would pass on an empty output"
-    PLANTED_OPENS="the storage box '\"\$STORAGE_BOX_HOST\"' opens"
-    PLANTED_REFUSES="the storage box does not open to '\"\$STORAGE_BOX_USER\"'"
-    PLANTED_OPENING="${BOX_OPENING//the storage box opens/$PLANTED_OPENS}"
-    PLANTED_OPENING="${PLANTED_OPENING//the storage box does not open/$PLANTED_REFUSES}"
-    [ "$PLANTED_OPENING" != "$BOX_OPENING" ] || fail "$driver: the planted lines changed nothing — the planted defect proves nothing"
-    box_account_in_output "$PLANTED_OPENING" "$rclone_ends" || fail "$driver: the planted host and user in the box lines were not caught when rclone ends $rclone_ends — the probe proves nothing"
+box_refusal_words() { # ends 0 when the rclone stand-in worded a refusal with both the host and the user of the box, so a case that refuses a call proves something
+  grep -qF -- "$BOX_HOST" "$STANDIN/rclone-errors.log" 2> /dev/null && grep -qF -- "$BOX_USER" "$STANDIN/rclone-errors.log" 2> /dev/null
+}
+backup_box_holds() { # <driver text> <the code it ends with> <what it says> <the box's refused call>... — ends 0 when the whole backup driver ended so, said that, and printed neither the host nor the user of the box; what is wrong stands in $OUT/verdict
+  local text="$1" code="$2" says="$3" dir="$LOCK_DIR/whole"
+  shift 3
+  : > "$OUT/verdict"
+  lock_reset free
+  if [ "$#" -gt 0 ]; then printf '%s\n' "$@" > "$STANDIN/box-fails"; fi
+  : > "$STANDIN/argv.log"
+  lock_driver whole "$text"
+  lock_run whole
+  [ "$LOCK_CODE" = "$code" ] || echo "the backup driver ended with $LOCK_CODE, not $code: $(tail -n 1 "$dir/err" | cut -c1-200)" >> "$OUT/verdict"
+  grep -qF -- "$says" "$dir/out" "$dir/err" || echo "the backup driver did not say '$says'" >> "$OUT/verdict"
+  if [ "$#" -gt 0 ] && ! box_refusal_words; then echo 'the box was not refused with words that carry its host and user, so the case proves nothing' >> "$OUT/verdict"; fi
+  box_account_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
+  printed_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
+  commands_wrong >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+RESTORE_TEXT="$(cat "$HERE/master-restore-driver.sh")"
+restore_box_holds() { # <driver text> <the code it ends with> <what it says> <the box's refused call>... — the same for the whole restore driver, with its three paths moved into the sandbox; what is wrong stands in $OUT/verdict
+  local text="$1" code="$2" says="$3" dir="$WORK/restore-whole" literal restore_code=0
+  shift 3
+  : > "$OUT/verdict"
+  lock_reset free
+  if [ "$#" -gt 0 ]; then printf '%s\n' "$@" > "$STANDIN/box-fails"; fi
+  : > "$STANDIN/argv.log"
+  rm -rf "$dir"; mkdir -p "$dir/staging" "$dir/checkout" "$dir/storage" "$STANDIN/cluster"
+  : > "$STANDIN/cluster/knob-no-claims"
+  for literal in /var/lib/master-restore /srv/hostyour-cloud /var/snap/microk8s/common/default-storage; do
+    driver_names_literal "$text" "$literal" || fail "the restore driver names no $literal — the sandbox of the whole-driver cases proves nothing"
   done
+  printf '%s\n' "$text" | sed -e "s#/var/lib/master-restore#$dir/staging#g" -e "s#/srv/hostyour-cloud#$dir/checkout/platform#g" \
+    -e "s#/var/snap/microk8s/common/default-storage#$dir/storage#g" > "$dir/driver.sh"
+  for literal in /var/lib/master-restore /srv/hostyour-cloud /var/snap/microk8s/common/default-storage; do
+    ! grep -qF -- "$literal" "$dir/driver.sh" || fail "the sandboxed restore driver still names $literal — the whole-driver cases would reach this machine"
+  done
+  { printf "FQDN='%s'\nOPERATOR_USER='op'\nSTAGE='prod'\nELEVATION_PASSWORD='%s'\n" "$CARRY_FQDN" "$PLANTED_PASSWORD"
+    printf "PLATFORM_REPO='acme/cloud'\nPLATFORM_BRANCH='master'\nPLATFORM_REPO_READ_PAT='%s'\n" "$PLANTED_PAT"
+    printf "STORAGE_BOX_HOST='%s'\nSTORAGE_BOX_USER='%s'\nSTORAGE_BOX_PASSWORD='%s'\nBACKUP_PASSPHRASE='%s'\n" "$BOX_HOST" "$BOX_USER" "$PLANTED_BOX_PASSWORD" "$PLANTED_PASSPHRASE"; } > "$dir/config"
+  ( export SUDO_STANDIN=nopasswd SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
+    umask 077
+    exec timeout 120 bash "$dir/driver.sh" "$dir/config" "$RESTORED_ID" ) < /dev/null > "$dir/out" 2> "$dir/err" || restore_code=$?
+  [ "$restore_code" = "$code" ] || echo "the restore driver ended with $restore_code, not $code: $(tail -n 1 "$dir/err" | cut -c1-200)" >> "$OUT/verdict"
+  grep -qF -- "$says" "$dir/out" "$dir/err" || echo "the restore driver did not say '$says'" >> "$OUT/verdict"
+  if [ "$#" -gt 0 ] && ! box_refusal_words; then echo 'the box was not refused with words that carry its host and user, so the case proves nothing' >> "$OUT/verdict"; fi
+  box_account_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
+  printed_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
+  commands_wrong >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+BACKUP_AFTER_OPENING='say "release on this machine: ${RELEASE:-unknown}"'
+RESTORE_AFTER_OPENING='good "backup $ID of $FQDN ($STAGE) fetched — every checksum holds"'
+backup_box_holds "$LOCK_TEXT" 0 'the storage box opens' || fail "backup: the whole driver names the storage box account on a box that opens: $(cat "$OUT/verdict")"
+backup_box_holds "$LOCK_TEXT" 69 'the storage box does not open' lsd || fail "backup: the whole driver names the storage box account when the box refuses its opening: $(cat "$OUT/verdict")"
+backup_box_holds "$LOCK_TEXT" 69 'could not be carried' upload || fail "backup: the whole driver names the storage box account when the box refuses the carry: $(cat "$OUT/verdict")"
+backup_box_holds "$LOCK_TEXT" 69 'could not be listed' lsf || fail "backup: the whole driver names the storage box account when the box refuses the listing: $(cat "$OUT/verdict")"
+backup_box_holds "$LOCK_TEXT" 69 'could not be read back' download || fail "backup: the whole driver names the storage box account when the box refuses the copy back: $(cat "$OUT/verdict")"
+restore_box_holds "$RESTORE_TEXT" 0 'the storage box opens' || fail "restore: the whole driver names the storage box account on a box that opens: $(cat "$OUT/verdict")"
+grep -qx "STAGED $RESTORED_ID" "$WORK/restore-whole/out" || fail 'restore: the whole driver did not end with STAGED and the id on a box that opens — the case would pass on a run that stopped early'
+restore_box_holds "$RESTORE_TEXT" 69 'the storage box does not open' lsd || fail "restore: the whole driver names the storage box account when the box refuses its opening: $(cat "$OUT/verdict")"
+restore_box_holds "$RESTORE_TEXT" 66 'holds no backup' lsf || fail "restore: the whole driver names the storage box account when the box refuses the listing: $(cat "$OUT/verdict")"
+restore_box_holds "$RESTORE_TEXT" 69 'could not be fetched' download || fail "restore: the whole driver names the storage box account when the box refuses the fetch: $(cat "$OUT/verdict")"
+ok 'both drivers, run whole, print "the storage box" without its host or user: on a box that opens, and on a box that refuses the opening, the listing, the carry or the copy back, with rclone wording each refusal with both'
+
+# planted defects: each value, on each stream, said after the opening span or in the opening lines, and rclone's own errors let through
+for driver in backup restore; do
+  case "$driver" in
+    backup) text="$LOCK_TEXT"; holds=backup_box_holds; after="$BACKUP_AFTER_OPENING"; opens="good 'the storage box opens'"; refuses="die 'the storage box does not open — nothing was stopped' 69" ;;
+    restore) text="$RESTORE_TEXT"; holds=restore_box_holds; after="$RESTORE_AFTER_OPENING"; opens="good 'the storage box opens'"; refuses="die 'the storage box does not open — nothing was placed' 69" ;;
+  esac
+  for value in host user; do
+    case "$value" in host) named='$STORAGE_BOX_HOST' ;; *) named='$STORAGE_BOX_USER' ;; esac
+    plant "$text" "$after" "$after; say \"said: $named\""
+    ! "$holds" "$PLANTED_TEXT" 0 'the storage box opens' || fail "the planted $value of the box said on standard output after the opening span was not caught in the $driver — the probe proves nothing"
+    caught_for "$driver driver that says the $value of the box on standard output" "the $value of the box stands on standard output"
+    plant "$text" "$after" "$after; printf '%s\\n' \"$named\" >&2"
+    ! "$holds" "$PLANTED_TEXT" 0 'the storage box opens' || fail "the planted $value of the box said on standard error after the opening span was not caught in the $driver — the probe proves nothing"
+    caught_for "$driver driver that says the $value of the box on standard error" "the $value of the box stands on standard error"
+  done
+  plant "$text" "$opens" "good \"the storage box \$STORAGE_BOX_HOST opens\""
+  ! "$holds" "$PLANTED_TEXT" 0 'opens' || fail "the planted host of the box in the line that says it opens was not caught in the $driver — the probe proves nothing"
+  caught_for "$driver driver that says the host of the box where it opens" 'the host of the box stands on standard output'
+  plant "$text" "$refuses" "die \"the storage box does not open to \$STORAGE_BOX_USER — nothing was changed\" 69"
+  ! "$holds" "$PLANTED_TEXT" 69 'the storage box does not open' lsd || fail "the planted user of the box in the line that says it does not open was not caught in the $driver — the probe proves nothing"
+  caught_for "$driver driver that says the user of the box where it does not open" 'the user of the box stands on standard error'
 done
-ok 'both drivers print "the storage box" without the host or user of the box, when it opens and when it does not, and a planted host or user in those lines is caught'
+plant "$LOCK_TEXT" 'rclone lsd box: >/dev/null 2>&1' 'rclone lsd box: >/dev/null'
+! backup_box_holds "$PLANTED_TEXT" 69 'the storage box does not open' lsd || fail 'the planted opening of the box that lets rclone speak was not caught in the backup — the probe proves nothing'
+caught_for 'backup opening that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$LOCK_TEXT" 'copy "$WORK" "$BACKUPS/$ID/" --quiet 2>/dev/null' 'copy "$WORK" "$BACKUPS/$ID/" --quiet'
+! backup_box_holds "$PLANTED_TEXT" 69 'could not be carried' upload || fail 'the planted carry that lets rclone speak was not caught in the backup — the probe proves nothing'
+caught_for 'backup carry that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$LOCK_TEXT" 'lsf "$BACKUPS/$ID/" 2>/dev/null)' 'lsf "$BACKUPS/$ID/")'
+! backup_box_holds "$PLANTED_TEXT" 69 'could not be listed' lsf || fail 'the planted listing that lets rclone speak was not caught in the backup — the probe proves nothing'
+caught_for 'backup listing that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$LOCK_TEXT" '"$READBACK" --quiet 2>/dev/null' '"$READBACK" --quiet'
+! backup_box_holds "$PLANTED_TEXT" 69 'could not be read back' download || fail 'the planted copy back that lets rclone speak was not caught in the backup — the probe proves nothing'
+caught_for 'backup copy back that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$RESTORE_TEXT" 'rclone lsd box: >/dev/null 2>&1' 'rclone lsd box: >/dev/null'
+! restore_box_holds "$PLANTED_TEXT" 69 'the storage box does not open' lsd || fail 'the planted opening of the box that lets rclone speak was not caught in the restore — the probe proves nothing'
+caught_for 'restore opening that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$RESTORE_TEXT" 'lsf "$BACKUPS/$ID/manifest.txt" >/dev/null 2>&1' 'lsf "$BACKUPS/$ID/manifest.txt" >/dev/null'
+! restore_box_holds "$PLANTED_TEXT" 66 'holds no backup' lsf || fail 'the planted listing of the manifest that lets rclone speak was not caught in the restore — the probe proves nothing'
+caught_for 'restore listing that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$RESTORE_TEXT" '"$FETCH/" --quiet 2>/dev/null' '"$FETCH/" --quiet'
+! restore_box_holds "$PLANTED_TEXT" 69 'could not be fetched' download || fail 'the planted fetch that lets rclone speak was not caught in the restore — the probe proves nothing'
+caught_for 'restore fetch that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+ok 'the planted drivers are caught: the host or the user said after the opening span on either stream, in the line that says the box opens or does not, and every call of rclone that is let speak'
 rm -rf "$STANDIN" "$SEAL_DIR" "$WORK"/placement-*
 
 # ===========================================================================
