@@ -63,7 +63,7 @@ global:
     r2:
       accountId: 7d6b0eaa4cff67abf485661f0022e065
       jurisdiction: eu
-  deployRepo: digitaplatform/digita-deploy
+  platformUrl: https://github.com/simetrixch/hostyour-cloud.git
   vaultKubernetesAuthPath: kubernetes-apps6
   nodeCidrs:
     - 136.243.202.195/32
