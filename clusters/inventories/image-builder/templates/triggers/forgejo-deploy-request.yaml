@@ -1,0 +1,78 @@
+{{- if .Values.eventListener.enabled }}
+{{- /*
+FORGEJO DEPLOY-REQUEST push → the unit's own release pipeline, the twin of github-deploy-request.yaml for a
+unit whose repository stands on the installation's Forgejo: a push of the ref deploy/<stage>/<release-tag>
+fires ONE PipelineRun `<unit>-release` in the unit's build namespace, created from the same TriggerTemplate
+deploy-request, and the routing by body.repository.name is the one that file states.
+
+THE KEY IS FORGEJO'S OWN: the github interceptor checks the signature against
+image-builder-forgejo-webhook-secret, as templates/triggers/forgejo-release.yaml does, so a GitHub delivery
+fails here and a Forgejo delivery fails at the GitHub Trigger.
+
+TAG DELETION is NOT a release. Gitea's push payload carries no `deleted`; a deleted tag is the push whose
+`after` is all zeros, which is what the filter refuses. The grammar is global.releaseTagFilter in a CEL RAW
+string, as in github-deploy-request.yaml.
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: forgejo-deploy-request
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: forgejo
+spec:
+  interceptors:
+    - ref:
+        name: github
+      params:
+        - name: secretRef
+          value:
+            secretName: image-builder-forgejo-webhook-secret
+            secretKey: forgejo
+        - name: eventTypes
+          value: ["push"]
+    - ref:
+        name: cel
+      params:
+        - name: overlays
+          value:
+            - key: unit
+              expression: body.repository.name.lowerAscii()
+            # ["refs","tags","deploy","<stage>","<release-tag>"]: the filter below has proven that shape.
+            - key: stage
+              expression: body.ref.split('/')[3]
+            - key: release-tag
+              expression: body.ref.split('/')[4]
+            - key: git-url
+              expression: body.repository.clone_url
+        - name: filter
+          value: >-
+            body.ref.matches(r'^refs/tags/deploy/(dev|test|prod)/{{ .Values.global.releaseTagFilter }}$') &&
+            !body.after.matches(r'^0+$')
+  bindings:
+    - ref: forgejo-deploy-request-binding
+  template:
+    ref: deploy-request
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: forgejo-deploy-request-binding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: forgejo
+spec:
+  params:
+    - name: unit
+      value: $(extensions.unit)
+    - name: stage
+      value: $(extensions.stage)
+    - name: release-tag
+      value: $(extensions.release-tag)
+    - name: git-url
+      value: $(extensions.git-url)
+{{- end }}

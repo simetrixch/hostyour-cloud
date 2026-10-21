@@ -20,17 +20,41 @@ pushes to, under the owner's prefix for the platform's own builds alone
 {{- end -}}
 
 {{/*
+consumer-build.forgejoHost — the host of the Forgejo this installation's repositories stand on:
+global.repositoryCredentials.forgejo.host where .enabled is true, the answer the branch program writes
+into installation/values/repository-credentials.yaml, and nothing where the installation has none.
+*/}}
+{{- define "consumer-build.forgejoHost" -}}
+{{- $forgejo := dig "repositoryCredentials" "forgejo" dict .Values.global -}}
+{{- if $forgejo.enabled -}}
+{{- required "consumer-build: global.repositoryCredentials.forgejo.host is required when the Forgejo is enabled (installation/values/repository-credentials.yaml)" $forgejo.host -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+consumer-build.repoHost — the host of the unit's repository, unit.repoURL being
+https://<host>/<owner>/<repo>[.git]: github.com, or the Forgejo of the installation. Any other host
+fails the render by name.
+*/}}
+{{- define "consumer-build.repoHost" -}}
+{{- $url := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
+{{- $hosts := list "github.com" -}}
+{{- with include "consumer-build.forgejoHost" . }}{{ $hosts = append $hosts . }}{{ end -}}
+{{- $host := regexReplaceAll "^https://([^/]+)/[^/]+/[^/]+$" $url "${1}" -}}
+{{- if or (eq $host $url) (not (has $host $hosts)) }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://<host>/<owner>/<repository>[.git] on %s, and the build's npm scope is read off its owner" $url (join " or " $hosts)) }}{{ end -}}
+{{- $host -}}
+{{- end -}}
+
+{{/*
 consumer-build.repoOwner — the organisation that owns the unit's repository, read off
-unit.repoURL (https://github.com/<owner>/<repo>.git). It is the npm scope the unit's packages
-are published under, and the prefix the platform's own builds are pushed under: the publish
-pipeline publishes a package of this scope and no other (templates/pipeline-publish.yaml), so the
-scope is a fact of the registration and never a value of this chart.
+unit.repoURL (https://<host>/<owner>/<repo>.git, see consumer-build.repoHost). It is the npm scope the
+unit's packages are published under, and the prefix the platform's own builds are pushed under: the
+publish pipeline publishes a package of this scope and no other (templates/pipeline-publish.yaml), so
+the scope is a fact of the registration and never a value of this chart.
 */}}
 {{- define "consumer-build.repoOwner" -}}
-{{- $url := required "consumer-build: unit.repoURL is required (stamped by the fan-out ApplicationSet)" .Values.unit.repoURL -}}
-{{- $owner := regexReplaceAll "^https://github\\.com/([^/]+)/[^/]+$" $url "${1}" -}}
-{{- if eq $owner $url }}{{ fail (printf "consumer-build: unit.repoURL %q is not https://github.com/<owner>/<repository>[.git], and the build's npm scope is read off its owner" $url) }}{{ end -}}
-{{- $owner -}}
+{{- $null := include "consumer-build.repoHost" . -}}
+{{- regexReplaceAll "^https://[^/]+/([^/]+)/[^/]+$" .Values.unit.repoURL "${1}" -}}
 {{- end -}}
 
 {{- define "consumer-build.hasBuilds" -}}
@@ -55,7 +79,7 @@ scope is a fact of the registration and never a value of this chart.
      nothing for any other unit or cluster. Its publish run fills the mirror the platform's images are
      pulled from. */}}
 {{- define "consumer-build.isPlatformMirror" -}}
-{{- if and .Values.unit (eq (.Values.unit.repoURL | default "") "https://github.com/simetrixch/hostyour-cloud.git") (eq (printf "%s/%s" (include "common.registryHost" .) (include "consumer-build.repoOwner" . | lower)) (include "common.buildRegistry" .)) -}}
+{{- if and .Values.unit (eq (.Values.unit.repoURL | default "") (required "consumer-build: global.platformUrl is required (platform values chain)" .Values.global.platformUrl)) (eq (printf "%s/%s" (include "common.registryHost" .) (include "consumer-build.repoOwner" . | lower)) (include "common.buildRegistry" .)) -}}
 true
 {{- end -}}
 {{- end -}}
@@ -74,7 +98,7 @@ true
      each release under its digest and then under its tag, and release/release.sh of ansiwise-cli waits for
      that tag before it pins the engine. */}}
 {{- define "consumer-build.isPlatformEngine" -}}
-{{- if and .Values.unit (eq (.Values.unit.repoURL | default "") "https://github.com/simetrixch/ansiwise-cli.git") (eq (printf "%s/%s" (include "common.registryHost" .) (include "consumer-build.repoOwner" . | lower)) (include "common.buildRegistry" .)) -}}
+{{- if and .Values.unit (eq (.Values.unit.repoURL | default "") (printf "%s/ansiwise-cli.git" (regexReplaceAll "/[^/]+$" (required "consumer-build: global.platformUrl is required (platform values chain)" .Values.global.platformUrl) ""))) (eq (printf "%s/%s" (include "common.registryHost" .) (include "consumer-build.repoOwner" . | lower)) (include "common.buildRegistry" .)) -}}
 true
 {{- end -}}
 {{- end -}}
@@ -83,6 +107,11 @@ true
      the copies, at its -immutable tag, because the plain tag is rebuilt every night. */}}
 {{- define "consumer-build.toolsImage" -}}
 alpine/k8s:1.35.6@sha256:b7a12c5ddf261994c33d2eaaa06fd69a0803ff6b38683bfa3d30a76dcdf92807
+{{- end -}}
+{{/* The image of the bump's search-and-write step, which pushes over SSH as well as over HTTPS: bash, git, openssh, curl, yq and
+     helm, pinned by the digest of its index. */}}
+{{- define "consumer-build.bumpImage" -}}
+dtzar/helm-kubectl:4.3.0@sha256:d5ecd564b636549b4f20012e713dcbac7af4dcac20665e2ca87663452d6654e6
 {{- end -}}
 {{- define "consumer-build.skopeoImage" -}}
 quay.io/skopeo/stable:v1.22.3-immutable@sha256:c0ee1f4edca5c01cb8d5611124f92f3cc47196ecab68aee5d0f90834e00574d5

@@ -21,9 +21,10 @@ fail() { echo "check: FAIL — $1"; exit 1; }
 # the first two have run costs a minute for an answer that was knowable at the start.
 #
 # base64 decodes rendered values; yq reads the version stamp declarations; promtool runs the rule
-# tests; patch reverses the patch of the vendored Plane chart.
+# tests; patch reverses the patch of the vendored Plane chart; ssh, ssh-keygen and sshd run the
+# SSH files of the bump against a one-shot server.
 missing=""
-for tool in helm gitleaks base64 yq node promtool patch; do
+for tool in helm gitleaks base64 yq node promtool patch ssh ssh-keygen sshd; do
   command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
 done
 [ -n "$missing" ] && fail "these tools are not on this path:$missing"
@@ -1194,8 +1195,7 @@ echo "check: the credentials of the argocd-secrets chart and of its slave twin f
 # Applications, but not the only one that names a repository: a chart an ApplicationSet renders reads global.platformUrl
 # and global.deployUrl from the platform chain, or is handed the URL by the ApplicationSet, and a literal in it is a
 # repository the map moved and the chart did not. The chain is the one the render loop above hands each chart at stage
-# dev. The unit mode of clusters/inventories/consumer-build is not scanned: its build plane still names the platform
-# repository on GitHub until the build plane reads it from the map, and the scan would report that on every run.
+# dev. The unit mode of clusters/inventories/consumer-build is scanned for a unit on the Forgejo, below.
 chain_charts=0
 chain_found=""
 for chart in clusters/inventories/*/ clusters/units/*/ clusters/slaves/*/; do
@@ -1223,6 +1223,42 @@ rm -rf "$planted_reconciler" && cp -R clusters/units/reconciler "$planted_reconc
 [ -n "$(moved_repository_findings "$planted_reconciler" chain)" ] \
   || fail "the scan of a chart stays silent on a chart that renders the platform repository on github.com"
 echo "check: $chain_charts charts name no platform or deploy repository on GitHub for a Forgejo map; the scan refuses the planted chart that renders the platform on github.com and takes the real charts."
+
+# THE UNIT MODE OF consumer-build, FOR A UNIT ON THE FORGEJO. The build plane of a unit whose repository stands on the
+# Forgejo reads the platform and the deploy repository from the map and pushes the unit over SSH, so a line of its render
+# that names github.com is a repository the map moved and the chart did not. The lines that name github.com on purpose are
+# three, and each is matched whole: a comment, the two lines of push_url that tell a github.com carrier from the forge's,
+# and the path under which the owner's mirror keeps a third party's release asset (.../simetrixch/github.com/<owner>/...).
+# A unit on github.com is not scanned: its own repository is named there, and the scan reads for the ones it is not.
+# $1 is the unit's repoURL, $2 the platform repository, $3 the deploy repository, $4 the builds as JSON. One finding per line.
+forgejo_unit_findings() {
+  local out
+  case "$1" in https://github.com/*) return 0 ;; esac
+  out="$(helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
+    -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
+    -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" -f scripts/standin/repository-credentials.yaml \
+    --set "global.platformUrl=$2" --set "global.deployUrl=$3" \
+    --set-json "unit={\"name\":\"shop\",\"repoURL\":\"$1\",\"buildsJson\":$(printf '%s' "$4" | yq -o=json -I=0 'to_json(0)')}" 2>&1)" \
+    || { printf '  the render of consumer-build in unit mode for the unit %s fails: %s\n' "$1" "$(printf '%s\n' "$out" | head -n 1)"; return 0; }
+  printf '%s\n' "$out" | grep -n 'github\.com' \
+    | grep -vE '^[0-9]+:[[:space:]]*#|host\}" = github\.com \]; then$|neither github\.com nor this installation|/simetrixch/github\.com/[a-z0-9-]+/' \
+    | sed 's/^/  a line of the render of a Forgejo unit still names github.com: /' || true
+}
+forge_unit="https://$forge_host/check/shop.git"
+for builds in '["shop"]' '[]'; do
+  found="$(forgejo_unit_findings "$forge_unit" "$forge_platform" "$forge_deploy" "$builds")"
+  if [ -n "$found" ]; then
+    echo "$found"
+    fail "the render of a Forgejo unit that builds $builds names github.com"
+  fi
+done
+[ -n "$(forgejo_unit_findings "$forge_unit" "$github_platform" "$forge_deploy" '["shop"]')" ] \
+  || fail "the scan of a Forgejo unit stays silent on a render that names the platform repository on github.com"
+[ -n "$(forgejo_unit_findings "$forge_unit" "$forge_platform" "$github_deploy" '["shop"]')" ] \
+  || fail "the scan of a Forgejo unit stays silent on a render that names the deploy repository on github.com"
+[ -z "$(forgejo_unit_findings https://github.com/swissbookai/swissbookai.git "$github_platform" "$github_deploy" '["swissbookai"]')" ] \
+  || fail "the scan of a Forgejo unit reports a unit that stands on github.com"
+echo "check: the unit mode of consumer-build names no github.com line for a unit on the Forgejo, with and without builds; the scan refuses the planted renders that name the platform and the deploy repository on github.com and takes a unit on github.com."
 
 # THE PROJECT OF A UNIT, AS THE APPLICATIONSET HANDS THE RECONCILER ITS VALUES. clusters/units/reconciler is given
 # no platform chain: the unit-reconciler ApplicationSet of clusters/argocd/files/units-appset.yaml hands it the
@@ -1926,9 +1962,12 @@ fault="$(plant_vendor retimed "find $pl/charts -type f -exec touch -d 2001-01-01
 echo "check: the vendored plane-ce folder is the upstream chart plus plane-ce-$(yq '.version' clusters/inventories/plane/charts/plane-ce/Chart.yaml).patch, and nothing else; the check refuses ${#planted_vendor[@]} planted defects and passes the innocent case."
 
 push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
+  local forge=()
+  # A unit on the Forgejo renders on the map of an installation that has one.
+  case "$2" in "https://$forge_host/"*) forge=(-f scripts/standin/repository-credentials.yaml --set "global.platformUrl=$forge_platform" --set "global.deployUrl=$forge_deploy") ;; esac
   helm template consumer-build clusters/inventories/consumer-build --namespace argocd --api-versions monitoring.coreos.com/v1 --api-versions monitoring.coreos.com/v1alpha1 \
     -f clusters/platform/values-common.yaml -f clusters/platform/values-dev.yaml \
-    -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" \
+    -f clusters/inventories/consumer-build/values-common.yaml -f "$cluster_map" -f "$registration" ${forge[@]+"${forge[@]}"} \
     --set "global.buildRegistry=$4" --set-json "unit={\"name\":\"$1\",\"repoURL\":\"$2\",\"buildsJson\":$(printf '%s' "$3" | yq -o=json -I=0 'to_json(0)')}" \
     > "$work/push-render" 2>&1 \
     || { cat "$work/push-render" >&2; echo "consumer-build does not render the release of unit $1"; return; }
@@ -1941,6 +1980,7 @@ push_cases=(
   "a unit of the owner that is not buildRegistryUnit|hostyour-demo-consumer|https://github.com/simetrixch/hostyour-demo-consumer.git|[\"hostyour-demo-consumer\"]|$master_registry|"
   "a unit of another owner|digita-platform|https://github.com/digitaplatform/digita-platform.git|[\"digita-platform\"]|$master_registry|"
   "the platform's builds on another installation|hostyour-manager|https://github.com/simetrixch/hostyour-manager.git|[\"manager\",\"gate-runner\",\"dbtools\"]|$trunk_registry|"
+  "a unit on the Forgejo of the installation|shop|$forge_unit|[\"shop\"]|$master_registry|"
 )
 push_fault() { # unit, repoURL, builds, buildRegistry, prefix -> the first build whose push path is not <prefix><build>, or nothing
   local want got

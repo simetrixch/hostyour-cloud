@@ -1,9 +1,8 @@
 {{- if .Values.eventListener.enabled }}
 {{- /*
 The ONE webhook of the build plane. Two GitHub Triggers attach (templates/triggers/),
-and no push matches two of them; the two Forgejo Triggers of
-templates/triggers/forgejo-release.yaml check another key, so no delivery matches
-a Trigger of both:
+and no push matches two of them; the Forgejo Triggers of templates/triggers/
+check another key, so no delivery matches a Trigger of both:
 github-deploy-request — a push of the ref deploy/<stage>/<release-tag> routes
 into the unit's own <unit>-release Pipeline in namespace <unit>-build, the
 release cycle.
@@ -11,6 +10,9 @@ github-release-publish — a push of the release tag itself routes into the
 unit's own <unit>-publish Pipeline there, which publishes its npm packages. GitHub does
 nothing else here: it only fires this webhook; build, push, bump, sync and
 check all run in the build plane.
+forgejo-deploy-request and forgejo-release-publish are their twins for a unit whose repository
+stands on the installation's Forgejo, and create from the same TriggerTemplates; forgejo-tag-push and
+forgejo-pull-request are the forge flow's own.
 
 The Service backing the EventListener is named `el-image-builder` by Tekton's
 controller (prefix `el-` + EventListener name). Our Ingress points at it.
@@ -30,6 +32,8 @@ spec:
     - triggerRef: github-release-publish # <release-tag> push → <unit>-publish in <unit>-build
     - triggerRef: forgejo-tag-push # a Forgejo tag push → forgejo-release in forgejo-build
     - triggerRef: forgejo-pull-request # a Forgejo pull request → forgejo-release in forgejo-build
+    - triggerRef: forgejo-deploy-request # deploy/<stage>/<release-tag> push on Forgejo → <unit>-release in <unit>-build
+    - triggerRef: forgejo-release-publish # <release-tag> push on Forgejo → <unit>-publish in <unit>-build
   resources:
     kubernetesResource:
       spec:

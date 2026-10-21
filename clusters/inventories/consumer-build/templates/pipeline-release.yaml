@@ -96,7 +96,8 @@ namespace, so the credential Secrets they envFrom by name are rendered here
 {{- $builds := include "consumer-build.builds" . | fromJsonArray -}}
 {{- $buildsAtOnce := int (required "consumer-build: ciCapacity.releaseBuildsAtOnce is required (values-common.yaml, the images of one release that build at the same time)" .Values.ciCapacity.releaseBuildsAtOnce) -}}
 {{- if lt $buildsAtOnce 1 }}{{ fail "consumer-build: ciCapacity.releaseBuildsAtOnce must be at least 1" }}{{ end -}}
-{{- $cloudURL := "https://github.com/simetrixch/hostyour-cloud.git" -}}
+{{- $cloudURL := required "consumer-build: global.platformUrl is required (platform values chain)" .Values.global.platformUrl -}}
+{{- $forgejoHost := include "consumer-build.forgejoHost" . -}}
 {{- $channelStages := required "consumer-build: global.channelStages is required (platform values chain)" .Values.global.channelStages -}}
 {{- /* The channel table, serialized for shell consumption: one line per
        channel, `<channel> <stage> <stage>…`. Helm ranges maps key-sorted, so
@@ -892,7 +893,7 @@ spec:
                           fieldPath: metadata.namespace
         steps:
           - name: search-and-write
-            image: alpine/k8s:1.35.6
+            image: {{ include "consumer-build.bumpImage" . }}
             env:
               - name: UNIT
                 value: {{ $unit | quote }}
@@ -925,6 +926,16 @@ spec:
               # write into somebody else's deploy repository.
               - name: DEPLOY_URL
                 value: {{ required "consumer-build: global.deployUrl is required (clusters/active/<fqdn>.yaml, written by deploy-branch as https://<forge host>/<deploy repository>.git — the repository holding this installation's tenant charts)" .Values.global.deployUrl | quote }}
+{{- if $forgejoHost }}
+              # The Forgejo of this installation: a unit's repository on it is pushed over SSH with the unit's own deploy key
+              # (forge_ssh_setup, push_url). The step dials the Service by its name, and the host key comes from bump-git-https.
+              - name: FORGEJO_HOST
+                value: {{ $forgejoHost | quote }}
+              - name: FORGEJO_SSH_HOSTNAME
+                value: {{ printf "%s.%s.svc" .Values.bump.forgejo.service .Values.bump.forgejo.namespace | quote }}
+              - name: FORGEJO_SSH_PORT
+                value: {{ .Values.bump.forgejo.servicePort | quote }}
+{{- end }}
               # toJson for the same newline-preserving reason as in gate-stage.
               - name: CHANNEL_STAGES
                 value: {{ $channelTable | toJson }}
@@ -1023,7 +1034,7 @@ spec:
 
               git config --global user.name  "image-builder"
               git config --global user.email "image-builder@platform"
-              # All carriers live on the same git host, so the credential
+              # Repositories share a git host, so the credential
               # records are PATH-qualified and git must select by repo path.
               git config --global credential.useHttpPath true
               # The store is armed UNCONDITIONALLY, because the three records
@@ -1038,6 +1049,30 @@ spec:
               git config --global credential.helper "store --file=${CREDENTIALS_FILE}"
               if [ -n "${GITCREDENTIALS:-}" ]; then
                 printf '%s\n' "${GITCREDENTIALS}" > "${CREDENTIALS_FILE}"
+              fi
+
+              # forge_ssh_setup — the SSH files of a plane with a Forgejo: ssh_config with the one Host block of the forge, the
+              # Service it dials, the alias its host key is stored under and no IdentityFile, because each push names its own key
+              # in GIT_SSH_COMMAND; and known_hosts with the host key the chart delivers, which is the only host key trusted.
+              forge_ssh_setup() {
+                if [ -z "${FORGEJO_HOST_KEY:-}" ]; then
+                  echo "bump: FAIL — bump-git-https holds no FORGEJO_HOST_KEY while this plane names the forge ${FORGEJO_HOST}; an SSH push could not verify the host it pushes to (<env>/app/forgejo-host-key, written by deploy-platform-services)" >&2
+                  return 1
+                fi
+                SSH_DIR="$(mktemp -d)"
+                printf '%s\n' \
+                  "Host ${FORGEJO_HOST}" \
+                  "  HostName ${FORGEJO_SSH_HOSTNAME}" \
+                  "  Port ${FORGEJO_SSH_PORT}" \
+                  "  HostKeyAlias ${FORGEJO_HOST}" \
+                  "  User git" \
+                  "  IdentitiesOnly yes" \
+                  "  StrictHostKeyChecking yes" \
+                  "  UserKnownHostsFile ${SSH_DIR}/known_hosts" > "${SSH_DIR}/ssh_config"
+                printf '%s %s\n' "${FORGEJO_HOST}" "${FORGEJO_HOST_KEY}" > "${SSH_DIR}/known_hosts"
+              }
+              if [ -n "${FORGEJO_HOST:-}" ]; then
+                forge_ssh_setup
               fi
 
               # The declared images of this release — the manifest in the
@@ -1068,9 +1103,35 @@ spec:
               # what it ran. MOVED AND NOT MERGED, as always: the platform owns
               # the branch, and each release replaces it.
               OWN_CHART="$(yq eval '.chart.path // ""' "${SRC}/deploy/platform.yaml")"
-              # own_checkout <dir> — this unit's release commit, cloned at its tag.
+              # push_url <https url> — where a repository is cloned from and pushed to: a github.com repository over HTTPS, as the
+              # credential store holds it, and a repository on the Forgejo of this installation over SSH, with the key of its unit.
+              # Any other host is refused by name.
+              push_url() {
+                local url="$1" host
+                host="${url#https://}"
+                host="${host%%/*}"
+                if [ "${host}" = github.com ]; then
+                  printf '%s\n' "${url}"
+                elif [ -z "${FORGEJO_HOST:-}" ]; then
+                  echo "bump: FAIL — ${url} is on a forge and this plane names none" >&2
+                  return 1
+                elif [ "${host}" = "${FORGEJO_HOST}" ]; then
+                  printf 'ssh://git@%s\n' "${url#https://}"
+                else
+                  echo "bump: FAIL — ${url} is on neither github.com nor this installation's Forgejo ${FORGEJO_HOST}" >&2
+                  return 1
+                fi
+              }
+              # own_checkout <dir> — this unit's release commit, cloned at its tag. A Forgejo unit's key is put in front of git
+              # first, and stays the identity of the pushes that follow in the clone.
               own_checkout() {
-                git clone -q --depth 1 --branch "${RELEASE_TAG}" "${REPO_URL}" "$1"                   || { echo "bump: FAIL — cannot clone ${REPO_URL} at its release tag ${RELEASE_TAG}; deploy/${STAGE} stands where it was" >&2; exit 1; }
+                local remote
+                remote="$(push_url "${REPO_URL}")" || exit 1
+                case "${remote}" in
+                  ssh://*) carrier_credential "${UNIT}" "${REPO_URL}" ;;
+                esac
+                git clone -q --depth 1 --branch "${RELEASE_TAG}" "${remote}" "$1" \
+                  || { echo "bump: FAIL — cannot clone ${REPO_URL} at its release tag ${RELEASE_TAG}; deploy/${STAGE} stands where it was" >&2; exit 1; }
               }
               # own_stage_values <dir> <chartPath> — bump this unit's own stage values
               # file in the release tree cloned into <dir>. A tag whose tree lacks the
@@ -1095,6 +1156,125 @@ spec:
                   git diff --cached --quiet || git commit -q -m "release: ${UNIT} ${RELEASE_TAG} — pin ${IMAGE_TAG} (${STAGE})"
                   git push -q --force origin "HEAD:refs/heads/deploy/${STAGE}" 2>"${err}" )                   || { echo "bump: FAIL — deploy/${STAGE} of ${REPO_URL} could not be placed at ${RELEASE_TAG}; it stands where it was. git said:" >&2; cat "${err}" >&2; exit 1; }
                 echo "bump: deploy/${STAGE} placed at ${RELEASE_TAG} with its pins"
+              }
+
+              # ── the carrier credentials: ONE PER REGISTRATION ──────────────
+              # The Manager's own copy of this search opens each carrier
+              # under THAT unit's identity and under no other
+              # (hostyour-manager server/domains/registry-cleanup/search.ts,
+              # readUnitChart: the owner's identity resolved from the URL;
+              # every unit is private, none is public).
+              # This is the same shape read from the other end: the Manager
+              # holds a sealed credential store, this pod holds a Vault login,
+              # and both resolve to the ONE PAT per unit that onboarding seeds
+              # at secret/build/<unit>/repo-pat (hostyour-manager
+              # server/domains/onboarding/onboard-seed-repo-pat.ts) — the same
+              # entry templates/externalsecret-bump.yaml reads for THIS unit.
+              #
+              # It cannot be an ExternalSecret like the three fixed records:
+              # WHICH units are registered changes with every onboarding, and
+              # this chart is not re-rendered when it does. A render-time list
+              # would be stale exactly when a new consumer appears, which is the
+              # case that matters.
+              #
+              # ONE login, taken on first need and given back by vault_logout —
+              # login, use, revoke-self, the close the Manager's own
+              # Vault client makes after every call (adapters/vault/
+              # vault-self-seeder.ts). A unit on the Forgejo reads its own key
+              # here as well, so its release dials Vault even where no carrier
+              # lives elsewhere; a release of a github.com unit, whose only
+              # chart-carrying registration is its own, never dials Vault at all.
+              # The block stands before the arm for a manifest with no builds,
+              # because that arm clones the unit's own repository too.
+              VAULT_CLIENT_TOKEN=""
+              vault_login() {
+                local req body code rc
+                [ -z "${VAULT_CLIENT_TOKEN}" ] || return 0
+                req="$(mktemp)"
+                body="$(mktemp)"
+                # The JWT goes in through a FILE, never on the command line:
+                # /proc/<pid>/cmdline is readable by every process in this pod.
+                printf '{"role":"%s","jwt":"%s"}' "${VAULT_ROLE}" "$(cat "${VAULT_TOKEN_FILE}")" > "${req}"
+                chmod 600 "${req}"
+                set +e
+                code="$(curl -sS --connect-timeout 10 --max-time 60 -o "${body}" -w '%{http_code}' \
+                        -X POST -H 'content-type: application/json' --data-binary "@${req}" \
+                        "${VAULT_ADDR}/v1/auth/${VAULT_AUTH_MOUNT}/login")"
+                rc=$?
+                set -e
+                rm -f "${req}"
+                if [ "${rc}" != "0" ]; then
+                  echo "bump: FAIL — ${VAULT_ADDR}: curl exited ${rc} on the kubernetes-auth login; the carrier credentials cannot be read, so the class-(a) search cannot be made" >&2
+                  return 1
+                fi
+                if [ "${code}" != "200" ]; then
+                  echo "bump: FAIL — Vault answered ${code} to a login as role ${VAULT_ROLE} at auth/${VAULT_AUTH_MOUNT}. That role is seeded with the cluster (hostyour-deploy ansiwise/programs/deploy-gitops.yaml) and binds the ServiceAccount pipeline-sa in a namespace labelled hostyour.cloud/build; a 403 here means the role, the label or the account does not match this pod." >&2
+                  return 1
+                fi
+                VAULT_CLIENT_TOKEN="$(yq -p=json -o=y '.auth.client_token // ""' "${body}")"
+                rm -f "${body}"
+                if [ -z "${VAULT_CLIENT_TOKEN}" ]; then
+                  echo "bump: FAIL — the Vault login answered 200 and carried no auth.client_token; nothing can be read with it" >&2
+                  return 1
+                fi
+              }
+
+              # carrier_credential <unit> <repoURL> — put THAT unit's own push
+              # token (property `push`, which writes that one repository and no
+              # other) in front of git for the clone and the push below: on
+              # github.com a record of the credential store, path-qualified to THAT
+              # repository; on the Forgejo the OpenSSH key, as a file of mode 600
+              # named in GIT_SSH_COMMAND, which a push of that clone inherits.
+              # Fail-closed at every arm: a registration
+              # states this unit deploys at this stage, so a credential that
+              # cannot be read is a search that cannot be made, never one that
+              # found nothing.
+              carrier_credential() {
+                local cname="$1" crepo="$2" remote body code rc push
+                remote="$(push_url "${crepo}")" || return 1
+                vault_login
+                body="$(mktemp)"
+                set +e
+                code="$(curl -sS --connect-timeout 10 --max-time 60 -o "${body}" -w '%{http_code}' \
+                        -H "x-vault-token: ${VAULT_CLIENT_TOKEN}" \
+                        "${VAULT_ADDR}/v1/${VAULT_KV_MOUNT}/data/build/${cname}/repo-pat")"
+                rc=$?
+                set -e
+                if [ "${rc}" != "0" ]; then
+                  echo "bump: FAIL — ${VAULT_ADDR}: curl exited ${rc} reading ${VAULT_KV_MOUNT}/build/${cname}/repo-pat" >&2
+                  return 1
+                fi
+                if [ "${code}" != "200" ]; then
+                  echo "bump: FAIL — Vault answered ${code} for ${VAULT_KV_MOUNT}/build/${cname}/repo-pat. The registration of ${cname} names a repo credential, so that entry is what onboarding seeded for it; 404 means it is gone and 403 means role ${VAULT_ROLE} may not read it." >&2
+                  return 1
+                fi
+                push="$(yq -p=json -o=y '.data.data.push // ""' "${body}")"
+                rm -f "${body}"
+                if [ -z "${push}" ]; then
+                  echo "bump: FAIL — ${VAULT_KV_MOUNT}/build/${cname}/repo-pat carries no property 'push'; the Manager writes it for every unit that releases, and a carrier deploys from a stage file, so it releases" >&2
+                  return 1
+                fi
+                case "${remote}" in
+                  ssh://*)
+                    # printf adds the final newline that $(yq …) took off the key, and OpenSSH refuses a key without it.
+                    (umask 077; printf '%s\n' "${push}" > "${SSH_DIR}/${cname}.key")
+                    export GIT_SSH_COMMAND="ssh -F ${SSH_DIR}/ssh_config -o IdentitiesOnly=yes -i ${SSH_DIR}/${cname}.key"
+                    ;;
+                  *)
+                    printf 'https://x-access-token:%s@%s\n' "${push}" "${crepo#https://}" >> "${CREDENTIALS_FILE}"
+                    ;;
+                esac
+              }
+
+              # vault_logout — the login has no further use once the keys and tokens are read. Handing it back beats letting it
+              # stand for its whole TTL, and it is the same close the Manager makes after every Vault call.
+              vault_logout() {
+                [ -n "${VAULT_CLIENT_TOKEN}" ] || return 0
+                curl -sS --connect-timeout 10 --max-time 60 -o /dev/null \
+                  -X POST -H "x-vault-token: ${VAULT_CLIENT_TOKEN}" \
+                  "${VAULT_ADDR}/v1/auth/token/revoke-self" \
+                  || echo "bump: the Vault token could not be revoked and stands until its own TTL expires; every pin of this release is unaffected" >&2
+                VAULT_CLIENT_TOKEN=""
               }
 
               # A MANIFEST WITH NO builds[] IS VALID, in two shapes: a
@@ -1133,6 +1313,7 @@ spec:
                   own_checkout "${OWN_DIR}"
                   place_delivery_branch "${OWN_DIR}"
                 fi
+                vault_logout
                 echo "bump: ${SRC}/deploy/platform.yaml declares no builds — this release ships no image, so there is no pin to write and no Application this run can derive; what this unit deploys reaches the cluster on ArgoCD's next poll of the ref it follows"
                 exit 0
               fi
@@ -1269,98 +1450,6 @@ spec:
               git clone -q --depth 1 --branch "${BOOKS_BRANCH}" "${CLOUD_URL}" "${WORK}/books" \
                 || { echo "bump: FAIL — cannot read ${CLOUD_URL}@${BOOKS_BRANCH}, this installation's books; the search over the consumer registrations is impossible" >&2; exit 1; }
 
-              # ── the carrier credentials: ONE PER REGISTRATION ──────────────
-              # The Manager's own copy of this search opens each carrier
-              # under THAT unit's identity and under no other
-              # (hostyour-manager server/domains/registry-cleanup/search.ts,
-              # readUnitChart: the owner's identity resolved from the URL,
-              # hostyour-manager#226 - every unit is private, none is public).
-              # This is the same shape read from the other end: the Manager
-              # holds a sealed credential store, this pod holds a Vault login,
-              # and both resolve to the ONE PAT per unit that onboarding seeds
-              # at secret/build/<unit>/repo-pat (hostyour-manager
-              # server/domains/onboarding/onboard-seed-repo-pat.ts) — the same
-              # entry templates/externalsecret-bump.yaml reads for THIS unit.
-              #
-              # It cannot be an ExternalSecret like the three fixed records:
-              # WHICH units are registered changes with every onboarding, and
-              # this chart is not re-rendered when it does. A render-time list
-              # would be stale exactly when a new consumer appears, which is the
-              # case that matters.
-              #
-              # ONE login, taken on first need and given back when the loop is
-              # done — login, use, revoke-self, the close the Manager's own
-              # Vault client makes after every call (adapters/vault/
-              # vault-self-seeder.ts). A release on an installation whose only
-              # chart-carrying registration is this unit's own public repo never
-              # dials Vault at all.
-              VAULT_CLIENT_TOKEN=""
-              vault_login() {
-                local req body code rc
-                [ -z "${VAULT_CLIENT_TOKEN}" ] || return 0
-                req="$(mktemp)"
-                body="$(mktemp)"
-                # The JWT goes in through a FILE, never on the command line:
-                # /proc/<pid>/cmdline is readable by every process in this pod.
-                printf '{"role":"%s","jwt":"%s"}' "${VAULT_ROLE}" "$(cat "${VAULT_TOKEN_FILE}")" > "${req}"
-                chmod 600 "${req}"
-                set +e
-                code="$(curl -sS --connect-timeout 10 --max-time 60 -o "${body}" -w '%{http_code}' \
-                        -X POST -H 'content-type: application/json' --data-binary "@${req}" \
-                        "${VAULT_ADDR}/v1/auth/${VAULT_AUTH_MOUNT}/login")"
-                rc=$?
-                set -e
-                rm -f "${req}"
-                if [ "${rc}" != "0" ]; then
-                  echo "bump: FAIL — ${VAULT_ADDR}: curl exited ${rc} on the kubernetes-auth login; the carrier credentials cannot be read, so the class-(a) search cannot be made" >&2
-                  return 1
-                fi
-                if [ "${code}" != "200" ]; then
-                  echo "bump: FAIL — Vault answered ${code} to a login as role ${VAULT_ROLE} at auth/${VAULT_AUTH_MOUNT}. That role is seeded with the cluster (hostyour-deploy ansiwise/programs/deploy-gitops.yaml) and binds the ServiceAccount pipeline-sa in a namespace labelled hostyour.cloud/build; a 403 here means the role, the label or the account does not match this pod." >&2
-                  return 1
-                fi
-                VAULT_CLIENT_TOKEN="$(yq -p=json -o=y '.auth.client_token // ""' "${body}")"
-                rm -f "${body}"
-                if [ -z "${VAULT_CLIENT_TOKEN}" ]; then
-                  echo "bump: FAIL — the Vault login answered 200 and carried no auth.client_token; nothing can be read with it" >&2
-                  return 1
-                fi
-              }
-
-              # carrier_credential <unit> <repoURL> — put THAT unit's own push
-              # token (property `push`, which writes that one repository and no
-              # other), path-qualified to THAT repository, in front of git for the clone
-              # and the push below. Fail-closed at every arm: a registration
-              # states this unit deploys at this stage, so a credential that
-              # cannot be read is a search that cannot be made, never one that
-              # found nothing.
-              carrier_credential() {
-                local cname="$1" crepo="$2" body code rc push
-                vault_login
-                body="$(mktemp)"
-                set +e
-                code="$(curl -sS --connect-timeout 10 --max-time 60 -o "${body}" -w '%{http_code}' \
-                        -H "x-vault-token: ${VAULT_CLIENT_TOKEN}" \
-                        "${VAULT_ADDR}/v1/${VAULT_KV_MOUNT}/data/build/${cname}/repo-pat")"
-                rc=$?
-                set -e
-                if [ "${rc}" != "0" ]; then
-                  echo "bump: FAIL — ${VAULT_ADDR}: curl exited ${rc} reading ${VAULT_KV_MOUNT}/build/${cname}/repo-pat" >&2
-                  return 1
-                fi
-                if [ "${code}" != "200" ]; then
-                  echo "bump: FAIL — Vault answered ${code} for ${VAULT_KV_MOUNT}/build/${cname}/repo-pat. The registration of ${cname} names a repo credential, so that entry is what onboarding seeded for it; 404 means it is gone and 403 means role ${VAULT_ROLE} may not read it." >&2
-                  return 1
-                fi
-                push="$(yq -p=json -o=y '.data.data.push // ""' "${body}")"
-                rm -f "${body}"
-                if [ -z "${push}" ]; then
-                  echo "bump: FAIL — ${VAULT_KV_MOUNT}/build/${cname}/repo-pat carries no property 'push'; the Manager writes it for every unit that releases, and a carrier deploys from a stage file, so it releases" >&2
-                  return 1
-                fi
-                printf 'https://x-access-token:%s@%s\n' "${push}" "${crepo#https://}" >> "${CREDENTIALS_FILE}"
-              }
-
               # ── class (a): every registration with a chartPath ─────────────
               # Each carrier is cloned and pushed under ITS OWN credential, so a
               # foreign PRIVATE repository is inside this search instead of
@@ -1400,10 +1489,11 @@ spec:
                 # NOT fire, and a carrier whose credential Vault refused would
                 # fall through to the clone as though it had none.
                 carrier_credential "${rname}" "${rrepo}"
+                rremote="$(push_url "${rrepo}")"
                 dest="${WORK}/carrier-${rname}"
                 # Fail-closed: a registered stage whose delivery branch cannot
                 # be read is a search we cannot complete — not completed-ok.
-                git clone -q --depth 1 --branch "deploy/${STAGE}" "${rrepo}" "${dest}" \
+                git clone -q --depth 1 --branch "deploy/${STAGE}" "${rremote}" "${dest}" \
                   || { echo "bump: FAIL — cannot read ${rrepo}@deploy/${STAGE} (registration ${rname}); the search over its pins is impossible." >&2
                        echo "  This run presented ${rname}'s OWN PAT, read from ${VAULT_KV_MOUNT}/build/${rname}/repo-pat, so what was refused is the branch or that PAT — not the choice of credential." >&2
                        exit 1; }
@@ -1418,15 +1508,7 @@ spec:
               done
 
               # The carriers are read and written; the login has no further use.
-              # Handing it back beats letting it stand for its whole TTL, and it
-              # is the same close the Manager makes after every Vault call.
-              if [ -n "${VAULT_CLIENT_TOKEN}" ]; then
-                curl -sS --connect-timeout 10 --max-time 60 -o /dev/null \
-                  -X POST -H "x-vault-token: ${VAULT_CLIENT_TOKEN}" \
-                  "${VAULT_ADDR}/v1/auth/token/revoke-self" \
-                  || echo "bump: the Vault token could not be revoked and stands until its own TTL expires; every pin of this release is unaffected" >&2
-                VAULT_CLIENT_TOKEN=""
-              fi
+              vault_logout
 
               # ── class (b): this installation's tenant pins ─────────────────
               # The charts are read off the deploy repository's trunk — they are product,

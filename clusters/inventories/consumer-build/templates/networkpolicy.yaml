@@ -151,4 +151,41 @@ spec:
         - protocol: TCP
           port: {{ . }}
         {{- end }}
+{{- if include "consumer-build.forgejoHost" . }}
+---
+{{- /*
+SSH pinhole for the BUMP pod ONLY, on a plane with a Forgejo: the bump pushes a Forgejo unit's release and every
+Forgejo carrier over SSH with a deploy key, and reaches the one Forgejo instance's pods on the container port its
+Service forgejo-ssh leads to, and nothing else. The pods are selected by the chart's labels with the release name
+of the stage; Calico evaluates egress after the DNAT of the Service, which is why the port is the pod's.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bump-forge-ssh-egress
+  namespace: {{ printf "%s-build" $unit }}
+  labels:
+    app.kubernetes.io/name: consumer-build
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    image-builder.io/consumer: {{ $unit | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: bump
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.bump.forgejo.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- range $label, $value := .Values.bump.forgejo.podLabels }}
+              {{ $label | quote }}: {{ tpl $value $ | quote }}
+              {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.bump.forgejo.podPort }}
+{{- end }}
 {{- end }}
