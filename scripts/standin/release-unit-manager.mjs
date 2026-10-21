@@ -18,8 +18,8 @@
 // decoy tenants are suspended, not following, on another stage, not active, or render no part of the
 // unit, and run an old version: a call that names one is a defect of the act, and the call list shows
 // it. A world with a stageTag answers the release read of the stage test with that tag, as another
-// release would have left it, and one with carriers adds them to that answer, as the Manager does for a
-// build-only unit. Every answer to a stage's release read carries `standing.followRefused`, the follows of
+// release would have left it, and one with carriers adds them to that answer, as the Manager does for an
+// Images unit. Every answer to a stage's release read carries `standing.followRefused`, the follows of
 // the stage's tenants that were refused at their plan: a world's `views` are the rounds of the test stage's
 // answer (the last repeats), each with its `followRefused` list, which is empty where the round names none
 // and absent where the round has the key set to undefined, and `prodRefused` is the list of the prod
@@ -166,6 +166,12 @@ const standingOf = (tenantId) => {
   const rounds = world?.rounds[tenantId] ?? [round([part([OLD], { name: tenantId === "tnt_other" ? "other" : "shop" })])];
   return rounds[Math.min(Math.max(looks.get(tenantId) ?? 0, 1), rounds.length) - 1];
 };
+/** The steps a promotion plans in the scenarios that name them; in any other scenario it plans the one put-release. */
+const PROMOTION_STEPS = {
+  "promotion-reattest": ["put-release", "reattest-smtp-entry"],
+  "promotion-mints": ["mint-release"],
+  "promotion-builds": ["watch-release-build"],
+};
 /** The runs, each a script of the statuses its reads walk through. */
 const runs = new Map();
 const after = { failed: ["running", "failed"], cancelled: ["running", "cancelled"] }[SCENARIO] ?? ["running", "running", "succeeded"];
@@ -223,7 +229,7 @@ const api = createServer((req, res) => {
       const runId = `run_${runs.size + 1}`;
       // The three refusals the Manager's plan makes, each settling the run failed at its plan.
       const refused = release[1] === "ghost" || asked.commit === "d".repeat(40) || asked.version === "0.2.000";
-      const steps = asked.sourceTag !== undefined && SCENARIO !== "wrong-steps" ? ["put-release"] : ["mint-release", "watch-release-build"];
+      const steps = asked.sourceTag !== undefined ? PROMOTION_STEPS[SCENARIO] ?? ["put-release"] : ["mint-release", "watch-release-build"];
       runs.set(runId, { statuses: ["planning", refused ? "failed" : "planned"], steps, approved: false });
       if (SCENARIO === "lost-post") return req.socket.destroy();
       return json(res, 201, { runId }, refresh);

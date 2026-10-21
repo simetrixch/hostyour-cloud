@@ -54,6 +54,7 @@ suite scripts/forgejo.test.mjs 'forge — Forgejo admits the groups admins and p
 suite scripts/plane-test-accounts.test.mjs 'forge — the Plane sign-in test accounts are in the group plane-users alone, with passwords from the environment, the provider restarts onto them, and every application admits admins, only Plane and Forgejo plane-users beside them.'
 suite scripts/forward-auth-gate.test.mjs 'forge — every host behind the forward auth is answered, in the embedded outpost, by providers whose applications admit admins alone, and plane-users at plane alone.'
 suite scripts/forgejo-release.test.mjs 'forge — a Forgejo delivery runs forgejo-release in forgejo-build past the guard, its tokens reach the three API Tasks alone, and GitHub and Forgejo deliveries never cross.'
+suite scripts/mongod-rseq.test.mjs 'mongod — a mongod pod carries the rseq workaround and its label while the platform switch is on, and neither while it is off, in the shared instance and in every unit mode.'
 
 # One suite of the pool: `bash scripts/test.sh --suite <file>` runs it and leaves its output and "<exit status> <seconds>" in $TEST_LOGS.
 if [ "${1:-}" = --suite ]; then

@@ -766,10 +766,15 @@ kube-prometheus-stack:
   # node-exporter: enable the systemd collector so failed host units
   # (snap.microk8s.*, kubelet, containerd) are scraped and alertable — B4 host
   # observability.
+  #
+  # THE KERNEL THE HOST RUNS reaches Prometheus through the textfile collector: deploy-host
+  # (hostyour-deploy ansiwise/programs/deploy-host.yaml) has a timer write hostyour_kernel_info into
+  # /var/lib/hostyour-textfile, and the host's / stands at /host/root in this pod.
   prometheus-node-exporter:
     extraArgs:
       - --collector.systemd
       - --collector.systemd.unit-include=(snap\.microk8s\..+|kubelet|containerd|ssh)\.service
+      - --collector.textfile.directory=/host/root/var/lib/hostyour-textfile
 
   # THE AGE OF A TEKTON PIPELINERUN. The controller's own gauge tekton_pipelines_controller_running_pipelineruns
   # counts the running runs and says nothing of how long one has run, which PipelineRunRunningTooLong
@@ -780,7 +785,13 @@ kube-prometheus-stack:
   # has not started has no start series and a run that has not finished has no completion series, because
   # kube-state-metrics skips a path that is absent. The chart's ClusterRole covers the built-in kinds and the
   # CRDs themselves but not the runs, so rbac.extraRules adds list and watch on them.
+  #
+  # THE POD LABEL THAT SAYS A MONGOD CARRIES ITS RSEQ WORKAROUND. kube-state-metrics exports a pod's labels
+  # only where they are allowed, and the rule MongoDBRseqWorkaroundMissing (clusters/inventories/mongodb)
+  # reads kube_pod_labels{label_hostyour_cloud_mongod_rseq_workaround}.
   kube-state-metrics:
+    metricLabelsAllowlist:
+      - pods=[hostyour.cloud/mongod-rseq-workaround]
     rbac:
       extraRules:
         - apiGroups: ["tekton.dev"]

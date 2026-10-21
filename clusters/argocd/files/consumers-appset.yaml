@@ -2,7 +2,7 @@
 # registrations/<unit>/<stage>.yaml IN THIS INSTALLATION'S BOOKS. A unit's stage file there IS the
 # deployment of that unit at that stage; the Manager writes and removes it, and removing it
 # offboards. The generator names the three stage files outright: the stage-free build declaration
-# registrations/<unit>/build.yaml never reaches this ApplicationSet, so a build-only unit generates
+# registrations/<unit>/build.yaml never reaches this ApplicationSet, so an Images unit generates
 # nothing here.
 #
 # A UNIT CARRIES ITS OWN STAGE, AND THE PLATFORM KEEPS THE CLUSTER'S. The stage is read off the
@@ -304,8 +304,8 @@ spec:
         #    namespace, as a source of its single Application. The
         #    service-provisioner then resolves the claim to this in-namespace
         #    instance. Bare access to `services` is safe under
-        #    missingkey=error: the field is mandatory in the deployable
-        #    registration (an empty list is allowed).
+        #    missingkey=error: the field is mandatory in the stage registration
+        #    of a Deployments unit (an empty list is allowed).
         {{- if has "postgresql" .services }}
         {{- $postgresqlSize := dig "sizes" "postgresql" .size . }}
         - repoURL: __PLATFORM_URL__
