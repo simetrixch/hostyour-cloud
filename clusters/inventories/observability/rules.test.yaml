@@ -46,3 +46,26 @@ tests:
         exp_samples:
           - labels: ALERTS{alertname="PodNotReady", alertstate="firing", cluster="apps1", condition="true", namespace="shop", pod="web-0", severity="warning"}
             value: 1
+
+  - name: PodOOMKilled alerts on a kill that is less than 15 minutes old, not on a kill of 14 days ago that is still the container's last termination
+    interval: 1m
+    input_series:
+      # On apps1 the container was killed 2 minutes before the first evaluation, at 18m; the series begin at 19m.
+      - series: kube_pod_container_status_last_terminated_timestamp{cluster="apps1", namespace="observability", pod="alloy-xxxxx", container="alloy"}
+        values: _x18 1080x16
+      - series: kube_pod_container_status_last_terminated_reason{cluster="apps1", namespace="observability", pod="alloy-xxxxx", container="alloy", reason="OOMKilled"}
+        values: _x18 1x16
+      # On apps2 the same container was killed 14 days before the test starts and stands in that state since.
+      - series: kube_pod_container_status_last_terminated_timestamp{cluster="apps2", namespace="observability", pod="alloy-xxxxx", container="alloy"}
+        values: -1208400x34
+      - series: kube_pod_container_status_last_terminated_reason{cluster="apps2", namespace="observability", pod="alloy-xxxxx", container="alloy", reason="OOMKilled"}
+        values: 1x34
+    promql_expr_test:
+      - expr: ALERTS{alertname="PodOOMKilled"}
+        eval_time: 20m
+        exp_samples:
+          - labels: ALERTS{alertname="PodOOMKilled", alertstate="firing", cluster="apps1", namespace="observability", pod="alloy-xxxxx", container="alloy", severity="critical"}
+            value: 1
+      # At 34m the kill of apps1 is 16 minutes old, so the alert has stopped.
+      - expr: ALERTS{alertname="PodOOMKilled"}
+        eval_time: 34m

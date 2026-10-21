@@ -926,6 +926,19 @@ if (cd "$planted" && promtool test rules rules.test.yaml >/dev/null 2>&1); then
 fi
 echo "check: the rule test goes red at stage dev with cluster taken out of PodNotReady's on (cluster, namespace, pod)."
 
+# THE PLANTED DEFECT of PodOOMKilled is the state form: the dev rules run once more with its expression set back to
+# the container's last termination reason alone, which fires for as long as that state stands, and that run fails.
+planted="$work/rules-planted-oomkilled"
+cp -R "$work/rules/observability/dev" "$planted" \
+  || fail "the planted run of the PodOOMKilled rule test needs the rules of observability at stage dev"
+planted_rules="$(grep -l 'alert: PodOOMKilled' "$planted"/rule-*.yml)" \
+  && yq -i '(.groups[].rules[] | select(.alert == "PodOOMKilled") | .expr) = "kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"} == 1"' "$planted_rules" \
+  || fail "PodOOMKilled could not be planted with the state form of its expression"
+if (cd "$planted" && promtool test rules rules.test.yaml >/dev/null 2>&1); then
+  fail "the rule test clusters/inventories/observability/rules.test.yaml passes at stage dev with PodOOMKilled set back to the state kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"} == 1, so it cannot catch an alert that outlives the kill, or PodOOMKilled carries that expression no more"
+fi
+echo "check: the rule test goes red at stage dev with PodOOMKilled set back to the state of the last termination reason."
+
 # THE PLANTED DEFECTS OF THE PIPELINERUN ALERTS are the two shapes of a wrong join between the start series and the
 # completion series: cluster taken out of the `on` list, which lets a run of another cluster that carries the same
 # name hide a run that has not completed, and the `unless` clause taken out, which alerts on a run that completed. The

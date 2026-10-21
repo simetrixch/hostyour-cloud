@@ -144,7 +144,7 @@ monitoring:
                   and not a counted number of restarts.
 
             - alert: PodOOMKilled
-              expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+              expr: max by (cluster, namespace, pod, container) ((time() - kube_pod_container_status_last_terminated_timestamp) < 900 and on (cluster, namespace, pod, container) (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1))
               for: 1m
               labels:
                 severity: critical
@@ -1313,6 +1313,11 @@ alloy:
     extraPorts:
       - { name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP }
       - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
+    resources:
+      requests:
+        memory: 450Mi
+      limits:
+        memory: 1Gi
 
 # ============================================================================
 # The site statistics service (templates/site-telemetry-*.yaml, files/site_telemetry.py): the read API
