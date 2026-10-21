@@ -224,7 +224,7 @@ test('planted defect: a queue that deletes by age alone, finished or not, is cau
 
 // A publish run (clusters/inventories/consumer-build pipeline-publish.yaml) packs and pushes a release's npm
 // packages. It waits in the same queue under a key of its own and takes a slot like a release: up to nine releases or
-// publish runs run at once, of different units, never two of one unit. The memory budget (ciCapacity in consumer-build)
+// publish runs run at once, of different units, never two of one unit. The memory budget (releaseCapacity in consumer-build)
 // bounds the sum of the limits of nine such runs, not the free memory of the node.
 const publish = (ns, tag, options = {}) => run(ns, tag, {...options, pipeline: ns.replace(/-build$/, '-publish')});
 test('a publish run waits behind a running release of its own unit, its own release included, and runs beside one of another unit', () => {

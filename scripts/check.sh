@@ -406,7 +406,7 @@ $found"
 # comment beside each request in the values names). The names are the ones the charts render and the live pods
 # carry; traefik is the MicroK8s ingress addon's DaemonSet, which no chart of this repository renders, so it stands
 # here for the render that carries it once hostyour-deploy sets its request. The build pods and the other pods that
-# stand on the node are budgeted in clusters/inventories/consumer-build/values-common.yaml (ciCapacity).
+# stand on the node are budgeted in clusters/inventories/consumer-build/values-common.yaml (releaseCapacity).
 cpu_guaranteed='traefik|forgejo|argocd-application-controller|argocd-applicationset-controller|argocd-repo-server|argocd-server|argocd-redis|argocd-dex-server|argocd-notifications-controller|cert-manager|cert-manager-cainjector|cert-manager-webhook'
 
 # $1 says where the render came from, $2 is a file holding it. One line per finding on stdout. `eval` reads one document at

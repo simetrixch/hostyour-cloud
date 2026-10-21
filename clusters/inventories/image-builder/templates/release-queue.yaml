@@ -1,6 +1,6 @@
 {{- /*
 THE RELEASE QUEUE. The build plane is one node with room for 250 pods (the kubelet's --max-pods in
-hostyour-deploy) and a sum of memory limits that clusters/inventories/consumer-build (ciCapacity)
+hostyour-deploy) and a sum of memory limits that clusters/inventories/consumer-build (releaseCapacity)
 holds to a budget, and every release run takes several pods. Releases started in parallel beyond
 that filled the node until no task pod could start and every run hung until its timeout. So every
 release run is created waiting (the deploy-request TriggerTemplate sets spec.status
