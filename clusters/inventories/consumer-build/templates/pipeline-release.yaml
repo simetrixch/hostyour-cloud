@@ -1,7 +1,7 @@
 {{- /*
 The unit's release pipeline `<unit>-release` — ONE generic pipeline, rendered
-per unit from this template. Every unit runs the same chain, consumer and
-build-only alike:
+per unit from this template. Every unit runs the same chain, Deployments and
+Images units alike:
 
   gate-stage → clone@tag (+verify: tag → commit, sha7) → builds (manifest vs
   attestation) → probe per build → build/push per missing build → engine-pin →
