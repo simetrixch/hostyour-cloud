@@ -13,7 +13,7 @@ The run is created by the github-release-publish Trigger
 under a key of its own, `<unit>-build/<release-tag> publish`: it never runs
 beside a release of its unit, and it takes one of the queue's slots, because the
 memory of the build node holds, per slot, the build pods of one release or the
-pack pod of one publish run (ciCapacity in values-common.yaml).
+pack pod of one publish run (releaseCapacity in values-common.yaml).
 Neither this Pipeline nor its runs carry image-builder.io/consumer, the label the
 Manager's release watch selects, because Tekton copies a Pipeline's labels onto
 its runs.
@@ -429,7 +429,7 @@ spec:
               - name: scratch
                 mountPath: /scratch
             # The install and build of the repository, without its test suites. The
-            # cpu and memory budgets of ciCapacity (values-common.yaml) count this pod.
+            # cpu and memory budgets of releaseCapacity (values-common.yaml) count this pod.
             computeResources:
               requests: { cpu: "1", memory: 2Gi }
               limits: { cpu: "4", memory: 3Gi }

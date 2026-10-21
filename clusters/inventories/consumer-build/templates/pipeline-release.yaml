@@ -94,8 +94,8 @@ namespace, so the credential Secrets they envFrom by name are rendered here
 {{- end -}}
 {{- $releaseTagRe := printf "^%s$" (required "consumer-build: global.releaseTagFilter is required (platform values chain)" .Values.global.releaseTagFilter) -}}
 {{- $builds := include "consumer-build.builds" . | fromJsonArray -}}
-{{- $buildsAtOnce := int (required "consumer-build: ciCapacity.releaseBuildsAtOnce is required (values-common.yaml, the images of one release that build at the same time)" .Values.ciCapacity.releaseBuildsAtOnce) -}}
-{{- if lt $buildsAtOnce 1 }}{{ fail "consumer-build: ciCapacity.releaseBuildsAtOnce must be at least 1" }}{{ end -}}
+{{- $buildsAtOnce := int (required "consumer-build: releaseCapacity.releaseBuildsAtOnce is required (values-common.yaml, the images of one release that build at the same time)" .Values.releaseCapacity.releaseBuildsAtOnce) -}}
+{{- if lt $buildsAtOnce 1 }}{{ fail "consumer-build: releaseCapacity.releaseBuildsAtOnce must be at least 1" }}{{ end -}}
 {{- $cloudURL := required "consumer-build: global.platformUrl is required (platform values chain)" .Values.global.platformUrl -}}
 {{- $forgejoHost := include "consumer-build.forgejoHost" . -}}
 {{- $channelStages := required "consumer-build: global.channelStages is required (platform values chain)" .Values.global.channelStages -}}
@@ -531,7 +531,7 @@ spec:
               limits: { cpu: 200m, memory: 128Mi }
 
     # ── build: {{ $b }} — pushed to the path decided at the top ──────────────
-    # The first ciCapacity.releaseBuildsAtOnce builds wait for the scan; every later one waits
+    # The first releaseCapacity.releaseBuildsAtOnce builds wait for the scan; every later one waits
     # for the build that many places before it, so no more than that many Buildah pods are alive
     # at once and the release slot of the memory budget counts exactly them.
     - name: {{ printf "build-%s" $b }}

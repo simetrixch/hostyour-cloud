@@ -16,7 +16,7 @@ forgejo:
   # quantile_over_time(0.95, sum(rate(container_cpu_usage_seconds_total{namespace="forgejo",container="forgejo"}[5m]))[7d:5m])),
   # rounded up to the next 10m, the least a request here can be, as clusters/inventories/cert-manager rounds it.
   # scripts/check.sh fails when the pod renders without one, and the budget of the build node counts it
-  # (clusters/inventories/consumer-build/values-common.yaml, ciCapacity.standingCpuRequests).
+  # (clusters/inventories/consumer-build/values-common.yaml, releaseCapacity.standingCpuRequests).
   resources:
     requests:
       cpu: 10m

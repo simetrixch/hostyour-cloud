@@ -28,7 +28,7 @@ workspaces:
 # without a class, so the scheduler puts a waiting release pod ahead of the others. It does not preempt: a release
 # build never evicts a platform pod. A class does not decide who the kernel kills when the node runs out of memory:
 # that follows the QoS class of a pod, so the memory the build pods may take is bounded by the sum of their limits
-# instead (ciCapacity in clusters/inventories/consumer-build).
+# instead (releaseCapacity in clusters/inventories/consumer-build).
 priorityClasses:
   release:
     name: image-builder-release
@@ -51,9 +51,9 @@ eventListener:
 # The release queue (templates/release-queue.yaml) starts up to maxRunning release or publish runs at a time
 # on the build plane, one run per unit: a second stage run, a retry, another tag or a publish run of a unit
 # waits for the run of that unit that runs. The memory budget, the cores and the pod limit of the node hold
-# the largest runs (ciCapacity in clusters/inventories/consumer-build, proved by scripts/build-contract.test.mjs),
+# the largest runs (releaseCapacity in clusters/inventories/consumer-build, proved by scripts/build-contract.test.mjs),
 # so raising maxRunning fails that test until the budget is raised with it. Nine is the owner's decision of
-# 2026-10-19: a release builds its images one after the other (ciCapacity.releaseBuildsAtOnce in
+# 2026-10-19: a release builds its images one after the other (releaseCapacity.releaseBuildsAtOnce in
 # clusters/inventories/consumer-build, 1), so a slot holds one Buildah pod of 3 GiB or the pack pod of a publish
 # run, 3.5 GiB, and nine slots are 31.5 GiB of limits, which the budget holds exactly (the largest release of 15
 # days built 4 images with pods at 2321Mi at most).
