@@ -96,8 +96,10 @@ The first form reads the prod release (`GET /api/units/<unit>/release?stage=prod
 version, channel and full commit) and puts exactly that release on test. The prod release is the
 release prod has put: it does not say that a tenant at prod runs it, and a tenant that has not adopted
 it yet does not block the copy. The Manager plans it as the
-one `put-release` step and reads prod again before it pushes the deploy ref, so a prod that moved in
-between writes nothing. The script approves no other plan of this form. The second form plans the
+`put-release` step, with a step of the unit's own where the unit has one (digita-post re-attests its SMTP
+entry), and reads prod again before it pushes the deploy ref, so a prod that moved in between writes
+nothing. The script approves every plan of this form that mints and builds nothing, and refuses one with
+the step `mint-release` or `watch-release-build`, naming it. The second form plans the
 release the dialog would plan for that stage, channel, version and full commit.
 
 The script runs on the operator's machine and needs `node` and `ssh`. Every exchange with the

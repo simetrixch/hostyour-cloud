@@ -33,6 +33,9 @@ spec:
       labels:
         app.kubernetes.io/name: mongodb
         app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- with include "common.mongodRseqLabel" . }}
+        {{ . }}
+        {{- end }}
     spec:
       securityContext:
         {{- toYaml .Values.mongodb.podSecurityContext | nindent 8 }}
@@ -96,16 +99,9 @@ spec:
           env:
             - name: TZ
               value: {{ .Values.global.timezone | quote }}
-            # Keeps mongod from segfaulting roughly every thirty seconds on this
-            # machine's kernel. MongoDB vendors its own TCMalloc, and TCMalloc
-            # disagrees with Linux 6.19 through 7.0.13 over restartable sequences;
-            # the image does NOT refuse to start on such a kernel, so without this
-            # the database serves for about half a minute, dies with SIGSEGV,
-            # comes back and does it again — taking writes in between, which is
-            # why it reads as healthy from the outside. Same setting the shared
-            # instance carries, for the same kernel.
-            - name: GLIBC_TUNABLES
-              value: "glibc.pthread.rseq=1"
+            {{- with include "common.mongodRseqEnv" . }}
+{{ . | indent 12 }}
+            {{- end }}
             # The official mongo entrypoint creates the SCRAM root user on FIRST
             # init from these (it runs with or without --replSet, before the set
             # is configured). On later boots the user already exists in the volume

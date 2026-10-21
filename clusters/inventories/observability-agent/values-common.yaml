@@ -93,6 +93,10 @@ alloy:
 # prometheus.operator.servicemonitors discovers cluster-wide.
 # ---------------------------------------------------------------------------
 kube-state-metrics:
+  # The pod label that says a mongod carries its rseq workaround, as on the master: the rule
+  # MongoDBRseqWorkaroundMissing (clusters/inventories/mongodb) reads it as a kube_pod_labels series.
+  metricLabelsAllowlist:
+    - pods=[hostyour.cloud/mongod-rseq-workaround]
   prometheus:
     monitor:
       enabled: true
