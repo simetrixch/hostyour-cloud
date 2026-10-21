@@ -123,7 +123,9 @@ for tool in git tar gpg; do
 done
 # THE PINNED RCLONE, from the shared helper the launcher sent ahead of this driver: from the owner's mirror, or from the package the
 # operator carried with --rclone-package where the mirror stands on the machine that is lost. Nothing is placed before it answers the pin.
-require_rclone || die "rclone $AW_RCLONE_PIN could not be put on this machine, and nothing else here reaches the storage box: $RCLONE_REFUSAL. Nothing was placed" 69
+RCLONE_WAY_OUT=''
+[ -n "${AW_RCLONE_CARRIED_ARCH:-}" ] || RCLONE_WAY_OUT='; with the mirror lost, start this restore again with --rclone-package <the .deb of the pin that the operator kept>'
+require_rclone || die "rclone $AW_RCLONE_PIN could not be put on this machine, and nothing else here reaches the storage box: $RCLONE_REFUSAL. Nothing was placed$RCLONE_WAY_OUT" 69
 # A SECRET AN ELEVATED COMMAND NEEDS IS A FILE, never an argument: sudo writes every command it runs, with
 # its arguments, to the system log, and any local account reads an argument in the process list. This
 # shell's own printf is no process, so it writes each secret to a file of mode 600 in a folder in memory

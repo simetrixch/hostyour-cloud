@@ -3455,21 +3455,30 @@ printf 'rclone %s\n- os/version: stand-in\n' "$RCLONE_PIN_OF_TREE" > "$STANDIN/r
 cat > "$STANDIN/dpkg" <<'STANDIN_DPKG'
 #!/usr/bin/env bash
 # dpkg as require-rclone.sh calls it: --print-architecture answers the file dpkg-arch (amd64 if there is none); -i FILE logs the call
-# and, unless the file dpkg-fails stands, puts the rclone stand-in back where it was hidden as rclone.hidden, as an installed package would.
+# and, unless the file dpkg-fails stands, puts the rclone stand-in back where it was hidden as rclone.hidden, and makes rclone answer
+# what dpkg-installs-answer holds to both accounts (rclone-answer-root goes), as an installed package would.
 here="$(dirname "$0")"
 printf 'dpkg %s\n' "$*" >> "$here/dpkg.log"
 case "$1" in
   --print-architecture) cat "$here/dpkg-arch" 2> /dev/null || echo amd64 ;;
   -i) [ ! -e "$here/dpkg-fails" ] || { echo 'dpkg: error processing archive (stand-in)' >&2; exit 1; }
       [ ! -e "$here/rclone.hidden" ] || mv "$here/rclone.hidden" "$here/rclone"
-      [ ! -e "$here/dpkg-installs-answer" ] || cp "$here/dpkg-installs-answer" "$here/rclone-answer" ;;
+      [ ! -e "$here/dpkg-installs-answer" ] || { cp "$here/dpkg-installs-answer" "$here/rclone-answer"; rm -f "$here/rclone-answer-root"; } ;;
   *) echo "dpkg stand-in: a call the driver does not make: $*" >&2; exit 2 ;;
 esac
 STANDIN_DPKG
 cat > "$STANDIN/curl" <<'STANDIN_CURL'
 #!/usr/bin/env bash
-# curl as require-rclone.sh calls it: every call is logged with its arguments, and none is answered: the machine has no route to the mirror.
-printf 'curl %s\n' "$*" >> "$(dirname "$0")/curl.log"
+# curl as require-rclone.sh calls it: every call is logged with its arguments. Where the file curl-serves stands it is the answer to the call,
+# written to the --output file; where it does not, the machine has no route to the mirror.
+here="$(dirname "$0")"
+printf 'curl %s\n' "$*" >> "$here/curl.log"
+if [ -f "$here/curl-serves" ]; then
+  out=''; previous=''
+  for argument in "$@"; do [ "$previous" != --output ] || out="$argument"; previous="$argument"; done
+  [ -n "$out" ] || { echo 'curl stand-in: a call without --output' >&2; exit 2; }
+  exec cp "$here/curl-serves" "$out"
+fi
 echo 'curl: (6) Could not resolve host (stand-in)' >&2
 exit 6
 STANDIN_CURL
@@ -5363,10 +5372,101 @@ bare_restore "$WORK/carried-rclone.deb"
 grep -q '^dpkg -i ' "$STANDIN/dpkg.log" && [ ! -s "$STANDIN/curl.log" ] && grep -qx "STAGED $RESTORED_ID" "$WORK/restore-whole/out" \
   || fail 'restore: a bare machine with a carried package did not install it with no request to the mirror and go on to fetch and stage the backup'
 bare_restore none 69 'could not be put on this machine'
+grep -qF -- '--rclone-package <the .deb of the pin that the operator kept>' "$WORK/restore-whole/err" || fail "restore: the refusal of a bare machine with no carried package and no route to the mirror does not name --rclone-package, the way out: $(tail -n 1 "$WORK/restore-whole/err" | cut -c1-300)"
 # The refusal comes before the passphrase is used, so the one complaint of the case is that no passphrase reached gpg.
 [ "$(cat "$OUT/verdict")" = 'no passphrase reached gpg through a file' ] && ! grep -q '^dpkg -i ' "$STANDIN/dpkg.log" && [ -s "$STANDIN/curl.log" ] \
   || fail "restore: a bare machine with no carried package and no route to the mirror was not refused before the box was opened: $(cat "$OUT/verdict")"
 ok 'restore: on a bare machine with no rclone and no route to the mirror, the package carried with the session is installed with no request and the restore goes on to fetch and stage the backup; with no carried package the restore ends 69 naming rclone before the box is opened'
+# ── the backup driver puts the pinned rclone on the machine itself, before it stops a store ──
+# The driver is run whole with the helper and the metadata of the bare machine's tree ahead of it, as the launcher sends them. The stand-ins of the package
+# manager and of the fetch answer what each case writes; the machine of every case starts with an rclone that answers the pin and no route to the mirror.
+PROVISION_CALL="$(grep -m1 '^require_rclone || die ' "$HERE/master-backup-driver.sh" || true)"
+[ -n "$PROVISION_CALL" ] || fail 'the backup driver carries no line that calls require_rclone and dies with its refusal — the cases of its provisioning prove nothing'
+BARE_AMD64_ADDRESS="$( . "$HERE/read-rclone-pin.sh"; read_rclone_pin "$BARE_TREE" && awk '$1 == "amd64" { print $3 }' <<< "$RCLONE_ROWS" )"
+[[ "$BARE_AMD64_ADDRESS" == https://*"/blobs/sha256:$BARE_DIGEST" ]] || fail "the owned address of the amd64 row of the bare machine's tree is not the address of the fixture package: $BARE_AMD64_ADDRESS"
+provisioning_machine() { # <pinned|old|root-old|offline|install-fails|still-old|no-architecture> — the stand-ins as the machine of that case has them
+  local pin_answer
+  pin_answer="$(printf 'rclone %s\n- os/version: stand-in\n' "$RCLONE_PIN_OF_TREE")"
+  rm -f "$STANDIN/rclone-answer-root" "$STANDIN/dpkg-arch" "$STANDIN/dpkg-fails" "$STANDIN/dpkg-installs-answer" "$STANDIN/curl-serves"
+  printf '%s\n' "$pin_answer" > "$STANDIN/rclone-answer"
+  : > "$STANDIN/dpkg.log"; : > "$STANDIN/curl.log"
+  case "$1" in
+    pinned) ;;
+    old) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer"; printf '%s\n' "$pin_answer" > "$STANDIN/dpkg-installs-answer"; cp "$WORK/carried-rclone.deb" "$STANDIN/curl-serves" ;;
+    root-old) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer-root"; printf '%s\n' "$pin_answer" > "$STANDIN/dpkg-installs-answer"; cp "$WORK/carried-rclone.deb" "$STANDIN/curl-serves" ;;
+    offline) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer" ;;
+    install-fails) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer"; : > "$STANDIN/dpkg-fails"; cp "$WORK/carried-rclone.deb" "$STANDIN/curl-serves" ;;
+    still-old) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer"; cp "$WORK/carried-rclone.deb" "$STANDIN/curl-serves" ;;
+    no-architecture) echo 'rclone v1.60.1-DEV' > "$STANDIN/rclone-answer"; echo riscv64 > "$STANDIN/dpkg-arch" ;;
+    *) fail "provisioning_machine knows no machine named $1" ;;
+  esac
+}
+provisioning_holds() { # <the driver's text> <the machine's case> — the whole backup driver on that machine: ends 0 when the pinned rclone was put on it before the first store was stopped, or the driver was refused with 69 before any store, the queue or a folder was touched, as the case says; what is wrong stands in $OUT/verdict
+  local text="$1" kind="$2" installs requests says want_installs want_requests first_id
+  : > "$OUT/verdict"
+  provisioning_machine "$kind"
+  case "$kind" in
+    pinned|old|root-old)
+      want_installs=0 want_requests=0
+      [ "$kind" = pinned ] || want_installs=1 want_requests=1
+      lock_reset block
+      lock_driver provisioned "$text"
+      lock_start provisioned; lock_held provisioned
+      installs="$(grep -c '^dpkg -i ' "$STANDIN/dpkg.log" || true)"; requests="$(grep -c '^curl ' "$STANDIN/curl.log" || true)"
+      [ "$installs" = "$want_installs" ] || echo "$installs package(s) were installed before the first store was stopped, not $want_installs" >> "$OUT/verdict"
+      [ "$requests" = "$want_requests" ] || echo "the mirror was asked $requests time(s) before the first store was stopped, not $want_requests" >> "$OUT/verdict"
+      if [ "$want_requests" = 1 ] && ! grep -qF -- "$BARE_AMD64_ADDRESS" "$STANDIN/curl.log"; then
+        echo "the request made before the first store was stopped was not for the owned address of the amd64 row: $(cut -c1-300 "$STANDIN/curl.log")" >> "$OUT/verdict"
+      fi
+      first_id="$(ls "$LOCK_DIR/provisioned/backups" 2> /dev/null | head -n 1 || true)"
+      lock_let_go
+      [ "$LOCK_CODE" = 0 ] || echo "the driver ended with $LOCK_CODE once let go: $(tail -n 1 "$LOCK_DIR/provisioned/err" | cut -c1-200)" >> "$OUT/verdict"
+      { [ -n "$first_id" ] && [ "$(tail -n 1 "$LOCK_DIR/provisioned/out")" = "BACKUP $first_id" ]; } || echo 'the driver did not end with BACKUP and its id once let go' >> "$OUT/verdict"
+      secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict" ;;
+    *)
+      case "$kind" in
+        offline) says='could not be fetched from the mirror' want_installs=0 want_requests=1 ;;
+        install-fails) says='could not be installed' want_installs=1 want_requests=1 ;;
+        still-old) says='after the installation rclone answers' want_installs=1 want_requests=1 ;;
+        no-architecture) says='has no rclone package among the rows' want_installs=0 want_requests=0 ;;
+      esac
+      lock_reset free
+      lock_driver provisioned "$text"
+      lock_run provisioned
+      installs="$(grep -c '^dpkg -i ' "$STANDIN/dpkg.log" || true)"; requests="$(grep -c '^curl ' "$STANDIN/curl.log" || true)"
+      [ "$LOCK_CODE" = 69 ] || echo "the driver ended with $LOCK_CODE, not 69: $(tail -n 1 "$LOCK_DIR/provisioned/err" | cut -c1-200)" >> "$OUT/verdict"
+      grep -qF -- 'Nothing was stopped' "$LOCK_DIR/provisioned/err" || echo "the refusal did not say 'Nothing was stopped': $(tail -n 1 "$LOCK_DIR/provisioned/err" | cut -c1-200)" >> "$OUT/verdict"
+      grep -qF -- "$says" "$LOCK_DIR/provisioned/err" || echo "the refusal did not say '$says': $(tail -n 1 "$LOCK_DIR/provisioned/err" | cut -c1-200)" >> "$OUT/verdict"
+      [ "$(scale_calls)" = 0 ] || echo "a store was stopped before the refusal: $(scale_calls) scale call(s)" >> "$OUT/verdict"
+      [ "$(patch_calls)" = 0 ] || echo "the Manager's queue was suspended before the refusal: $(patch_calls) patch call(s)" >> "$OUT/verdict"
+      [ ! -e "$LOCK_DIR/provisioned/backups" ] || echo 'a folder of the backup was made before the refusal' >> "$OUT/verdict"
+      [ "$installs" = "$want_installs" ] || echo "$installs package(s) were installed, not $want_installs" >> "$OUT/verdict"
+      [ "$requests" = "$want_requests" ] || echo "the mirror was asked $requests time(s), not $want_requests" >> "$OUT/verdict" ;;
+  esac
+  printed_wrong "$LOCK_DIR/provisioned/out" "$LOCK_DIR/provisioned/err" >> "$OUT/verdict"
+  provisioning_machine pinned
+  [ ! -s "$OUT/verdict" ]
+}
+for kind in pinned old root-old offline install-fails still-old no-architecture; do
+  PREAMBLE_TREE="$BARE_TREE" provisioning_holds "$LOCK_TEXT" "$kind" || fail "backup: the driver on a machine of the case '$kind' did not provision rclone before it stopped a store, or refuse: $(cat "$OUT/verdict")"
+done
+plant "$LOCK_TEXT" "$PROVISION_CALL" 'true'; NO_PROVISION="$PLANTED_TEXT"
+plant "$NO_PROVISION" 'step "the host'"'"'s own file"' "$PROVISION_CALL"$'\n''step "the host'"'"'s own file"'; LATE_PROVISION="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "$PROVISION_CALL" 'require_rclone || true'; IGNORES_REFUSAL="$PLANTED_TEXT"
+REFUSAL_WORDS=('the driver ended with' 'the refusal did not say' 'a store was stopped' 'the Manager' 'a folder of the backup' 'the mirror was asked' 'package(s)')
+for planted in NO_PROVISION LATE_PROVISION; do
+  for kind in old root-old; do
+    ! PREAMBLE_TREE="$BARE_TREE" provisioning_holds "${!planted}" "$kind" || fail "the planted driver $planted was not caught on a machine of the case '$kind' — the probe proves nothing"
+    caught_for "driver $planted on a machine of the case '$kind'" 'before the first store was stopped'
+  done
+done
+! PREAMBLE_TREE="$BARE_TREE" provisioning_holds "$NO_PROVISION" offline || fail 'the planted driver without the call was not caught on a machine with an old rclone and no route to the mirror — the probe proves nothing'
+caught_for 'driver without the call on a machine with an old rclone and no route to the mirror' 'the driver ended with 0, not 69' "${REFUSAL_WORDS[@]}"
+! PREAMBLE_TREE="$BARE_TREE" provisioning_holds "$LATE_PROVISION" offline || fail 'the planted driver that provisions after its store loop was not caught on a machine with an old rclone and no route to the mirror — the probe proves nothing'
+caught_for 'driver that provisions after its store loop on a machine with an old rclone and no route to the mirror' 'a store was stopped before the refusal' "${REFUSAL_WORDS[@]}"
+! PREAMBLE_TREE="$BARE_TREE" provisioning_holds "$IGNORES_REFUSAL" offline || fail 'the planted driver that goes on after a refusal of its provisioning was not caught — the probe proves nothing'
+caught_for 'driver that goes on after a refusal of its provisioning' 'the driver ended with 0, not 69' "${REFUSAL_WORDS[@]}"
+ok 'backup: the driver puts the pinned rclone on the machine before it stops a store: on a machine that answers the pin it asks for nothing, on one whose rclone is old, or whose root runs an old one, it fetches the owned address of the amd64 row and installs the package first; with no route to the mirror, a failed installation, an installation that leaves rclone old or an architecture no row has, it ends 69 saying nothing was stopped, with no store scaled, no queue suspended and no folder made; a driver without the call, one with it after the store loop and one that goes on after its refusal are caught'
 backup_box_holds "$LOCK_TEXT" 0 'the storage box opens' || fail "backup: the whole driver names the storage box account on a box that opens: $(cat "$OUT/verdict")"
 backup_box_holds "$LOCK_TEXT" 69 'the storage box does not open' lsd || fail "backup: the whole driver names the storage box account when the box refuses its opening: $(cat "$OUT/verdict")"
 backup_box_holds "$LOCK_TEXT" 69 'could not be carried' upload || fail "backup: the whole driver names the storage box account when the box refuses the carry: $(cat "$OUT/verdict")"

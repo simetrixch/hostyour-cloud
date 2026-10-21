@@ -79,7 +79,7 @@
 # The first statistics that report the expected bytes start one completion wait of READBACK_FINISH_SECONDS, counted
 # on this script's clock and never restarted. A copy that ends inside it is judged by its exit status like any other.
 # One that still runs when it passes is ended and this ends 69, "read-back completion did not finish". That bound is
-# a diagnostic outer limit, not a measured one: nothing yet says why rclone runs on after its last byte.
+# an outer policy, not a measured limit: the pinned rclone ends by itself after its last byte, and a copy that does not is not waited on past it.
 # WHAT RCLONE REPORTS AFTER ITS LAST BYTE is printed, at the end of a copy and before an unfinished one is ended: the
 # statistics records it wrote and the last 30 of its log records, read from its DEBUG output in the private file.
 # THE STORAGE BOX IS NAMED "the storage box" AND NOTHING MORE in what this prints. rclone's own messages carry the
@@ -531,8 +531,9 @@ readback_known_names() {
 # readback_project: rclone's output on standard input, one JSON record a line, projected to what may be printed. Every byte
 # it prints is a fixed word of this program, a number checked as digits, a time, level or source location checked by its
 # shape, the version of rclone, a file name of readback_known_names, or the wording of the rclone message template that
-# wrote the record (rclone v1.60.1: fs/accounting/stats.go:482, cmd/cmd.go:263,283,285,298,414, fs/operations/operations.go:103,
-# 107,529,538,544-545,566, fs/sync/sync.go:441,457,479,891) with each value the template takes from outside replaced by [redacted].
+# wrote the record (the places are those of rclone v1.60.1, where the wording was read: fs/accounting/stats.go:482, cmd/cmd.go:263,283,285,298,414,
+# fs/operations/operations.go:103,107,529,538,544-545,566, fs/sync/sync.go:441,457,479,891; a record the pinned release words otherwise is
+# an unknown message) with each value the template takes from outside replaced by [redacted].
 # Whatever else a record holds, and any line that is not a whole JSON record, is counted and never printed. The first line it
 # prints, "unfinished: ...", is for the failure message. It prints nothing when no statistics record reports the expected bytes.
 readback_project() {

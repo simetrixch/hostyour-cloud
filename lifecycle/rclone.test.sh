@@ -336,7 +336,7 @@ planted_helper skips-the-digest '/sha256sum -c --quiet/s#.*#true \&\& true >/dev
 planted_helper accepts-the-old-executable 's#^rclone_is_pinned() {#rclone_is_pinned() { return 0#' old
 planted_helper takes-any-address '/the address of the row for \$arch is not the owned address/s#.*#    || true#' upstream_address
 planted_helper installs-without-the-answer-check '/after the installation rclone answers/s#.*#    || true; true#' wrong_result
-ok 'the program the backup launcher sent, run with stand-ins: a pinned rclone is left alone with no request; an absent one, an old one and one whose root answers another version are replaced from the owned address with finite connection and total limits and a package held to the row'"'"'s digest; a package of other bytes, a failed installation, a wrong result, an unsupported architecture, a mirror that cannot be reached and an address that is not the owned one are each refused, with no installation and no folder left behind; a helper that skips the digest, one that accepts the old executable, one that takes any address and one that does not read the answer afterwards are each caught'
+ok 'the helper of the program the backup launcher sent (its driver cut off, require_rclone called in its place), run with stand-ins: a pinned rclone is left alone with no request; an absent one, an old one and one whose root answers another version are replaced from the owned address with finite connection and total limits and a package held to the row'"'"'s digest; a package of other bytes, a failed installation, a wrong result, an unsupported architecture, a mirror that cannot be reached and an address that is not the owned one are each refused, with no installation and no folder left behind; a helper that skips the digest, one that accepts the old executable, one that takes any address and one that does not read the answer afterwards are each caught'
 
 # ── A5: the restore carries the package as data ──
 CARRIED_TREE="$TREE"
@@ -383,6 +383,70 @@ send "$TREE/lifecycle" restore --rclone-package "$WORK/missing.deb"
 send "$TREE/lifecycle" restore 20261021T120000Z --rclone-package
 [ "$SEND_CODE" = 64 ] || fail "master-restore.sh did not refuse --rclone-package without a file: $SEND_CODE"
 ok 'master-restore.sh --rclone-package, with or without a backup id, sends the package as data behind a quoted delimiter and the program installs it on a bare machine with no route to the mirror without one request; a package changed in transit, one for another architecture and a session cut inside the package install nothing; the launcher refuses a file that is not the row'"'"'s or not there before it opens a session; a helper that ignores the carried package is caught'
+
+# ── A6: the launcher holds the carried package to the table with a tool an operator machine has ──
+# A macOS operator machine has openssl and shasum and no sha256sum. Its path is every executable of this machine but the tools it lacks.
+path_without() { # <folder> <tool>... — a folder of links to every executable of /usr/bin and /bin but those tools
+  local folder="$1" file
+  shift
+  mkdir -p "$folder"
+  for file in /usr/bin/* /bin/*; do
+    [ -f "$file" ] && [ -x "$file" ] || continue
+    case " $* " in *" ${file##*/} "*) continue ;; esac
+    [ -e "$folder/${file##*/}" ] || ln -s "$file" "$folder/${file##*/}"
+  done
+}
+NO_SHA256SUM="$WORK/path-no-sha256sum"
+path_without "$NO_SHA256SUM" sha256sum
+[ ! -e "$NO_SHA256SUM/sha256sum" ] && [ -x "$NO_SHA256SUM/openssl" ] && [ -x "$NO_SHA256SUM/awk" ] && [ -x "$NO_SHA256SUM/base64" ] \
+  || fail 'the path of a machine without sha256sum was not made, or lacks openssl, awk or base64'
+NO_DIGEST_TOOL="$WORK/path-no-digest-tool"
+cp -a "$NO_SHA256SUM" "$NO_DIGEST_TOOL"; rm "$NO_DIGEST_TOOL/openssl"
+BROKEN_DIGEST_TOOL="$WORK/path-broken-digest-tool"
+cp -a "$NO_SHA256SUM" "$BROKEN_DIGEST_TOOL"; rm "$BROKEN_DIGEST_TOOL/openssl"
+printf '#!/bin/sh\nexit 0\n' > "$BROKEN_DIGEST_TOOL/openssl"; chmod +x "$BROKEN_DIGEST_TOOL/openssl"
+carried_by() { # <path> <reader file> <package> — what carry_rclone_package of that reader answers on that path: the architecture it names, or ERROR and the reason
+  ( PATH="$1"; . "$2"; if carry_rclone_package "$TREE" "$3"; then printf '%s\n' "$RCLONE_CARRIED_ARCH"; else printf 'ERROR %s\n' "$RCLONE_METADATA_ERROR"; fi )
+}
+carried_holds() { # <reader file> — ends 0 when, on the paths below, the reader names the architecture of each genuine package, refuses a file that is not one for what it is, and names a digest it cannot compute
+  local reader answer
+  [ "$(carried_by "$PATH" "$1" "$WORK/fixture-amd64.deb")" = amd64 ] && [ "$(carried_by "$PATH" "$1" "$WORK/fixture-arm64.deb")" = arm64 ] || return 1
+  [ "$(carried_by "$NO_SHA256SUM" "$1" "$WORK/fixture-amd64.deb")" = amd64 ] && [ "$(carried_by "$NO_SHA256SUM" "$1" "$WORK/fixture-arm64.deb")" = arm64 ] || return 1
+  answer="$(carried_by "$NO_SHA256SUM" "$1" "$WORK/not-the-package.deb")"
+  [[ "$answer" == *'is neither of the digests'* ]] || return 1
+  for reader in "$NO_DIGEST_TOOL" "$BROKEN_DIGEST_TOOL"; do
+    answer="$(carried_by "$reader" "$1" "$WORK/fixture-amd64.deb")"
+    [[ "$answer" == 'ERROR '*'could not be computed'* && "$answer" != *'is neither of the digests'* ]] || return 1
+  done
+}
+carried_holds "$HERE/read-rclone-pin.sh" || fail "the reader of the launchers does not hold a carried package to the table on a machine without sha256sum: $(carried_by "$NO_SHA256SUM" "$HERE/read-rclone-pin.sh" "$WORK/fixture-amd64.deb" | cut -c1-300)"
+READER_TEXT="$(cat "$HERE/read-rclone-pin.sh")"
+DIGEST_LINES="$(sed -n '/^  # openssl and not sha256sum/,/^    || { RCLONE_METADATA_ERROR="the sha256 of /p' "$HERE/read-rclone-pin.sh")"
+[ "$(printf '%s\n' "$DIGEST_LINES" | wc -l | tr -d ' ')" = 3 ] || fail 'the reader of the launchers does not compute the digest of the carried package in the three lines this test replaces'
+printf '%s\n' "${READER_TEXT/"$DIGEST_LINES"/'  digest=$(sha256sum "$file" | cut -d'"' '"' -f1)'}" > "$WORK/reader-sha256sum.sh"
+printf '%s\n' "${READER_TEXT/' && [[ "$digest" =~ ^[0-9a-f]{64}$ ]]'/}" > "$WORK/reader-accepts-empty-digest.sh"
+for planted in sha256sum accepts-empty-digest; do
+  ! cmp -s "$WORK/reader-$planted.sh" "$HERE/read-rclone-pin.sh" || fail "the planted reader $planted was not made"
+  ! carried_holds "$WORK/reader-$planted.sh" 2> /dev/null || fail "the planted reader $planted passed the cases of a machine without a digest tool — the cases prove nothing"
+done
+[[ "$(carried_by "$NO_SHA256SUM" "$WORK/reader-sha256sum.sh" "$WORK/fixture-amd64.deb" 2> /dev/null)" == *' its sha256  is neither of the digests'* ]] \
+  || fail 'the planted reader that computes the digest with sha256sum did not refuse the genuine package with an empty digest — the plant is not the old reader'
+# the launcher on such a machine: the genuine package is sent, and with no tool to compute the digest nothing is sent
+SD_PATH_OF_PART_A="$SD_PATH"
+SD_PATH="$SD/bin:$NO_SHA256SUM"
+send "$TREE/lifecycle" restore 20261021T120000Z --rclone-package "$WORK/fixture-amd64.deb"
+{ [ "$SEND_CODE" = 0 ] && grep -qF -- "AW_RCLONE_CARRIED_ARCH='amd64'" "$SD/session-stream"; } || fail "master-restore.sh --rclone-package on a machine without sha256sum ended $SEND_CODE: $(tail -n 1 "$WORK/send.err" | cut -c1-300)"
+rm -rf "$WORK/mutant-sha256sum"; cp -R "$TREE" "$WORK/mutant-sha256sum"; cp "$WORK/reader-sha256sum.sh" "$WORK/mutant-sha256sum/lifecycle/read-rclone-pin.sh"
+send "$WORK/mutant-sha256sum/lifecycle" restore 20261021T120000Z --rclone-package "$WORK/fixture-amd64.deb"
+[ "$SEND_CODE" != 0 ] || fail 'a launcher that computes the digest with sha256sum sent the genuine package from a machine without it — the case proves nothing'
+for path in "$NO_DIGEST_TOOL" "$BROKEN_DIGEST_TOOL"; do
+  SD_PATH="$SD/bin:$path"
+  send "$TREE/lifecycle" restore 20261021T120000Z --rclone-package "$WORK/fixture-amd64.deb"
+  { [ "$SEND_CODE" = 65 ] && [ ! -e "$SD/session-stream" ] && grep -qF -- 'could not be computed' "$WORK/send.err"; } \
+    || fail "master-restore.sh --rclone-package on a machine whose digest tool is missing or silent ended $SEND_CODE: $(tail -n 1 "$WORK/send.err" | cut -c1-300)"
+done
+SD_PATH="$SD_PATH_OF_PART_A"
+ok 'the launcher holds a carried package to the table with openssl: on a machine without sha256sum it names the architecture of each genuine package and sends the restore program, it refuses a file that is not one for what it is, and with no digest tool, or one that prints nothing, it ends 65 saying the digest could not be computed and sends nothing; a reader that computes it with sha256sum, which refuses the genuine package from that machine with a false reason, and one that takes an empty digest are caught'
 
 echo "rclone.test: part A green"
 [ "${1:-}" != --part-a ] || exit 0
@@ -559,4 +623,8 @@ wait "$PID_B" || fail 'the second of two copies at once did not end 0'
 sleep 1
 ! pgrep -f "$WORK" > /dev/null || fail "a process that names this test's folder is still running: $(pgrep -fa "$WORK" | head -n 2 | cut -c1-200)"
 ok 'two copies at once, each from a server of its own on a port the kernel gave it, ended 0 with the same sha256, and no process of this test is left running'
-echo "rclone.test: GREEN — part A (stand-ins) and part B (the executables of rclone $PIN, Ubuntu's and Debian 12's)"
+if [ -n "$OLD_RCLONE" ]; then
+  echo "rclone.test: GREEN — part A (stand-ins) and part B (the executables of rclone $PIN, Ubuntu's and Debian 12's)"
+else
+  echo "rclone.test: GREEN — part A (stand-ins) and part B with the executable of rclone $PIN only; the executables of Ubuntu and Debian 12 did not run on $ARCH"
+fi

@@ -452,8 +452,10 @@ another pin. The backup takes its lock first, so a second backup ends 75 without
 
 `master-restore.sh <config> [<id>] --rclone-package <local .deb>`: on a bare machine the mirror is the master that is lost. The operator keeps
 the package of the pin for the architecture outside that master (it is the file the mirror serves at the owned address of its row, and
-its sha256 is the row's). The launcher checks the file against the rows, sends it as base64 behind a quoted heredoc delimiter, as data, and the machine checks it again before it
-installs it, with no request to the mirror or to GitHub. A file that is no package of the pin, one for another architecture or one damaged in the
+its sha256 is the row's). The launcher checks the file against the rows with `openssl dgst -sha256` (macOS carries that, not `sha256sum`; a digest it cannot compute ends the
+launcher with 65), sends it as base64 behind a quoted heredoc delimiter, as data, and the machine checks it again before it
+installs it, with no request to the mirror or to GitHub. A restore without the option that finds the mirror lost ends 69 before it places anything,
+and its refusal names this option. A file that is no package of the pin, one for another architecture or one damaged in the
 session is refused. Keeping that file is a prerequisite of a recovery without the master. It solves the rclone of the restore only: the
 engine and the images a full recovery needs are not provided by it (`driver.sh` names that problem).
 

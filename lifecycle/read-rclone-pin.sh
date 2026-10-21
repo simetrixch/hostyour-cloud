@@ -17,7 +17,7 @@
 RCLONE_ARCHITECTURES='amd64 arm64'
 
 read_rclone_pin() {
-  local tree="$1" versions table values registry arch url digest line address found
+  local tree="$1" versions table values registry arch url digest line address found row
   versions="$tree/clusters/platform/versions.yaml" table="$tree/clusters/platform/mirror-sources.table" values="$tree/clusters/platform/values-common.yaml"
   RCLONE_METADATA='' RCLONE_METADATA_ERROR='' RCLONE_PIN='' RCLONE_ROWS=''
   [ -r "$versions" ] && [ -r "$table" ] && [ -r "$values" ] && [ -r "$tree/clusters/inventories/consumer-build/files/mirror-sources.sh" ] \
@@ -60,7 +60,9 @@ carry_rclone_package() {
   RCLONE_CARRIED_ARCH=''
   [ -f "$file" ] && [ -r "$file" ] && [ -s "$file" ] || { RCLONE_METADATA_ERROR="$file is not a readable, non-empty file"; return 1; }
   read_rclone_pin "$tree" || return 1
-  digest=$(sha256sum "$file" | cut -d' ' -f1)
+  # openssl and not sha256sum: macOS, an operator machine, carries the first and not the second.
+  digest=$(openssl dgst -sha256 < "$file" 2>/dev/null) && digest="${digest##* }" && [[ "$digest" =~ ^[0-9a-f]{64}$ ]] \
+    || { RCLONE_METADATA_ERROR="the sha256 of $file could not be computed on this machine with openssl dgst -sha256, so the file cannot be held to the digests of the platform table"; return 1; }
   while read -r arch row _; do
     [ "$row" = "$digest" ] && RCLONE_CARRIED_ARCH="$arch"
   done <<< "$RCLONE_ROWS"
