@@ -1,0 +1,120 @@
+# `promtool test rules` over this chart's PrometheusRules as they render. scripts/check.sh sets
+# rule_files to the rules of each stage's render before it runs this file, so it names none here.
+#
+# EVERY TEST READS ALERTS, NOT alert_rule_test: alert_rule_test compares the annotations byte for
+# byte, so a reworded summary would turn a test red while the rule is right. ALERTS carries the
+# labels alone, and an alert on a pod it should not name is a sample the test did not expect.
+#
+# THE SERIES ARE THE ONES kube-state-metrics exports for the pod mongodb/mongodb-prod-0 of each cluster
+# (clusters/inventories/observability and observability-agent allow the pod label
+# hostyour.cloud/mongod-rseq-workaround) and hostyour_kernel_info, which hostyour-deploy's kernel-reading
+# timer writes from /proc/version_signature. Every cluster has one machine and a pod of the same name, so
+# every join of the rules is on (cluster): scripts/check.sh runs this file once more with cluster taken
+# out of each of the two joins of MongoDBRseqWorkaroundMissing, and both runs must fail.
+evaluation_interval: 1m
+tests:
+  - name: MongoDBRestarted alerts on a restart and on a segfault, and not on a planned scale to 0 and back
+    interval: 1m
+    input_series:
+      # master: the container restarts at minute 5.
+      - series: kube_pod_container_status_restarts_total{cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 0x5 1x25
+      # apps1: the set is scaled to 0 at minute 5 and back at minute 10; the pod is replaced, so its counter
+      # starts again at 0, and its last termination was the stop (SIGTERM, 143).
+      - series: kube_pod_container_status_restarts_total{cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 0x5 _x5 0x20
+      - series: kube_pod_container_status_last_terminated_exitcode{cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 143x5 _x25
+      # apps2: the container's last termination was SIGSEGV, and its counter did not move in the window.
+      - series: kube_pod_container_status_restarts_total{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x30
+      - series: kube_pod_container_status_last_terminated_exitcode{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 139x30
+      # apps3: a container of another pod restarts, which is not this alert's.
+      - series: kube_pod_container_status_restarts_total{cluster="apps3", namespace="shop", pod="shop-0", container="shop"}
+        values: 0x5 1x25
+    promql_expr_test:
+      - expr: ALERTS{alertname="MongoDBRestarted"}
+        eval_time: 3m
+        exp_samples:
+          - labels: ALERTS{alertname="MongoDBRestarted", alertstate="firing", cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="warning"}
+            value: 1
+      - expr: ALERTS{alertname="MongoDBRestarted"}
+        eval_time: 8m
+        exp_samples:
+          - labels: ALERTS{alertname="MongoDBRestarted", alertstate="firing", cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="warning"}
+            value: 1
+          - labels: ALERTS{alertname="MongoDBRestarted", alertstate="firing", cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="warning"}
+            value: 1
+      # The restart has left the window of 15 minutes; the segfault stays on the pod until it is replaced.
+      - expr: ALERTS{alertname="MongoDBRestarted"}
+        eval_time: 25m
+        exp_samples:
+          - labels: ALERTS{alertname="MongoDBRestarted", alertstate="firing", cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="warning"}
+            value: 1
+
+  - name: MongoDBRseqWorkaroundMissing alerts on a pod without the workaround on a kernel of 6.19 to 7.0.13 of its own cluster, and not on a fixed kernel, a pod with the workaround, a kernel before 6.19, or another cluster's kernel
+    interval: 1m
+    input_series:
+      # master: no workaround, kernel 7.0.13, the last one in the range.
+      - series: kube_pod_container_status_running{cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x30
+      - series: hostyour_kernel_info{cluster="master", release="7.0.0-31.31-generic", upstream="7.0.13"}
+        values: 1x30
+      # apps1: no workaround, kernel 7.0.14, the first one past it. The pod has the name of master's.
+      - series: kube_pod_container_status_running{cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x30
+      - series: hostyour_kernel_info{cluster="apps1", release="7.0.0-33.33-generic", upstream="7.0.14"}
+        values: 1x30
+      # apps2: the workaround stands, kernel 7.0.12.
+      - series: kube_pod_container_status_running{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x30
+      - series: kube_pod_labels{cluster="apps2", namespace="mongodb", pod="mongodb-prod-0", label_hostyour_cloud_mongod_rseq_workaround="true"}
+        values: 1x30
+      - series: hostyour_kernel_info{cluster="apps2", release="7.0.0-31.31-generic", upstream="7.0.12"}
+        values: 1x30
+      # apps3: no workaround, kernel 6.19.2, the lower end of the range.
+      - series: kube_pod_container_status_running{cluster="apps3", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x30
+      - series: hostyour_kernel_info{cluster="apps3", release="6.19.0-5.5-generic", upstream="6.19.2"}
+        values: 1x30
+      # apps4: no workaround, kernel 6.18.9, before the range.
+      - series: kube_pod_container_status_running{cluster="apps4", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x30
+      - series: hostyour_kernel_info{cluster="apps4", release="6.18.0-9.9-generic", upstream="6.18.9"}
+        values: 1x30
+      # apps5: no workaround, kernel 7.0.9, in the range with one digit, and the pod runs for 3 minutes only.
+      - series: kube_pod_container_status_running{cluster="apps5", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x3 0x27
+      - series: hostyour_kernel_info{cluster="apps5", release="7.0.0-20.20-generic", upstream="7.0.9"}
+        values: 1x30
+    promql_expr_test:
+      # The alert is pending for the 5 minutes the rule waits, and not yet firing.
+      - expr: ALERTS{alertname="MongoDBRseqWorkaroundMissing", alertstate="firing"}
+        eval_time: 3m
+      - expr: ALERTS{alertname="MongoDBRseqWorkaroundMissing", alertstate="firing"}
+        eval_time: 10m
+        exp_samples:
+          - labels: ALERTS{alertname="MongoDBRseqWorkaroundMissing", alertstate="firing", cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="critical"}
+            value: 1
+          - labels: ALERTS{alertname="MongoDBRseqWorkaroundMissing", alertstate="firing", cluster="apps3", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="critical"}
+            value: 1
+
+  - name: MongoDBKernelUnread alerts on a running mongod of a cluster that reports no kernel, and not on one that does
+    interval: 1m
+    input_series:
+      - series: kube_pod_container_status_running{cluster="master", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x40
+      - series: hostyour_kernel_info{cluster="master", release="7.0.0-31.31-generic", upstream="7.0.13"}
+        values: 1x40
+      # apps1 reports no kernel at all; the kernel of master must not stand in for it.
+      - series: kube_pod_container_status_running{cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb"}
+        values: 1x40
+    promql_expr_test:
+      - expr: ALERTS{alertname="MongoDBKernelUnread", alertstate="firing"}
+        eval_time: 10m
+      - expr: ALERTS{alertname="MongoDBKernelUnread", alertstate="firing"}
+        eval_time: 25m
+        exp_samples:
+          - labels: ALERTS{alertname="MongoDBKernelUnread", alertstate="firing", cluster="apps1", namespace="mongodb", pod="mongodb-prod-0", container="mongodb", severity="warning"}
+            value: 1

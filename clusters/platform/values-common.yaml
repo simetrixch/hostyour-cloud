@@ -49,6 +49,16 @@ global:
   # Europe/Berlin inconsistency.
   timezone: Europe/Amsterdam
 
+  # mongod and the Linux kernel it runs on. A mongod that vendors TCMalloc segfaults on Linux 6.19
+  # through 7.0.13 unless the pod carries GLIBC_TUNABLES=glibc.pthread.rseq=1, which costs allocation
+  # performance. The switch is for every mongod pod of the platform, the shared instance and every
+  # unit's own (clusters/charts/common/templates/_mongod.tpl). Turn it off when every machine reads
+  # a kernel of 7.0.14 or later in hostyour_kernel_info: the rule MongoDBRseqWorkaroundMissing
+  # (clusters/inventories/mongodb) fires for a pod without it on a machine that still reads one in
+  # that range.
+  mongod:
+    rseqWorkaround: true
+
   # StorageClass for PersistentVolumeClaims. Our own `clusters/charts/pvc/` chart reads
   # this; upstream charts (Bitnami, kube-prometheus-stack, loki, tempo) still
   # have it hardcoded in their per-app values blocks for now — those would

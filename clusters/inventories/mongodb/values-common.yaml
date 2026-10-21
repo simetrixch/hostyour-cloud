@@ -114,6 +114,53 @@ monitoring:
               annotations:
                 summary: "MongoDB connection pool > 80% utilised"
 
+            # A MONGOD THAT RESTARTS IS A MONGOD THAT CRASHES. On Linux 6.19 through 7.0.13 a mongod without its
+            # rseq workaround serves for about half a minute, dies with SIGSEGV (exit 139) and starts again, so
+            # it reads as healthy from outside while it takes writes in between. A planned scale to 0 and back
+            # replaces the pod and counts no restart. The exit code stays on the series until the pod is replaced.
+            - alert: MongoDBRestarted
+              expr: >-
+                increase(kube_pod_container_status_restarts_total{namespace="mongodb", container="mongodb"}[15m]) > 0
+                or
+                kube_pod_container_status_last_terminated_exitcode{namespace="mongodb", container="mongodb"} == 139
+              labels:
+                severity: warning
+              annotations:
+                summary: "MongoDB {{ $labels.pod }} on {{ $labels.cluster }} restarted or was last terminated by SIGSEGV (exit 139)"
+
+            # THE WORKAROUND IS BOUND TO THE KERNEL, read on the machine (hostyour_kernel_info, written by
+            # hostyour-deploy's kernel-reading timer from /proc/version_signature). A running mongod without the
+            # pod label that says it carries the workaround, on a machine whose upstream kernel is 6.19.x or
+            # 7.0.0 through 7.0.13, is the crash loop above waiting to start. Every join is on (cluster): each
+            # cluster has its own machine, and a kernel of one must not speak for the pod of another.
+            - alert: MongoDBRseqWorkaroundMissing
+              expr: >-
+                (
+                  kube_pod_container_status_running{namespace="mongodb", container="mongodb"} == 1
+                  unless on (cluster, namespace, pod)
+                  kube_pod_labels{namespace="mongodb", label_hostyour_cloud_mongod_rseq_workaround="true"}
+                )
+                and on (cluster)
+                hostyour_kernel_info{upstream=~"6[.]19[.][0-9]+|7[.]0[.]([0-9]|1[0-3])"}
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "MongoDB {{ $labels.pod }} on {{ $labels.cluster }} runs without its rseq workaround on a kernel that needs it"
+
+            # A KERNEL NOBODY READ IS NOT A SAFE KERNEL. The workaround may only come out where the machine's own
+            # reading says 7.0.14 or later, so a mongod on a machine that reports no kernel is reported.
+            - alert: MongoDBKernelUnread
+              expr: >-
+                kube_pod_container_status_running{namespace="mongodb", container="mongodb"} == 1
+                unless on (cluster)
+                hostyour_kernel_info
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "MongoDB {{ $labels.pod }} runs on {{ $labels.cluster }}, whose kernel version no machine reading reports"
+
 # Metrics exporter — emits mongodb_* metrics (the alerts above need it).
 # Since mongod runs with --auth, the exporter needs a credentialed URI. It does
 # NOT carry static creds: templates/serviceclaim-exporter.yaml claims a

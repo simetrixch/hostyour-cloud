@@ -224,14 +224,17 @@ images:
   # offers nothing newer for 26.04 — the GA and hardware-enablement stacks are
   # both on 7.0, and the next bump arrives with 26.04.2 — so a kernel of 7.0.14
   # or later means a mainline one. The cheaper mitigation is
-  # GLIBC_TUNABLES=glibc.pthread.rseq=1 on the Deployment, reported to stop the
-  # segfault at the cost of allocation performance; it belongs in clusters/inventories/mongodb,
-  # not here, and it comes out when the kernel moves.
+  # GLIBC_TUNABLES=glibc.pthread.rseq=1 on the pod, reported to stop the
+  # segfault at the cost of allocation performance. It is the platform switch
+  # global.mongod.rseqWorkaround (clusters/platform/values-common.yaml), and it
+  # comes out only where every machine reads a kernel of 7.0.14 or later.
   #
-  # Watch mongod by hand for two minutes on the first install. Nothing here does
-  # it: the probes in clusters/inventories/mongodb are ordinary 10- and 15-second ones, and a
-  # process that serves for half a minute and then segfaults passes them on the
-  # way past. A restart count climbing on its own IS this defect.
+  # THE WATCH IS IN THE CLUSTER. The alerts MongoDBRestarted,
+  # MongoDBRseqWorkaroundMissing and MongoDBKernelUnread
+  # (clusters/inventories/mongodb) fire on a restart or a SIGSEGV of mongod, on a
+  # pod without the workaround on a machine whose kernel is 6.19 to 7.0.13, and
+  # on a machine whose kernel no reading reports. The kernel is read on each
+  # machine from /proc/version_signature by hostyour-deploy's deploy-host.
   mongodb:
     # THE TAG CARRIES THE DIGEST OF ITS linux/amd64 MANIFEST, so a pull asks the registry mirror
     # (zot) for that one manifest and never for the index. Docker Hub's index for this image mixes
