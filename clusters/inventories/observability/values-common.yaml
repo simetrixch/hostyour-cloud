@@ -1315,9 +1315,9 @@ alloy:
       - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
     resources:
       requests:
-        memory: 450Mi
-      limits:
         memory: 1Gi
+      limits:
+        memory: 2Gi
 
 # ============================================================================
 # The site statistics service (templates/site-telemetry-*.yaml, files/site_telemetry.py): the read API
