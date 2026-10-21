@@ -2844,8 +2844,8 @@ ok 'neither driver asks root for a file'"'"'s mode; the guard catches each plant
 
 # Neither driver pipes or redirects anything into an elevated command: root() replaces its standard input
 # with the password line. A heredoc on a descriptor of its own inside a quoted script (3<<EOF) is no
-# input of root, and stays.
-piped_into_root_in() { grep -vE '^[[:space:]]*#' "$1" | grep -E '\| *(root|seal)( |$)|(root|seal) .* <<'; }
+# input of root, and stays. The second bar of || is no pipe.
+piped_into_root_in() { grep -vE '^[[:space:]]*#' "$1" | grep -E '(^|[^|])\| *(root|seal)( |$)|(root|seal) .* <<'; }
 for driver in master-backup-driver.sh master-restore-driver.sh; do
   ! piped_into_root_in "$HERE/$driver" > "$OUT/piped.out" \
     || fail "$driver pipes or redirects into an elevated command, which reads root()'s password line instead: $(cat "$OUT/piped.out")"
@@ -2860,9 +2860,10 @@ done
   echo 'seal "$out" tar -cf - .'
   echo 'seal "$out" cat "$QUORUM"'
   echo "root env X=1 sh -c 'gpg -d \"\$1\" 3<<EOF | tar -xf -'"
-  echo 'root cat "$sealed" | wc -c'; } > "$OUT/innocent-piped.sh"
+  echo 'root cat "$sealed" | wc -c'
+  echo '[ -z "$pid" ] || root kill -TERM "$pid"'; } > "$OUT/innocent-piped.sh"
 ! piped_into_root_in "$OUT/innocent-piped.sh" > "$OUT/piped.out" \
-  || fail "the guard caught a comment, a seal that takes its command, a heredoc on a descriptor of its own and the output of root piped on: $(cat "$OUT/piped.out")"
+  || fail "the guard caught a comment, a seal that takes its command, a heredoc on a descriptor of its own, the output of root piped on and an or-list that runs root: $(cat "$OUT/piped.out")"
 ok 'neither driver pipes or redirects into an elevated command; the guard catches each planted form and passes the innocent lines'
 # The file of mode 000 is removed here: the recursive greps over $WORK further down (no_session) cannot read it.
 rm -rf "$QUORUM_DIR"
@@ -2984,7 +2985,7 @@ cat > "$STANDIN/microk8s" <<'STANDIN_MICROK8S'
 # run that reads running for the driver's first two looks at the release runs, then True), run-forever (one that
 # never ends), late-job (a Job of the queue that is not listed at the first look at the Jobs, is unfinished at the
 # second and third, finished from the fourth, and that .status.active names at its third and fourth look),
-# no-cronjob, not-ready (workload names, one a line, that do not read ready after a scale up), scale-fails
+# no-cronjob, no-claims (a get of a claim ends 1, as on a machine that stands bare), not-ready (workload names, one a line, that do not read ready after a scale up), scale-fails
 # (workload names whose scale up ends 1), stop-fails (workload names whose scale to 0 ends 1 and changes nothing)
 # and stop-lost (workload names whose scale to 0 takes effect and ends 1, as an answer lost on the way back does). The first scale call, while block-first-scale stands beside it, claims
 # the folder blocked and then waits until the file release stands (or 60 seconds pass), which is how a case holds
@@ -3033,7 +3034,9 @@ case "$1" in
   get)
     case "$2" in
       nodes|pods) exit 0 ;;
-      pvc) echo 1; exit 0 ;;
+      pvc)
+        if knob no-claims; then echo 'Error from server (NotFound): persistentvolumeclaims "data-vault-0" not found' >&2; exit 1; fi
+        echo 1; exit 0 ;;
       cronjob/release-queue)
         if knob no-cronjob; then echo 'Error from server (NotFound): cronjobs.batch "release-queue" not found' >&2; exit 1; fi
         case "$jsonpath" in
@@ -3132,12 +3135,25 @@ cat > "$STANDIN/rclone" <<'STANDIN_RCLONE'
 # stands in its environment; a copy to the box is not refused, as the carry of 2026-10-19 was not.
 # The first copy to the box, while block-first-upload stands beside it, claims the folder blocked and then
 # waits until the file release stands (or 60 seconds pass), which is how a case holds one driver in its
-# upload; a copy from the box does the same while hang-readback stands beside it, after it wrote its process
-# id to hanging. Like the microk8s stand-in it lets go of descriptor 9, the backup's lock, so that the driver
+# upload. Like the microk8s stand-in it lets go of descriptor 9, the backup's lock, so that the driver
 # alone holds the lock while it waits.
+# Every refusal goes to standard error and to rclone-errors.log, which is where a case reads what refused a call: the drivers
+# print nothing of rclone's own words. Where the file box-fails names a call (lsd, lsf, upload or download), that call ends 1
+# with the words rclone gives a box that refuses it, the host and the user of the box among them. size answers the bytes
+# of the files under a path, as rclone size --json does. A copy to a path that is not on the box is a local copy. With
+# --use-json-log, a copy prints the statistics line rclone 1.60.1 prints (the key order of its output) when it ends.
+# Where the file readback-plan stands, a copy from the box prints a statistics line after each tick, one tick for each
+# --stats interval. The clock is the machine's: the line says the real time since the copy started and the bytes the plan
+# has moved by then, so the rate a driver measures is the plan's however long a tick takes. A line of the plan is
+# "rate BYTES_A_SECOND MILLISECONDS|forever" (the segments in order, counted from the start of the copy), "garbage"
+# (statistics that no number can be read from), "ignore-term" (a copy that ignores TERM), "exit CODE" (the copy ends
+# with that code and an error once its segments are used up; without it, the rest is moved at once), "every SECONDS"
+# (a tick after that long, whatever --stats says) or "slow SECONDS" (every tick takes that long more, as on a machine
+# under load). The last line it printed is kept in readback-emitted, and its pid in transfer.pid.
 exec 9>&-
 here="$(dirname "$0")"
 printf 'rclone %s\n' "$*" >> "$here/argv.log"
+err() { echo "rclone stand-in: $*" >&2; echo "$*" >> "$here/rclone-errors.log"; }
 conf="${RCLONE_CONFIG:-}"
 args=()
 while [ "$#" -gt 0 ]; do
@@ -3147,6 +3163,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 set -- "${args[@]}"
+json_log=''; stats_every=5; previous=''
+for argument in "$@"; do
+  [ "$previous" != --stats ] || stats_every="${argument%s}"
+  [ "$argument" != --use-json-log ] || json_log=1
+  previous="$argument"
+done
 if [ "$1" = obscure ]; then
   if [ "$2" = - ]; then IFS= read -r given; else given="$2"; fi
   printf 'obscured-of-%s\n' "$given"
@@ -3156,10 +3178,10 @@ fi
 hashcheck_off=''
 if [ -n "$conf" ] && [ -f "$conf" ]; then
   if grep -qxF "$conf" "$here/rootonly" 2> /dev/null && [ -z "${STANDIN_ELEVATED:-}" ]; then
-    echo "rclone stand-in: Failed to load config file \"$conf\": permission denied" >&2; exit 1
+    err "Failed to load config file \"$conf\": permission denied"; exit 1
   fi
   [ "$(grep -vE '^(shell_type|md5sum_command|sha1sum_command) = ' "$conf" | grep -vxF 'disable_hashcheck = true' | sed -E 's/^([a-z]+) *= */\1=/')" = "$(printf '[box]\ntype=sftp\nhost=%s\nuser=%s\npass=%s' "$host" "$user" "$pass")" ] \
-    || { echo 'rclone stand-in: the config does not define the remote box' >&2; exit 1; }
+    || { err 'the config does not define the remote box'; exit 1; }
   printf '%s %s %s\n' "$(stat -c %a "$(dirname "$conf")")" "$(stat -c %a "$conf")" "$(dirname "$conf")" >> "$here/secrets.seen"
   saved_keys=('shell_type = unix')
   if grep -qxF 'disable_hashcheck = true' "$conf"; then hashcheck_off=1; else saved_keys+=('md5sum_command = md5sum' 'sha1sum_command = sha1sum'); fi
@@ -3170,35 +3192,102 @@ if [ -n "$conf" ] && [ -f "$conf" ]; then
 elif [ "${RCLONE_CONFIG_BOX_TYPE:-}" = sftp ] && [ "${RCLONE_CONFIG_BOX_HOST:-}" = "$host" ] && [ "${RCLONE_CONFIG_BOX_USER:-}" = "$user" ] && [ "${RCLONE_CONFIG_BOX_PASS:-}" = "$pass" ]; then
   [ "${RCLONE_CONFIG_BOX_DISABLE_HASHCHECK:-}" != true ] || hashcheck_off=1
 else
-  echo 'rclone stand-in: the remote box is not defined' >&2; exit 1
+  err 'the remote box is not defined'; exit 1
 fi
+box_fails() { [ -f "$here/box-fails" ] && grep -qxF "$1" "$here/box-fails"; }
+box_refuses() {
+  err "Failed to create file system for \"box:\": sftp: dial tcp $host:22: ssh: handshake failed for user $user: unable to authenticate"; exit 1
+}
+stats_line() { # BYTES TOTAL MILLISECONDS
+  printf '{"level":"warning","msg":"\\nTransferred: %s bytes\\n","source":"accounting/stats.go:482","stats":{"bytes":%d,"checks":0,"deletedDirs":0,"deletes":0,"elapsedTime":%d.%03d,"errors":0,"eta":null,"fatalError":false,"renames":0,"retryError":false,"speed":0,"totalBytes":%d,"totalChecks":0,"totalTransfers":1,"transferTime":0,"transfers":0},"time":"2026-10-21T00:00:00+00:00"}\n' "$1" "$1" $(( $3 / 1000 )) $(( $3 % 1000 )) "$2" >&2
+  echo "$1 $3" > "$here/readback-emitted"
+}
+bytes_under() { find "$1" -type f -exec cat {} + | wc -c | tr -d ' '; }
+progressive() { # FROM TO — the copy of the plan: each tick has moved what the plan gives for the real time since the copy started
+  local from="$1" to="$2" kind a b rates=() spans=() code='' garbage='' slow='' every="$stats_every" file total=0 sent=0 tick=0 started elapsed due at span len n take index=0 offset=0 files=() sizes=() segment used_up
+  while read -r kind a b; do
+    case "$kind" in
+      rate) rates+=("$a"); spans+=("$b") ;;
+      garbage) garbage=1 ;;
+      ignore-term) trap '' TERM ;;
+      exit) code="$a" ;;
+      slow) slow="$a" ;;
+      every) every="$a" ;;
+    esac
+  done < "$here/readback-plan"
+  echo $$ > "$here/transfer.pid"
+  while IFS= read -r file; do
+    files+=("$file"); sizes+=("$(wc -c < "$from/$file" | tr -d ' ')"); total=$(( total + ${sizes[${#sizes[@]} - 1]} ))
+    : > "$to/$file"
+  done < <(cd "$from" && find . -type f | sort)
+  started=$(date +%s%N)
+  while :; do
+    sleep "$every"
+    [ -z "$slow" ] || sleep "$slow"
+    tick=$(( tick + 1 )); elapsed=$(( ($(date +%s%N) - started) / 1000000 ))
+    [ "$tick" -le 3000 ] || exit 1
+    if [ -n "$garbage" ]; then
+      echo "not json: user $user at $host" >&2
+      echo "{\"level\":\"error\",\"msg\":\"dial tcp $host:22 as $user\",\"stats\":{\"bytes\":-5,\"elapsedTime\":1.5,\"totalBytes\":9}}" >&2
+      echo "{\"stats\":{\"bytes\":99999999999999999999999,\"elapsedTime\":1.5,\"totalBytes\":9}} $host" >&2
+      echo "{\"stats\":{\"bytes\":7,\"elapsedTime\":\"$user\",\"totalBytes\":9}}" >&2
+      continue
+    fi
+    due=0 at=0 used_up=1
+    for segment in "${!rates[@]}"; do
+      span="${spans[$segment]}"; [ "$span" != forever ] || span=999999999999
+      len=$(( elapsed - at )); [ "$len" -le "$span" ] || len="$span"; [ "$len" -ge 0 ] || len=0
+      due=$(( due + rates[segment] * len / 1000 )); at=$(( at + span ))
+      [ "$elapsed" -ge "$at" ] || used_up=''
+    done
+    if [ -n "$used_up" ] && [ -z "$code" ]; then due="$total"; fi
+    [ "$due" -le "$total" ] || due="$total"
+    n=$(( due - sent )); sent="$due"
+    while [ "$n" -gt 0 ]; do
+      if [ "$offset" -ge "${sizes[$index]}" ]; then index=$(( index + 1 )); offset=0; continue; fi
+      take=$(( ${sizes[$index]} - offset )); [ "$take" -le "$n" ] || take="$n"
+      tail -c +$(( offset + 1 )) "$from/${files[$index]}" | head -c "$take" >> "$to/${files[$index]}"
+      offset=$(( offset + take )); n=$(( n - take ))
+    done
+    stats_line "$sent" "$total" "$elapsed"
+    if [ -n "$used_up" ] && [ -n "$code" ]; then err "Failed to copy: sftp: dial tcp $host:22: connection to $user lost"; exit "$code"; fi
+    [ "$sent" -lt "$total" ] || exit 0
+  done
+}
 case "$1" in
-  lsd) exit 0 ;;
-  lsf) if [ -d "$here/box-uploaded/${2#box:}" ]; then ls "$here/box-uploaded/${2#box:}"; fi; exit 0 ;;
+  lsd) if box_fails lsd; then box_refuses; fi; exit 0 ;;
+  lsf) if box_fails lsf; then box_refuses; fi; if [ -d "$here/box-uploaded/${2#box:}" ]; then ls "$here/box-uploaded/${2#box:}"; fi; exit 0 ;;
+  size) printf '{"count":%d,"bytes":%d,"sizeless":0}\n' "$(find "$2" -type f | wc -l | tr -d ' ')" "$(bytes_under "$2")"; exit 0 ;;
   copy)
     case "$2" in
       box:*)
+        if box_fails download; then box_refuses; fi
         from="$here/box-uploaded/${2#box:}"; [ -d "$from" ] || from="$here/box-backup"
         if [ -z "$hashcheck_off" ]; then
           first="$(ls "$from" | head -n 1)"
-          echo "rclone stand-in: Failed to calculate src hash: failed to calculate md5 hash: failed to run \"md5sum ${2#box:}$first\"" >&2
-          echo "rclone stand-in: corrupted on transfer: md5 hashes differ src \"\" vs dst \"$(md5sum < "$from/$first" | cut -d' ' -f1)\"" >&2
+          err "Failed to calculate src hash: failed to calculate md5 hash: failed to run \"md5sum ${2#box:}$first\""
+          err "corrupted on transfer: md5 hashes differ src \"\" vs dst \"$(md5sum < "$from/$first" | cut -d' ' -f1)\""
           exit 1
         fi
-        if [ -e "$here/hang-readback" ]; then
-          echo $$ > "$here/hanging"
-          for _ in $(seq 1 600); do [ -e "$here/release" ] && break; sleep 0.1; done
-        fi
-        cp -R "$from/." "$3" ;;
+        if [ -e "$here/readback-plan" ]; then progressive "$from" "$3"; exit $?; fi
+        cp -R "$from/." "$3"
+        if [ -n "$json_log" ]; then stats_line "$(bytes_under "$from")" "$(bytes_under "$from")" 12; fi ;;
       *)
-        if [ -e "$here/block-first-upload" ] && mkdir "$here/blocked" 2> /dev/null; then
-          for _ in $(seq 1 600); do [ -e "$here/release" ] && break; sleep 0.1; done
-        fi
-        if grep -qxF "$2" "$here/rootonly" 2> /dev/null && [ -z "${STANDIN_ELEVATED:-}" ]; then
-          echo "rclone stand-in: open $2: permission denied" >&2; exit 1
-        fi
-        mkdir -p "$here/box-uploaded/${3#box:}" && cp -R "$2/." "$here/box-uploaded/${3#box:}" || exit 1
-        if [ -x "$here/after-upload" ]; then "$here/after-upload" "$here/box-uploaded/${3#box:}" || exit 1; fi ;;
+        case "$3" in
+          box:*)
+            if box_fails upload; then box_refuses; fi
+            if [ -e "$here/block-first-upload" ] && mkdir "$here/blocked" 2> /dev/null; then
+              for _ in $(seq 1 600); do [ -e "$here/release" ] && break; sleep 0.1; done
+            fi
+            if grep -qxF "$2" "$here/rootonly" 2> /dev/null && [ -z "${STANDIN_ELEVATED:-}" ]; then
+              err "open $2: permission denied"; exit 1
+            fi
+            mkdir -p "$here/box-uploaded/${3#box:}" && cp -R "$2/." "$here/box-uploaded/${3#box:}" || exit 1
+            if [ -x "$here/after-upload" ]; then "$here/after-upload" "$here/box-uploaded/${3#box:}" || exit 1; fi ;;
+          *)
+            cp -R "$2/." "$3"
+            if [ -n "$json_log" ]; then stats_line "$(bytes_under "$2")" "$(bytes_under "$2")" 12; fi ;;
+        esac ;;
     esac ;;
   *) echo "rclone stand-in: a call the drivers do not make: $1" >&2; exit 2 ;;
 esac
@@ -3258,7 +3347,7 @@ RESTORE_ROOT="$(grep '^root() ' "$HERE/master-restore-driver.sh")"
 RESTORE_STORES="$(sed -n '/^STORES=($/,/^)$/p' "$HERE/master-restore-driver.sh")"
 RESTORE_PLACEMENT="$(sed -n '/^PLACE=/,/^root chmod 700 "\$PLACE"$/p' "$HERE/master-restore-driver.sh")"
 BACKUP_CLEANUP="$(sed -n "/^SECRETS=''/,/^trap cleanup/p" "$HERE/master-backup-driver.sh")"
-BACKUP_READBACK_LIMIT="$(grep -E '^readonly READBACK_(WAIT_SECONDS|LEAST_BYTES_PER_SECOND)=' "$HERE/master-backup-driver.sh")"
+BACKUP_READBACK_TIMINGS="$(grep -E '^readonly READBACK_[A-Z_]+=' "$HERE/master-backup-driver.sh")"
 BACKUP_SECRETS="$(sed -n '/^SECRETS="\$(mktemp/,/^( umask 077/p' "$HERE/master-backup-driver.sh")"
 BACKUP_RCLONE_CONF="$(sed -n '/^RCLONE_CONF=/,/^export RCLONE_CONFIG=/p' "$HERE/master-backup-driver.sh")"
 BACKUP_WORK="$(sed -n '/^ID=/,/^root install -d -m 700/p' "$HERE/master-backup-driver.sh")"
@@ -3266,10 +3355,10 @@ BACKUP_WAY_OUT="$(sed -n '/^step "the manifest, and the way out"/,/^printf .BACK
 RESTORE_CLEANUP="$(sed -n "/^SECRETS=''/,/^trap cleanup/p" "$HERE/master-restore-driver.sh")"
 RESTORE_SECRETS="$(sed -n '/^SECRETS="\$(mktemp/,/^export RCLONE_CONFIG=/p' "$HERE/master-restore-driver.sh")"
 RESTORE_FETCHED="$(sed -n '/^step "the backup \$ID, fetched and checked"/,/^good "\${#STORES\[@\]} store(s) stand opened/p' "$HERE/master-restore-driver.sh")"
-for lifted in BACKUP_ROOT BACKUP_SEAL BACKUP_CLEANUP BACKUP_READBACK_LIMIT BACKUP_SECRETS BACKUP_RCLONE_CONF BACKUP_WORK BACKUP_WAY_OUT RESTORE_ROOT RESTORE_STORES RESTORE_PLACEMENT RESTORE_CLEANUP RESTORE_SECRETS RESTORE_FETCHED; do
+for lifted in BACKUP_ROOT BACKUP_SEAL BACKUP_CLEANUP BACKUP_READBACK_TIMINGS BACKUP_SECRETS BACKUP_RCLONE_CONF BACKUP_WORK BACKUP_WAY_OUT RESTORE_ROOT RESTORE_STORES RESTORE_PLACEMENT RESTORE_CLEANUP RESTORE_SECRETS RESTORE_FETCHED; do
   [ -n "${!lifted}" ] || fail "the drivers carry no text for $lifted — nothing below measures what reaches an elevated command"
 done
-BACKUP_TEXT="$BACKUP_CLEANUP"$'\n'"$BACKUP_READBACK_LIMIT"$'\n'"$BACKUP_SECRETS"$'\n'"$BACKUP_ROOT"$'\n'"$BACKUP_RCLONE_CONF"$'\n'"$BACKUP_SEAL"
+BACKUP_TEXT="$BACKUP_CLEANUP"$'\n'"$BACKUP_READBACK_TIMINGS"$'\n'"$BACKUP_SECRETS"$'\n'"$BACKUP_ROOT"$'\n'"$BACKUP_RCLONE_CONF"$'\n'"$BACKUP_SEAL"
 
 commands_wrong() { # says which planted secret stands in a line of $STANDIN/argv.log, which every stand-in writes its arguments to; ends 0
   grep -qF "$PLANTED_PASSPHRASE" "$STANDIN/argv.log" && echo 'the backup passphrase stands on a command line'
@@ -3292,7 +3381,7 @@ secrets_wrong() { # <secrets.seen> — says what is wrong with the folders the g
 # shellcheck disable=SC2034 # the lifted text reads these
 sealed_by() { # <sudo kind> <the text lifted first> <command line...> — its code is the command line's; what it printed stands in $OUT/sealed.out and $OUT/sealed.err, what every stand-in was handed in $STANDIN/argv.log
   local kind="$1" text="$2"; shift 2
-  rm -rf "$STANDIN/secrets.seen" "$STANDIN/rootonly" "$STANDIN/box-uploaded"; : > "$STANDIN/argv.log"
+  rm -rf "$STANDIN/secrets.seen" "$STANDIN/rootonly" "$STANDIN/box-uploaded" "$STANDIN/rclone-errors.log"; : > "$STANDIN/argv.log"
   ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 022
     set -uo pipefail
@@ -3516,6 +3605,10 @@ carry_run() { # the driver's own lines: the work folder made, one store and the 
   seal "$WORK/host--vault-${STAGE}.txt.gpg" cat "$SEAL_DIR/quorum.txt"
   eval "$CARRY_WAY_OUT"
 }
+refusals_said() { # says what the rclone stand-in refused in the case just run, in one line, since the drivers print none of rclone's words; ends 0
+  if [ -s "$STANDIN/rclone-errors.log" ]; then echo "the rclone stand-in refused: $(tr '\n' ' ' < "$STANDIN/rclone-errors.log")"; fi
+  return 0
+}
 printed_wrong() { # <file>... — says which planted line stands in those files, whole: the quorum, the passphrase and the passwords reach the operator's terminal and the log of the run, so none may; ends 0
   local planted
   for planted in planted-unseal-key-1 planted-unseal-key-2 "$PLANTED_PASSPHRASE" "$PLANTED_BOX_PASSWORD" "$PLANTED_PASSWORD"; do
@@ -3530,6 +3623,7 @@ carry_holds() { # <sudo kind> <the text lifted first> <the way out> — ends 0 w
   rm -rf "$SEAL_DIR/backups"
   sealed_by "$kind" "$text" carry_run || code=$?
   printed_wrong "$OUT/sealed.out" "$OUT/sealed.err" >> "$OUT/verdict"
+  refusals_said >> "$OUT/verdict"
   ! grep -q 'command not found' "$OUT/sealed.err" || echo "the way out called a command the case does not define: $(grep 'command not found' "$OUT/sealed.err" | head -n 1)" >> "$OUT/verdict"
   if [ "$code" != 0 ]; then
     echo "the way out ended with $code: $(tail -n 2 "$OUT/sealed.err" | tr '\n' ' ')" >> "$OUT/verdict"
@@ -3620,6 +3714,7 @@ carry_refused() { # <sudo kind> <the way out> <what the box does to the upload: 
   sealed_by "$kind" "$text" carry_run || code=$?
   rm -f "$STANDIN/after-upload"
   printed_wrong "$OUT/sealed.out" "$OUT/sealed.err" >> "$OUT/verdict"
+  refusals_said >> "$OUT/verdict"
   if [ "$code" = 0 ]; then
     echo 'the way out ended with 0 although the box holds other bytes than were sent' >> "$OUT/verdict"
   else
@@ -3648,9 +3743,8 @@ ok 'backup: a flipped byte in an archive on the box, a manifest that counts othe
 
 # planted defects of the read-back, each of which lets its case through (the way out ends 0), or prints, or
 # leaves its folder
-READBACK_COPY='root timeout --kill-after=30 "$READBACK_LIMIT" rclone --config "$RCLONE_CONF" copy "$BACKUPS/$ID/" "$READBACK" --quiet'
-plant "$BACKUP_WAY_OUT" "$READBACK_COPY" 'root cp -R "$WORK/." "$READBACK"'; READS_WORK="$PLANTED_TEXT"
-plant "$BACKUP_WAY_OUT" "$READBACK_COPY" 'rclone copy "$BACKUPS/$ID/" "$READBACK" --quiet'; READS_BY_OPERATOR="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" 'copy "$BACKUPS/$ID/" "$READBACK" --use-json-log' 'copy "$WORK" "$READBACK" --use-json-log'; READS_WORK="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" "root bash -c 'echo \"\$\$\" > \"\$1\"; shift; exec \"\$@\"'" "bash -c 'echo \"\$\$\" > \"\$1\"; shift; exec \"\$@\"'"; READS_BY_OPERATOR="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" 'grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11' 'true'; NO_CHECKSUMS="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_MANIFEST_COMPARISON="$PLANTED_TEXT"
 # the comparison would refuse the damage of the next two cases first, so they are planted in a driver without it
@@ -3660,6 +3754,7 @@ plant "$BACKUP_WAY_OUT" '-o /dev/null -d "host--vault-$4.txt.gpg"' '-d "host--va
 TRAP_REMOVAL='if [ -n "$READBACK" ]; then root rm -rf "$READBACK" >/dev/null 2>&1; fi'
 plant "$BACKUP_TEXT" "$TRAP_REMOVAL" 'true'; KEEPS_AFTER_REFUSAL="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" 'root rm -rf "$WORK" "$READBACK"' 'root rm -rf "$WORK"'; KEEPS_AFTER_SUCCESS="$PLANTED_TEXT"
+plant "$KEEPS_AFTER_SUCCESS" 'if root test -e "$WORK" || root test -e "$READBACK"; then' 'if false; then'; KEEPS_UNCHECKED="$PLANTED_TEXT"
 plant "$BACKUP_TEXT" 'pass = %s\ndisable_hashcheck = true\n' 'pass = %s\n'; HASH_CHECK_ON="$PLANTED_TEXT"
 plant "$BACKUP_TEXT" '\nuser = %s' ''; CONFIG_WITHOUT_USER="$PLANTED_TEXT"
 for kind in nopasswd password; do
@@ -3692,7 +3787,10 @@ for kind in nopasswd password; do
   caught_for 'clean-up that leaves the read-back folder after a refusal' 'the read-back folder stands after the way out'
   ! carry_holds "$kind" "$BACKUP_TEXT" "$KEEPS_AFTER_SUCCESS" \
     || fail "the planted way out that leaves the read-back folder was not caught under a sudo that reads $kind — the probe proves nothing"
-  caught_for 'way out that leaves the read-back folder' 'the way out said that nothing of it is left on this machine while the read-back folder stood'
+  caught_for 'way out that leaves the read-back folder' 'the way out ended with 70'
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$KEEPS_UNCHECKED" \
+    || fail "the planted way out that leaves the read-back folder and does not look for it was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'way out that leaves the read-back folder and does not look for it' 'the way out said that nothing of it is left on this machine while the read-back folder stood' 'the read-back folder stands after the way out'
   ! carry_holds "$kind" "$HASH_CHECK_ON" "$BACKUP_WAY_OUT" \
     || fail "the planted box config that leaves the remote hash check on was not caught under a sudo that reads $kind — the probe proves nothing"
   caught_for 'box config that leaves the remote hash check on' 'the way out ended with 69' 'md5 hashes differ'
@@ -3720,20 +3818,19 @@ while IFS='|' read -r ns pvc _ _; do
   echo planted-store > "$LOCK_DIR/storage/${ns}-${pvc}-pvc-0000/payload"
 done < <(STAGE=prod; eval "$BACKUP_STORES"; printf '%s\n' "${STORES[@]}")
 LOCK_STORES="$(ls "$LOCK_DIR/storage" | wc -l | tr -d ' ')"
-lock_reset() { # <free|block|block-upload|hang-readback> — the stand-ins forget the last case; block holds the first scale call of the next one, block-upload its first copy to the box, hang-readback its copy from the box
-  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/hang-readback" "$STANDIN/hanging" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$LOCK_DIR/master-backup.lock"
+lock_reset() { # <free|block|block-upload> — the stand-ins forget the last case; block holds the first scale call of the next one, block-upload its first copy to the box
+  rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/readback-plan" "$STANDIN/readback-emitted" "$STANDIN/transfer.pid" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$STANDIN/box-fails" "$STANDIN/rclone-errors.log" "$LOCK_DIR/master-backup.lock"
   : > "$STANDIN/kubectl-calls.log"
   case "$1" in
     block) : > "$STANDIN/block-first-scale" ;;
     block-upload) : > "$STANDIN/block-first-upload" ;;
-    hang-readback) : > "$STANDIN/hang-readback" ;;
   esac
 }
 driver_names_literal() { grep -qF -- "$2" <<< "$1"; } # <the driver's text> <literal> — the text goes in as a here-string, since grep -q closes a pipe at its first match and the writer is cut off
 lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder, with the driver and its paths moved into the sandbox, the waits of its hold shortened, NAME=value moving a named value of the driver on from there, and a config beside it
   local dir="$LOCK_DIR/$1" text="$2" literal pair moved=()
   shift 2
-  for pair in QUEUE_POLL_SECONDS=0.05 STORE_POLL_SECONDS=0.05 QUEUE_WAIT_SECONDS=20 STORE_WAIT_SECONDS=5 "$@"; do
+  for pair in QUEUE_POLL_SECONDS=0.05 STORE_POLL_SECONDS=0.05 READBACK_POLL_SECONDS=0.05 QUEUE_WAIT_SECONDS=20 STORE_WAIT_SECONDS=5 "$@"; do
     moved+=(-e "s#^readonly ${pair%%=*}=.*#readonly ${pair%%=*}=${pair#*=}#")
   done
   rm -rf "$dir"; mkdir -p "$dir"
@@ -3937,7 +4034,7 @@ ok 'the planted drivers are caught: no lock, a lock taken after the folder, a lo
 # queue is not held, while the planted run still reads running or while the planted Job of the queue is unfinished; the
 # Manager started or the queue let go while a store this run stopped is not back and ready; and a run that ends with the
 # Manager at 0 or the queue held although every store is back and ready, are each red.
-for named in QUEUE_POLL_SECONDS QUEUE_WAIT_SECONDS STORE_POLL_SECONDS STORE_WAIT_SECONDS READBACK_WAIT_SECONDS READBACK_LEAST_BYTES_PER_SECOND; do
+for named in QUEUE_POLL_SECONDS QUEUE_WAIT_SECONDS STORE_POLL_SECONDS STORE_WAIT_SECONDS READBACK_WAIT_SECONDS READBACK_POLL_SECONDS READBACK_REPORT_SECONDS READBACK_GRACE_SECONDS READBACK_SLOWDOWN_FACTOR; do
   grep -q "^readonly $named=[0-9]" "$HERE/master-backup-driver.sh" || fail "the backup driver names no $named on a line of its own — the hold cases cannot move its wait into the sandbox"
 done
 hold_run() { # <the driver's text> [<knob>...] — the stand-ins forget the last case and take the knobs, then the whole driver runs once; its code stands in $LOCK_CODE. A knob is NAME (the file knob-NAME), NAME=content (the file of cluster/ so named), copy-fails=<ns>-<claim> (the copy of that store fails) or a NAME=value of the driver, which a shortened wait is
@@ -3957,6 +4054,13 @@ hold_run() { # <the driver's text> [<knob>...] — the stand-ins forget the last
   lock_driver hold "$text" ${timings[@]+"${timings[@]}"}
   lock_run hold
   find "$LOCK_DIR/storage" -name fails -delete
+}
+box_account_wrong() { # <standard output file> <standard error file> — says on which stream the host and the user of the fixture stand; ends 0
+  grep -qF -- "$BOX_HOST" "$1" && echo 'the host of the box stands on standard output'
+  grep -qF -- "$BOX_HOST" "$2" && echo 'the host of the box stands on standard error'
+  grep -qF -- "$BOX_USER" "$1" && echo 'the user of the box stands on standard output'
+  grep -qF -- "$BOX_USER" "$2" && echo 'the user of the box stands on standard error'
+  return 0
 }
 hold_wrong() { # <the Manager's replicas before the run> <the queue's suspend before the run> — says what is wrong with the world the last run left, in the order it was made; ends 0
   local world="$STANDIN/cluster/world.log" file name replicas ready back=1
@@ -4174,96 +4278,324 @@ hold_caught 'a queue let go before the stores were read ready, the Manager never
 hold_caught 'a release that trusts its record of the stopped stores instead of the cluster' "$TRUSTS_RECORD" 'knob-stop-fails=idp/idp-postgresql' 'the run ended with the Manager at 0' 'the run ended with' 'the run did not end with BACKUP'
 ok 'backup: the planted drivers are caught: no hold, the running run not read, no wait, a wait ended on one quiet pass, a wait that reads the active list alone, the Manager or the queue let go before the last store, readiness read by rollout status, an exit that does not release the hold, a failed copy that forgets its store, a release that does not read the stores ready, a queue let go before the stores were read ready, a release that trusts its record of the stopped stores'
 
-# ── the read-back ends within a limit, and what it left is removed when the ssh session that carried the driver has ended ─
-# The read-back is the one step that waits on the storage box alone. It is given READBACK_WAIT_SECONDS and one second more for each
-# READBACK_LEAST_BYTES_PER_SECOND of the backup, and after that the driver ends 69 and says so. The first case moves the two values so
-# that the limit is a second, holds the copy from the box in the rclone stand-in, and runs the whole driver. The second is the night of
-# 2026-10-19: the driver arrives over one ssh session without a terminal, the session ends while the copy hangs, and the copy is ended later
-# with TERM. Both streams of the driver then lead nowhere, so the notice bash prints for the ended copy kills it with SIGPIPE (141) before
-# any line after the copy runs, and only the trap is left to remove what the driver made. sshd starts a session with SIGPIPE at its default,
-# so the case starts the driver so, whatever disposition the runner of this suite passes on.
-readback_gives_up() { # <the driver's text> — the copy from the box never ends and the limit is a second: ends 0 when the driver ended 69 within seconds, named the limit, left the work folder with its archives and nothing else, and let the Manager and the queue go; what is wrong stands in $OUT/verdict
-  local text="$1" dir="$LOCK_DIR/stall" folders id _
-  lock_reset hang-readback
-  lock_driver stall "$text" READBACK_WAIT_SECONDS=1 READBACK_LEAST_BYTES_PER_SECOND=1073741824
-  lock_start stall
-  : > "$OUT/verdict"
-  for _ in $(seq 1 600); do [ -e "$STANDIN/hanging" ] && break; kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
-  if [ ! -e "$STANDIN/hanging" ]; then
-    echo "the driver did not reach the copy that holds it in its read-back: $(tail -n 2 "$dir/err" | tr '\n' ' ')" >> "$OUT/verdict"
-    if kill -0 "$LOCK_PID" 2> /dev/null; then kill -KILL "$LOCK_PID"; fi
-  else
-    for _ in $(seq 1 200); do kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
-    if kill -0 "$LOCK_PID" 2> /dev/null; then
-      echo 'the driver still ran 20 seconds after its copy started, with a limit of a second'
-      kill -KILL "$LOCK_PID"
-    fi >> "$OUT/verdict"
+# ── the read-back measures the box's rate and ends a copy that stands still or falls behind, and what it left is removed when the ssh session ends ─
+# The read-back is the one step that waits on the storage box alone. The driver reads rclone's own statistics of the copy: the bytes it has
+# moved and the time it has run. After READBACK_WAIT_SECONDS it freezes a floor of half the rate it measured, and gives the whole backup the
+# time it takes at that floor, counted from there; a copy that moves no byte for READBACK_WAIT_SECONDS is ended. The cases run the whole driver
+# against the rclone stand-in, whose copy from the box follows a plan: it prints the statistics line rclone 1.60.1 prints after each tick, with
+# the real time since the copy started and the bytes the plan has moved by then, so the driver's measurement reads what it reads in production
+# and its clock and the stand-in's are one clock: no case depends on how long a tick takes. RB_SLOW is the seconds a tick takes longer, and the
+# cases that hold a rate or a stall run once more with it set. One volume weighs about 3 MiB more in the cases that need a backup that takes
+# seconds. The waits are shortened as the lock cases shorten theirs, READBACK_WAIT_SECONDS to two seconds: the driver counts whole seconds,
+# and two are at least one real second.
+READBACK_PAD=3145728
+RB_LIMIT=25
+RB_SLOW=''
+volume_padded() { # <on|off> — one volume of the lock cases weighs about 3 MiB more, or is put back
+  local payload
+  payload="$LOCK_DIR/storage/$(ls "$LOCK_DIR/storage" | head -n 1)/payload"
+  if [ "$1" = on ]; then cp "$payload" "$payload.plain"; head -c "$READBACK_PAD" /dev/zero >> "$payload"; else mv -f "$payload.plain" "$payload"; fi
+}
+backup_bytes() { find "$STANDIN/box-uploaded" -type f -exec cat {} + 2> /dev/null | wc -c | tr -d ' '; } # what the box holds of the backup just run
+readback_start() { # <run> <the driver's text> <padded: 0|1> <the plan, one line each> [NAME=value...] — starts the whole driver against a box whose copy back follows the plan; its pid stands in $LOCK_PID
+  local run="$1" text="$2" padded="$3" plan="$4"
+  shift 4
+  lock_reset free
+  if [ -n "$plan" ]; then printf '%s\n' "$plan" > "$STANDIN/readback-plan"; fi
+  if [ -n "$plan" ] && [ -n "$RB_SLOW" ]; then printf 'slow %s\n' "$RB_SLOW" >> "$STANDIN/readback-plan"; fi
+  : > "$STANDIN/argv.log"
+  if [ "$padded" = 1 ]; then volume_padded on; fi
+  lock_driver "$run" "$text" READBACK_POLL_SECONDS=0.1 READBACK_REPORT_SECONDS=1 READBACK_WAIT_SECONDS=2 "$@"
+  RB_STARTED=$SECONDS
+  lock_start "$run"
+}
+readback_finish() { # <padded: 0|1> <seconds> — waits that long for the driver, ends it where it still runs and says so in $OUT/verdict; its code stands in $LOCK_CODE, the seconds it ran in $RB_RAN
+  local _
+  for _ in $(seq 1 $(( $2 * 10 ))); do kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
+  RB_RAN=$(( SECONDS - RB_STARTED ))
+  if kill -0 "$LOCK_PID" 2> /dev/null; then
+    echo "the driver still ran $2 seconds after it started" >> "$OUT/verdict"
+    kill -KILL "$LOCK_PID"
   fi
-  : > "$STANDIN/release"
   LOCK_CODE=0; { wait "$LOCK_PID"; } 2> /dev/null || LOCK_CODE=$?
-  [ "$LOCK_CODE" = 69 ] || echo "the driver ended with $LOCK_CODE, not 69: $(tail -n 2 "$dir/err" | tr '\n' ' ')" >> "$OUT/verdict"
-  grep -qE "reading back [0-9]+ bytes from box:$CARRY_FQDN/master/[0-9]{8}T[0-9]{6}Z/, within 1 s" "$dir/out" || echo 'the driver did not say how many bytes it reads back and within how many seconds' >> "$OUT/verdict"
-  grep -qF -- 'did not finish within 1 s' "$dir/err" || echo "the driver did not say that the read-back did not finish within its limit: $(tail -n 1 "$dir/err")" >> "$OUT/verdict"
+  if [ -s "$STANDIN/transfer.pid" ] && kill -0 "$(cat "$STANDIN/transfer.pid")" 2> /dev/null; then
+    echo 'the transfer still ran after the driver ended' >> "$OUT/verdict"
+    kill -KILL "$(cat "$STANDIN/transfer.pid")" 2> /dev/null || true
+  fi
+  if [ "$1" = 1 ]; then volume_padded off; fi
+}
+readback_wrong() { # <run> — says what is wrong with any run: the box named, a secret printed or on a command line, the Manager or the queue not let go, a folder left; ends 0
+  local dir="$LOCK_DIR/$1" folders
+  box_account_wrong "$dir/out" "$dir/err"
+  printed_wrong "$dir/out" "$dir/err"
+  commands_wrong
+  secrets_wrong "$STANDIN/secrets.seen"
+  hold_wrong 1 false
+  folders="$(ls "$dir/backups" 2> /dev/null || true)"
+  case "$folders" in *.readback*) echo 'the read-back folder stands after the driver ended' ;; esac
+  return 0
+}
+readback_refused() { # <run> <what the error says> — ends 0 when the driver ended 69, said that, and left the work folder with its archives; what is wrong is added to $OUT/verdict
+  local dir="$LOCK_DIR/$1" folders id
+  [ "$LOCK_CODE" = 69 ] || echo "the driver ended with $LOCK_CODE, not 69: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
+  grep -qF -- "$2" "$dir/err" || echo "the driver did not say '$2': $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
   folders="$(ls "$dir/backups" 2> /dev/null || true)"; id="${folders%%$'\n'*}"
-  case "$folders" in *.readback*) echo 'the read-back folder stands after the driver ended' >> "$OUT/verdict" ;; esac
   if [ "$(grep -c '^[0-9]\{8\}T[0-9]\{6\}Z$' <<< "$folders")" != 1 ]; then
     echo "the work folder does not stand after the driver ended: $(tr '\n' ' ' <<< "$folders")" >> "$OUT/verdict"
   elif [ "$(ls "$dir/backups/$id" | wc -l | tr -d ' ')" != "$(( LOCK_STORES + 2 ))" ]; then
     echo "the work folder holds $(ls "$dir/backups/$id" | wc -l | tr -d ' ') file(s), not the $LOCK_STORES stores, the quorum and the manifest" >> "$OUT/verdict"
   fi
-  hold_wrong 1 false >> "$OUT/verdict"
-  printed_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
-  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+}
+rate_agrees() { # <bytes> <seconds> <rate> — ends 0 when the rate stated is the bytes over the seconds, to the three places it is stated in
+  awk -v bytes="$1" -v seconds="$2" -v rate="$3" 'BEGIN { d = bytes / seconds - rate; if (d < 0) d = -d; exit !(d < 0.002) }'
+}
+readback_figures() { # <run> <the bytes the transfer had moved, or any> — checks the "read N of E expected bytes in S s, R bytes a second" of the error: E is what the box holds, N the given figure, R is N over S; ends 0 with what is wrong added to $OUT/verdict
+  local dir="$LOCK_DIR/$1" line moved total seconds rate
+  line="$(sed -n 's/.*read \([0-9]*\) of \([0-9]*\) expected bytes in \([0-9.]*\) s, \([0-9.]*\) bytes a second.*/\1 \2 \3 \4/p' "$dir/err" | head -n 1)"
+  if [ -z "$line" ]; then echo "the error does not state the bytes read of the bytes expected, the time and the rate: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"; return 0; fi
+  read -r moved total seconds rate <<< "$line"
+  [ "$total" = "$(backup_bytes)" ] || echo "the error states $total expected bytes, and the box holds $(backup_bytes)" >> "$OUT/verdict"
+  if [ "$2" != any ] && [ "$moved" != "$2" ]; then echo "the error states $moved bytes read, and the transfer had moved $2" >> "$OUT/verdict"; fi
+  rate_agrees "$moved" "$seconds" "$rate" || echo "the error states $rate bytes a second for $moved bytes in $seconds s" >> "$OUT/verdict"
+  return 0
+}
+emitted_bytes() { cut -d' ' -f1 "$STANDIN/readback-emitted"; } # the bytes of the last statistics line the stand-in printed
+allowance_of() { # <expected bytes> <bytes read> <seconds, to three places> — the seconds the whole backup takes at half the rate those give, rounded up
+  local milli="${3/./}"
+  milli=$(( 10#$milli ))
+  printf '%d' $(( ($1 * 2 * milli + $2 * 1000 - 1) / ($2 * 1000) ))
+}
+rate_near() { awk -v got="$1" -v want="$2" 'BEGIN { d = got - want; if (d < 0) d = -d; exit !(d <= want / 1000) }'; } # <rate stated> <rate planned> — ends 0 when they differ by no more than a thousandth
+readback_measured() { # <run> — reads the line "measured N bytes in S s, R bytes a second; policy: a floor of 1/2 of it, F bytes a second; the T bytes are given A s more" of the run into M_BYTES M_SECONDS M_RATE M_FLOOR M_TOTAL M_ALLOWED; what is wrong with its figures is added to $OUT/verdict; ends 0
+  local dir="$LOCK_DIR/$1" line
+  M_BYTES='' M_SECONDS='' M_RATE='' M_FLOOR='' M_TOTAL='' M_ALLOWED=''
+  line="$(sed -n 's/.*measured \([0-9]*\) bytes in \([0-9.]*\) s, \([0-9.]*\) bytes a second; policy: a floor of 1\/2 of it, \([0-9.]*\) bytes a second; the \([0-9]*\) bytes are given \([0-9]*\) s more.*/\1 \2 \3 \4 \5 \6/p' "$dir/out" | head -n 1)"
+  if [ -z "$line" ]; then
+    echo "the driver did not print the rate it measured, the floor it froze and the time it gave the rest: $(grep -a 'measured' "$dir/out" | head -n 1 | cut -c1-300)" >> "$OUT/verdict"
+    return 0
+  fi
+  read -r M_BYTES M_SECONDS M_RATE M_FLOOR M_TOTAL M_ALLOWED <<< "$line"
+  rate_agrees "$M_BYTES" "$M_SECONDS" "$M_RATE" || echo "the driver states $M_RATE bytes a second for $M_BYTES bytes in $M_SECONDS s" >> "$OUT/verdict"
+  rate_agrees "$M_BYTES" "$(awk -v s="$M_SECONDS" 'BEGIN { printf "%.3f", s * 2 }')" "$M_FLOOR" || echo "the driver froze a floor of $M_FLOOR bytes a second, not half of the $M_RATE it measured" >> "$OUT/verdict"
+  [ "$M_TOTAL" = "$(backup_bytes)" ] || echo "the driver expected $M_TOTAL bytes, and the box holds $(backup_bytes)" >> "$OUT/verdict"
+  [ "$M_ALLOWED" = "$(allowance_of "$M_TOTAL" "$M_BYTES" "$M_SECONDS")" ] || echo "the driver gave the rest $M_ALLOWED s, not the $(allowance_of "$M_TOTAL" "$M_BYTES" "$M_SECONDS") s the whole backup takes at the floor" >> "$OUT/verdict"
+  return 0
+}
+
+readback_paced() { # <the driver's text> — a copy back at half a MiB a second, three times the old floor's pace of the size of the backup: ends 0 when the driver ended 0 after the old size-derived limit, read every byte, and said what it measured; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/paced" total old_limit
+  : > "$OUT/verdict"
+  readback_start paced "$text" 1 'rate 524288 forever'
+  readback_finish 1 $RB_LIMIT
+  total="$(backup_bytes)"
+  old_limit=$(( 2 + total / 1048576 ))
+  [ "$LOCK_CODE" = 0 ] || echo "the driver ended with $LOCK_CODE, not 0, on a box that gives half a MiB a second: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
+  [ "$(tail -n 1 "$dir/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the driver did not end with BACKUP and an id' >> "$OUT/verdict"
+  [ "$RB_RAN" -gt "$old_limit" ] || echo "the driver ran $RB_RAN s, not past the $old_limit s the old rule gave this backup, so the case does not hold a slow box that the old rule ended" >> "$OUT/verdict"
+  readback_measured paced
+  if [ -n "$M_RATE" ]; then rate_near "$M_RATE" 524288 || echo "the driver measured $M_RATE bytes a second, not the 524288 the stand-in moves" >> "$OUT/verdict"; fi
+  grep -qF -- "read back $total of $total expected bytes in " "$dir/out" || echo "the driver did not say that it read back $total of $total expected bytes" >> "$OUT/verdict"
+  readback_wrong paced >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
 }
-readback_orphaned() { # <the driver's text> — the ssh session ends while the copy from the box hangs, then the copy is ended with TERM: ends 0 when the driver ended 141 and left the work folder with its archives and nothing else; what is wrong stands in $OUT/verdict
-  local text="$1" dir="$LOCK_DIR/orphan" session reader folders id _
-  lock_reset hang-readback
-  lock_driver orphan "$text"
-  session="$dir/session"; mkfifo "$session"
+readback_stalled() { # <the driver's text> <the plan> <padded: 0|1> <moved: zero|some> — a copy that moves no byte for READBACK_WAIT_SECONDS, from the start or after some progress: ends 0 when the driver ended 69 saying so, with the bytes and the rate it had read, and the transfer ended and reaped; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/stalled" moved
+  : > "$OUT/verdict"
+  readback_start stalled "$text" "$3" "$2"
+  readback_finish "$3" $RB_LIMIT
+  readback_refused stalled 'moved no byte for 2 s and was ended'
+  if [ "$4" = zero ]; then moved=0; else moved="$(emitted_bytes)"; [ "$moved" -gt 0 ] || echo 'the stand-in moved no byte before it stood still, so the case does not hold a stall after progress' >> "$OUT/verdict"; fi
+  readback_figures stalled "$moved"
+  if [ "$4" = zero ]; then grep -qF -- ', 0.000 bytes a second' "$dir/err" || echo "the error does not state a measured rate of 0.000 bytes a second for the zero bytes: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"; fi
+  grep -qF -- 'transfer exit status 143' "$dir/err" || echo "the error does not state the transfer ended by TERM, exit status 143: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
+  readback_wrong stalled >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_slowed() { # <the driver's text> — a copy that falls to a four-hundredth of its rate after the measurement and still moves a byte every tick: ends 0 when the driver ended 69 once the time the measured rate gave the whole backup had passed; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/slowed"
+  : > "$OUT/verdict"
+  readback_start slowed "$text" 1 $'rate 786432 3500\nrate 2048 forever'
+  readback_finish 1 $RB_LIMIT
+  readback_measured slowed
+  if [ -n "$M_RATE" ]; then rate_near "$M_RATE" 786432 || echo "the driver measured $M_RATE bytes a second, not the 786432 of the fast part, so it did not end the measurement before the fast part ended" >> "$OUT/verdict"; fi
+  readback_refused slowed "did not finish within the $M_ALLOWED s its measured rate allows and was ended"
+  readback_figures slowed any
+  readback_wrong slowed >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_unmeasured() { # <the driver's text> — statistics that no number can be read from: ends 0 when the driver ended 69 saying it had none, and printed nothing of what they said; what is wrong stands in $OUT/verdict
+  local text="$1"
+  : > "$OUT/verdict"
+  readback_start unmeasured "$text" 0 'garbage'
+  readback_finish 0 $RB_LIMIT
+  readback_refused unmeasured 'gave no statistics within 2 s, so its rate could not be measured'
+  grep -qF -- "no statistics were read of $(backup_bytes) expected bytes" "$LOCK_DIR/unmeasured/err" || echo "the error does not say that no statistics were read of the $(backup_bytes) expected bytes" >> "$OUT/verdict"
+  readback_wrong unmeasured >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_failed() { # <the driver's text> — the transfer ends 7 with an error after some progress: ends 0 when the driver ended 69 stating the exit status and what it had read, and not what rclone said; what is wrong stands in $OUT/verdict
+  local text="$1"
+  : > "$OUT/verdict"
+  readback_start failed "$text" 1 $'rate 524288 500\nexit 7'
+  readback_finish 1 $RB_LIMIT
+  readback_refused failed 'could not be read back'
+  grep -qF -- 'transfer exit status 7' "$LOCK_DIR/failed/err" || echo "the error does not state the exit status 7 of the transfer: $(tail -n 1 "$LOCK_DIR/failed/err" | cut -c1-300)" >> "$OUT/verdict"
+  readback_figures failed "$(emitted_bytes)"
+  if ! grep -qF -- 'connection to' "$STANDIN/rclone-errors.log"; then echo 'the stand-in gave no error that carries the host and the user of the box, so the case proves nothing' >> "$OUT/verdict"; fi
+  readback_wrong failed >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_killed() { # <the driver's text> — a copy that stands still and ignores TERM: ends 0 when the driver killed it once READBACK_GRACE_SECONDS had passed and reaped it, ending 69 with exit status 137; what is wrong stands in $OUT/verdict
+  local text="$1"
+  : > "$OUT/verdict"
+  readback_start killed "$text" 0 $'rate 0 forever\nignore-term' READBACK_GRACE_SECONDS=1
+  readback_finish 0 $RB_LIMIT
+  readback_refused killed 'moved no byte for 2 s and was ended'
+  grep -qF -- 'transfer exit status 137' "$LOCK_DIR/killed/err" || echo "the error does not state the transfer was killed, exit status 137: $(tail -n 1 "$LOCK_DIR/killed/err" | cut -c1-300)" >> "$OUT/verdict"
+  readback_wrong killed >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_quick() { # <the driver's text> — a copy that ends before the measurement is over: ends 0 when the driver went straight to the checks and stated the bytes and the time it read; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/quick" total milli
+  : > "$OUT/verdict"
+  readback_start quick "$text" 0 '' READBACK_WAIT_SECONDS=300
+  readback_finish 0 $RB_LIMIT
+  total="$(backup_bytes)"
+  milli=$(( total * 1000000 / 12 ))
+  [ "$LOCK_CODE" = 0 ] || echo "the driver ended with $LOCK_CODE, not 0: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
+  grep -qF -- "read back $total of $total expected bytes in 0.012 s, $(( milli / 1000 )).$(printf '%03d' $(( milli % 1000 ))) bytes a second" "$dir/out" || echo "the driver did not state the $total bytes it read back in the 0.012 s the copy ran: $(grep -a 'read back' "$dir/out" | head -n 1 | cut -c1-300)" >> "$OUT/verdict"
+  ! grep -qF -- 'measured ' "$dir/out" || echo 'the driver froze a floor for a copy that ended before the measurement was over' >> "$OUT/verdict"
+  readback_wrong quick >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_late() { # <the driver's text> — a copy that ends 0 inside the last poll period before the deadline its measured rate gave it: ends 0 when the driver took it for one that ended, read every byte and went on to the checks; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/late" total
+  : > "$OUT/verdict"
+  readback_start late "$text" 1 $'rate 600000 5000\nrate 17400 forever\nevery 0.1' READBACK_POLL_SECONDS=3
+  readback_finish 1 $RB_LIMIT
+  total="$(backup_bytes)"
+  readback_measured late
+  if [ -n "$M_RATE" ]; then rate_near "$M_RATE" 600000 || echo "the driver measured $M_RATE bytes a second, not the 600000 of the fast part, so it did not end the measurement before the fast part ended" >> "$OUT/verdict"; fi
+  [ "$M_ALLOWED" = 11 ] || echo "the driver gave the rest $M_ALLOWED s, not the 11 s this case is cut for, so its copy does not end in the last poll period before the deadline" >> "$OUT/verdict"
+  if grep -qF -- 'transfer exit status 0' "$dir/err"; then echo "the driver ended a copy that had finished, as one that passed its allowance: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"; fi
+  [ "$LOCK_CODE" = 0 ] || echo "the driver ended with $LOCK_CODE, not 0, on a copy that finished inside its allowance: $(tail -n 1 "$dir/err" | cut -c1-300)" >> "$OUT/verdict"
+  [ "$(tail -n 1 "$dir/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the driver did not end with BACKUP and an id' >> "$OUT/verdict"
+  grep -qF -- "read back $total of $total expected bytes in " "$dir/out" || echo "the driver did not say that it read back $total of $total expected bytes" >> "$OUT/verdict"
+  readback_wrong late >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+readback_orphaned() { # <the driver's text> — the ssh session ends while the copy runs: ends 0 when the driver ended 141, the copy was ended with it and the work folder stands with its archives; what is wrong stands in $OUT/verdict
+  local text="$1" dir="$LOCK_DIR/orphaned" session reader _
+  : > "$OUT/verdict"
+  lock_reset free
+  printf '%s\n' 'rate 524288 forever' > "$STANDIN/readback-plan"
+  : > "$STANDIN/argv.log"
+  volume_padded on
+  lock_driver orphaned "$text" READBACK_POLL_SECONDS=0.1 READBACK_REPORT_SECONDS=1 READBACK_WAIT_SECONDS=2
+  session="$dir/session"; mkfifo "$session"; : > "$dir/err"
   cat "$session" > "$dir/out" 2>&1 &
   reader=$!
   ( export SUDO_STANDIN=nopasswd SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 077
     exec env --default-signal=PIPE bash "$dir/driver.sh" "$dir/config" ) < /dev/null > "$session" 2>&1 &
   LOCK_PID=$!
-  : > "$OUT/verdict"
-  for _ in $(seq 1 600); do [ -e "$STANDIN/hanging" ] && break; kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
-  [ -e "$STANDIN/hanging" ] || echo "the driver did not reach the copy that holds it in its read-back: $(tail -n 2 "$dir/out" | tr '\n' ' ')" >> "$OUT/verdict"
+  RB_STARTED=$SECONDS
+  for _ in $(seq 1 600); do [ -s "$STANDIN/transfer.pid" ] && break; kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
+  [ -s "$STANDIN/transfer.pid" ] || echo "the driver did not start the copy back: $(tail -n 2 "$dir/out" | tr '\n' ' ' | cut -c1-300)" >> "$OUT/verdict"
   kill "$reader"; { wait "$reader"; } 2> /dev/null || true
-  if [ -e "$STANDIN/hanging" ]; then
-    kill -TERM "$(cat "$STANDIN/hanging")"
-    for _ in $(seq 1 100); do kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
-  fi
-  if kill -0 "$LOCK_PID" 2> /dev/null; then
-    echo 'the driver still ran 10 seconds after its copy was ended' >> "$OUT/verdict"
-    kill -KILL "$LOCK_PID"
-  fi
-  : > "$STANDIN/release"
-  LOCK_CODE=0; { wait "$LOCK_PID"; } 2> /dev/null || LOCK_CODE=$?
-  [ "$LOCK_CODE" = 141 ] || echo "the driver ended with $LOCK_CODE, not 141 — bash dies of SIGPIPE on the notice of the ended copy, and the arm after the copy ran" >> "$OUT/verdict"
-  folders="$(ls "$dir/backups" 2> /dev/null || true)"; id="${folders%%$'\n'*}"
-  case "$folders" in *.readback*) echo 'the read-back folder stands after the driver ended' >> "$OUT/verdict" ;; esac
-  if [ "$(grep -c '^[0-9]\{8\}T[0-9]\{6\}Z$' <<< "$folders")" != 1 ]; then
-    echo "the work folder does not stand after the driver ended: $(tr '\n' ' ' <<< "$folders")" >> "$OUT/verdict"
-  elif [ "$(ls "$dir/backups/$id" | wc -l | tr -d ' ')" != "$(( LOCK_STORES + 2 ))" ]; then
-    echo "the work folder holds $(ls "$dir/backups/$id" | wc -l | tr -d ' ') file(s), not the $LOCK_STORES stores, the quorum and the manifest" >> "$OUT/verdict"
-  fi
-  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  readback_finish 1 15
+  [ "$LOCK_CODE" = 141 ] || echo "the driver ended with $LOCK_CODE, not 141 — bash dies of SIGPIPE on the next line it prints once the session has ended" >> "$OUT/verdict"
+  readback_wrong orphaned >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
 }
-readback_gives_up "$LOCK_TEXT" || fail "backup: a read-back that does not finish was not ended within its limit as it must be: $(cat "$OUT/verdict")"
-readback_orphaned "$LOCK_TEXT" || fail "backup: the read-back folder, the secrets or the work folder were left wrong when the ssh session ended during the read-back: $(cat "$OUT/verdict")"
-ok 'backup: a read-back that does not finish ends 69 once its limit has passed, drawn from the size of the backup, naming the limit, with the archives on the machine, the Manager started and the queue let go; a driver whose ssh session ended while its read-back hung, and whose copy was ended after that, leaves the work folder only, whatever line it was in'
 
-# planted defects: the copy without the time limit, and a trap that does not remove the read-back folder
-plant "$LOCK_TEXT" 'root timeout --kill-after=30 "$READBACK_LIMIT" rclone' 'root rclone'; NO_READBACK_LIMIT="$PLANTED_TEXT"
+readback_paced "$LOCK_TEXT" || fail "backup: a read-back at half a MiB a second, which the old fixed floor would have ended, was not finished as it must be: $(cat "$OUT/verdict")"
+readback_quick "$LOCK_TEXT" || fail "backup: a read-back that ends before its measurement is over was not taken to the checks as it must be: $(cat "$OUT/verdict")"
+readback_stalled "$LOCK_TEXT" 'rate 0 forever' 0 zero || fail "backup: a read-back that moved no byte at all was not ended as it must be: $(cat "$OUT/verdict")"
+readback_stalled "$LOCK_TEXT" $'rate 524288 300\nrate 0 forever' 1 some || fail "backup: a read-back that stood still after some progress was not ended as it must be: $(cat "$OUT/verdict")"
+readback_slowed "$LOCK_TEXT" || fail "backup: a read-back that slowed after its measurement was not ended once the measured rate's time had passed: $(cat "$OUT/verdict")"
+readback_unmeasured "$LOCK_TEXT" || fail "backup: a read-back whose statistics hold no number was not ended as it must be: $(cat "$OUT/verdict")"
+readback_failed "$LOCK_TEXT" || fail "backup: a read-back whose transfer failed was not reported as it must be: $(cat "$OUT/verdict")"
+readback_killed "$LOCK_TEXT" || fail "backup: a read-back that ignores TERM was not killed after its grace as it must be: $(cat "$OUT/verdict")"
+readback_late "$LOCK_TEXT" || fail "backup: a read-back that ended inside the last poll period before its deadline was not taken as finished: $(cat "$OUT/verdict")"
+RB_SLOW=0.4
+readback_paced "$LOCK_TEXT" || fail "backup: a read-back at half a MiB a second, when every tick of the copy took 0.4 s longer, was not finished as it must be: $(cat "$OUT/verdict")"
+readback_stalled "$LOCK_TEXT" $'rate 524288 300\nrate 0 forever' 1 some || fail "backup: a read-back that stood still after some progress, when every tick of the copy took 0.4 s longer, was not ended as it must be: $(cat "$OUT/verdict")"
+RB_SLOW=''
+readback_orphaned "$LOCK_TEXT" || fail "backup: the transfer, the read-back folder, the secrets or the work folder were left wrong when the ssh session ended during the read-back: $(cat "$OUT/verdict")"
+ok 'backup: a read-back at half a MiB a second, slower than the old floor of a MiB a second, is finished, with the rate it measured, the floor of half of it and the time the whole backup takes at that floor stated; a copy that ends within the measurement goes straight to the checks, stating its bytes and time, and so does one that ends inside the last poll period before its deadline; the cases that hold a rate or a stall give the same answers when every tick of the copy takes 0.4 s longer; a copy that moves no byte for READBACK_WAIT_SECONDS, from the first byte or after some, one that slows past its allowance, one whose statistics hold no number, one whose transfer fails and one that ignores TERM each end 69 stating the bytes read of the bytes expected, the time, the rate and the transfer exit status, with the transfer ended and reaped, the archives on the machine, the Manager started and the queue let go; a driver whose ssh session ended during the read-back ends its transfer and leaves the work folder only'
+
+# The arithmetic of the measurement: rate to three places, seconds to three places, and the allowance rounded up, on the vectors below.
+READBACK_ARITHMETIC="$(sed -n '/^rate_of() {/,/^}/p;/^seconds_of() /p;/^readback_allowance_seconds() /p' "$HERE/master-backup-driver.sh")"
+[ -n "$READBACK_ARITHMETIC" ] || fail 'the backup driver carries no arithmetic of the read-back to measure'
+arithmetic_wrong() { # <the arithmetic's text> — says which vector it answers wrongly, evaluated with the driver's own READBACK values; ends 0
+  local want call got
+  while IFS='|' read -r want call; do
+    got="$( eval "$BACKUP_READBACK_TIMINGS"; eval "$1"; eval "$call" )"
+    [ "$got" = "$want" ] || echo "$call answered '$got', not '$want'"
+  done <<'VECTORS'
+524288.000|rate_of 3145728 6000
+0.333|rate_of 1 3000
+0.500|rate_of 1 2000
+0.000|rate_of 1 86400000
+0.000|rate_of 0 5000
+unavailable|rate_of 100 0
+999999999999000.000|rate_of 999999999999 1
+1.500|seconds_of 1500
+0.012|seconds_of 12
+12|readback_allowance_seconds 3145728 1048576 2000
+7|readback_allowance_seconds 10 3 1000
+600|readback_allowance_seconds 100 1 3000
+1999999799980001|readback_allowance_seconds 99999999999 1 9999999
+VECTORS
+  return 0
+}
+[ -z "$(arithmetic_wrong "$READBACK_ARITHMETIC")" ] || fail "backup: the arithmetic of the read-back answers wrongly: $(arithmetic_wrong "$READBACK_ARITHMETIC")"
+ok 'backup: the rate and the seconds of the read-back are stated to three places, a rate below one byte a second is stated as it is and not as none, no time passed is "unavailable" and not 0.000, the allowance is rounded up, and the largest figures the driver accepts do not overflow'
+
+# planted defects of the read-back: the old fixed floor, a stall that is not ended, a deadline that is not enforced, a copy that ended while the poll
+# slept and is judged by the rules for a running one, a transfer that is not killed after its grace, a byte count that is not the transfer's, a cleanup
+# that leaves the transfer, an access value in the statistics line, and the three arithmetic mistakes; each is refused for its own defect only
+ALLOWANCE_LINE='readback_allowance_seconds() { printf '"'"'%d'"'"' $(( ($1 * READBACK_SLOWDOWN_FACTOR * $3 + $2 * 1000 - 1) / ($2 * 1000) )); }'
+# a driver that is ended by the case after the seconds it was given, with what that leaves behind
+DRIVER_RAN_ON=('the driver still ran' 'the transfer still ran after the driver ended' 'the driver ended with' 'the driver did not say' 'the error does not state' 'stands after the driver ended')
+plant "$LOCK_TEXT" "$ALLOWANCE_LINE" 'readback_allowance_seconds() { printf '"'"'%d'"'"' $(( $1 / 1048576 )); }'; OLD_FIXED_FLOOR="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'readback_fail "moved no byte for $READBACK_WAIT_SECONDS s and was ended"' 'true'; NO_STALL_RULE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'readback_fail "did not finish within the $READBACK_ALLOWED_SECONDS s its measured rate allows and was ended"' 'true'; NO_DEADLINE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'root kill -KILL "$pid" >/dev/null 2>&1;' 'true;'; NO_KILL="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "expected bytes in %s s, %s bytes a second' \"\$SAMPLE_BYTES\" \"\$READBACK_EXPECTED\"" "expected bytes in %s s, %s bytes a second' \"\$READBACK_EXPECTED\" \"\$READBACK_EXPECTED\""; FALSE_BYTE_COUNT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'now=$SECONDS\n    kill -0 "$TRANSFER_JOB" 2>/dev/null || break' 'now=$SECONDS'; JUDGES_ENDED_COPY_AS_RUNNING="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '[ -z "$TRANSFER_JOB" ] || readback_end' 'true'; KEEPS_TRANSFER="$PLANTED_TEXT"
 plant "$LOCK_TEXT" "$TRAP_REMOVAL" 'true'; NO_READBACK_REMOVAL="$PLANTED_TEXT"
-! readback_gives_up "$NO_READBACK_LIMIT" || fail 'the planted read-back without a time limit was not caught — the probe proves nothing'
-caught_for 'read-back without a time limit' 'the driver still ran 20 seconds after its copy started' 'the driver ended with' 'did not say that the read-back did not finish' 'stands after the driver ended' 'does not stand after the driver ended'
+plant "$LOCK_TEXT" 'die "the archives could not be read back from $BACKUPS/$ID/: $(readback_state); they stand in $WORK on this machine" 69' 'die "the archives could not be read back from $BACKUPS/$ID/: $(readback_state) $(tail -n 1 "$READBACK_STATS"); they stand in $WORK on this machine" 69'; PRINTS_STATISTICS="$PLANTED_TEXT"
+! readback_paced "$OLD_FIXED_FLOOR" || fail 'the planted old fixed floor was not caught on a box that gives half a MiB a second — the probe proves nothing'
+caught_for 'old fixed floor' 'the driver gave the rest' 'the driver ended with 69, not 0' 'the driver did not end with BACKUP' 'the driver did not say that it read back'
+! readback_stalled "$NO_STALL_RULE" 'rate 0 forever' 0 zero || fail 'the planted read-back without the stall rule was not caught on a copy that moved no byte — the probe proves nothing'
+caught_for 'read-back without the stall rule' 'moved no byte for 2 s and was ended'
+! readback_stalled "$NO_STALL_RULE" $'rate 524288 300\nrate 0 forever' 1 some || fail 'the planted read-back without the stall rule was not caught on a copy that stood still after some progress — the probe proves nothing'
+caught_for 'read-back without the stall rule' "${DRIVER_RAN_ON[@]}"
+! readback_slowed "$NO_DEADLINE" || fail 'the planted read-back without the deadline was not caught on a copy that slowed after its measurement — the probe proves nothing'
+caught_for 'read-back without the deadline' "${DRIVER_RAN_ON[@]}"
+! readback_late "$JUDGES_ENDED_COPY_AS_RUNNING" || fail 'the planted read-back that judges a copy that ended while the poll slept by the rules for a running one was not caught on a copy that ended inside the last poll period before its deadline — the probe proves nothing'
+caught_for 'read-back that judges an ended copy by the rules for a running one' 'the driver ended a copy that had finished' 'the driver ended with 69, not 0' 'the driver did not end with BACKUP' 'the driver did not say that it read back'
+! readback_killed "$NO_KILL" || fail 'the planted read-back that never kills was not caught on a copy that ignores TERM — the probe proves nothing'
+caught_for 'read-back that never kills' "${DRIVER_RAN_ON[@]}"
+! readback_stalled "$FALSE_BYTE_COUNT" $'rate 524288 300\nrate 0 forever' 1 some || fail 'the planted false byte count was not caught — the probe proves nothing'
+caught_for 'false byte count' 'the error states'
+! readback_orphaned "$KEEPS_TRANSFER" || fail 'the planted cleanup that leaves the transfer was not caught when the ssh session ended — the probe proves nothing'
+caught_for 'cleanup that leaves the transfer' 'the transfer still ran after the driver ended'
 ! readback_orphaned "$NO_READBACK_REMOVAL" || fail 'the planted trap that does not remove the read-back folder was not caught when the ssh session ended — the probe proves nothing'
 caught_for 'trap that does not remove the read-back folder' 'the read-back folder stands after the driver ended'
-ok 'the planted drivers are caught: a read-back without a time limit runs on past it, and a trap that does not remove the read-back folder leaves it when the ssh session has ended'
+! readback_failed "$PRINTS_STATISTICS" || fail 'the planted statistics line in the error was not caught — the probe proves nothing'
+caught_for 'statistics line in the error' 'stands on standard error'
+plant "$READBACK_ARITHMETIC" '+ $2 * 1000 - 1) /' ') /'; TRUNCATED_ALLOWANCE="$PLANTED_TEXT"
+plant "$READBACK_ARITHMETIC" "printf '%d.%03d' \$(( milli / 1000 )) \$(( milli % 1000 ))" "printf '%d.000' \$(( milli / 1000 ))"; WHOLE_BYTES_RATE="$PLANTED_TEXT"
+plant "$READBACK_ARITHMETIC" '{ printf unavailable; return 0; }' '{ printf 0.000; return 0; }'; UNAVAILABLE_AS_ZERO="$PLANTED_TEXT"
+for planted in TRUNCATED_ALLOWANCE WHOLE_BYTES_RATE UNAVAILABLE_AS_ZERO; do
+  [ -n "$(arithmetic_wrong "${!planted}")" ] || fail "the planted arithmetic $planted was not caught by the vectors — the probe proves nothing"
+done
+ok 'the planted drivers are caught, each for its own defect: the old fixed floor ends a box that gives half a MiB a second, a read-back without the stall rule or without the deadline runs on past it, one that judges a copy that ended while the poll slept by the rules for a running one ends a finished copy with 69, one that never kills a copy that ignores TERM waits on it, a byte count that is not the transfer'"'"'s, a cleanup that leaves the transfer or the read-back folder when the ssh session ended, a statistics line in the error names the box'"'"'s account, and an allowance that truncates, a rate in whole bytes and an unavailable rate stated as zero are answered wrongly by the vectors'
+lock_reset free # the plan of the last case must not pace the restore's fetch
 
 # The restore: the fetch, the clone, the fetch of the branch, the opening of the quorum and of every store,
 # as the driver's own text runs them against a backup the rclone stand-in serves.
@@ -4281,7 +4613,7 @@ restore_holds() { # <sudo kind> <the secrets text> <the fetch text> — ends 0 w
   local kind="$1" secrets_text="$2" fetched_text="$3" dir="$WORK/restore-$1" code=0 row ns pvc size stores
   : > "$OUT/verdict"
   rm -rf "$dir"; mkdir -p "$dir/staging" "$dir/checkout"
-  rm -f "$STANDIN/secrets.seen"; : > "$STANDIN/argv.log"
+  rm -f "$STANDIN/secrets.seen" "$STANDIN/rclone-errors.log"; : > "$STANDIN/argv.log"
   ( export SUDO_STANDIN="$kind" SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 022
     set -uo pipefail
@@ -4299,6 +4631,7 @@ restore_holds() { # <sudo kind> <the secrets text> <the fetch text> — ends 0 w
     eval "$secrets_text"
     eval "$fetched_text" ) < /dev/null > "$OUT/restore.out" 2> "$OUT/restore.err" || code=$?
   [ "$code" = 0 ] || echo "the restore's text ended with $code: $(tail -n 2 "$OUT/restore.err" | tr '\n' ' ')" >> "$OUT/verdict"
+  refusals_said >> "$OUT/verdict"
   stores="$(restore_rows | wc -l | tr -d ' ')"
   grep -qF "good: $stores store(s) stand opened" "$OUT/restore.out" || echo 'the restore did not open every store' >> "$OUT/verdict"
   cmp -s "$dir/checkout/platform/secrets/vault-prod.txt" "$SEAL_DIR/quorum.txt" || echo 'the quorum did not arrive whole beside the checkout' >> "$OUT/verdict"
@@ -4363,7 +4696,7 @@ for kind in nopasswd password; do
   caught_for 'secret files written under an open umask' 'its file at 644'
   plant "$RESTORE_SECRETS" 'pass = %s\ndisable_hashcheck = true\n' 'pass = %s\n'
   ! restore_holds "$kind" "$PLANTED_TEXT" "$RESTORE_FETCHED" || fail "the planted box config that leaves the remote hash check on was not caught in the restore under a sudo that reads $kind — the probe proves nothing"
-  caught_for 'box config that leaves the remote hash check on, in the restore' "the restore's text ended with 69" 'did not open every store' 'did not arrive whole'
+  caught_for 'box config that leaves the remote hash check on, in the restore' "the restore's text ended with 69" 'did not open every store' 'did not arrive whole' 'md5 hashes differ'
   grep -qF 'md5 hashes differ' "$OUT/verdict" || fail "the planted box config that leaves the remote hash check on was not refused in the restore for the hash the box cannot give: $(cat "$OUT/verdict")"
 done
 # a clean-up that leaves the folder: the text lifted first is the one that changes
@@ -4374,6 +4707,124 @@ RESTORE_CLEANUP_CLEAN="$RESTORE_CLEANUP"; RESTORE_CLEANUP="$RESTORE_KEPT"
 caught_for 'clean-up that leaves the folder' 'stands after the driver ended'
 RESTORE_CLEANUP="$RESTORE_CLEANUP_CLEAN"
 ok 'the planted restore lines are caught under each sudo: the box password in env or as an argument, the token in -c, the passphrase in env for the quorum and for a store, files under an open umask, a box config that leaves the remote hash check on, a folder left behind'
+# ── the storage box is "the storage box" and nothing more, in what either driver prints ─────────────────────
+# rclone words a refused box with its host and its user, and the host carries the account number. Each driver runs whole against the
+# stand-ins, on a box that opens and on a box that refuses one call (the opening, the listing, the carry to the box or the copy
+# back from it), and what it printed on each stream is kept in a file of its own. Neither file may hold the host or the user of the
+# fixture, however far into the run they would be said: a planted host or user is put after the opening span, on both streams, and
+# an rclone error that is let through carries both.
+box_refusal_words() { # ends 0 when the rclone stand-in worded a refusal with both the host and the user of the box, so a case that refuses a call proves something
+  grep -qF -- "$BOX_HOST" "$STANDIN/rclone-errors.log" 2> /dev/null && grep -qF -- "$BOX_USER" "$STANDIN/rclone-errors.log" 2> /dev/null
+}
+backup_box_holds() { # <driver text> <the code it ends with> <what it says> <the box's refused call>... — ends 0 when the whole backup driver ended so, said that, and printed neither the host nor the user of the box; what is wrong stands in $OUT/verdict
+  local text="$1" code="$2" says="$3" dir="$LOCK_DIR/whole"
+  shift 3
+  : > "$OUT/verdict"
+  lock_reset free
+  if [ "$#" -gt 0 ]; then printf '%s\n' "$@" > "$STANDIN/box-fails"; fi
+  : > "$STANDIN/argv.log"
+  lock_driver whole "$text"
+  lock_run whole
+  [ "$LOCK_CODE" = "$code" ] || echo "the backup driver ended with $LOCK_CODE, not $code: $(tail -n 1 "$dir/err" | cut -c1-200)" >> "$OUT/verdict"
+  grep -qF -- "$says" "$dir/out" "$dir/err" || echo "the backup driver did not say '$says'" >> "$OUT/verdict"
+  if [ "$#" -gt 0 ] && ! box_refusal_words; then echo 'the box was not refused with words that carry its host and user, so the case proves nothing' >> "$OUT/verdict"; fi
+  box_account_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
+  printed_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
+  commands_wrong >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+RESTORE_TEXT="$(cat "$HERE/master-restore-driver.sh")"
+restore_box_holds() { # <driver text> <the code it ends with> <what it says> <the box's refused call>... — the same for the whole restore driver, with its three paths moved into the sandbox; what is wrong stands in $OUT/verdict
+  local text="$1" code="$2" says="$3" dir="$WORK/restore-whole" literal restore_code=0
+  shift 3
+  : > "$OUT/verdict"
+  lock_reset free
+  if [ "$#" -gt 0 ]; then printf '%s\n' "$@" > "$STANDIN/box-fails"; fi
+  : > "$STANDIN/argv.log"
+  rm -rf "$dir"; mkdir -p "$dir/staging" "$dir/checkout" "$dir/storage" "$STANDIN/cluster"
+  : > "$STANDIN/cluster/knob-no-claims"
+  for literal in /var/lib/master-restore /srv/hostyour-cloud /var/snap/microk8s/common/default-storage; do
+    driver_names_literal "$text" "$literal" || fail "the restore driver names no $literal — the sandbox of the whole-driver cases proves nothing"
+  done
+  printf '%s\n' "$text" | sed -e "s#/var/lib/master-restore#$dir/staging#g" -e "s#/srv/hostyour-cloud#$dir/checkout/platform#g" \
+    -e "s#/var/snap/microk8s/common/default-storage#$dir/storage#g" > "$dir/driver.sh"
+  for literal in /var/lib/master-restore /srv/hostyour-cloud /var/snap/microk8s/common/default-storage; do
+    ! grep -qF -- "$literal" "$dir/driver.sh" || fail "the sandboxed restore driver still names $literal — the whole-driver cases would reach this machine"
+  done
+  { printf "FQDN='%s'\nOPERATOR_USER='op'\nSTAGE='prod'\nELEVATION_PASSWORD='%s'\n" "$CARRY_FQDN" "$PLANTED_PASSWORD"
+    printf "PLATFORM_REPO='acme/cloud'\nPLATFORM_BRANCH='master'\nPLATFORM_REPO_READ_PAT='%s'\n" "$PLANTED_PAT"
+    printf "STORAGE_BOX_HOST='%s'\nSTORAGE_BOX_USER='%s'\nSTORAGE_BOX_PASSWORD='%s'\nBACKUP_PASSPHRASE='%s'\n" "$BOX_HOST" "$BOX_USER" "$PLANTED_BOX_PASSWORD" "$PLANTED_PASSPHRASE"; } > "$dir/config"
+  ( export SUDO_STANDIN=nopasswd SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
+    umask 077
+    exec timeout 120 bash "$dir/driver.sh" "$dir/config" "$RESTORED_ID" ) < /dev/null > "$dir/out" 2> "$dir/err" || restore_code=$?
+  [ "$restore_code" = "$code" ] || echo "the restore driver ended with $restore_code, not $code: $(tail -n 1 "$dir/err" | cut -c1-200)" >> "$OUT/verdict"
+  grep -qF -- "$says" "$dir/out" "$dir/err" || echo "the restore driver did not say '$says'" >> "$OUT/verdict"
+  if [ "$#" -gt 0 ] && ! box_refusal_words; then echo 'the box was not refused with words that carry its host and user, so the case proves nothing' >> "$OUT/verdict"; fi
+  box_account_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
+  printed_wrong "$dir/out" "$dir/err" >> "$OUT/verdict"
+  commands_wrong >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+BACKUP_AFTER_OPENING='say "release on this machine: ${RELEASE:-unknown}"'
+RESTORE_AFTER_OPENING='good "backup $ID of $FQDN ($STAGE) fetched — every checksum holds"'
+backup_box_holds "$LOCK_TEXT" 0 'the storage box opens' || fail "backup: the whole driver names the storage box account on a box that opens: $(cat "$OUT/verdict")"
+backup_box_holds "$LOCK_TEXT" 69 'the storage box does not open' lsd || fail "backup: the whole driver names the storage box account when the box refuses its opening: $(cat "$OUT/verdict")"
+backup_box_holds "$LOCK_TEXT" 69 'could not be carried' upload || fail "backup: the whole driver names the storage box account when the box refuses the carry: $(cat "$OUT/verdict")"
+backup_box_holds "$LOCK_TEXT" 69 'could not be listed' lsf || fail "backup: the whole driver names the storage box account when the box refuses the listing: $(cat "$OUT/verdict")"
+backup_box_holds "$LOCK_TEXT" 69 'could not be read back' download || fail "backup: the whole driver names the storage box account when the box refuses the copy back: $(cat "$OUT/verdict")"
+restore_box_holds "$RESTORE_TEXT" 0 'the storage box opens' || fail "restore: the whole driver names the storage box account on a box that opens: $(cat "$OUT/verdict")"
+grep -qx "STAGED $RESTORED_ID" "$WORK/restore-whole/out" || fail 'restore: the whole driver did not end with STAGED and the id on a box that opens — the case would pass on a run that stopped early'
+restore_box_holds "$RESTORE_TEXT" 69 'the storage box does not open' lsd || fail "restore: the whole driver names the storage box account when the box refuses its opening: $(cat "$OUT/verdict")"
+restore_box_holds "$RESTORE_TEXT" 66 'holds no backup' lsf || fail "restore: the whole driver names the storage box account when the box refuses the listing: $(cat "$OUT/verdict")"
+restore_box_holds "$RESTORE_TEXT" 69 'could not be fetched' download || fail "restore: the whole driver names the storage box account when the box refuses the fetch: $(cat "$OUT/verdict")"
+ok 'both drivers, run whole, print "the storage box" without its host or user: on a box that opens, and on a box that refuses the opening, the listing, the carry or the copy back, with rclone wording each refusal with both'
+
+# planted defects: each value, on each stream, said after the opening span or in the opening lines, and rclone's own errors let through
+for driver in backup restore; do
+  case "$driver" in
+    backup) text="$LOCK_TEXT"; holds=backup_box_holds; after="$BACKUP_AFTER_OPENING"; opens="good 'the storage box opens'"; refuses="die 'the storage box does not open — nothing was stopped' 69" ;;
+    restore) text="$RESTORE_TEXT"; holds=restore_box_holds; after="$RESTORE_AFTER_OPENING"; opens="good 'the storage box opens'"; refuses="die 'the storage box does not open — nothing was placed' 69" ;;
+  esac
+  for value in host user; do
+    case "$value" in host) named='$STORAGE_BOX_HOST' ;; *) named='$STORAGE_BOX_USER' ;; esac
+    plant "$text" "$after" "$after; say \"said: $named\""
+    ! "$holds" "$PLANTED_TEXT" 0 'the storage box opens' || fail "the planted $value of the box said on standard output after the opening span was not caught in the $driver — the probe proves nothing"
+    caught_for "$driver driver that says the $value of the box on standard output" "the $value of the box stands on standard output"
+    plant "$text" "$after" "$after; printf '%s\\n' \"$named\" >&2"
+    ! "$holds" "$PLANTED_TEXT" 0 'the storage box opens' || fail "the planted $value of the box said on standard error after the opening span was not caught in the $driver — the probe proves nothing"
+    caught_for "$driver driver that says the $value of the box on standard error" "the $value of the box stands on standard error"
+  done
+  plant "$text" "$opens" "good \"the storage box \$STORAGE_BOX_HOST opens\""
+  ! "$holds" "$PLANTED_TEXT" 0 'opens' || fail "the planted host of the box in the line that says it opens was not caught in the $driver — the probe proves nothing"
+  caught_for "$driver driver that says the host of the box where it opens" 'the host of the box stands on standard output'
+  plant "$text" "$refuses" "die \"the storage box does not open to \$STORAGE_BOX_USER — nothing was changed\" 69"
+  ! "$holds" "$PLANTED_TEXT" 69 'the storage box does not open' lsd || fail "the planted user of the box in the line that says it does not open was not caught in the $driver — the probe proves nothing"
+  caught_for "$driver driver that says the user of the box where it does not open" 'the user of the box stands on standard error'
+done
+plant "$LOCK_TEXT" 'rclone lsd box: >/dev/null 2>&1' 'rclone lsd box: >/dev/null'
+! backup_box_holds "$PLANTED_TEXT" 69 'the storage box does not open' lsd || fail 'the planted opening of the box that lets rclone speak was not caught in the backup — the probe proves nothing'
+caught_for 'backup opening that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$LOCK_TEXT" 'copy "$WORK" "$BACKUPS/$ID/" --quiet 2>/dev/null' 'copy "$WORK" "$BACKUPS/$ID/" --quiet'
+! backup_box_holds "$PLANTED_TEXT" 69 'could not be carried' upload || fail 'the planted carry that lets rclone speak was not caught in the backup — the probe proves nothing'
+caught_for 'backup carry that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$LOCK_TEXT" 'lsf "$BACKUPS/$ID/" 2>/dev/null)' 'lsf "$BACKUPS/$ID/")'
+! backup_box_holds "$PLANTED_TEXT" 69 'could not be listed' lsf || fail 'the planted listing that lets rclone speak was not caught in the backup — the probe proves nothing'
+caught_for 'backup listing that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$LOCK_TEXT" '--stats-log-level NOTICE 2> "$READBACK_STATS" &' '--stats-log-level NOTICE &'
+! backup_box_holds "$PLANTED_TEXT" 69 'could not be read back' download || fail 'the planted copy back that lets rclone speak was not caught in the backup — the probe proves nothing'
+caught_for 'backup copy back that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$RESTORE_TEXT" 'rclone lsd box: >/dev/null 2>&1' 'rclone lsd box: >/dev/null'
+! restore_box_holds "$PLANTED_TEXT" 69 'the storage box does not open' lsd || fail 'the planted opening of the box that lets rclone speak was not caught in the restore — the probe proves nothing'
+caught_for 'restore opening that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$RESTORE_TEXT" 'lsf "$BACKUPS/$ID/manifest.txt" >/dev/null 2>&1' 'lsf "$BACKUPS/$ID/manifest.txt" >/dev/null'
+! restore_box_holds "$PLANTED_TEXT" 66 'holds no backup' lsf || fail 'the planted listing of the manifest that lets rclone speak was not caught in the restore — the probe proves nothing'
+caught_for 'restore listing that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+plant "$RESTORE_TEXT" '"$FETCH/" --quiet 2>/dev/null' '"$FETCH/" --quiet'
+! restore_box_holds "$PLANTED_TEXT" 69 'could not be fetched' download || fail 'the planted fetch that lets rclone speak was not caught in the restore — the probe proves nothing'
+caught_for 'restore fetch that lets rclone speak' 'the host of the box stands on standard error' 'the user of the box stands on standard error'
+ok 'the planted drivers are caught: the host or the user said after the opening span on either stream, in the line that says the box opens or does not, and every call of rclone that is let speak'
 rm -rf "$STANDIN" "$SEAL_DIR" "$WORK"/placement-*
 
 # ===========================================================================
