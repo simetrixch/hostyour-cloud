@@ -81,10 +81,10 @@ alloy:
     resources:
       requests:
         cpu: 100m
-        memory: 128Mi
+        memory: 450Mi
       limits:
         cpu: 500m
-        memory: 512Mi
+        memory: 1Gi
 
 # ---------------------------------------------------------------------------
 # kube-state-metrics (prometheus-community) — kube_* metrics (pod state /
