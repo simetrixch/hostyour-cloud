@@ -528,6 +528,11 @@ carry the same first complete sample and rate. A complete count, an ended copy o
 the wait never reaches the checks of the manifest by itself: only a copy that ended by itself with exit status 0
 does.
 
+Only when all four checks hold (the sha256 of every archive, the manifest's store count, the quorum opening to `/dev/null` and the returned
+manifest equal to the one sent) the driver prints the checksum coverage: how many archives were held to their checksum, of how many the backup
+must hold (one for every store and the quorum's, counted from the stores and from the manifest, not from a constant), and their names. A
+checksum line that is missing, or an answer for another name, ends the run 69 with the archives kept, and no `BACKUP` line is printed.
+
 When the records show that every expected byte was read, the driver prints a diagnosis before it ends the copy, and
 also when the copy ends by itself, with 0 or not. It shows the first and the last statistics record since the count
 was complete (bytes of the expected bytes, transfers and checks of their totals, errors, deletes, deleted

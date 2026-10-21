@@ -841,11 +841,13 @@ for _ in $(seq 1 100); do [ -s "$READBACK_PID" ] && break; kill -0 "$TRANSFER_JO
 readback_follow
 good "read back $SAMPLE_BYTES of $READBACK_EXPECTED expected bytes in $(seconds_of "$SAMPLE_MILLIS") s, $(rate_of "$SAMPLE_BYTES" "$SAMPLE_MILLIS") bytes a second (backup $ID)"
 READBACK_CODE=0
-root sh -c 'cd "$1" || exit 10
-grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11
+# What sha256sum answers for each archive is kept, and only after all four checks hold is it read for the coverage below.
+READBACK_CHECKED=$(root sh -c 'cd "$1" || exit 10
+checked=$(grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c) || exit 11
 grep -qx "STORES=$2" manifest.txt || exit 12
 gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13
-cmp -s manifest.txt "$5" || exit 14' _ "$READBACK" "${#STORES[@]}" "$PASSPHRASE_FILE" "$STAGE" "$WORK/manifest.txt" || READBACK_CODE=$?
+cmp -s manifest.txt "$5" || exit 14
+printf "%s\n" "$checked"' _ "$READBACK" "${#STORES[@]}" "$PASSPHRASE_FILE" "$STAGE" "$WORK/manifest.txt") || READBACK_CODE=$?
 if [ "$READBACK_CODE" != 0 ]; then
   case "$READBACK_CODE" in
     11) die "the archives read back from $BACKUPS/$ID/ do not match the checksums of their manifest — what the storage box keeps is not what was sent; the archives stand in $WORK on this machine" 69 ;;
@@ -855,7 +857,21 @@ if [ "$READBACK_CODE" != 0 ]; then
     *) die "the read-back of $BACKUPS/$ID/ could not be run, it ended with $READBACK_CODE — the archives stand in $WORK on this machine" 69 ;;
   esac
 fi
-good "read back from $BACKUPS/$ID/: the checksums hold, the manifest counts the ${#STORES[@]} stores, the quorum opens, the manifest is the one sent"
+# THE COVERAGE: the archives of this backup whose sha256 was checked, of the archives it must hold (one for each store and the
+# quorum's), by the names this run made them under; any other name in the answer is no coverage and is never printed.
+READBACK_EXPECTED_ARCHIVES=$(( ${#STORES[@]} + 1 )) READBACK_VERIFIED=0 READBACK_VERIFIED_NAMES='' READBACK_OTHER=0
+while IFS= read -r line; do
+  name="${line%: OK}"
+  if [ "$name" != "$line" ] && [[ "$(readback_known_names)" == *"|$name|"* ]] && [ "$name" != manifest.txt ]; then
+    READBACK_VERIFIED=$(( READBACK_VERIFIED + 1 )) READBACK_VERIFIED_NAMES="${READBACK_VERIFIED_NAMES:+$READBACK_VERIFIED_NAMES, }$name"
+  else
+    READBACK_OTHER=$(( READBACK_OTHER + 1 ))
+  fi
+done <<< "$READBACK_CHECKED"
+if [ "$READBACK_VERIFIED" != "$READBACK_EXPECTED_ARCHIVES" ] || [ "$READBACK_OTHER" != 0 ]; then
+  die "the manifest read back from $BACKUPS/$ID/ holds the checksums of $READBACK_VERIFIED of the $READBACK_EXPECTED_ARCHIVES archives of this backup, and $READBACK_OTHER other answer(s) — a backup is whole only when every archive is held to its checksum; the archives stand in $WORK on this machine" 69
+fi
+good "read back from $BACKUPS/$ID/: the checksums hold for $READBACK_VERIFIED of $READBACK_EXPECTED_ARCHIVES archives ($READBACK_VERIFIED_NAMES), the manifest counts the ${#STORES[@]} stores, the quorum opens, the manifest is the one sent"
 root rm -rf "$WORK" "$READBACK"
 if root test -e "$WORK" || root test -e "$READBACK"; then
   die "the backup stands whole on the storage box, but $WORK or $READBACK could not be removed from this machine" 70

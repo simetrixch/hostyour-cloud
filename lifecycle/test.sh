@@ -3880,12 +3880,16 @@ ok 'backup: a flipped byte in an archive on the box, a manifest that counts othe
 # leaves its folder
 plant "$BACKUP_WAY_OUT" 'copy "$BACKUPS/$ID/" "$READBACK" --use-json-log' 'copy "$WORK" "$READBACK" --use-json-log'; READS_WORK="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" "root bash -c 'echo \"\$\$\" > \"\$1\"; shift; exec \"\$@\"'" "bash -c 'echo \"\$\$\" > \"\$1\"; shift; exec \"\$@\"'"; READS_BY_OPERATOR="$PLANTED_TEXT"
-plant "$BACKUP_WAY_OUT" 'grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c --quiet || exit 11' 'true'; NO_CHECKSUMS="$PLANTED_TEXT"
-plant "$BACKUP_WAY_OUT" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_MANIFEST_COMPARISON="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" 'sha256sum -c) || exit 11' 'sed "s/^[0-9a-f]*  //; s/\$/: OK/") || exit 11'; NO_CHECKSUMS="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_COMPARISON_ONLY="$PLANTED_TEXT"
+# the coverage refuses a manifest that lost the form of a checksum line as well, so the comparison is planted away in a driver without it
+plant "$BACKUP_WAY_OUT" 'if [ "$READBACK_VERIFIED" != "$READBACK_EXPECTED_ARCHIVES" ] || [ "$READBACK_OTHER" != 0 ]; then' 'if false; then'; NO_COVERAGE="$PLANTED_TEXT"
+plant "$NO_COVERAGE" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_MANIFEST_COMPARISON="$PLANTED_TEXT"
 # the comparison would refuse the damage of the next two cases first, so they are planted in a driver without it
 plant "$NO_MANIFEST_COMPARISON" 'grep -qx "STORES=$2" manifest.txt || exit 12' 'true'; NO_STORE_COUNT="$PLANTED_TEXT"
 plant "$NO_MANIFEST_COMPARISON" 'gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13' 'true'; NO_QUORUM_OPENING="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" '-o /dev/null -d "host--vault-$4.txt.gpg"' '-d "host--vault-$4.txt.gpg"'; OPENS_TO_OUTPUT="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" '-o /dev/null -d "host--vault-$4.txt.gpg"' '-d "host--vault-$4.txt.gpg" >&2'; OPENS_TO_TERMINAL="$PLANTED_TEXT"
 TRAP_REMOVAL='if [ -n "$READBACK" ]; then root rm -rf "$READBACK" >/dev/null 2>&1; fi'
 plant "$BACKUP_TEXT" "$TRAP_REMOVAL" 'true'; KEEPS_AFTER_REFUSAL="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" 'root rm -rf "$WORK" "$READBACK"' 'root rm -rf "$WORK"'; KEEPS_AFTER_SUCCESS="$PLANTED_TEXT"
@@ -3905,6 +3909,8 @@ for kind in nopasswd password; do
   ! carry_refused "$kind" "$NO_MANIFEST_COMPARISON" "$BOX_LOST_SHAPE" 'is not the manifest that was sent' \
     || fail "the planted read-back without the comparison of the manifest was not caught under a sudo that reads $kind — the probe proves nothing"
   caught_for 'read-back without the comparison of the manifest' 'the way out ended with 0'
+  carry_refused "$kind" "$NO_COMPARISON_ONLY" "$BOX_LOST_SHAPE" 'archives of this backup' \
+    || fail "the planted read-back without the comparison of the manifest let a checksum line that lost its form through the coverage under a sudo that reads $kind: $(cat "$OUT/verdict")"
   ! carry_refused "$kind" "$NO_MANIFEST_COMPARISON" "$BOX_LOST_SHAPE_AND_FLIPPED" 'is not the manifest that was sent' \
     || fail "the planted read-back without the comparison of the manifest was not caught on a flipped archive under a sudo that reads $kind — the probe proves nothing"
   caught_for 'read-back without the comparison of the manifest, on a flipped archive' 'the way out ended with 0'
@@ -3914,9 +3920,11 @@ for kind in nopasswd password; do
   ! carry_refused "$kind" "$NO_QUORUM_OPENING" "$BOX_OTHER_PASSPHRASE" 'does not open' \
     || fail "the planted read-back without the opening of the quorum was not caught under a sudo that reads $kind — the probe proves nothing"
   caught_for 'read-back without the opening of the quorum' 'the way out ended with 0'
-  ! carry_holds "$kind" "$BACKUP_TEXT" "$OPENS_TO_OUTPUT" \
-    || fail "the planted opening of the quorum to the output was not caught under a sudo that reads $kind — the probe proves nothing"
-  caught_for 'opening of the quorum to the output' 'the run printed the planted line planted-unseal-key-1' 'the run printed the planted line planted-unseal-key-2'
+  ! carry_holds "$kind" "$BACKUP_TEXT" "$OPENS_TO_TERMINAL" \
+    || fail "the planted opening of the quorum to the terminal was not caught under a sudo that reads $kind — the probe proves nothing"
+  caught_for 'opening of the quorum to the terminal' 'the run printed the planted line planted-unseal-key-1' 'the run printed the planted line planted-unseal-key-2'
+  carry_refused "$kind" "$OPENS_TO_OUTPUT" 'true' 'other answer(s)' \
+    || fail "the planted opening of the quorum to the output of the read-back was not refused as an answer that is no checksum, and unprinted, under a sudo that reads $kind: $(cat "$OUT/verdict")"
   ! carry_refused "$kind" "$BACKUP_WAY_OUT" "$BOX_FLIPPED_BYTE" 'do not match the checksums' "$KEEPS_AFTER_REFUSAL" \
     || fail "the planted clean-up that leaves the read-back folder after a refusal was not caught under a sudo that reads $kind — the probe proves nothing"
   caught_for 'clean-up that leaves the read-back folder after a refusal' 'the read-back folder stands after the way out'
@@ -4680,7 +4688,7 @@ timeline_ms() { # <event> — the milliseconds from the start of the copy to the
   awk -v want="$1" '$1 == "start" { s = $2 } $1 == want && s != "" { printf "%d", ($2 - s) / 1000000; exit }' "$STANDIN/readback-timeline" 2> /dev/null || true
 }
 readback_held() { # <the driver's text> <run> <the plan> <READBACK_FINISH_SECONDS> <the least seconds the copy runs on after its last byte> <measured: yes|no> [<knob>...] — a copy that reads every byte, runs on and then ends 0: ends 0 when the driver let it end and went on to the checks; what is wrong stands in $OUT/verdict, the real times in $RB_TIMES
-  local text="$1" run="$2" plan="$3" finish="$4" least="$5" measured="$6" dir="$LOCK_DIR/$2" complete exit_ms
+  local text="$1" run="$2" plan="$3" finish="$4" least="$5" measured="$6" dir="$LOCK_DIR/$2" complete exit_ms coverage covered covered_of covered_names
   shift 6
   : > "$OUT/verdict"
   : > "$STANDIN/argv.log"
