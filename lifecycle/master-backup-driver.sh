@@ -503,6 +503,14 @@ readback_read() { # the newest sample into SAMPLE_BYTES and SAMPLE_MILLIS; ends 
   read -r SAMPLE_BYTES SAMPLE_MILLIS <<< "$sample"
   SAMPLE_BYTES=$(( 10#$SAMPLE_BYTES )) SAMPLE_MILLIS=$(( 10#$SAMPLE_MILLIS ))
 }
+# readback_first_complete: the first sample that held every expected byte, bytes and rclone's own elapsed time taken from the
+# same statistics line, as the words of every outcome after it. Neither the time this script first looked nor the time the
+# copy then took to end is the time of those bytes.
+readback_first_complete() {
+  local seconds=unavailable
+  [ "$READBACK_COMPLETE_MILLIS" -le 0 ] || seconds=$(seconds_of "$READBACK_COMPLETE_MILLIS")
+  printf 'first complete sample: %s of %s expected bytes in %s s, %s bytes a second' "$READBACK_COMPLETE_BYTES" "$READBACK_EXPECTED" "$seconds" "$(rate_of "$READBACK_COMPLETE_BYTES" "$READBACK_COMPLETE_MILLIS")"
+}
 readback_state() { # what the transfer had read, in the words of every failure and of the last line
   if readback_read; then
     printf 'read %s of %s expected bytes in %s s, %s bytes a second' "$SAMPLE_BYTES" "$READBACK_EXPECTED" "$(seconds_of "$SAMPLE_MILLIS")" "$(rate_of "$SAMPLE_BYTES" "$SAMPLE_MILLIS")"
@@ -753,10 +761,10 @@ readback_unfinished() {
   pid=$(readback_pid)
   if [ -n "$pid" ] && root kill -0 "$pid" >/dev/null 2>&1; then process=yes; fi
   readback_diagnose
-  say "read-back completion (backup $ID): every expected byte was first seen read $(( READBACK_COMPLETE_AT - READBACK_STARTED_AT )) s into the read-back; the completion wait ran $waited s of its $READBACK_FINISH_SECONDS s; the newest statistics were seen to change $(( SECONDS - READBACK_FRESH_AT )) s ago; the transfer job still runs: $job; the recorded rclone process still runs: $process"
+  say "read-back completion (backup $ID): every expected byte was first seen read $(( READBACK_COMPLETE_AT - READBACK_STARTED_AT )) s into the read-back; the completion wait ran $waited s of its $READBACK_FINISH_SECONDS s; the newest statistics were seen to change $(( SECONDS - READBACK_FRESH_AT )) s ago; $(readback_first_complete); latest sample: $state; the transfer job still runs: $job; the recorded rclone process still runs: $process"
   readback_say_diagnosis
   readback_end
-  die "read-back completion did not finish: rclone reported every expected byte read ($READBACK_COMPLETE_BYTES of $READBACK_EXPECTED), the completion wait ran $waited s to its bound of $READBACK_FINISH_SECONDS s with the transfer still running, and it was ended (backup $ID); $state, transfer exit status $TRANSFER_CODE; ${READBACK_UNFINISHED:-no statistics record of the completion could be read}; the archives stand in $WORK on this machine" 69
+  die "read-back completion did not finish: rclone reported every expected byte read, the completion wait ran $waited s to its bound of $READBACK_FINISH_SECONDS s with the transfer still running, and it was ended (backup $ID); $(readback_first_complete); latest sample: $state, transfer exit status $TRANSFER_CODE; ${READBACK_UNFINISHED:-no statistics record of the completion could be read}; the archives stand in $WORK on this machine" 69
 }
 # readback_follow: the transfer runs in the background with its statistics in a file that only this reads. The first
 # READBACK_WAIT_SECONDS measure the rate; a transfer that moves no byte for that long is ended, and so is one that passes
@@ -767,7 +775,7 @@ readback_unfinished() {
 # runs. Ends 0 when the transfer ended 0 and left a statistics line; otherwise it ends the run.
 readback_follow() {
   local started=$SECONDS progress=$SECONDS next_report now seen='' last=0 frozen='' deadline=0 changed=''
-  READBACK_STARTED_AT=$SECONDS READBACK_FRESH_AT=$SECONDS READBACK_COMPLETE_AT='' READBACK_COMPLETE_BYTES=''
+  READBACK_STARTED_AT=$SECONDS READBACK_FRESH_AT=$SECONDS READBACK_COMPLETE_AT='' READBACK_COMPLETE_BYTES='' READBACK_COMPLETE_MILLIS=''
   next_report=$(( SECONDS + READBACK_REPORT_SECONDS ))
   while kill -0 "$TRANSFER_JOB" 2>/dev/null; do
     sleep "$READBACK_POLL_SECONDS"
@@ -778,8 +786,8 @@ readback_follow() {
       if [ "$SAMPLE_BYTES" -gt "$last" ]; then last=$SAMPLE_BYTES progress=$now; fi
       if [ "$SAMPLE_MILLIS" != "$changed" ]; then changed=$SAMPLE_MILLIS READBACK_FRESH_AT=$now; fi
       if [ -z "$READBACK_COMPLETE_AT" ] && [ "$SAMPLE_BYTES" -ge "$READBACK_EXPECTED" ]; then
-        READBACK_COMPLETE_AT=$now READBACK_COMPLETE_BYTES=$SAMPLE_BYTES
-        say "read back: rclone reports $SAMPLE_BYTES of $READBACK_EXPECTED expected bytes, so the transfer is given $READBACK_FINISH_SECONDS s to end (backup $ID)"
+        READBACK_COMPLETE_AT=$now READBACK_COMPLETE_BYTES=$SAMPLE_BYTES READBACK_COMPLETE_MILLIS=$SAMPLE_MILLIS
+        say "read back: $(readback_first_complete), so the transfer is given $READBACK_FINISH_SECONDS s to end (backup $ID)"
       fi
     fi
     if [ -n "$READBACK_COMPLETE_AT" ]; then
@@ -817,7 +825,7 @@ readback_follow() {
   TRANSFER_JOB=''
   readback_diagnose
   if [ -n "$READBACK_COMPLETE_AT" ]; then
-    say "read-back completion (backup $ID): every expected byte was first seen read $(( READBACK_COMPLETE_AT - READBACK_STARTED_AT )) s into the read-back; the transfer was seen to have ended $(( SECONDS - READBACK_COMPLETE_AT )) s later with exit status $TRANSFER_CODE"
+    say "read-back completion (backup $ID): every expected byte was first seen read $(( READBACK_COMPLETE_AT - READBACK_STARTED_AT )) s into the read-back; $(readback_first_complete); the transfer was seen to have ended $(( SECONDS - READBACK_COMPLETE_AT )) s later with exit status $TRANSFER_CODE"
   fi
   readback_say_diagnosis
   [ "$TRANSFER_CODE" = 0 ] || die "the archives could not be read back from $BACKUPS/$ID/: $(readback_state); they stand in $WORK on this machine" 69

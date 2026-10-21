@@ -4697,6 +4697,13 @@ readback_held() { # <the driver's text> <run> <the plan> <READBACK_FINISH_SECOND
   [ "$(tail -n 1 "$dir/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the driver did not end with BACKUP and an id' >> "$OUT/verdict"
   grep -qF -- 'the checksums hold' "$dir/out" || echo 'the driver did not reach the checksums of the manifest' >> "$OUT/verdict"
   grep -qF -- 'the transfer was seen to have ended' "$dir/out" || echo 'the driver did not say that the copy that had read every byte ended' >> "$OUT/verdict"
+  grep -qE 'read back: first complete sample: [0-9]+ of [0-9]+ expected bytes in [0-9.]+ s, [0-9.]+ bytes a second, so the transfer is given' "$dir/out" || echo 'the line of the first complete sample states no bytes, time and rate' >> "$OUT/verdict"
+  grep -qE 'first complete sample: [0-9]+ of [0-9]+ expected bytes in [0-9.]+ s, [0-9.]+ bytes a second; the transfer was seen to have ended' "$dir/out" || echo 'the line of the end of the copy states no first complete sample with its rate' >> "$OUT/verdict"
+  grep -qE "copy .* --timeout ${finish}s( |\$)" "$STANDIN/argv.log" || echo "the read-back was not run under --timeout ${finish}s, the idle limit of rclone that READBACK_FINISH_SECONDS sets" >> "$OUT/verdict"
+  coverage="$(sed -n 's/.*the checksums hold for \([0-9]*\) of \([0-9]*\) archives (\(.*\)), the manifest counts.*/\1 \2 \3/p' "$dir/out")"
+  read -r covered covered_of covered_names <<< "$coverage"
+  { [ -n "$coverage" ] && [ "$covered" = "$covered_of" ] && [ "$covered_of" = $(( LOCK_STORES + 1 )) ] && [[ "$covered_names" == *"host--vault-prod.txt.gpg"* ]] && [[ "$covered_names" != *manifest* ]]; } \
+    || echo "the checksum coverage is not every archive of the backup, the stores and the quorum, by name: $coverage" >> "$OUT/verdict"
   if [ "$measured" = no ]; then
     ! grep -qF -- 'measured ' "$dir/out" || echo 'the driver froze a rate for a copy that had read every byte before the measurement was over' >> "$OUT/verdict"
   else
@@ -4710,18 +4717,22 @@ readback_held() { # <the driver's text> <run> <the plan> <READBACK_FINISH_SECOND
 }
 RB_WAIT=2 # READBACK_WAIT_SECONDS of every case here, as readback_start sets it
 readback_bounded() { # <the driver's text> <run> <the plan> <the bound in seconds> <the exit status of the ended copy: 143|137> [<knob>...] — a copy that has read every byte and runs on past READBACK_FINISH_SECONDS: ends 0 when the driver ended 69 with the named failure once the bound passed, the copy ended and reaped and no checksum run; what is wrong stands in $OUT/verdict
-  local text="$1" run="$2" plan="$3" bound="$4" status="$5" dir="$LOCK_DIR/$2" line fields counted total waited stated_bound stated_id stated_status
+  local text="$1" run="$2" plan="$3" bound="$4" status="$5" dir="$LOCK_DIR/$2" line fields latest counted total waited stated_bound stated_id stated_status first_seconds first_rate latest_bytes latest_seconds latest_rate
   shift 5
   : > "$OUT/verdict"
   readback_start "$run" "$text" 1 "$plan" READBACK_FINISH_SECONDS="$bound" "$@"
   readback_finish 1 "$RB_LIMIT"
   readback_refused "$run" 'read-back completion did not finish'
   line="$(tail -n 1 "$dir/err")"
-  fields="$(sed -n 's/.*rclone reported every expected byte read (\([0-9]*\) of \([0-9]*\)), the completion wait ran \([0-9]*\) s to its bound of \([0-9]*\) s with the transfer still running, and it was ended (backup \([0-9]\{8\}T[0-9]\{6\}Z\)); .*transfer exit status \([0-9]*\);.*/\1 \2 \3 \4 \5 \6/p' <<< "$line")"
+  fields="$(sed -n 's/.*rclone reported every expected byte read, the completion wait ran \([0-9]*\) s to its bound of \([0-9]*\) s with the transfer still running, and it was ended (backup \([0-9]\{8\}T[0-9]\{6\}Z\)); first complete sample: \([0-9]*\) of \([0-9]*\) expected bytes in \([0-9.]*\) s, \([0-9.]*\) bytes a second; latest sample: read \([0-9]*\) of [0-9]* expected bytes in .*/\1 \2 \3 \4 \5 \6 \7 \8/p' <<< "$line")"
+  latest="$(sed -n 's/.*latest sample: read \([0-9]*\) of [0-9]* expected bytes in \([0-9.]*\) s, \([0-9.]*\) bytes a second, transfer exit status \([0-9]*\);.*/\1 \2 \3 \4/p' <<< "$line")"
   if [ -z "$fields" ]; then
-    echo "the error does not say that rclone reported every expected byte, how long the wait ran, its bound, the backup and the exit status: $(cut -c1-400 <<< "$line")" >> "$OUT/verdict"
+    echo "the error does not say that rclone reported every expected byte, how long the wait ran, its bound, the backup, the first complete sample with its rate, and the latest sample with the exit status: $(cut -c1-400 <<< "$line")" >> "$OUT/verdict"
   else
-    read -r counted total waited stated_bound stated_id stated_status <<< "$fields"
+    read -r waited stated_bound stated_id counted total first_seconds first_rate _ <<< "$fields"
+    read -r latest_bytes latest_seconds latest_rate stated_status <<< "$latest"
+    rate_agrees "$counted" "$first_seconds" "$first_rate" || echo "the error states $first_rate bytes a second for the first complete sample of $counted bytes in $first_seconds s" >> "$OUT/verdict"
+    rate_agrees "${latest_bytes:-0}" "${latest_seconds:-1}" "${latest_rate:-x}" || echo "the error states ${latest_rate:-no rate} bytes a second for the latest sample of ${latest_bytes:-no} bytes in ${latest_seconds:-no} s" >> "$OUT/verdict"
     [ "$total" = "$(backup_bytes)" ] || echo "the error states $total expected bytes, and the box holds $(backup_bytes)" >> "$OUT/verdict"
     [ "$counted" -ge "$total" ] || echo "the error states $counted bytes reported, fewer than the $total expected" >> "$OUT/verdict"
     [ "$stated_bound" = "$bound" ] || echo "the error states a bound of $stated_bound s, not the $bound s of the case" >> "$OUT/verdict"
@@ -5064,7 +5075,7 @@ done
 # for a copy that is still reading applied after the last byte, a bound that ends the copy and calls the backup whole, and the ways the diagnosis
 # could disclose what rclone wrote: its raw statistics or log, a file name or object nobody approved, a secret handed to awk, and a filter that
 # knows only the wording of the cases; each is refused for its own defect only
-HELD_FRAGMENTS=('the driver ended with' 'the driver did not end with BACKUP' 'the driver did not reach the checksums' 'the driver did not say that the copy' 'the copy did not read every byte' 'the driver still ran' 'the transfer still ran after' 'stands after the driver ended' 'the driver froze a rate' 'the copy ended')
+HELD_FRAGMENTS=('the driver ended with' 'the driver did not end with BACKUP' 'the driver did not reach the checksums' 'the driver did not say that the copy' 'the copy did not read every byte' 'the driver still ran' 'the transfer still ran after' 'stands after the driver ended' 'the driver froze a rate' 'the copy ended' 'the line of the first complete sample' 'the line of the end of the copy' 'the read-back was not run under --timeout' 'the checksum coverage')
 BOUNDED_FRAGMENTS=('the driver ended with' 'the driver did not say' 'the error' 'the work folder' 'the driver still ran' 'the transfer still ran after' 'stands after the driver ended' 'the copy ended by itself' 'the driver ran the checksums' 'the driver printed nothing' 'the backup' 'the file with the log' 'the failure of a copy whose statistics')
 LEAK_FRAGMENTS=('the run printed the planted value' 'stands on standard output' 'stands on standard error' 'stands on the command line of awk' 'on a command line' 'the driver did not print' 'the driver printed an object' 'the driver did not say' 'the error' 'the driver ended with')
 FINISH_BOUND='if [ $(( now - READBACK_COMPLETE_AT )) -ge "$READBACK_FINISH_SECONDS" ]; then readback_unfinished; fi'
@@ -5108,6 +5119,23 @@ caught_for 'stall rule after the last byte' 'the driver ended with' "${HELD_FRAG
 caught_for 'measured deadline after the last byte' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
 ! readback_held "$JUDGES_ENDED_COPY_AS_RUNNING" held_late_completed $'rate 4194304 forever\nevery 0.1\nhold 6' 5 5 no READBACK_POLL_SECONDS=3 || fail 'the planted read-back that judges a copy that ended while the poll slept by the rules for a running one was not caught on a copy that ended inside the last poll period before its completion bound — the probe proves nothing'
 caught_for 'read-back that judges an ended copy by the rules for a running one' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
+# planted defects of the completion bound's report and of the integrity verdict: a first complete sample without its rate, a copy without --timeout,
+# a coverage that expects fewer archives than the backup holds, and a bound that is still the diagnostic two hours
+plant "$LOCK_TEXT" '"$(rate_of "$READBACK_COMPLETE_BYTES" "$READBACK_COMPLETE_MILLIS")"' 'unavailable'; MISSING_RATE="$PLANTED_TEXT"
+! readback_bounded "$MISSING_RATE" bounded_repeated $'rate 4194304 forever\nhold forever' 3 143 || fail 'the planted failure whose first complete sample states no rate was not caught — the probe proves nothing'
+caught_for 'failure whose first complete sample states no rate' 'the error does not say that rclone reported every expected byte'
+! readback_held "$MISSING_RATE" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted completion line without a rate was not caught — the probe proves nothing'
+caught_for 'completion line without a rate' 'the line of the first complete sample' "${HELD_FRAGMENTS[@]}"
+plant "$LOCK_TEXT" ' --timeout "${READBACK_FINISH_SECONDS}s"' ''; NO_TIMEOUT="$PLANTED_TEXT"
+! readback_held "$NO_TIMEOUT" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted read-back without --timeout was not caught — the probe proves nothing'
+caught_for 'read-back without --timeout' 'the read-back was not run under --timeout' "${HELD_FRAGMENTS[@]}"
+plant "$LOCK_TEXT" 'READBACK_EXPECTED_ARCHIVES=$(( ${#STORES[@]} + 1 ))' 'READBACK_EXPECTED_ARCHIVES=$(( ${#STORES[@]} + 0 ))'; FEWER_ARCHIVES="$PLANTED_TEXT"
+! readback_held "$FEWER_ARCHIVES" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted coverage that expects fewer archives than the backup holds was not caught — the probe proves nothing'
+caught_for 'coverage that expects fewer archives' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
+finish_is_300() { [ "$(sed -n 's/^readonly READBACK_FINISH_SECONDS=//p' <<< "$1")" = 300 ]; }
+finish_is_300 "$LOCK_TEXT" || fail 'READBACK_FINISH_SECONDS of the backup driver is not 300 s, the one idle interval of rclone'
+plant "$LOCK_TEXT" 'readonly READBACK_FINISH_SECONDS=300' 'readonly READBACK_FINISH_SECONDS=7200'
+! finish_is_300 "$PLANTED_TEXT" || fail 'the planted completion bound of two hours was not caught — the probe proves nothing'
 for planted in PRINTS_RAW_STATISTICS PRINTS_RAW_LOG_TAIL PRINTS_ANY_FILE_NAME PRINTS_ANY_MESSAGE PRINTS_ANY_OBJECT HANDS_SECRET_TO_AWK RAW_STATISTICS_IN_ERROR; do
   ! readback_private "${!planted}" private_bound bound || fail "the planted driver $planted was not caught when the log of the copy carries the host, the user, the account, the path and the passwords of the box — the probe proves nothing"
   while IFS= read -r line; do

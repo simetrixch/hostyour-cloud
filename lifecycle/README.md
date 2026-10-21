@@ -521,8 +521,10 @@ runs, the rules above do not end the copy, because a copy that has read its last
 copy that ends by itself inside the wait is judged by its exit status alone: 0 goes to the checks of the manifest,
 anything else ends the run. A copy that still runs when the wait is over is ended with TERM, killed after
 `READBACK_GRACE_SECONDS` and reaped, and the driver ends with exit 69 and the failure `read-back completion did
-not finish`. It says that rclone reported every expected byte, how many, how long the wait ran, and what the last
-record still reports unfinished, and it names no path on the box. A complete count, an ended copy or the end of
+not finish`. It says that rclone reported every expected byte, how long the wait ran, the first complete sample (its bytes, rclone's own
+elapsed time for them and their rate, taken from one statistics record) and, separately, the latest sample with its rate, and what the last
+record still reports unfinished, and it names no path on the box. The line that starts the wait and the line that reports a copy that ended inside it
+carry the same first complete sample and rate. A complete count, an ended copy or the end of
 the wait never reaches the checks of the manifest by itself: only a copy that ended by itself with exit status 0
 does.
 
