@@ -5,6 +5,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import {chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
 import {immutableChanges, probeImmutableChanges} from './check-immutable.mjs';
 import {renderChart} from './render-chart.mjs';
 
@@ -15,7 +16,8 @@ test('no Tekton test resources are rendered and production readers remain', () =
     (d.kind === 'Task' && d.metadata.name.startsWith('test-')) || d.metadata.name.endsWith('-test-push')));
   assert.deepEqual(builder.find(d => d.kind === 'EventListener').spec.triggers,
     [{triggerRef: 'github-deploy-request'}, {triggerRef: 'github-release-publish'},
-      {triggerRef: 'forgejo-tag-push'}, {triggerRef: 'forgejo-pull-request'}]);
+      {triggerRef: 'forgejo-tag-push'}, {triggerRef: 'forgejo-pull-request'},
+      {triggerRef: 'forgejo-deploy-request'}, {triggerRef: 'forgejo-release-publish'}]);
   const guard = builder.find(d => d.kind === 'ValidatingAdmissionPolicy' && d.metadata.name === 'image-builder-pipelinerun-guard');
   assert.ok(!JSON.stringify(guard).includes('op3-input'));
   const fanout = renderChart('consumer-build').find(d => d.kind === 'ApplicationSet');
@@ -498,8 +500,21 @@ test('the release pipeline checks an apps bundle with the stage engine before th
   const planted = structuredClone(check);
   planted.taskSpec.steps[2].envFrom = [{secretRef: {name: 'bump-git-https'}}];
   assert.ok(!holdsNoCredential(planted), 'PLANTED DEFECT: a check step that takes the bump credential is caught');
-  assert.deepEqual(release.spec.tasks.filter((t) => JSON.stringify(t).includes('bump-git-https')).map((t) => t.name), ['engine-pin', 'bump']);
+  const holders = (pipeline) => pipeline.spec.tasks.filter((t) => JSON.stringify(t).includes('bump-git-https')).map((t) => t.name);
+  assert.deepEqual(holders(release), ['engine-pin', 'bump']);
+  const third = structuredClone(release);
+  third.spec.tasks.find((t) => t.name === 'builds').taskSpec.steps[0].envFrom = [{secretRef: {name: 'bump-git-https'}}];
+  assert.notDeepEqual(holders(third), ['engine-pin', 'bump'], 'PLANTED DEFECT: bump-git-https as the envFrom of a third task is caught');
   assert.ok(task('engine-pin').taskSpec.steps.every((s) => s.image === 'alpine/k8s:1.35.6'), 'the task that holds the credential runs no image the unit or the pin names');
+  // The step that pushes runs on an image that carries ssh, pinned by the digest of its index; every other step stays on alpine/k8s.
+  const pinned = /^dtzar\/helm-kubectl:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/;
+  const stepImages = (pipeline) => Object.fromEntries(pipeline.spec.tasks.flatMap((t) => (t.taskSpec?.steps ?? []).map((s) => [`${t.name}/${s.name}`, s.image])));
+  assert.match(stepImages(release)['bump/search-and-write'], pinned);
+  assert.deepEqual(Object.entries(stepImages(release)).filter(([, image]) => image.startsWith('dtzar/')).map(([name]) => name), ['bump/search-and-write']);
+  assert.equal(stepImages(release)['bump/argo-sync'], 'alpine/k8s:1.35.6', 'the step that calls kubectl keeps the image that carries it');
+  assert.doesNotMatch('dtzar/helm-kubectl:4.3.0', pinned, 'PLANTED DEFECT: a tag without its digest is caught');
+  assert.doesNotMatch(`dtzar/helm-kubectl:latest@sha256:${'0'.repeat(64)}`, pinned, 'PLANTED DEFECT: a floating tag is caught');
+  assert.match(`dtzar/helm-kubectl:4.3.0@sha256:${'0'.repeat(64)}`, pinned, 'PLANTED INNOCENT: a version with the digest of its index');
   for (const t of [task('engine-pin'), check]) {
     for (const step of t.taskSpec.steps) assert.ok(step.computeResources?.requests?.cpu && step.computeResources?.limits?.memory, `${t.name}/${step.name} bounds its resources`);
   }
@@ -543,6 +558,123 @@ test('the bump reads the platform credentials from build-platform/, and units na
   assert.notDeepEqual(bumpReadFindings({...cloud, 'cloud-pat': 'build/hostyour-cloud/repo-pat#pat'}, 'hostyour-cloud'), [], 'PLANTED DEFECT: the old hostyour-cloud leaf, the entry a unit named hostyour-cloud owns, is caught');
   const shop = bumpReads(renderUnit('shop'));
   assert.notDeepEqual(bumpReadFindings({...shop, 'unit-pat': 'build/shop/repo-pat#pat'}, 'shop'), [], 'PLANTED DEFECT: the unit\'s record back on its pat, the token that reaches more than its own repository, is caught');
+});
+
+// ── The bump on an installation with a Forgejo ────────────────────────────────────────
+// scripts/standin/repository-credentials.yaml is the file the branch program writes beside the cluster map of an
+// installation whose repositories stand on its own Forgejo; the two URLs are the repositories that map names.
+const FORGE_HOST = 'forgejo.check.example.invalid';
+const FORGE = ['-f', 'scripts/standin/repository-credentials.yaml',
+  '--set', `global.platformUrl=https://${FORGE_HOST}/check/hostyour-cloud.git`, '--set', `global.deployUrl=https://${FORGE_HOST}/check/check.git`];
+const renderOn = (extra, name, repoURL, builds = ['app']) => renderChart('consumer-build', [...extra, '--set-json', 'unit=' + JSON.stringify({name, repoURL, buildsJson: JSON.stringify(builds)})]);
+const bumpSecret = (docs) => docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'bump-git-https');
+const bumpStep = (docs, unit = 'shop') => docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === `${unit}-release`).spec.tasks.find((t) => t.name === 'bump').taskSpec.steps.find((s) => s.name === 'search-and-write');
+const forgeShapes = {
+  today: {forge: false, unitOnForge: false, url: 'https://github.com/check/shop.git', extra: []},
+  github: {forge: true, unitOnForge: false, url: 'https://github.com/check/shop.git', extra: FORGE},
+  forgejo: {forge: true, unitOnForge: true, url: `https://${FORGE_HOST}/check/shop.git`, extra: FORGE}
+};
+const credentialUser = (host) => host === 'github.com' ? 'x-access-token' : 'oauth2';
+// What the bump Secret of unit `shop` must read and render, as findings: the unit's own record for a github.com unit alone (a Forgejo
+// unit's `push` is an OpenSSH key the step reads from Vault at run time, never a line of a credential store), the platform
+// repositories from the entry of their forge, the host key of the Forgejo where the plane names one and nowhere else.
+const bumpSecretFindings = (secret, {forge, unitOnForge}, unit = 'shop') => {
+  const reads = Object.fromEntries(secret.spec.data.map(({secretKey, remoteRef}) => [secretKey, `${remoteRef.key}#${remoteRef.property}`]));
+  const data = secret.spec.target.template.data;
+  const found = [];
+  const expected = {
+    ...(unitOnForge ? {} : {'unit-pat': `build/${unit}/repo-pat#push`}),
+    'deploy-pat': `build-platform/deploy/${forge ? 'forgejo-' : ''}repo-pat#pat`,
+    'cloud-pat': `build-platform/hostyour-cloud/${forge ? 'forgejo-' : ''}repo-pat#pat`,
+    ...(forge ? {'forgejo-host-key': 'prod/app/forgejo-host-key#host-key'} : {})
+  };
+  if (JSON.stringify(Object.entries(reads).sort()) !== JSON.stringify(Object.entries(expected).sort())) found.push(`reads ${JSON.stringify(reads)}, not ${JSON.stringify(expected)}`);
+  const records = data.GITCREDENTIALS.trim().split('\n');
+  if (records.length !== Object.keys(expected).filter((key) => key.endsWith('-pat')).length) found.push(`GITCREDENTIALS holds ${records.length} records`);
+  for (const record of records) {
+    const [, user, host] = record.match(/^https:\/\/([^:]+):\{\{ index \. "[a-z-]+" \}\}@([^/]+)/) ?? [];
+    if (user !== credentialUser(host)) found.push(`the record ${record.replace(/\{\{.*?\}\}/, '<pat>')} names user ${user} for ${host}`);
+  }
+  if (forge && data.FORGEJO_HOST_KEY !== '{{ index . "forgejo-host-key" }}') found.push(`FORGEJO_HOST_KEY is ${data.FORGEJO_HOST_KEY}`);
+  if (!forge && 'FORGEJO_HOST_KEY' in data) found.push('FORGEJO_HOST_KEY stands on a plane with no Forgejo');
+  return found;
+};
+const forgeEnvFindings = (step, forge) => ['FORGEJO_HOST', 'FORGEJO_SSH_HOSTNAME', 'FORGEJO_SSH_PORT']
+  .filter((name) => step.env.some((e) => e.name === name) !== forge).map((name) => `${name} is ${forge ? 'absent' : 'present'}`);
+const cloneCredential = (docs) => docs.find((d) => d.kind === 'ExternalSecret' && d.metadata.name === 'build-git-https').spec.target.template.data.GITCREDENTIALS;
+
+test('the bump of a plane with a Forgejo reads the forge shape of its credentials, a Forgejo unit no key in a credential line, and today\'s chain renders none of it', () => {
+  const docs = Object.fromEntries(Object.entries(forgeShapes).map(([name, shape]) => [name, renderOn(shape.extra, 'shop', shape.url)]));
+  for (const [name, shape] of Object.entries(forgeShapes)) {
+    assert.deepEqual(bumpSecretFindings(bumpSecret(docs[name]), shape), [], `PLANTED INNOCENT: the bump Secret, ${name}`);
+    assert.deepEqual(forgeEnvFindings(bumpStep(docs[name]), shape.forge), [], `PLANTED INNOCENT: the environment of the step, ${name}`);
+  }
+  const plant = (name, edit) => { const copy = structuredClone(bumpSecret(docs[name])); edit(copy); return copy; };
+  const unitPatRead = bumpSecret(docs.github).spec.data.find((d) => d.secretKey === 'unit-pat');
+  const planted = {
+    'unit-pat rendered for the Forgejo unit, a key in a credential line': ['forgejo', (s) => {
+      s.spec.data.unshift(unitPatRead);
+      s.spec.target.template.data.GITCREDENTIALS = `https://oauth2:{{ index . "unit-pat" }}@${FORGE_HOST}/check/shop.git\n${s.spec.target.template.data.GITCREDENTIALS}`;
+    }],
+    'FORGEJO_HOST_KEY absent while the forge is enabled': ['forgejo', (s) => {
+      delete s.spec.target.template.data.FORGEJO_HOST_KEY;
+      s.spec.data = s.spec.data.filter((d) => d.secretKey !== 'forgejo-host-key');
+    }],
+    'FORGEJO_HOST_KEY rendered on today\'s chain': ['today', (s) => { s.spec.target.template.data.FORGEJO_HOST_KEY = '{{ index . "forgejo-host-key" }}'; }],
+    'the deploy repository read from the GitHub entry on a Forgejo': ['forgejo', (s) => { s.spec.data.find((d) => d.secretKey === 'deploy-pat').remoteRef.key = 'build-platform/deploy/repo-pat'; }],
+    'the platform repository read from the GitHub entry on a Forgejo': ['github', (s) => { s.spec.data.find((d) => d.secretKey === 'cloud-pat').remoteRef.key = 'build-platform/hostyour-cloud/repo-pat'; }],
+    'a Forgejo record with the user of GitHub': ['forgejo', (s) => { s.spec.target.template.data.GITCREDENTIALS = s.spec.target.template.data.GITCREDENTIALS.replaceAll('oauth2:', 'x-access-token:'); }]
+  };
+  for (const [defect, [name, edit]] of Object.entries(planted)) {
+    assert.notDeepEqual(bumpSecretFindings(plant(name, edit), forgeShapes[name]), [], `PLANTED DEFECT: ${defect}`);
+  }
+  const withEnv = (name, edit) => { const step = structuredClone(bumpStep(docs[name])); edit(step); return step; };
+  assert.notDeepEqual(forgeEnvFindings(withEnv('today', (s) => s.env.push({name: 'FORGEJO_SSH_PORT', value: '22'})), false), [], 'PLANTED DEFECT: the SSH port in the environment of a plane with no Forgejo');
+  assert.notDeepEqual(forgeEnvFindings(withEnv('forgejo', (s) => { s.env = s.env.filter((e) => e.name !== 'FORGEJO_HOST'); }), true), [], 'PLANTED DEFECT: no forge host in the environment of a plane with one');
+  // The step reads the repositories of the plane from its environment, holds the credentials it always held, and no key stands in a volume.
+  const env = Object.fromEntries(bumpStep(docs.forgejo).env.map((e) => [e.name, e.value]));
+  assert.deepEqual([env.CLOUD_URL, env.DEPLOY_URL, env.REPO_URL, env.FORGEJO_HOST, env.FORGEJO_SSH_HOSTNAME, env.FORGEJO_SSH_PORT],
+    [`https://${FORGE_HOST}/check/hostyour-cloud.git`, `https://${FORGE_HOST}/check/check.git`, `https://${FORGE_HOST}/check/shop.git`, FORGE_HOST, 'forgejo-ssh.forgejo.svc', '22']);
+  assert.equal(bumpStep(docs.today).env.find((e) => e.name === 'CLOUD_URL').value, 'https://github.com/simetrixch/hostyour-cloud.git');
+  const bump = docs.forgejo.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-release').spec.tasks.find((t) => t.name === 'bump').taskSpec;
+  assert.deepEqual(bump.volumes.map((v) => v.name), ['bump-scratch', 'vault-token', 'argo-sync-token']);
+  assert.deepEqual(bumpStep(docs.forgejo).volumeMounts.map((m) => m.name), ['bump-scratch', 'vault-token']);
+  assert.deepEqual(bumpStep(docs.forgejo).envFrom, [{secretRef: {name: 'bump-git-https'}}]);
+});
+
+test('the clone credential of a unit names the host of its repository, with the user of that forge', () => {
+  const docs = Object.fromEntries(Object.entries(forgeShapes).map(([name, shape]) => [name, renderOn(shape.extra, 'shop', shape.url)]));
+  const findings = (credential, host) => credential === `https://${credentialUser(host)}:{{ .pat }}@${host}` ? [] : [`${credential} for ${host}`];
+  assert.deepEqual(findings(cloneCredential(docs.github), 'github.com'), [], 'PLANTED INNOCENT: a github.com unit on a plane with a Forgejo');
+  assert.deepEqual(findings(cloneCredential(docs.forgejo), FORGE_HOST), [], 'PLANTED INNOCENT: a Forgejo unit');
+  assert.notDeepEqual(findings(cloneCredential(docs.github), FORGE_HOST), [], 'PLANTED DEFECT: the Forgejo host on a github.com unit');
+  assert.notDeepEqual(findings(cloneCredential(docs.today), FORGE_HOST), [], 'PLANTED DEFECT: github.com for a Forgejo unit');
+  assert.notDeepEqual(findings(cloneCredential(docs.forgejo), 'github.com'), [], 'PLANTED DEFECT: the user of GitHub on a Forgejo host');
+});
+
+test('a unit is on github.com or on the Forgejo of its plane, and its publish run follows the owner and the repository off either host', () => {
+  const refusal = (extra, url) => { try { renderOn(extra, 'shop', url); return ''; } catch (error) { return String(error.stderr); } };
+  assert.equal(refusal([], 'https://github.com/check/shop.git'), '', 'PLANTED INNOCENT: github.com on today\'s chain');
+  assert.equal(refusal(FORGE, `https://${FORGE_HOST}/check/shop.git`), '', 'PLANTED INNOCENT: the Forgejo of the plane');
+  assert.match(refusal(FORGE, 'https://elsewhere.example.invalid/check/shop.git'), /unit\.repoURL "https:\/\/elsewhere\.example\.invalid\/check\/shop\.git" is not .* on github\.com or forgejo\.check\.example\.invalid/,
+    'PLANTED DEFECT: a third host is refused by name');
+  assert.match(refusal([], `https://${FORGE_HOST}/check/shop.git`), /is not .* on github\.com/, 'PLANTED DEFECT: a Forgejo unit on a plane with no Forgejo is refused by name');
+  const binaries = (docs) => docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === 'shop-publish').spec.tasks.find((t) => t.name === 'push')
+    .taskSpec.steps[0].env.find((e) => e.name === 'BINARIES_REPOSITORY').value;
+  assert.equal(binaries(renderOn(FORGE, 'shop', `https://${FORGE_HOST}/check/shop.git`, [])), 'check/shop');
+  assert.equal(binaries(renderOn([], 'shop', 'https://github.com/check/shop.git', [])), 'check/shop');
+});
+
+test('the platform tree and the engine are the repositories global.platformUrl names, on GitHub or on a Forgejo', () => {
+  const tasks = (docs, unit) => docs.find((d) => d.kind === 'Pipeline' && d.metadata.name === `${unit}-publish`).spec.tasks.map((t) => t.name);
+  const mirrors = (extra, owner, url) => tasks(renderOn([...extra, '--set', `global.buildRegistry=zot.check.example.invalid/${owner}`], 'hostyour-cloud', url, []), 'hostyour-cloud').includes('mirror');
+  const exports = (extra, owner, url) => tasks(renderOn([...extra, '--set', `global.buildRegistry=zot.check.example.invalid/${owner}`], 'ansiwise-cli', url, []), 'ansiwise-cli').includes('tag');
+  assert.equal(mirrors([], 'simetrixch', 'https://github.com/simetrixch/hostyour-cloud.git'), true, 'PLANTED INNOCENT: the platform tree on GitHub');
+  assert.equal(mirrors(FORGE, 'check', `https://${FORGE_HOST}/check/hostyour-cloud.git`), true, 'the platform tree on the Forgejo of the plane mirrors');
+  assert.equal(mirrors(FORGE, 'simetrixch', 'https://github.com/simetrixch/hostyour-cloud.git'), false, 'PLANTED DEFECT: the old GitHub address of the platform tree mirrors once the plane names another');
+  assert.equal(exports([], 'simetrixch', 'https://github.com/simetrixch/ansiwise-cli.git'), true, 'PLANTED INNOCENT: the engine on GitHub');
+  assert.equal(exports(FORGE, 'check', `https://${FORGE_HOST}/check/ansiwise-cli.git`), true, 'the engine beside the platform tree on the Forgejo exports');
+  assert.equal(exports(FORGE, 'simetrixch', 'https://github.com/simetrixch/ansiwise-cli.git'), false, 'PLANTED DEFECT: the old GitHub address of the engine exports once the plane names another');
 });
 
 // ci-tools.json at a repository's root names the tools its release build runs with, {"<tool>": "<x.y.z>"}: the scan of
@@ -1262,21 +1394,22 @@ test('the release class ranks above a pod without a class and preempts nothing, 
   assert.ok(release.value > 0, 'a release outranks a pod without a class');
   assert.deepEqual(renderUnit('shop').filter((d) => d.kind === 'ResourceQuota'), []);
 });
+const yaml = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', '-I=0', ...args], {input, encoding: 'utf8'}));
+// A platform application as the ApplicationSet deploys it to a stage: its release, namespace and rendered objects.
+const deployed = (name, stage, extra = []) => {
+  const app = yaml(['.', `clusters/inventories/${name}/app.yaml`]);
+  const release = app.releaseName ?? `${app.name}-${stage}`;
+  const rendered = execFileSync('helm', ['template', release, `clusters/inventories/${name}`, '--namespace', app.namespace,
+    '-f', 'clusters/platform/values-common.yaml', '-f', `clusters/platform/values-${stage}.yaml`,
+    '-f', `clusters/inventories/${name}/values-common.yaml`,
+    ...(existsSync(`clusters/inventories/${name}/values-${stage}.yaml`) ? ['-f', `clusters/inventories/${name}/values-${stage}.yaml`] : []),
+    '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', '--set-string', `stage=${stage}`, ...extra],
+  {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
+  return {app, release, rendered, docs: yaml(['eval-all', '[.]', '-'], rendered).filter(Boolean)};
+};
 test('the Forgejo build fence preserves the build baseline and limits each internal API to its own tasks and deployed pods', async t => {
-  const yaml = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', '-I=0', ...args], {input, encoding: 'utf8'}));
   const releaseTemplate = yaml(['.spec.template.spec.sources[1].helm.releaseName', 'clusters/argocd/files/platform-apps-appset.yaml']);
   assert.equal(releaseTemplate, '{{ dig "releaseName" (printf "%s-__STAGE__" .name) . }}');
-  const deployed = (name, stage, extra = []) => {
-    const app = yaml(['.', `clusters/inventories/${name}/app.yaml`]);
-    const release = app.releaseName ?? `${app.name}-${stage}`;
-    const rendered = execFileSync('helm', ['template', release, `clusters/inventories/${name}`, '--namespace', app.namespace,
-      '-f', 'clusters/platform/values-common.yaml', '-f', `clusters/platform/values-${stage}.yaml`,
-      '-f', `clusters/inventories/${name}/values-common.yaml`,
-      ...(existsSync(`clusters/inventories/${name}/values-${stage}.yaml`) ? ['-f', `clusters/inventories/${name}/values-${stage}.yaml`] : []),
-      '-f', 'scripts/standin/cluster-map.yaml', '-f', 'scripts/standin/registration.yaml', '--set-string', `stage=${stage}`, ...extra],
-    {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024});
-    return {app, release, rendered, docs: yaml(['eval-all', '[.]', '-'], rendered).filter(Boolean)};
-  };
   const builder = imageBuilder();
   const destination = (name, task, variable, stage) => {
     const rendered = deployed(name, stage);
@@ -1450,6 +1583,93 @@ func main() {
         error => error.message.includes(`${key} is required`));
     });
   }
+});
+
+test('the bump of a plane with a Forgejo reaches the SSH port of that Forgejo\'s pods and nothing else, at every stage', async t => {
+  const POLICY = 'bump-forge-ssh-egress';
+  const sshCache = new Map();
+  // The SSH Service of the Forgejo as deployed to a stage, the pods it selects and the container port its port leads to: what the policy must admit.
+  const sshOf = (stage) => {
+    if (sshCache.has(stage)) return sshCache.get(stage);
+    const forgejo = deployed('forgejo', stage);
+    const service = forgejo.docs.find((d) => d.kind === 'Service' && d.metadata.name === 'forgejo-ssh');
+    const workloads = forgejo.docs.filter((d) => ['Deployment', 'StatefulSet'].includes(d.kind) && d.metadata.namespace === forgejo.app.namespace &&
+      Object.entries(service.spec.selector).every(([key, value]) => d.spec.template.metadata.labels[key] === value));
+    assert.equal(workloads.length, 1, 'forgejo-ssh selects exactly the Forgejo workload');
+    const [{port, targetPort}] = service.spec.ports;
+    const containerPort = typeof targetPort === 'number' ? targetPort : workloads[0].spec.template.spec.containers.flatMap((c) => c.ports ?? []).find((p) => p.name === targetPort).containerPort;
+    const ssh = {namespace: forgejo.app.namespace, service: service.metadata.name, servicePort: port, podLabels: service.spec.selector, containerPort};
+    sshCache.set(stage, ssh);
+    return ssh;
+  };
+  const render = (stage, extra = FORGE) => renderOn([...extra, '-f', `clusters/platform/values-${stage}.yaml`], 'shop', 'https://github.com/check/shop.git');
+  const policies = (docs) => docs.filter((d) => d.kind === 'NetworkPolicy');
+  const named = (docs, name) => policies(docs).find((d) => d.metadata.name === name);
+  const baseline = named(renderUnit('shop'), 'build-egress').spec;
+  const expectedSpec = (ssh) => ({podSelector: {matchLabels: {'tekton.dev/pipelineTask': 'bump'}}, policyTypes: ['Egress'],
+    egress: [{to: [{namespaceSelector: {matchLabels: {'kubernetes.io/metadata.name': ssh.namespace}}, podSelector: {matchLabels: ssh.podLabels}}],
+      ports: [{protocol: 'TCP', port: ssh.containerPort}]}]});
+  // The policies of the unit's namespace, as findings. The plane names a Forgejo where `forge` is true, and then the bump has the one policy more.
+  const fenceFindings = (docs, stage, forge = true) => {
+    const found = [];
+    const names = policies(docs).map((p) => p.metadata.name).sort();
+    const want = ['build-egress', 'bump-apiserver', ...(forge ? [POLICY] : [])];
+    if (!isDeepStrictEqual(names, want)) found.push(`the policies are ${names.join(', ')}, not ${want.join(', ')}`);
+    const policy = named(docs, POLICY);
+    if (forge && policy && !isDeepStrictEqual(policy.spec, expectedSpec(sshOf(stage)))) found.push(`${POLICY} is ${JSON.stringify(policy.spec)}`);
+    if (!isDeepStrictEqual(named(docs, 'build-egress')?.spec, baseline)) found.push('build-egress is not the baseline');
+    return found;
+  };
+  for (const stage of ['prod', 'test', 'dev']) {
+    const docs = render(stage);
+    await t.test(`PLANTED INNOCENT: the ${stage} policy matches the Forgejo deployed to ${stage}`, () => {
+      assert.deepEqual(fenceFindings(docs, stage), []);
+      const env = Object.fromEntries(bumpStep(docs).env.map((e) => [e.name, e.value]));
+      const ssh = sshOf(stage);
+      assert.deepEqual([env.FORGEJO_SSH_HOSTNAME, env.FORGEJO_SSH_PORT], [`${ssh.service}.${ssh.namespace}.svc`, String(ssh.servicePort)], 'the step dials the Service the policy leads to');
+    });
+    if (stage !== 'prod') await t.test(`PLANTED DEFECT: the ${stage} policy fixed to the Forgejo of prod`, () => {
+      const copy = structuredClone(docs);
+      named(copy, POLICY).spec.egress[0].to[0].podSelector.matchLabels['app.kubernetes.io/instance'] = 'forgejo-prod';
+      assert.notDeepEqual(fenceFindings(copy, stage), []);
+    });
+  }
+  await t.test('PLANTED INNOCENT: a plane with no Forgejo renders the policies it renders today', () => {
+    assert.deepEqual(fenceFindings(render('prod', []), 'prod', false), []);
+  });
+  const docs = render('prod');
+  const rule = (copy) => named(copy, POLICY).spec.egress[0];
+  const cases = [
+    ['policy removed', (copy) => copy.splice(copy.indexOf(named(copy, POLICY)), 1)],
+    ['policy rendered on a plane with no Forgejo', (copy, today) => today.push(structuredClone(named(copy, POLICY)))],
+    ['pod selector emptied', (copy) => { named(copy, POLICY).spec.podSelector = {}; }],
+    ['pod selector missing', (copy) => { delete named(copy, POLICY).spec.podSelector; }],
+    ['another task selected', (copy) => { named(copy, POLICY).spec.podSelector = {matchLabels: {'tekton.dev/pipelineTask': 'build-app'}}; }],
+    ['port changed', (copy) => { rule(copy).ports[0].port = 22; }],
+    ['second port added', (copy) => { rule(copy).ports.push({protocol: 'TCP', port: 22}); }],
+    ['ports missing', (copy) => { delete rule(copy).ports; }],
+    ['UDP instead of TCP', (copy) => { rule(copy).ports[0].protocol = 'UDP'; }],
+    ['namespace selector missing', (copy) => { delete rule(copy).to[0].namespaceSelector; }],
+    ['unrelated namespace', (copy) => { rule(copy).to[0].namespaceSelector.matchLabels['kubernetes.io/metadata.name'] = 'unrelated'; }],
+    ['destination pod selector missing', (copy) => { delete rule(copy).to[0].podSelector; }],
+    ['destination pod selector empty', (copy) => { rule(copy).to[0].podSelector = {}; }],
+    ['instance label dropped', (copy) => { delete rule(copy).to[0].podSelector.matchLabels['app.kubernetes.io/instance']; }],
+    ['instance of the fixture release', (copy) => { rule(copy).to[0].podSelector.matchLabels['app.kubernetes.io/instance'] = 'forgejo'; }],
+    ['namespace and pod selectors split into alternative peers', (copy) => { const peer = rule(copy).to[0]; rule(copy).to = [{namespaceSelector: peer.namespaceSelector}, {podSelector: peer.podSelector}]; }],
+    ['rule copied into build-egress', (copy) => { named(copy, 'build-egress').spec.egress.push(structuredClone(rule(copy))); }]
+  ];
+  for (const [defect, edit] of cases) await t.test(`PLANTED DEFECT: ${defect}`, () => {
+    const copy = structuredClone(docs);
+    const today = structuredClone(render('prod', []));
+    edit(copy, today);
+    if (defect === 'policy rendered on a plane with no Forgejo') assert.notDeepEqual(fenceFindings(today, 'prod', false), []);
+    else assert.notDeepEqual(fenceFindings(copy, 'prod'), []);
+  });
+  await t.test('PLANTED INNOCENT: harmless metadata', () => {
+    const copy = structuredClone(docs);
+    for (const p of policies(copy)) p.metadata.annotations = {description: 'build egress'};
+    assert.deepEqual(fenceFindings(copy, 'prod'), []);
+  });
 });
 
 test('no step of the publish pipeline or of the clone traces its commands', () => {

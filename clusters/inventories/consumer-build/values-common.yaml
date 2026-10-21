@@ -190,3 +190,15 @@ bump:
       - 443
       - 6443
       - 16443
+  # The Forgejo of the installation as the bump reaches it over SSH (templates/networkpolicy.yaml bump-forge-ssh-egress, the
+  # environment of the step search-and-write): the Service forgejo-ssh the chart of clusters/inventories/forgejo makes, which
+  # leads to the container port of its pods; Calico evaluates egress after DNAT, so the policy admits the pod port. The pods
+  # carry the release name of the stage, as egress.forgejo of clusters/inventories/forgejo-build has it.
+  forgejo:
+    namespace: forgejo
+    service: forgejo-ssh
+    servicePort: 22
+    podPort: 2222
+    podLabels:
+      app.kubernetes.io/name: forgejo
+      app.kubernetes.io/instance: 'forgejo-{{ .Values.global.env }}'

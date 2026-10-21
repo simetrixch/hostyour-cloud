@@ -399,7 +399,7 @@ const FORGEJO_KEY = `${STAGE}/app/forgejo-webhook:forgejo-webhook-secret`;
 const GITHUB_KEY = `${STAGE}/app/image-builder:github-webhook-secret`;
 
 test('a Forgejo delivery passes the Forgejo Triggers alone, and a GitHub delivery the GitHub Triggers alone', () => {
-  assert.deepEqual(admitting(builder, FORGEJO_KEY), ['forgejo-pull-request', 'forgejo-tag-push']);
+  assert.deepEqual(admitting(builder, FORGEJO_KEY), ['forgejo-deploy-request', 'forgejo-pull-request', 'forgejo-release-publish', 'forgejo-tag-push']);
   assert.deepEqual(admitting(builder, GITHUB_KEY), ['github-deploy-request', 'github-release-publish']);
   const webhook = byKind(builder, 'ExternalSecret', 'image-builder-forgejo-webhook-secret');
   assert.equal(webhook.spec.target.deletionPolicy, 'Delete', 'a missing key leaves image-builder Healthy and refuses every Forgejo delivery');
@@ -412,7 +412,24 @@ test('PLANTED DEFECT: a Forgejo Trigger on GitHub\'s key, or the Forgejo key bes
   const shared = structuredClone(builder);
   byKind(shared, 'ExternalSecret', 'image-builder-forgejo-webhook-secret').spec.data[0].remoteRef = {key: `${STAGE}/app/image-builder`, property: 'github-webhook-secret'};
   assert.equal(admitting(shared, FORGEJO_KEY).length, 0);
-  assert.equal(admitting(shared, GITHUB_KEY).length, 4);
+  assert.equal(admitting(shared, GITHUB_KEY).length, 6);
+  for (const name of ['forgejo-deploy-request', 'forgejo-release-publish']) {
+    const twin = structuredClone(builder);
+    byKind(twin, 'Trigger', name).spec.interceptors[0].params[0].value = {secretName: 'image-builder-webhook-secrets', secretKey: 'github'};
+    assert.deepEqual(admitting(twin, GITHUB_KEY), [name, 'github-deploy-request', 'github-release-publish'].sort());
+  }
+});
+
+test('the TriggerTemplates of the deploy request and the release publish are the ones both providers create from, and name neither', () => {
+  for (const [template, github, forgejo] of [['deploy-request', 'github-deploy-request', 'forgejo-deploy-request'], ['release-publish', 'github-release-publish', 'forgejo-release-publish']]) {
+    assert.equal(byKind(builder, 'TriggerTemplate', template).metadata.labels.provider, undefined, `${template} names no provider`);
+    for (const trigger of [github, forgejo]) assert.equal(byKind(builder, 'Trigger', trigger).spec.template.ref, template);
+    assert.equal(byKind(builder, 'Trigger', github).metadata.labels.provider, 'github');
+    assert.equal(byKind(builder, 'Trigger', forgejo).metadata.labels.provider, 'forgejo');
+    assert.equal(byKind(builder, 'Trigger', forgejo).spec.bindings[0].ref, `${forgejo}-binding`);
+    assert.deepEqual(byKind(builder, 'TriggerBinding', `${forgejo}-binding`).spec.params, byKind(builder, 'TriggerBinding', `${github}-binding`).spec.params,
+      `${forgejo}'s binding hands the template the parameters GitHub's does`);
+  }
 });
 
 const evaluate = (policy, requests) => execFileSync('go', ['run', '.'], {cwd: 'scripts/vap-eval', encoding: 'utf8',
@@ -429,13 +446,42 @@ test('a tag push and an opened or updated pull request of the repository\'s own 
     {body: {ref: 'refs/tags/v0.0.1', after: SHA, repository}},
     {body: {ref: 'refs/heads/main', after: SHA, repository}},
     {body: {ref: 'refs/tags/v0.0.1', after: '0'.repeat(40), repository}},
-    {body: {ref: 'refs/tags/a/b', after: SHA, repository}}]);
-  assert.deepEqual(tags.map(v => v.denied.length === 0), [true, false, false, false]);
+    {body: {ref: 'refs/tags/a/b', after: SHA, repository}},
+    {body: {ref: `refs/tags/${RELEASE_TAG}`, after: SHA, repository}},
+    {body: {ref: `refs/tags/deploy/prod/${RELEASE_TAG}`, after: SHA, repository}}]);
+  assert.deepEqual(tags.map(v => v.denied.length === 0), [true, false, false, false, false, false]);
   assert.deepEqual(tags[0].variables, {repository: 'Owner/Shop', 'image-name': 'forgejo/owner/shop', commit: SHA, revision: 'refs/tags/v0.0.1', tag: 'v0.0.1'});
   const pull = (action, headRepoId, flow) => ({body: {action, number: 7, pull_request: {flow, base: {repo_id: 1}, head: {sha: SHA, repo_id: headRepoId}}, repository}});
   const pulls = evaluate(celOf('forgejo-pull-request'), [...['opened', 'synchronized', 'reopened', 'closed'].map(action => pull(action, 1, 0)), pull('opened', 2, 0), pull('opened', 1, 1)]);
   assert.deepEqual(pulls.map(v => v.denied.length === 0), [true, true, true, false, false, false]);
   assert.deepEqual(pulls[0].variables, {repository: 'Owner/Shop', 'image-name': 'forgejo/owner/shop', commit: SHA, revision: 'refs/pull/7/head'});
+});
+
+const RELEASE_TAG = '0.8.540-stable-20261021010202';
+const CLONE_URL = 'https://forgejo.example.invalid/owner/shop.git';
+const pushOf = (ref, after = SHA) => ({body: {ref, after, repository: {...repository, clone_url: CLONE_URL}}});
+
+test('a release tag starts a publish and a deploy tag a release of the unit, and each is refused by the other and by the forge flow, on a Forgejo payload that has no `deleted`', () => {
+  const refs = [`refs/tags/${RELEASE_TAG}`, `refs/tags/deploy/prod/${RELEASE_TAG}`, `refs/tags/deploy/dev/${RELEASE_TAG}`, `refs/tags/deploy/staging/${RELEASE_TAG}`, 'refs/tags/v0.0.1', 'refs/heads/main', 'refs/tags/deploy/prod/v1'];
+  const publish = evaluate(celOf('forgejo-release-publish'), refs.map(ref => pushOf(ref)));
+  assert.deepEqual(publish.map(v => v.denied.length === 0), [true, false, false, false, false, false, false]);
+  assert.deepEqual(publish[0].variables, {unit: 'shop', 'release-tag': RELEASE_TAG, 'git-url': CLONE_URL});
+  const request = evaluate(celOf('forgejo-deploy-request'), refs.map(ref => pushOf(ref)));
+  assert.deepEqual(request.map(v => v.denied.length === 0), [false, true, true, false, false, false, false]);
+  assert.deepEqual(request[1].variables, {unit: 'shop', stage: 'prod', 'release-tag': RELEASE_TAG, 'git-url': CLONE_URL});
+  // The forge flow takes neither: a release tag of the grammar would otherwise be built as forgejo/<owner>/<repo>, and v0.0.1 stays its own.
+  const forge = evaluate(celOf('forgejo-tag-push'), refs.map(ref => pushOf(ref)));
+  assert.deepEqual(forge.map(v => v.denied.length === 0), [false, false, false, false, true, false, false],
+    'PLANTED INNOCENT: v0.0.1 stays admitted by the forge flow');
+  // A deleted tag is a push whose `after` is all zeros; the payload of Gitea carries no `deleted`.
+  for (const name of ['forgejo-release-publish', 'forgejo-deploy-request']) {
+    const ref = name === 'forgejo-release-publish' ? `refs/tags/${RELEASE_TAG}` : `refs/tags/deploy/prod/${RELEASE_TAG}`;
+    assert.deepEqual(evaluate(celOf(name), [pushOf(ref, '0'.repeat(40)), pushOf(ref)]).map(v => v.denied.length === 0), [false, true], `${name} refuses a deleted tag`);
+    // PLANTED DEFECT: the GitHub guard on a Gitea payload admits the deletion.
+    const github = celOf(name);
+    github.spec.validations[0].expression = github.spec.validations[0].expression.replace("!body.after.matches(r'^0+$')", '!(has(body.deleted) && body.deleted)');
+    assert.deepEqual(evaluate(github, [pushOf(ref, '0'.repeat(40))]).map(v => v.denied.length === 0), [true], `PLANTED DEFECT: ${name} with GitHub's deletion guard admits a deleted tag`);
+  }
 });
 
 test('the run a delivery creates passes the PipelineRun guard in forgejo-build, carries no label of the queue or the keeper, and a foreign run does not', () => {

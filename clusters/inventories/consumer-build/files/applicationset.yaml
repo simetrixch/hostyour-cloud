@@ -99,6 +99,8 @@ spec:
           targetRevision: *revision
           path: clusters/inventories/consumer-build
           helm:
+            # Absent on an installation whose repositories stand on GitHub only.
+            ignoreMissingValueFiles: true
             valueFiles:
               - $values/clusters/platform/values-common.yaml
               - $values/clusters/platform/values-__STAGE__.yaml
@@ -112,6 +114,9 @@ spec:
               # namespace never appears either, and an onboarding'''s provision-build-rbac
               # step then fails with a 404 naming a namespace nobody created.
               # __FQDN__ is global.domain, this cluster'''s fqdn, which names its map.
+              # The forge this installation's repositories stand on (global.repositoryCredentials.forgejo), written by the
+              # branch program, as clusters/argocd/files/platform-apps-appset.yaml loads it: a unit's render knows the Forgejo.
+              - $values/installation/values/repository-credentials.yaml
               - $values/clusters/active/__FQDN__.yaml
             valuesObject:
               unit:

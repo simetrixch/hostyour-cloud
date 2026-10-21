@@ -1,0 +1,71 @@
+{{- if .Values.eventListener.enabled }}
+{{- /*
+FORGEJO RELEASE TAG push → the unit's own publish pipeline, the twin of github-release-publish.yaml for a
+unit whose repository stands on the installation's Forgejo: a push of the release tag itself
+(refs/tags/<release-tag>, never the deploy ref) fires ONE PipelineRun `<unit>-publish` in the unit's build
+namespace, created from the same TriggerTemplate release-publish, which waits in the release queue as that
+file states.
+
+THE KEY IS FORGEJO'S OWN, as in forgejo-deploy-request.yaml. A release tag is refused by the forge flow
+(templates/triggers/forgejo-release.yaml), so no delivery matches both. TAG DELETION is the push whose `after`
+is all zeros: Gitea's payload carries no `deleted`. The grammar is global.releaseTagFilter in a CEL RAW string.
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: forgejo-release-publish
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: forgejo
+spec:
+  interceptors:
+    - ref:
+        name: github
+      params:
+        - name: secretRef
+          value:
+            secretName: image-builder-forgejo-webhook-secret
+            secretKey: forgejo
+        - name: eventTypes
+          value: ["push"]
+    - ref:
+        name: cel
+      params:
+        - name: overlays
+          value:
+            - key: unit
+              expression: body.repository.name.lowerAscii()
+            # ["refs","tags","<release-tag>"]: the filter below has proven that shape.
+            - key: release-tag
+              expression: body.ref.split('/')[2]
+            - key: git-url
+              expression: body.repository.clone_url
+        - name: filter
+          value: >-
+            body.ref.matches(r'^refs/tags/{{ .Values.global.releaseTagFilter }}$') &&
+            !body.after.matches(r'^0+$')
+  bindings:
+    - ref: forgejo-release-publish-binding
+  template:
+    ref: release-publish
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: forgejo-release-publish-binding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: forgejo
+spec:
+  params:
+    - name: unit
+      value: $(extensions.unit)
+    - name: release-tag
+      value: $(extensions.release-tag)
+    - name: git-url
+      value: $(extensions.git-url)
+{{- end }}
