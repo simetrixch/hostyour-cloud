@@ -950,6 +950,32 @@ for planted_chart in tekton image-builder; do
   done
 done
 
+# THE PLANTED DEFECTS OF MongoDBRseqWorkaroundMissing are the two joins that must carry cluster: each cluster has one machine and
+# a pod named mongodb-prod-0, so a kernel of one cluster that speaks for the pod of another, or a label of another cluster's pod
+# that hides this one, turns the alert blind or false. The dev rules of mongodb run once more with cluster taken out of each of the
+# two joins, and each run fails.
+for planted_defect in "cluster taken out of the kernel join of MongoDBRseqWorkaroundMissing" "cluster taken out of the label join of MongoDBRseqWorkaroundMissing"; do
+  planted="$work/rules-planted-mongodb"
+  rm -rf "$planted"
+  cp -R "$work/rules/mongodb/dev" "$planted" \
+    || fail "the planted run of the rule test needs the rules of mongodb at stage dev"
+  planted_rules="$(grep -l 'alert: MongoDBRseqWorkaroundMissing' "$planted"/rule-*.yml)" \
+    || fail "the rules of mongodb at stage dev carry no MongoDBRseqWorkaroundMissing to plant a defect in"
+  planted_expr_before="$(yq '.groups[].rules[] | select(.alert == "MongoDBRseqWorkaroundMissing") | .expr' "$planted_rules")"
+  case "$planted_defect" in
+    *kernel*) yq -i '(.groups[].rules[] | select(.alert == "MongoDBRseqWorkaroundMissing") | .expr) |= sub("and on [(]cluster[)]"; "and on ()")' "$planted_rules" ;;
+    *) yq -i '(.groups[].rules[] | select(.alert == "MongoDBRseqWorkaroundMissing") | .expr) |= sub("unless on [(]cluster, namespace, pod[)]"; "unless on (namespace, pod)")' "$planted_rules" ;;
+  esac \
+    || fail "MongoDBRseqWorkaroundMissing could not be planted with $planted_defect"
+  if [ "$(yq '.groups[].rules[] | select(.alert == "MongoDBRseqWorkaroundMissing") | .expr' "$planted_rules")" = "$planted_expr_before" ]; then
+    fail "the plant with $planted_defect changed nothing in MongoDBRseqWorkaroundMissing, so the alert is not written the way the plant expects"
+  fi
+  if (cd "$planted" && promtool test rules rules.test.yaml >/dev/null 2>&1); then
+    fail "the rule test clusters/inventories/mongodb/rules.test.yaml passes at stage dev with $planted_defect, so it cannot catch that join, or the alert is not written the way the plant expects"
+  fi
+  echo "check: the rule test of mongodb goes red at stage dev with $planted_defect."
+done
+
 # ── clusters/argocd as ArgoCD is handed it: the cluster map ALONE ────────────────────────────
 # THE LOOP ABOVE RENDERS IT WITH THE PLATFORM CHAIN, AND NO CLUSTER EVER DOES. clusters/argocd is
 # the one chart of this repository whose whole values chain is a single file:
@@ -2224,6 +2250,49 @@ mkdir "$deploy_tree" || fail "no folder for hostyour-deploy at its pin could be 
   || fail "hostyour-deploy at $deploy_pin, the pin of ci-sources.json, could not be archived from $deploy_source — fetch that commit into it"
 bash scripts/check-mirror-consumers.sh . "$deploy_tree" || fail "scripts/check-mirror-consumers.sh refuses a consumer of the owner's mirror, listed above by file:line"
 echo "check: a row listed above as read by none is no failure: the row of kubeconform is read by hostyour-manager gate-runner/Containerfile, a tree this check does not read, and a bump adds its row before its consumer moves."
+
+# THE TEXTFILE DIRECTORY THE KERNEL READING IS WRITTEN INTO, read at the commit ci-sources.json pins like the rows above. The
+# service of hostyour-deploy ansiwise/programs/deploy-host.yaml writes hostyour_kernel_info there, and the rule
+# MongoDBRseqWorkaroundMissing reads it, so the master's node exporter and the Alloy of every slave must read that very path, under
+# /host/root where their pods mount the host's /. A reader of another path never sees the file, and the rule would stay blind.
+textfile_directory_faults() { # $1 deploy-host.yaml, $2 the values of observability, $3 the Alloy config of the monitoring chart
+  local directory
+  directory="$(yq '.steps[] | select(.step == "write_file_from_template" and .template == "ansiwise/templates/kernel-reading-service.tpl") | .values["textfile-directory"]' "$1")"
+  if [ -z "$directory" ] || [ "$directory" = null ]; then
+    echo "no write_file_from_template row of $1 renders ansiwise/templates/kernel-reading-service.tpl with a textfile-directory"
+    return 0
+  fi
+  [ "$(DIRECTORY="$directory" yq '[.steps[] | select(.step == "hand_directory_to_account" and .path == strenv(DIRECTORY))] | length' "$1")" = 1 ] \
+    || echo "no one hand_directory_to_account row of $1 hands $directory to the operator"
+  yq '.["kube-prometheus-stack"]["prometheus-node-exporter"].extraArgs[]' "$2" | grep -qxF -- "--collector.textfile.directory=/host/root$directory" \
+    || echo "the node exporter of $2 does not read --collector.textfile.directory=/host/root$directory"
+  grep -qF "directory = \"/host/root$directory\"" "$3" \
+    || echo "the Alloy config $3 has no textfile block reading /host/root$directory"
+}
+textfile_deploy_host="$deploy_tree/ansiwise/programs/deploy-host.yaml"
+textfile_master_values=clusters/inventories/observability/values-common.yaml
+textfile_agent_config=clusters/charts/monitoring/templates/alloy-agent-config.yaml
+textfile_directory_faults "$textfile_deploy_host" "$textfile_master_values" "$textfile_agent_config" > "$work/textfile-faults"
+if [ -s "$work/textfile-faults" ]; then
+  sed 's/^/  /' "$work/textfile-faults"
+  fail "the readers of the textfile directory and the row of hostyour-deploy ansiwise/programs/deploy-host.yaml at ${deploy_pin:0:7} that creates it do not name one path — move the hostyour-deploy pin of ci-sources.json to the commit of the directory row, or read the path of that row"
+fi
+# THE PLANTED DEFECTS are the three places that can name another path, each shown red on its own, and the innocent is the same
+# program over a copy of the row's file with its comments taken out, which must pass.
+sed 's#/var/lib/hostyour-textfile#/var/lib/other-textfile#g' "$textfile_deploy_host" > "$work/textfile-planted-row.yaml"
+sed 's#/host/root/var/lib/hostyour-textfile#/host/root/var/lib/other-textfile#' "$textfile_master_values" > "$work/textfile-planted-master.yaml"
+sed 's#/host/root/var/lib/hostyour-textfile#/host/root/var/lib/other-textfile#' "$textfile_agent_config" > "$work/textfile-planted-agent.yaml"
+yq '... comments=""' "$textfile_deploy_host" > "$work/textfile-innocent-row.yaml"
+for planted_pair in "row:$work/textfile-planted-row.yaml $textfile_master_values $textfile_agent_config" \
+                    "node exporter:$textfile_deploy_host $work/textfile-planted-master.yaml $textfile_agent_config" \
+                    "Alloy:$textfile_deploy_host $textfile_master_values $work/textfile-planted-agent.yaml"; do
+  # shellcheck disable=SC2086
+  [ -n "$(textfile_directory_faults ${planted_pair#*:})" ] \
+    || fail "the check of the textfile directory passes with the path of the ${planted_pair%%:*} changed, so it cannot catch a reader of another path"
+done
+[ -z "$(textfile_directory_faults "$work/textfile-innocent-row.yaml" "$textfile_master_values" "$textfile_agent_config")" ] \
+  || fail "the check of the textfile directory refuses the row of deploy-host.yaml with its comments taken out, which names the same path"
+echo "check: the node exporter and the Alloy agent read the textfile directory that hostyour-deploy ansiwise/programs/deploy-host.yaml at ${deploy_pin:0:7} creates, and the check refuses a changed path of the row, of the node exporter and of Alloy, and passes the row without its comments."
 
 # ── What an installation's branch must be able to take ───────────────────────────────────────
 # A RELEASE REACHES A MACHINE AS A MERGE into its installation's branch, the branch named after its

@@ -166,6 +166,12 @@ const standingOf = (tenantId) => {
   const rounds = world?.rounds[tenantId] ?? [round([part([OLD], { name: tenantId === "tnt_other" ? "other" : "shop" })])];
   return rounds[Math.min(Math.max(looks.get(tenantId) ?? 0, 1), rounds.length) - 1];
 };
+/** The steps a promotion plans in the scenarios that name them; in any other scenario it plans the one put-release. */
+const PROMOTION_STEPS = {
+  "promotion-reattest": ["put-release", "reattest-smtp-entry"],
+  "promotion-mints": ["mint-release"],
+  "promotion-builds": ["watch-release-build"],
+};
 /** The runs, each a script of the statuses its reads walk through. */
 const runs = new Map();
 const after = { failed: ["running", "failed"], cancelled: ["running", "cancelled"] }[SCENARIO] ?? ["running", "running", "succeeded"];
@@ -223,7 +229,7 @@ const api = createServer((req, res) => {
       const runId = `run_${runs.size + 1}`;
       // The three refusals the Manager's plan makes, each settling the run failed at its plan.
       const refused = release[1] === "ghost" || asked.commit === "d".repeat(40) || asked.version === "0.2.000";
-      const steps = asked.sourceTag !== undefined && SCENARIO !== "wrong-steps" ? ["put-release"] : ["mint-release", "watch-release-build"];
+      const steps = asked.sourceTag !== undefined ? PROMOTION_STEPS[SCENARIO] ?? ["put-release"] : ["mint-release", "watch-release-build"];
       runs.set(runId, { statuses: ["planning", refused ? "failed" : "planned"], steps, approved: false });
       if (SCENARIO === "lost-post") return req.socket.destroy();
       return json(res, 201, { runId }, refresh);

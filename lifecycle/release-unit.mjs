@@ -66,6 +66,10 @@ const USAGE = [
  *  reached, a watch that stopped or a wait for the following tenants that ran out. */
 const EXIT = { failed: 1, usage: 64, unavailable: 69, watchStopped: 75 };
 const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
+/** The steps of a plan that mint or build a release, which a promotion never plans: it puts the standing release. The Manager's
+ *  run API names no such attribute; the two names are the steps `mintReleaseStep` and `watchReleaseBuildStep` of
+ *  hostyour-manager plugins/unit/server/release-cycle.ts. */
+const STEPS_THAT_MINT_OR_BUILD = new Set(["mint-release", "watch-release-build"]);
 
 /** A whole number of an operator's setting, or its default. */
 function setting(name, fallback) {
@@ -386,7 +390,8 @@ say(`run: ${runId}`);
 const plan = await watch(runId, (status) => status !== "planning");
 if (plan.status !== "planned") stop(`run ${runId} was refused at its plan (${plan.status}): open /runs/${runId} for why`, EXIT.failed);
 const steps = plan.steps.map((s) => s.name);
-if (PROD_TO_TEST && steps.join(",") !== "put-release") stop(`run ${runId} plans ${steps.join(", ")}, and a release from prod to test is the one put-release; it is not approved. Discard it on /runs/${runId}`, EXIT.failed);
+const mintingSteps = steps.filter((name) => STEPS_THAT_MINT_OR_BUILD.has(name));
+if (PROD_TO_TEST && mintingSteps.length > 0) stop(`run ${runId} plans ${mintingSteps.join(", ")}, and a release from prod to test mints and builds nothing; it is not approved. Discard it on /runs/${runId}`, EXIT.failed);
 if ((plan.requiredSecrets ?? []).length > 0) stop(`run ${runId} asks for secrets to be typed, which this script does not do; it is not approved. Open /runs/${runId}`, EXIT.failed);
 
 const approved = await call("POST", `/api/runs/${encodeURIComponent(runId)}/approve`, {});

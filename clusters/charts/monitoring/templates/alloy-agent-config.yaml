@@ -160,6 +160,10 @@ data:
       rootfs_path = "/host/root"
       procfs_path = "/host/proc"
       sysfs_path  = "/host/sys"
+      // hostyour_kernel_info, written by deploy-host's timer into the host's textfile directory.
+      textfile {
+        directory = "/host/root/var/lib/hostyour-textfile"
+      }
     }
     prometheus.scrape "node" {
       targets    = prometheus.exporter.unix.node.targets
