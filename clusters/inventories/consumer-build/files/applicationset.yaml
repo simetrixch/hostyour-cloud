@@ -1,6 +1,6 @@
 # Build fan-out — one ApplicationSet over the stage-free build registrations
 # registrations/<unit>/build.yaml IN THIS INSTALLATION'S BOOKS. Every
-# registered unit — consumer and build-only alike — gets ONE Application
+# registered unit — every kind alike — gets ONE Application
 # `<unit>-build` (project `builds`) that renders the consumer-build chart in
 # UNIT mode: namespace <unit>-build, SecretStore, the <unit>-release Pipeline,
 # its credentials and NetworkPolicy.
@@ -15,7 +15,7 @@
 # registrations/*/build.yaml, and a unit has exactly one such file. No merge
 # generator, no dedup, no template logic. (A files generator emits one
 # parameter set per FILE; matching registrations/*/*.yaml would give a
-# deployable unit three parameter sets and three Applications of the same
+# Deployments unit three parameter sets and three Applications of the same
 # name.)
 #
 # THE GENERATOR AND THE SOURCES STAND AT __REVISION__, the commit of this
