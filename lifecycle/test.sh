@@ -4678,8 +4678,8 @@ readback_bounded() { # <the driver's text> <run> <the plan> <the bound in second
 # data from outside: the diagnosis shows its message templates (the cases write them as rclone 1.60.1 does, with the host, the user, the
 # account and the path of the box planted where rclone puts a value it took from outside), numbers, times, the version and the names of
 # this backup's files, and nothing else.
-PLANTED_ACCOUNT=u398127
-PLANTED_REMOTE_PATH="/home/$PLANTED_ACCOUNT/secret-backups/20261021T042059Z"
+PLANTED_ACCOUNT=planted-box-account
+PLANTED_REMOTE_PATH="/home/$PLANTED_ACCOUNT/secret-backups/planted-backup-id"
 rb_record() { # <second> <level> <source> <message> [<object>] — a log record as rclone 1.60.1 writes it: compact JSON, the keys in alphabetical order, the time to the microsecond
   local message="${4//\\/\\\\}" object=''
   message="${message//\"/\\\"}"; message="${message//$'\n'/\\n}"
@@ -4822,7 +4822,7 @@ readback_private() { # <the driver's text> <run> <the end: success|failure|bound
   plan+=$'\n'"log after $(rb_record 2 error operations/operations.go:538 "Failed to copy: dial $BOX_HOST as $BOX_USER ($PLANTED_ACCOUNT) $PLANTED_REMOTE_PATH password $PLANTED_BOX_PASSWORD passphrase $PLANTED_PASSPHRASE elevation $PLANTED_PASSWORD")"
   plan+=$'\n'"log after $(rb_record 3 info operations/operations.go:566 'Copied (new)' "$PLANTED_REMOTE_PATH/manifest.txt")"
   plan+=$'\n'"log after $(rb_record 4 info operations/operations.go:566 'Copied (new)' "$PLANTED_ACCOUNT")"
-  plan+=$'\n''log after {"level":"info","msg":"Failed to copy: boxuser at box.example.invalid","object":"u398127","source":"operations/operations.go:538","time":"2026-10-21T08:00:05.123456+00:00"}'
+  plan+=$'\n''log after {"level":"info","msg":"Failed to copy: boxuser at box.example.invalid","object":"planted-box-account","source":"operations/operations.go:538","time":"2026-10-21T08:00:05.123456+00:00"}'
   plan+=$'\n'"log after not json: user $BOX_USER at $BOX_HOST password $PLANTED_BOX_PASSWORD"
   plan+=$'\n'"log after {\"level\":\"info\",\"msg\":\"cut off $BOX_HOST"
   plan+=$'\n'"log after {\"level\":\"info\",\"msg\":\"tab"$'\t'"here $BOX_USER\"}"
