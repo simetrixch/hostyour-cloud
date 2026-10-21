@@ -9,8 +9,9 @@
 # domain ends the host, and then it takes one of equal matches at random, per request
 # (internal/outpost/proxyv2/handlers.go lookupApp). A host left to that fallback is answered by the
 # Tekton Dashboard's provider (admins) or by Plane's (admins and plane-users), so a member of
-# plane-users could pass this gate. This provider claims the host, and the only group bound to its
-# application is `admins`. scripts/forward-auth-gate.test.mjs holds every gated host to that.
+# plane-users could pass this gate. This provider claims the host, and the groups bound to its
+# application are `admins` and `platform-readers`, the group of the sign-in proof of the two consoles
+# (21-platform-test-accounts.yaml). scripts/forward-auth-gate.test.mjs holds every gated host to that.
 #
 # mode: forward_domain, the way 99-proxy-tekton.yaml and 99-proxy-plane.yaml are, so the session cookie
 # is scoped to the env apex (.<DOMAIN>). The application is hidden from the launcher: Headlamp's own
@@ -22,6 +23,7 @@ metadata:
     blueprints.goauthentik.io/instantiate: "true"
 conditions:
   - !Find [authentik_core.group, [name, admins]]
+  - !Find [authentik_core.group, [name, platform-readers]]
 entries:
   - id: headlamp-proxy-provider
     model: authentik_providers_proxy.proxyprovider
@@ -51,11 +53,21 @@ entries:
       meta_launch_url: !Format ["https://kube.%s/", !Env IDP_DOMAIN]
       meta_hide: true
       group: Platform
+      # The OR across the bindings, pinned for the reason 99-manager.yaml gives.
+      policy_engine_mode: any
   - id: headlamp-forward-auth-admins-binding
     model: authentik_policies.policybinding
     identifiers:
       target: !Find [authentik_core.application, [slug, headlamp-forward-auth]]
       group: !Find [authentik_core.group, [name, admins]]
       order: 0
+    attrs:
+      enabled: true
+  - id: headlamp-forward-auth-platform-readers-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, headlamp-forward-auth]]
+      group: !Find [authentik_core.group, [name, platform-readers]]
+      order: 1
     attrs:
       enabled: true

@@ -1,0 +1,73 @@
+{{- /*
+run-headlamp-sign-in — the proof that a person signs in to Headlamp through Authentik. A session starts it with
+a TaskRun and reads the step's log:
+
+  apiVersion: tekton.dev/v1
+  kind: TaskRun
+  metadata: {generateName: run-headlamp-sign-in-, namespace: e2e-runner}
+  spec:
+    serviceAccountName: pipeline-sa
+    taskRef: {name: run-headlamp-sign-in}
+
+The case is cases/headlamp-sign-in.spec.ts of digita-testkit, run under its own config
+(packages/e2e/playwright.headlamp.config.ts), because it signs in to no tenant's app and so has no E2E
+password and no sign-in project. Headlamp is this installation's own, kube.<global.domain>, so the Task has
+no params: nothing a run names reaches the browser. The case signs in as `platform-sign-in`, of the group
+platform-readers (clusters/bootstrap/idp/blueprints/21-platform-test-accounts.yaml), reads the list of namespaces,
+which only a signed-in person sees, and then expects `plane-sign-in-uninvited`, of the group plane-users
+alone, to be refused.
+
+THE TWO PASSWORDS TRAVEL ONLY AS THE STEP'S ENVIRONMENT, through secretKeyRef from the Secrets
+platform-test-account (externalsecret-platform-test-account.yaml) and plane-test-account
+(externalsecret-plane-test-account.yaml), never as a param, which the TaskRun's spec would print, and
+never in the script. The run's log holds no value of them because the testkit's Playwright config allows
+only the `list` reporter and keeps traces off, and this step sets no PLAYWRIGHT_LIST_PRINT_STEPS and adds
+no reporter: a step title quotes what a fill typed.
+
+Nothing a run writes outlives its pod (see _run.tpl).
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: run-headlamp-sign-in
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  description: >-
+    Sign in to this installation's Headlamp through Authentik as the platform test account, and expect the
+    test account of the wrong group to be refused.
+  steps:
+    - name: run-headlamp-sign-in
+      image: {{ include "e2e-runner.image" $ }}
+      workingDir: /e2e/packages/e2e
+      env:
+        - name: PLAYWRIGHT_BASE_URL
+          value: {{ printf "https://kube.%s" .Values.global.domain | quote }}
+        - name: E2E_PLATFORM_ACCOUNT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: platform-test-account
+              key: password
+        - name: E2E_PLANE_UNINVITED_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: plane-test-account
+              key: uninvited-password
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+      script: |
+        #!/bin/sh
+        set -eu
+        exec node_modules/.bin/playwright test --config playwright.headlamp.config.ts
+      securityContext:
+        {{- include "e2e-runner.stepSecurityContext" $ | nindent 8 }}
+      volumeMounts:
+        {{- include "e2e-runner.stepVolumeMounts" $ | nindent 8 }}
+      computeResources:
+        {{- toYaml .Values.run.resources | nindent 8 }}
+  volumes:
+    {{- include "e2e-runner.volumes" $ | nindent 4 }}
