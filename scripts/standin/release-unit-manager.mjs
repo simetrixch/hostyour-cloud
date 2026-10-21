@@ -18,8 +18,8 @@
 // decoy tenants are suspended, not following, on another stage, not active, or render no part of the
 // unit, and run an old version: a call that names one is a defect of the act, and the call list shows
 // it. A world with a stageTag answers the release read of the stage test with that tag, as another
-// release would have left it, and one with carriers adds them to that answer, as the Manager does for a
-// build-only unit. Every answer to a stage's release read carries `standing.followRefused`, the follows of
+// release would have left it, and one with carriers adds them to that answer, as the Manager does for an
+// Images unit. Every answer to a stage's release read carries `standing.followRefused`, the follows of
 // the stage's tenants that were refused at their plan: a world's `views` are the rounds of the test stage's
 // answer (the last repeats), each with its `followRefused` list, which is empty where the round names none
 // and absent where the round has the key set to undefined, and `prodRefused` is the list of the prod
