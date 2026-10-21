@@ -139,6 +139,24 @@ on another version line than the release is named with its line and left to `Mov
 `/tenants/<id>`; it is not waited for. When no following tenant renders the unit the script prints
 `no following tenant at <stage> renders <unit>`.
 
+A tenant whose Versions request was refused at its plan has no run of the release to wait for, and
+that request can be a combined one: the follower moves the platform and the tenant's catalog bundle in
+one Versions run, so a bundle release that links a website the tenant does not run holds the platform
+release back with it. `GET /api/units/<unit>/release?stage=<stage>` names each such tenant in
+`standing.followRefused` (tenant, refused run and the redacted reason of the run's record), and the
+script reads that view again on every look of the wait. A tenant in the list that has not landed ends
+the script with exit 1 and prints the tenant, the run, the reason and the run's `/runs/<id>`; the unit
+release run itself may have succeeded, and the script says neither that the tenant is up to date nor
+that the unit's build failed. A refusal that stood before the script started is named at the first
+look, and one that appears later at the next look. It is read before the generic failure of a
+Versions run, and never ahead of the proof that the tenant's Application renders the release. A
+tenant that is only late, or has a Versions run under way, is still waited for. The list is required
+on a stage response: a Manager that names none, or an entry without a tenant or a run, stops the
+watch with exit 75, and the script never takes that for an empty list. If the stage pins another
+release when the view is read again, the script ends with exit 1 and names what it pins; the list
+belongs to the release the view names. With `--prod-to-test` the prod view is the source of the copy
+only: the refusals it names belong to prod's tenants and are not applied to the tenants at test.
+
 With `--prod-to-test` the same rule is read before the release request: a tenant that records the
 tag, whose Application does not render it and whose Versions run that moved it to the tag failed or
 was cancelled ends the script with exit 1 and that run's `/runs/<id>`, and nothing is planned,
@@ -149,10 +167,10 @@ there and not waited for.
 | exit | what it means |
 |---|---|
 | 0 | the run succeeded |
-| 1 | the plan was refused, or the run failed or was cancelled, or a plan or an approval did not take, or the Versions run that moved a following tenant to the tag failed or was cancelled; the run, where there is one, is named |
+| 1 | the plan was refused, or the run failed or was cancelled, or a plan or an approval did not take, or the Versions run that moved a following tenant to the tag failed or was cancelled, or the Manager names a following tenant's Versions request as refused at its plan, or the stage pins another release than the one waited for; the run, where there is one, is named |
 | 64 | the arguments are not one of the two forms, or a setting below is not a whole number |
 | 69 | `node` or `ssh` is missing, no session could be minted over the admin socket, or the following tenants, their Versions runs or their rendered versions could not be read before the release request; nothing was planned |
-| 75 | the watch stopped while the run may go on: the session expired or was revoked, the relay gave no answer too often in a row, or a release request got no answer; or the run succeeded and a following tenant did not run the tag within `RELEASE_UNIT_FOLLOW_SECONDS`, or could not be read, or the Manager named no Versions runs or rendered versions for it; the run, where there is one, is named |
+| 75 | the watch stopped while the run may go on: the session expired or was revoked, the relay gave no answer too often in a row, or a release request got no answer; or the run succeeded and a following tenant did not run the tag within `RELEASE_UNIT_FOLLOW_SECONDS`, or could not be read, or the Manager named no Versions runs, rendered versions or list of refused follows for it; the run, where there is one, is named |
 
 `RELEASE_UNIT_POLL_SECONDS` (10) is the pause between two reads of the run, and
 `RELEASE_UNIT_RETRIES` (30) the number of reads in a row that may get no answer before the watch

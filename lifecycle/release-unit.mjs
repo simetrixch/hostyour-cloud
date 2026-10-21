@@ -46,6 +46,16 @@
 // whose Application does not render it and whose move failed, ends the script there, because planning
 // the release again would change nothing for it, and one whose Application renders the tag already runs
 // it and is not waited for.
+//
+// A REFUSED FOLLOW IS READ FROM THE UNIT'S RELEASE VIEW. A tenant whose Versions request was refused at
+// its plan has no run of the release to wait for, and the request may name other parts than the unit
+// (one combined request moves the platform and the tenant's bundle together, so a bundle that links a
+// website the tenant does not run holds the platform release back). GET /api/units/<unit>/release?stage=
+// names each such tenant in `standing.followRefused`, with the refused run and the reason of its record.
+// The view is read again on every look, and a tenant it names that has not landed ends the script with
+// the tenant, the run and the reason, ahead of the generic failure of a run. The view must still name
+// the release awaited: if the stage pins another one the script stops, because the list belongs to the
+// release the view names.
 import { spawn } from "node:child_process";
 
 const USAGE = [
@@ -263,6 +273,18 @@ async function followingTenants(stage, on) {
 }
 
 const failedLine = (f) => `tenant ${f.tenant.id}: its Versions run ${f.run} ${f.status}: open /runs/${f.run}`;
+const refusedLine = (r, tag) => `tenant ${r.tenantId}: its Versions run ${r.runId} was refused at its plan, so it does not move to ${tag}: ${r.planError ?? "the Manager keeps no reason for it"}; open /runs/${r.runId}`;
+
+/** The release `stage` runs of `unit`, with the follows of its tenants that were refused. A Manager that
+ *  names no such list ends the script: an empty one is never assumed. */
+async function readStageRelease(stage, unit, on) {
+  const standing = (await read(`/api/units/${unit}/release?stage=${stage}`, `the release ${stage} runs of ${unit} could not be read`, on.code, on.ending)).standing;
+  if (typeof standing?.tag !== "string") stop(`the Manager names no release that ${stage} runs of ${unit}${on.ending}`, on.code);
+  const refused = standing.followRefused;
+  const named = (r) => r !== null && typeof r === "object" && typeof r.tenantId === "string" && typeof r.runId === "string" && (r.planError === undefined || typeof r.planError === "string");
+  if (!Array.isArray(refused) || !refused.every(named)) stop(`the release ${stage} runs of ${unit} names no list of the follows that were refused${on.ending}`, on.code);
+  return standing;
+}
 
 /** Before the release request: a tenant that records the tag, whose Application does not render it and
  *  whose move to it failed, ends the script. The tenants that already run the tag are printed and
@@ -283,19 +305,22 @@ async function refuseHeldTenants(stage, unit, standing) {
 async function waitForFollowing(stage, unit, since, runId, wanted, alreadyRunning) {
   const on = { code: EXIT.watchStopped, ending: `. The run ${runId} succeeded; whether the following tenants run it is not known: open /runs` };
   if (typeof since !== "number") stop(`run ${runId} succeeded, but the Manager names no time it started, so the Versions runs that followed it cannot be told: open /runs`, on.code);
-  const standing = (await read(`/api/units/${unit}/release?stage=${stage}`, `the release ${stage} runs of ${unit} could not be read`, on.code, on.ending)).standing;
-  if (typeof standing?.tag !== "string") stop(`the Manager names no release that ${stage} runs of ${unit}${on.ending}`, on.code);
+  const standing = await readStageRelease(stage, unit, on);
   const tag = standing.tag;
   if (!wanted.pattern.test(tag)) stop(`run ${runId} succeeded, but ${stage} pins ${unit} at ${tag}, and this release is ${wanted.text}: another release of ${unit} reached ${stage}, so the tenants are not waited for. Open /runs`, EXIT.failed);
   let pending = (await followingTenants(stage, on)).filter((t) => !alreadyRunning.includes(t.id));
   const deadline = Date.now() + FOLLOW_SECONDS * 1000;
   let rendering = alreadyRunning.length > 0;
   let announced = false;
+  let view = standing;
   for (;;) {
     const seen = await look(pending, unit, standing, since, on);
     rendering = rendering || seen.unrelated.length < pending.length;
     for (const l of seen.landed) say(`tenant ${l.tenant.id}: ${l.line}`);
     for (const l of seen.left) say(`tenant ${l.tenant.id}: stays on line ${l.line}, and ${tag} is on line ${lineOf(tag)}; Move to line on /tenants/${l.tenant.id}, not waited for`);
+    const notLanded = new Set([...seen.waiting.map((w) => w.tenant.id), ...seen.failed.map((f) => f.tenant.id)]);
+    const refused = view.followRefused.filter((r) => notLanded.has(r.tenantId));
+    if (refused.length > 0) stop(refused.map((r) => refusedLine(r, tag)).join("; "), EXIT.failed);
     if (seen.failed.length > 0) stop(seen.failed.map(failedLine).join("; "), EXIT.failed);
     pending = seen.waiting.map((w) => w.tenant);
     if (pending.length === 0) break;
@@ -303,6 +328,8 @@ async function waitForFollowing(stage, unit, since, runId, wanted, alreadyRunnin
     announced = true;
     if (Date.now() >= deadline) stop(`${seen.waiting.map((w) => `${w.tenant.id} (${w.why})`).join("; ")} did not run ${tag} within ${FOLLOW_SECONDS} seconds. The run ${runId} succeeded: open /runs`, EXIT.watchStopped);
     await sleep(POLL_MS);
+    view = await readStageRelease(stage, unit, on);
+    if (view.tag !== standing.tag || view.commit !== standing.commit) stop(`${stage} no longer runs the release of ${unit} that was waited for: it was ${standing.tag} on ${standing.commit} and the Manager now names ${view.tag} on ${view.commit ?? "no commit"}, so the tenants are not waited for. The run ${runId} succeeded: open /runs`, EXIT.failed);
   }
   if (!rendering) say(`no following tenant at ${stage} renders ${unit}`);
 }
