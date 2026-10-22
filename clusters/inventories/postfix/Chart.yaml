@@ -5,7 +5,8 @@ description: Send-only SMTP for cluster-internal email delivery
 type: application
 dependencies:
   # Vendored as the folder charts/mail, upstream plus the patch in vendor/: the chart has no value for
-  # `enableServiceLinks`, so the patch adds one. The image turns every POSTFIX_ variable into a Postfix
+  # `enableServiceLinks`, so the patch adds one, and it drops the chart's `icon:` address, which
+  # scripts/check-mirror-consumers.sh refuses. The image turns every POSTFIX_ variable into a Postfix
   # parameter, and Kubernetes gives the pod one such variable per port of the Service postfix-<stage>.
   - name: mail
     alias: postfix

@@ -1,3 +1,13 @@
+--- a/mail/Chart.yaml
++++ b/mail/Chart.yaml
+@@ -2,7 +2,6 @@
+ appVersion: 5.1.0
+ description: An outgoing SMTP mail relay for your applications in Kubernetes cluster
+ home: https://github.com/bokysan/docker-postfix
+-icon: https://bokysan.github.io/docker-postfix/postfix.png
+ maintainers:
+ - name: Bokysan
+   url: https://github.com/bokysan
 --- a/mail/templates/statefulset.yaml
 +++ b/mail/templates/statefulset.yaml
 @@ -44,6 +44,7 @@
