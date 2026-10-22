@@ -489,7 +489,7 @@ HARNESS
 ( cd "$REAL" && env -i PATH="$REAL/bin:/usr/bin:/bin" TMPDIR="$REAL/tmp" bash "$REAL/program.sh" ) > "$REAL/program.out" 2>&1 \
   || fail "the helper could not put the pinned rclone $PIN on a machine from the owned address of its row: $(tail -n 3 "$REAL/program.out" | tr '\n' ' ' | cut -c1-400)"
 NEW_RCLONE="$REAL/bin/rclone"
-rclone_version_of() { local answer; answer="$("$1" --version)"; printf '%s\n' "${answer%%$'\n'*}"; } # the first line of the answer of an rclone, read whole so that no writer is left on a closed pipe
+rclone_version_of() { local answer; answer="$("$1" --version)" || return; printf '%s\n' "${answer%%$'\n'*}"; } # the first line of the answer of an rclone, read whole so that no writer is left on a closed pipe
 NEW_ANSWER="$(rclone_version_of "$NEW_RCLONE")"
 [ "$NEW_ANSWER" = "rclone $PIN" ] || fail "the executable the helper installed answers \"$NEW_ANSWER\", not \"rclone $PIN\""
 [ -z "$(ls -A "$REAL/tmp")" ] || fail 'the helper left a folder behind in the temporary folder'
