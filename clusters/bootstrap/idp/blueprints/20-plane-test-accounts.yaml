@@ -8,11 +8,14 @@
 # `plane-users` grants no right anywhere: it only lets its members through to the two applications
 # Plane's sign-in passes through, the forward auth of Plane (99-proxy-plane.yaml) and Forgejo
 # (99-forgejo.yaml), which makes them restricted accounts there and, with the limits the deployment
-# sets on them, accounts that can create no repository. Every other application of the identity
-# provider is bound to `admins` alone, because an application without a binding admits every account,
-# and so is the provider that answers for every other host behind the forward auth: the outpost
-# answers a host with the provider of that external host, and scripts/forward-auth-gate.test.mjs holds
-# each gated host to a provider of its own whose application admits `admins` alone.
+# sets on them, accounts that can create no repository. The applications argocd, headlamp and
+# headlamp-forward-auth admit `platform-readers` beside `admins` (21-platform-test-accounts.yaml). Every
+# other application of the identity provider is bound to `admins` alone, because an application without a
+# binding admits every account, and so is the provider that answers for every other host behind the
+# forward auth: the outpost answers a host with the provider of that external host, and
+# scripts/forward-auth-gate.test.mjs holds each gated host to a provider of its own whose application
+# admits `admins` and `platform-readers` at kube.<fqdn>, `admins` and `plane-users` at plane.<fqdn>, and
+# `admins` alone at every other host.
 #
 # THE PASSWORDS ARE NOT IN THIS FILE. Each arrives as one key of the Secret idp-bootstrap-secrets,
 # which the deployment writes out of the secret store (<stage>/idp/bootstrap) and the chart hands to

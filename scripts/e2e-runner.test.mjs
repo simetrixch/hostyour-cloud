@@ -185,101 +185,137 @@ test('PLANTED DEFECT: a step without the refusals hands every unsafe value to Pl
   }
 });
 
-// THE PLANE SIGN-IN RUN: the Task that proves Plane signs a person in through Forgejo and the identity provider,
-// as the two test accounts of clusters/bootstrap/idp/blueprints/20-plane-test-accounts.yaml. It targets the
-// installation's own Plane, so it names no tenant, and the two passwords reach it from the Secret
-// plane-test-account, which the namespace's default SecretStore reads: the store of the E2E passwords reaches
-// tenants' entries and nothing else, and its role stays as it is.
+// THE SIGN-IN RUNS: the Tasks that prove a person signs in through the identity provider. run-plane-sign-in proves
+// Plane's sign-in as the two test accounts of clusters/bootstrap/idp/blueprints/20-plane-test-accounts.yaml;
+// run-argocd-sign-in and run-headlamp-sign-in prove the sign-in of Argo CD and Headlamp as the account of
+// 21-platform-test-accounts.yaml, and expect the account of the wrong group, from the Plane blueprint, to be refused.
+// Each targets one host of the installation itself, so it names no tenant, and every password reaches it from a Secret
+// that the namespace's default SecretStore reads: the store of the E2E passwords reaches tenants' entries and nothing
+// else, and its role stays as it is.
 const clusterDomain = yaml('.global.domain', readFileSync('scripts/standin/cluster-map.yaml', 'utf8'));
 // yq prints nothing for a document that matches nothing, and a missing object is a finding, not a crash.
 const pick = (expression, rendered) => JSON.parse(execFileSync('yq', ['ea', '-o=json', `[${expression}] | .[0] // null`, '-'], {input: rendered, encoding: 'utf8'}));
-const planeObjects = (rendered = runner.stdout) => ({
-  task: pick('select(.kind == "Task" and .metadata.name == "run-plane-sign-in")', rendered),
-  secret: pick('select(.kind == "ExternalSecret" and .metadata.name == "plane-test-account")', rendered),
+const SIGN_IN_SECRETS = {
+  'plane-test-account': ['password=prod/app/plane-test-account:password', 'uninvited-password=prod/app/plane-test-account:uninvited-password'],
+  'platform-test-account': ['password=prod/app/platform-test-account:password'],
+};
+const WRONG_GROUP = {variable: 'E2E_PLANE_UNINVITED_PASSWORD', secret: 'plane-test-account', key: 'uninvited-password'};
+const PLATFORM_ACCOUNT = {variable: 'E2E_PLATFORM_ACCOUNT_PASSWORD', secret: 'platform-test-account', key: 'password'};
+const SIGN_IN_TASKS = {
+  'run-plane-sign-in': {host: 'plane', config: 'playwright.plane.config.ts', passwords: [{variable: 'E2E_PLANE_ACCOUNT_PASSWORD', secret: 'plane-test-account', key: 'password'}, WRONG_GROUP]},
+  'run-argocd-sign-in': {host: 'argo', config: 'playwright.argocd.config.ts', passwords: [PLATFORM_ACCOUNT, WRONG_GROUP]},
+  'run-headlamp-sign-in': {host: 'kube', config: 'playwright.headlamp.config.ts', passwords: [PLATFORM_ACCOUNT, WRONG_GROUP]},
+};
+const signInObjects = (rendered = runner.stdout) => ({
+  tasks: Object.fromEntries(Object.keys(SIGN_IN_TASKS).map(name => [name, pick(`select(.kind == "Task" and .metadata.name == "${name}")`, rendered)])),
+  secrets: Object.fromEntries(Object.keys(SIGN_IN_SECRETS).map(name => [name, pick(`select(.kind == "ExternalSecret" and .metadata.name == "${name}")`, rendered)])),
   stores: JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(.kind == "SecretStore") | .metadata.name]', '-'], {input: rendered, encoding: 'utf8'})),
 });
-const PASSWORD_VARIABLES = ['E2E_PLANE_ACCOUNT_PASSWORD', 'E2E_PLANE_UNINVITED_PASSWORD'];
 
-/** Every way the Task or its Secret lets a password out, or reads it through the wrong store, named. */
-function planeFindings({task, secret, stores}) {
+/** Every way a Task or its Secret lets a password out, or reads it through the wrong store, named. */
+function signInFindings({tasks, secrets, stores}) {
   const found = [];
-  if (!task) found.push('no Task run-plane-sign-in');
-  if (!secret) found.push('no ExternalSecret plane-test-account');
-  if (secret) {
+  for (const [name, expected] of Object.entries(SIGN_IN_SECRETS)) {
+    const secret = secrets[name];
+    if (!secret) { found.push(`no ExternalSecret ${name}`); continue; }
     const store = secret.spec.secretStoreRef.name;
-    if (store !== 'vault-backend') found.push(`plane-test-account is read through ${store}, not through the namespace's default store vault-backend`);
-    if (store === 'e2e-passwords') found.push('plane-test-account is read through the store of the E2E passwords, whose role reaches tenants\' entries and must not be widened');
+    if (store !== 'vault-backend') found.push(`${name} is read through ${store}, not through the namespace's default store vault-backend`);
+    if (store === 'e2e-passwords') found.push(`${name} is read through the store of the E2E passwords, whose role reaches tenants' entries and must not be widened`);
     if (!stores.includes(store)) found.push(`the store ${store} does not exist in the namespace`);
     const reads = secret.spec.data.map(({secretKey, remoteRef: {key, property}}) => `${secretKey}=${key}:${property}`);
-    if (JSON.stringify(reads) !== JSON.stringify(['password=prod/app/plane-test-account:password', 'uninvited-password=prod/app/plane-test-account:uninvited-password'])) found.push(`plane-test-account reads ${reads}`);
-    if (secret.spec.refreshInterval !== '0' || secret.spec.refreshPolicy !== 'OnChange') found.push('plane-test-account is read from Vault on a timer');
+    if (JSON.stringify(reads) !== JSON.stringify(expected)) found.push(`${name} reads ${reads}`);
+    if (secret.spec.refreshInterval !== '0' || secret.spec.refreshPolicy !== 'OnChange') found.push(`${name} is read from Vault on a timer`);
   }
-  if (!task) return found;
-  const [step] = task.spec.steps;
-  if (task.spec.steps.length !== 1) found.push(`${task.spec.steps.length} steps, not 1`);
-  if ((task.spec.params ?? []).length > 0) found.push(`the Task takes params ${task.spec.params.map(({name}) => name)}, which a TaskRun's spec would print`);
-  const env = Object.fromEntries(step.env.map(({name, ...source}) => [name, source]));
-  for (const variable of PASSWORD_VARIABLES) {
-    const key = variable === PASSWORD_VARIABLES[0] ? 'password' : 'uninvited-password';
-    if (JSON.stringify(env[variable]) !== JSON.stringify({valueFrom: {secretKeyRef: {name: 'plane-test-account', key}}})) found.push(`${variable} is not the key ${key} of the Secret plane-test-account through secretKeyRef`);
+  for (const [name, {host, config, passwords}] of Object.entries(SIGN_IN_TASKS)) {
+    const task = tasks[name];
+    if (!task) { found.push(`no Task ${name}`); continue; }
+    const [step] = task.spec.steps;
+    if (task.spec.steps.length !== 1) found.push(`${name} has ${task.spec.steps.length} steps, not 1`);
+    if ((task.spec.params ?? []).length > 0) found.push(`${name} takes params ${task.spec.params.map(({name: param}) => param)}, which a TaskRun's spec would print`);
+    const env = Object.fromEntries(step.env.map(({name: variable, ...source}) => [variable, source]));
+    for (const {variable, secret, key} of passwords) {
+      if (JSON.stringify(env[variable]) !== JSON.stringify({valueFrom: {secretKeyRef: {name: secret, key}}})) found.push(`${name}: ${variable} is not the key ${key} of the Secret ${secret} through secretKeyRef`);
+    }
+    for (const [variable, source] of Object.entries(env)) {
+      if (/PASSWORD|SECRET|TOKEN|KEY/.test(variable) && !passwords.some(password => password.variable === variable)) found.push(`${name}: the step carries ${variable}, which is no password of the accounts of this proof`);
+      if (/PASSWORD|SECRET|TOKEN|KEY/.test(variable) && source.value !== undefined) found.push(`${name}: ${variable} is a value of the Task, not a secretKeyRef`);
+    }
+    if (env.PLAYWRIGHT_BASE_URL?.value !== `https://${host}.${clusterDomain}`) found.push(`${name}: the case starts at ${env.PLAYWRIGHT_BASE_URL?.value}, not at the installation's own ${host}`);
+    if (env.PLAYWRIGHT_LIST_PRINT_STEPS !== undefined) found.push(`${name}: the list reporter prints the steps, which quote what a fill typed`);
+    if (/PASSWORD|printenv|\benv\b|set -[a-z]*x|--reporter|\$\(params\./.test(step.script)) found.push(`${name}: the script names a password, prints the environment, switches tracing on or adds a reporter`);
+    if (!new RegExp(`^exec node_modules/\\.bin/playwright test --config ${config.replaceAll('.', '\\.')}$`, 'm').test(step.script)) found.push(`${name}: the script does not run ${config} alone`);
+    if (task.spec.workspaces !== undefined || task.spec.results !== undefined) found.push(`${name} hands something to another pod`);
+    const volumes = Object.fromEntries(task.spec.volumes.map(({name: volume, ...source}) => [volume, source]));
+    const mounted = Object.fromEntries(step.volumeMounts.map(({name: volume, mountPath}) => [mountPath, volumes[volume]]));
+    if (JSON.stringify(mounted['/e2e/packages/e2e/.auth']) !== JSON.stringify({emptyDir: {medium: 'Memory'}}) || JSON.stringify(mounted['/e2e/packages/e2e/test-results']) !== JSON.stringify({emptyDir: {}})) found.push(`${name}: what the run writes outlives its pod`);
+    if (step.securityContext.readOnlyRootFilesystem !== true || step.securityContext.runAsNonRoot !== true) found.push(`${name}: the step runs with a writable root filesystem or as root`);
+    if (!/\/digita-testkit-e2e:0\.1\.0$/.test(step.image)) found.push(`${name}: the image is ${step.image}, not the pinned E2E image`);
   }
-  for (const [name, source] of Object.entries(env)) {
-    if (/PASSWORD|SECRET|TOKEN|KEY/.test(name) && !PASSWORD_VARIABLES.includes(name)) found.push(`the step carries ${name}, which is no password of the two test accounts`);
-    if (/PASSWORD|SECRET|TOKEN|KEY/.test(name) && source.value !== undefined) found.push(`${name} is a value of the Task, not a secretKeyRef`);
-  }
-  if (env.PLAYWRIGHT_BASE_URL?.value !== `https://plane.${clusterDomain}`) found.push(`the case starts at ${env.PLAYWRIGHT_BASE_URL?.value}, not at the installation's own Plane`);
-  if (env.PLAYWRIGHT_LIST_PRINT_STEPS !== undefined) found.push('the list reporter prints the steps, which quote what a fill typed');
-  if (/PASSWORD|printenv|\benv\b|set -[a-z]*x|--reporter|\$\(params\./.test(step.script)) found.push('the script names a password, prints the environment, switches tracing on or adds a reporter');
-  if (!/^exec node_modules\/\.bin\/playwright test --config playwright\.plane\.config\.ts$/m.test(step.script)) found.push('the script does not run the Plane config alone');
-  if (task.spec.workspaces !== undefined || task.spec.results !== undefined) found.push('the Task hands something to another pod');
-  const volumes = Object.fromEntries(task.spec.volumes.map(({name, ...source}) => [name, source]));
-  const mounted = Object.fromEntries(step.volumeMounts.map(({name, mountPath}) => [mountPath, volumes[name]]));
-  if (JSON.stringify(mounted['/e2e/packages/e2e/.auth']) !== JSON.stringify({emptyDir: {medium: 'Memory'}}) || JSON.stringify(mounted['/e2e/packages/e2e/test-results']) !== JSON.stringify({emptyDir: {}})) found.push('what the run writes outlives its pod');
-  if (step.securityContext.readOnlyRootFilesystem !== true || step.securityContext.runAsNonRoot !== true) found.push('the step runs with a writable root filesystem or as root');
-  if (!/\/digita-testkit-e2e:0\.1\.0$/.test(step.image)) found.push(`the image is ${step.image}, not the pinned E2E image`);
   return found;
 }
 
-test('the Plane sign-in Task gets both passwords from plane-test-account through secretKeyRef, and the Secret is read by the default store', () => {
+test('each sign-in Task gets its passwords from its Secrets through secretKeyRef, and the Secrets are read by the default store', () => {
   assert.equal(runner.status, 0, runner.stderr);
-  assert.deepEqual(planeFindings(planeObjects()), []);
+  assert.deepEqual(signInFindings(signInObjects()), []);
 });
 
-test('PLANTED DEFECT: a password as a value, a param, a printed password, E2E_PASSWORD, a reporter or the store of the E2E passwords is each found', () => {
+test('PLANTED DEFECT: a password as a value, a param, a printed password, E2E_PASSWORD, a reporter, another proof\'s account or the store of the E2E passwords is each found, on every Task', () => {
   assert.equal(runner.status, 0, runner.stderr);
-  const planted = {
-    'a password as a literal value': ({task}) => { task.spec.steps[0].env.find(e => e.name === PASSWORD_VARIABLES[0]).valueFrom = undefined; task.spec.steps[0].env.find(e => e.name === PASSWORD_VARIABLES[0]).value = 'hunter2-hunter2'; },
-    'a password in a param': ({task}) => { task.spec.params = [{name: 'password', type: 'string'}]; },
-    'a print of the password in the script': ({task}) => { task.spec.steps[0].script += '\necho "signing in with ${E2E_PLANE_ACCOUNT_PASSWORD}"\n'; },
-    'the E2E password of a tenant': ({task}) => { task.spec.steps[0].env.push({name: 'E2E_PASSWORD', valueFrom: {secretKeyRef: {name: 'e2e-$(params.target)', key: 'password'}}}); },
-    'a reporter that prints the steps': ({task}) => { task.spec.steps[0].env.push({name: 'PLAYWRIGHT_LIST_PRINT_STEPS', value: '1'}); },
-    'a trace of the script': ({task}) => { task.spec.steps[0].script = task.spec.steps[0].script.replace('set -eu', 'set -eux'); },
-    'the other tenant Secret': ({task}) => { task.spec.steps[0].env.find(e => e.name === PASSWORD_VARIABLES[1]).valueFrom.secretKeyRef.name = 'e2e-aaaaaaaaaaaa-prod'; },
-    'a session that outlives its pod': ({task}) => { task.spec.workspaces = [{name: 'session'}]; },
-    'a read of Vault on a timer': ({secret}) => { secret.spec.refreshInterval = '1h'; },
-    'the wrong entry': ({secret}) => { secret.spec.data[0].remoteRef.key = 'prod/app/manager'; },
+  const taskPlants = {
+    'a password as a literal value': (task, {passwords}) => { const env = task.spec.steps[0].env.find(e => e.name === passwords[0].variable); env.valueFrom = undefined; env.value = 'hunter2-hunter2'; },
+    'a password in a param': task => { task.spec.params = [{name: 'password', type: 'string'}]; },
+    'a print of the password in the script': (task, {passwords}) => { task.spec.steps[0].script += `\necho "signing in with \${${passwords[0].variable}}"\n`; },
+    'the E2E password of a tenant': task => { task.spec.steps[0].env.push({name: 'E2E_PASSWORD', valueFrom: {secretKeyRef: {name: 'e2e-$(params.target)', key: 'password'}}}); },
+    'a reporter that prints the steps': task => { task.spec.steps[0].env.push({name: 'PLAYWRIGHT_LIST_PRINT_STEPS', value: '1'}); },
+    'a trace of the script': task => { task.spec.steps[0].script = task.spec.steps[0].script.replace('set -eu', 'set -eux'); },
+    'the Secret of a tenant for the account of the wrong group': (task, {passwords}) => { task.spec.steps[0].env.find(e => e.name === passwords[1].variable).valueFrom.secretKeyRef.name = 'e2e-aaaaaaaaaaaa-prod'; },
+    'the Secret of the other proof for the first account': (task, {passwords}) => { task.spec.steps[0].env.find(e => e.name === passwords[0].variable).valueFrom.secretKeyRef.name = passwords[0].secret === 'plane-test-account' ? 'platform-test-account' : 'plane-test-account'; },
+    'the password of an account this proof does not use': (task, {passwords}) => { task.spec.steps[0].env.push({name: ['E2E_PLANE_ACCOUNT_PASSWORD', 'E2E_PLATFORM_ACCOUNT_PASSWORD'].find(v => !passwords.some(p => p.variable === v)), valueFrom: {secretKeyRef: {name: 'plane-test-account', key: 'password'}}}); },
+    'the case at another host': (task, {host}) => { task.spec.steps[0].env.find(e => e.name === 'PLAYWRIGHT_BASE_URL').value = `https://${host === 'argo' ? 'kube' : 'argo'}.${clusterDomain}`; },
+    'the script runs another config': (task, {config}) => { task.spec.steps[0].script = task.spec.steps[0].script.replace(config, 'playwright.config.ts'); },
+    'a session that outlives its pod': task => { task.spec.workspaces = [{name: 'session'}]; },
+    'a Task that is missing': (task, {}, tasks, name) => { tasks[name] = null; },
   };
-  for (const [name, plant] of Object.entries(planted)) {
-    const objects = structuredClone(planeObjects());
-    plant(objects);
-    assert.notDeepEqual(planeFindings(objects), [], name);
+  for (const [taskName, expected] of Object.entries(SIGN_IN_TASKS)) {
+    for (const [plantName, plant] of Object.entries(taskPlants)) {
+      const objects = structuredClone(signInObjects());
+      plant(objects.tasks[taskName], expected, objects.tasks, taskName);
+      assert.notDeepEqual(signInFindings(objects), [], `${taskName}: ${plantName}`);
+    }
+  }
+  const secretPlants = {
+    'a read of Vault on a timer': secret => { secret.spec.refreshInterval = '1h'; },
+    'the wrong entry': secret => { secret.spec.data[0].remoteRef.key = 'prod/app/manager'; },
+    'an ExternalSecret that is missing': (secret, secrets, name) => { secrets[name] = null; },
+  };
+  for (const secretName of Object.keys(SIGN_IN_SECRETS)) {
+    for (const [plantName, plant] of Object.entries(secretPlants)) {
+      const objects = structuredClone(signInObjects());
+      plant(objects.secrets[secretName], objects.secrets, secretName);
+      assert.notDeepEqual(signInFindings(objects), [], `${secretName}: ${plantName}`);
+    }
   }
   const throughE2ePasswords = helm(...runnerArgs, '--set-string', 'global.secretStoreName=e2e-passwords');
   assert.equal(throughE2ePasswords.status, 0, throughE2ePasswords.stderr);
-  assert.ok(planeFindings(planeObjects(throughE2ePasswords.stdout)).some(finding => /store of the E2E passwords/.test(finding)), 'an ExternalSecret reading through e2e-passwords');
+  const found = signInFindings(signInObjects(throughE2ePasswords.stdout));
+  for (const secretName of Object.keys(SIGN_IN_SECRETS)) {
+    assert.ok(found.some(finding => finding.startsWith(`${secretName} is read through the store of the E2E passwords`)), `${secretName} read through e2e-passwords`);
+  }
 });
 
 test('PLANTED INNOCENT: another image pin, another variable that is no secret and another description change nothing the rules hold', () => {
   const repinned = helm(...runnerArgs.slice(0, -1), 'builds[0].name=digita-testkit-e2e,builds[0].image=digita-testkit-e2e,builds[0].tag=0.1.0');
-  assert.deepEqual(planeFindings(planeObjects(repinned.stdout)), []);
-  const objects = structuredClone(planeObjects());
-  objects.task.spec.steps[0].env.push({name: 'E2E_PLANE_WORKSPACE', value: 'simplidigita'});
-  objects.task.spec.description = 'planted';
-  assert.deepEqual(planeFindings(objects), []);
+  assert.deepEqual(signInFindings(signInObjects(repinned.stdout)), []);
+  const objects = structuredClone(signInObjects());
+  for (const task of Object.values(objects.tasks)) {
+    task.spec.steps[0].env.push({name: 'E2E_PLANE_WORKSPACE', value: 'simplidigita'});
+    task.spec.description = 'planted';
+  }
+  assert.deepEqual(signInFindings(objects), []);
 });
 
-test('the e2e-runner policy and the store of the E2E passwords stay as they are: the Plane Secret needs neither', () => {
-  const {stores} = planeObjects();
+test('the e2e-runner policy and the store of the E2E passwords stay as they are: the sign-in Secrets need neither', () => {
+  const {stores} = signInObjects();
   assert.equal(stores.filter(name => name === 'e2e-passwords').length, 1);
   const store = yaml('select(.kind == "SecretStore" and .metadata.name == "e2e-passwords") | .spec.provider.vault.auth.kubernetes', runner.stdout);
   assert.equal(store.role, 'e2e-runner');

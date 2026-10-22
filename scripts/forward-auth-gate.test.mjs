@@ -4,12 +4,13 @@ import {readFileSync, readdirSync} from 'node:fs';
 import test from 'node:test';
 
 // Every host behind the identity provider's forward auth is answered by the embedded outpost with one
-// provider, and the group plane-users must pass that gate at plane.<fqdn> alone. The outpost picks the
+// provider, and the group plane-users must pass that gate at plane.<fqdn> alone, and the group platform-readers at
+// kube.<fqdn> alone. The outpost picks the
 // provider of a request (authentik internal/outpost/proxyv2/handlers.go lookupApp, proxyv2 2026.5.6): the
 // provider whose external host is the host; and only where none has it, any one of the forward_domain
 // providers whose cookie domain ends the host, at random per request. So for each gated host this test
-// collects those candidates and demands that the application of every one of them admits `admins` alone,
-// and at plane.<fqdn> `admins` and `plane-users`. It is stricter than the outpost, which takes the longest
+// collects those candidates and demands that the application of every one of them admits `admins` alone, at
+// plane.<fqdn> `admins` and `plane-users`, and at kube.<fqdn> `admins` and `platform-readers`. It is stricter than the outpost, which takes the longest
 // cookie domain among the matches: a longer cookie domain added later changes no verdict here.
 
 const blueprintDirectory = 'clusters/bootstrap/idp/blueprints';
@@ -19,7 +20,8 @@ const blueprintTexts = Object.fromEntries(readdirSync(blueprintDirectory).filter
 const yq = (text, path = '.') => JSON.parse(execFileSync('yq', ['-o=json', path, '-'], {input: text, encoding: 'utf8'}));
 const hostOf = text => text.replace('{{ .Values.global.domain }}', '<fqdn>');
 const PLANE = 'plane.<fqdn>';
-const ADMITTED = host => (host === PLANE ? ['admins', 'plane-users'] : ['admins']);
+const KUBE = 'kube.<fqdn>';
+const ADMITTED = host => ({[PLANE]: ['admins', 'plane-users'], [KUBE]: ['admins', 'platform-readers']}[host] ?? ['admins']);
 
 // The files of the repository that put a route behind the forward auth, and the hosts each one gates. A chart
 // that leaves its ingress off gates nothing. Plane's address is written by deploy-branch into
@@ -108,20 +110,23 @@ entries:
       group: !Find [authentik_core.group, [name, admins]]
 `;
 
-test('every host behind the forward auth is answered by providers whose applications admit admins, and plane-users at plane alone', () => {
+test('every host behind the forward auth is answered by providers whose applications admit admins, plane-users at plane alone and platform-readers at kube alone', () => {
   assert.deepEqual(gateFindings(blueprintTexts, repositoryTexts), []);
   assert.deepEqual(Object.keys(SOURCES).filter(file => !(file in repositoryTexts)), [], 'every source exists');
 });
 
-test('PLANTED DEFECT: kube.<fqdn> without a provider of its own is answered by Plane\'s and found', () => {
+test('PLANTED DEFECT: kube.<fqdn> without a provider of its own is answered by Plane\'s and Tekton\'s and found', () => {
   assert.deepEqual(gateFindings(withoutHeadlampGate(), repositoryTexts), [
-    'kube.<fqdn> is answered by Plane, whose application plane admits ["admins","plane-users"], not ["admins"] alone',
+    'kube.<fqdn> is answered by Plane, whose application plane admits ["admins","plane-users"], not ["admins","platform-readers"] alone',
+    'kube.<fqdn> is answered by Tekton Dashboard, whose application tekton-dashboard admits ["admins"], not ["admins","platform-readers"] alone',
   ]);
 });
 
-test('PLANTED DEFECT: a second group on the gate, a gate off the outpost, a new gated host nobody claims, an unknown gated file, and plane-users on Tekton or none at Plane are found', () => {
+test('PLANTED DEFECT: a wrong group on the gate, a gate off the outpost, a new gated host nobody claims, an unknown gated file, plane-users on Tekton, none at Plane and no platform-readers at kube are found', () => {
   const planted = {
     'plane-users admitted by the gate of kube': [{...blueprintTexts, '99-proxy-headlamp.yaml': blueprintTexts['99-proxy-headlamp.yaml'] + planeUsersBinding('headlamp-forward-auth')}, repositoryTexts],
+    'platform-readers dropped from the gate of kube': [{...blueprintTexts, '99-proxy-headlamp.yaml': blueprintTexts['99-proxy-headlamp.yaml'].replace(/  - id: headlamp-forward-auth-platform-readers-binding[\s\S]*$/, '')}, repositoryTexts],
+    'platform-readers admitted to Tekton': [{...blueprintTexts, '99-proxy-tekton.yaml': blueprintTexts['99-proxy-tekton.yaml'].replace('name, admins]]\n      order', 'name, platform-readers]]\n      order')}, repositoryTexts],
     'the gate of kube not bound to the outpost': [{...blueprintTexts, [OUTPOST]: outpostWithout(blueprintTexts[OUTPOST])}, repositoryTexts],
     'plane-users admitted to Tekton': [{...blueprintTexts, '99-proxy-tekton.yaml': blueprintTexts['99-proxy-tekton.yaml'].replace('name, admins]]\n      order', 'name, plane-users]]\n      order')}, repositoryTexts],
     'plane without plane-users': [{...blueprintTexts, '99-proxy-plane.yaml': blueprintTexts['99-proxy-plane.yaml'].replace(/  - id: plane-plane-users-binding[\s\S]*$/, '')}, repositoryTexts],
@@ -132,12 +137,14 @@ test('PLANTED DEFECT: a second group on the gate, a gate off the outpost, a new 
     assert.notDeepEqual(gateFindings(blueprints, files), [], name);
   }
   assert.notEqual(planted['plane without plane-users'][0]['99-proxy-plane.yaml'], blueprintTexts['99-proxy-plane.yaml'], 'the plant matched');
+  assert.notEqual(planted['platform-readers dropped from the gate of kube'][0]['99-proxy-headlamp.yaml'], blueprintTexts['99-proxy-headlamp.yaml'], 'the plant matched');
+  assert.notEqual(planted['platform-readers admitted to Tekton'][0]['99-proxy-tekton.yaml'], blueprintTexts['99-proxy-tekton.yaml'], 'the plant matched');
   assert.notEqual(planted['plane-users admitted to Tekton'][0]['99-proxy-tekton.yaml'], blueprintTexts['99-proxy-tekton.yaml'], 'the plant matched');
 });
 
-test('PLANTED INNOCENT: Plane in forward_single mode beside no gate for kube, a new host with its own provider, and a comment naming the forward auth change nothing', () => {
-  // Plane's provider stays a candidate for plane.<fqdn> by its external host in either mode and leaves the fallback for kube.<fqdn> to Tekton's.
-  const single = {...withoutHeadlampGate(), '99-proxy-plane.yaml': blueprintTexts['99-proxy-plane.yaml'].replace('\n      mode: forward_domain', '\n      mode: forward_single')};
+test('PLANTED INNOCENT: Plane in forward_single mode, a new host with its own provider, and a comment naming the forward auth change nothing', () => {
+  // Plane's provider stays a candidate for plane.<fqdn> by its external host in either mode, and kube.<fqdn> is claimed by its own provider.
+  const single = {...blueprintTexts, '99-proxy-plane.yaml': blueprintTexts['99-proxy-plane.yaml'].replace('\n      mode: forward_domain', '\n      mode: forward_single')};
   assert.notEqual(single['99-proxy-plane.yaml'], blueprintTexts['99-proxy-plane.yaml']);
   assert.deepEqual(gateFindings(single, repositoryTexts), []);
   const route = {...repositoryTexts, 'clusters/bootstrap/headlamp/ingressroute.tpl': repositoryTexts['clusters/bootstrap/headlamp/ingressroute.tpl'] + ingress};
