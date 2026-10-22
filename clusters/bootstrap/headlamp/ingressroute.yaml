@@ -6,7 +6,7 @@
 # address of every cluster. The middleware idp/forwardauth answers that request with a redirect
 # to the identity provider unless the browser holds a session. The provider that answers for this
 # host is the one whose external host it is, the Headlamp Forward Auth of idp/blueprints/99-proxy-headlamp.yaml,
-# bound to the group admins alone; a host with no provider of its own would be answered by any
+# bound to the groups admins and platform-readers; a host with no provider of its own would be answered by any
 # forward_domain provider of the domain, at random. The identity provider's session carries here, so
 # Headlamp's own login completes without a second prompt.
 apiVersion: traefik.io/v1alpha1

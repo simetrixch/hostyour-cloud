@@ -209,25 +209,24 @@ configs:
         groups:
           essential: true
   # Map the platform's own `admins` group to this component's admin role.
-  # ONE NAME FOR THE PLATFORM'S STAFF, and these are the four products that
-  # admit on it, so no component admits somebody another one refuses:
-  # the manager (adminsGroup in clusters/inventories/manager/values-common.yaml,
-  # and the group PolicyBinding in clusters/bootstrap/idp/blueprints/
-  # 99-manager.yaml), this ArgoCD, a slave's ArgoCD
-  # (clusters/slaves/slave/values-common.yaml rbac.policy.csv) and Grafana
-  # (role_attribute_path in
-  # clusters/inventories/observability/values-common.yaml).
+  # `admins` is the one name for the platform's staff, admitted as
+  # administrators by the manager (adminsGroup in
+  # clusters/inventories/manager/values-common.yaml, and the group PolicyBinding
+  # in clusters/bootstrap/idp/blueprints/99-manager.yaml), by this ArgoCD
+  # (`g, admins, role:admin` below), by a slave's ArgoCD
+  # (clusters/slaves/slave/values-common.yaml rbac.policy.csv) and by Grafana
+  # (role_attribute_path in clusters/inventories/observability/values-common.yaml).
   # The group is created by blueprints/15-group-admins.yaml, the
   # deployment puts the first operator into it with the
   # `authentik_group_membership` step, and anybody later is added to it in the
   # provider.
-  # NO OTHER PLACE IN THIS TREE DECIDES ADMISSION ON A GROUP, measured over
-  # the whole tree: the blueprints carry exactly one PolicyBinding
-  # (99-manager.yaml, entry `manager-admins-binding`), there are only the two
-  # `policy.csv` files named above
-  # and the three `role_attribute_path` lines, and the only Kubernetes `Group`
-  # subject anywhere in the tree is `system:authenticated`, in the three Tekton
-  # bindings under clusters/inventories/tekton/templates/.
+  # This ArgoCD also admits `platform-readers`, bound beside `admins` in
+  # clusters/bootstrap/idp/blueprints/99-argocd.yaml for the sign-in proof of the
+  # e2e runner. No line of `policy.csv` names that group, so its members get
+  # `policy.default: role:readonly` below. scripts/plane-test-accounts.test.mjs
+  # holds which group each application admits beside `admins`, and
+  # scripts/platform-test-accounts.test.mjs holds `platform-readers` out of every
+  # line of `policy.csv`.
   rbac:
     policy.csv: |
       g, admins, role:admin
