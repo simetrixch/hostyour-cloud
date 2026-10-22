@@ -16,8 +16,8 @@
 # on ghcr.io as an oci address, of helm.plane.so and of charts.goauthentik.io, each with its host right
 # after the scheme. An owned address carries github.com/<owner>/<name>/releases/download/ or
 # <name>.github.io in its path, after the owner, and is no hit. An image on ghcr.io without the oci
-# scheme is not refused. Five files may spell such an address, because they are the table or a test
-# whose every refused shape is a planted case that nothing fetches; EXCLUDED below names each with its
+# scheme is not refused. Six files may spell such an address, because they are the table, the patch of a vendored chart that
+# removes it, or a test whose every refused shape is a planted case that nothing fetches; EXCLUDED below names each with its
 # tree and its reason.
 #
 # HELD, at a consumer place: an owned address is text that names <registry>/v2/<owner>/ or
@@ -57,6 +57,7 @@ trap 'rm -rf "$work"' EXIT
 # A tree is named by the file only its repository has. EXCLUDED is <tree>|<path>|<reason>.
 EXCLUDED=(
   "hostyour-cloud|clusters/platform/mirror-sources.table|the one place allowed to name an upstream address"
+  "hostyour-cloud|clusters/inventories/postfix/vendor/mail-5.1.0.patch|the patch of the vendored mail chart: it removes the chart's icon address, so it must spell it, and nothing fetches it"
   "hostyour-cloud|scripts/check-mirror-consumers.test.sh|its own test, which writes every refused shape into a temporary tree"
   "hostyour-cloud|scripts/pipeline-publish.test.sh|the tests of the mirror steps: their planted tool rows can only be GitHub Release assets by the form of the table, and they fetch no address, every curl and helm call going to a local fake registry or a fake"
   "hostyour-deploy|scripts/owned-storage.test.mjs|the test of the installer's consumers: its refused shapes are planted defects written into objects in memory and never fetched, and it reads the programs with yq and fetches nothing"
