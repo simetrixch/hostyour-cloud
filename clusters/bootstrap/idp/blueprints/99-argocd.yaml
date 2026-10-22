@@ -25,6 +25,7 @@ metadata:
 conditions:
   - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
   - !Find [authentik_core.group, [name, admins]]
+  - !Find [authentik_core.group, [name, platform-readers]]
 entries:
   - id: argocd-provider
     model: authentik_providers_oauth2.oauth2provider
@@ -71,11 +72,21 @@ entries:
       meta_launch_url: !Format ["https://argo.%s/", !Env IDP_DOMAIN]
       open_in_new_tab: true
       group: Platform
+      # The OR across the bindings, pinned for the reason 99-manager.yaml gives.
+      policy_engine_mode: any
   - id: argocd-admins-binding
     model: authentik_policies.policybinding
     identifiers:
       target: !Find [authentik_core.application, [slug, argocd]]
       group: !Find [authentik_core.group, [name, admins]]
       order: 0
+    attrs:
+      enabled: true
+  - id: argocd-platform-readers-binding
+    model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, argocd]]
+      group: !Find [authentik_core.group, [name, platform-readers]]
+      order: 1
     attrs:
       enabled: true

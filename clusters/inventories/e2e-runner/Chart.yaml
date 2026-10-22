@@ -9,14 +9,18 @@ description: >-
   a run tests the cases of one reviewed commit. Which tenants a run may target
   is not stated here: clusters/argocd/files/e2e-targets-appset.yaml derives one
   target per demo tenant and stage from the books. A second Task, run-plane-sign-in,
-  proves this installation's own Plane sign-in as two test accounts and names no tenant.
+  proves this installation's own Plane sign-in as two test accounts and names no tenant;
+  a third and a fourth, run-argocd-sign-in and run-headlamp-sign-in, prove its Argo CD and
+  Headlamp sign-ins as a test account of the group platform-readers, and the refusal of one of
+  the wrong group.
 type: application
 
 dependencies:
   # The namespace's default SecretStore, under the app-tier `external-secrets`
   # role, for the registry pull credential
   # (templates/externalsecret-registry-pull.yaml) and the passwords of the
-  # Plane sign-in test accounts (templates/externalsecret-plane-test-account.yaml).
+  # sign-in test accounts (templates/externalsecret-plane-test-account.yaml and
+  # templates/externalsecret-platform-test-account.yaml).
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store

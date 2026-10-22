@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — the account of the Argo CD and Headlamp sign-in proofs, and the group
+# `platform-readers` it is in. A worker that proves "a person signs in to Argo CD and to Headlamp
+# through Authentik" cannot type the owner's password, so it signs in as `platform-sign-in` and expects
+# `plane-sign-in-uninvited` (20-plane-test-accounts.yaml), which is in the wrong group, to be refused.
+#
+# WHY A GROUP OF THEIR OWN. An account in `admins` would be an administrator of Authentik, of Argo CD
+# and of the cluster. The group `platform-readers` grants no right in Authentik: it only lets its members
+# through to the applications of the two consoles, argocd, headlamp and the forward auth of Headlamp
+# (headlamp-forward-auth), where they read and change nothing: Argo CD gives them its read-only default
+# role, and the Kubernetes API server gives them the cluster role `view` (the binding
+# oidc-platform-readers of hostyour-deploy's deploy-platform-services program). Which applications admit
+# which group beside `admins` is held by scripts/plane-test-accounts.test.mjs.
+#
+# THE PASSWORD IS NOT IN THIS FILE. It arrives as one key of the Secret idp-bootstrap-secrets, which the
+# deployment writes out of the secret store (<stage>/idp/bootstrap) and the chart hands to both
+# authentik deployments through envFrom. The provider sets the password at every reconcile, so a
+# password someone changed by hand does not outlive the next one. The e2e runner reads the same value
+# from <stage>/app/platform-test-account.
+#
+# THE ADDRESS is the project's test mailbox with the case's name after a `+`; the cases trigger no mail.
+#
+# state: created on the group is LOAD-BEARING for the same reason as in 15-group-admins.yaml: the
+# default would re-assert the group at every reconcile. The members come from the account below, which
+# is re-asserted with this group alone.
+version: 1
+metadata:
+  name: Platform sign-in test account
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - id: platform-readers-group
+    model: authentik_core.group
+    state: created
+    identifiers:
+      name: platform-readers
+    attrs:
+      name: platform-readers
+  - id: platform-sign-in-account
+    model: authentik_core.user
+    identifiers:
+      username: platform-sign-in
+    attrs:
+      username: platform-sign-in
+      name: Platform sign-in test account
+      email: simplidigita.ai+platform-sign-in@gmail.com
+      is_active: true
+      password: !Env IDP_PLATFORM_TEST_ACCOUNT_PASSWORD
+      groups:
+        - !KeyOf platform-readers-group
