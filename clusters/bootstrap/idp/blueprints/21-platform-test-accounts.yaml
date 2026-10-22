@@ -12,6 +12,11 @@
 # oidc-platform-readers of hostyour-deploy's deploy-platform-services program). Which applications admit
 # which group beside `admins` is held by scripts/plane-test-accounts.test.mjs.
 #
+# THE GROUP IS CREATED AGAIN BY EACH FILE THAT BINDS IT (99-argocd.yaml, 99-headlamp.yaml, 99-proxy-headlamp.yaml), with
+# this same entry, because Authentik applies the files in no order and a top-level `conditions:` gates nothing (only an
+# entry has conditions). A file that bound a group another file creates fails whole at a first start and waits for the
+# hourly discovery. scripts/plane-test-accounts.test.mjs holds a file to creating the group it binds.
+#
 # THE PASSWORD IS NOT IN THIS FILE. It arrives as one key of the Secret idp-bootstrap-secrets, which the
 # deployment writes out of the secret store (<stage>/idp/bootstrap) and the chart hands to both
 # authentik deployments through envFrom. The provider sets the password at every reconcile, so a
