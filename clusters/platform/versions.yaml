@@ -477,6 +477,14 @@ charts:
   # The upstream chart is named `mail` in the Chart.yaml that wraps it — the
   # dependency below is what couples this key to that name, for the stamp and
   # the report alike.
+  # VENDORED, PATCHED, UNPACKED, as plane-ce above: clusters/inventories/postfix/charts/mail is the upstream
+  # chart plus clusters/inventories/postfix/vendor/mail-<version>.patch, which adds the value
+  # `enableServiceLinks` the chart lacks and drops the `icon:` address of its Chart.yaml. A bump stamps the version into Chart.yaml, and scripts/check.sh stays
+  # red until the folder follows: pull mail-<version>.tgz from the chart repository bokysan.github.io/docker-postfix,
+  # delete its README.md, write vendor/mail-<version>.upstream.sha256 from it (find mail -type f | sort | xargs
+  # sha256sum), unpack it into clusters/inventories/postfix/charts/, apply the old patch with patch -p1 inside charts/,
+  # write vendor/mail-<version>.patch anew, move its row in EXCLUDED of scripts/check-mirror-consumers.sh to the new
+  # file name, and git rm the old folder and vendor files.
   postfix-mail:
     version: "5.1.0"
     upstream:

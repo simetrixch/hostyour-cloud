@@ -133,6 +133,12 @@ expect_red "excluded file name in a tree of another repository" "$named" scripts
 mkdir -p "$named/clusters/platform"; cp "$root/clusters/platform/values-common.yaml" "$named/clusters/platform/values-common.yaml"
 expect_green "excluded file name in the platform tree" "$named" "refused shapes 0" "excluded: scripts/pipeline-publish.test.sh"
 
+# The patch of the vendored mail chart removes the chart's icon address, so it is the one patch that spells a refused shape.
+patched="$(new_tree patched)"
+put "$patched/clusters/inventories/postfix/vendor/mail-5.1.0.patch" '--- a/mail/Chart.yaml' '-icon: https://someone.github.io/charts/icon.png'
+mkdir -p "$patched/clusters/platform"; cp "$root/clusters/platform/values-common.yaml" "$patched/clusters/platform/values-common.yaml"
+expect_green "the patch of the vendored mail chart in the platform tree" "$patched" "refused shapes 0" "excluded: clusters/inventories/postfix/vendor/mail-5.1.0.patch"
+
 # Consumers the table does not hold.
 tree="$(new_tree blob)"
 put "$tree/clusters/inventories/consumer-build/files/ci-tools.table" 'node 26.11.1 15fc043a51a5783f2f4b634561091658f5a7f0e3db03f997dca3a8033a33e45b https://nodejs.org/dist/v26.11.1/node-v26.11.1-linux-x64.tar.gz' \

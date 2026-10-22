@@ -1,5 +1,8 @@
 postfix:
   recreateOnRedeploy: false
+  # Without it Kubernetes puts POSTFIX_PROD_SERVICE_PORT and seven more variables of the relay's own Service into
+  # the pod, and the image writes each into main.cf as a parameter Postfix does not know. The relay reads none.
+  enableServiceLinks: false
   replicaCount: 1
   # THE SERVICE IS NAMED FOR THE RELEASE ALONE — postfix-<env>, with no `-mail`
   # suffix. boky's `mail.fullname` (charts/mail _helpers.tpl) appends the subchart
