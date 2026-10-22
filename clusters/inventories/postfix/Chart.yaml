@@ -4,10 +4,12 @@ version: 1.0.0
 description: Send-only SMTP for cluster-internal email delivery
 type: application
 dependencies:
+  # Vendored as the folder charts/mail, upstream plus the patch in vendor/: the chart has no value for
+  # `enableServiceLinks`, so the patch adds one. The image turns every POSTFIX_ variable into a Postfix
+  # parameter, and Kubernetes gives the pod one such variable per port of the Service postfix-<stage>.
   - name: mail
     alias: postfix
     version: 5.1.0
-    repository: oci://zot.master.digitacloud.app/simetrixch/bokysan.github.io/docker-postfix
   - name: external-secret
     version: 1.0.0
     repository: file://../../charts/external-secret

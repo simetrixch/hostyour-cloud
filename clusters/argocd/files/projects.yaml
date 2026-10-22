@@ -169,7 +169,6 @@ spec:
   description: Supporting platform services — the mail relay, DBGate, the tailnet coordinator. Namespaced only.
   sourceRepos:
     - __PLATFORM_URL__
-    - oci://zot.master.digitacloud.app/simetrixch/bokysan.github.io/docker-postfix
   destinations:
     - name: __CLUSTER_NAME__
       namespace: postfix

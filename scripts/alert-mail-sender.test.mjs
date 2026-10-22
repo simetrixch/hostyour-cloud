@@ -206,6 +206,17 @@ test('the relay fence selects the relay pod and the hook pod, and admits the nam
   assert.ok(!admitsClient(policy, {'kubernetes.io/metadata.name': 'observability'}, 25), 'PLANTED DEFECT: the relay listens for clients on 587 only');
 });
 
+// The image writes every POSTFIX_ variable of its environment into main.cf as a parameter, and Kubernetes puts one such variable
+// into a pod for each port of each Service of its namespace, so a pod with service links makes `postconf` warn about parameters it
+// does not know.
+test('no stage puts the Service variables into the relay pod, where the image would write them into main.cf', () => {
+  for (const stage of STAGES) {
+    const domains = domainsOf(stage);
+    assert.strictEqual(statefulSetOf(relayOf(stage, domains)).enableServiceLinks, false, `PLANTED INNOCENT: the ${stage} relay pod gets no Service variables`);
+    assert.notStrictEqual(statefulSetOf(relayOf(stage, domains, ['--set', 'postfix.enableServiceLinks=true'])).enableServiceLinks, false, `PLANTED DEFECT: a ${stage} render with service links on is not seen as off`);
+  }
+});
+
 test('no Service hands the relay port to the hook pod', () => {
   const relay = relayOf('prod', domainsOf('prod'));
   const services = servicesOf(relay);

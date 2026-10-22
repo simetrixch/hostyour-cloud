@@ -1,0 +1,23 @@
+--- a/mail/templates/statefulset.yaml
++++ b/mail/templates/statefulset.yaml
+@@ -44,6 +44,7 @@
+         {{- with .Values.pod.annotations }}{{ toYaml . | nindent 8 }}{{ end }}
+     spec:
+       serviceAccountName: {{ $serviceAccountName | quote }}
++      enableServiceLinks: {{ .Values.enableServiceLinks }}
+       {{ with .Values.imagePullSecrets }}imagePullSecrets: {{- toYaml . | nindent 8 }}{{- end }}
+       {{ if .Values.schedulerName }}schedulerName: {{ .Values.schedulerName | quote }}{{ end }}
+       {{ if .Values.priorityClassName }}priorityClassName: {{ .Values.priorityClassName | quote }}{{ end }}
+--- a/mail/values.yaml
++++ b/mail/values.yaml
+@@ -85,6 +85,10 @@
+ # a pod and let `StatefulSet` recreate it.
+ recreateOnRedeploy: true
+ 
++# Kubernetes injects one environment variable per Service of the namespace into the pod. The image turns every
++# variable that starts with POSTFIX_ into a Postfix parameter, so the Service of this release makes Postfix warn.
++enableServiceLinks: true
++
+ resources:
+   {}
+   # We usually recommend not to specify default resources and to leave this as a conscious
