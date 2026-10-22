@@ -85,7 +85,7 @@ metrics:
 # a pod and let `StatefulSet` recreate it.
 recreateOnRedeploy: true
 
-# Kubernetes injects one environment variable per Service of the namespace into the pod. The image turns every
+# Kubernetes injects environment variables for each Service of the namespace into the pod. The image turns every
 # variable that starts with POSTFIX_ into a Postfix parameter, so the Service of this release makes Postfix warn.
 enableServiceLinks: true
 

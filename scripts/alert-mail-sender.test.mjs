@@ -206,14 +206,15 @@ test('the relay fence selects the relay pod and the hook pod, and admits the nam
   assert.ok(!admitsClient(policy, {'kubernetes.io/metadata.name': 'observability'}, 25), 'PLANTED DEFECT: the relay listens for clients on 587 only');
 });
 
-// The image writes every POSTFIX_ variable of its environment into main.cf as a parameter, and Kubernetes puts one such variable
-// into a pod for each port of each Service of its namespace, so a pod with service links makes `postconf` warn about parameters it
-// does not know.
+// The image writes every POSTFIX_ variable of its environment into main.cf as a parameter, and Kubernetes puts eight such variables
+// into a pod for the Service postfix-<stage> and its one port, so a pod with service links makes `postconf` warn about parameters it
+// does not know. The stand-in renders the values of prod only, so each stage's own file is handed in after them.
 test('no stage puts the Service variables into the relay pod, where the image would write them into main.cf', () => {
   for (const stage of STAGES) {
     const domains = domainsOf(stage);
-    assert.strictEqual(statefulSetOf(relayOf(stage, domains)).enableServiceLinks, false, `PLANTED INNOCENT: the ${stage} relay pod gets no Service variables`);
-    assert.notStrictEqual(statefulSetOf(relayOf(stage, domains, ['--set', 'postfix.enableServiceLinks=true'])).enableServiceLinks, false, `PLANTED DEFECT: a ${stage} render with service links on is not seen as off`);
+    const stageValues = ['-f', `clusters/inventories/postfix/values-${stage}.yaml`];
+    assert.strictEqual(statefulSetOf(relayOf(stage, domains, stageValues)).enableServiceLinks, false, `PLANTED INNOCENT: the ${stage} relay pod gets no Service variables`);
+    assert.notStrictEqual(statefulSetOf(relayOf(stage, domains, [...stageValues, '--set', 'postfix.enableServiceLinks=true'])).enableServiceLinks, false, `PLANTED DEFECT: a ${stage} render with service links on is not seen as off`);
   }
 });
 

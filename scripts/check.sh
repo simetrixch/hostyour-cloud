@@ -1958,11 +1958,11 @@ for row in "${planted_charts[@]}"; do
 done
 echo "check: $(grep -c . "$work/vendored-charts") vendored chart archive holds its line in clusters/platform/charts.sha256 and its version; no inventory up to the registry's sync wave fetches a chart from ghcr.io or zot, and none fetches one from ghcr.io; the check refuses ${#planted_charts[@]} planted defects."
 
-# EVERY UNPACKED CHART FOLDER IS VENDORED AND PATCHED; today that is clusters/inventories/plane/charts/plane-ce. Unpacked, because
-# the plane chart also depends on charts of this repository, so Helm builds its dependencies, and Helm accepts a
+# EVERY UNPACKED CHART FOLDER IS VENDORED AND PATCHED; the report line below names each. Unpacked, because
+# the inventory chart that depends on it also depends on charts of this repository, so Helm builds its dependencies, and Helm accepts a
 # dependency that names no repository only as a folder. The claim "this folder is upstream plus the patch, and
 # nothing else" is held here and by no comment: the patch must apply in reverse without fuzz, and the result must be
-# exactly the files, and only the files, of vendor/plane-ce-<version>.upstream.sha256, which lists each file of the
+# exactly the files, and only the files, of vendor/<name>-<version>.upstream.sha256, which lists each file of the
 # upstream archive but its README.md with its sha256. The README is not vendored: it names upstream addresses that
 # scripts/check-mirror-consumers.sh refuses in every tracked file, and Helm renders nothing from it. The folder's own Chart.yaml must hold the version the dependency names, or
 # Helm renders a stale folder without a word.
@@ -2025,7 +2025,8 @@ for row in "${planted_vendor[@]}"; do
 done
 fault="$(plant_vendor retimed "find $pl/charts -type f -exec touch -d 2001-01-01 {} +")" || fail "the planted innocent vendored-chart case could not be planted"
 [ -z "$fault" ] || fail "vendored_patch_fault refuses the planted innocent case, every file given another modification time: $fault"
-echo "check: the vendored plane-ce folder is the upstream chart plus plane-ce-$(yq '.version' clusters/inventories/plane/charts/plane-ce/Chart.yaml).patch, and nothing else; the check refuses ${#planted_vendor[@]} planted defects and passes the innocent case."
+vendored_folders="$(for chart_file in clusters/inventories/*/charts/*/Chart.yaml; do printf '%s %s, ' "${chart_file%/Chart.yaml}" "$(yq '.version' "$chart_file")"; done)"
+echo "check: each vendored chart folder (${vendored_folders%, }) is the upstream chart plus its vendor/<name>-<version>.patch, and nothing else; the check refuses ${#planted_vendor[@]} planted defects and passes the innocent case."
 
 push_paths() { # $1 unit name, $2 repoURL, $3 builds as JSON, $4 global.buildRegistry -> the probe IMAGE and buildah image-name of each build, one line each
   local forge=()

@@ -7,7 +7,7 @@ dependencies:
   # Vendored as the folder charts/mail, upstream plus the patch in vendor/: the chart has no value for
   # `enableServiceLinks`, so the patch adds one, and it drops the chart's `icon:` address, which
   # scripts/check-mirror-consumers.sh refuses. The image turns every POSTFIX_ variable into a Postfix
-  # parameter, and Kubernetes gives the pod one such variable per port of the Service postfix-<stage>.
+  # parameter, and Kubernetes gives the pod eight such variables for the Service postfix-<stage> and its one port.
   - name: mail
     alias: postfix
     version: 5.1.0
