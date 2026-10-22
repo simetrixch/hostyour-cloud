@@ -154,6 +154,8 @@ postfix:
   # signed already. A relay file would sign it under the same selector with a key its record does not
   # carry, and the right signature would never be made. Named for the cluster's own domain, as this
   # once was, the file matched no sender domain and the relay signed nothing while holding a key.
+  # The image logs `ERROR Skipping DKIM for domain <platform domain>` at every start, because that
+  # domain has no file here. The line is expected and names no fault.
   extraInitContainers: |
     - name: fix-dkim-permissions
       image: busybox:latest
