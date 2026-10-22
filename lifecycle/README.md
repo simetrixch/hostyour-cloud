@@ -479,17 +479,22 @@ nobody may write to Plane while it runs. The driver takes the lock the backup ta
 hold (65), a manifest whose `FQDN`, `STAGE` or `SET` differ from this restore's (65), an archive that no checksum of the
 manifest holds or that does not open with `BACKUP_PASSPHRASE` (65), a `STORES=` that is not 2 or an archive that is missing
 (66), and a workload or a volume folder it cannot find (66). Then, for each of the two stores in turn, it reads the
-replicas, stops the workload and waits until its pods are gone, moves the content of the volume to
+replicas, stops the workload and waits until the cluster answers that its pods are gone, moves the content of the volume to
 `/var/lib/master-backup/restore-<id>.replaced/<namespace>--<claim>/`, opens the archive into the volume with
 `--numeric-owner`, starts the workload with the replicas it had and waits until it reads ready within
-`STORE_WAIT_SECONDS`. Only when both read ready does it remove the replaced content and the fetch folder, and print
-`RESTORED <id>`.
+`STORE_WAIT_SECONDS`, and then until it has read ready on every look for `STORE_SETTLE_SECONDS`. Neither store has a
+readiness probe, so its pod reads ready once its container runs, even one that ends a moment later on the content it was
+given. Only when both read ready does it remove the replaced content and the fetch folder, and print `RESTORED <id>`.
 
-A store that cannot be stopped, whose volume cannot be emptied or filled, that cannot be started again or that does not
-read ready ends the restore with 70. The driver names the store, says where the replaced content and the fetched backup
-stand, and prints two commands: the one that puts the old content back and starts the store again, and the one that removes
-both folders when the new content is the one to keep. A restore that is killed after it began to stop stores leaves the
-same two folders and the store it stood on stopped. The next restore of that backup ends 65 until both folders are looked at and removed, because the
+A store that cannot be stopped, whose volume cannot be moved aside or filled, that cannot be started again or that does
+not read ready ends the restore with 70. The driver names the store and says where the fetched backup stands. For each
+volume it moved aside, of the store it stopped at and of a store it restored before, it says where what the volume held
+stands and prints the command that puts it back: the command stops the store, waits until its pods are gone, empties the
+volume, moves the kept content back and starts the store with the replicas it had. Where the move aside stopped part way,
+the command does not empty the volume, because the volume then holds nothing but what it held. A volume the driver did not
+touch gets no such command. Last it prints the command that removes both folders when the volumes are to stay as they
+stand. A restore that is killed after it began to stop stores leaves the same two folders and the store it stood on
+stopped. The next restore of that backup ends 65 until both folders are looked at and removed, because the
 replaced content may be the only copy of what the volume held.
 
 ## The pinned rclone

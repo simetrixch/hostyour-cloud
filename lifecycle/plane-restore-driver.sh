@@ -19,8 +19,9 @@
 #
 # THE REPLACED CONTENT IS KEPT. What a volume held is moved to /var/lib/master-backup/restore-<id>.replaced/<namespace>--<claim>/,
 # not deleted, and both folders are removed only once both stores read ready. A store that does not read ready, or a step that
-# fails, ends 70 and leaves both folders where they stand, naming the store and two commands: the one that puts the old content back
-# and the one that keeps the new and clears the folders. A restore killed after it began to stop stores leaves them too.
+# fails, ends 70 and leaves both folders where they stand, naming the store, for each volume it moved aside the command that puts
+# back what that volume held, and the one that keeps the volumes as they stand and clears the folders. A restore killed after it
+# began to stop stores leaves them too.
 #
 # ONE RUN AT A TIME ON A MACHINE, with the lock master-backup-driver.sh takes (its text says why): a restore and a backup of the
 # same stores never run at once. The two copies of the lock lines are held byte-equal by lifecycle/test.sh.
@@ -42,9 +43,11 @@ readonly ID="${2:-}"
 readonly BACKUP_ROOT=/var/lib/master-backup
 readonly FETCH="$BACKUP_ROOT/restore-$ID"
 readonly KEPT="$FETCH.replaced"
-# How long a store is given to stop and to read ready, in seconds, and how often it is looked at. Each stands on a line of its own because a test moves them.
+# How long a store is given to stop and to read ready, how long it must then read ready on every look, in seconds, and how often it
+# is looked at. Each stands on a line of its own because a test moves them.
 readonly STORE_POLL_SECONDS=2
 readonly STORE_WAIT_SECONDS=180
+readonly STORE_SETTLE_SECONDS=30
 SECRETS='' FETCHED='' KEEP=''
 # The fetched backup is removed on every way out that has stopped no store; once a store is stopped it stays, with the content it replaced.
 cleanup() {
@@ -165,12 +168,12 @@ replicas_of() { K -n "$1" get "$3/$2" -o jsonpath='{.spec.replicas}' 2>/dev/null
 # A store reads ready by the workload's own count of ready pods, which the Deployment and StatefulSet controllers keep
 # for every update strategy; kubectl's rollout status refuses a StatefulSet that is not a RollingUpdate.
 ready_of() { K -n "$1" get "$3/$2" -o jsonpath='{.status.readyReplicas}' 2>/dev/null; }
-# stop_store NS WORKLOAD KIND: scaled to nothing and waited for until its pods are gone. Unlike the backup's, this ends 1 when
-# they are not gone within STORE_WAIT_SECONDS, because a volume is emptied under no running pod here.
+# stop_store NS WORKLOAD KIND: scaled to nothing and waited for until the cluster answers that its pods are gone. Unlike the
+# backup's, this ends 1 when that answer does not come within STORE_WAIT_SECONDS, because a volume is emptied under no running pod here.
 stop_store() {
-  local deadline=$(( SECONDS + STORE_WAIT_SECONDS ))
+  local deadline=$(( SECONDS + STORE_WAIT_SECONDS )) pods
   K -n "$1" scale "$3/$2" --replicas=0 >/dev/null || return 1
-  while [ "$(K -n "$1" get pods -o name 2>/dev/null | grep -c "^pod/${2}")" != 0 ]; do
+  until pods=$(K -n "$1" get pods -o name 2>/dev/null) && ! grep -q "^pod/${2}" <<< "$pods"; do
     [ "$SECONDS" -lt "$deadline" ] || return 1
     sleep "$STORE_POLL_SECONDS"
   done
@@ -216,13 +219,34 @@ for row in "${STORES[@]}"; do
   say "${ns}/${kind}/${workload} runs with ${want} replica(s); its volume is $(basename "$dir")"
 done
 
-# store_refused WHAT: names the store the loop stands on and what stopped the restore there, where the two contents stand, and the
-# two commands; the fetched backup and the replaced content stay where they are. Ends 70.
+# put_back NS KIND WORKLOAD DIR HELD REPLICAS EMPTY: prints the command that puts what the volume DIR held back from HELD: it stops
+# the store, waits until the cluster answers that its pods are gone, empties DIR where EMPTY is 1, moves the kept content back and
+# starts the store with the replicas it had. EMPTY is 0 where the move aside stopped part way, so DIR holds nothing but old content.
+put_back() {
+  local empty=''
+  [ "$7" = 0 ] || empty="find $4 -mindepth 1 -delete && "
+  say "  sudo sh -c 'microk8s kubectl -n $1 scale $2/$3 --replicas=0 && until p=\$(microk8s kubectl -n $1 get pods -o name) && ! echo \"\$p\" | grep -q ^pod/$3; do sleep 2; done && ${empty}find $5 -mindepth 1 -maxdepth 1 -exec mv -t $4 {} + && microk8s kubectl -n $1 scale $2/$3 --replicas=$6'"
+}
+# store_refused MOVED WHAT: names the store the loop stands on and what stopped the restore there; MOVED says how far its volume
+# came: none (not touched), part (the move aside stopped part way) or all (moved aside, the backup perhaps in it). For every store
+# whose volume was moved aside it names where what the volume held stands and the command that puts it back, then the command that
+# keeps the volumes as they stand and clears both folders; the fetched backup and the replaced content stay where they are. Ends 70.
 store_refused() {
-  warn "${ns}/${kind}/${workload}: $1"
-  warn "The restore stops here. What ${ns}/${pvc} held stands in ${held}, the fetched backup in ${FETCH}. To put the old content back:"
-  say "  sudo sh -c 'microk8s kubectl -n ${ns} scale ${kind}/${workload} --replicas=0 && find ${dir} -mindepth 1 -delete && find ${held} -mindepth 1 -maxdepth 1 -exec mv -t ${dir} {} + && microk8s kubectl -n ${ns} scale ${kind}/${workload} --replicas=${want}'"
-  say "To keep what the backup put there, and clear both folders:"
+  local at done_ns done_pvc done_workload done_kind
+  warn "${ns}/${kind}/${workload}: $2"
+  for (( at = 0; at < index - 1; at++ )); do
+    IFS='|' read -r done_ns done_pvc done_workload done_kind <<< "${STORES[$at]}"
+    warn "${done_ns}/${done_kind}/${done_workload} was restored and read ready. What ${done_ns}/${done_pvc} held stands in $KEPT/${done_ns}--${done_pvc}. To put it back:"
+    put_back "$done_ns" "$done_kind" "$done_workload" "${DIRS[$at]}" "$KEPT/${done_ns}--${done_pvc}" "${WANTS[$at]}" 1
+  done
+  case "$1" in
+    none) warn "The volume of ${ns}/${pvc} was not touched, so nothing of it is to be put back." ;;
+    part) warn "What ${ns}/${pvc} held stands part in ${dir}, part in ${held}. To put it back:"
+          put_back "$ns" "$kind" "$workload" "$dir" "$held" "$want" 0 ;;
+    *)    warn "What ${ns}/${pvc} held stands in ${held}. To put it back:"
+          put_back "$ns" "$kind" "$workload" "$dir" "$held" "$want" 1 ;;
+  esac
+  warn "The restore stops here, and the fetched backup stands in ${FETCH}. To keep the volumes as they stand, and clear both folders:"
   say "  sudo rm -rf ${FETCH} ${KEPT}"
   die "the restore of ${ns}/${pvc} stopped; ${FETCH} and ${KEPT} stand on this machine" 70
 }
@@ -238,23 +262,30 @@ for row in "${STORES[@]}"; do
   root install -d -m 700 -o root -g root "$held" || die "could not make $held" 78
   if ! stop_store "$ns" "$workload" "$kind"; then
     if start_store "$ns" "$workload" "$kind" "$want"; then back="it was asked to run with ${want} replica(s) again"; else back="it could not be started again and may stand at 0 replicas"; fi
-    store_refused "was not stopped (its pods stood after ${STORE_WAIT_SECONDS} s, or the scale failed), so its volume was not touched; $back"
+    store_refused none "was not stopped (the scale failed, or the cluster did not answer within ${STORE_WAIT_SECONDS} s that its pods are gone), so its volume was not touched; $back"
   fi
   say "${ns}/${workload} stopped"
-  root find "$dir" -mindepth 1 -maxdepth 1 -exec mv -t "$held" {} + || store_refused "its volume could not be moved aside; it stands at 0 replicas"
+  root find "$dir" -mindepth 1 -maxdepth 1 -exec mv -t "$held" {} + || store_refused part "its volume could not be moved aside; it stands at 0 replicas"
   root bash -c 'set -o pipefail; gpg --batch --quiet --pinentry-mode loopback --passphrase-file "$1" -d "$2" | tar --numeric-owner -C "$3" -xf -' _ "$PASSPHRASE_FILE" "$FETCH/${ns}--${pvc}.tar.gpg" "$dir" \
-    || store_refused "its archive could not be opened into its volume; it stands at 0 replicas"
+    || store_refused all "its archive could not be opened into its volume; it stands at 0 replicas"
   good "${ns}/${pvc}: the volume held $(root du -sh "$held" | cut -f1), the backup put back $(root du -sh "$dir" | cut -f1)"
-  start_store "$ns" "$workload" "$kind" "$want" || store_refused "could not be started again; it stands at 0 replicas"
-  deadline=$(( SECONDS + STORE_WAIT_SECONDS ))
+  start_store "$ns" "$workload" "$kind" "$want" || store_refused all "could not be started again; it stands at 0 replicas"
+  # Neither store of the set has a readiness probe, so its pod reads ready once its container runs, even one that ends a moment
+  # later on the content it was given: a store counts as ready once it read ready on every look for STORE_SETTLE_SECONDS.
+  deadline=$(( SECONDS + STORE_WAIT_SECONDS )) since=''
   while :; do
     ready=$(ready_of "$ns" "$workload" "$kind")
     ready=${ready:-0}
-    [ "$ready" -ge "$want" ] 2>/dev/null && break
-    [ "$SECONDS" -lt "$deadline" ] || store_refused "reads ${ready} ready replica(s) of the ${want} it had, after ${STORE_WAIT_SECONDS} s"
+    if [ "$ready" -ge "$want" ] 2>/dev/null; then
+      since=${since:-$SECONDS}
+      [ $(( SECONDS - since )) -lt "$STORE_SETTLE_SECONDS" ] || break
+    else
+      since=''
+      [ "$SECONDS" -lt "$deadline" ] || store_refused all "reads ${ready} ready replica(s) of the ${want} it had, after ${STORE_WAIT_SECONDS} s"
+    fi
     sleep "$STORE_POLL_SECONDS"
   done
-  good "${ns}/${kind}/${workload} reads ready: ${ready} of ${want}"
+  good "${ns}/${kind}/${workload} reads ready: ${ready} of ${want}, on every look for ${STORE_SETTLE_SECONDS} s"
 done
 
 step "the replaced content and the fetched backup, removed"

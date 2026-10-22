@@ -3090,7 +3090,9 @@ cat > "$STANDIN/microk8s" <<'STANDIN_MICROK8S'
 # no-cronjob, no-claims (a get of a claim ends 1, as on a machine that stands bare), not-ready (workload names, one a line, that do not read ready after a scale up), scale-fails
 # (workload names whose scale up ends 1), stop-fails (workload names whose scale to 0 ends 1 and changes nothing),
 # stop-lost (workload names whose scale to 0 takes effect and ends 1, as an answer lost on the way back does),
-# no-workload (workload names whose get ends 1, as a workload that is not in the cluster does) and pods-stay (workload names whose
+# no-workload (workload names whose get ends 1, as a workload that is not in the cluster does), pods-unanswered (every get of the
+# pods ends 1, as a cluster that does not answer does), ready-once (workload names that read ready at the first look after a scale
+# up and never again, as a container with no readiness probe that starts and then ends does) and pods-stay (workload names whose
 # pod is still listed after a scale to 0). The first scale call, while block-first-scale stands beside it, claims
 # the folder blocked and then waits until the file release stands (or 60 seconds pass), which is how a case holds
 # one driver inside its store loop. It lets go of descriptor 9, the backup's lock: a real kubectl call ends in
@@ -3139,6 +3141,7 @@ case "$1" in
     case "$2" in
       nodes) exit 0 ;;
       pods)
+        if knob pods-unanswered; then echo 'microk8s stand-in: the server did not answer' >&2; exit 1; fi
         if [ -f "$state/knob-pods-stay" ]; then while read -r stays; do case "$stays" in "$namespace/"*) echo "pod/${stays#*/}-0" ;; esac; done < "$state/knob-pods-stay"; fi
         exit 0 ;;
       pvc)
@@ -3186,7 +3189,8 @@ case "$1" in
           *spec.replicas*) value_of "$namespace--$workload.replicas" 1 ;;
           *status.readyReplicas*)
             ready="$(value_of "$namespace--$workload.ready" "$(value_of "$namespace--$workload.replicas" 1)")"
-            [ "$ready" = 0 ] || echo "$ready" ;;
+            [ "$ready" = 0 ] || echo "$ready"
+            if listed ready-once "$namespace/$workload"; then echo 0 > "$state/$namespace--$workload.ready"; fi ;;
           *) echo "microk8s stand-in: a read of a workload the backup does not make: $jsonpath" >&2; exit 2 ;;
         esac
         exit 0 ;;
@@ -4096,7 +4100,7 @@ rclone_preamble() { # what a launcher sends ahead of a driver: the helper that p
 lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder, with the driver and its paths moved into the sandbox, the waits of its hold shortened, NAME=value moving a named value of the driver on from there, and a config beside it
   local dir="$LOCK_DIR/$1" text="$2" literal pair moved=()
   shift 2
-  for pair in QUEUE_POLL_SECONDS=0.05 STORE_POLL_SECONDS=0.05 READBACK_POLL_SECONDS=0.05 QUEUE_WAIT_SECONDS=20 STORE_WAIT_SECONDS=5 "$@"; do
+  for pair in QUEUE_POLL_SECONDS=0.05 STORE_POLL_SECONDS=0.05 READBACK_POLL_SECONDS=0.05 QUEUE_WAIT_SECONDS=20 STORE_WAIT_SECONDS=5 STORE_SETTLE_SECONDS=1 "$@"; do
     moved+=(-e "s#^readonly ${pair%%=*}=.*#readonly ${pair%%=*}=${pair#*=}#")
   done
   rm -rf "$dir"; mkdir -p "$dir"
@@ -4774,7 +4778,67 @@ plane_restore_refused() { # <the driver's text> <a script run in the folder of t
   plane_restore_quiet >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
 }
-plane_restore_stopped() { # <the driver's text> <pgdb: written|restored> <minio: written|restored> <what the output says> [<knob>...] — a restore that stops half way: ends 0 when it ended 70 saying that, left the volumes as asked, left the fetched backup and the replaced content on the machine, named the two commands, and printed no secret; what is wrong stands in $OUT/verdict
+plane_put_back_commands() { # — the put-back commands the last restore named, one a line, without their colors and indents
+  sed 's/\x1b\[[0-9;]*m//g; s/^ *//' "$LOCK_DIR/prestore/out" "$LOCK_DIR/prestore/err" | grep "^sudo sh -c 'microk8s kubectl -n plane scale " || true
+}
+plane_put_back_wrong() { # <pgdb: written|restored> <minio: written|restored> — says where the last restore named no put-back command for a volume it moved aside, or one for a volume it did not touch; ends 0
+  local name state=("$1" "$2") index=0 named
+  for name in pgdb minio; do
+    named="$(plane_put_back_commands | grep -c "scale statefulset/plane-$name-wl --replicas=0 " || true)"
+    if [ "${state[$index]}" = restored ]; then
+      [ "$named" = 1 ] || echo "the restore named $named put-back command(s) for the volume of plane-$name-wl, not 1, although it moved that volume aside"
+    else
+      [ "$named" = 0 ] || echo "the restore named a put-back command for the volume of plane-$name-wl, although it did not touch that volume"
+    fi
+    index=$(( index + 1 ))
+  done
+  return 0
+}
+plane_put_back_run() { # <seconds> — runs each put-back command the last restore named as an operator runs it, without sudo and with the stand-ins in front, each ended after that many seconds at the latest; says each that did not end 0, with its code; ends 0
+  local line code
+  while IFS= read -r line; do
+    code=0
+    ( PATH="$STANDIN:$PATH"; eval "timeout $1 ${line#sudo }" ) > /dev/null 2>&1 || code=$?
+    [ "$code" = 0 ] || echo "the put-back command ended with $code: $line"
+  done < <(plane_put_back_commands)
+  return 0
+}
+plane_put_back_proven() { # — the put-back commands of the last restore, which moved both volumes aside, run once each store wrote a file on the backup: ends 0 when each waits and touches no volume while a pod of its store stands, and once none stands, each ends 0, both volumes hold what was written after the backup and nothing written on the backup, and both stores run with one replica again; what is wrong stands in $OUT/verdict
+  local claim name
+  : > "$OUT/verdict"
+  for claim in "$PLANE_PGDB_CLAIM" "$PLANE_MINIO_CLAIM"; do echo on-the-backup > "$(plane_volume_dir "$claim")/written-on-the-backup"; done
+  printf '%s\n' plane/plane-pgdb-wl plane/plane-minio-wl > "$STANDIN/cluster/knob-pods-stay"
+  [ "$(plane_put_back_run 1 | grep -c 'ended with 124' || true)" = 2 ] || echo 'the put-back commands did not both wait while a pod of their store stood' >> "$OUT/verdict"
+  plane_volumes_wrong restored restored >> "$OUT/verdict"
+  rm "$STANDIN/cluster/knob-pods-stay"
+  plane_put_back_run 20 >> "$OUT/verdict"
+  plane_volumes_wrong written written >> "$OUT/verdict"
+  for claim in "$PLANE_PGDB_CLAIM" "$PLANE_MINIO_CLAIM"; do
+    [ ! -e "$(plane_volume_dir "$claim")/written-on-the-backup" ] || echo "the volume of $claim still holds a file written on the backup" >> "$OUT/verdict"
+  done
+  for name in pgdb minio; do
+    [ "$(cat "$STANDIN/cluster/plane--plane-$name-wl.replicas")" = 1 ] || echo "plane-$name-wl does not run with its one replica again" >> "$OUT/verdict"
+  done
+  [ ! -s "$OUT/verdict" ]
+}
+plane_restore_part() { # <the driver's text> — a restore whose move aside of the volume of plane-pgdb-wl stops at a folder it cannot move: ends 0 when it ended 70 saying so, named one put-back command, and that command, run as an operator runs it, put back what the volume held and left the folder in it; what is wrong stands in $OUT/verdict
+  local dir named
+  plane_restore_reset ''
+  dir="$(plane_volume_dir "$PLANE_PGDB_CLAIM")"
+  mkdir -m 555 "$dir/not-movable"
+  plane_restore_run "$1" "$PLANE_ID"
+  : > "$OUT/verdict"
+  [ "$LOCK_CODE" = 70 ] || echo "the restore ended with $LOCK_CODE, not 70: $(tail -n 2 "$LOCK_DIR/prestore/err" | tr '\n' ' ')" >> "$OUT/verdict"
+  grep -qF -- 'plane/statefulset/plane-pgdb-wl: its volume could not be moved aside' "$LOCK_DIR/prestore/out" "$LOCK_DIR/prestore/err" || echo 'the restore did not say that the volume of plane-pgdb-wl could not be moved aside' >> "$OUT/verdict"
+  named="$(plane_put_back_commands | wc -l)"
+  [ "$named" -eq 1 ] || echo "the restore named $named put-back command(s), not 1" >> "$OUT/verdict"
+  plane_put_back_run 20 >> "$OUT/verdict"
+  plane_volumes_wrong written written >> "$OUT/verdict"
+  [ -d "$dir/not-movable" ] || echo 'the put-back command took away the folder the move aside left in the volume' >> "$OUT/verdict"
+  plane_restore_quiet >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+plane_restore_stopped() { # <the driver's text> <pgdb: written|restored> <minio: written|restored> <what the output says> [<knob>...] — a restore that stops half way: ends 0 when it ended 70 saying that, left the volumes as asked, left the fetched backup and the replaced content on the machine, named a put-back command for each volume it moved aside and none for one it did not touch, named the command that clears both folders, and printed no secret; what is wrong stands in $OUT/verdict
   local text="$1" pgdb="$2" minio="$3" said="$4" claim kept
   shift 4
   plane_restore_reset ''
@@ -4793,7 +4857,7 @@ plane_restore_stopped() { # <the driver's text> <pgdb: written|restored> <minio:
     [ "$(cat "$kept/plane--$PLANE_MINIO_CLAIM/payload" 2> /dev/null)" = "written-after-the-backup-of-$PLANE_MINIO_CLAIM" ] || echo 'the content the restore replaced in the volume of plane-minio-wl is not kept' >> "$OUT/verdict"
   fi
   grep -qF -- "sudo rm -rf $LOCK_DIR/prestore/backups/restore-$PLANE_ID $kept" "$LOCK_DIR/prestore/out" "$LOCK_DIR/prestore/err" || echo 'the restore did not name the command that clears both folders' >> "$OUT/verdict"
-  grep -qF -- "microk8s kubectl -n plane scale statefulset/" "$LOCK_DIR/prestore/out" "$LOCK_DIR/prestore/err" || echo 'the restore did not name the command that puts the old content back' >> "$OUT/verdict"
+  plane_put_back_wrong "$pgdb" "$minio" >> "$OUT/verdict"
   plane_restore_quiet >> "$OUT/verdict"
   [ ! -s "$OUT/verdict" ]
 }
@@ -4847,6 +4911,20 @@ grep -qF -- 'an earlier restore of' "$LOCK_DIR/prestore/err" || echo 'the second
   || echo 'the second restore did not leave the replaced content where the first left it' >> "$OUT/verdict"
 plane_restore_quiet >> "$OUT/verdict"
 [ ! -s "$OUT/verdict" ] || fail "plane-restore: folders left by a restore that stopped did not refuse the next one: $(cat "$OUT/verdict")"
+# a cluster that does not answer whether the pods of a store are gone stops the restore before the volume is touched; a store that reads ready once and then
+# no more, as a store with no readiness probe that ends on the content it was given does, stops it with 70, and the put-back commands it then names put back
+# what both volumes held once no pod of their store stands; the command for a volume whose move aside stopped part way puts it back without emptying it
+plane_restore_stopped "$PLANE_RESTORE_TEXT" written written 'was not stopped' pods-unanswered STORE_WAIT_SECONDS=1 \
+  || fail "plane-restore: a cluster that did not answer whether the pods of a store are gone did not stop the restore before the volume was touched: $(cat "$OUT/verdict")"
+plane_restore_stopped "$PLANE_RESTORE_TEXT" restored restored 'plane/statefulset/plane-minio-wl: reads 0 ready replica(s) of the 1 it had, after 1 s' knob-ready-once=plane/plane-minio-wl STORE_WAIT_SECONDS=1 \
+  || fail "plane-restore: a store that read ready once and then no more did not stop the restore as it must: $(cat "$OUT/verdict")"
+plane_put_back_proven || fail "plane-restore: the put-back commands a stopped restore named did not put back what the volumes held: $(cat "$OUT/verdict")"
+if [ "$(id -u)" = 0 ]; then
+  echo 'test: NOT RUN — a move aside that stops part way: uid 0 moves a folder of mode 555, so this run plants nothing; a run as a user that is not root checks it'
+else
+  plane_restore_part "$PLANE_RESTORE_TEXT" || fail "plane-restore: a volume whose move aside stopped part way was not put back as it held: $(cat "$OUT/verdict")"
+  ok 'plane-restore: a volume whose move aside stops part way ends 70, and the put-back command it names moves back what was moved without emptying the volume'
+fi
 
 # a restore and a backup never run at once: the one that comes second is refused with 75 naming the act and the run of the one that holds the lock
 plane_restore_lock() { # <restore|backup> <the restore driver's text> — the holder is held inside its store loop and the other started: ends 0 when the other ended 75, named the act, run and start of the holder, scaled and patched nothing and made no folder, and the holder ran to its end once let go; what is wrong stands in $OUT/verdict
@@ -4894,11 +4972,14 @@ plane_restore_lock() { # <restore|backup> <the restore driver's text> — the ho
 }
 plane_restore_lock backup "$PLANE_RESTORE_TEXT" || fail "plane-restore: a restore was not refused while a backup of the set plane held the stores: $(cat "$OUT/verdict")"
 plane_restore_lock restore "$PLANE_RESTORE_TEXT" || fail "plane-restore: a backup was not refused while a restore held the stores: $(cat "$OUT/verdict")"
-ok 'plane-restore puts the backup of the set plane back store by store with the replicas each had, opens each archive with --numeric-owner and leaves nothing on the machine; a flipped byte, a manifest of another FQDN, stage or set, a count that is not 2, a missing archive, an archive no checksum holds or one sealed with another passphrase, a backup the box does not list, a workload or a volume that is not there, each end before a store is stopped with 65 or 66; a store that cannot be stopped or started or does not read ready ends 70 with the folders kept and the two commands named; a restore and a backup refuse each other with 75 naming the act'
+ok 'plane-restore puts the backup of the set plane back store by store with the replicas each had, opens each archive with --numeric-owner and leaves nothing on the machine; a flipped byte, a manifest of another FQDN, stage or set, a count that is not 2, a missing archive, an archive no checksum holds or one sealed with another passphrase, a backup the box does not list, a workload or a volume that is not there, each end before a store is stopped with 65 or 66; a store that cannot be stopped or started, a cluster that does not answer whether its pods are gone, a store that does not read ready or reads ready once and then no more, each ends 70 with the folders kept, a put-back command named for each volume it moved aside and none for one it did not touch, and the command that clears both folders; those put-back commands wait while a pod of their store stands and then put back what each volume held; a restore and a backup refuse each other with 75 naming the act'
 
 # planted defects of plane-restore, each in a copy of the driver, each of which a case above must turn red, and an innocent that none may: a restore that stops a store before it has checked the checksums,
 # one that does not keep the fetched backup once a store is stopped, one that starts a store with one replica, one that opens an archive without --numeric-owner, one that does not read the set of the
-# manifest, one that does not refuse the folders of an earlier restore, one that takes no lock, one whose record names no act, and the two rows in the other order
+# manifest, one that does not refuse the folders of an earlier restore, one that takes no lock, one whose record names no act, one that takes a store for ready at its first
+# ready look, one that takes no answer about the pods for no pod, one that names a put-back command for a volume it did not touch, one that names none for the store it
+# restored before, one whose put-back commands do not wait until the pods are gone, one whose put-back commands do not empty the volume, one that empties a volume it moved
+# aside part way; and the innocents: the two rows in the other order, and put-back commands that look for the pods every second
 plant "$PLANE_RESTORE_TEXT" $'root sh -c "cd \'$FETCH\' && grep -E' $'K -n plane scale statefulset/plane-pgdb-wl --replicas=0 >/dev/null\nroot sh -c "cd \'$FETCH\' && grep -E'; RESTORE_SCALES_FIRST="$PLANTED_TEXT"
 plant "$PLANE_RESTORE_TEXT" $'KEEP=1\n' ''; RESTORE_DROPS_FETCH="$PLANTED_TEXT"
 plant "$PLANE_RESTORE_TEXT" 'start_store "$ns" "$workload" "$kind" "$want" || store_refused' 'start_store "$ns" "$workload" "$kind" 1 || store_refused'; RESTORE_STARTS_ONE="$PLANTED_TEXT"
@@ -4907,6 +4988,14 @@ plant "$PLANE_RESTORE_TEXT" 'for field in FQDN STAGE SET; do' 'for field in FQDN
 plant "$PLANE_RESTORE_TEXT" 'if root test -e "$FETCH" || root test -e "$KEPT"; then' 'if false; then'; RESTORE_IGNORES_EARLIER="$PLANTED_TEXT"
 plant "$PLANE_RESTORE_TEXT" 'flock -n -E 75 9 || LOCKED=$?' 'LOCKED=0'; RESTORE_NO_LOCK="$PLANTED_TEXT"
 plant "$PLANE_RESTORE_TEXT" $'\'%s %s %s\\n\' "$(date -u +%Y%m%dT%H%M%SZ)" "$$" plane-restore >' $'\'%s %s\\n\' "$(date -u +%Y%m%dT%H%M%SZ)" "$$" >'; RESTORE_RECORD_NO_ACT="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" '[ $(( SECONDS - since )) -lt "$STORE_SETTLE_SECONDS" ] || break' 'break'; RESTORE_NO_SETTLE="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" 'until pods=$(K -n "$1" get pods -o name 2>/dev/null) && ! grep -q "^pod/${2}" <<< "$pods"; do' 'while [ "$(K -n "$1" get pods -o name 2>/dev/null | grep -c "^pod/${2}")" != 0 ]; do'; RESTORE_NO_ANSWER_IS_GONE="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" 'store_refused none "was not stopped' 'store_refused all "was not stopped'; RESTORE_PUTS_BACK_UNTOUCHED="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" 'for (( at = 0; at < index - 1; at++ )); do' 'for (( at = 0; at < 0; at++ )); do'; RESTORE_FORGETS_EARLIER="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" ' && until p=\$(microk8s kubectl -n $1 get pods -o name) && ! echo \"\$p\" | grep -q ^pod/$3; do sleep 2; done' ''; RESTORE_PUTS_BACK_RUNNING="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" '[ "$7" = 0 ] || empty=' '[ "$7" = 1 ] || empty='; RESTORE_KEEPS_BACKUP="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" '|| store_refused part "' '|| store_refused all "'; RESTORE_EMPTIES_PART="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" 'do sleep 2; done' 'do sleep 1; done'; RESTORE_PUT_BACK_LOOKS_EVERY_SECOND="$PLANTED_TEXT"
 RESTORE_ROWS_SWAPPED="$(printf '%s\n' "$PLANE_RESTORE_TEXT" | sed '/^  "plane|pvc-plane-pgdb-vol-plane-pgdb-wl-0|plane-pgdb-wl|statefulset"$/{N;s/^\(.*\)\n\(.*\)$/\2\n\1/;}')"
 [ "$RESTORE_ROWS_SWAPPED" != "$PLANE_RESTORE_TEXT" ] || fail 'the two rows of the restore were not put in the other order — the probe proves nothing'
 ! plane_restore_refused "$RESTORE_SCALES_FIRST" "$FLIP_A_BYTE" "$PLANE_ID" 65 'the checksums in manifest.txt of backup' \
@@ -4930,8 +5019,38 @@ RESTORE_AGAIN=1 plane_restore_run "$RESTORE_IGNORES_EARLIER" "$PLANE_ID"
 grep -qF 'the second driver ended with' "$OUT/verdict" || fail "the planted restore that takes no lock was not refused for what it is: $(cat "$OUT/verdict")"
 ! plane_restore_lock restore "$RESTORE_RECORD_NO_ACT" || fail 'the planted restore whose record names no act was not caught — the probe proves nothing'
 grep -qF 'the refusal did not name the running run' "$OUT/verdict" || fail "the planted restore whose record names no act was not refused for what it is: $(cat "$OUT/verdict")"
+! plane_restore_stopped "$RESTORE_NO_SETTLE" restored restored 'plane/statefulset/plane-minio-wl: reads 0 ready replica(s) of the 1 it had, after 1 s' knob-ready-once=plane/plane-minio-wl STORE_WAIT_SECONDS=1 \
+  || fail 'the planted restore that takes a store for ready at its first ready look was not caught — the probe proves nothing'
+grep -qF 'the restore ended with 0, not 70' "$OUT/verdict" || fail "the planted restore that takes a store for ready at its first ready look was not refused for what it is: $(cat "$OUT/verdict")"
+! plane_restore_stopped "$RESTORE_NO_ANSWER_IS_GONE" written written 'was not stopped' pods-unanswered STORE_WAIT_SECONDS=1 \
+  || fail 'the planted restore that takes no answer about the pods for no pod was not caught — the probe proves nothing'
+grep -qF 'the restore ended with 0, not 70' "$OUT/verdict" || fail "the planted restore that takes no answer about the pods for no pod was not refused for what it is: $(cat "$OUT/verdict")"
+! plane_restore_stopped "$RESTORE_PUTS_BACK_UNTOUCHED" written written 'was not stopped' knob-stop-fails=plane/plane-pgdb-wl \
+  || fail 'the planted restore that names a put-back command for a volume it did not touch was not caught — the probe proves nothing'
+grep -qF 'the restore named a put-back command for the volume of plane-pgdb-wl, although it did not touch that volume' "$OUT/verdict" \
+  || fail "the planted restore that names a put-back command for a volume it did not touch was not refused for what it is: $(cat "$OUT/verdict")"
+! plane_restore_stopped "$RESTORE_FORGETS_EARLIER" restored restored 'plane/statefulset/plane-minio-wl: reads 0 ready replica(s) of the 1 it had, after 1 s' knob-not-ready=plane/plane-minio-wl STORE_WAIT_SECONDS=1 \
+  || fail 'the planted restore that names no put-back command for the store it restored before was not caught — the probe proves nothing'
+grep -qF 'the restore named 0 put-back command(s) for the volume of plane-pgdb-wl, not 1' "$OUT/verdict" \
+  || fail "the planted restore that names no put-back command for the store it restored before was not refused for what it is: $(cat "$OUT/verdict")"
+plane_restore_stopped "$RESTORE_PUTS_BACK_RUNNING" restored restored 'plane/statefulset/plane-minio-wl: reads 0 ready replica(s) of the 1 it had, after 1 s' knob-ready-once=plane/plane-minio-wl STORE_WAIT_SECONDS=1 || fail "the planted restore whose put-back commands do not wait did not stop as the case needs: $(cat "$OUT/verdict")"
+! plane_put_back_proven || fail 'the planted restore whose put-back commands do not wait until the pods are gone was not caught — the probe proves nothing'
+grep -qF 'the put-back commands did not both wait while a pod of their store stood' "$OUT/verdict" \
+  || fail "the planted restore whose put-back commands do not wait until the pods are gone was not refused for what it is: $(cat "$OUT/verdict")"
+plane_restore_stopped "$RESTORE_KEEPS_BACKUP" restored restored 'plane/statefulset/plane-minio-wl: reads 0 ready replica(s) of the 1 it had, after 1 s' knob-ready-once=plane/plane-minio-wl STORE_WAIT_SECONDS=1 || fail "the planted restore whose put-back commands do not empty the volume did not stop as the case needs: $(cat "$OUT/verdict")"
+! plane_put_back_proven || fail 'the planted restore whose put-back commands do not empty the volume was not caught — the probe proves nothing'
+grep -qF 'still holds a file written on the backup' "$OUT/verdict" \
+  || fail "the planted restore whose put-back commands do not empty the volume was not refused for what it is: $(cat "$OUT/verdict")"
+if [ "$(id -u)" != 0 ]; then
+  ! plane_restore_part "$RESTORE_EMPTIES_PART" || fail 'the planted restore that empties a volume it moved aside part way was not caught — the probe proves nothing'
+  grep -qF 'the put-back command took away the folder the move aside left in the volume' "$OUT/verdict" \
+    || fail "the planted restore that empties a volume it moved aside part way was not refused for what it is: $(cat "$OUT/verdict")"
+  ok 'the planted restore that empties a volume it moved aside part way is caught'
+fi
+{ plane_restore_stopped "$RESTORE_PUT_BACK_LOOKS_EVERY_SECOND" restored restored 'plane/statefulset/plane-minio-wl: reads 0 ready replica(s) of the 1 it had, after 1 s' knob-ready-once=plane/plane-minio-wl STORE_WAIT_SECONDS=1 && plane_put_back_proven; } \
+  || fail "the put-back commands that look for the pods every second were refused: $(cat "$OUT/verdict")"
 plane_restored "$RESTORE_ROWS_SWAPPED" || fail "the two rows of the restore in the other order were refused: $(cat "$OUT/verdict")"
-ok 'the planted restores are caught: one that stops a store before it checks the checksums, one that does not keep the fetched backup, one that starts a store with one replica, one that opens an archive without --numeric-owner, one that does not read the set, one that ignores the folders of an earlier restore, one that takes no lock, one whose record names no act; the two rows in the other order are not refused'
+ok 'the planted restores are caught: one that stops a store before it checks the checksums, one that does not keep the fetched backup, one that starts a store with one replica, one that opens an archive without --numeric-owner, one that does not read the set, one that ignores the folders of an earlier restore, one that takes no lock, one whose record names no act, one that takes a store for ready at its first ready look, one that takes no answer about the pods for no pod, one that names a put-back command for a volume it did not touch, one that names none for the store it restored before, one whose put-back commands do not wait until the pods are gone, one whose put-back commands do not empty the volume; the two rows in the other order and put-back commands that look every second are not refused'
 for claim in "$PLANE_PGDB_CLAIM" "$PLANE_MINIO_CLAIM"; do
   rm -rf "$(plane_volume_dir "$claim")"; mkdir -p "$(plane_volume_dir "$claim")"
   echo "planted-store-of-$claim" > "$(plane_volume_dir "$claim")/payload"
