@@ -220,13 +220,6 @@ configs:
   # deployment puts the first operator into it with the
   # `authentik_group_membership` step, and anybody later is added to it in the
   # provider.
-  # This ArgoCD also admits `platform-readers`, bound beside `admins` in
-  # clusters/bootstrap/idp/blueprints/99-argocd.yaml for the sign-in proof of the
-  # e2e runner. No line of `policy.csv` names that group, so its members get
-  # `policy.default: role:readonly` below. scripts/plane-test-accounts.test.mjs
-  # holds which group each application admits beside `admins`, and
-  # scripts/platform-test-accounts.test.mjs holds `platform-readers` out of every
-  # line of `policy.csv`.
   rbac:
     policy.csv: |
       g, admins, role:admin

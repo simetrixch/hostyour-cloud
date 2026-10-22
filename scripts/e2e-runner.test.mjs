@@ -185,36 +185,41 @@ test('PLANTED DEFECT: a step without the refusals hands every unsafe value to Pl
   }
 });
 
-// THE SIGN-IN RUNS: the Tasks that prove a person signs in through the identity provider. run-plane-sign-in proves
-// Plane's sign-in as the two test accounts of clusters/bootstrap/idp/blueprints/20-plane-test-accounts.yaml;
-// run-argocd-sign-in and run-headlamp-sign-in prove the sign-in of Argo CD and Headlamp as the account of
-// 21-platform-test-accounts.yaml, and expect the account of the wrong group, from the Plane blueprint, to be refused.
-// Each targets one host of the installation itself, so it names no tenant, and every password reaches it from a Secret
-// that the namespace's default SecretStore reads: the store of the E2E passwords reaches tenants' entries and nothing
-// else, and its role stays as it is.
+// THE SIGN-IN RUN: the Task that proves Plane signs a person in through Forgejo and the identity provider, as the two test
+// accounts of clusters/bootstrap/idp/blueprints/20-plane-test-accounts.yaml. It targets the installation's own Plane, so it
+// names no tenant, and the two passwords reach it from the Secret plane-test-account, which the namespace's default
+// SecretStore reads: the store of the E2E passwords reaches tenants' entries and nothing else, and its role stays as it is.
+// Argo CD, Headlamp and the Vault UI are the owner's own consoles and get no test account and no proof run, so no Task and
+// no ExternalSecret of the chart may carry their names or read an entry of a test account for them.
 const clusterDomain = yaml('.global.domain', readFileSync('scripts/standin/cluster-map.yaml', 'utf8'));
 // yq prints nothing for a document that matches nothing, and a missing object is a finding, not a crash.
 const pick = (expression, rendered) => JSON.parse(execFileSync('yq', ['ea', '-o=json', `[${expression}] | .[0] // null`, '-'], {input: rendered, encoding: 'utf8'}));
 const SIGN_IN_SECRETS = {
   'plane-test-account': ['password=prod/app/plane-test-account:password', 'uninvited-password=prod/app/plane-test-account:uninvited-password'],
-  'platform-test-account': ['password=prod/app/platform-test-account:password'],
 };
-const WRONG_GROUP = {variable: 'E2E_PLANE_UNINVITED_PASSWORD', secret: 'plane-test-account', key: 'uninvited-password'};
-const PLATFORM_ACCOUNT = {variable: 'E2E_PLATFORM_ACCOUNT_PASSWORD', secret: 'platform-test-account', key: 'password'};
 const SIGN_IN_TASKS = {
-  'run-plane-sign-in': {host: 'plane', config: 'playwright.plane.config.ts', passwords: [{variable: 'E2E_PLANE_ACCOUNT_PASSWORD', secret: 'plane-test-account', key: 'password'}, WRONG_GROUP]},
-  'run-argocd-sign-in': {host: 'argo', config: 'playwright.argocd.config.ts', passwords: [PLATFORM_ACCOUNT, WRONG_GROUP]},
-  'run-headlamp-sign-in': {host: 'kube', config: 'playwright.headlamp.config.ts', passwords: [PLATFORM_ACCOUNT, WRONG_GROUP]},
+  'run-plane-sign-in': {host: 'plane', config: 'playwright.plane.config.ts', passwords: [
+    {variable: 'E2E_PLANE_ACCOUNT_PASSWORD', secret: 'plane-test-account', key: 'password'},
+    {variable: 'E2E_PLANE_UNINVITED_PASSWORD', secret: 'plane-test-account', key: 'uninvited-password'},
+  ]},
 };
+// A name or a Vault key that belongs to a console of the owner: Argo CD, Headlamp or the platform test account that proved them.
+const CONSOLE_PATTERN = /argocd|headlamp|platform/;
 const signInObjects = (rendered = runner.stdout) => ({
   tasks: Object.fromEntries(Object.keys(SIGN_IN_TASKS).map(name => [name, pick(`select(.kind == "Task" and .metadata.name == "${name}")`, rendered)])),
   secrets: Object.fromEntries(Object.keys(SIGN_IN_SECRETS).map(name => [name, pick(`select(.kind == "ExternalSecret" and .metadata.name == "${name}")`, rendered)])),
   stores: JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(.kind == "SecretStore") | .metadata.name]', '-'], {input: rendered, encoding: 'utf8'})),
+  taskNames: JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(.kind == "Task") | .metadata.name]', '-'], {input: rendered, encoding: 'utf8'})),
+  secretReads: JSON.parse(execFileSync('yq', ['ea', '-o=json', '[select(.kind == "ExternalSecret") | {"name": .metadata.name, "keys": [.spec.data[]?.remoteRef.key]}]', '-'], {input: rendered, encoding: 'utf8'})),
 });
 
 /** Every way a Task or its Secret lets a password out, or reads it through the wrong store, named. */
-function signInFindings({tasks, secrets, stores}) {
+function signInFindings({tasks, secrets, stores, taskNames, secretReads}) {
   const found = [];
+  for (const name of taskNames.filter(each => CONSOLE_PATTERN.test(each))) found.push(`the Task ${name} proves a sign-in to a console of the owner, which gets no proof run`);
+  for (const {name, keys} of secretReads) {
+    if (CONSOLE_PATTERN.test(name) || keys.some(key => CONSOLE_PATTERN.test(key))) found.push(`the ExternalSecret ${name} reads ${keys} for a console of the owner, which gets no test account`);
+  }
   for (const [name, expected] of Object.entries(SIGN_IN_SECRETS)) {
     const secret = secrets[name];
     if (!secret) { found.push(`no ExternalSecret ${name}`); continue; }
@@ -254,12 +259,12 @@ function signInFindings({tasks, secrets, stores}) {
   return found;
 }
 
-test('each sign-in Task gets its passwords from its Secrets through secretKeyRef, and the Secrets are read by the default store', () => {
+test('the sign-in Task gets its passwords from plane-test-account through secretKeyRef, the Secret is read by the default store, and no Task or ExternalSecret serves a console of the owner', () => {
   assert.equal(runner.status, 0, runner.stderr);
   assert.deepEqual(signInFindings(signInObjects()), []);
 });
 
-test('PLANTED DEFECT: a password as a value, a param, a printed password, E2E_PASSWORD, a reporter, another proof\'s account or the store of the E2E passwords is each found, on every Task', () => {
+test('PLANTED DEFECT: a password as a value, a param, a printed password, E2E_PASSWORD, a reporter, another account, the store of the E2E passwords or a Task or Secret of a console is each found', () => {
   assert.equal(runner.status, 0, runner.stderr);
   const taskPlants = {
     'a password as a literal value': (task, {passwords}) => { const env = task.spec.steps[0].env.find(e => e.name === passwords[0].variable); env.valueFrom = undefined; env.value = 'hunter2-hunter2'; },
@@ -269,9 +274,8 @@ test('PLANTED DEFECT: a password as a value, a param, a printed password, E2E_PA
     'a reporter that prints the steps': task => { task.spec.steps[0].env.push({name: 'PLAYWRIGHT_LIST_PRINT_STEPS', value: '1'}); },
     'a trace of the script': task => { task.spec.steps[0].script = task.spec.steps[0].script.replace('set -eu', 'set -eux'); },
     'the Secret of a tenant for the account of the wrong group': (task, {passwords}) => { task.spec.steps[0].env.find(e => e.name === passwords[1].variable).valueFrom.secretKeyRef.name = 'e2e-aaaaaaaaaaaa-prod'; },
-    'the Secret of the other proof for the first account': (task, {passwords}) => { task.spec.steps[0].env.find(e => e.name === passwords[0].variable).valueFrom.secretKeyRef.name = passwords[0].secret === 'plane-test-account' ? 'platform-test-account' : 'plane-test-account'; },
-    'the password of an account this proof does not use': (task, {passwords}) => { task.spec.steps[0].env.push({name: ['E2E_PLANE_ACCOUNT_PASSWORD', 'E2E_PLATFORM_ACCOUNT_PASSWORD'].find(v => !passwords.some(p => p.variable === v)), valueFrom: {secretKeyRef: {name: 'plane-test-account', key: 'password'}}}); },
-    'the case at another host': (task, {host}) => { task.spec.steps[0].env.find(e => e.name === 'PLAYWRIGHT_BASE_URL').value = `https://${host === 'argo' ? 'kube' : 'argo'}.${clusterDomain}`; },
+    'the password of an account this proof does not use': task => { task.spec.steps[0].env.push({name: 'E2E_OTHER_ACCOUNT_PASSWORD', valueFrom: {secretKeyRef: {name: 'plane-test-account', key: 'password'}}}); },
+    'the case at another host': task => { task.spec.steps[0].env.find(e => e.name === 'PLAYWRIGHT_BASE_URL').value = `https://other.${clusterDomain}`; },
     'the script runs another config': (task, {config}) => { task.spec.steps[0].script = task.spec.steps[0].script.replace(config, 'playwright.config.ts'); },
     'a session that outlives its pod': task => { task.spec.workspaces = [{name: 'session'}]; },
     'a Task that is missing': (task, {}, tasks, name) => { tasks[name] = null; },
@@ -294,6 +298,17 @@ test('PLANTED DEFECT: a password as a value, a param, a printed password, E2E_PA
       plant(objects.secrets[secretName], objects.secrets, secretName);
       assert.notDeepEqual(signInFindings(objects), [], `${secretName}: ${plantName}`);
     }
+  }
+  const consolePlants = {
+    'a rendered Task run-argocd-sign-in': objects => { objects.taskNames.push('run-argocd-sign-in'); },
+    'a rendered Task run-headlamp-sign-in': objects => { objects.taskNames.push('run-headlamp-sign-in'); },
+    'a rendered ExternalSecret platform-test-account': objects => { objects.secretReads.push({name: 'platform-test-account', keys: ['prod/app/platform-test-account']}); },
+    'an ExternalSecret under another name that reads prod/app/platform-test-account': objects => { objects.secretReads.push({name: 'console-password', keys: ['prod/app/platform-test-account']}); },
+  };
+  for (const [plantName, plant] of Object.entries(consolePlants)) {
+    const objects = structuredClone(signInObjects());
+    plant(objects);
+    assert.notDeepEqual(signInFindings(objects), [], plantName);
   }
   const throughE2ePasswords = helm(...runnerArgs, '--set-string', 'global.secretStoreName=e2e-passwords');
   assert.equal(throughE2ePasswords.status, 0, throughE2ePasswords.stderr);

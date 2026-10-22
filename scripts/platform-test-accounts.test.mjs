@@ -4,20 +4,30 @@ import {readdirSync, readFileSync} from 'node:fs';
 import test from 'node:test';
 import {isDeepStrictEqual} from 'node:util';
 
-// The account of the Argo CD and Headlamp sign-in proofs (digita-testkit cases/argocd-sign-in.spec.ts and
-// cases/headlamp-sign-in.spec.ts). It is declared here and made by the identity provider with the password of
-// its own Vault value, and it is a member of the group platform-readers alone: a group that grants no
-// administrator right in Authentik, and that Argo CD maps to no role, so its members get the read-only
-// default of Argo CD and, on the cluster, the role `view`. Which applications admit the group is held by
-// scripts/plane-test-accounts.test.mjs; this file holds what is about the account, the group and Argo CD's
-// own admission.
+// The account `platform-sign-in` and the group `platform-readers` once served a sign-in proof of Argo CD and Headlamp.
+// Those are the owner's own consoles and get no test account and no proof run, so both are gone. An entry that a
+// blueprint stops declaring does not delete its object in Authentik, so clusters/bootstrap/idp/blueprints/
+// 21-platform-test-accounts.yaml stays and declares both absent; the bindings of the group fall with it. This file holds
+// that removal, that no other blueprint declares either again, that no application of the identity provider admits
+// the group (scripts/plane-test-accounts.test.mjs holds that), and that Argo CD's own admission is what it was
+// before the account existed: `admins` administrate it and anybody else gets the read-only default.
 
-const blueprintText = readFileSync('clusters/bootstrap/idp/blueprints/21-platform-test-accounts.yaml', 'utf8');
+const blueprintDirectory = 'clusters/bootstrap/idp/blueprints';
+const REMOVAL_BLUEPRINT = '21-platform-test-accounts.yaml';
+const PLANE_BLUEPRINT = '20-plane-test-accounts.yaml';
+const blueprintTexts = Object.fromEntries(readdirSync(blueprintDirectory).filter(name => name.endsWith('.yaml')).sort()
+  .map(name => [name, readFileSync(`${blueprintDirectory}/${name}`, 'utf8')]));
 const argocdText = readFileSync('clusters/bootstrap/argocd/values.tpl', 'utf8');
 const idpValues = JSON.parse(execFileSync('yq', ['-o=json', '.', 'clusters/bootstrap/idp/values.yaml'], {encoding: 'utf8'}));
 
 const GROUP = 'platform-readers';
-const ACCOUNT = {username: 'platform-sign-in', email: 'simplidigita.ai+platform-sign-in@gmail.com', password: 'IDP_PLATFORM_TEST_ACCOUNT_PASSWORD'};
+const ACCOUNT = 'platform-sign-in';
+const REMOVALS = [
+  {model: 'authentik_core.user', identifiers: {username: ACCOUNT}, state: 'absent'},
+  {model: 'authentik_core.group', identifiers: {name: GROUP}, state: 'absent'},
+];
+
+const parse = text => JSON.parse(execFileSync('yq', ['-o=json', '.', '-'], {input: text, encoding: 'utf8'}));
 
 /** The lines of one key of Argo CD's `rbac:` block, which values.tpl holds as template text and not as YAML. */
 function rbacLines(text, key) {
@@ -33,119 +43,138 @@ function rbacLines(text, key) {
   return block.map(line => line.trim()).filter(line => line !== '' && !line.startsWith('#'));
 }
 
-/** Every way the blueprint or Argo CD's admission breaks the rules above, named. */
-function findings(text, values, argocd) {
+/** Every way the blueprint of the removals is not exactly the removal of the account and of the group, named. */
+function removalFindings(text) {
   const found = [];
-  const blueprint = JSON.parse(execFileSync('yq', ['-o=json', '.', '-'], {input: text, encoding: 'utf8'}));
-  const tag = path => execFileSync('yq', [`${path} | tag`, '-'], {input: text, encoding: 'utf8'}).trim();
-  const groups = blueprint.entries.filter(e => e.model === 'authentik_core.group');
-  if (groups.length !== 1 || groups[0].identifiers.name !== GROUP) return [...found, `the groups are ${groups.map(g => g.identifiers.name)}, not ${GROUP} alone`];
-  const [group] = groups;
-  if (group.state !== 'created') found.push(`the group ${GROUP} is ${group.state ?? 'present'}, so a reconcile would wipe the members the sign-in adds`);
-  if (group.attrs?.is_superuser) found.push(`the group ${GROUP} makes its members superusers`);
-  if (Object.keys(group.attrs ?? {}).some(key => !['name'].includes(key))) found.push(`the group ${GROUP} carries attributes beyond its name: ${Object.keys(group.attrs)}`);
-  if (group.id === undefined) found.push(`the group ${GROUP} has no id, so no account can refer to it`);
-  const users = blueprint.entries.filter(e => e.model === 'authentik_core.user');
-  if (JSON.stringify(users.map(u => u.identifiers.username)) !== JSON.stringify([ACCOUNT.username])) return [...found, `the accounts are ${users.map(u => u.identifiers.username)}, not ${ACCOUNT.username} alone`];
-  const [user] = users;
-  const at = blueprint.entries.indexOf(user);
-  const where = `the account ${ACCOUNT.username}`;
-  if (user.attrs.email !== ACCOUNT.email) found.push(`${where} has the address ${user.attrs.email}`);
-  if (user.attrs.is_active !== true) found.push(`${where} is not active`);
-  if (user.attrs.password !== ACCOUNT.password || tag(`.entries[${at}].attrs.password`) !== '!Env') found.push(`${where} does not take its password from !Env ${ACCOUNT.password}`);
-  if (JSON.stringify(user.attrs.groups) !== JSON.stringify([group.id]) || tag(`.entries[${at}].attrs.groups[0]`) !== '!KeyOf') found.push(`${where} is in other groups than ${GROUP}`);
-  if (user.attrs.is_superuser || user.attrs.attributes?.['goauthentik.io/user/superuser']) found.push(`${where} is a superuser`);
-  if (user.attrs.type !== undefined && user.attrs.type !== 'internal') found.push(`${where} is of the type ${user.attrs.type}`);
-  if (!values.global.podAnnotations['platform/test-accounts'].split(' ').includes(ACCOUNT.username)) found.push(`platform/test-accounts does not list ${ACCOUNT.username}, so the provider never restarts onto the new password`);
-  // Argo CD's admission: no line of policy.csv names the group or the account, and the default role is the read-only one.
-  const policy = rbacLines(argocd, 'policy.csv');
-  if (policy === null || !policy.includes('g, admins, role:admin')) found.push('the policy.csv of Argo CD was not read: it holds no admins line');
-  for (const line of policy ?? []) {
-    if (line.includes(GROUP) || line.includes(ACCOUNT.username)) found.push(`policy.csv of Argo CD names ${GROUP} or ${ACCOUNT.username} in "${line}"`);
+  const blueprint = parse(text);
+  if (blueprint.metadata?.labels?.['blueprints.goauthentik.io/instantiate'] !== 'true') found.push('the blueprint is not instantiated, so Authentik never applies its removals');
+  const entries = (blueprint.entries ?? []).map(({id, ...entry}) => entry);
+  for (const removal of REMOVALS) {
+    if (!entries.some(entry => isDeepStrictEqual(entry, removal))) found.push(`the blueprint does not declare ${JSON.stringify(removal.identifiers)} of ${removal.model} absent with no attrs`);
   }
-  const fallback = rbacLines(argocd, 'policy.default');
-  if (JSON.stringify(fallback) !== JSON.stringify(['role:readonly'])) found.push(`policy.default of Argo CD is ${fallback}, so a member of ${GROUP}, whom no policy line names, gets more than the read-only role`);
+  for (const entry of entries) {
+    if (!REMOVALS.some(removal => isDeepStrictEqual(entry, removal))) found.push(`the blueprint holds ${JSON.stringify(entry)}, which is no removal of the account or the group`);
+  }
+  if (entries.length !== REMOVALS.length) found.push(`the blueprint holds ${entries.length} entries, not ${REMOVALS.length}`);
   return found;
 }
 
-test('the blueprint declares the platform account in the group platform-readers alone with a !Env password, and Argo CD gives that group no role of its own', () => {
-  assert.deepEqual(findings(blueprintText, idpValues, argocdText), []);
-});
-
-test('PLANTED DEFECT: an administrator group, a second group, a literal password, a superuser, another address, a re-asserted group or an Argo CD role for the group is found', () => {
-  const planted = {
-    'a member of admins': ['blueprint', text => text.replace(/groups:\n(\s+)- !KeyOf platform-readers-group/, 'groups:\n$1- !KeyOf platform-readers-group\n$1- !Find [authentik_core.group, [name, admins]]')],
-    'a member of plane-users beside': ['blueprint', text => text.replace(/groups:\n(\s+)- !KeyOf platform-readers-group/, 'groups:\n$1- !KeyOf platform-readers-group\n$1- !Find [authentik_core.group, [name, plane-users]]')],
-    'a literal password': ['blueprint', text => text.replace('!Env IDP_PLATFORM_TEST_ACCOUNT_PASSWORD', 'hunter2-hunter2')],
-    'the password of the Plane account': ['blueprint', text => text.replace('!Env IDP_PLATFORM_TEST_ACCOUNT_PASSWORD', '!Env IDP_PLANE_TEST_ACCOUNT_PASSWORD')],
-    'a superuser': ['blueprint', text => text.replace('is_active: true', 'is_active: true\n      is_superuser: true')],
-    'a group of superusers': ['blueprint', text => text.replace(/(id: platform-readers-group[\s\S]*?attrs:\n\s+name: platform-readers)/, '$1\n      is_superuser: true')],
-    'a group re-asserted at every reconcile': ['blueprint', text => text.replace('\n    state: created\n', '\n    state: present\n')],
-    'a second account': ['blueprint', text => `${text}  - id: planted-account\n    model: authentik_core.user\n    identifiers:\n      username: planted\n    attrs:\n      username: planted\n`],
-    'another address': ['blueprint', text => text.replace('simplidigita.ai+platform-sign-in@gmail.com', 'owner@example.com')],
-    'the bare test mailbox': ['blueprint', text => text.replace('simplidigita.ai+platform-sign-in@gmail.com', 'simplidigita.ai@gmail.com')],
-    'the group an administrator of Argo CD': ['argocd', text => text.replace('g, admins, role:admin\n', 'g, admins, role:admin\n      g, platform-readers, role:admin\n')],
-    'the account an administrator of Argo CD': ['argocd', text => text.replace('g, admins, role:admin\n', 'g, admins, role:admin\n      g, platform-sign-in, role:admin\n')],
-    'a policy for the group': ['argocd', text => text.replace('g, admins, role:admin\n', 'g, admins, role:admin\n      p, platform-readers, applications, sync, */*, allow\n')],
-    'an administrator by default': ['argocd', text => text.replace(/^(\s+)policy\.default: role:readonly$/m, '$1policy.default: role:admin')],
-    'no policy.csv to read': ['argocd', text => text.replace('policy.csv: |', 'policy.csvs: |')],
-  };
-  for (const [name, [kind, plant]] of Object.entries(planted)) {
-    const source = kind === 'blueprint' ? blueprintText : argocdText;
-    const text = plant(source);
-    assert.notEqual(text, source, `${name}: the plant matched nothing`);
-    assert.notDeepEqual(findings(kind === 'blueprint' ? text : blueprintText, idpValues, kind === 'argocd' ? text : argocdText), [], name);
+/** Every blueprint that declares the group or an account other than the two of Plane's sign-in proof present, named. */
+function strayFindings(texts) {
+  const found = [];
+  for (const [file, text] of Object.entries(texts)) {
+    for (const entry of parse(text).entries ?? []) {
+      const state = entry.state ?? 'present';
+      if (entry.model === 'authentik_core.group' && (entry.identifiers?.name === GROUP || entry.attrs?.name === GROUP) && state !== 'absent') found.push(`${file} declares the group ${GROUP} ${state}`);
+      if (entry.model === 'authentik_core.user' && state !== 'absent' && file !== PLANE_BLUEPRINT) found.push(`${file} declares the account ${entry.identifiers?.username} ${state}, and only ${PLANE_BLUEPRINT} declares accounts`);
+    }
   }
-  const unannounced = structuredClone(idpValues);
-  unannounced.global.podAnnotations['platform/test-accounts'] = 'plane-sign-in plane-sign-in-uninvited';
-  assert.notDeepEqual(findings(blueprintText, unannounced, argocdText), [], 'the provider is not told to restart');
-});
-
-test('PLANTED INNOCENT: comments naming the group, in the blueprint and inside policy.csv, change nothing the rules hold', () => {
-  assert.deepEqual(findings(`# planted comment naming platform-readers and !Env\n${blueprintText}`, idpValues, argocdText), []);
-  assert.deepEqual(findings(blueprintText.replace('version: 1', 'version: 1 # planted'), idpValues, argocdText), []);
-  const commented = argocdText.replace('g, admins, role:admin\n', 'g, admins, role:admin\n      # platform-readers has no line here\n');
-  assert.notEqual(commented, argocdText, 'the plant matched');
-  assert.deepEqual(findings(blueprintText, idpValues, commented), []);
-});
-
-// Each file that binds the group creates it again (scripts/plane-test-accounts.test.mjs holds that), and the file Authentik
-// applies first decides what the group is, so every entry that creates it is held to the one the rules above hold.
-const blueprintDirectory = 'clusters/bootstrap/idp/blueprints';
-const blueprintTexts = Object.fromEntries(readdirSync(blueprintDirectory).filter(name => name.endsWith('.yaml')).sort()
-  .map(name => [name, readFileSync(`${blueprintDirectory}/${name}`, 'utf8')]));
-
-/** Every entry of the blueprints that creates the group otherwise than 21-platform-test-accounts.yaml, named; the id is the file's own. */
-function copyFindings(texts) {
-  const isGroup = entry => entry.model === 'authentik_core.group' && (entry.identifiers?.name === GROUP || entry.attrs?.name === GROUP);
-  const groupsOf = text => (JSON.parse(execFileSync('yq', ['-o=json', '.', '-'], {input: text, encoding: 'utf8'})).entries ?? []).filter(isGroup);
-  const shape = ({id, ...entry}) => entry;
-  const [group] = groupsOf(blueprintText);
-  return Object.entries(texts).flatMap(([file, text]) => groupsOf(text).filter(copy => !isDeepStrictEqual(shape(copy), shape(group)))
-    .map(copy => `${file} creates the group ${GROUP} otherwise than 21-platform-test-accounts.yaml: ${JSON.stringify(shape(copy))}`));
+  return found;
 }
 
-test('every blueprint that creates the group platform-readers creates it as 21-platform-test-accounts.yaml does', () => {
-  assert.deepEqual(copyFindings(blueprintTexts), []);
+/** Every way the provider or Argo CD still knows the account or the group, or the owner's admission changed, named. */
+function admissionFindings(values, argocd) {
+  const found = [];
+  if (values.global.podAnnotations['platform/test-accounts'].split(' ').includes(ACCOUNT)) found.push(`platform/test-accounts still lists ${ACCOUNT}, an account that is gone`);
+  const policy = rbacLines(argocd, 'policy.csv');
+  if (policy === null || !policy.includes('g, admins, role:admin')) found.push('the policy.csv of Argo CD was not read or holds no admins line, so the owner is no administrator of it');
+  for (const line of policy ?? []) {
+    if (line.includes(GROUP) || line.includes(ACCOUNT)) found.push(`policy.csv of Argo CD names ${GROUP} or ${ACCOUNT} in "${line}"`);
+  }
+  const fallback = rbacLines(argocd, 'policy.default');
+  if (!isDeepStrictEqual(fallback, ['role:readonly'])) found.push(`policy.default of Argo CD is ${fallback}, not the read-only role it has always been`);
+  return found;
+}
+
+test('the blueprint declares the account platform-sign-in and the group platform-readers absent, with no attrs, and nothing else', () => {
+  assert.deepEqual(removalFindings(blueprintTexts[REMOVAL_BLUEPRINT]), []);
 });
 
-const readersCopy = /( {2}- id: platform-readers-group\n {4}model: authentik_core.group\n) {4}state: created\n( {4}identifiers:\n {6}name: platform-readers\n {4}attrs:\n {6}name: platform-readers\n)/;
-
-test('PLANTED DEFECT: a copy of the group that makes its members superusers, gives it a parent group or re-asserts it is found', () => {
+test('PLANTED DEFECT: an account or group that is not absent, an attr on a removal, a missing or extra entry, or a blueprint that is not instantiated is found', () => {
   const planted = {
-    'a group of superusers in 99-headlamp.yaml': ['99-headlamp.yaml', text => text.replace(readersCopy, '$1    state: created\n$2      is_superuser: true\n')],
-    'a parent group in 99-proxy-headlamp.yaml': ['99-proxy-headlamp.yaml', text => text.replace(readersCopy, '$1    state: created\n$2      parent: !Find [authentik_core.group, [name, admins]]\n')],
-    'the group re-asserted by 99-argocd.yaml': ['99-argocd.yaml', text => text.replace(readersCopy, '$1$2')],
+    'the account without state absent': text => text.replace(/(model: authentik_core\.user\n)\s+state: absent\n/, '$1'),
+    'the account created': text => text.replace(/(model: authentik_core\.user\n\s+)state: absent/, '$1state: created'),
+    'the group created': text => text.replace(/(model: authentik_core\.group\n\s+)state: absent/, '$1state: created'),
+    'the group without state absent': text => text.replace(/(model: authentik_core\.group\n)\s+state: absent\n/, '$1'),
+    'a password on the account': text => text.replace(/(username: platform-sign-in\n)/, '$1    attrs:\n      password: !Env IDP_PLATFORM_TEST_ACCOUNT_PASSWORD\n'),
+    'groups on the account': text => text.replace(/(username: platform-sign-in\n)/, '$1    attrs:\n      groups:\n        - !KeyOf platform-readers-group\n'),
+    'the group dropped': text => text.replace(/ {2}- id: platform-readers-group[\s\S]*$/, ''),
+    'the account dropped': text => text.replace(/ {2}- id: platform-sign-in-account\n[\s\S]*?(?= {2}- id: platform-readers-group)/, ''),
+    'a second account removed too': text => `${text}  - id: planted-account\n    model: authentik_core.user\n    state: absent\n    identifiers:\n      username: planted\n`,
+    'the account declared twice': text => `${text}  - id: planted-copy\n    model: authentik_core.user\n    state: absent\n    identifiers:\n      username: platform-sign-in\n`,
+    'the instantiate label dropped': text => text.replace(/ {4}blueprints\.goauthentik\.io\/instantiate: "true"\n/, ''),
+  };
+  for (const [name, plant] of Object.entries(planted)) {
+    const text = plant(blueprintTexts[REMOVAL_BLUEPRINT]);
+    assert.notEqual(text, blueprintTexts[REMOVAL_BLUEPRINT], `${name}: the plant matched nothing`);
+    assert.notDeepEqual(removalFindings(text), [], name);
+  }
+});
+
+test('PLANTED INNOCENT: a comment, a comment after the version and the removals in the other order change nothing the rules hold', () => {
+  const text = blueprintTexts[REMOVAL_BLUEPRINT];
+  assert.deepEqual(removalFindings(`# planted comment naming platform-readers and password: !Env\n${text}`), []);
+  assert.deepEqual(removalFindings(text.replace('version: 1', 'version: 1 # planted')), []);
+  const [head, ...entries] = text.split(/(?<=\n)(?= {2}- id: )/);
+  assert.equal(entries.length, REMOVALS.length);
+  assert.deepEqual(removalFindings([head, ...entries.reverse()].join('')), []);
+});
+
+const readersGroup = state => `  - id: planted-group\n    model: authentik_core.group\n${state ? `    state: ${state}\n` : ''}    identifiers:\n      name: platform-readers\n    attrs:\n      name: platform-readers\n`;
+
+test('no other blueprint declares the group platform-readers present, and no blueprint but the Plane one declares an account present', () => {
+  assert.deepEqual(strayFindings(blueprintTexts), []);
+});
+
+test('PLANTED DEFECT: the group created or present in another blueprint, or an account declared present in another blueprint, is found', () => {
+  const planted = {
+    'the group created by 99-headlamp.yaml': ['99-headlamp.yaml', text => text + readersGroup('created')],
+    'the group created by 99-proxy-headlamp.yaml': ['99-proxy-headlamp.yaml', text => text + readersGroup('created')],
+    'the group present in 99-argocd.yaml': ['99-argocd.yaml', text => text + readersGroup('')],
+    'an account declared present by 99-grafana.yaml': ['99-grafana.yaml', text => `${text}  - id: planted-account\n    model: authentik_core.user\n    identifiers:\n      username: planted\n    attrs:\n      username: planted\n`],
+    'the account created by 99-vault.yaml': ['99-vault.yaml', text => `${text}  - id: planted-account\n    model: authentik_core.user\n    state: created\n    identifiers:\n      username: platform-sign-in\n`],
   };
   for (const [name, [file, plant]] of Object.entries(planted)) {
     const text = plant(blueprintTexts[file]);
     assert.notEqual(text, blueprintTexts[file], `${name}: the plant matched nothing`);
-    assert.notDeepEqual(copyFindings({...blueprintTexts, [file]: text}), [], name);
+    assert.notDeepEqual(strayFindings({...blueprintTexts, [file]: text}), [], name);
   }
 });
 
-test('PLANTED INNOCENT: a copy of the group under another id, with its keys in another order, is the same group', () => {
-  const reordered = blueprintTexts['99-argocd.yaml'].replace(readersCopy, '  - id: readers\n    model: authentik_core.group\n$2    state: created\n');
-  assert.notEqual(reordered, blueprintTexts['99-argocd.yaml'], 'the plant matched');
-  assert.deepEqual(copyFindings({...blueprintTexts, '99-argocd.yaml': reordered}), []);
+test('PLANTED INNOCENT: a comment naming the group, and a copy of the absent group entry under another id, change nothing the rules hold', () => {
+  assert.deepEqual(strayFindings({...blueprintTexts, '99-argocd.yaml': `# planted comment naming platform-readers\n${blueprintTexts['99-argocd.yaml']}`}), []);
+  assert.deepEqual(strayFindings({...blueprintTexts, '99-argocd.yaml': blueprintTexts['99-argocd.yaml'] + readersGroup('absent')}), []);
+});
+
+test('the provider is not told to restart onto the account, and Argo CD gives the owner the administrator role and everybody else the read-only default', () => {
+  assert.deepEqual(admissionFindings(idpValues, argocdText), []);
+});
+
+test('PLANTED DEFECT: the account in the annotation, a role for the group or the account, or a changed default or owner role of Argo CD is found', () => {
+  const planted = {
+    'the account in the annotation': ['values', values => { values.global.podAnnotations['platform/test-accounts'] += ' platform-sign-in'; }],
+    'the group an administrator of Argo CD': ['argocd', text => text.replace('g, admins, role:admin\n', 'g, admins, role:admin\n      g, platform-readers, role:admin\n')],
+    'the account an administrator of Argo CD': ['argocd', text => text.replace('g, admins, role:admin\n', 'g, admins, role:admin\n      g, platform-sign-in, role:admin\n')],
+    'a policy for the group': ['argocd', text => text.replace('g, admins, role:admin\n', 'g, admins, role:admin\n      p, platform-readers, applications, sync, */*, allow\n')],
+    'an administrator by default': ['argocd', text => text.replace(/^(\s+)policy\.default: role:readonly$/m, '$1policy.default: role:admin')],
+    'the owner\'s group without its role': ['argocd', text => text.replace('g, admins, role:admin\n', '')],
+    'no policy.csv to read': ['argocd', text => text.replace('policy.csv: |', 'policy.csvs: |')],
+  };
+  for (const [name, [kind, plant]] of Object.entries(planted)) {
+    const values = structuredClone(idpValues);
+    let argocd = argocdText;
+    if (kind === 'values') plant(values);
+    else argocd = plant(argocdText);
+    assert.notEqual(JSON.stringify([values, argocd]), JSON.stringify([idpValues, argocdText]), `${name}: the plant matched nothing`);
+    assert.notDeepEqual(admissionFindings(values, argocd), [], name);
+  }
+});
+
+test('PLANTED INNOCENT: a comment inside policy.csv naming the group, and the other accounts in the annotation, change nothing the rules hold', () => {
+  const commented = argocdText.replace('g, admins, role:admin\n', 'g, admins, role:admin\n      # platform-readers has no line here\n');
+  assert.notEqual(commented, argocdText, 'the plant matched');
+  assert.deepEqual(admissionFindings(idpValues, commented), []);
+  const other = structuredClone(idpValues);
+  other.global.podAnnotations['platform/test-accounts'] += ' planted-account';
+  assert.deepEqual(admissionFindings(other, argocdText), []);
 });

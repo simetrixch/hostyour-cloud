@@ -83,13 +83,12 @@ const blueprintTexts = Object.fromEntries(readdirSync(blueprintDirectory).filter
   .map(name => [name, readFileSync(`${blueprintDirectory}/${name}`, 'utf8')]));
 
 // The group an application admits beside `admins`. Plane's sign-in passes through two applications, the forward auth of
-// Plane and Forgejo, which Plane signs in through, and both admit plane-users. The sign-in proof of the two consoles
-// passes through Argo CD, Headlamp's own client and the forward auth in front of Headlamp, and all three admit
-// platform-readers (21-platform-test-accounts.yaml). Every other application admits `admins` alone.
-const ADMITTED_BESIDE_ADMINS = {
-  forgejo: 'plane-users', plane: 'plane-users',
-  argocd: 'platform-readers', headlamp: 'platform-readers', 'headlamp-forward-auth': 'platform-readers',
-};
+// Plane and Forgejo, which Plane signs in through, and both admit plane-users. Every other application admits `admins` alone.
+const ADMITTED_BESIDE_ADMINS = {forgejo: 'plane-users', plane: 'plane-users'};
+
+// The group of the removed sign-in proof of Argo CD and Headlamp. No application admits it, and no blueprint keeps it
+// otherwise than absent (21-platform-test-accounts.yaml).
+const REMOVED_GROUP = 'platform-readers';
 
 // Authentik applies the blueprint files in no order, and the top-level `conditions:` of a file gates nothing: only an
 // entry has conditions (BlueprintEntry in authentik/blueprints/v1/common.py; the file's dict is read into Blueprint,
@@ -98,7 +97,7 @@ const ADMITTED_BESIDE_ADMINS = {
 // These two groups are bound by files that do not create them, so their first start still has that hour.
 const GROUPS_OF_ANOTHER_BLUEPRINT = new Set(['admins', 'plane-users']);
 
-/** Every way an application of the blueprints admits more than staff, or a sign-in group anywhere but the applications of its sign-in, or a group bound before its file creates it, named. */
+/** Every way an application of the blueprints admits more than staff, or a sign-in group anywhere but the applications of its sign-in, or a group bound before its file creates it, or the removed group kept, named. */
 function accessFindings(texts) {
   const found = [];
   const applications = [];
@@ -106,6 +105,7 @@ function accessFindings(texts) {
     const blueprint = JSON.parse(execFileSync('yq', ['-o=json', '.', '-'], {input: text, encoding: 'utf8'}));
     for (const entry of blueprint.entries ?? []) {
       if (entry.model === 'authentik_core.application') applications.push({slug: entry.identifiers.slug, mode: entry.attrs.policy_engine_mode, bindings: []});
+      if (entry.model === 'authentik_core.group' && entry.identifiers?.name === REMOVED_GROUP && entry.state !== 'absent') found.push(`${file} keeps the group ${REMOVED_GROUP} ${entry.state ?? 'present'}, which no application admits any more`);
     }
     for (const entry of (blueprint.entries ?? []).filter(e => e.model === 'authentik_policies.policybinding')) {
       const {target, group, policy, user} = entry.identifiers;
@@ -131,13 +131,12 @@ function accessFindings(texts) {
   return found;
 }
 
-test('every application admits the group admins, only Plane and Forgejo admit plane-users beside it, only Argo CD and Headlamp admit platform-readers, and a file creates the new group it binds', () => {
+test('every application admits the group admins, only Plane and Forgejo admit plane-users beside it, nothing admits or keeps platform-readers, and a file creates the new group it binds', () => {
   assert.deepEqual(accessFindings(blueprintTexts), []);
 });
 
 const bindingToGroup = (text, group) => text.replace(/(group: !Find \[authentik_core.group, \[name, )admins\]/, `$1${group}]`);
-const readersGroup = '  - id: platform-readers-group\n    model: authentik_core.group\n    state: created\n    identifiers:\n      name: platform-readers\n    attrs:\n      name: platform-readers\n';
-const createsReaders = text => text.replace(/^entries:\n/m, `entries:\n${readersGroup}`);
+const readersGroup = state => `  - id: planted-readers-group\n    model: authentik_core.group\n${state ? `    state: ${state}\n` : ''}    identifiers:\n      name: platform-readers\n    attrs:\n      name: platform-readers\n`;
 const readersBinding = slug => `  - id: planted-readers-binding\n    model: authentik_policies.policybinding\n    identifiers:\n      target: !Find [authentik_core.application, [slug, ${slug}]]\n      group: !Find [authentik_core.group, [name, platform-readers]]\n      order: 5\n    attrs:\n      enabled: true\n`;
 
 test('PLANTED DEFECT: an application without a binding, a third or a wrong group, a binding by user or negated, or a wrong mode is found', () => {
@@ -151,17 +150,14 @@ test('PLANTED DEFECT: an application without a binding, a third or a wrong group
     'a disabled binding of vault': ['99-vault.yaml', text => text.replace('enabled: true', 'enabled: false')],
     'plane without plane-users': ['99-proxy-plane.yaml', text => text.replace(/  - id: plane-plane-users-binding[\s\S]*$/, '')],
     'plane under the mode all': ['99-proxy-plane.yaml', text => text.replace('policy_engine_mode: any', 'policy_engine_mode: all')],
-    'plane-users admitted to argocd': ['99-argocd.yaml', text => text.replace('group: !Find [authentik_core.group, [name, platform-readers]]', 'group: !Find [authentik_core.group, [name, plane-users]]')],
-    'platform-readers admitted to plane': ['99-proxy-plane.yaml', text => createsReaders(text) + readersBinding('plane')],
-    'platform-readers admitted to the tekton-dashboard': ['99-proxy-tekton.yaml', text => createsReaders(text) + readersBinding('tekton-dashboard')],
-    'argocd without its platform-readers binding': ['99-argocd.yaml', text => text.replace(/  - id: argocd-platform-readers-binding[\s\S]*$/, '')],
-    'headlamp-forward-auth without its platform-readers binding': ['99-proxy-headlamp.yaml', text => text.replace(/  - id: headlamp-forward-auth-platform-readers-binding[\s\S]*$/, '')],
-    'argocd with two bindings and no policy_engine_mode': ['99-argocd.yaml', text => text.replace(/\n      # The OR across the bindings[^\n]*\n      policy_engine_mode: any/, '')],
-    'headlamp binds platform-readers without creating the group': ['99-headlamp.yaml', text => text.replace(readersGroup, ''), 'without creating it first'],
-    'headlamp waits for platform-readers in its conditions instead of creating the group': ['99-headlamp.yaml', text => text.replace(readersGroup, '')
-      .replace('  - !Find [authentik_core.group, [name, admins]]\n', '  - !Find [authentik_core.group, [name, admins]]\n  - !Find [authentik_core.group, [name, platform-readers]]\n'), 'without creating it first'],
-    'argocd creates platform-readers after its binding': ['99-argocd.yaml', text => text.replace(readersGroup, '') + readersGroup, 'without creating it first'],
-    'headlamp-forward-auth creates platform-readers in the default state': ['99-proxy-headlamp.yaml', text => text.replace(readersGroup, readersGroup.replace('    state: created\n', '')), 'without creating it first'],
+    'plane-users admitted to argocd': ['99-argocd.yaml', text => bindingToGroup(text, 'plane-users'), 'admits'],
+    'platform-readers admitted to argocd': ['99-argocd.yaml', text => text + readersBinding('argocd'), 'admits'],
+    'platform-readers admitted to headlamp': ['99-headlamp.yaml', text => text + readersBinding('headlamp'), 'admits'],
+    'platform-readers admitted to headlamp-forward-auth': ['99-proxy-headlamp.yaml', text => text + readersBinding('headlamp-forward-auth'), 'admits'],
+    'platform-readers admitted to plane': ['99-proxy-plane.yaml', text => text + readersBinding('plane'), 'admits'],
+    'platform-readers admitted to the tekton-dashboard': ['99-proxy-tekton.yaml', text => text + readersBinding('tekton-dashboard'), 'admits'],
+    'platform-readers created again by argocd': ['99-argocd.yaml', text => text + readersGroup('created'), 'keeps the group platform-readers created'],
+    'platform-readers present in the default state in headlamp': ['99-headlamp.yaml', text => text + readersGroup(''), 'keeps the group platform-readers present'],
     'a new group bound by the file of grafana without being created': ['99-grafana.yaml', text => bindingToGroup(text, 'planted-group'), 'without creating it first'],
   };
   for (const [name, [file, plant, rule]] of Object.entries(planted)) {
@@ -173,10 +169,10 @@ test('PLANTED DEFECT: an application without a binding, a third or a wrong group
   }
 });
 
-test('PLANTED INNOCENT: a comment, and a new application that admits admins alone, change nothing the rules hold', () => {
+test('PLANTED INNOCENT: a comment, the removed group declared absent, and a new application that admits admins alone, change nothing the rules hold', () => {
   assert.deepEqual(accessFindings({...blueprintTexts, '99-vault.yaml': `# planted comment naming plane-users\n${blueprintTexts['99-vault.yaml']}`}), []);
   assert.deepEqual(accessFindings({...blueprintTexts, '99-argocd.yaml': `# planted comment naming platform-readers\n${blueprintTexts['99-argocd.yaml']}`}), []);
-  assert.deepEqual(accessFindings({...blueprintTexts, '99-vault.yaml': createsReaders(blueprintTexts['99-vault.yaml'])}), []);
+  assert.deepEqual(accessFindings({...blueprintTexts, '99-vault.yaml': blueprintTexts['99-vault.yaml'] + readersGroup('absent')}), []);
   const added = `${blueprintTexts['99-grafana.yaml']}  - id: planted-app\n    model: authentik_core.application\n    identifiers:\n      slug: planted\n    attrs:\n      name: Planted\n      slug: planted\n`
     + '  - id: planted-binding\n    model: authentik_policies.policybinding\n    identifiers:\n      target: !Find [authentik_core.application, [slug, planted]]\n      group: !Find [authentik_core.group, [name, admins]]\n      order: 0\n    attrs:\n      enabled: true\n';
   assert.deepEqual(accessFindings({...blueprintTexts, '99-grafana.yaml': added}), []);
