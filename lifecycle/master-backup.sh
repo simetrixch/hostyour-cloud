@@ -2,7 +2,7 @@
 # ===========================================================================
 # master-backup.sh — takes a backup of ONE master, from an operator's machine.
 #
-#   bash lifecycle/master-backup.sh lifecycle/config.<machine>.env
+#   bash lifecycle/master-backup.sh lifecycle/config.<machine>.env [master|plane]
 #
 # WHAT IT TAKES, AND WHY THIS EXISTS. A master is the one machine of an installation that holds
 # state nothing else holds: Vault with every unit's secrets, the Manager's database, the IdP's
@@ -12,6 +12,11 @@
 # them is gone; the install branch, the registrations and the deploy repository on origin describe an
 # installation that can no longer be opened. This takes that set, sealed with BACKUP_PASSPHRASE, to
 # the storage box under <fqdn>/master/<id>/, and master-restore brings it back onto a bare machine.
+#
+# THE SET. Without a second argument, or with `master`, this takes everything above. With `plane` it takes Plane's two stores alone
+# (its PostgreSQL and its object store, which hold every card), in a short run of its own to <fqdn>/plane/<id>/, with neither
+# the Manager's hold nor the quorum; plane-restore puts that backup back into the standing cluster. A set is no part of the other:
+# there is no backup of everything at once.
 #
 # ONE SESSION, THE CONFIG AND THE RCLONE AHEAD OF THE DRIVER. master-backup-driver.sh is the backup itself and runs
 # on the machine; this only opens the session and carries it over, the config inside a quoted
@@ -38,9 +43,15 @@ set -uo pipefail
 die() { printf 'backup: %s. Nothing has been changed\n' "$1" >&2; exit "${2:-65}"; }
 say() { printf '%s\n' "$1"; }
 
-CONFIG="${1:-}"
-[ $# -le 1 ] || die "lifecycle/master-backup.sh was given more than it takes: $2" 64
-[ -n "$CONFIG" ] || die 'usage: lifecycle/master-backup.sh <config>' 64
+USAGE='usage: lifecycle/master-backup.sh <config> [master|plane]'
+CONFIG="${1:-}" SET="${2:-master}"
+[ $# -le 2 ] || die "lifecycle/master-backup.sh was given more than it takes: $3" 64
+[ -n "$CONFIG" ] || die "$USAGE" 64
+case "$SET" in
+  master) RESTORE=master-restore ;;
+  plane) RESTORE=plane-restore ;;
+  *) die "$USAGE" 64 ;;
+esac
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRIVER="$HERE/master-backup-driver.sh"
 [ -r "$DRIVER" ] \
@@ -104,7 +115,7 @@ if [ $? -ne 0 ]; then
       die "$TARGET could not be reached: $(printf '%s' "$PROBE" | tr -d '\r' | tr '\n' ' ')" 69 ;;
   esac
 fi
-say "backup: $TARGET opens to the operator key; the backup of $FQDN starts"
+say "backup: $TARGET opens to the operator key; the backup of the set $SET of $FQDN starts"
 
 {
   printf 'umask 077\ncat > "$1" <<%sAW_CONFIG_END%s\n' "'" "'"
@@ -113,11 +124,11 @@ say "backup: $TARGET opens to the operator key; the backup of $FQDN starts"
   tr -d $'\r' < "$RCLONE_HELPER"
   printf '%s\n' "$RCLONE_METADATA"
   tr -d $'\r' < "$DRIVER"
-} | ssh "${BASE[@]}" "$TARGET" 'bash -s -- "$HOME/.aw-backup.env"'
+} | ssh "${BASE[@]}" "$TARGET" "bash -s -- \"\$HOME/.aw-backup.env\" $SET"
 TAKEN=${PIPESTATUS[1]}
 if [ "$TAKEN" -eq 0 ]; then
-  say "backup: the backup of $FQDN stands on the storage box; the BACKUP line above names it, and master-restore takes that name"
+  say "backup: the backup of the set $SET of $FQDN stands on the storage box; the BACKUP line above names it, and $RESTORE takes that name"
 else
-  say "backup: the backup of $FQDN ended with exit $TAKEN. The line above it says what stopped and why"
+  say "backup: the backup of the set $SET of $FQDN ended with exit $TAKEN. The line above it says what stopped and why"
 fi
 exit "$TAKEN"

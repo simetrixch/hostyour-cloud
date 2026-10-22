@@ -1,5 +1,5 @@
 # ===========================================================================
-# require-rclone.sh — puts the pinned rclone on the machine, for master-backup and master-restore, ON THE MACHINE.
+# require-rclone.sh — puts the pinned rclone on the machine, for master-backup, master-restore and plane-restore, ON THE MACHINE.
 #
 # The two launchers send this file whole through their one ssh session, behind the metadata that read-rclone-pin.sh made
 # (AW_RCLONE_PIN and AW_RCLONE_ROWS) and ahead of the driver, because a driver arrives over standard input and can read

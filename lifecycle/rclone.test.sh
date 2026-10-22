@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# rclone.test.sh — the rclone that master-backup and master-restore run: how a machine is given it, and what it does.
+# rclone.test.sh — the rclone that master-backup, master-restore and plane-restore run: how a machine is given it, and what it does.
 #
 #   bash lifecycle/rclone.test.sh        (lifecycle/test.sh runs it)
 #
@@ -46,8 +46,8 @@ PIN="$(yq e '.cliTools.rclone.version' "$ROOT/clusters/platform/versions.yaml")"
 [[ "$PIN" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "clusters/platform/versions.yaml states no cliTools.rclone.version of the form vX.Y.Z that yq can read: $PIN"
 TREE="$WORK/tree"
 mkdir -p "$TREE/lifecycle" "$TREE/clusters/platform" "$TREE/clusters/inventories/consumer-build/files" "$TREE/scripts"
-for file in master-backup.sh master-restore.sh master-backup-driver.sh master-restore-driver.sh require-owner-only.sh require-config-assignments.sh \
-  require-rclone.sh read-rclone-pin.sh config.example.env; do
+for file in master-backup.sh master-restore.sh plane-restore.sh master-backup-driver.sh master-restore-driver.sh plane-restore-driver.sh \
+  require-owner-only.sh require-config-assignments.sh require-rclone.sh read-rclone-pin.sh config.example.env; do
   cp "$HERE/$file" "$TREE/lifecycle/$file"
 done
 cp "$ROOT/clusters/platform/versions.yaml" "$ROOT/clusters/platform/values-common.yaml" "$TREE/clusters/platform/"
@@ -210,13 +210,15 @@ exit "${STANDIN_SSH_EXIT:-0}"
 STANDIN
 chmod +x "$SD/bin/ssh"
 
-send() { # <lifecycle folder> backup|restore [launcher arguments after the config...] — runs the launcher against the stand-in ssh; its code stands in $SEND_CODE, the program it sent in $SD/session-stream
-  local dir="$1" act="$2"
+send() { # <lifecycle folder> backup|restore|plane-restore [launcher arguments after the config...] — runs the launcher against the stand-in ssh; its code stands in $SEND_CODE, the program it sent in $SD/session-stream and its command in $SD/session-command
+  local dir="$1" act="$2" launcher
   shift 2
+  case "$act" in plane-restore) launcher=plane-restore ;; *) launcher="master-$act" ;; esac
   rm -f "$SD/session-stream" "$SD/session-command"
   SEND_CODE=0
-  ( cd "$WORK" && PATH="$SD_PATH" bash "$dir/master-$act.sh" "$WORK/config.env" "$@" ) > "$WORK/send.out" 2> "$WORK/send.err" || SEND_CODE=$?
+  ( cd "$WORK" && PATH="$SD_PATH" bash "$dir/$launcher.sh" "$WORK/config.env" "$@" ) > "$WORK/send.out" 2> "$WORK/send.err" || SEND_CODE=$?
 }
+session_command_is() { [ "$(cat "$SD/session-command" 2> /dev/null)" = "$1" ]; } # <the command ssh was handed to start the program it was sent>
 metadata_by_yq() { # <tree> — the metadata the launchers must send, made from yq and scripts/list-mirror-sources.sh
   printf "AW_RCLONE_PIN='%s'\nAW_RCLONE_ROWS='%s'\n" "$(yq e '.cliTools.rclone.version' "$1/clusters/platform/versions.yaml")" "$(rows_by_list "$1" | sort -k1,1 | tr '\n' '\001' | sed 's/\x01$//' | tr '\001' '\n')"
 }
@@ -234,19 +236,35 @@ send "$TREE/lifecycle" backup
 expected_program "$TREE/lifecycle" master-backup-driver.sh > "$WORK/expected-backup"
 cmp -s "$SD/session-stream" "$WORK/expected-backup" \
   || fail "the program master-backup.sh sent is not the config, require-rclone.sh, the metadata of yq and the list, and the driver: $(cmp "$SD/session-stream" "$WORK/expected-backup" 2>&1 | head -n 1)"
-grep -qF -- '-- "$HOME/.aw-backup.env"' "$SD/session-command" || fail 'master-backup.sh did not start the program it sent with the file for the config'
+session_command_is 'bash -s -- "$HOME/.aw-backup.env" master' || fail "master-backup.sh without a set did not start the program it sent with the file for the config and the set master: $(cat "$SD/session-command")"
+send "$TREE/lifecycle" backup plane
+[ "$SEND_CODE" = 0 ] || fail "master-backup.sh with the set plane against a stand-in ssh ended $SEND_CODE: $(tail -n 2 "$WORK/send.err" | tr '\n' ' ' | cut -c1-300)"
+cmp -s "$SD/session-stream" "$WORK/expected-backup" || fail 'master-backup.sh with the set plane did not send the program it sends for the set master: the set is an argument of the driver, not of the program'
+session_command_is 'bash -s -- "$HOME/.aw-backup.env" plane' || fail "master-backup.sh with the set plane did not start the program it sent with the file for the config and the set plane: $(cat "$SD/session-command")"
 send "$TREE/lifecycle" restore 20261021T120000Z
 [ "$SEND_CODE" = 0 ] || fail "master-restore.sh against a stand-in ssh ended $SEND_CODE: $(tail -n 2 "$WORK/send.err" | tr '\n' ' ' | cut -c1-300)"
 expected_program "$TREE/lifecycle" master-restore-driver.sh > "$WORK/expected-restore"
 cmp -s "$SD/session-stream" "$WORK/expected-restore" \
   || fail "the program master-restore.sh sent is not the config, require-rclone.sh, the metadata of yq and the list, and the driver: $(cmp "$SD/session-stream" "$WORK/expected-restore" 2>&1 | head -n 1)"
+send "$TREE/lifecycle" plane-restore 20261021T120000Z
+[ "$SEND_CODE" = 0 ] || fail "plane-restore.sh against a stand-in ssh ended $SEND_CODE: $(tail -n 2 "$WORK/send.err" | tr '\n' ' ' | cut -c1-300)"
+expected_program "$TREE/lifecycle" plane-restore-driver.sh > "$WORK/expected-plane-restore"
+cmp -s "$SD/session-stream" "$WORK/expected-plane-restore" \
+  || fail "the program plane-restore.sh sent is not the config, require-rclone.sh, the metadata of yq and the list, and the driver: $(cmp "$SD/session-stream" "$WORK/expected-plane-restore" 2>&1 | head -n 1)"
+session_command_is 'bash -s -- "$HOME/.aw-plane-restore.env" 20261021T120000Z' || fail "plane-restore.sh did not start the program it sent with the file for the config and the id: $(cat "$SD/session-command")"
 # a launcher that leaves the helper and the metadata out sends another program
 rm -rf "$WORK/mutant-tree"; cp -R "$TREE" "$WORK/mutant-tree"
 sed -i.bak -e '/< "\$RCLONE_HELPER"$/d' -e '/"\$RCLONE_METADATA"$/d' "$WORK/mutant-tree/lifecycle/master-backup.sh"; rm -f "$WORK/mutant-tree/lifecycle/master-backup.sh.bak"
 ! cmp -s "$WORK/mutant-tree/lifecycle/master-backup.sh" "$TREE/lifecycle/master-backup.sh" || fail 'the planted launcher that sends neither the helper nor the metadata was not made'
 send "$WORK/mutant-tree/lifecycle" backup
 ! cmp -s "$SD/session-stream" "$WORK/expected-backup" || fail 'a master-backup.sh that sends neither the helper nor the metadata sent the same program — the comparison proves nothing'
-ok 'master-backup.sh and master-restore.sh send, through the one ssh session, the config, require-rclone.sh byte for byte, the pin and the rows that yq and the list give, and the driver; a launcher that leaves the helper and the metadata out is caught'
+# a launcher that does not hand the set to the program starts the master set whatever it was asked for
+rm -rf "$WORK/mutant-set"; cp -R "$TREE" "$WORK/mutant-set"
+sed -i.bak 's#\.aw-backup\.env\\" \$SET"#.aw-backup.env\\""#' "$WORK/mutant-set/lifecycle/master-backup.sh"; rm -f "$WORK/mutant-set/lifecycle/master-backup.sh.bak"
+! cmp -s "$WORK/mutant-set/lifecycle/master-backup.sh" "$TREE/lifecycle/master-backup.sh" || fail 'the planted launcher that does not hand the set to the program was not made'
+send "$WORK/mutant-set/lifecycle" backup plane
+! session_command_is 'bash -s -- "$HOME/.aw-backup.env" plane' || fail 'a master-backup.sh that does not hand the set to the program started it with the set all the same — the comparison proves nothing'
+ok 'master-backup.sh (with the set master by default and with the set plane), master-restore.sh and plane-restore.sh send, through the one ssh session, the config, require-rclone.sh byte for byte, the pin and the rows that yq and the list give, and the driver, and start it with the file for the config and the set or the id; a launcher that leaves the helper and the metadata out and one that does not hand the set over are caught'
 
 # ── A4: the program is run: the driver is cut off its end and require_rclone is called in its place ──
 program_of() { # <expected program file> <driver file> — everything the launcher sent before the driver
@@ -559,6 +577,7 @@ production() { # <name>... — the functions of the backup driver by those names
 eval "$(production rate_of seconds_of readback_sample readback_known_names readback_project)"
 STAGE=prod
 STORES=("vault|data-vault-0|vault|statefulset")
+HOST_ARCHIVE=host--vault-prod.txt.gpg
 sample_of() { READBACK_STATS="$WORK/run-$1/log" readback_sample; } # the newest "bytes milliseconds" the production sampler reads from the log of a run
 
 copy_back new "$NEW_RCLONE" big 120

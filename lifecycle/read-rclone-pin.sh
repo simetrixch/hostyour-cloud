@@ -1,7 +1,7 @@
 # ===========================================================================
 # read-rclone-pin.sh — what a launcher tells a machine about the rclone it must run, from the tree it was released in.
 #
-# Sourced by master-backup.sh and master-restore.sh, which send this metadata through their one ssh session, with
+# Sourced by master-backup.sh, master-restore.sh and plane-restore.sh, which send this metadata through their one ssh session, with
 # require-rclone.sh, ahead of the driver. The pin is cliTools.rclone.version of clusters/platform/versions.yaml; the
 # digest of the package and its owned address are those of the two rows of clusters/platform/mirror-sources.table
 # (amd64 and arm64), made with mirror_source_line and global.buildRegistry. A launcher runs on any operator machine

@@ -3,7 +3,7 @@
 # master-backup-driver.sh — the backup of a master, ON THE MACHINE.
 #
 # Started by master-backup.sh over the one session it opens, with the config
-# ahead of it on the same standard input. Never started by hand.
+# ahead of it on the same standard input and the set it backs up as its second argument. Never started by hand.
 #
 # WHAT A MASTER IS THAT NOTHING ELSE HOLDS. The install branch, the registrations and the deploy repository
 # stand on origin; the images are rebuilt by the release cycles; every certificate is issued again
@@ -13,6 +13,13 @@
 # quorum is written to once and kept nowhere else: secrets/vault-<stage>.txt. That is the set this
 # takes, and nothing beside it: the observability volumes and the build workspaces are left, because
 # they are measurements and scratch, and the next installation makes its own.
+#
+# TWO SETS, ONE MACHINERY. The second argument names the set this takes: `master` is everything this text says, and `plane` is
+# Plane's two stores alone, its PostgreSQL (plane-pgdb) and its object store (plane-minio), in a short run of its own. The set
+# plane holds neither the queue nor the Manager, because the Manager reads nothing of Plane, seals no quorum, and goes to
+# box:<fqdn>/plane/<id>/. The two stores are taken one after the other, so the database and the object store of one backup can
+# differ by the writes between the two copies, and Plane's other pods keep running and cannot reach a store while it is stopped.
+# plane-restore-driver.sh puts a plane backup back into the standing cluster.
 #
 # EACH STORE IS STOPPED FOR ITS COPY. A volume copied under a running database is a volume with a
 # write in flight, and a restore that starts on one is a restore that may not start at all. So the
@@ -41,8 +48,8 @@
 # memory (/dev/shm) that is removed when this ends. Never as an argument: sudo writes the arguments of
 # every command it runs to the system log.
 #
-# WHERE IT GOES. box:<fqdn>/master/<id>/ on the storage box. Everything of one installation lives
-# under its FQDN: the unit backups the Manager writes stand beside this, under box:<fqdn>/<stage>/.
+# WHERE IT GOES. box:<fqdn>/<set>/<id>/ on the storage box. Everything of one installation lives
+# under its FQDN: the unit backups the Manager writes stand beside this, under box:<fqdn>/<stage>/, and a set is no stage.
 # It goes through the same rclone remote the Manager's relocations use (hostyour-manager
 # relocation-jobs.ts BOX_REMOTE), one directory per backup, named by the moment it was taken, with a
 # manifest of checksums beside the archives. Root made the archives in a folder that is root's alone,
@@ -50,22 +57,22 @@
 # the box into the config it loaded, so after root's copy that file is root's and the operator cannot
 # load it. The last line this prints is that id, which is what master-restore asks for.
 #
-# ONE BACKUP AT A TIME ON A MACHINE. A second run would read a store's replicas while the first holds that
+# ONE RUN AT A TIME ON A MACHINE. A second run would read a store's replicas while the first holds that
 # store at 0 and start it again with 0, and would copy a store the first has started again. So a run takes a
 # lock before it makes or stops anything, and a second run is refused with exit 75, naming the first. The lock
 # is flock on a file in /run/lock, which every account may write: /var/lib/master-backup is root's alone, and
 # the operator, who runs this, can hold no lock in it. It belongs to this process, so it is gone when the
 # process is, however it ends, and a run that died leaves nothing that blocks the next. It sits on the
-# machine, so a run started from another computer is refused too. The first is named from the record its run
-# wrote into the file, its id and its process id; that record stays after the run, and a lock held by hand writes
-# none, so the refusal names a run only while its process still has the file open, and otherwise says that no
-# run can be named.
+# machine, so a run started from another computer is refused too. One lock serves both sets and plane-restore-driver.sh.
+# The first is named from the record its run wrote into the file, its id, its process id and its act (master, plane or
+# plane-restore); that record stays after the run, and a lock held by hand writes none, so the refusal names a run only
+# while its process still has the file open, and otherwise says that no run can be named.
 #
 # READ BACK BEFORE IT IS CALLED WHOLE. The count of names and the size check rclone makes while it copies
 # look at no byte of what the box keeps. So the backup is copied back from the box into a folder of root's,
 # and there its checksums are held to the manifest, the manifest's count of stores to the rows of STORES, the
-# quorum archive is opened with the passphrase, to /dev/null (the opened quorum is written nowhere, and this
-# machine's output and log hold no line of it), and the manifest itself is held to the one that was sent. That
+# quorum archive (of the set plane, its first archive) is opened with the passphrase, to /dev/null (what is opened is written
+# nowhere, and this machine's output and log hold no line of it), and the manifest itself is held to the one that was sent. That
 # last check is what makes the first one whole: a checksum line that lost its form is skipped by the filter
 # of the first, and so is the archive under it. The storage box answers rclone's md5sum command over its shell
 # with a failure, or never, so the remote's hash check is off and what proves the bytes is the manifest's sha256.
@@ -164,6 +171,11 @@ require_config_assignments "$CONFIG" \
 for named in FQDN OPERATOR_USER STAGE ELEVATION_PASSWORD STORAGE_BOX_HOST STORAGE_BOX_USER STORAGE_BOX_PASSWORD BACKUP_PASSPHRASE; do
   [ -n "${!named:-}" ] || die "the config says nothing under ${named}, and nothing here may choose one" 64
 done
+readonly SET="${2:-}"
+case "$SET" in
+  master|plane) ;;
+  *) die "the set this backs up is its second argument, master or plane, and \"$SET\" is neither" 64 ;;
+esac
 
 # A SECRET AN ELEVATED COMMAND NEEDS IS A FILE, never an argument: sudo writes every command it runs, with
 # its arguments, to the system log, and any local account reads an argument in the process list. This
@@ -175,11 +187,11 @@ PASSPHRASE_FILE="$SECRETS/passphrase"
 root() { printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' "$@"; }
 K() { microk8s kubectl "$@"; }
 
-# THE STORES, ONE ROW EACH: namespace | claim | the workload stopped for the copy | its kind. The
+# THE STORES OF EACH SET, ONE ROW EACH: namespace | claim | the workload stopped for the copy | its kind. The
 # names are the platform's own (clusters/inventories/<app>), stage-suffixed where the chart suffixes
-# them. master-restore-driver.sh carries the SAME rows with each claim's size beside it, and
-# lifecycle/test.sh holds the two lists against each other, so a store added here is added there.
-STORES=(
+# them. master-restore-driver.sh carries the SAME master rows with each claim's size beside it, plane-restore-driver.sh
+# the SAME plane rows, and lifecycle/test.sh holds each pair against each other, so a store added here is added there.
+MASTER_STORES=(
   "vault|data-vault-0|vault|statefulset"
   "manager|manager-data|manager|deployment"
   "headscale|headscale-data|headscale-${STAGE}-app|deployment"
@@ -192,6 +204,19 @@ STORES=(
   "dbgate|dbgate-data|dbgate-${STAGE}-app|deployment"
   "forgejo|gitea-shared-storage|forgejo|deployment"
 )
+# Plane's redis (valkey) and rabbitmq are left out: they hold sessions, cache and queued tasks, and no card.
+PLANE_STORES=(
+  "plane|pvc-plane-pgdb-vol-plane-pgdb-wl-0|plane-pgdb-wl|statefulset"
+  "plane|pvc-plane-minio-vol-plane-minio-wl-0|plane-minio-wl|statefulset"
+)
+# What the set takes besides its stores: the master set seals Vault's quorum beside them (HOST_ARCHIVE), and the read-back opens
+# that archive; the set plane has none, so its read-back opens the archive of its first store. ARCHIVES counts every archive.
+case "$SET" in
+  master) STORES=("${MASTER_STORES[@]}") HOST_ARCHIVE="host--vault-${STAGE}.txt.gpg" ARCHIVES=$(( ${#MASTER_STORES[@]} + 1 )) OPENED_WORDS='the quorum' ;;
+  plane)  STORES=("${PLANE_STORES[@]}") HOST_ARCHIVE='' ARCHIVES=${#PLANE_STORES[@]} OPENED_WORDS='the first archive' ;;
+esac
+IFS='|' read -r first_ns first_pvc _ <<< "${STORES[0]}"
+OPENED_ARCHIVE="${HOST_ARCHIVE:-${first_ns}--${first_pvc}.tar.gpg}"
 readonly QUORUM="/srv/hostyour-cloud/secrets/vault-${STAGE}.txt"
 # THE QUORUM IS THE OPERATOR'S OWN FILE, and this runs as the operator: it is checked as that account,
 # as the unseal service reads it, never through root. An elevated test -r is no check of it: where the
@@ -208,7 +233,7 @@ say "asked as $(id -un) on $(hostname), for $FQDN, stage $STAGE"
 printf '%s\n' "$ELEVATION_PASSWORD" | sudo -S -p '' true 2>/dev/null || die 'the ELEVATION_PASSWORD in the config does not raise a command on this machine' 77
 command -v microk8s >/dev/null 2>&1 || die 'microk8s is not on this machine, so there is no cluster whose stores could be taken' 69
 K get nodes >/dev/null 2>&1 || die 'the cluster does not answer, and a store copied while it cannot be stopped is a store with a write in flight' 69
-require_quorum
+[ "$SET" != master ] || require_quorum
 ROOT_DIR="$(readlink -f "$STORAGE_ROOT")"
 [ -d "$ROOT_DIR" ] || die "$STORAGE_ROOT does not lead to a directory, so the stores' volumes cannot be found" 69
 good "the stores' volumes stand under $ROOT_DIR"
@@ -224,10 +249,10 @@ flock -n -E 75 9 || LOCKED=$?
 if [ "$LOCKED" = 75 ]; then
   # The record stays in the file when its run ends, and a lock held by hand writes none, so a record names the
   # holder only while the process it names still has this file open as descriptor 9.
-  HOLDER_ID='' HOLDER_PID=''
-  read -r HOLDER_ID HOLDER_PID _ < "$LOCK_FILE" || true
-  if [[ "$HOLDER_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ && "$HOLDER_PID" =~ ^[0-9]+$ ]] && [ "/proc/$HOLDER_PID/fd/9" -ef "$LOCK_FILE" ]; then
-    die "another master backup holds the lock $LOCK_FILE: run $HOLDER_ID, started ${HOLDER_ID:0:4}-${HOLDER_ID:4:2}-${HOLDER_ID:6:2} ${HOLDER_ID:9:2}:${HOLDER_ID:11:2}:${HOLDER_ID:13:2} UTC. Nothing was stopped; start this again once it has ended" 75
+  HOLDER_ID='' HOLDER_PID='' HOLDER_ACT=''
+  read -r HOLDER_ID HOLDER_PID HOLDER_ACT _ < "$LOCK_FILE" || true
+  if [[ "$HOLDER_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ && "$HOLDER_PID" =~ ^[0-9]+$ && "$HOLDER_ACT" =~ ^(master|plane|plane-restore)$ ]] && [ "/proc/$HOLDER_PID/fd/9" -ef "$LOCK_FILE" ]; then
+    die "another run holds the lock $LOCK_FILE: the act $HOLDER_ACT, run $HOLDER_ID, started ${HOLDER_ID:0:4}-${HOLDER_ID:4:2}-${HOLDER_ID:6:2} ${HOLDER_ID:9:2}:${HOLDER_ID:11:2}:${HOLDER_ID:13:2} UTC. Nothing was stopped; start this again once it has ended" 75
   fi
   die "the lock $LOCK_FILE is held, and its record is empty or names a run that is not alive, so no run can be named. Nothing was stopped; start this again once the holder has ended" 75
 elif [ "$LOCKED" != 0 ]; then
@@ -244,10 +269,10 @@ rclone lsd box: >/dev/null 2>&1 || die 'the storage box does not open — nothin
 good 'the storage box opens'
 
 ID="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUPS="box:$FQDN/master"
+BACKUPS="box:$FQDN/$SET"
 WORK="/var/lib/master-backup/$ID"
 root install -d -m 700 -o root -g root /var/lib/master-backup "$WORK" || die "could not make $WORK" 78
-printf '%s %s\n' "$ID" "$$" > "$LOCK_FILE" || die "the run's id could not be written to $LOCK_FILE, where a second run reads it" 78
+printf '%s %s %s\n' "$ID" "$$" "$SET" > "$LOCK_FILE" || die "the run's id could not be written to $LOCK_FILE, where a second run reads it" 78
 # seal OUT COMMAND...: what COMMAND writes, sealed to OUT. Both run as root inside one bash, because
 # root() hands sudo the password on standard input: nothing piped or redirected into a command it
 # starts reaches it, and under a NOPASSWD rule the command reads the password line as its data.
@@ -332,13 +357,15 @@ wait_for_queue() {
 # release_refused WHAT: what is wrong, and the commands that let the Manager and the queue go once the store is ready.
 release_refused() {
   warn "$1"
+  [ -n "$QUEUE_WAS" ] || return 0
   warn 'The Manager stays stopped and the queue suspended. Once the store is ready, start the Manager and let the queue go with:'
   say "  microk8s kubectl -n manager scale ${MANAGER_KIND}/${MANAGER_WORKLOAD} --replicas=${MANAGER_WAS}"
   say "  microk8s kubectl -n ${QUEUE_NAMESPACE} patch cronjob/${QUEUE_CRONJOB} --type=merge -p '{\"spec\":{\"suspend\":${QUEUE_WAS}}}'"
 }
 # release_hold: starts the Manager with the replicas it had and then lets the queue go, only when every store this run
 # stopped reads the replicas it had and ready within STORE_WAIT_SECONDS. Otherwise it starts neither, says which
-# store, and ends 1. It is called once: HELD is cleared first, so the way out does not run it again after a refusal.
+# store, and ends 1. The set plane has neither to start, so for it this is the wait for its stores alone. It is called
+# once: HELD is cleared first, so the way out does not run it again after a refusal.
 # A store asked to stop is read from the cluster, not from the record: a scale to 0 that failed may have changed
 # nothing, and a scale back that failed may have worked.
 release_hold() {
@@ -381,6 +408,7 @@ release_hold() {
     fi
     good "manager/${MANAGER_KIND}/${MANAGER_WORKLOAD} started again with ${MANAGER_WAS} replica(s); its runs go on"
   fi
+  [ -n "$QUEUE_WAS" ] || return 0
   if ! K -n "$QUEUE_NAMESPACE" patch "cronjob/$QUEUE_CRONJOB" --type=merge -p "{\"spec\":{\"suspend\":${QUEUE_WAS}}}" >/dev/null; then
     warn "the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} could not be set back to suspend=${QUEUE_WAS}. Set it with:"
     say "  microk8s kubectl -n ${QUEUE_NAMESPACE} patch cronjob/${QUEUE_CRONJOB} --type=merge -p '{\"spec\":{\"suspend\":${QUEUE_WAS}}}'"
@@ -389,25 +417,33 @@ release_hold() {
   good "the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} is let go (suspend=${QUEUE_WAS})"
 }
 
-step "the Manager's runs, held"
-MANAGER_WORKLOAD='' MANAGER_KIND='' MANAGER_STOPPED='' STOPPED='' STARTED=''
-for row in "${STORES[@]}"; do
-  [ "${row%%|*}" = manager ] && IFS='|' read -r _ _ MANAGER_WORKLOAD MANAGER_KIND <<< "$row"
-done
-[ -n "$MANAGER_WORKLOAD" ] || die 'no row of STORES names the namespace manager, so there is no Manager whose runs could be held' 66
-MANAGER_WAS=$(replicas_of manager "$MANAGER_WORKLOAD" "$MANAGER_KIND")
-[ -n "$MANAGER_WAS" ] || die "manager/${MANAGER_KIND}/${MANAGER_WORKLOAD} is not in the cluster, so nothing could stop the Manager before its copy" 66
-QUEUE_WAS=$(K -n "$QUEUE_NAMESPACE" get "cronjob/$QUEUE_CRONJOB" -o jsonpath='{.spec.suspend}' 2>/dev/null) \
-  || die "the CronJob ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} is not in the cluster, and without it no release or publish run can be held — nothing was stopped" 66
-[ "$QUEUE_WAS" = true ] || QUEUE_WAS=false
-HELD=1
-K -n "$QUEUE_NAMESPACE" patch "cronjob/$QUEUE_CRONJOB" --type=merge -p '{"spec":{"suspend":true}}' >/dev/null || die "could not hold the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB}" 70
-good "the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} is held (it stood at suspend=${QUEUE_WAS}): no release or publish run starts until this has ended"
-wait_for_queue
-good 'no job of the queue and no release or publish run is running'
-MANAGER_STOPPED=1
-stop_store manager "$MANAGER_WORKLOAD" "$MANAGER_KIND"
-good "manager/${MANAGER_KIND}/${MANAGER_WORKLOAD} stopped (it ran with ${MANAGER_WAS} replica(s)): its runs pause between two steps"
+MANAGER_WORKLOAD='' MANAGER_KIND='' MANAGER_STOPPED='' QUEUE_WAS='' STOPPED='' STARTED=''
+hold_the_manager_runs() {
+  step "the Manager's runs, held"
+  for row in "${STORES[@]}"; do
+    [ "${row%%|*}" = manager ] && IFS='|' read -r _ _ MANAGER_WORKLOAD MANAGER_KIND <<< "$row"
+  done
+  [ -n "$MANAGER_WORKLOAD" ] || die 'no row of STORES names the namespace manager, so there is no Manager whose runs could be held' 66
+  MANAGER_WAS=$(replicas_of manager "$MANAGER_WORKLOAD" "$MANAGER_KIND")
+  [ -n "$MANAGER_WAS" ] || die "manager/${MANAGER_KIND}/${MANAGER_WORKLOAD} is not in the cluster, so nothing could stop the Manager before its copy" 66
+  QUEUE_WAS=$(K -n "$QUEUE_NAMESPACE" get "cronjob/$QUEUE_CRONJOB" -o jsonpath='{.spec.suspend}' 2>/dev/null) \
+    || die "the CronJob ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} is not in the cluster, and without it no release or publish run can be held — nothing was stopped" 66
+  [ "$QUEUE_WAS" = true ] || QUEUE_WAS=false
+  HELD=1
+  K -n "$QUEUE_NAMESPACE" patch "cronjob/$QUEUE_CRONJOB" --type=merge -p '{"spec":{"suspend":true}}' >/dev/null || die "could not hold the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB}" 70
+  good "the queue ${QUEUE_NAMESPACE}/${QUEUE_CRONJOB} is held (it stood at suspend=${QUEUE_WAS}): no release or publish run starts until this has ended"
+  wait_for_queue
+  good 'no job of the queue and no release or publish run is running'
+  MANAGER_STOPPED=1
+  stop_store manager "$MANAGER_WORKLOAD" "$MANAGER_KIND"
+  good "manager/${MANAGER_KIND}/${MANAGER_WORKLOAD} stopped (it ran with ${MANAGER_WAS} replica(s)): its runs pause between two steps"
+}
+# The set plane holds nothing but its own stores, and HELD makes the way out of a refused run wait for them as well.
+if [ "$SET" = master ]; then
+  hold_the_manager_runs
+else
+  HELD=1
+fi
 
 step "the stores, each stopped for its copy"
 TAKEN=0
@@ -447,21 +483,25 @@ for row in "${STORES[@]}"; do
   TAKEN=$(( TAKEN + 1 ))
 done
 
-step "the Manager and its queue, let go"
-release_hold || die "the Manager and the queue were not let go; the archives stand in $WORK on this machine" 70
-
-step "the host's own file"
-seal "$WORK/host--vault-${STAGE}.txt.gpg" cat "$QUORUM" || die "the quorum file could not be sealed" 70
-good "vault-${STAGE}.txt taken — the quorum this backup is opened with"
+if [ "$SET" = master ]; then
+  step "the Manager and its queue, let go"
+  release_hold || die "the Manager and the queue were not let go; the archives stand in $WORK on this machine" 70
+  step "the host's own file"
+  seal "$WORK/$HOST_ARCHIVE" cat "$QUORUM" || die "the quorum file could not be sealed" 70
+  good "vault-${STAGE}.txt taken — the quorum this backup is opened with"
+else
+  step "the stores, read ready"
+  release_hold || die "a store did not read ready after its copy; the archives stand in $WORK on this machine" 70
+fi
 
 step "the manifest, and the way out"
 RELEASE=$(grep -E '^release:' "/srv/hostyour-cloud/clusters/active/${FQDN}.yaml" 2>/dev/null | head -1 | sed 's/^release:[[:space:]]*//' | tr -d '"'"'")
-root sh -c "cd '$WORK' && { printf 'FQDN=%s\nSTAGE=%s\nID=%s\nRELEASE=%s\nSTORES=%s\n' '$FQDN' '$STAGE' '$ID' '$RELEASE' '$TAKEN'; sha256sum *.gpg; } > manifest.txt" || die 'the manifest could not be written' 70
+root sh -c "cd '$WORK' && { printf 'FQDN=%s\nSTAGE=%s\nID=%s\nRELEASE=%s\nSET=%s\nSTORES=%s\n' '$FQDN' '$STAGE' '$ID' '$RELEASE' '$SET' '$TAKEN'; sha256sum *.gpg; } > manifest.txt" || die 'the manifest could not be written' 70
 say "release on this machine: ${RELEASE:-unknown}"
 root rclone --config "$RCLONE_CONF" copy "$WORK" "$BACKUPS/$ID/" --quiet 2>/dev/null || die "the archives could not be carried to $BACKUPS/$ID/ (rclone ended $?) — they stand in $WORK on this machine" 69
 LISTING=$(root rclone --config "$RCLONE_CONF" lsf "$BACKUPS/$ID/" 2>/dev/null) || die "the storage box could not be listed under $BACKUPS/$ID/ (rclone ended $?) — the archives stand in $WORK on this machine" 69
 LISTED=$(printf '%s\n' "$LISTING" | grep -c .)
-EXPECTED=$(( TAKEN + 2 ))
+EXPECTED=$(( ARCHIVES + 1 ))
 [ "$LISTED" = "$EXPECTED" ] || die "the storage box lists $LISTED file(s) under $BACKUPS/$ID/ and $EXPECTED were sent" 69
 # The folder is root's and cleanup removes it with root on every way out: a write after the ssh session has ended kills
 # this shell before the next line runs, so no line after a write is where the removal can rest.
@@ -526,7 +566,7 @@ readback_known_names() {
     IFS='|' read -r ns pvc _ <<< "$row"
     names+="${ns}--${pvc}.tar.gpg|"
   done
-  printf '%s' "$names" "host--vault-${STAGE}.txt.gpg|manifest.txt|"
+  printf '%s' "$names" "${HOST_ARCHIVE:+$HOST_ARCHIVE|}manifest.txt|"
 }
 # readback_project: rclone's output on standard input, one JSON record a line, projected to what may be printed. Every byte
 # it prints is a fixed word of this program, a number checked as digits, a time, level or source location checked by its
@@ -846,21 +886,21 @@ READBACK_CODE=0
 READBACK_CHECKED=$(root sh -c 'cd "$1" || exit 10
 checked=$(grep -E "^[0-9a-f]{64}  " manifest.txt | sha256sum -c) || exit 11
 grep -qx "STORES=$2" manifest.txt || exit 12
-gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13
+gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "$4" || exit 13
 cmp -s manifest.txt "$5" || exit 14
-printf "%s\n" "$checked"' _ "$READBACK" "${#STORES[@]}" "$PASSPHRASE_FILE" "$STAGE" "$WORK/manifest.txt") || READBACK_CODE=$?
+printf "%s\n" "$checked"' _ "$READBACK" "${#STORES[@]}" "$PASSPHRASE_FILE" "$OPENED_ARCHIVE" "$WORK/manifest.txt") || READBACK_CODE=$?
 if [ "$READBACK_CODE" != 0 ]; then
   case "$READBACK_CODE" in
     11) die "the archives read back from $BACKUPS/$ID/ do not match the checksums of their manifest — what the storage box keeps is not what was sent; the archives stand in $WORK on this machine" 69 ;;
     12) die "the manifest read back from $BACKUPS/$ID/ counts other stores than the ${#STORES[@]} rows of this backup — the archives stand in $WORK on this machine" 69 ;;
-    13) die "the quorum archive read back from $BACKUPS/$ID/ does not open with the BACKUP_PASSPHRASE of the config, and a backup that cannot open its quorum could never be restored — the archives stand in $WORK on this machine" 69 ;;
+    13) die "$OPENED_WORDS, read back from $BACKUPS/$ID/, does not open with the BACKUP_PASSPHRASE of the config, and a backup that cannot be opened could never be restored — the archives stand in $WORK on this machine" 69 ;;
     14) die "the manifest read back from $BACKUPS/$ID/ is not the manifest that was sent — a checksum line that lost its form on the box is a line no archive is held to; the archives stand in $WORK on this machine" 69 ;;
     *) die "the read-back of $BACKUPS/$ID/ could not be run, it ended with $READBACK_CODE — the archives stand in $WORK on this machine" 69 ;;
   esac
 fi
 # THE COVERAGE: the archives of this backup whose sha256 was checked, of the archives it must hold (one for each store and the
 # quorum's), by the names this run made them under; any other name in the answer is no coverage and is never printed.
-READBACK_EXPECTED_ARCHIVES=$(( ${#STORES[@]} + 1 )) READBACK_VERIFIED=0 READBACK_VERIFIED_NAMES='' READBACK_OTHER=0
+READBACK_EXPECTED_ARCHIVES=$ARCHIVES READBACK_VERIFIED=0 READBACK_VERIFIED_NAMES='' READBACK_OTHER=0
 while IFS= read -r line; do
   name="${line%: OK}"
   if [ "$name" != "$line" ] && [[ "$(readback_known_names)" == *"|$name|"* ]] && [ "$name" != manifest.txt ]; then
@@ -872,7 +912,7 @@ done <<< "$READBACK_CHECKED"
 if [ "$READBACK_VERIFIED" != "$READBACK_EXPECTED_ARCHIVES" ] || [ "$READBACK_OTHER" != 0 ]; then
   die "the manifest read back from $BACKUPS/$ID/ holds the checksums of $READBACK_VERIFIED of the $READBACK_EXPECTED_ARCHIVES archives of this backup, and $READBACK_OTHER other answer(s) — a backup is whole only when every archive is held to its checksum; the archives stand in $WORK on this machine" 69
 fi
-good "read back from $BACKUPS/$ID/: the checksums hold for $READBACK_VERIFIED of $READBACK_EXPECTED_ARCHIVES archives ($READBACK_VERIFIED_NAMES), the manifest counts the ${#STORES[@]} stores, the quorum opens, the manifest is the one sent"
+good "read back from $BACKUPS/$ID/: the checksums hold for $READBACK_VERIFIED of $READBACK_EXPECTED_ARCHIVES archives ($READBACK_VERIFIED_NAMES), the manifest counts the ${#STORES[@]} stores, $OPENED_WORDS opens, the manifest is the one sent"
 root rm -rf "$WORK" "$READBACK"
 if root test -e "$WORK" || root test -e "$READBACK"; then
   die "the backup stands whole on the storage box, but $WORK or $READBACK could not be removed from this machine" 70

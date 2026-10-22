@@ -2584,7 +2584,7 @@ chmod 644 "$MREACH"
 # from the tree above its folder, so a copy of a launcher runs as the released one does.
 plant_tree() {
   mkdir -p "$1/lifecycle" "$1/clusters/platform" "$1/clusters/inventories/consumer-build/files"
-  cp "$HERE/master-backup.sh" "$HERE/master-restore.sh" "$HERE/master-backup-driver.sh" "$HERE/master-restore-driver.sh" \
+  cp "$HERE/master-backup.sh" "$HERE/master-restore.sh" "$HERE/plane-restore.sh" "$HERE/master-backup-driver.sh" "$HERE/master-restore-driver.sh" "$HERE/plane-restore-driver.sh" \
     "$HERE/require-owner-only.sh" "$HERE/require-config-assignments.sh" "$HERE/read-rclone-pin.sh" "$HERE/require-rclone.sh" "$1/lifecycle/"
   cp "$HERE/../clusters/platform/versions.yaml" "$HERE/../clusters/platform/mirror-sources.table" "$HERE/../clusters/platform/values-common.yaml" "$1/clusters/platform/"
   cp "$HERE/../clusters/inventories/consumer-build/files/mirror-sources.sh" "$1/clusters/inventories/consumer-build/files/"
@@ -2595,18 +2595,22 @@ run_master_bash() { # script base name, then its arguments
   ( cd "$MASTER" && bash "$HERE/$base.sh" "$@" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
 }
 
-for act in master-backup master-restore; do
+for act in master-backup master-restore plane-restore; do
   run_master_bash "$act"
   must "usage: lifecycle/$act.sh <config>" "$act: a run naming no config is refused"
   [ "$A_CODE" = '64' ] || fail "$act: a run naming no config must end with 64, got $A_CODE"
   case "$act" in
     master-backup) expect "$act: a run naming no config" 64 <<'RECORDED' ;;
 ~~~ standard error ~~~
-backup: usage: lifecycle/master-backup.sh <config>. Nothing has been changed
+backup: usage: lifecycle/master-backup.sh <config> [master|plane]. Nothing has been changed
 RECORDED
     master-restore) expect "$act: a run naming no config" 64 <<'RECORDED' ;;
 ~~~ standard error ~~~
 restore: usage: lifecycle/master-restore.sh <config> [backup-id] [--rclone-package <local .deb>]. Nothing has been changed
+RECORDED
+    plane-restore) expect "$act: a run naming no config" 64 <<'RECORDED' ;;
+~~~ standard error ~~~
+restore: usage: lifecycle/plane-restore.sh <config> [backup-id]. Nothing has been changed
 RECORDED
   esac
 
@@ -2620,6 +2624,10 @@ RECORDED
 backup: there is no config at <WORK>/master/there-is-no-config.env. It states the installation this backs up: copy config.example.env beside it, fill it in, and name it as the argument. Nothing has been changed
 RECORDED
     master-restore) expect "$act: a config that is not there" 66 <<'RECORDED' ;;
+~~~ standard error ~~~
+restore: there is no config at <WORK>/master/there-is-no-config.env. It states the installation this restores: copy config.example.env beside it, fill it in, and name it as the first argument. Nothing has been changed
+RECORDED
+    plane-restore) expect "$act: a config that is not there" 66 <<'RECORDED' ;;
 ~~~ standard error ~~~
 restore: there is no config at <WORK>/master/there-is-no-config.env. It states the installation this restores: copy config.example.env beside it, fill it in, and name it as the first argument. Nothing has been changed
 RECORDED
@@ -2637,6 +2645,10 @@ RECORDED
 ~~~ standard error ~~~
 restore: <WORK>/master/config.nopass.env states no BACKUP_PASSPHRASE, and a backup is opened with it or not at all. Nothing has been changed
 RECORDED
+    plane-restore) expect "$act: a config without the passphrase" 65 <<'RECORDED' ;;
+~~~ standard error ~~~
+restore: <WORK>/master/config.nopass.env states no BACKUP_PASSPHRASE, and a backup is opened with it or not at all. Nothing has been changed
+RECORDED
   esac
 
   run_master_bash "$act" "$MREACH"
@@ -2649,6 +2661,10 @@ RECORDED
 backup: <WORK>/master/config.reach.env is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 <WORK>/master/config.reach.env. Nothing has been changed
 RECORDED
     master-restore) expect "$act: a config of mode 644" 77 <<'RECORDED' ;;
+~~~ standard error ~~~
+restore: <WORK>/master/config.reach.env is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 <WORK>/master/config.reach.env. Nothing has been changed
+RECORDED
+    plane-restore) expect "$act: a config of mode 644" 77 <<'RECORDED' ;;
 ~~~ standard error ~~~
 restore: <WORK>/master/config.reach.env is mode 644 and carries credentials, the elevation password of the machine among them. Run: chmod 600 <WORK>/master/config.reach.env. Nothing has been changed
 RECORDED
@@ -2679,6 +2695,10 @@ RECORDED
 ~~~ standard error ~~~
 restore: <WORK>/master/config.nobox.env states no STORAGE_BOX_USER, and the storage box is where a backup comes from. Nothing has been changed
 RECORDED
+    plane-restore) expect "$act: a config without the storage box" 65 <<'RECORDED' ;;
+~~~ standard error ~~~
+restore: <WORK>/master/config.nobox.env states no STORAGE_BOX_USER, and the storage box is where a backup comes from. Nothing has been changed
+RECORDED
   esac
 
   # THE DOOR IS MACHINE_HOST. The name resolves to nothing, so ssh refuses at once and names it:
@@ -2693,6 +2713,10 @@ RECORDED
 backup: op@door.example.invalid could not be reached: ssh: Could not resolve hostname door.example.invalid: <RESOLVER>. Nothing has been changed
 RECORDED
     master-restore) expect "$act: the door composed from MACHINE_HOST, refused by name" 69 <<'RECORDED' ;;
+~~~ standard error ~~~
+restore: op@door.example.invalid could not be reached: ssh: Could not resolve hostname door.example.invalid: <RESOLVER>. Nothing has been changed
+RECORDED
+    plane-restore) expect "$act: the door composed from MACHINE_HOST, refused by name" 69 <<'RECORDED' ;;
 ~~~ standard error ~~~
 restore: op@door.example.invalid could not be reached: ssh: Could not resolve hostname door.example.invalid: <RESOLVER>. Nothing has been changed
 RECORDED
@@ -2723,6 +2747,10 @@ RECORDED
 ~~~ standard error ~~~
 restore: master-restore-driver.sh is not beside this file. It IS the staging on the machine, and this only starts it. Nothing has been changed
 RECORDED
+    plane-restore) expect "$act: a launcher standing without its driver" 66 <<'RECORDED' ;;
+~~~ standard error ~~~
+restore: plane-restore-driver.sh is not beside this file. It IS the restore on the machine, and this only starts it. Nothing has been changed
+RECORDED
   esac
 done
 
@@ -2735,6 +2763,14 @@ restore: a backup is named by the moment it was taken, like 20260922T031500Z, an
 RECORDED
 
 run_master_bash master-backup "$MCFG" extra
+must 'usage: lifecycle/master-backup.sh <config> [master|plane]' 'backup: a set that is neither master nor plane is refused'
+[ "$A_CODE" = '64' ] || fail "backup: a set that is neither master nor plane must end with 64, got $A_CODE"
+expect 'backup: a set that is neither master nor plane' 64 <<'RECORDED'
+~~~ standard error ~~~
+backup: usage: lifecycle/master-backup.sh <config> [master|plane]. Nothing has been changed
+RECORDED
+
+run_master_bash master-backup "$MCFG" plane extra
 must 'was given more than it takes: extra' 'backup: a third argument is refused'
 [ "$A_CODE" = '64' ] || fail "backup: a third argument must end with 64, got $A_CODE"
 expect 'backup: a third argument' 64 <<'RECORDED'
@@ -2742,12 +2778,29 @@ expect 'backup: a third argument' 64 <<'RECORDED'
 backup: lifecycle/master-backup.sh was given more than it takes: extra. Nothing has been changed
 RECORDED
 
-# ── one list of stores in both drivers ───────────────────────────────────────
-# master-backup-driver.sh names namespace|claim|workload|kind, master-restore-driver.sh
-# namespace|claim|size: the namespace and the claim, in order, have to be the same rows.
-stores_of() { sed -n '/^STORES=($/,/^)$/p' "$1" | grep -E '^  "' | sed 's/^  "//; s/"$//' | cut -d'|' -f1,2; }
-stores_of "$HERE/master-backup-driver.sh" > "$OUT/stores-backup"
-stores_of "$HERE/master-restore-driver.sh" > "$OUT/stores-restore"
+run_master_bash plane-restore "$MCFG" nope
+must 'a backup is named by the moment it was taken' 'plane-restore: an id that is no moment is refused'
+[ "$A_CODE" = '64' ] || fail "plane-restore: an id that is no moment must end with 64, got $A_CODE"
+expect 'plane-restore: an id that is no moment' 64 <<'RECORDED'
+~~~ standard error ~~~
+restore: a backup is named by the moment it was taken, like 20260922T031500Z, and "nope" is not one. Run this without an id to see the ones the storage box holds. Nothing has been changed
+RECORDED
+
+run_master_bash plane-restore "$MCFG" 20261021T120000Z extra
+must 'was given more than it takes: extra' 'plane-restore: a third argument is refused'
+[ "$A_CODE" = '64' ] || fail "plane-restore: a third argument must end with 64, got $A_CODE"
+expect 'plane-restore: a third argument' 64 <<'RECORDED'
+~~~ standard error ~~~
+restore: lifecycle/plane-restore.sh was given more than it takes: extra. Nothing has been changed
+RECORDED
+
+# ── one list of stores in each pair of drivers ───────────────────────────────
+# master-backup-driver.sh names namespace|claim|workload|kind in MASTER_STORES, master-restore-driver.sh
+# namespace|claim|size: the namespace and the claim, in order, have to be the same rows. The rows of the set
+# plane are the four columns in both master-backup-driver.sh (PLANE_STORES) and plane-restore-driver.sh, and are held whole.
+stores_of() { sed -n "/^$2=(\$/,/^)\$/p" "$1" | grep -E '^  "' | sed 's/^  "//; s/"$//'; } # <driver file> <array name>
+stores_of "$HERE/master-backup-driver.sh" MASTER_STORES | cut -d'|' -f1,2 > "$OUT/stores-backup"
+stores_of "$HERE/master-restore-driver.sh" STORES | cut -d'|' -f1,2 > "$OUT/stores-restore"
 [ -s "$OUT/stores-backup" ] || fail 'the backup driver names no store — the list it takes from could not be read'
 diff -u "$OUT/stores-backup" "$OUT/stores-restore" \
   || fail 'the two drivers name different stores — a store taken by one and unknown to the other is backed up and never placed'
@@ -2757,18 +2810,56 @@ ok "the two drivers name the same $(wc -l < "$OUT/stores-backup" | tr -d ' ') st
 grep -qx 'forgejo|gitea-shared-storage' "$OUT/stores-backup" \
   || fail 'the drivers do not name the claim gitea-shared-storage of the namespace forgejo — Forgejo'"'"'s database and repositories are backed up by nobody'
 ok "the drivers name Forgejo's claim gitea-shared-storage"
+plane_rows_wrong() { # <backup driver file> <restore driver file> — says in what the rows of the set plane differ between the two, in order and whole; ends 0
+  local backup restore
+  backup="$(stores_of "$1" PLANE_STORES)"; restore="$(stores_of "$2" STORES)"
+  [ -n "$backup" ] || echo 'the backup driver names no row of the set plane'
+  [ "$backup" = "$restore" ] || echo "the rows of the set plane differ between the two drivers: backup $(printf '%s' "$backup" | tr '\n' ' ')restore $(printf '%s' "$restore" | tr '\n' ' ')"
+  return 0
+}
+plane_rows_wrong "$HERE/master-backup-driver.sh" "$HERE/plane-restore-driver.sh" > "$OUT/verdict"
+[ ! -s "$OUT/verdict" ] || fail "$(cat "$OUT/verdict")"
+[ "$(stores_of "$HERE/master-backup-driver.sh" PLANE_STORES | cut -d'|' -f1,2 | tr '\n' ' ')" = 'plane|pvc-plane-pgdb-vol-plane-pgdb-wl-0 plane|pvc-plane-minio-vol-plane-minio-wl-0 ' ] \
+  || fail 'the set plane is not the claims pvc-plane-pgdb-vol-plane-pgdb-wl-0 and pvc-plane-minio-vol-plane-minio-wl-0 of the namespace plane — Plane'"'"'s database and files are backed up by nobody'
+# PLANTED DEFECT: a backup driver whose plane rows name the pgdb claim alone. PLANTED INNOCENT: the two rows in the other order in both files alike.
+sed '/^  "plane|pvc-plane-minio-vol-plane-minio-wl-0|plane-minio-wl|statefulset"$/d' "$HERE/master-backup-driver.sh" > "$OUT/planted-plane-rows.sh"
+! cmp -s "$OUT/planted-plane-rows.sh" "$HERE/master-backup-driver.sh" || fail 'the planted plane rows with the minio claim left out were not planted — the probe proves nothing'
+plane_rows_wrong "$OUT/planted-plane-rows.sh" "$HERE/plane-restore-driver.sh" > "$OUT/verdict"
+grep -q 'the rows of the set plane differ between the two drivers' "$OUT/verdict" || fail 'a backup driver whose plane rows name the pgdb claim alone was not caught — the probe proves nothing'
+swap_plane_rows() { sed '/^  "plane|pvc-plane-pgdb-vol-plane-pgdb-wl-0|plane-pgdb-wl|statefulset"$/{N;s/^\(.*\)\n\(.*\)$/\2\n\1/;}' "$1"; }
+swap_plane_rows "$HERE/master-backup-driver.sh" > "$OUT/reordered-backup.sh"
+swap_plane_rows "$HERE/plane-restore-driver.sh" > "$OUT/reordered-restore.sh"
+! cmp -s "$OUT/reordered-backup.sh" "$HERE/master-backup-driver.sh" || fail 'the plane rows were not reordered in the backup driver — the probe proves nothing'
+plane_rows_wrong "$OUT/reordered-backup.sh" "$OUT/reordered-restore.sh" > "$OUT/verdict"
+[ ! -s "$OUT/verdict" ] || fail "the plane rows reordered in both drivers alike were refused: $(cat "$OUT/verdict")"
+plane_rows_wrong "$OUT/reordered-backup.sh" "$HERE/plane-restore-driver.sh" > "$OUT/verdict"
+grep -q 'the rows of the set plane differ between the two drivers' "$OUT/verdict" || fail 'plane rows reordered in the backup driver alone were not caught — the probe proves nothing'
+ok 'the backup and the restore of the set plane name the same two rows of the namespace plane, in the same order; a backup driver that names the pgdb claim alone and one reordered alone are caught, and both reordered alike pass'
 
-# ── one folder in both drivers ───────────────────────────────────────────────
-# A backup written where the restore does not look never comes back, so both drivers name the
-# installation's machine-backup folder in one identical line, and neither names the old one.
+lock_block_of() { sed -n '/^LOCK_FILE=/,/^fi$/p' "$1"; } # <driver file> — the lines that open the lock file and refuse a second run
+[ -n "$(lock_block_of "$HERE/master-backup-driver.sh")" ] || fail 'the backup driver carries no lock block — the plane restore cannot be held to it'
+[ "$(lock_block_of "$HERE/master-backup-driver.sh")" = "$(lock_block_of "$HERE/plane-restore-driver.sh")" ] \
+  || fail 'the lock block of plane-restore-driver.sh differs from the one of master-backup-driver.sh: the two refuse each other by one rule, and each arrives over its own ssh session, so each carries its copy'
+sed 's/flock -n -E 75 9/flock -n -E 76 9/' "$HERE/plane-restore-driver.sh" > "$OUT/lock-differs.sh"
+[ "$(lock_block_of "$HERE/master-backup-driver.sh")" != "$(lock_block_of "$OUT/lock-differs.sh")" ] || fail 'a lock block of the plane restore that ends another code was not told from the backup driver'"'"'s — the probe proves nothing'
+sed 's/^\(printf .*\) plane-restore > "\$LOCK_FILE"/\1 plane-restore >> "$LOCK_FILE"/' "$HERE/plane-restore-driver.sh" > "$OUT/lock-record-moves.sh"
+! cmp -s "$OUT/lock-record-moves.sh" "$HERE/plane-restore-driver.sh" || fail 'the record line of the plane restore was not changed — the probe proves nothing'
+[ "$(lock_block_of "$HERE/master-backup-driver.sh")" = "$(lock_block_of "$OUT/lock-record-moves.sh")" ] || fail 'a change to the record line of the plane restore, which stands after the lock block, was taken for a change of the block'
+ok 'the lock block of the plane restore is the one of the backup driver, byte for byte; a block that ends another code is told apart, and a change after the block is not'
+
+# ── one folder in each pair of drivers ───────────────────────────────────────
+# A backup written where the restore does not look never comes back, so each backup driver and its restore name the
+# installation's folder of the set in one identical line, and none names the old one.
 folder_of() { grep -E '^BACKUPS=' "$1"; }
-[ "$(folder_of "$HERE/master-backup-driver.sh")" = 'BACKUPS="box:$FQDN/master"' ] \
-  || fail 'the backup driver does not write under box:$FQDN/master, the folder of the installation'
-[ "$(folder_of "$HERE/master-backup-driver.sh")" = "$(folder_of "$HERE/master-restore-driver.sh")" ] \
-  || fail 'the two drivers name different folders — a backup written where the restore does not look never comes back'
-! grep -n 'box:master/' "$HERE/master-backup-driver.sh" "$HERE/master-restore-driver.sh" \
+[ "$(folder_of "$HERE/master-backup-driver.sh")" = 'BACKUPS="box:$FQDN/$SET"' ] \
+  || fail 'the backup driver does not write under box:$FQDN/$SET, the folder of the installation and the set'
+[ "$(folder_of "$HERE/master-restore-driver.sh")" = 'BACKUPS="box:$FQDN/master"' ] \
+  || fail 'the master restore driver does not read box:$FQDN/master, where the set master is written'
+[ "$(folder_of "$HERE/plane-restore-driver.sh")" = 'BACKUPS="box:$FQDN/plane"' ] \
+  || fail 'the plane restore driver does not read box:$FQDN/plane, where the set plane is written'
+! grep -n 'box:master/' "$HERE/master-backup-driver.sh" "$HERE/master-restore-driver.sh" "$HERE/plane-restore-driver.sh" \
   || fail 'a driver still names the old folder box:master/'
-ok 'the two drivers write and read one folder, box:$FQDN/master'
+ok 'the backup driver writes box:$FQDN/<set>, and the restores read box:$FQDN/master and box:$FQDN/plane'
 
 # ── the quorum, checked by the account that owns it ──────────────────────────
 # Vault's quorum is the operator's own file at mode 600, and the backup runs as the operator. Its
@@ -2831,7 +2922,7 @@ ok 'the planted elevated check is caught: root is called for a file the runner o
 
 # Neither driver asks root for a file's mode.
 elevated_reads_in() { grep -vE '^[[:space:]]*#' "$1" | grep -E 'root (test|\[) -[rwx]( |$)'; }
-for driver in master-backup-driver.sh master-restore-driver.sh; do
+for driver in master-backup-driver.sh master-restore-driver.sh plane-restore-driver.sh; do
   ! elevated_reads_in "$HERE/$driver" > "$OUT/elevated.out" \
     || fail "$driver asks root for a file's mode: $(cat "$OUT/elevated.out")"
 done
@@ -2854,7 +2945,7 @@ ok 'neither driver asks root for a file'"'"'s mode; the guard catches each plant
 # with the password line. A heredoc on a descriptor of its own inside a quoted script (3<<EOF) is no
 # input of root, and stays. The second bar of || is no pipe.
 piped_into_root_in() { grep -vE '^[[:space:]]*#' "$1" | grep -E '(^|[^|])\| *(root|seal)( |$)|(root|seal) .* <<'; }
-for driver in master-backup-driver.sh master-restore-driver.sh; do
+for driver in master-backup-driver.sh master-restore-driver.sh plane-restore-driver.sh; do
   ! piped_into_root_in "$HERE/$driver" > "$OUT/piped.out" \
     || fail "$driver pipes or redirects into an elevated command, which reads root()'s password line instead: $(cat "$OUT/piped.out")"
 done
@@ -2961,18 +3052,21 @@ STANDIN_GPG
 cat > "$STANDIN/tar" <<'STANDIN_TAR'
 #!/usr/bin/env bash
 # tar as the drivers call it: tar --numeric-owner -C DIR -cf - . writes DIR/payload to standard output, and
-# ends 70 half way where DIR/fails stands; tar --numeric-owner -C DIR -xf - writes standard input to DIR/payload.
+# ends 70 half way where DIR/fails stands; tar --numeric-owner -C DIR -xf - writes standard input to DIR/payload;
+# tar -tf - reads standard input, which is all of an archive that opens, and lists nothing.
 printf 'tar %s\n' "$*" >> "$(dirname "$0")/argv.log"
-dir=''; stream=''; extract=''
+dir=''; stream=''; extract=''; list=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --numeric-owner|.) shift ;;
     -C) dir="$2"; shift 2 ;;
     -cf) stream="$2"; shift 2 ;;
     -xf) stream="$2"; extract=1; shift 2 ;;
+    -tf) stream="$2"; list=1; shift 2 ;;
     *) echo "tar stand-in: an argument the drivers do not pass: $1" >&2; exit 2 ;;
   esac
 done
+if [ -n "$list" ]; then [ "$stream" = - ] || exit 2; cat > /dev/null; exit 0; fi
 [ "$stream" = - ] && [ -n "$dir" ] || exit 2
 if [ -n "$extract" ]; then cat > "$dir/payload"; exit 0; fi
 if [ -e "$dir/fails" ]; then head -c 1000 "$dir/payload"; exit 70; fi
@@ -2994,8 +3088,10 @@ cat > "$STANDIN/microk8s" <<'STANDIN_MICROK8S'
 # never ends), late-job (a Job of the queue that is not listed at the first look at the Jobs, is unfinished at the
 # second and third, finished from the fourth, and that .status.active names at its third and fourth look),
 # no-cronjob, no-claims (a get of a claim ends 1, as on a machine that stands bare), not-ready (workload names, one a line, that do not read ready after a scale up), scale-fails
-# (workload names whose scale up ends 1), stop-fails (workload names whose scale to 0 ends 1 and changes nothing)
-# and stop-lost (workload names whose scale to 0 takes effect and ends 1, as an answer lost on the way back does). The first scale call, while block-first-scale stands beside it, claims
+# (workload names whose scale up ends 1), stop-fails (workload names whose scale to 0 ends 1 and changes nothing),
+# stop-lost (workload names whose scale to 0 takes effect and ends 1, as an answer lost on the way back does),
+# no-workload (workload names whose get ends 1, as a workload that is not in the cluster does) and pods-stay (workload names whose
+# pod is still listed after a scale to 0). The first scale call, while block-first-scale stands beside it, claims
 # the folder blocked and then waits until the file release stands (or 60 seconds pass), which is how a case holds
 # one driver inside its store loop. It lets go of descriptor 9, the backup's lock: a real kubectl call ends in
 # seconds, and this one waits on purpose, so it must not stand in for the holder of the lock when the case kills
@@ -3041,7 +3137,10 @@ set -- "${args[@]}"
 case "$1" in
   get)
     case "$2" in
-      nodes|pods) exit 0 ;;
+      nodes) exit 0 ;;
+      pods)
+        if [ -f "$state/knob-pods-stay" ]; then while read -r stays; do case "$stays" in "$namespace/"*) echo "pod/${stays#*/}-0" ;; esac; done < "$state/knob-pods-stay"; fi
+        exit 0 ;;
       pvc)
         if knob no-claims; then echo 'Error from server (NotFound): persistentvolumeclaims "data-vault-0" not found' >&2; exit 1; fi
         echo 1; exit 0 ;;
@@ -3082,6 +3181,7 @@ case "$1" in
         exit 0 ;;
       */*)
         workload="${2#*/}"
+        if listed no-workload "$namespace/$workload"; then echo "Error from server (NotFound): $2 not found" >&2; exit 1; fi
         case "$jsonpath" in
           *spec.replicas*) value_of "$namespace--$workload.replicas" 1 ;;
           *status.readyReplicas*)
@@ -3742,11 +3842,12 @@ ok 'the planted seals are caught under each sudo: the passphrase in env, the box
 CARRY_FQDN=master.example.invalid
 # shellcheck disable=SC2034 # the lifted text reads these
 carry_run() { # the driver's own lines: the work folder made, one store and the quorum sealed into it, then the way out
-  FQDN="$CARRY_FQDN" STAGE=prod TAKEN=1
+  FQDN="$CARRY_FQDN" STAGE=prod TAKEN=1 SET=master
   STORES=("ns|pvc|workload|deployment")
+  HOST_ARCHIVE="host--vault-${STAGE}.txt.gpg" ARCHIVES=2 OPENED_ARCHIVE="host--vault-${STAGE}.txt.gpg" OPENED_WORDS='the quorum' 
   eval "$CARRY_WORK"
   seal "$WORK/ns--pvc.tar.gpg" tar --numeric-owner -C "$SEAL_DIR/store" -cf - .
-  seal "$WORK/host--vault-${STAGE}.txt.gpg" cat "$SEAL_DIR/quorum.txt"
+  seal "$WORK/$HOST_ARCHIVE" cat "$SEAL_DIR/quorum.txt"
   eval "$CARRY_WAY_OUT"
 }
 refusals_said() { # says what the rclone stand-in refused in the case just run, in one line, since the drivers print none of rclone's words; ends 0
@@ -3848,7 +3949,7 @@ BOX_LOST_SHAPE='sed -i "/ ns--pvc.tar.gpg\$/s/^./g/" "$1/manifest.txt"'
 BOX_LOST_SHAPE_AND_FLIPPED="$BOX_LOST_SHAPE"$'\n'"$BOX_FLIPPED_BYTE"
 { printf 'sealed with: another-passphrase\n'; cat "$SEAL_DIR/quorum.txt"; } > "$STANDIN/other-quorum.gpg"
 BOX_OTHER_PASSPHRASE='cp "$(dirname "$0")/other-quorum.gpg" "$1/host--vault-prod.txt.gpg"
-( cd "$1" && { head -n 5 manifest.txt; sha256sum -- *.gpg; } > manifest.new && mv manifest.new manifest.txt )'
+( cd "$1" && { head -n 6 manifest.txt; sha256sum -- *.gpg; } > manifest.new && mv manifest.new manifest.txt )'
 carry_refused() { # <sudo kind> <the way out> <what the box does to the upload: a script that is handed its folder> <what the refusal must say> [<the text lifted first>] — ends 0 when the way out ended 69 saying that, the read-back folder is gone and the work folder stands, and nothing planted was printed; what is wrong stands in $OUT/verdict
   local kind="$1" says="$4" text="${5:-$BACKUP_TEXT}" code=0 folders
   CARRY_WAY_OUT="$2"
@@ -3896,9 +3997,9 @@ plant "$BACKUP_WAY_OUT" 'if [ "$READBACK_VERIFIED" != "$READBACK_EXPECTED_ARCHIV
 plant "$NO_COVERAGE" $'\ncmp -s manifest.txt "$5" || exit 14' ''; NO_MANIFEST_COMPARISON="$PLANTED_TEXT"
 # the comparison would refuse the damage of the next two cases first, so they are planted in a driver without it
 plant "$NO_MANIFEST_COMPARISON" 'grep -qx "STORES=$2" manifest.txt || exit 12' 'true'; NO_STORE_COUNT="$PLANTED_TEXT"
-plant "$NO_MANIFEST_COMPARISON" 'gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "host--vault-$4.txt.gpg" || exit 13' 'true'; NO_QUORUM_OPENING="$PLANTED_TEXT"
-plant "$BACKUP_WAY_OUT" '-o /dev/null -d "host--vault-$4.txt.gpg"' '-d "host--vault-$4.txt.gpg"'; OPENS_TO_OUTPUT="$PLANTED_TEXT"
-plant "$BACKUP_WAY_OUT" '-o /dev/null -d "host--vault-$4.txt.gpg"' '-d "host--vault-$4.txt.gpg" >&2'; OPENS_TO_TERMINAL="$PLANTED_TEXT"
+plant "$NO_MANIFEST_COMPARISON" 'gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-file "$3" -o /dev/null -d "$4" || exit 13' 'true'; NO_QUORUM_OPENING="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" '-o /dev/null -d "$4"' '-d "$4"'; OPENS_TO_OUTPUT="$PLANTED_TEXT"
+plant "$BACKUP_WAY_OUT" '-o /dev/null -d "$4"' '-d "$4" >&2'; OPENS_TO_TERMINAL="$PLANTED_TEXT"
 TRAP_REMOVAL='if [ -n "$READBACK" ]; then root rm -rf "$READBACK" >/dev/null 2>&1; fi'
 plant "$BACKUP_TEXT" "$TRAP_REMOVAL" 'true'; KEEPS_AFTER_REFUSAL="$PLANTED_TEXT"
 plant "$BACKUP_WAY_OUT" 'root rm -rf "$WORK" "$READBACK"' 'root rm -rf "$WORK"'; KEEPS_AFTER_SUCCESS="$PLANTED_TEXT"
@@ -3961,15 +4062,23 @@ ok 'the planted read-backs are caught under each sudo: the work folder read in p
 # volumes, the quorum and the lock file); the lock is the kernel's, so flock is the real one. The first
 # driver is held inside its store loop by the microk8s stand-in, and a second one is started beside it.
 LOCK_DIR="$WORK/lock"
-BACKUP_STORES="$(sed -n '/^STORES=($/,/^)$/p' "$HERE/master-backup-driver.sh")"
-[ -n "$BACKUP_STORES" ] || fail 'the backup driver carries no STORES rows — the lock cases cannot give it volumes'
+LOCK_ARG=master # the second argument of the next run of the driver: the set of a backup, the id of a restore
+LOCK_LITERALS='/var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock' # the paths of the machine a driver names, which lock_driver moves into the sandbox
+BACKUP_STORES="$(sed -n '/^MASTER_STORES=($/,/^)$/p' "$HERE/master-backup-driver.sh")"
+[ -n "$BACKUP_STORES" ] || fail 'the backup driver carries no MASTER_STORES rows — the lock cases cannot give it volumes'
+PLANE_BACKUP_STORES="$(sed -n '/^PLANE_STORES=($/,/^)$/p' "$HERE/master-backup-driver.sh")"
+[ -n "$PLANE_BACKUP_STORES" ] || fail 'the backup driver carries no PLANE_STORES rows — the cases of the set plane cannot give it volumes'
 mkdir -p "$LOCK_DIR/srv/secrets"
 cp "$SEAL_DIR/quorum.txt" "$LOCK_DIR/srv/secrets/vault-prod.txt"
 while IFS='|' read -r ns pvc _ _; do
   mkdir -p "$LOCK_DIR/storage/${ns}-${pvc}-pvc-0000"
   echo planted-store > "$LOCK_DIR/storage/${ns}-${pvc}-pvc-0000/payload"
-done < <(STAGE=prod; eval "$BACKUP_STORES"; printf '%s\n' "${STORES[@]}")
+done < <(STAGE=prod; eval "$BACKUP_STORES"; printf '%s\n' "${MASTER_STORES[@]}")
 LOCK_STORES="$(ls "$LOCK_DIR/storage" | wc -l | tr -d ' ')"
+while IFS='|' read -r ns pvc _ _; do
+  mkdir -p "$LOCK_DIR/storage/${ns}-${pvc}-pvc-0000"
+  echo "planted-store-of-$pvc" > "$LOCK_DIR/storage/${ns}-${pvc}-pvc-0000/payload"
+done < <(eval "$PLANE_BACKUP_STORES"; printf '%s\n' "${PLANE_STORES[@]}")
 lock_reset() { # <free|block|block-upload> — the stand-ins forget the last case; block holds the first scale call of the next one, block-upload its first copy to the box
   rm -rf "$STANDIN/blocked" "$STANDIN/release" "$STANDIN/block-first-scale" "$STANDIN/block-first-upload" "$STANDIN/readback-plan" "$STANDIN/readback-emitted" "$STANDIN/readback-timeline" "$STANDIN/readback-stats-path" "$STANDIN/transfer.pid" "$STANDIN/box-uploaded" "$STANDIN/rootonly" "$STANDIN/secrets.seen" "$STANDIN/cluster" "$STANDIN/box-fails" "$STANDIN/rclone-errors.log" "$LOCK_DIR/master-backup.lock"
   : > "$STANDIN/kubectl-calls.log"
@@ -3991,12 +4100,12 @@ lock_driver() { # <run> <the driver's text> [NAME=value...] — the run's folder
     moved+=(-e "s#^readonly ${pair%%=*}=.*#readonly ${pair%%=*}=${pair#*=}#")
   done
   rm -rf "$dir"; mkdir -p "$dir"
-  for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
+  for literal in $LOCK_LITERALS; do
     driver_names_literal "$text" "$literal" || fail "the backup driver names no $literal — the sandbox of the lock cases proves nothing"
   done
   { rclone_preamble; printf '%s\n' "$text"; } | sed -e "s#/var/lib/master-backup#$dir/backups#g" -e "s#/var/snap/microk8s/common/default-storage#$LOCK_DIR/storage#g" \
     -e "s#/srv/hostyour-cloud#$LOCK_DIR/srv#g" -e "s#/run/lock/master-backup.lock#$LOCK_DIR/master-backup.lock#g" "${moved[@]}" > "$dir/driver.sh"
-  for literal in /var/lib/master-backup /var/snap/microk8s/common/default-storage /srv/hostyour-cloud /run/lock/master-backup.lock; do
+  for literal in $LOCK_LITERALS; do
     ! grep -qF -- "$literal" "$dir/driver.sh" || fail "the sandboxed backup driver still names $literal — the lock cases would reach this machine"
   done
   { printf "FQDN='%s'\nOPERATOR_USER='op'\nSTAGE='prod'\nELEVATION_PASSWORD='%s'\n" "$CARRY_FQDN" "$PLANTED_PASSWORD"
@@ -4006,7 +4115,7 @@ lock_start() { # <run> — starts the run in the background as the launcher star
   local dir="$LOCK_DIR/$1"
   ( export SUDO_STANDIN=nopasswd SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 077
-    exec bash "$dir/driver.sh" "$dir/config" ) < /dev/null > "$dir/out" 2> "$dir/err" &
+    exec bash "$dir/driver.sh" "$dir/config" "$LOCK_ARG" ) < /dev/null > "$dir/out" 2> "$dir/err" &
   LOCK_PID=$!
 }
 lock_run() { # <run> — runs it in front, ended after two minutes at the latest; its code stands in $LOCK_CODE
@@ -4014,7 +4123,7 @@ lock_run() { # <run> — runs it in front, ended after two minutes at the latest
   LOCK_CODE=0
   ( export SUDO_STANDIN=nopasswd SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 077
-    exec timeout 120 bash "$dir/driver.sh" "$dir/config" ) < /dev/null > "$dir/out" 2> "$dir/err" || LOCK_CODE=$?
+    exec timeout 120 bash "$dir/driver.sh" "$dir/config" "$LOCK_ARG" ) < /dev/null > "$dir/out" 2> "$dir/err" || LOCK_CODE=$?
 }
 lock_held() { # <run> — waits until a stand-in holds the run, inside its store loop or in its upload
   local _
@@ -4027,12 +4136,12 @@ lock_let_go() { # lets the held run go on, waits for it to end; its code stands 
 }
 scale_calls() { grep -c ' scale ' "$STANDIN/kubectl-calls.log" || true; }
 patch_calls() { grep -c ' patch ' "$STANDIN/kubectl-calls.log" || true; }
-lock_refuses() { # <the driver's text> [<scale|upload>] — holds a first run in its store loop, or in the upload of its archives, and starts a second: ends 0 when the second ended 75, named the first run's id and start, scaled nothing and made no folder, and the first ran to its end once let go; what is wrong stands in $OUT/verdict
-  local text="$1" held="${2:-scale}" first_id started second scaled scaled_before patched patched_before
+lock_refuses() { # <the driver's text> [<scale|upload>] [<master|plane>] — holds a first run of that set in its store loop, or in the upload of its archives, and starts a second of the set master: ends 0 when the second ended 75, named the first run's act, id and start, scaled nothing and made no folder, and the first ran to its end once let go; what is wrong stands in $OUT/verdict
+  local text="$1" held="${2:-scale}" act="${3:-master}" first_id started second scaled scaled_before patched patched_before
   : > "$OUT/verdict"
   if [ "$held" = upload ]; then lock_reset block-upload; else lock_reset block; fi
   lock_driver first "$text"; lock_driver second "$text"
-  lock_start first; lock_held first
+  LOCK_ARG="$act" lock_start first; lock_held first
   first_id="$(ls "$LOCK_DIR/first/backups" 2> /dev/null | head -n 1 || true)"
   started="${first_id:0:4}-${first_id:4:2}-${first_id:6:2} ${first_id:9:2}:${first_id:11:2}:${first_id:13:2} UTC"
   [ -n "$first_id" ] || echo 'the first driver made no folder, so there is no run to name' >> "$OUT/verdict"
@@ -4041,8 +4150,8 @@ lock_refuses() { # <the driver's text> [<scale|upload>] — holds a first run in
   scaled=$(( $(scale_calls) - scaled_before )); patched=$(( $(patch_calls) - patched_before ))
   lock_let_go
   [ "$second" = 75 ] || echo "the second driver ended with $second, not 75" >> "$OUT/verdict"
-  { [ -n "$first_id" ] && grep -qF -- "$first_id" "$LOCK_DIR/second/err" && grep -qF -- "$started" "$LOCK_DIR/second/err"; } \
-    || echo "the refusal did not name the running run $first_id, started $started: $(tail -n 1 "$LOCK_DIR/second/err")" >> "$OUT/verdict"
+  { [ -n "$first_id" ] && grep -qF -- "the act $act, run $first_id, started $started" "$LOCK_DIR/second/err"; } \
+    || echo "the refusal did not name the running run $first_id of the act $act, started $started: $(tail -n 1 "$LOCK_DIR/second/err")" >> "$OUT/verdict"
   [ "$scaled" = 0 ] || echo "the second driver scaled $scaled time(s) while the first held the stores" >> "$OUT/verdict"
   [ "$patched" = 0 ] || echo "the second driver patched $patched time(s) while the first held the queue" >> "$OUT/verdict"
   [ ! -e "$LOCK_DIR/second/backups" ] || echo 'the refused driver made a folder before it was refused' >> "$OUT/verdict"
@@ -4411,7 +4520,7 @@ ok 'backup: the queue is held and the running release and publish runs and the J
 # refuses for vault/vault; an exit that does not release what the run holds; a failed copy that forgets the store it could not start
 # again; a release that does not read the stores ready; a release that lets the queue go before it read the stores ready, with the
 # Manager never started; a release that trusts its record of the stopped stores instead of the cluster
-HOLD_BLOCK="$(printf '%s\n' "$LOCK_TEXT" | sed -n '/^step "the Manager.s runs, held"/,/^good "manager\/${MANAGER_KIND}\/${MANAGER_WORKLOAD} stopped/p')"
+HOLD_BLOCK="$(printf '%s\n' "$LOCK_TEXT" | sed -n '/^  step "the Manager.s runs, held"/,/^  good "manager\/${MANAGER_KIND}\/${MANAGER_WORKLOAD} stopped/p')"
 [ -n "$HOLD_BLOCK" ] || fail 'the backup driver carries no hold — the planted defects cannot be built'
 READY_LINE="$(printf '%s\n' "$LOCK_TEXT" | grep '^ready_of() ')"
 RELEASE_CALL='release_hold || die "the Manager and the queue were not let go; the archives stand in $WORK on this machine" 70'
@@ -4420,7 +4529,7 @@ plant "$LOCK_TEXT" "$HOLD_BLOCK" "STOPPED='' STARTED=''"; NO_HOLD="$PLANTED_TEXT
 plant "$NO_HOLD" 'if [ "$ns" = manager ]; then' 'if false; then'; NO_HOLD="$PLANTED_TEXT"
 plant "$NO_HOLD" "$RELEASE_CALL" 'true'; NO_HOLD="$PLANTED_TEXT"
 plant "$LOCK_TEXT" '"$active" "$jobs" "$runs"' '"$active" "$jobs" ""'; RUN_NOT_READ="$PLANTED_TEXT"
-plant "$LOCK_TEXT" $'\nwait_for_queue\n' $'\n'; NO_WAIT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'\n  wait_for_queue\n' $'\n'; NO_WAIT="$PLANTED_TEXT"
 plant "$LOCK_TEXT" '[ "$quiet" -ge 2 ] && break' '[ "$quiet" -ge 1 ] && break'; ONE_QUIET_PASS="$PLANTED_TEXT"
 plant "$LOCK_TEXT" '"$active" "$jobs" "$runs"' '"$active" "" ""'; ACTIVE_ALONE="$PLANTED_TEXT"
 plant "$LOCK_TEXT" "$STARTS_MANAGER_LATE" '    start_store manager "$MANAGER_WORKLOAD" "$MANAGER_KIND" "$MANAGER_WAS"'; MANAGER_EARLY="$PLANTED_TEXT"
@@ -4455,6 +4564,378 @@ hold_caught 'a release that does not read the stores ready' "$NEVER_NOT_READY" '
 hold_caught 'a queue let go before the stores were read ready, the Manager never started' "$LET_GO_FIRST" 'knob-not-ready=idp/idp-postgresql STORE_WAIT_SECONDS=1' 'the queue was let go while these stores were not back and ready' 'the run ended with' 'the run did not end with BACKUP'
 hold_caught 'a release that trusts its record of the stopped stores instead of the cluster' "$TRUSTS_RECORD" 'knob-stop-fails=idp/idp-postgresql' 'the run ended with the Manager at 0' 'the run ended with' 'the run did not end with BACKUP'
 ok 'backup: the planted drivers are caught: no hold, the running run not read, no wait, a wait ended on one quiet pass, a wait that reads the active list alone, the Manager or the queue let go before the last store, readiness read by rollout status, an exit that does not release the hold, a failed copy that forgets its store, a release that does not read the stores ready, a queue let go before the stores were read ready, a release that trusts its record of the stopped stores'
+
+# ── the set plane: Plane's two stores alone, with no hold ───────────────────────────────────────────────────────────
+# The set plane is a short run of its own. The cases run the whole driver with it, in the sandbox of the hold cases: it stops and starts
+# the two stores one after the other and reads each ready, it neither reads nor patches the queue and neither reads nor scales the
+# Manager, it seals no quorum, and the box ends up holding the two archives and the manifest under box:$FQDN/plane/<id>/, whose manifest
+# says SET=plane and STORES=2. The lock cases name a plane run as the holder.
+PLANE_PGDB_CLAIM=pvc-plane-pgdb-vol-plane-pgdb-wl-0
+PLANE_MINIO_CLAIM=pvc-plane-minio-vol-plane-minio-wl-0
+plane_holds() { # <the driver's text> [<knob>...] — the whole driver runs once with the set plane: ends 0 when it ended 0 with BACKUP and an id, made four scale calls and no patch and no call in the namespaces of the Manager and the queue, the box holds the two sealed archives and the manifest under the plane folder alone, the manifest names the set and two stores, the read-back says it, and nothing planted was printed; what is wrong stands in $OUT/verdict
+  local text="$1" landed claim
+  shift
+  LOCK_ARG=plane hold_run "$text" "$@"
+  : > "$OUT/verdict"
+  [ "$LOCK_CODE" = 0 ] || echo "the run ended with $LOCK_CODE, not 0: $(tail -n 2 "$LOCK_DIR/hold/err" | tr '\n' ' ')" >> "$OUT/verdict"
+  [ "$(tail -n 1 "$LOCK_DIR/hold/out" | cut -c1-7)" = 'BACKUP ' ] || echo 'the run did not end with BACKUP and an id' >> "$OUT/verdict"
+  [ "$(patch_calls)" = 0 ] || echo "the run patched $(patch_calls) time(s) — the set plane holds no queue" >> "$OUT/verdict"
+  ! grep -qE ' -n (manager|image-builder) ' "$STANDIN/kubectl-calls.log" || echo 'the run called kubectl in the namespace of the Manager or of the queue — the set plane reads neither' >> "$OUT/verdict"
+  [ "$(scale_calls)" = 4 ] || echo "the run made $(scale_calls) scale call(s), not the four of two stores stopped and started" >> "$OUT/verdict"
+  landed="$(find "$STANDIN/box-uploaded/$CARRY_FQDN/plane" -mindepth 1 -maxdepth 1 -type d 2> /dev/null)"
+  if [ "$(printf '%s\n' "$landed" | grep -c .)" != 1 ]; then
+    echo 'the box holds no one backup folder under the plane folder' >> "$OUT/verdict"
+  else
+    [ "$(ls "$landed" | tr '\n' ' ')" = "manifest.txt plane--$PLANE_MINIO_CLAIM.tar.gpg plane--$PLANE_PGDB_CLAIM.tar.gpg " ] \
+      || echo "the box holds other files than the two archives and the manifest: $(ls "$landed" | tr '\n' ' ')" >> "$OUT/verdict"
+    grep -qx 'SET=plane' "$landed/manifest.txt" || echo 'the manifest on the box does not say SET=plane' >> "$OUT/verdict"
+    grep -qx 'STORES=2' "$landed/manifest.txt" || echo 'the manifest on the box does not count the two stores' >> "$OUT/verdict"
+    for claim in "$PLANE_PGDB_CLAIM" "$PLANE_MINIO_CLAIM"; do
+      { printf 'sealed with: %s\n' "$PLANTED_PASSPHRASE"; cat "$LOCK_DIR/storage/plane-$claim-pvc-0000/payload"; } | cmp -s - "$landed/plane--$claim.tar.gpg" \
+        || echo "the archive of $claim on the box is not the sealed store" >> "$OUT/verdict"
+    done
+    [ "$(tail -n 1 "$LOCK_DIR/hold/out")" = "BACKUP $(basename "$landed")" ] || echo 'the last line is not BACKUP and the id the box holds' >> "$OUT/verdict"
+  fi
+  [ ! -e "$STANDIN/box-uploaded/$CARRY_FQDN/master" ] || echo 'the run wrote under the master folder of the box' >> "$OUT/verdict"
+  hold_says 'the checksums hold for 2 of 2 archives' || echo 'the read-back did not say that the checksums hold for 2 of 2 archives' >> "$OUT/verdict"
+  hold_says 'the manifest counts the 2 stores, the first archive opens, the manifest is the one sent' || echo 'the read-back did not say that the manifest counts 2 stores and the first archive opens' >> "$OUT/verdict"
+  hold_says 'plane/statefulset/plane-pgdb-wl reads ready: 1 of 1' || echo 'the run did not read plane-pgdb-wl ready' >> "$OUT/verdict"
+  hold_says 'plane/statefulset/plane-minio-wl reads ready: 1 of 1' || echo 'the run did not read plane-minio-wl ready' >> "$OUT/verdict"
+  ! hold_says 'host--vault' || echo 'the run named the quorum archive — the set plane seals none' >> "$OUT/verdict"
+  printed_wrong "$LOCK_DIR/hold/out" "$LOCK_DIR/hold/err" >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+plane_refused() { # <the driver's text> <the code> <what the output says> [<knob>...] — the whole driver with the set plane ends with that code and says that, patched nothing and called nothing in the namespaces of the Manager and the queue, and carried nothing to the box; what is wrong stands in $OUT/verdict
+  local text="$1" code="$2" said="$3"
+  shift 3
+  LOCK_ARG=plane hold_run "$text" "$@"
+  : > "$OUT/verdict"
+  [ "$LOCK_CODE" = "$code" ] || echo "the run ended with $LOCK_CODE, not $code: $(tail -n 2 "$LOCK_DIR/hold/err" | tr '\n' ' ')" >> "$OUT/verdict"
+  hold_says "$said" || echo "the run did not say: $said" >> "$OUT/verdict"
+  [ "$(patch_calls)" = 0 ] || echo "the run patched $(patch_calls) time(s) — the set plane holds no queue" >> "$OUT/verdict"
+  ! grep -qE ' -n (manager|image-builder) ' "$STANDIN/kubectl-calls.log" || echo 'the run called kubectl in the namespace of the Manager or of the queue — the set plane reads neither' >> "$OUT/verdict"
+  ! hold_says 'The Manager stays stopped' || echo 'the run spoke of a Manager it did not stop' >> "$OUT/verdict"
+  [ ! -d "$STANDIN/box-uploaded" ] || echo 'a refused run carried something to the box' >> "$OUT/verdict"
+  [ -n "$(ls -A "$LOCK_DIR/hold/backups")" ] || echo 'the archives of a refused run do not stand on the machine' >> "$OUT/verdict"
+  printed_wrong "$LOCK_DIR/hold/out" "$LOCK_DIR/hold/err" >> "$OUT/verdict"
+  if [ -s "$STANDIN/secrets.seen" ]; then secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"; fi
+  [ ! -s "$OUT/verdict" ]
+}
+plane_holds "$LOCK_TEXT" || fail "backup: the set plane was not taken as two stores, with no hold, and carried to the plane folder: $(cat "$OUT/verdict")"
+[ "$(grep -c 'scale statefulset/plane-pgdb-wl --replicas=0' "$STANDIN/kubectl-calls.log")" = 1 ] \
+  || fail 'backup: the set plane did not stop plane-pgdb-wl once'
+[ "$(grep -n 'scale statefulset/plane-minio-wl --replicas=0' "$STANDIN/kubectl-calls.log" | cut -d: -f1)" -gt "$(grep -n 'scale statefulset/plane-pgdb-wl --replicas=1' "$STANDIN/kubectl-calls.log" | cut -d: -f1)" ] \
+  || fail 'backup: the set plane stopped the object store before the database was started again — one store is stopped at a time'
+# innocents: the state of the Manager and the queue is no concern of a plane run, and a cluster with no release queue takes it all the same
+plane_holds "$LOCK_TEXT" manager--manager.replicas=0 suspend=true || fail "backup: a Manager at 0 and a queue suspended changed the set plane: $(cat "$OUT/verdict")"
+plane_holds "$LOCK_TEXT" no-cronjob || fail "backup: a cluster with no release queue refused the set plane, which reads none: $(cat "$OUT/verdict")"
+# a copy that fails starts its store again and the run ends 70; a store that does not read ready is named, and nothing is carried
+plane_refused "$LOCK_TEXT" 70 "the copy of plane/$PLANE_PGDB_CLAIM failed; plane-pgdb-wl was started again with 1 replica(s)" copy-fails=plane-$PLANE_PGDB_CLAIM \
+  || fail "backup: a failed copy of a plane store was not refused as it must be: $(cat "$OUT/verdict")"
+[ "$(cat "$STANDIN/cluster/plane--plane-pgdb-wl.replicas")" = 1 ] || fail 'backup: the store whose copy failed was not started again'
+plane_refused "$LOCK_TEXT" 70 'plane/statefulset/plane-minio-wl reads 0 ready replica(s) of the 1 it had, after 1 s' knob-not-ready=plane/plane-minio-wl STORE_WAIT_SECONDS=1 \
+  || fail "backup: a plane store that does not read ready was not refused as it must be: $(cat "$OUT/verdict")"
+hold_says 'a store did not read ready after its copy' || fail 'backup: the refusal of a plane store that does not read ready did not say so'
+# a plane run is held out by a run that holds the lock, and holds out the next run, each naming its act
+lock_refuses "$LOCK_TEXT" scale plane || fail "backup: a second driver was not refused while a plane run held its stores: $(cat "$OUT/verdict")"
+lock_refuses "$LOCK_TEXT" upload plane || fail "backup: a second driver was not refused while a plane run uploaded its archives: $(cat "$OUT/verdict")"
+ok 'backup: the set plane stops and starts its two stores one after the other and reads each ready, patches no queue and calls nothing of the Manager, seals no quorum, carries the two archives and a manifest of SET=plane and STORES=2 to the plane folder, and says what its read-back proved; a Manager at 0 and a missing release queue change nothing; a failed copy or a store that does not read ready ends 70 and carries nothing; a second run is refused with 75 naming the plane run that holds the lock'
+
+# planted defects of the set plane, each in a copy of the driver, each of which a case above must turn red: a plane run that holds the queue, a plane run that stops the Manager, plane rows that name
+# the pgdb claim alone, a manifest that names the wrong set, a backup carried to the folder of the set master, a plane run that does not wait for its stores to read ready, a lock record without the act
+plant "$LOCK_TEXT" $'else\n  HELD=1\nfi' $'else\n  HELD=1\n  K -n "$QUEUE_NAMESPACE" patch "cronjob/$QUEUE_CRONJOB" --type=merge -p \'{"spec":{"suspend":true}}\' >/dev/null\nfi'; PLANE_HOLDS_QUEUE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" $'else\n  HELD=1\nfi' $'else\n  HELD=1\n  stop_store manager manager deployment\nfi'; PLANE_STOPS_MANAGER="$PLANTED_TEXT"
+plant "$LOCK_TEXT" '  "plane|pvc-plane-minio-vol-plane-minio-wl-0|plane-minio-wl|statefulset"
+' ''; PLANE_PGDB_ALONE="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "'\$SET' '\$TAKEN'" "'master' '\$TAKEN'"; PLANE_MANIFEST_MASTER="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'BACKUPS="box:$FQDN/$SET"' 'BACKUPS="box:$FQDN/master"'; PLANE_TO_MASTER_FOLDER="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'release_hold || die "a store did not read ready after its copy; the archives stand in $WORK on this machine" 70' 'true'; PLANE_NO_READY_WAIT="$PLANTED_TEXT"
+plant "$LOCK_TEXT" "printf '%s %s %s\\n' \"\$ID\" \"\$\$\" \"\$SET\" > \"\$LOCK_FILE\"" "printf '%s %s\\n' \"\$ID\" \"\$\$\" > \"\$LOCK_FILE\""; LOCK_RECORD_NO_ACT="$PLANTED_TEXT"
+! plane_holds "$PLANE_HOLDS_QUEUE" || fail 'the planted plane run that holds the queue was not caught — the probe proves nothing'
+caught_for 'plane run that holds the queue' 'the run patched' 'the run called kubectl in the namespace'
+! plane_holds "$PLANE_STOPS_MANAGER" || fail 'the planted plane run that stops the Manager was not caught — the probe proves nothing'
+caught_for 'plane run that stops the Manager' 'the run called kubectl in the namespace' 'the run made' 'the run ended with'
+! plane_holds "$PLANE_PGDB_ALONE" || fail 'the planted plane rows that name the pgdb claim alone were not caught — the probe proves nothing'
+caught_for 'plane rows that name the pgdb claim alone' 'the run made' 'the box holds other files' 'the manifest on the box does not count the two stores' 'the read-back did not say' 'the run did not read plane-minio-wl ready' 'on the box is not the sealed store'
+! plane_holds "$PLANE_MANIFEST_MASTER" || fail 'the planted plane manifest that names the set master was not caught — the probe proves nothing'
+caught_for 'plane manifest that names the set master' 'the manifest on the box does not say SET=plane'
+! plane_holds "$PLANE_TO_MASTER_FOLDER" || fail 'the planted plane backup carried to the folder of the set master was not caught — the probe proves nothing'
+caught_for 'plane backup carried to the folder of the set master' 'the box holds no one backup folder under the plane folder' 'the run wrote under the master folder of the box'
+! plane_refused "$PLANE_NO_READY_WAIT" 70 'plane/statefulset/plane-minio-wl reads 0 ready replica(s) of the 1 it had, after 1 s' knob-not-ready=plane/plane-minio-wl STORE_WAIT_SECONDS=1 \
+  || fail 'the planted plane run that does not wait for its stores to read ready was not caught — the probe proves nothing'
+caught_for 'plane run that does not wait for its stores to read ready' 'the run ended with 0' 'the run did not say' 'a refused run carried something to the box' 'the archives of a refused run do not stand on the machine'
+! lock_refuses "$LOCK_RECORD_NO_ACT" scale plane || fail 'the planted lock record without the act was not caught — the probe proves nothing'
+caught_for 'lock record without the act' 'the refusal did not name the running run' 'the second driver ended with'
+ok 'the planted plane drivers are caught: a plane run that holds the queue or stops the Manager, plane rows that name the pgdb claim alone, a manifest of the wrong set, a backup carried to the folder of the master, a plane run that does not wait for its stores, a lock record without the act'
+
+# ── plane-restore puts a backup of the set plane back into the standing cluster ──────────────────────────────────────
+# The cases run plane-restore-driver.sh whole against the stand-ins of the hold sandbox, on a backup the rclone stand-in serves: the one
+# the plane run leaves on the box. The volumes of the two stores hold what was written after that backup, and a restore must put back what
+# it took. Every refusal ends before a store is stopped, with its code, and leaves the volumes as they were and no folder on the machine.
+# A restore that stopped a store and ends before both read ready keeps the fetched backup and the replaced content, and names them.
+PLANE_RESTORE_TEXT="$(cat "$HERE/plane-restore-driver.sh")"
+PLANE_RESTORE_LITERALS='/var/lib/master-backup /var/snap/microk8s/common/default-storage /run/lock/master-backup.lock'
+plane_holds "$LOCK_TEXT" || fail "backup: the plane run that the restore cases restore from did not end whole: $(cat "$OUT/verdict")"
+PLANE_ID="$(tail -n 1 "$LOCK_DIR/hold/out" | cut -d' ' -f2)"
+rm -rf "$WORK/plane-box"; cp -R "$STANDIN/box-uploaded" "$WORK/plane-box"
+PGDB_ARCHIVE="plane--$PLANE_PGDB_CLAIM.tar.gpg"
+MINIO_ARCHIVE="plane--$PLANE_MINIO_CLAIM.tar.gpg"
+plane_volume_dir() { echo "$LOCK_DIR/storage/plane-$1-pvc-0000"; } # <claim>
+plane_restore_reset() { # [<a script run in the folder of the backup on the box>] — the world before a restore: the box holds the backup, changed by the script, the volumes hold what was written after it, the cluster is as the stand-ins start it
+  local claim dir
+  lock_reset free
+  rm -f "$STANDIN/box-fails"
+  cp -R "$WORK/plane-box" "$STANDIN/box-uploaded"
+  [ -z "${1:-}" ] || ( cd "$STANDIN/box-uploaded/$CARRY_FQDN/plane/$PLANE_ID" && eval "$1" )
+  for claim in "$PLANE_PGDB_CLAIM" "$PLANE_MINIO_CLAIM"; do
+    dir="$(plane_volume_dir "$claim")"
+    rm -rf "$dir"; mkdir -p "$dir"
+    echo "written-after-the-backup-of-$claim" > "$dir/payload"
+    echo later > "$dir/written-later"
+  done
+  : > "$STANDIN/argv.log"
+}
+plane_restore_run() { # <the driver's text> <the id, or nothing> [<knob>...] — the whole restore driver runs once; its code stands in $LOCK_CODE. A knob is NAME (the file knob-NAME of the cluster), NAME=content (the file of cluster/ so named), box-fails=<call> (the box refuses that call), no-volume=<claim> (the volume of that claim is not on the machine) or a NAME=value of the driver, which a shortened wait is. Where RESTORE_AGAIN stands, the folders the last restore left on the machine stand for this one
+  local text="$1" id="$2" knob timings=()
+  shift 2
+  [ -z "${RESTORE_AGAIN:-}" ] || mv "$LOCK_DIR/prestore/backups" "$WORK/prestore-backups"
+  mkdir -p "$STANDIN/cluster"
+  for knob in "$@"; do
+    case "$knob" in
+      STORE_*=*) timings+=("$knob") ;;
+      box-fails=*) printf '%s\n' "${knob#*=}" > "$STANDIN/box-fails" ;;
+      no-volume=*) rm -rf "$(plane_volume_dir "${knob#*=}")" ;;
+      *=*) printf '%s\n' "${knob#*=}" > "$STANDIN/cluster/${knob%%=*}" ;;
+      *) : > "$STANDIN/cluster/knob-$knob" ;;
+    esac
+  done
+  LOCK_LITERALS="$PLANE_RESTORE_LITERALS" lock_driver prestore "$text" ${timings[@]+"${timings[@]}"}
+  [ -z "${RESTORE_AGAIN:-}" ] || mv "$WORK/prestore-backups" "$LOCK_DIR/prestore/backups"
+  LOCK_ARG="$id" lock_run prestore
+}
+plane_volumes_wrong() { # <pgdb: written|restored|absent> <minio: written|restored|absent> — says which volume does not hold what the case left in it: what was written after the backup, what the backup took and nothing else, or nothing because it was not made; ends 0
+  local claim dir state=("$1" "$2") index=0
+  for claim in "$PLANE_PGDB_CLAIM" "$PLANE_MINIO_CLAIM"; do
+    dir="$(plane_volume_dir "$claim")"
+    if [ "${state[$index]}" = absent ]; then
+      [ ! -e "$dir" ] || echo "the volume of $claim stands, although the case took it away"
+    elif [ "${state[$index]}" = restored ]; then
+      [ "$(cat "$dir/payload" 2> /dev/null)" = "planted-store-of-$claim" ] || echo "the volume of $claim does not hold what the backup took: $(cat "$dir/payload" 2> /dev/null)"
+      [ ! -e "$dir/written-later" ] || echo "the volume of $claim still holds a file written after the backup"
+    else
+      [ "$(cat "$dir/payload" 2> /dev/null)" = "written-after-the-backup-of-$claim" ] || echo "the volume of $claim does not hold what was written after the backup: $(cat "$dir/payload" 2> /dev/null)"
+      [ -e "$dir/written-later" ] || echo "the volume of $claim lost a file although the restore did not reach it"
+    fi
+    index=$(( index + 1 ))
+  done
+  return 0
+}
+plane_restore_quiet() { # — says what the last restore printed that it must not: a planted secret in what it said or on a command line, a folder of secrets that stands; ends 0
+  commands_wrong
+  printed_wrong "$LOCK_DIR/prestore/out" "$LOCK_DIR/prestore/err"
+  if [ -s "$STANDIN/secrets.seen" ]; then secrets_wrong "$STANDIN/secrets.seen"; fi
+  return 0
+}
+plane_restored() { # <the driver's text> [<knob>...] — the whole restore of the backup on the box: ends 0 when it ended 0 with RESTORED and the id, each volume holds what the backup took and nothing written after it, each store was stopped and started again with the replicas it had, one after the other, every archive was opened with --numeric-owner, neither folder of the restore stands, and no secret stands on a command line or in what it printed; what is wrong stands in $OUT/verdict
+  local text="$1" calls pgdb_replicas=1 knob
+  shift
+  for knob in "$@"; do case "$knob" in plane--plane-pgdb-wl.replicas=*) pgdb_replicas="${knob#*=}" ;; esac; done
+  plane_restore_reset ''
+  plane_restore_run "$text" "$PLANE_ID" "$@"
+  : > "$OUT/verdict"
+  [ "$LOCK_CODE" = 0 ] || echo "the restore ended with $LOCK_CODE, not 0: $(tail -n 2 "$LOCK_DIR/prestore/err" | tr '\n' ' ')" >> "$OUT/verdict"
+  [ "$(tail -n 1 "$LOCK_DIR/prestore/out")" = "RESTORED $PLANE_ID" ] || echo 'the restore did not end with RESTORED and the id' >> "$OUT/verdict"
+  plane_volumes_wrong restored restored >> "$OUT/verdict"
+  calls="$(grep ' scale ' "$STANDIN/kubectl-calls.log" | sed 's/^kubectl -n plane scale statefulset\///' | tr '\n' ' ')"
+  case "$calls" in
+    "plane-pgdb-wl --replicas=0 plane-pgdb-wl --replicas=$pgdb_replicas plane-minio-wl --replicas=0 plane-minio-wl --replicas=1 ") ;;
+    "plane-minio-wl --replicas=0 plane-minio-wl --replicas=1 plane-pgdb-wl --replicas=0 plane-pgdb-wl --replicas=$pgdb_replicas ") ;;
+    *) echo "the scale calls were not each store stopped and started again with its replicas, one after the other: $calls" >> "$OUT/verdict" ;;
+  esac
+  [ "$(grep -c '^tar --numeric-owner -C .* -xf -$' "$STANDIN/argv.log")" = 2 ] || echo 'the archives were not both opened into their volumes with --numeric-owner' >> "$OUT/verdict"
+  [ -z "$(ls -A "$LOCK_DIR/prestore/backups")" ] || echo "the restore left $(ls "$LOCK_DIR/prestore/backups" | tr '\n' ' ')on the machine" >> "$OUT/verdict"
+  grep -qF -- 'plane/statefulset/plane-pgdb-wl reads ready' "$LOCK_DIR/prestore/out" || echo 'the restore did not read plane-pgdb-wl ready' >> "$OUT/verdict"
+  grep -qF -- 'plane/statefulset/plane-minio-wl reads ready' "$LOCK_DIR/prestore/out" || echo 'the restore did not read plane-minio-wl ready' >> "$OUT/verdict"
+  plane_restore_quiet >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+plane_restore_refused() { # <the driver's text> <a script run in the folder of the backup on the box, or nothing> <the id, or nothing> <the code> <what the output says> [<knob>...] — a restore that must end with that code and say that before it stopped anything: ends 0 when it made no scale call, left both volumes as REFUSED_VOLUMES says (as they were written), left no folder on the machine, and printed no secret; what is wrong stands in $OUT/verdict
+  local text="$1" script="$2" id="$3" code="$4" said="$5"
+  shift 5
+  plane_restore_reset "$script"
+  plane_restore_run "$text" "$id" "$@"
+  : > "$OUT/verdict"
+  [ "$LOCK_CODE" = "$code" ] || echo "the restore ended with $LOCK_CODE, not $code: $(tail -n 2 "$LOCK_DIR/prestore/err" | tr '\n' ' ')" >> "$OUT/verdict"
+  grep -qF -- "$said" "$LOCK_DIR/prestore/out" "$LOCK_DIR/prestore/err" || echo "the restore did not say: $said" >> "$OUT/verdict"
+  [ "$(scale_calls)" = 0 ] || echo "the restore made $(scale_calls) scale call(s) before it was refused" >> "$OUT/verdict"
+  plane_volumes_wrong ${REFUSED_VOLUMES:-written written} >> "$OUT/verdict"
+  [ -z "$(ls -A "$LOCK_DIR/prestore/backups" 2> /dev/null)" ] || echo "a refused restore left $(ls "$LOCK_DIR/prestore/backups" | tr '\n' ' ')on the machine" >> "$OUT/verdict"
+  plane_restore_quiet >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+plane_restore_stopped() { # <the driver's text> <pgdb: written|restored> <minio: written|restored> <what the output says> [<knob>...] — a restore that stops half way: ends 0 when it ended 70 saying that, left the volumes as asked, left the fetched backup and the replaced content on the machine, named the two commands, and printed no secret; what is wrong stands in $OUT/verdict
+  local text="$1" pgdb="$2" minio="$3" said="$4" claim kept
+  shift 4
+  plane_restore_reset ''
+  plane_restore_run "$text" "$PLANE_ID" "$@"
+  : > "$OUT/verdict"
+  [ "$LOCK_CODE" = 70 ] || echo "the restore ended with $LOCK_CODE, not 70: $(tail -n 2 "$LOCK_DIR/prestore/err" | tr '\n' ' ')" >> "$OUT/verdict"
+  grep -qF -- "$said" "$LOCK_DIR/prestore/out" "$LOCK_DIR/prestore/err" || echo "the restore did not say: $said" >> "$OUT/verdict"
+  plane_volumes_wrong "$pgdb" "$minio" >> "$OUT/verdict"
+  [ -d "$LOCK_DIR/prestore/backups/restore-$PLANE_ID" ] || echo 'the fetched backup does not stand on the machine' >> "$OUT/verdict"
+  kept="$LOCK_DIR/prestore/backups/restore-$PLANE_ID.replaced"
+  [ -d "$kept" ] || echo 'the replaced content does not stand on the machine' >> "$OUT/verdict"
+  if [ "$pgdb" = restored ]; then
+    [ "$(cat "$kept/plane--$PLANE_PGDB_CLAIM/payload" 2> /dev/null)" = "written-after-the-backup-of-$PLANE_PGDB_CLAIM" ] || echo 'the content the restore replaced in the volume of plane-pgdb-wl is not kept' >> "$OUT/verdict"
+  fi
+  if [ "$minio" = restored ]; then
+    [ "$(cat "$kept/plane--$PLANE_MINIO_CLAIM/payload" 2> /dev/null)" = "written-after-the-backup-of-$PLANE_MINIO_CLAIM" ] || echo 'the content the restore replaced in the volume of plane-minio-wl is not kept' >> "$OUT/verdict"
+  fi
+  grep -qF -- "sudo rm -rf $LOCK_DIR/prestore/backups/restore-$PLANE_ID $kept" "$LOCK_DIR/prestore/out" "$LOCK_DIR/prestore/err" || echo 'the restore did not name the command that clears both folders' >> "$OUT/verdict"
+  grep -qF -- "microk8s kubectl -n plane scale statefulset/" "$LOCK_DIR/prestore/out" "$LOCK_DIR/prestore/err" || echo 'the restore did not name the command that puts the old content back' >> "$OUT/verdict"
+  plane_restore_quiet >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+
+plane_restored "$PLANE_RESTORE_TEXT" || fail "plane-restore: the backup was not put back, store by store: $(cat "$OUT/verdict")"
+plane_restored "$PLANE_RESTORE_TEXT" plane--plane-pgdb-wl.replicas=2 || fail "plane-restore: a store that ran with two replicas was not started again with two: $(cat "$OUT/verdict")"
+FLIP_A_BYTE="printf Z | dd of=$PGDB_ARCHIVE bs=1 count=1 seek=0 conv=notrunc 2> /dev/null"
+plane_restore_refused "$PLANE_RESTORE_TEXT" "$FLIP_A_BYTE" "$PLANE_ID" 65 'the checksums in manifest.txt of backup' \
+  || fail "plane-restore: an archive with a flipped byte was not refused before a store was stopped: $(cat "$OUT/verdict")"
+plane_restore_refused "$PLANE_RESTORE_TEXT" "sed -i 's/^FQDN=.*/FQDN=other.example.invalid/' manifest.txt" "$PLANE_ID" 65 'names FQDN other.example.invalid and this restore needs' \
+  || fail "plane-restore: a backup of another FQDN was not refused: $(cat "$OUT/verdict")"
+plane_restore_refused "$PLANE_RESTORE_TEXT" "sed -i 's/^STAGE=.*/STAGE=test/' manifest.txt" "$PLANE_ID" 65 'names STAGE test and this restore needs' \
+  || fail "plane-restore: a backup of another stage was not refused: $(cat "$OUT/verdict")"
+plane_restore_refused "$PLANE_RESTORE_TEXT" "sed -i 's/^SET=.*/SET=master/' manifest.txt" "$PLANE_ID" 65 'names SET master and this restore needs plane' \
+  || fail "plane-restore: a backup of another set was not refused: $(cat "$OUT/verdict")"
+plane_restore_refused "$PLANE_RESTORE_TEXT" "sed -i 's/^STORES=.*/STORES=3/' manifest.txt" "$PLANE_ID" 66 'counts other stores than the 2 rows of this restore' \
+  || fail "plane-restore: a manifest that counts other stores than the two rows was not refused: $(cat "$OUT/verdict")"
+plane_restore_refused "$PLANE_RESTORE_TEXT" "rm $MINIO_ARCHIVE; sed -i '/minio/d' manifest.txt" "$PLANE_ID" 66 "carries no archive for plane/$PLANE_MINIO_CLAIM" \
+  || fail "plane-restore: a backup missing the archive of a store was not refused: $(cat "$OUT/verdict")"
+plane_restore_refused "$PLANE_RESTORE_TEXT" "sed -i '/pgdb/d' manifest.txt" "$PLANE_ID" 65 "holds no checksum for the archive of plane/$PLANE_PGDB_CLAIM" \
+  || fail "plane-restore: an archive no checksum of the manifest holds was not refused: $(cat "$OUT/verdict")"
+plane_restore_refused "$PLANE_RESTORE_TEXT" "printf 'sealed with: another-passphrase\nx\n' > $PGDB_ARCHIVE; sed -i '/pgdb/d' manifest.txt; sha256sum $PGDB_ARCHIVE >> manifest.txt" "$PLANE_ID" 65 "the archive of plane/$PLANE_PGDB_CLAIM does not open with the BACKUP_PASSPHRASE" \
+  || fail "plane-restore: an archive sealed with another passphrase, under a checksum that holds, was not refused: $(cat "$OUT/verdict")"
+plane_restore_refused "$PLANE_RESTORE_TEXT" '' "$PLANE_ID" 66 "the storage box holds no backup $PLANE_ID" box-fails=lsf \
+  || fail "plane-restore: a backup the box does not list was not refused: $(cat "$OUT/verdict")"
+plane_restore_refused "$PLANE_RESTORE_TEXT" '' "$PLANE_ID" 66 'plane/statefulset/plane-minio-wl is not in the cluster' knob-no-workload=plane/plane-minio-wl \
+  || fail "plane-restore: a workload that is not in the cluster was not refused: $(cat "$OUT/verdict")"
+REFUSED_VOLUMES='written absent' plane_restore_refused "$PLANE_RESTORE_TEXT" '' "$PLANE_ID" 66 "no volume of plane/$PLANE_MINIO_CLAIM stands under" no-volume="$PLANE_MINIO_CLAIM" \
+  || fail "plane-restore: a volume that is not on the machine was not refused: $(cat "$OUT/verdict")"
+# a restore without an id lists the backups the box holds and ends 64 before it takes the lock, fetches or stops anything
+plane_restore_refused "$PLANE_RESTORE_TEXT" '' '' 64 'name one of them as the second argument' \
+  || fail "plane-restore: a call without an id did not end 64 before it touched the machine: $(cat "$OUT/verdict")"
+grep -qxF "     $PLANE_ID" "$LOCK_DIR/prestore/out" || fail "plane-restore: a call without an id did not list the backup $PLANE_ID: $(cat "$LOCK_DIR/prestore/out" | tr '\n' ' ')"
+# a store that cannot be stopped, one whose pods stand after the wait, one that cannot be started again and one that does not read ready stop the restore with 70
+plane_restore_stopped "$PLANE_RESTORE_TEXT" written written 'was not stopped' knob-stop-fails=plane/plane-pgdb-wl \
+  || fail "plane-restore: a store that cannot be stopped did not stop the restore as it must: $(cat "$OUT/verdict")"
+plane_restore_stopped "$PLANE_RESTORE_TEXT" written written 'was not stopped' knob-pods-stay=plane/plane-pgdb-wl STORE_WAIT_SECONDS=1 \
+  || fail "plane-restore: a store whose pods stand after the wait did not stop the restore as it must: $(cat "$OUT/verdict")"
+plane_restore_stopped "$PLANE_RESTORE_TEXT" restored restored 'could not be started again; it stands at 0 replicas' knob-scale-fails=plane/plane-minio-wl \
+  || fail "plane-restore: a store that cannot be started again did not stop the restore as it must: $(cat "$OUT/verdict")"
+plane_restore_stopped "$PLANE_RESTORE_TEXT" restored restored 'plane/statefulset/plane-minio-wl: reads 0 ready replica(s) of the 1 it had, after 1 s' knob-not-ready=plane/plane-minio-wl STORE_WAIT_SECONDS=1 \
+  || fail "plane-restore: a store that does not read ready did not stop the restore as it must: $(cat "$OUT/verdict")"
+# the folders that stopped restore left refuse the next restore of the same backup, before it fetches or stops anything
+: > "$STANDIN/kubectl-calls.log"
+RESTORE_AGAIN=1 plane_restore_run "$PLANE_RESTORE_TEXT" "$PLANE_ID"
+: > "$OUT/verdict"
+[ "$LOCK_CODE" = 65 ] || echo "the second restore ended with $LOCK_CODE, not 65: $(tail -n 2 "$LOCK_DIR/prestore/err" | tr '\n' ' ')" >> "$OUT/verdict"
+grep -qF -- 'an earlier restore of' "$LOCK_DIR/prestore/err" || echo 'the second restore did not name the earlier one' >> "$OUT/verdict"
+[ "$(scale_calls)" = 0 ] || echo "the second restore made $(scale_calls) scale call(s) before it was refused" >> "$OUT/verdict"
+[ "$(cat "$LOCK_DIR/prestore/backups/restore-$PLANE_ID.replaced/plane--$PLANE_MINIO_CLAIM/payload" 2> /dev/null)" = "written-after-the-backup-of-$PLANE_MINIO_CLAIM" ] \
+  || echo 'the second restore did not leave the replaced content where the first left it' >> "$OUT/verdict"
+plane_restore_quiet >> "$OUT/verdict"
+[ ! -s "$OUT/verdict" ] || fail "plane-restore: folders left by a restore that stopped did not refuse the next one: $(cat "$OUT/verdict")"
+
+# a restore and a backup never run at once: the one that comes second is refused with 75 naming the act and the run of the one that holds the lock
+plane_restore_lock() { # <restore|backup> <the restore driver's text> — the holder is held inside its store loop and the other started: ends 0 when the other ended 75, named the act, run and start of the holder, scaled and patched nothing and made no folder, and the holder ran to its end once let go; what is wrong stands in $OUT/verdict
+  local holder="$1" text="$2" act first_id='' started second scaled scaled_before patched patched_before
+  : > "$OUT/verdict"
+  plane_restore_reset ''
+  : > "$STANDIN/block-first-scale"
+  if [ "$holder" = restore ]; then
+    LOCK_LITERALS="$PLANE_RESTORE_LITERALS" lock_driver first "$text"; lock_driver second "$LOCK_TEXT"
+    LOCK_ARG="$PLANE_ID" lock_start first
+  else
+    lock_driver first "$LOCK_TEXT"; LOCK_LITERALS="$PLANE_RESTORE_LITERALS" lock_driver second "$text"
+    LOCK_ARG=plane lock_start first
+  fi
+  lock_held first
+  if [ "$holder" = restore ]; then
+    act=plane-restore
+    read -r first_id _ < "$LOCK_DIR/master-backup.lock" || true
+  else
+    act=plane
+    first_id="$(ls "$LOCK_DIR/first/backups" 2> /dev/null | head -n 1 || true)"
+  fi
+  started="${first_id:0:4}-${first_id:4:2}-${first_id:6:2} ${first_id:9:2}:${first_id:11:2}:${first_id:13:2} UTC"
+  [ -n "$first_id" ] || echo 'the holder left no id, so there is no run to name' >> "$OUT/verdict"
+  scaled_before="$(scale_calls)"; patched_before="$(patch_calls)"
+  if [ "$holder" = restore ]; then LOCK_ARG=plane lock_run second; else LOCK_ARG="$PLANE_ID" lock_run second; fi
+  second="$LOCK_CODE"
+  scaled=$(( $(scale_calls) - scaled_before )); patched=$(( $(patch_calls) - patched_before ))
+  lock_let_go
+  [ "$second" = 75 ] || echo "the second driver ended with $second, not 75" >> "$OUT/verdict"
+  { [ -n "$first_id" ] && grep -qF -- "the act $act, run $first_id, started $started" "$LOCK_DIR/second/err"; } \
+    || echo "the refusal did not name the running run $first_id of the act $act, started $started: $(tail -n 1 "$LOCK_DIR/second/err")" >> "$OUT/verdict"
+  [ "$scaled" = 0 ] || echo "the second driver scaled $scaled time(s) while the first held the stores" >> "$OUT/verdict"
+  [ "$patched" = 0 ] || echo "the second driver patched $patched time(s) while the first held the stores" >> "$OUT/verdict"
+  [ ! -e "$LOCK_DIR/second/backups" ] || echo 'the refused driver made a folder before it was refused' >> "$OUT/verdict"
+  [ "$LOCK_CODE" = 0 ] || echo "the first driver ended with $LOCK_CODE once let go" >> "$OUT/verdict"
+  if [ "$holder" = restore ]; then
+    [ "$(tail -n 1 "$LOCK_DIR/first/out")" = "RESTORED $PLANE_ID" ] || echo 'the restore that held the lock did not end with RESTORED and the id once let go' >> "$OUT/verdict"
+  else
+    [ "$(tail -n 1 "$LOCK_DIR/first/out")" = "BACKUP $first_id" ] || echo 'the backup that held the lock did not end with BACKUP and its id once let go' >> "$OUT/verdict"
+  fi
+  printed_wrong "$LOCK_DIR/first/out" "$LOCK_DIR/first/err" "$LOCK_DIR/second/out" "$LOCK_DIR/second/err" >> "$OUT/verdict"
+  secrets_wrong "$STANDIN/secrets.seen" >> "$OUT/verdict"
+  [ ! -s "$OUT/verdict" ]
+}
+plane_restore_lock backup "$PLANE_RESTORE_TEXT" || fail "plane-restore: a restore was not refused while a backup of the set plane held the stores: $(cat "$OUT/verdict")"
+plane_restore_lock restore "$PLANE_RESTORE_TEXT" || fail "plane-restore: a backup was not refused while a restore held the stores: $(cat "$OUT/verdict")"
+ok 'plane-restore puts the backup of the set plane back store by store with the replicas each had, opens each archive with --numeric-owner and leaves nothing on the machine; a flipped byte, a manifest of another FQDN, stage or set, a count that is not 2, a missing archive, an archive no checksum holds or one sealed with another passphrase, a backup the box does not list, a workload or a volume that is not there, each end before a store is stopped with 65 or 66; a store that cannot be stopped or started or does not read ready ends 70 with the folders kept and the two commands named; a restore and a backup refuse each other with 75 naming the act'
+
+# planted defects of plane-restore, each in a copy of the driver, each of which a case above must turn red, and an innocent that none may: a restore that stops a store before it has checked the checksums,
+# one that does not keep the fetched backup once a store is stopped, one that starts a store with one replica, one that opens an archive without --numeric-owner, one that does not read the set of the
+# manifest, one that does not refuse the folders of an earlier restore, one that takes no lock, one whose record names no act, and the two rows in the other order
+plant "$PLANE_RESTORE_TEXT" $'root sh -c "cd \'$FETCH\' && grep -E' $'K -n plane scale statefulset/plane-pgdb-wl --replicas=0 >/dev/null\nroot sh -c "cd \'$FETCH\' && grep -E'; RESTORE_SCALES_FIRST="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" $'KEEP=1\n' ''; RESTORE_DROPS_FETCH="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" 'start_store "$ns" "$workload" "$kind" "$want" || store_refused' 'start_store "$ns" "$workload" "$kind" 1 || store_refused'; RESTORE_STARTS_ONE="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" 'tar --numeric-owner -C "$3" -xf -' 'tar -C "$3" -xf -'; RESTORE_NO_NUMERIC="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" 'for field in FQDN STAGE SET; do' 'for field in FQDN STAGE; do'; RESTORE_NO_SET="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" 'if root test -e "$FETCH" || root test -e "$KEPT"; then' 'if false; then'; RESTORE_IGNORES_EARLIER="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" 'flock -n -E 75 9 || LOCKED=$?' 'LOCKED=0'; RESTORE_NO_LOCK="$PLANTED_TEXT"
+plant "$PLANE_RESTORE_TEXT" $'\'%s %s %s\\n\' "$(date -u +%Y%m%dT%H%M%SZ)" "$$" plane-restore >' $'\'%s %s\\n\' "$(date -u +%Y%m%dT%H%M%SZ)" "$$" >'; RESTORE_RECORD_NO_ACT="$PLANTED_TEXT"
+RESTORE_ROWS_SWAPPED="$(printf '%s\n' "$PLANE_RESTORE_TEXT" | sed '/^  "plane|pvc-plane-pgdb-vol-plane-pgdb-wl-0|plane-pgdb-wl|statefulset"$/{N;s/^\(.*\)\n\(.*\)$/\2\n\1/;}')"
+[ "$RESTORE_ROWS_SWAPPED" != "$PLANE_RESTORE_TEXT" ] || fail 'the two rows of the restore were not put in the other order — the probe proves nothing'
+! plane_restore_refused "$RESTORE_SCALES_FIRST" "$FLIP_A_BYTE" "$PLANE_ID" 65 'the checksums in manifest.txt of backup' \
+  || fail 'the planted restore that stops a store before it checks the checksums was not caught — the probe proves nothing'
+grep -qF 'the restore made 1 scale call(s) before it was refused' "$OUT/verdict" || fail "the planted restore that stops a store before it checks the checksums was not refused for what it is: $(cat "$OUT/verdict")"
+! plane_restore_stopped "$RESTORE_DROPS_FETCH" restored restored 'plane/statefulset/plane-minio-wl: reads 0 ready replica(s) of the 1 it had, after 1 s' knob-not-ready=plane/plane-minio-wl STORE_WAIT_SECONDS=1 \
+  || fail 'the planted restore that does not keep the fetched backup was not caught — the probe proves nothing'
+grep -qF 'the fetched backup does not stand on the machine' "$OUT/verdict" || fail "the planted restore that does not keep the fetched backup was not refused for what it is: $(cat "$OUT/verdict")"
+! plane_restored "$RESTORE_STARTS_ONE" plane--plane-pgdb-wl.replicas=2 || fail 'the planted restore that starts a store with one replica was not caught — the probe proves nothing'
+grep -qF 'the scale calls were not each store stopped and started again with its replicas' "$OUT/verdict" || fail "the planted restore that starts a store with one replica was not refused for what it is: $(cat "$OUT/verdict")"
+! plane_restored "$RESTORE_NO_NUMERIC" || fail 'the planted restore that opens an archive without --numeric-owner was not caught — the probe proves nothing'
+grep -qF 'the archives were not both opened into their volumes with --numeric-owner' "$OUT/verdict" || fail "the planted restore that opens an archive without --numeric-owner was not refused for what it is: $(cat "$OUT/verdict")"
+! plane_restore_refused "$RESTORE_NO_SET" "sed -i 's/^SET=.*/SET=master/' manifest.txt" "$PLANE_ID" 65 'names SET master and this restore needs plane' \
+  || fail 'the planted restore that does not read the set of the manifest was not caught — the probe proves nothing'
+grep -qF 'the restore made' "$OUT/verdict" || fail "the planted restore that does not read the set of the manifest was not refused for what it is: $(cat "$OUT/verdict")"
+plane_restore_stopped "$PLANE_RESTORE_TEXT" restored restored 'plane/statefulset/plane-minio-wl: reads 0 ready replica(s) of the 1 it had, after 1 s' knob-not-ready=plane/plane-minio-wl STORE_WAIT_SECONDS=1 \
+  || fail "plane-restore: the case of the folders an earlier restore left could not be made again: $(cat "$OUT/verdict")"
+RESTORE_AGAIN=1 plane_restore_run "$RESTORE_IGNORES_EARLIER" "$PLANE_ID"
+! { [ "$LOCK_CODE" = 65 ] && grep -qF -- 'an earlier restore of' "$LOCK_DIR/prestore/err"; } || fail 'the planted restore that ignores the folders of an earlier restore was refused all the same — the probe proves nothing'
+! plane_restore_lock backup "$RESTORE_NO_LOCK" || fail 'the planted restore that takes no lock was not caught — the probe proves nothing'
+grep -qF 'the second driver ended with' "$OUT/verdict" || fail "the planted restore that takes no lock was not refused for what it is: $(cat "$OUT/verdict")"
+! plane_restore_lock restore "$RESTORE_RECORD_NO_ACT" || fail 'the planted restore whose record names no act was not caught — the probe proves nothing'
+grep -qF 'the refusal did not name the running run' "$OUT/verdict" || fail "the planted restore whose record names no act was not refused for what it is: $(cat "$OUT/verdict")"
+plane_restored "$RESTORE_ROWS_SWAPPED" || fail "the two rows of the restore in the other order were refused: $(cat "$OUT/verdict")"
+ok 'the planted restores are caught: one that stops a store before it checks the checksums, one that does not keep the fetched backup, one that starts a store with one replica, one that opens an archive without --numeric-owner, one that does not read the set, one that ignores the folders of an earlier restore, one that takes no lock, one whose record names no act; the two rows in the other order are not refused'
+for claim in "$PLANE_PGDB_CLAIM" "$PLANE_MINIO_CLAIM"; do
+  rm -rf "$(plane_volume_dir "$claim")"; mkdir -p "$(plane_volume_dir "$claim")"
+  echo "planted-store-of-$claim" > "$(plane_volume_dir "$claim")/payload"
+done
 
 # ── the read-back measures the box's rate and ends a copy that stands still or falls behind, and what it left is removed when the ssh session ends ─
 # The read-back is the one step that waits on the storage box alone. The driver reads rclone's own statistics of the copy: the bytes it has
@@ -4676,7 +5157,7 @@ readback_orphaned() { # <the driver's text> [<the plan>] — the ssh session end
   reader=$!
   ( export SUDO_STANDIN=nopasswd SUDO_STANDIN_PASSWORD="$PLANTED_PASSWORD" PATH="$STANDIN:$PATH"
     umask 077
-    exec env --default-signal=PIPE bash "$dir/driver.sh" "$dir/config" ) < /dev/null > "$session" 2>&1 &
+    exec env --default-signal=PIPE bash "$dir/driver.sh" "$dir/config" "$LOCK_ARG" ) < /dev/null > "$session" 2>&1 &
   LOCK_PID=$!
   RB_STARTED=$SECONDS
   for _ in $(seq 1 600); do [ -s "$STANDIN/transfer.pid" ] && break; kill -0 "$LOCK_PID" 2> /dev/null || break; sleep 0.1; done
@@ -5146,7 +5627,7 @@ caught_for 'completion line without a rate' 'the line of the first complete samp
 plant "$LOCK_TEXT" ' --timeout "${READBACK_FINISH_SECONDS}s"' ''; NO_TIMEOUT="$PLANTED_TEXT"
 ! readback_held "$NO_TIMEOUT" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted read-back without --timeout was not caught — the probe proves nothing'
 caught_for 'read-back without --timeout' 'the read-back was not run under --timeout' "${HELD_FRAGMENTS[@]}"
-plant "$LOCK_TEXT" 'READBACK_EXPECTED_ARCHIVES=$(( ${#STORES[@]} + 1 ))' 'READBACK_EXPECTED_ARCHIVES=$(( ${#STORES[@]} + 0 ))'; FEWER_ARCHIVES="$PLANTED_TEXT"
+plant "$LOCK_TEXT" 'READBACK_EXPECTED_ARCHIVES=$ARCHIVES' 'READBACK_EXPECTED_ARCHIVES=$(( ARCHIVES - 1 ))'; FEWER_ARCHIVES="$PLANTED_TEXT"
 ! readback_held "$FEWER_ARCHIVES" held_after_last_byte $'rate 4194304 forever\nhold 5' 20 4 no || fail 'the planted coverage that expects fewer archives than the backup holds was not caught — the probe proves nothing'
 caught_for 'coverage that expects fewer archives' 'the driver ended with' "${HELD_FRAGMENTS[@]}"
 finish_is_300() { [ "$(sed -n 's/^readonly READBACK_FINISH_SECONDS=//p' <<< "$1")" = 300 ]; }
@@ -7726,8 +8207,8 @@ SHAPE_LAUNCHER_NAMES=('line 3' 'line 3 (STORAGE_BOX_PASSWORD)' 'line 3' 'line 3,
 SHAPE_DRIVER_NAMES=('line 3' 'line 3' 'line 3' 'line 3, line 4')
 SHAPE_LAUNCHER_LEAKS=('abc def|SECRET_X' 'planted-secret' 'GEZDGNBVGY3TQOJQ' 'zqa|zqb|ZQPART2')
 SHAPE_DRIVER_LEAKS=('abc def|SECRET_X' 'planted-secret|STORAGE_BOX_PASSWORD' 'GEZDGNBVGY3TQOJQ' 'zqa|zqb|ZQPART2')
-SHAPE_LAUNCHERS=(master-backup master-restore regenerate-install-branch remove-slave-from-master install-machine)
-SHAPE_DRIVERS=(master-backup-driver master-restore-driver regenerate-driver remove-slave-driver driver)
+SHAPE_LAUNCHERS=(master-backup master-restore plane-restore regenerate-install-branch remove-slave-from-master install-machine)
+SHAPE_DRIVERS=(master-backup-driver master-restore-driver plane-restore-driver regenerate-driver remove-slave-driver driver)
 
 plant_shape() { # the file, the line to plant as its third; the drivers remove the file they are given
   printf '%s\n' '# the planted config' "FQDN='shape.example.invalid'" "$2" "OPERATOR_USER='op'" > "$1"
@@ -7738,7 +8219,7 @@ launch_shape() { # the folder the launcher stands in, the launcher, the config i
   case "$launcher" in
     regenerate-install-branch) args=(apps3.example.invalid "$config") ;;
     remove-slave-from-master) args=(apps7.example.invalid "$config"); cwd="$SLAVEWORK_A" ;;
-    master-backup|master-restore) cwd="$MASTER" ;;
+    master-backup|master-restore|plane-restore) cwd="$MASTER" ;;
   esac
   A_CODE=0
   ( cd "$cwd" && bash "$dir/$launcher.sh" "${args[@]}" ) > "$OUT/a.out" 2> "$OUT/a.err" || A_CODE=$?
@@ -7753,7 +8234,7 @@ refused_by_number() { # what ran, the lines it must name as the refusal prints t
   done <<< "${3//|/$'\n'}"
 }
 
-# ── the five launchers, run up to the refusal ──
+# ── the six launchers, run up to the refusal ──
 for i in 0 1 2 3; do
   for launcher in "${SHAPE_LAUNCHERS[@]}"; do
     plant_shape "$SHAPE/launcher.env" "${SHAPE_LINES[$i]}"
@@ -7763,7 +8244,7 @@ for i in 0 1 2 3; do
   done
 done
 
-# ── the five drivers, run as the machine runs them: the config is their one argument ──
+# ── the six drivers, run as the machine runs them: the config is their first argument ──
 for i in 0 1 2 3; do
   for driver in "${SHAPE_DRIVERS[@]}"; do
     plant_shape "$SHAPE/driver.env" "${SHAPE_LINES[$i]}"
@@ -7914,7 +8395,7 @@ done
 sed 's/head -3/head -4/' "$HERE/driver.sh" > "$SHAPE/planted-driver.sh"
 [ "$(sed -n "$SHAPE_SPAN" "$SHAPE/planted-driver.sh")" != "$SHAPE_FN" ] \
   || fail 'a driver whose function was changed by one word compared equal — the comparison proves nothing'
-ok 'the five drivers carry the function of require-config-assignments.sh byte for byte, and a copy with one word changed is caught'
+ok 'the six drivers carry the function of require-config-assignments.sh byte for byte, and a copy with one word changed is caught'
 
 # ── planted defects in the function: each must leave an answer the cases above refuse ──
 mutant() { # the new name of the function, then the sed script that plants the defect in its text

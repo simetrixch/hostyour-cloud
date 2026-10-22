@@ -18,8 +18,9 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `regenerate-install-branch.sh` | brings an installation onto the release its own map is pinned to |
 | `remove-slave-from-master.sh` | takes ONE slave's registration off the master it stands on |
 | `abandon-installation.sh` | takes down what an installation whose machines are gone left outside them: the DNS records it wrote, its install branches on origin and its books branch in the deploy repository; the config stays |
-| `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends, ending a read that stands still or falls behind the rate it measured on that same read, or that has read every byte and does not end |
+| `master-backup.sh <config> [master\|plane]` | takes the stores of one set, sealed, to the storage box, and reads the backup back from it before it ends. The set `master`, which a call without a set takes, is a master's stores and Vault's quorum under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them; the set `plane` is Plane's database and files alone under `<fqdn>/plane/<id>/`, holding nothing. One run at a time on a machine, whichever the set (a second ends 75). The read-back ends a read that stands still or falls behind the rate it measured on that same read, or that has read every byte and does not end |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing; it puts the pinned rclone on the machine first, from the owner's mirror or, with `--rclone-package <local .deb>`, from the package the operator kept |
+| `plane-restore.sh <config> [<id>]` | puts one backup of the set `plane` back into the cluster that stands: without an id it lists the backups under `<fqdn>/plane/` and ends 64; with one it fetches the backup, refuses before it stops anything a backup whose checksums, FQDN, stage or set do not hold, one that misses an archive, and a workload or a volume it cannot find, then stops Plane's database and its object store one after the other, replaces the content of their volumes with the backup's, starts each again with the replicas it had and waits until it reads ready, and ends `RESTORED <id>`. It takes the lock the backup takes |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
 | `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact prod release on test; the stage `none` releases a library or the platform, which have no stage, and names the installations a platform release is placed on |
 | `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network, in a clone whose origin carries the install branch (exit 69 otherwise). `status.sh` calls it as one `forgejo-ssh:` row of every installation whose branch runs Forgejo, and `install-machine.sh` at its end after an installation that ended well: green on a banner, RED on none, `not asked` where it could not ask; 66 (no Forgejo on the branch) is no row. Tekton does not call it: it runs inside the network |
@@ -29,9 +30,10 @@ acts below share a subject rather than a purpose, which is why they stand in one
 
 `scripts/test.sh` runs their remote fixture checks.
 
-**Five files here are not a person's entry point.** `driver.sh` is the installation itself,
+**Six files here are not a person's entry point.** `driver.sh` is the installation itself,
 `regenerate-driver.sh` the regeneration, `remove-slave-driver.sh` the removal, `master-backup-driver.sh`
-the backup and `master-restore-driver.sh` the staging of a restore: all five run ON THE MACHINE, and the
+the backup of either set, `master-restore-driver.sh` the staging of a restore and `plane-restore-driver.sh`
+the restore of Plane's stores: all six run ON THE MACHINE, and the
 launcher beside each carries it over the session it opens. None of them is started by hand.
 
 ## The order the acts stand in
@@ -410,6 +412,9 @@ The third only answers, and writes nothing at all.
 
 ```
 bash lifecycle/master-backup.sh  lifecycle/config.master.env                      # prints BACKUP <id>
+bash lifecycle/master-backup.sh  lifecycle/config.master.env plane                # prints BACKUP <id>, for Plane's database and files alone
+bash lifecycle/plane-restore.sh  lifecycle/config.master.env                      # lists the backups of Plane
+bash lifecycle/plane-restore.sh  lifecycle/config.master.env 20260922T031500Z     # puts one back into the cluster that stands
 bash lifecycle/master-restore.sh lifecycle/config.master.env                      # lists the backups
 bash lifecycle/master-restore.sh lifecycle/config.master.env 20260922T031500Z     # stages one
 bash lifecycle/master-restore.sh lifecycle/config.master.env 20260922T031500Z --rclone-package ~/rclone-v1.75.2-linux-amd64.deb   # the same, when the mirror is the master that is lost
@@ -426,7 +431,8 @@ host, `secrets/vault-<stage>.txt`, the file Vault's quorum was written to once. 
 exactly that set: each store is stopped for its own copy and started again with the replicas it had
 (a database copied under a running process is a copy with a write in flight), every archive is
 sealed with `BACKUP_PASSPHRASE` before it leaves, and the whole goes to the storage box under
-`<fqdn>/master/<id>/` with a manifest of checksums.
+`<fqdn>/master/<id>/` with a manifest of checksums. Plane's database and files are not in this set: they are the set
+`plane`, taken and restored on their own (the next section).
 
 The backup holds the Manager's runs, so none of them fails because of it. First it suspends the CronJob
 `release-queue` of the namespace `image-builder`, which starts every release and publish run, and waits until
@@ -447,6 +453,44 @@ of the Manager, a backup's included. A run of the Forgejo release flow lands in 
 neither queue label and starts at once; no step of the Manager waits on it, and one that reads Forgejo during
 Forgejo's copy may fail. A backup whose driver is killed leaves the Manager at 0 and the queue suspended, beside
 the store it was copying.
+
+## Plane's own backup, and its restore
+
+Plane keeps its cards, comments and members in its PostgreSQL, the StatefulSet `plane-pgdb-wl` of the namespace `plane`,
+and what people attach to them in its object store, `plane-minio-wl`. `master-backup.sh <config> plane` takes those two
+stores alone: each is stopped for its own copy and started again with the replicas it had, every archive is sealed with
+`BACKUP_PASSPHRASE`, and the three files (the two archives and a manifest of checksums that says `SET=plane` and
+`STORES=2`) go to the storage box under `<fqdn>/plane/<id>/`, beside the master's folder and never inside it. It is a
+short run of its own and can be repeated alone, whenever the Plane data should be safe again.
+
+The set leaves out Plane's Valkey (`plane-redis-wl`), which holds sessions and cache, and its RabbitMQ
+(`plane-rabbitmq-wl`), which holds queued tasks: neither holds a card. It holds neither the Manager's queue nor the
+Manager, which reads nothing of Plane, and it seals no quorum. The two stores are copied one after the other, not at
+one instant, so the database and the object store of one backup can differ by the writes between the two copies. Plane's
+other pods keep running, and cannot reach a store while it is stopped for its copy. After the last copy the driver waits until each store it started
+reads ready by the ready count of its workload, within `STORE_WAIT_SECONDS`, and ends 70 naming the store that does not,
+before the manifest is written. The two StatefulSets render no `spec.replicas` (`scripts/plane.test.mjs` holds that), so
+a sync does not write the scale to 0 back.
+
+`plane-restore.sh <config> <id>` puts one such backup back into the cluster that stands, and is not `master-restore`,
+which stages a master's backup on a bare machine. Everything written to Plane after the backup is gone afterwards, so
+nobody may write to Plane while it runs. The driver takes the lock the backup takes, fetches the backup to
+`/var/lib/master-backup/restore-<id>/` (root's, at mode 700) and refuses, before it stops anything: checksums that do not
+hold (65), a manifest whose `FQDN`, `STAGE` or `SET` differ from this restore's (65), an archive that no checksum of the
+manifest holds or that does not open with `BACKUP_PASSPHRASE` (65), a `STORES=` that is not 2 or an archive that is missing
+(66), and a workload or a volume folder it cannot find (66). Then, for each of the two stores in turn, it reads the
+replicas, stops the workload and waits until its pods are gone, moves the content of the volume to
+`/var/lib/master-backup/restore-<id>.replaced/<namespace>--<claim>/`, opens the archive into the volume with
+`--numeric-owner`, starts the workload with the replicas it had and waits until it reads ready within
+`STORE_WAIT_SECONDS`. Only when both read ready does it remove the replaced content and the fetch folder, and print
+`RESTORED <id>`.
+
+A store that cannot be stopped, whose volume cannot be emptied or filled, that cannot be started again or that does not
+read ready ends the restore with 70. The driver names the store, says where the replaced content and the fetched backup
+stand, and prints two commands: the one that puts the old content back and starts the store again, and the one that removes
+both folders when the new content is the one to keep. A restore that is killed after it began to stop stores leaves the
+same two folders and the store it stood on stopped. The next restore of that backup ends 65 until both folders are looked at and removed, because the
+replaced content may be the only copy of what the volume held.
 
 ## The pinned rclone
 
@@ -480,11 +524,11 @@ engine and the images a full recovery needs are not provided by it (`driver.sh` 
 ## One backup at a time, and a backup read back
 
 Two backups at once would leave a store stopped: the second reads the replicas of a store while the
-first holds it at 0, and starts it again with 0. So the driver takes a lock on the machine before it
-makes or stops anything. The lock is `flock` on `/run/lock/master-backup.lock`, held for the whole run.
+first holds it at 0, and starts it again with 0. A plane restore empties the volume of a store the same way. So both
+drivers take one lock on the machine, whichever set a backup takes, before they make or stop anything. The lock is `flock` on `/run/lock/master-backup.lock`, held for the whole run.
 A second run, started from this computer or from another, stops nothing and ends at once with exit 75
-(the code for "try again later"). The run that holds the lock writes its id and its process id into the lock
-file. The refusal names that run by its id and its start time only while the process still has the lock file
+(the code for "try again later"). The run that holds the lock writes its id, its process id and its act (`master`, `plane` or `plane-restore`) into the lock
+file. The refusal names that run by its act, its id and its start time only while the process still has the lock file
 open. A run that ended leaves its record in the file, and a lock held by hand (`flock` with a command) writes
 none. In both cases the refusal says that the record is empty or names a run that is not alive, names no run,
 and still ends 75.
@@ -502,14 +546,14 @@ the backup back. It copies the whole backup from the box into `/var/lib/master-b
 folder of root's beside the work folder, so the machine needs the backup's size in free space once more
 while it runs. In that folder it checks four things: every checksum of the manifest holds, the
 manifest's `STORES=` equals the number of stores this backup took, the quorum archive opens with
-`BACKUP_PASSPHRASE`, and the manifest is byte for byte the one the driver sent. The last check is what
+`BACKUP_PASSPHRASE` (the first archive of the backup does, for the set `plane`, which has no quorum), and the manifest is byte for byte the one the driver sent. The last check is what
 holds the first to every archive: a checksum line that lost its form on the box is not a checksum line to
 `sha256sum -c`, so the archive under it would never be read. The quorum is opened to `/dev/null`, so no
 line of it is written anywhere or printed. If a check fails, the driver ends with exit 69 and names the check.
 
 The storage box answers the `md5sum` command that rclone sends it over its shell with a failure, or never.
 So the hash check of the remote is off (`disable_hashcheck = true` in the `[box]` config that
-`master-backup-driver.sh` and `master-restore-driver.sh` write), for the carry, the read-back and the restore's
+`master-backup-driver.sh`, `master-restore-driver.sh` and `plane-restore-driver.sh` write), for the carry, the read-back and the restore's
 fetch alike, and rclone then compares sizes only. What proves the bytes is the manifest's sha256, which the
 read-back checks for every archive.
 

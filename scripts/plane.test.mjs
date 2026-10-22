@@ -10,7 +10,9 @@ import {applicationOf, driftFindings, renderChart, renderTwice} from './render-c
 // Plane's API-key API, is reached without it. Its PostgreSQL, Redis, RabbitMQ and MinIO run beside
 // it on the platform's StorageClass, and every secret it holds comes from <stage>/app/plane: the
 // chart's public default keys and passwords never render. The four images of the data services run at
-// the versions versions.yaml pins, which values-common.yaml states by hand.
+// the versions versions.yaml pins, which values-common.yaml states by hand. The StatefulSets of its
+// PostgreSQL and its MinIO state no replicas: the set plane of lifecycle/master-backup.sh scales both to
+// 0 for the copy, and a sync writes back every count the chart states.
 
 const yq = (args, input) => JSON.parse(execFileSync('yq', ['-o=json', ...args], {encoding: 'utf8', ...(input ? {input} : {})}));
 const platform = yq(['.global', 'clusters/platform/values-common.yaml']);
@@ -64,6 +66,10 @@ function renderFindings(objects) {
     const set = objects.find(o => o.kind === 'StatefulSet' && o.metadata.name === `plane-${name}-wl`);
     const classes = (set?.spec.volumeClaimTemplates ?? []).map(t => t.spec.storageClassName);
     if (classes.length !== 1 || classes[0] !== platform.storageClass) found.push(`${name} keeps its data on ${classes.join(', ') || 'nothing'}`);
+  }
+  for (const name of ['pgdb', 'minio']) {
+    const replicas = objects.find(o => o.kind === 'StatefulSet' && o.metadata.name === `plane-${name}-wl`)?.spec.replicas;
+    if (replicas !== undefined) found.push(`plane-${name}-wl states ${replicas} replica(s), which a sync writes back over the scale to 0 of its backup`);
   }
   for (const [name, pin] of [['pgdb', 'plane-postgres'], ['redis', 'plane-redis'], ['rabbitmq', 'plane-rabbitmq']]) {
     const set = objects.find(o => o.kind === 'StatefulSet' && o.metadata.name === `plane-${name}-wl`);
@@ -139,7 +145,7 @@ function blueprintFindings(proxyText, bindingsText) {
 const proxyText = readFileSync(`${blueprints}/99-proxy-plane.yaml`, 'utf8');
 const bindingsText = readFileSync(`${blueprints}/99-z-outpost-bindings.yaml`, 'utf8');
 
-test('Plane renders behind the forward auth, with /api/v1 alone outside it, its own data and no public default', () => {
+test('Plane renders behind the forward auth, with /api/v1 alone outside it, its own data, no public default and no replicas stated for the two stores the backup stops', () => {
   assert.deepEqual(renderFindings(renderChart('plane')), []);
 });
 
@@ -147,7 +153,7 @@ test('the embedded outpost gates plane.<domain>', () => {
   assert.deepEqual(blueprintFindings(proxyText, bindingsText), []);
 });
 
-test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class, a missing outpost binding, the chart\'s own /god-mode, a redirect to a port, a worker forking per core, a limit too small for it and an image off its pin are found', () => {
+test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, a volume off the platform class, a missing outpost binding, the chart\'s own /god-mode, a redirect to a port, a worker forking per core, a limit too small for it, an image off its pin and a replica count stated for the database are found', () => {
   const planted = {
     'the pages without the gate': ['--set-string', 'plane-ce.ingress.ingress_annotations.traefik\\.ingress\\.kubernetes\\.io/router\\.middlewares='],
     'the public default keys': ['--set', 'plane-ce.external_secrets.app_keys_existingSecret=', '--set', 'plane-ce.env.requireExplicitSecrets=false'],
@@ -190,6 +196,9 @@ test('PLANTED DEFECT: an ungated page, a second ungated path, a public default, 
   ported.find(o => o.kind === 'Middleware').spec.redirectRegex.replacement = 'https://${1}:3000/god-mode/${2}';
   assert.deepEqual(renderFindings(ported), ['https://plane.example.com/god-mode is sent to https://plane.example.com:3000/god-mode/',
     'https://plane.example.com/god-mode?next=1 is sent to https://plane.example.com:3000/god-mode/?next=1']);
+  const counted = renderChart('plane');
+  counted.find(o => o.kind === 'StatefulSet' && o.metadata.name === 'plane-pgdb-wl').spec.replicas = 1;
+  assert.deepEqual(renderFindings(counted), ['plane-pgdb-wl states 1 replica(s), which a sync writes back over the scale to 0 of its backup']);
   assert.notDeepEqual(blueprintFindings(proxyText, bindingsText.replace(/\n\s*- !Find \[authentik_providers_proxy.proxyprovider, \[name, Plane\]\]/g, '')), []);
 });
 
