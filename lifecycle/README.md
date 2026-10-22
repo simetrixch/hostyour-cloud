@@ -21,7 +21,7 @@ acts below share a subject rather than a purpose, which is why they stand in one
 | `master-backup.sh` | takes a master's stores and Vault's quorum, sealed, to the storage box under `<fqdn>/master/<id>/`, holding the Manager's runs while it takes them, one run at a time on a machine (a second ends 75), and reads the backup back from the box before it ends, ending a read that stands still or falls behind the rate it measured on that same read, or that has read every byte and does not end |
 | `master-restore.sh` | stages one of those backups on a bare machine, so that `install-machine` then installs the same installation onto it — same identity, same branch, its stores standing; it puts the pinned rclone on the machine first, from the owner's mirror or, with `--rclone-package <local .deb>`, from the package the operator kept |
 | `status.sh` | answers which release each installation stands on, and what the trunk carries since |
-| `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact prod release on test; the stage `none` releases a library, which has no stage |
+| `release-unit.sh` | releases ONE unit through the Manager, as the Release dialog does, with no click: it plans the release over the Manager's admin access, approves the plan and watches the run to its end; `--prod-to-test` puts the exact prod release on test; the stage `none` releases a library or the platform, which have no stage, and names the installations a platform release is placed on |
 | `check-forgejo-ssh.sh` | asks the SSH port an installation announces for Forgejo (its install branch's `SSH_PORT`, 23 today) for an SSH banner, from where it runs; run it from outside the installation's network, in a clone whose origin carries the install branch (exit 69 otherwise). `status.sh` calls it as one `forgejo-ssh:` row of every installation whose branch runs Forgejo, and `install-machine.sh` at its end after an installation that ended well: green on a banner, RED on none, `not asked` where it could not ask; 66 (no Forgejo on the branch) is no row. Tekton does not call it: it runs inside the network |
 | `create-origin-pull-certificate.sh` | makes the CA and the client certificate Cloudflare presents to the origins of proxied hosts, and writes `CLOUDFLARE_ORIGIN_PULL_CA`, `CLOUDFLARE_ORIGIN_PULL_CERTIFICATE` and `CLOUDFLARE_ORIGIN_PULL_PRIVATE_KEY` into the config; a second run is a rotation |
 | `apply-cloudflare-zone-security.sh` | previews or applies, and reads back, the Cloudflare Free controls of the installation's two zones, among them the minimum TLS version of 1.2 and Email Obfuscation off |
@@ -89,7 +89,7 @@ after each write, with the same guard every launcher applies.
 
 ```
 bash lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test
-bash lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit>
+bash lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit> [--installation <fqdn>]...
 ```
 
 The first form reads the prod release (`GET /api/units/<unit>/release?stage=prod`: its tag,
@@ -101,6 +101,24 @@ entry), and reads prod again before it pushes the deploy ref, so a prod that mov
 nothing. The script approves every plan of this form that mints and builds nothing, and refuses one with
 the step `mint-release` or `watch-release-build`, naming it. The second form plans the
 release the dialog would plan for that stage, channel, version and full commit.
+
+The second form always sends the installations the release is placed on, as `installations` in the
+release request: `[]` when no `--installation <fqdn>` is given, which publishes the release and places it
+nowhere, and the FQDNs in the order they were given otherwise. Only the platform's release, which has no
+stage (`none`), is placed. A pair that is malformed or trailing, an FQDN given twice and any
+`--installation` beside `--prod-to-test` end the script with 64 before it calls the Manager. The Manager
+decides the rest at its plan: the repository, the channel and its stages, the installation's identity
+and how many it places on. The one master it holds is the only installation it places a release on, so
+repeating the flag does not promise more than one.
+
+After the plan, before any approval, the script reads `installations` of `GET /api/runs/<run-id>`, the
+selection the plan froze, and compares it with the request: an array of strings with the same names in
+the same order, `[]` included. A Manager that strips the field (one from before it), a `null`, a value
+that is no list, an added, repeated, omitted, changed or reordered name end the script with the plan
+unapproved, still planned, and the run's page named. The comparison comes before the stop for secrets, so
+it is reported even where the plan also asks for the elevation password. A plan that does ask for it,
+which a placement does, is left planned for the owner's approval page; the script has no password
+argument, file or environment setting, and approves nothing that needs one.
 
 The script runs on the operator's machine and needs `node` and `ssh`. Every exchange with the
 Manager is one `ssh <user@master-host> microk8s.kubectl exec -i` into the Manager's container

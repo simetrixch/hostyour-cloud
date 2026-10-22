@@ -338,6 +338,13 @@ spec:
             - name: METRICS_QUERY_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.installationCommitterEmail }}
+            # The mailbox this installation's commits carry (config.ts INSTALLATION_COMMITTER_EMAIL). `with` and not `quote`, like
+            # METRICS_QUERY_URL above: an empty value must reach the process as an ABSENT variable, because config.ts refuses an empty
+            # one at boot and an absent one only keeps the placement off. values-common.yaml states where it is written.
+            - name: INSTALLATION_COMMITTER_EMAIL
+              value: {{ . | quote }}
+            {{- end }}
             # THE NAME THIS PLATFORM'S OWN UNIT IS ONBOARDED UNDER (config.ts
             # PLATFORM_UNIT_NAME), and the only value that lets the last program of a
             # first master's install onboard that unit without a gate run

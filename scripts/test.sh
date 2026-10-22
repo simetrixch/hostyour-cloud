@@ -37,6 +37,7 @@ suite scripts/alert-mail-sender.test.mjs 'alert mail sender — every alert mail
 suite scripts/manager-generator-refresh.test.mjs 'manager-generator-refresh — approved grant only.'
 suite scripts/manager-pat-storage.test.mjs
 suite scripts/manager-cloudflare-zone-settings.test.mjs 'manager Cloudflare zone settings — the settings token reaches the Manager from its own Vault entry and Secret, beside the DNS token, and no other inventory reads it.'
+suite scripts/manager-installation-committer.test.mjs 'manager installation committer — the committer_email answer of the hostyour-deploy pin reaches the Manager container as INSTALLATION_COMMITTER_EMAIL, and an absent one renders no variable.'
 suite scripts/installation-domain.test.mjs 'installation domain planning and its launcher.'
 suite scripts/post-stage-callbacks.test.mjs 'post stage callbacks — strict nonproduction allowlist.'
 suite scripts/unit-charts-consumer-project.test.mjs 'unit charts in the consumer project — no unit chart of a consumer'\''s Application renders a kind its AppProject refuses.'

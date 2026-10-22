@@ -6140,7 +6140,7 @@ run_release_unit() { # the scenario the stand-in Manager plays, then the act's a
   local scenario="$1" fake i
   shift
   rm -f "$RU/port" "$RU/sock" "$RU/relay-fails" "$RU/relay-hangs"
-  : > "$RU/calls"; : > "$RU/argv"; : > "$RU/env"; touch "$RU/started"
+  : > "$RU/calls"; : > "$RU/plans"; : > "$RU/argv"; : > "$RU/env"; touch "$RU/started"
   SCENARIO="$scenario" RU="$RU" SENTINEL_RUN="$SENTINEL_RUN" node "$HERE/../scripts/standin/release-unit-manager.mjs" &
   fake=$!
   for i in $(seq 100); do [ -s "$RU/port" ] && [ -S "$RU/sock" ] && break; sleep 0.05; done
@@ -6202,6 +6202,7 @@ expect 'an explicit release of a commit, its plan approved as it stands' 0 <<'RE
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -6212,7 +6213,7 @@ RECORDED
 calls 'an explicit release of a commit, its plan approved as it stands' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -6236,7 +6237,7 @@ RECORDED
 calls 'a unit the Manager has no registration of, refused at its plan' <<'RECORDED'
 MINT
 POST /api/units/ghost/release cookie=current origin=ok
-  body {"stage":"prod","channel":"stable","version":"0.2.001","commit":"cccccccccccccccccccccccccccccccccccccccc"}
+  body {"stage":"prod","channel":"stable","version":"0.2.001","commit":"cccccccccccccccccccccccccccccccccccccccc","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 RECORDED
@@ -6253,7 +6254,7 @@ RECORDED
 calls 'a commit that is not on the default branch, refused at its plan' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"prod","channel":"stable","version":"0.2.001","commit":"dddddddddddddddddddddddddddddddddddddddd"}
+  body {"stage":"prod","channel":"stable","version":"0.2.001","commit":"dddddddddddddddddddddddddddddddddddddddd","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 RECORDED
@@ -6270,7 +6271,7 @@ RECORDED
 calls 'a version that stands on another commit, refused at its plan' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"prod","channel":"stable","version":"0.2.000","commit":"cccccccccccccccccccccccccccccccccccccccc"}
+  body {"stage":"prod","channel":"stable","version":"0.2.000","commit":"cccccccccccccccccccccccccccccccccccccccc","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 RECORDED
@@ -6374,13 +6375,14 @@ expect 'a plan that asks for a secret to be typed' 1 <<'RECORDED'
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 ~~~ standard error ~~~
 release-unit: run run_1 asks for secrets to be typed, which this script does not do; it is not approved. Open /runs/run_1
 RECORDED
 calls 'a plan that asks for a secret to be typed' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"prod","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"prod","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 RECORDED
@@ -6639,11 +6641,210 @@ run_release_unit success manager@master.example.invalid shop
 expect 'a run naming a unit and nothing else' 64 <<'RECORDED'
 ~~~ standard error ~~~
 release-unit: usage: lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test
-       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit>
+       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit> [--installation <fqdn>]...
 RECORDED
 calls 'a run naming a unit and nothing else' <<'RECORDED'
 RECORDED
 no_session 'a run naming a unit and nothing else'
+
+# THE SELECTION OF INSTALLATIONS. A release request always names the installations it places the platform
+# release on, `[]` when no `--installation <fqdn>` is given, and the act approves nothing before the plan
+# the Manager froze names the same list. The stand-in plays a Manager that accepts a selection of its one
+# master and refuses any other at its plan, and, per scenario named selection-*, another Manager's answer
+# written out: the old one that strips the field, and the ones that answer null, a changed, extra, repeated,
+# omitted or reordered name, a value that is no list of names, or a name where none was asked. A run
+# asking for the elevation password is left planned for the owner's approval page.
+PLATFORM=(manager@master.example.invalid hostyour-cloud none stable 0.8.475 "$B")
+OWN_INSTALLATION=master.digitacloud.app
+OTHER_INSTALLATION=slave.digitacloud.app
+plans() { # what was being checked; the plans the stand-in Manager froze, on standard input
+  diff -u - "$RU/plans" || fail "$1 — the Manager froze other plans than the case records"
+}
+posts_of() { # how many release requests the Manager saw
+  grep -c '^POST /api/units/' "$RU/calls" || true
+}
+approvals() { # how many approvals the Manager saw
+  grep -c '/approve cookie' "$RU/calls" || true
+}
+refusal_case() { # what was being checked; the exit code; the last line of standard error; the scenario; the act's arguments. Whatever the act says, the Manager saw one release request and no approval
+  local label="$1" code="$2" last="$3"
+  shift 3
+  run_release_unit "$@"
+  [ "$A_CODE" = "$code" ] || fail "$label — the run ended with $A_CODE, and its case records $code"
+  [ "$(normalise < "$OUT/a.err" | tail -n 1)" = "$last" ] || fail "$label — the run ended on '$(normalise < "$OUT/a.err" | tail -n 1)', and its case records '$last'"
+  [ "$(posts_of)" = 1 ] || fail "$label — the Manager saw $(posts_of) release requests, not one"
+  [ "$(approvals)" = 0 ] || fail "$label — the Manager saw $(approvals) approvals of a plan that was not the one asked for"
+  no_session "$label"
+  ok "$label — exit $code on '${last#release-unit: }', one release request, no approval"
+}
+unsent_case() { # what was being checked; the last line of standard error; the act's arguments. The act refuses before it calls anything
+  local label="$1" last="$2"
+  shift 2
+  run_release_unit success "$@"
+  [ "$A_CODE" = 64 ] || fail "$label — the run ended with $A_CODE, and a usage error ends with 64"
+  [ "$(normalise < "$OUT/a.err" | tail -n 1)" = "$last" ] || fail "$label — the run ended on '$(normalise < "$OUT/a.err" | tail -n 1)', and its case records '$last'"
+  [ ! -s "$RU/calls" ] || fail "$label — the Manager saw calls where the act refuses before any: $(head -n 3 "$RU/calls" | tr '\n' ' ')"
+  no_session "$label"
+  ok "$label — exit 64 on '${last#release-unit: }', and no call to the Manager"
+}
+
+run_release_unit success "${PLATFORM[@]}" --installation "$OWN_INSTALLATION"
+expect 'the own installation, its selection acknowledged, and its elevation password left to the approval page' 1 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending, pin-release pending, read-back pending)
+run run_1: planned (mint-release pending, watch-release-build pending, pin-release pending, read-back pending)
+run run_1 places installations: master.digitacloud.app; open /runs/run_1
+~~~ standard error ~~~
+release-unit: run run_1 asks for secrets to be typed, which this script does not do; it is not approved. Open /runs/run_1
+RECORDED
+calls 'the own installation, its selection acknowledged, and its elevation password left to the approval page' <<'RECORDED'
+MINT
+POST /api/units/hostyour-cloud/release cookie=current origin=ok
+  body {"stage":null,"channel":"stable","version":"0.8.475","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":["master.digitacloud.app"]}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+plans 'the own installation' <<'RECORDED'
+run_1 installations=["master.digitacloud.app"]
+RECORDED
+no_session 'the own installation'
+
+run_release_unit success "${PLATFORM[@]}"
+expect 'a platform release naming no installation, its empty selection acknowledged and approved' 0 <<'RECORDED'
+run: run_1
+run run_1: planning (mint-release pending, watch-release-build pending)
+run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
+run run_1: queued (mint-release pending, watch-release-build pending)
+run run_1: running (mint-release running, watch-release-build running)
+run run_1: succeeded (mint-release ok, watch-release-build ok)
+run run_1 succeeded
+~~~ standard error ~~~
+RECORDED
+plans 'the empty selection' <<'RECORDED'
+run_1 installations=[]
+RECORDED
+[ "$(approvals)" = 1 ] || fail "the empty selection was approved $(approvals) times, not once"
+
+# Refused before any call: a pair that is malformed or trailing, a name given twice, and a selection in the form that puts the standing release on test.
+unsent_case 'an --installation with no name after it' "release-unit: --installation needs the FQDN of an installation after it (got nothing)" "${PLATFORM[@]}" --installation
+unsent_case 'an --installation followed by another flag' "release-unit: --installation needs the FQDN of an installation after it (got '--installation')" "${PLATFORM[@]}" --installation --installation "$OWN_INSTALLATION"
+unsent_case 'a name that is no FQDN' "release-unit: --installation needs the FQDN of an installation after it (got 'master;rm')" "${PLATFORM[@]}" --installation 'master;rm'
+unsent_case 'an argument after the pairs that is no pair' "release-unit: 'extra' is no argument of a release; the installations it is placed on are named by --installation <fqdn>, each its own pair" "${PLATFORM[@]}" --installation "$OWN_INSTALLATION" extra
+unsent_case 'the same installation named twice' "release-unit: the installation $OWN_INSTALLATION is named twice" "${PLATFORM[@]}" --installation "$OWN_INSTALLATION" --installation "$OWN_INSTALLATION"
+unsent_case 'the same installation named twice in another case' "release-unit: the installation MASTER.digitacloud.app is named twice" "${PLATFORM[@]}" --installation "$OWN_INSTALLATION" --installation MASTER.digitacloud.app
+unsent_case 'an installation in a release from prod to test' "release-unit: --installation cannot be given with --prod-to-test: a release from prod to test places the standing release and no installation" manager@master.example.invalid hostyour-cloud --prod-to-test --installation "$OWN_INSTALLATION"
+
+# Refused by the Manager at its plan: the run fails and nothing is approved. Two names are two installations on a Manager that holds one master, and none of these is turned into a second master here.
+refusal_case 'an installation the Manager does not place on' 1 'release-unit: run run_1 was refused at its plan (failed): open /runs/run_1 for why' success "${PLATFORM[@]}" --installation apps1.digitacloud.app
+refusal_case 'two installations on a Manager that holds one master' 1 'release-unit: run run_1 was refused at its plan (failed): open /runs/run_1 for why' success "${PLATFORM[@]}" --installation "$OWN_INSTALLATION" --installation "$OTHER_INSTALLATION"
+refusal_case 'a channel that does not reach the installation stage' 1 'release-unit: run run_1 was refused at its plan (failed): open /runs/run_1 for why' success manager@master.example.invalid hostyour-cloud none alpha 0.8.475 "$B" --installation "$OWN_INSTALLATION"
+refusal_case 'an installation named on a release that has a stage' 1 'release-unit: run run_1 was refused at its plan (failed): open /runs/run_1 for why' success manager@master.example.invalid hostyour-cloud prod stable 0.8.475 "$B" --installation "$OWN_INSTALLATION"
+
+# The plan froze another selection than the request named, or none: never approved, and left planned. The elevation password is also asked for in the third case, and the mismatch is what the act reports.
+OLD_MANAGER="release-unit: run run_1 names no installations in its plan, so this Manager may not carry the selection of the request; it is not approved and stands planned. Open /runs/run_1"
+refusal_case 'an old Manager that accepts the request and strips its installations' 1 "$OLD_MANAGER" selection-dropped "${PLATFORM[@]}" --installation "$OWN_INSTALLATION"
+plans 'an old Manager that strips the selection' <<'RECORDED'
+run_1 installations=absent
+RECORDED
+refusal_case 'an old Manager that strips an explicit empty selection' 1 "$OLD_MANAGER" selection-dropped "${PLATFORM[@]}"
+refusal_case 'a Manager that answers null for the selection' 1 "$OLD_MANAGER" selection-null "${PLATFORM[@]}" --installation "$OWN_INSTALLATION"
+refusal_case 'a plan that changed the installation, with its elevation password also asked for' 1 "release-unit: run run_1 plans the installations [$OTHER_INSTALLATION], and the request named [$OWN_INSTALLATION]; it is not approved and stands planned. Open /runs/run_1" selection-changed "${PLATFORM[@]}" --installation "$OWN_INSTALLATION"
+grep -q 'asks for secrets' "$OUT/a.err" && fail 'the mismatch was reported after the secret stop, not before it'
+refusal_case 'a plan that added an installation to the request' 1 "release-unit: run run_1 plans the installations [$OWN_INSTALLATION, $OTHER_INSTALLATION], and the request named [$OWN_INSTALLATION]; it is not approved and stands planned. Open /runs/run_1" selection-extra "${PLATFORM[@]}" --installation "$OWN_INSTALLATION"
+refusal_case 'a plan that repeated the installation' 1 "release-unit: run run_1 plans the installations [$OWN_INSTALLATION, $OWN_INSTALLATION], and the request named [$OWN_INSTALLATION]; it is not approved and stands planned. Open /runs/run_1" selection-repeated "${PLATFORM[@]}" --installation "$OWN_INSTALLATION"
+refusal_case 'a plan that omitted one of two installations' 1 "release-unit: run run_1 plans the installations [$OWN_INSTALLATION], and the request named [$OWN_INSTALLATION, $OTHER_INSTALLATION]; it is not approved and stands planned. Open /runs/run_1" selection-omitted "${PLATFORM[@]}" --installation "$OWN_INSTALLATION" --installation "$OTHER_INSTALLATION"
+refusal_case 'a plan that put the installations in another order' 1 "release-unit: run run_1 plans the installations [$OTHER_INSTALLATION, $OWN_INSTALLATION], and the request named [$OWN_INSTALLATION, $OTHER_INSTALLATION]; it is not approved and stands planned. Open /runs/run_1" selection-reordered "${PLATFORM[@]}" --installation "$OWN_INSTALLATION" --installation "$OTHER_INSTALLATION"
+refusal_case 'a plan that placed an installation nobody asked for' 1 "release-unit: run run_1 plans the installations [$OWN_INSTALLATION], and the request named []; it is not approved and stands planned. Open /runs/run_1" selection-empty-extra "${PLATFORM[@]}"
+refusal_case 'a plan whose installations are one string' 1 'release-unit: run run_1 names "master.digitacloud.app" as its installations, which is no list of installation names; it is not approved and stands planned. Open /runs/run_1' selection-string "${PLATFORM[@]}" --installation "$OWN_INSTALLATION"
+refusal_case 'a plan whose installations are numbers' 1 'release-unit: run run_1 names [1] as its installations, which is no list of installation names; it is not approved and stands planned. Open /runs/run_1' selection-numbers "${PLATFORM[@]}" --installation "$OWN_INSTALLATION"
+
+# Two acts at the same moment, each against a Manager of its own: the sessions, the runs and the selections do not cross, no request is sent twice, and an approval the Manager refuses is not sent again.
+RU_B="$WORK/release-unit-b"
+mkdir -p "$RU_B/home" "$RU_B/tmp"
+run_pair() { # the scenario and the arguments of the first act, then --, the scenario and the arguments of the second
+  local first_scenario="$1" first=() second=() fake_a fake_b i code_a=0 code_b=0
+  shift
+  while [ "$1" != -- ]; do first+=("$1"); shift; done
+  shift
+  local second_scenario="$1"
+  shift
+  second=("$@")
+  rm -f "$RU/port" "$RU/sock" "$RU_B/port" "$RU_B/sock" "$RU/relay-fails" "$RU_B/relay-fails" "$RU/relay-hangs" "$RU_B/relay-hangs"
+  for dir in "$RU" "$RU_B"; do : > "$dir/calls"; : > "$dir/plans"; : > "$dir/argv"; : > "$dir/env"; done
+  touch "$RU/started"
+  SCENARIO="$first_scenario" RU="$RU" SENTINEL_RUN="$SENTINEL_RUN-a" node "$HERE/../scripts/standin/release-unit-manager.mjs" & fake_a=$!
+  SCENARIO="$second_scenario" RU="$RU_B" SENTINEL_RUN="$SENTINEL_RUN-b" node "$HERE/../scripts/standin/release-unit-manager.mjs" & fake_b=$!
+  for i in $(seq 100); do [ -s "$RU/port" ] && [ -S "$RU/sock" ] && [ -s "$RU_B/port" ] && [ -S "$RU_B/sock" ] && break; sleep 0.05; done
+  [ -s "$RU/port" ] && [ -s "$RU_B/port" ] || fail 'a stand-in Manager of the pair did not start'
+  ( PATH="$RU/bin:$PATH" RU="$RU" HOME="$RU/home" TMPDIR="$RU/tmp" RELEASE_UNIT_POLL_SECONDS=0 RELEASE_UNIT_RETRIES=4 RELEASE_UNIT_EXCHANGE_SECONDS=3 timeout 15 bash "$RELEASE_UNIT" "${first[@]}" ) > "$OUT/a.out" 2> "$OUT/a.err" & local act_a=$!
+  ( PATH="$RU/bin:$PATH" RU="$RU_B" HOME="$RU_B/home" TMPDIR="$RU_B/tmp" RELEASE_UNIT_POLL_SECONDS=0 RELEASE_UNIT_RETRIES=4 RELEASE_UNIT_EXCHANGE_SECONDS=3 timeout 15 bash "$RELEASE_UNIT" "${second[@]}" ) > "$OUT/b.out" 2> "$OUT/b.err" & local act_b=$!
+  wait "$act_a" || code_a=$?
+  wait "$act_b" || code_b=$?
+  A_CODE=$code_a; B_CODE=$code_b
+  kill "$fake_a" "$fake_b" 2>/dev/null; wait "$fake_a" "$fake_b" 2>/dev/null || true
+}
+run_pair success "${PLATFORM[@]}" --installation "$OWN_INSTALLATION" -- success "${PLATFORM[@]}"
+[ "$A_CODE" = 1 ] || fail "two acts at once — the first, which asks for the elevation password, ended with $A_CODE, not 1"
+[ "$B_CODE" = 0 ] || fail "two acts at once — the second, which places nothing, ended with $B_CODE, not 0"
+diff -u - "$RU/calls" <<'RECORDED' || fail 'two acts at once — the first Manager saw other calls than the case records'
+MINT
+POST /api/units/hostyour-cloud/release cookie=current origin=ok
+  body {"stage":null,"channel":"stable","version":"0.8.475","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":["master.digitacloud.app"]}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+diff -u - "$RU_B/calls" <<'RECORDED' || fail 'two acts at once — the second Manager saw other calls than the case records'
+MINT
+POST /api/units/hostyour-cloud/release cookie=current origin=ok
+  body {"stage":null,"channel":"stable","version":"0.8.475","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+POST /api/runs/run_1/approve cookie=current origin=ok
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+GET /api/runs/run_1 cookie=current origin=n/a
+RECORDED
+[ "$(cat "$RU/plans")" = 'run_1 installations=["master.digitacloud.app"]' ] || fail 'two acts at once — the first Manager froze another selection than the first act asked for'
+[ "$(cat "$RU_B/plans")" = 'run_1 installations=[]' ] || fail 'two acts at once — the second Manager froze another selection than the second act asked for'
+grep -q 'run run_1 places installations: master.digitacloud.app' "$OUT/a.out" || fail 'two acts at once — the first act did not print its own selection'
+grep -q 'run run_1 places installations: none' "$OUT/b.out" || fail 'two acts at once — the second act printed another selection than its own'
+no_session 'two acts at once'
+ok 'two acts at once — each against its own Manager: the sessions, runs and selections did not cross, and no request was sent twice'
+
+run_pair success "${PLATFORM[@]}" -- approve-busy "${PLATFORM[@]}"
+[ "$A_CODE" = 0 ] || fail "a competing approval — the first act ended with $A_CODE, not 0"
+[ "$B_CODE" = 1 ] || fail "a competing approval — the second act, whose approval the Manager refused, ended with $B_CODE, not 1"
+[ "$(normalise < "$OUT/b.err" | tail -n 1)" = 'release-unit: run run_1 was not approved: the Manager answered 409 RESOURCE_BUSY: Resource busy. Open /runs/run_1' ] || fail "a competing approval — the second act ended on '$(tail -n 1 "$OUT/b.err")'"
+[ "$(grep -c '/approve cookie' "$RU_B/calls")" = 1 ] || fail 'a competing approval — the refused approval was sent again'
+[ "$(grep -c '^POST /api/units/' "$RU_B/calls")" = 1 ] || fail 'a competing approval — the release request was sent again'
+no_session 'a competing approval'
+ok 'a competing approval — the Manager refused it with its busy answer, and the act sent neither the approval nor the release request again'
+
+# PLANTED: a copy of the act with one rule of the selection changed. The first never compares what the plan froze; the second leaves an explicit empty selection to
+# whatever the Manager answered; the third compares the names without their order; the fourth lets a name be given twice. Each must approve, or send, where the act
+# refuses: the Manager's calls are what tell.
+plant_selection() { # what the copy does; the sed expression that makes it; the call the Manager must see although the act refuses it; the scenario; the act's arguments
+  local what="$1" expression="$2" call="$3" scenario="$4"
+  shift 4
+  PLANT="$WORK/release-unit-selection"
+  mkdir -p "$PLANT"
+  cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
+  sed -e "$expression" "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+  ! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail "the plant that $what changed nothing in release-unit.mjs"
+  RELEASE_UNIT="$PLANT/release-unit.sh"
+  run_release_unit "$scenario" "$@"
+  RELEASE_UNIT="$HERE/release-unit.sh"
+  ! grep -qE '^Node\.js v[0-9]' "$OUT/a.err" || fail "a copy of release-unit that $what crashed instead of running: $(grep -m1 -E '^[A-Za-z]*Error' "$OUT/a.err")"
+  grep -q "$call" "$RU/calls" || fail "a copy of release-unit that $what did not make the call '$call' the act refuses — the check proves nothing"
+  ok "the planted defect was caught — a copy of release-unit that $what makes the call '$call' where the act refuses"
+}
+plant_selection 'never compares the selection' '/^  if (fault !== null) stop/d' '/approve cookie' selection-extra "${PLATFORM[@]}" --installation "$OWN_INSTALLATION"
+plant_selection 'compares a selection only when one was asked' 's/const fault = selectionFault(release.installations, plan.installations);/const fault = release.installations.length === 0 ? null : selectionFault(release.installations, plan.installations);/' '/approve cookie' selection-dropped "${PLATFORM[@]}"
+plant_selection 'compares the names without their order' 's/frozen.some((fqdn, i) => fqdn !== asked\[i\])/[...frozen].sort().some((fqdn, i) => fqdn !== [...asked].sort()[i])/' '/approve cookie' selection-reordered "${PLATFORM[@]}" --installation "$OWN_INSTALLATION" --installation "$OTHER_INSTALLATION"
+plant_selection 'takes a missing selection for an empty one' 's/if (frozen === undefined || frozen === null) return "names no installations/if (frozen === undefined || frozen === null) frozen = []; if (false) return "names no installations/' '/approve cookie' selection-dropped "${PLATFORM[@]}"
+plant_selection 'lets one installation be named twice' '/is named twice/d' 'installations":\["master.digitacloud.app","master.digitacloud.app"\]' success "${PLATFORM[@]}" --installation "$OWN_INSTALLATION" --installation "$OWN_INSTALLATION"
 
 # THE TENANTS THAT FOLLOW RELEASES. A succeeded release run proves only that the stage pin stands; the
 # act then waits until every active following tenant at the stage that renders the unit runs the
@@ -6679,6 +6880,7 @@ expect 'a following tenant that moves after the release, beside the tenants that
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -6690,7 +6892,7 @@ RECORDED
 calls 'a following tenant that moves after the release, beside the tenants that are not waited for' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -6715,6 +6917,7 @@ expect 'a following tenant that never moves' 75 <<'RECORDED'
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -6726,7 +6929,7 @@ RECORDED
 calls 'a following tenant that never moves' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -6745,6 +6948,7 @@ expect 'a following tenant whose Versions run failed, beside one that landed' 1 
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -6756,7 +6960,7 @@ RECORDED
 calls 'a following tenant whose Versions run failed, beside one that landed' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -6777,6 +6981,7 @@ expect 'a following tenant on another version line than the release' 0 <<'RECORD
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -6787,7 +6992,7 @@ RECORDED
 calls 'a following tenant on another version line than the release' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -6806,6 +7011,7 @@ expect 'a unit that no following tenant renders' 0 <<'RECORDED'
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -6816,7 +7022,7 @@ RECORDED
 calls 'a unit that no following tenant renders' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -6835,6 +7041,7 @@ expect 'three relays lost while the following tenants are read' 0 <<'RECORDED'
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -6846,7 +7053,7 @@ RECORDED
 calls 'three relays lost while the following tenants are read' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -7066,6 +7273,7 @@ expect 'a stage that pins another release than the one this run put there' 1 <<'
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -7076,7 +7284,7 @@ RECORDED
 calls 'a stage that pins another release than the one this run put there' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -7128,6 +7336,7 @@ expect 'a tenant that records the tag after the release, with no Versions run af
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -7139,7 +7348,7 @@ RECORDED
 calls 'a tenant that records the tag after the release, with no Versions run after it and no rendered tag' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -7174,6 +7383,7 @@ expect 'a refusal that stood before the act looked, named at the first look' 1 <
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -7184,7 +7394,7 @@ RECORDED
 calls 'a refusal that stood before the act looked, named at the first look' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -7203,6 +7413,7 @@ expect 'a refusal that appears after the first look, named at the next one' 1 <<
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -7214,7 +7425,7 @@ RECORDED
 calls 'a refusal that appears after the first look, named at the next one' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"test","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -7375,6 +7586,7 @@ expect 'the release of a library, which has no stage' 0 <<'RECORDED'
 run: run_1
 run run_1: planning (mint-release pending, watch-release-build pending)
 run run_1: planned (mint-release pending, watch-release-build pending)
+run run_1 places installations: none; open /runs/run_1
 run run_1: queued (mint-release pending, watch-release-build pending)
 run run_1: running (mint-release running, watch-release-build running)
 run run_1: succeeded (mint-release ok, watch-release-build ok)
@@ -7385,7 +7597,7 @@ LIBRARY_CALLS="$OUT/library-calls"
 cat > "$LIBRARY_CALLS" <<'RECORDED'
 MINT
 POST /api/units/digita-plugins-free/release cookie=current origin=ok
-  body {"stage":null,"channel":"stable","version":"0.6.025","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":null,"channel":"stable","version":"0.6.025","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
@@ -7414,7 +7626,7 @@ PLANT="$WORK/release-unit-stage"
 mkdir -p "$PLANT"
 cp "$HERE/release-unit.sh" "$PLANT/release-unit.sh"
 RELEASE_UNIT="$PLANT/release-unit.sh"
-sed 's/release = { stage: stage === "none" ? null : stage, channel, version, commit };/release = { stage, channel, version, commit };/' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
+sed 's/release = { stage: stage === "none" ? null : stage, channel, version, commit, installations };/release = { stage, channel, version, commit, installations };/' "$HERE/release-unit.mjs" > "$PLANT/release-unit.mjs"
 ! cmp -s "$HERE/release-unit.mjs" "$PLANT/release-unit.mjs" || fail 'the plant that sends none as a string changed nothing in release-unit.mjs'
 run_release_unit success manager@master.example.invalid digita-plugins-free none stable 0.6.025 $B
 # The copy goes on to wait for the following tenants of a stage named "none", which the act never does; only
@@ -7433,7 +7645,7 @@ run_release_unit success manager@master.example.invalid shop prod stable 0.3.004
 calls 'the copy that sends none as a string, given prod' <<'RECORDED'
 MINT
 POST /api/units/shop/release cookie=current origin=ok
-  body {"stage":"prod","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  body {"stage":"prod","channel":"stable","version":"0.3.004","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","installations":[]}
 GET /api/runs/run_1 cookie=current origin=n/a
 GET /api/runs/run_1 cookie=current origin=n/a
 POST /api/runs/run_1/approve cookie=current origin=ok
