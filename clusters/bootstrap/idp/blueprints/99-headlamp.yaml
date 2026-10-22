@@ -9,8 +9,7 @@ metadata:
   name: Headlamp OIDC client
   labels:
     blueprints.goauthentik.io/instantiate: "true"
-# Wait for 10-groups-scopemapping.yaml's `groups` scope to exist —
-# parallel-apply race fix; see 99-argocd.yaml comment for details.
+# These conditions gate nothing, for the reason 99-argocd.yaml gives.
 conditions:
   - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
   - !Find [authentik_core.group, [name, admins]]
