@@ -1,3 +1,14 @@
+--- a/plane-ce/templates/workloads/api.deployment.yaml
++++ b/plane-ce/templates/workloads/api.deployment.yaml
+@@ -41,6 +41,8 @@
+         {{- include "plane.serviceAccountPodLabels" . }}
+       annotations:
+         timestamp: {{ now | quote }}
++        {{- /* envFrom reads the ConfigMap when a pod starts, so its hash rolls the pod when a value changes. The Secret of the same file is not hashed. */}}
++        checksum/app-vars: {{ regexFind "(?s)kind: ConfigMap.*" (include (print $.Template.BasePath "/config-secrets/app-env.yaml") .) | sha256sum }}
+     spec:
+       containers:
+       - name: {{ .Release.Name }}-api
 --- a/plane-ce/templates/workloads/migrator.job.yaml
 +++ b/plane-ce/templates/workloads/migrator.job.yaml
 @@ -3,7 +3,7 @@

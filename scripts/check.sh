@@ -481,10 +481,12 @@ $found"
 }
 
 # EVERY MAIL THE MASTER SENDS LEAVES THROUGH THE RELAY FROM ONE SENDER AT THE UNIT APEX. The relay signs
-# with DKIM for the unit apex and the platform domain only (clusters/inventories/postfix), and the
-# apex SPF names the relay. A sender at any other host, such as `mail.<unit apex>`, has no SPF and
-# no DKIM key, so its mail leaves unsigned and fails DMARC at the receiver. The relay admits a
-# foreign sender, so this scan is the only protection against it.
+# the unit apex with DKIM (clusters/inventories/postfix; the platform domain's mail is signed by the
+# entry the relay hands it to), the apex SPF names the relay, and the Job dkim-testkey checks the
+# published key at every sync. A sender at any other host, such as `mail.<unit apex>`, has no SPF and
+# no DKIM key, so its mail would leave unsigned and fail DMARC at the receiver. The relay refuses such
+# a sender at RCPT TO, and a foreign domain too (scripts/alert-mail-sender.test.mjs); this scan stays
+# the guard of which senders the tree renders.
 #
 # WHAT IT HOLDS, for every render at a stage:
 #  (a) every sender it finds is `alertmanager-<stage>` at global.unitApex of the stand-in cluster

@@ -1,0 +1,79 @@
+{{- /*
+THE RELAY'S KEY IS TESTED AGAINST ITS PUBLISHED RECORD AT EVERY SYNC. The relay signs the unit apex with the
+Vault pair, and the Manager's mail-dns-publish writes the public half under <selector>._domainkey.<unit apex>.
+opendkim-testkey reads that record and compares it with the private key. It exits non-zero when the record is
+missing, unreadable, or holds another key, so the Job turns red and the sync of this Application retries it
+every few minutes until the record matches. The relay keeps running meanwhile. The repair of a real mismatch
+is mail-dns-publish from the Manager's Mail page, never a hand edit. activeDeadlineSeconds ends a lookup that
+hangs as a red run instead of an operation that never ends.
+
+THE POD IS NOT LABELED WITH common.labels. They render app.kubernetes.io/name: postfix and
+app.kubernetes.io/instance: <release>, the selector of the relay's Services, which would hand port 587 to this
+pod while it runs. The release label alone puts it under the relay's NetworkPolicy, which has no listener to
+open for it and leaves DNS on 53 open.
+
+The key is the relay's Secret item at mode 0400, owned by root. The pod runs as uid 0 and sets no fsGroup, so
+the file keeps its owner bit and no group bit, and a root process reads it without any capability. The
+mode is the template's octal literal 0400, which renders as 256.
+The image is the relay's own, tag from the subchart's appVersion as its StatefulSet reads it.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dkim-testkey
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dkim-testkey
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: testkey
+          image: "{{ .Values.postfix.image.repository }}:{{ .Values.postfix.image.tag | default .Subcharts.postfix.Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.postfix.image.pullPolicy }}
+          command:
+            - opendkim-testkey
+            - -d
+            - {{ required "global.unitApex is required: the relay signs it and this Job tests its record" .Values.global.unitApex | quote }}
+            - -s
+            - {{ .Values.postfix.config.general.DKIM_SELECTOR | quote }}
+            - -k
+            - /dkim-source/dkim-private-key
+            - -vvv
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: dkim-key
+              mountPath: /dkim-source
+              readOnly: true
+      volumes:
+        - name: dkim-key
+          secret:
+            secretName: postfix-dkim-key
+            defaultMode: {{ 0400 }}
+            items:
+              - key: dkim-private-key
+                path: dkim-private-key
