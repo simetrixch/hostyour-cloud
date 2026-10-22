@@ -60,7 +60,7 @@ import { spawn } from "node:child_process";
 
 const USAGE = [
   "usage: lifecycle/release-unit.sh <user@master-host> <unit> --prod-to-test",
-  "       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit>",
+  "       lifecycle/release-unit.sh <user@master-host> <unit> <dev|test|prod|none> <alpha|beta|stable> <x.y.z> <commit> [--installation <fqdn>]...",
 ].join("\n");
 /** Exit codes: a run or a Versions run that did not succeed, a usage error, a Manager that could not be
  *  reached, a watch that stopped or a wait for the following tenants that ran out. */
@@ -213,6 +213,14 @@ async function read(path, what, code, ending) {
 
 /** The x.y of a release or image tag: its version line. */
 const lineOf = (tag) => /^(\d+\.\d+)\./.exec(tag)?.[1];
+/** Why the selection a plan froze is not the one asked, or null where it is the same: a list of names of the same length and in the same order,
+ *  an empty one included. A plan that names none (a Manager before the field, or one that strips it) is not an empty selection. */
+function selectionFault(asked, frozen) {
+  if (frozen === undefined || frozen === null) return "names no installations in its plan, so this Manager may not carry the selection of the request";
+  if (!Array.isArray(frozen) || !frozen.every((fqdn) => typeof fqdn === "string")) return `names ${JSON.stringify(frozen).slice(0, 80)} as its installations, which is no list of installation names`;
+  if (frozen.length !== asked.length || frozen.some((fqdn, i) => fqdn !== asked[i])) return `plans the installations [${frozen.join(", ")}], and the request named [${asked.join(", ")}]`;
+  return null;
+}
 /** A text as a pattern that matches only itself. */
 const literal = (text) => text.replace(/[^A-Za-z0-9]/g, "\\$&");
 
@@ -340,8 +348,9 @@ async function waitForFollowing(stage, unit, since, runId, wanted, alreadyRunnin
 
 const args = process.argv.slice(2);
 const [DOOR, UNIT] = args;
-const PROD_TO_TEST = args.length === 3 && args[2] === "--prod-to-test";
-if (!(PROD_TO_TEST || args.length === 6)) stop(USAGE, EXIT.usage);
+const PROD_TO_TEST = args[2] === "--prod-to-test";
+if (PROD_TO_TEST && args.includes("--installation")) stop("--installation cannot be given with --prod-to-test: a release from prod to test places the standing release and no installation", EXIT.usage);
+if (!(PROD_TO_TEST ? args.length === 3 : args.length >= 6)) stop(USAGE, EXIT.usage);
 if (!/^[a-z_][a-z0-9_-]*@[A-Za-z0-9.-]+$/.test(DOOR)) stop(`the door must be <user>@<host> (got '${DOOR}')`, EXIT.usage);
 if (!/^[a-z0-9-]+$/.test(UNIT)) stop(`'${UNIT}' is no unit name`, EXIT.usage);
 const POLL_MS = setting("RELEASE_UNIT_POLL_SECONDS", 10) * 1000;
@@ -360,7 +369,15 @@ if (!PROD_TO_TEST) {
   if (!["alpha", "beta", "stable"].includes(channel)) stop(`the channel must be alpha, beta or stable (got '${channel}')`, EXIT.usage);
   if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([0-9]{3}|0|[1-9][0-9]*)$/.test(version)) stop(`the version must be x.y.z (got '${version}')`, EXIT.usage);
   if (!/^[0-9a-f]{40}$/.test(commit)) stop(`the commit must be its full sha, 40 lowercase hex digits (got '${commit}')`, EXIT.usage);
-  release = { stage: stage === "none" ? null : stage, channel, version, commit };
+  const installations = [];
+  for (let i = 6; i < args.length; i += 2) {
+    if (args[i] !== "--installation") stop(`'${args[i]}' is no argument of a release; the installations it is placed on are named by --installation <fqdn>, each its own pair`, EXIT.usage);
+    const fqdn = args[i + 1];
+    if (fqdn === undefined || !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(fqdn)) stop(`--installation needs the FQDN of an installation after it (got ${fqdn === undefined ? "nothing" : `'${fqdn}'`})`, EXIT.usage);
+    if (installations.some((named) => named.toLowerCase() === fqdn.toLowerCase())) stop(`the installation ${fqdn} is named twice`, EXIT.usage);
+    installations.push(fqdn);
+  }
+  release = { stage: stage === "none" ? null : stage, channel, version, commit, installations };
   wanted = { pattern: new RegExp(`^${literal(`${version}-${channel}-`)}[0-9]{14}$`), text: `${version}-${channel}-<14 digits>` };
 }
 
@@ -389,6 +406,11 @@ say(`run: ${runId}`);
 
 const plan = await watch(runId, (status) => status !== "planning");
 if (plan.status !== "planned") stop(`run ${runId} was refused at its plan (${plan.status}): open /runs/${runId} for why`, EXIT.failed);
+if (!PROD_TO_TEST) {
+  const fault = selectionFault(release.installations, plan.installations);
+  if (fault !== null) stop(`run ${runId} ${fault}; it is not approved and stands planned. Open /runs/${runId}`, EXIT.failed);
+  say(`run ${runId} places installations: ${release.installations.length === 0 ? "none" : release.installations.join(", ")}; open /runs/${runId}`);
+}
 const steps = plan.steps.map((s) => s.name);
 const mintingSteps = steps.filter((name) => STEPS_THAT_MINT_OR_BUILD.has(name));
 if (PROD_TO_TEST && mintingSteps.length > 0) stop(`run ${runId} plans ${mintingSteps.join(", ")}, and a release from prod to test mints and builds nothing; it is not approved. Discard it on /runs/${runId}`, EXIT.failed);

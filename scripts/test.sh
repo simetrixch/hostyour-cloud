@@ -37,6 +37,7 @@ suite scripts/alert-mail-sender.test.mjs 'alert mail sender — every alert mail
 suite scripts/manager-generator-refresh.test.mjs 'manager-generator-refresh — approved grant only.'
 suite scripts/manager-pat-storage.test.mjs
 suite scripts/manager-cloudflare-zone-settings.test.mjs 'manager Cloudflare zone settings — the settings token reaches the Manager from its own Vault entry and Secret, beside the DNS token, and no other inventory reads it.'
+suite scripts/manager-installation-committer.test.mjs 'manager installation committer — the committer_email answer of the hostyour-deploy pin reaches the Manager container as INSTALLATION_COMMITTER_EMAIL, and an absent one renders no variable.'
 suite scripts/installation-domain.test.mjs 'installation domain planning and its launcher.'
 suite scripts/post-stage-callbacks.test.mjs 'post stage callbacks — strict nonproduction allowlist.'
 suite scripts/unit-charts-consumer-project.test.mjs 'unit charts in the consumer project — no unit chart of a consumer'\''s Application renders a kind its AppProject refuses.'
@@ -51,8 +52,9 @@ suite scripts/unit-networkpolicy.test.mjs 'unit network policy — a unit admits
 suite scripts/e2e-runner.test.mjs 'e2e runner — the password of a demo target stays bound to its host, and a run names a path on it and a case, nothing else.'
 suite scripts/platform-argo-sync.test.mjs 'platform argo-sync — every inventory a release pins lets that release read its Application, and nothing else.'
 suite scripts/forgejo.test.mjs 'forge — Forgejo admits the groups admins and plane-users alone, through the identity provider, and keeps its data in one volume.'
-suite scripts/plane-test-accounts.test.mjs 'forge — the Plane sign-in test accounts are in the group plane-users alone, with passwords from the environment, the provider restarts onto them, and every application admits admins, only Plane and Forgejo plane-users beside them.'
-suite scripts/forward-auth-gate.test.mjs 'forge — every host behind the forward auth is answered, in the embedded outpost, by providers whose applications admit admins alone, and plane-users at plane alone.'
+suite scripts/plane-test-accounts.test.mjs 'forge — the Plane sign-in test accounts are in the group plane-users alone, with passwords from the environment, the provider restarts onto them, and every application admits admins, only Plane and Forgejo plane-users beside them, and only Argo CD and Headlamp platform-readers.'
+suite scripts/platform-test-accounts.test.mjs 'forge — the platform sign-in test account is in the group platform-readers alone, with its password from the environment, the provider restarts onto it, and no line of the Argo CD policy gives the group more than the read-only default.'
+suite scripts/forward-auth-gate.test.mjs 'forge — every host behind the forward auth is answered, in the embedded outpost, by providers whose applications admit admins alone, plane-users at plane alone and platform-readers at kube alone.'
 suite scripts/forgejo-release.test.mjs 'forge — a Forgejo delivery runs forgejo-release in forgejo-build past the guard, its tokens reach the three API Tasks alone, and GitHub and Forgejo deliveries never cross.'
 suite scripts/mongod-rseq.test.mjs 'mongod — a mongod pod carries the rseq workaround and its label while the platform switch is on, and neither while it is off, in the shared instance and in every unit mode.'
 

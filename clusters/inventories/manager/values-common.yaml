@@ -178,6 +178,14 @@ master:
   # SSH port of the master's sshd.
   sshPort: 22
 
+# The mailbox this installation's commits carry (config.ts INSTALLATION_COMMITTER_EMAIL), the committer_email answer the install
+# branch was cut with. The Manager hands it back to the deployment program when it places a platform release, so the commits of a
+# release carry the mailbox of the installation that was set up and not one the Manager invented. It stands in
+# installation/values/manager.yaml, which the branch program writes from ansiwise/templates/manager-values.tpl, and nowhere
+# else: no stage file repeats it. Empty renders no variable at all, which is what config.ts expects of a Manager given no mailbox
+# (it still publishes a release and refuses to place one).
+installationCommitterEmail: ""
+
 # The ansiwise deployment engine, as this manager reaches it on a machine
 # (config.ts ANSIWISE_DOWNLOAD_URL + ANSIWISE_SERVE_COMMAND). Both are PRODUCT
 # and not installation state, which is why they stand here and not in
