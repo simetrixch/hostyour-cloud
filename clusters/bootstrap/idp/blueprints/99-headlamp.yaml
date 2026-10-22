@@ -9,12 +9,10 @@ metadata:
   name: Headlamp OIDC client
   labels:
     blueprints.goauthentik.io/instantiate: "true"
-# Wait for 10-groups-scopemapping.yaml's `groups` scope to exist —
-# parallel-apply race fix; see 99-argocd.yaml comment for details.
+# These conditions gate nothing, for the reason 99-argocd.yaml gives.
 conditions:
   - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
   - !Find [authentik_core.group, [name, admins]]
-  - !Find [authentik_core.group, [name, platform-readers]]
 entries:
   - id: headlamp-provider
     model: authentik_providers_oauth2.oauth2provider
@@ -65,6 +63,15 @@ entries:
       order: 0
     attrs:
       enabled: true
+  # Created here, not waited for: Authentik applies the files in no order and the top-level `conditions:` of a file
+  # gates nothing, so a binding to the group of 21-platform-test-accounts.yaml fails this whole file at a first start.
+  - id: platform-readers-group
+    model: authentik_core.group
+    state: created
+    identifiers:
+      name: platform-readers
+    attrs:
+      name: platform-readers
   - id: headlamp-platform-readers-binding
     model: authentik_policies.policybinding
     identifiers:

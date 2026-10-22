@@ -14,18 +14,12 @@ metadata:
   name: ArgoCD OIDC client
   labels:
     blueprints.goauthentik.io/instantiate: "true"
-# Wait for the `groups` scope mapping from 10-groups-scopemapping.yaml to
-# exist before applying this blueprint. Authentik's blueprints_discovery
-# enqueues apply_blueprint tasks in parallel; without this gate, a fresh
-# install where 99-* runs before 10-* completes lets !Find return None for
-# the groups property_mapping, then the serializer rejects `"None"` as an
-# invalid scope-mapping pk and the whole blueprint fails. Authentik
-# retries skipped blueprints on the next discovery cycle, so eventual
-# convergence is guaranteed.
+# These conditions gate nothing: Authentik reads a file into its Blueprint dataclass, which has no `conditions`
+# field, and drops the key (only an entry's own `conditions:` is read). Neither the `groups` scope mapping of
+# 10-groups-scopemapping.yaml nor the group `admins` is waited for.
 conditions:
   - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
   - !Find [authentik_core.group, [name, admins]]
-  - !Find [authentik_core.group, [name, platform-readers]]
 entries:
   - id: argocd-provider
     model: authentik_providers_oauth2.oauth2provider
@@ -82,6 +76,15 @@ entries:
       order: 0
     attrs:
       enabled: true
+  # Created here, not waited for: Authentik applies the files in no order and the top-level `conditions:` of a file
+  # gates nothing, so a binding to the group of 21-platform-test-accounts.yaml fails this whole file at a first start.
+  - id: platform-readers-group
+    model: authentik_core.group
+    state: created
+    identifiers:
+      name: platform-readers
+    attrs:
+      name: platform-readers
   - id: argocd-platform-readers-binding
     model: authentik_policies.policybinding
     identifiers:
