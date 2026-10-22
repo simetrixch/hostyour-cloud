@@ -23,143 +23,49 @@
 stage: prod
 role: master
 booksCluster: master.digitacloud.app
-# THE PIN. The release this cluster stands on, in the one release grammar. A regeneration reads
-# this line off the map and hands it back as the ref it merges, so the field and the branch state
-# are one statement and "this cluster runs platform X" is a question with an answer.
-#
-# WRITTEN ON EVERY RUN AND NEVER CARRIED. The one run that renders this file is answered with the
-# state it brings the branch to — deploy-branch fetches and merges it, into the branch it has just
-# cut or into the one that already stands — so the run that writes this line is the run that made it
-# true. The slot is required: a map naming no release is one the Manager cannot
-# regenerate and cannot give a slave, and the run that would leave it empty is refused instead.
-release: 0.8.481-stable-20261022154102
+release: 0.8.482-stable-20261022170157
 
 global:
-  # THIS MASTER'S ADDRESS ON ITS PRIVATE NETWORK, carried: tailnet-record-address writes it once the
-  # machine has joined, which is after this file is first written, and every rewrite from the answers
-  # hands it back as it stands. The fence of a mail sender's SMTP entry admits it.
-  apiHost: 100.64.0.1
-  # This cluster's own public domain name, which is also the name of its install branch.
   domain: master.digitacloud.app
-  # The first DNS label of that domain. Everything named per cluster carries it — the Vault auth
-  # mount below, the dashboard's context, a slave's ArgoCD instance.
   clusterName: master
-  # The install branch of the cluster that keeps the books — the cluster maps and the registrations.
-  # On a cluster that reads another's, this is a DIFFERENT branch from the one this file stands on.
-  # The same value as the top-level `booksCluster`, from the same slot, for the reason stated above.
-  booksCluster: master.digitacloud.app
-  # The cluster that builds this one's images. `servicesLocal.registry` below is the predicate that
-  # follows from it — a cluster that builds elsewhere pulls from that other cluster's registry.
   buildPlane: master.digitacloud.app
-  # The public apex units serve under: a unit's own name, then this.
+  booksCluster: master.digitacloud.app
+  apiHost: 100.64.0.1
   unitApex: digitacloud.app
-  # This installation's business domain: the mail sender identity and the relay's own name.
   platformDomain: simplidigita.ai
-  # WHERE THIS INSTALLATION'S CERTIFICATES COME FROM, and the mailbox that authority writes to. The
-  # same three for every cluster of one installation — a slave added later reads them here rather
-  # than being asked again, as it does timeSources below, which is the difference between one
-  # answer and two that may disagree.
-  # The authority stands here as well as in the config, because this file is what a caller reads to
-  # learn what the installation already is. A caller that cannot read it here hands the regeneration
-  # nothing, the answer falls to its default of platform-local, and every certificate is reissued
-  # from the cluster's own root while the run reports itself green.
+  alertRecipients: ['info@simetrix.ch']
+  deployUrl: https://github.com/digitaplatform/digita-deploy.git
   clusterIssuer: platform-acme
   letsencryptEmail: kartalbas@gmail.com
   letsencryptServer: https://dv.acme-v02.api.pki.goog/directory
-  # The key id of the one ACME account's External Account Binding, which the issuer binds; a map
-  # without the line is refused by name where the issuer renders.
   acmeEabKeyId: 27c643ece5d8e9aead63775dc15caf9d
-  # The time servers the machines of this installation ask the time of, and the only ones they ask.
-  # A slave added later is told them from here rather than being asked again. A flow sequence of
-  # plain scalars, one per source, kept apart by the comma the join writes: a hostname or an
-  # address needs no quoting in YAML, and a slot inside quoting would refuse a list of two, because
-  # the joined value then carries the quote that closes it.
-  timeSources: [ntp1.hetzner.de, ntp2.hetzner.de, ntp3.hetzner.de]
-  # Where this installation's platform alerts are delivered. An alert route of the observability
-  # application that names no recipients of its own resolves them through this key, and the render
-  # of the whole application stops where an enabled route resolves to neither. Written the same
-  # way, one plain mailbox per entry; the shape of the answer holds each entry to a mailbox.
-  alertRecipients: [info@simetrix.ch]
-  # THE TWO REPOSITORIES ARGO CD SYNCS FROM, as the URLs it clones: this platform's own tree and
-  # this installation's tenant charts. Every argocd file of the platform and the pipeline that
-  # releases a unit read them as they stand, so what is written here is the one place a repository
-  # moves from one forge to another. They are written by the pair of rows of deploy-branch that
-  # follow `platform_on_forgejo_in_answers` and `platform_on_github_in_answers`: Forgejo's host and
-  # repositories where the platform tree has moved there, github.com and the answered repositories
-  # where it has not. One host stands in both lines, because the forge that serves the platform
-  # tree serves the tenant charts. A cluster cutting a SLAVE's branch has no answer to read them
-  # from, so it reads this map.
-  platformUrl: https://github.com/simetrixch/hostyour-cloud.git
-  deployUrl: https://github.com/digitaplatform/digita-deploy.git
-  # The Vault auth mount of THIS cluster. One Vault serves several clusters, so the mount is what
-  # tells two of them apart, and every policy templated on a login is written against it.
-  vaultKubernetesAuthPath: kubernetes-master
-  # The registry's two accounts, by name. The names are not secret and are not minted — a name that
-  # changed on every run would lock out whatever holds the last one. THEY MUST DIFFER: they are two
-  # accounts distinguished by nothing else, and the registry chart refuses to render where they are
-  # equal, because the password file would carry one name twice and the second password would
-  # authenticate nothing at all.
   registryPullUser: simetrixch-pull
   registryPushUser: simetrixch-push
-  # THE OBJECT STORAGE THIS INSTALLATION'S TENANTS ARE GIVEN A BUCKET IN. Neither value is a
-  # secret: the account stands in every bucket's public endpoint, and the jurisdiction is part of a
-  # bucket's identity — a bucket made under one is invisible under another. The token that MAKES a
-  # bucket is not here and never in git: it is a credential, and it stands in the secret store like
-  # every other one.
-  #
-  # ONE LINE, AND THAT IS WHAT MAKES AN UNANSWERED INSTALLATION SAFE. Both slots are optional, and a
-  # line holding one that nobody answered is dropped whole — so an installation with no object
-  # storage writes no key here, and the charts resolve the platform's own empty default through the
-  # values chain. Written as two lines, the parent would stand with nothing under it, and a key
-  # holding null overrides a default instead of leaving it alone.
-  objectStorage: {r2: {accountId: '7d6b0eaa4cff67abf485661f0022e065', jurisdiction: 'eu'}}
-  # WHERE THE MACHINES OF THIS CLUSTER CAN BE REACHED, each address on its own as a /32.
-  #
-  # A boundary drawn in address terms has to name the machine it is drawn around, and a cloud
-  # machine's own address is a PUBLIC address — so a boundary that carves out the private ranges and
-  # calls the rest of the world outside leaves the machine itself inside the allowed part. The gate
-  # sandbox's fence is the reader that has to have it, and it refuses to render on an empty list
-  # rather than reporting itself drawn while standing open.
-  #
-  # MEASURED OFF THE MACHINE AND NEVER ANSWERED. It is a fact about the machine the run is standing
-  # on, and one mistyped octet is a boundary that reports itself closed while standing open. The row
-  # that fills this reads it with measure_host_addresses; nobody is asked.
-  #
-  # A /32 and not the prefix the interface carries: a node configured 10.1.1.7/24 shares that /24
-  # with every other host on the wire, and what a boundary needs is the machine, not the segment.
-  nodeCidrs: [192.168.0.250/32, 100.64.0.1/32]
-  # WHERE THE SHARED SERVICES ANSWER, one map and one shape per service. Each is that service plus
-  # the domain of the cluster that runs it — the books-keeping cluster for everything an
-  # installation has exactly one of, the build plane for the registry.
+  timeSources: ['ntp1.hetzner.de', 'ntp2.hetzner.de', 'ntp3.hetzner.de']
   endpoints:
     registry:
       host: zot.master.digitacloud.app
-    # The host LABEL the installation's shared mail service stands on: one DNS label, not an
-    # address. The mail service exists once per stage, and its host follows the unit host law —
-    # the label, a dot, the stage apex — so every unit composes the address itself as https://
-    # followed by this label and the unit's OWN stage zone. A test unit then reaches the test mail
-    # service and a prod unit the prod one; one address written here would send every stage to
-    # one of them. Angle brackets are slots to the engine, comments included, so none stand here.
-    # Optional: an installation that runs no mail service has none, and a chart that requires the
-    # key stops its render naming it rather than sending nowhere.
-    mail: {host: post}
-    # coredns rewrites exactly this name to the in-cluster Service, so it follows the books-keeping
-    # cluster and not this one — a cluster that keeps no books would otherwise be pointed at a Vault
-    # that does not run there.
-    vault: {url: 'https://vault.master.digitacloud.app'}
-    # One installation has ONE place people sign in, for the same reason. Everything that accepts a
-    # browser login is told this address, and the auth mount in the store reads it from here.
-    idp: {url: 'https://idp.master.digitacloud.app'}
-    tailnet: {url: 'https://tale.master.digitacloud.app'}
-    # Where a cluster's agent pushes its metrics and logs, and where the finished site statistics are
-    # read. The observability plane runs on the cluster that keeps the books (servicesLocal.observability
-    # below), behind the three routes it publishes; a slave takes the two push routes from here through
-    # the Manager's mark, and its agent refuses to render without them rather than send to an address
-    # with no host. The query route is the one place a tenant's admin reads its website's figures: a
-    # later move of the statistics to another server is this one address.
-    observability: {prometheusPush: 'https://prom-push.master.digitacloud.app', lokiPush: 'https://loki-push.master.digitacloud.app', query: 'https://observability-query.master.digitacloud.app'}
-  # WHICH OF THE SHARED SERVICES RUN HERE, keyed by the service. A chart reads its own key to decide
-  # whether to reach in-cluster or over the address above.
+    mail:
+      host: post
+    vault:
+      url: https://vault.master.digitacloud.app
+    idp:
+      url: https://idp.master.digitacloud.app
+    tailnet:
+      url: https://tale.master.digitacloud.app
+    observability:
+      prometheusPush: https://prom-push.master.digitacloud.app
+      lokiPush: https://loki-push.master.digitacloud.app
+      query: https://observability-query.master.digitacloud.app
+  objectStorage:
+    r2:
+      accountId: 7d6b0eaa4cff67abf485661f0022e065
+      jurisdiction: eu
+  platformUrl: https://github.com/simetrixch/hostyour-cloud.git
+  vaultKubernetesAuthPath: kubernetes-master
+  nodeCidrs:
+    - 192.168.0.250/32
+    - 100.64.0.1/32
   servicesLocal:
     registry: true
     vault: true
