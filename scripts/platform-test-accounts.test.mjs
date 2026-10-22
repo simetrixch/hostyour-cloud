@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {readdirSync, readFileSync} from 'node:fs';
 import test from 'node:test';
+import {isDeepStrictEqual} from 'node:util';
 
 // The account of the Argo CD and Headlamp sign-in proofs (digita-testkit cases/argocd-sign-in.spec.ts and
 // cases/headlamp-sign-in.spec.ts). It is declared here and made by the identity provider with the password of
@@ -106,4 +107,45 @@ test('PLANTED INNOCENT: comments naming the group, in the blueprint and inside p
   const commented = argocdText.replace('g, admins, role:admin\n', 'g, admins, role:admin\n      # platform-readers has no line here\n');
   assert.notEqual(commented, argocdText, 'the plant matched');
   assert.deepEqual(findings(blueprintText, idpValues, commented), []);
+});
+
+// Each file that binds the group creates it again (scripts/plane-test-accounts.test.mjs holds that), and the file Authentik
+// applies first decides what the group is, so every entry that creates it is held to the one the rules above hold.
+const blueprintDirectory = 'clusters/bootstrap/idp/blueprints';
+const blueprintTexts = Object.fromEntries(readdirSync(blueprintDirectory).filter(name => name.endsWith('.yaml')).sort()
+  .map(name => [name, readFileSync(`${blueprintDirectory}/${name}`, 'utf8')]));
+
+/** Every entry of the blueprints that creates the group otherwise than 21-platform-test-accounts.yaml, named; the id is the file's own. */
+function copyFindings(texts) {
+  const isGroup = entry => entry.model === 'authentik_core.group' && (entry.identifiers?.name === GROUP || entry.attrs?.name === GROUP);
+  const groupsOf = text => (JSON.parse(execFileSync('yq', ['-o=json', '.', '-'], {input: text, encoding: 'utf8'})).entries ?? []).filter(isGroup);
+  const shape = ({id, ...entry}) => entry;
+  const [group] = groupsOf(blueprintText);
+  return Object.entries(texts).flatMap(([file, text]) => groupsOf(text).filter(copy => !isDeepStrictEqual(shape(copy), shape(group)))
+    .map(copy => `${file} creates the group ${GROUP} otherwise than 21-platform-test-accounts.yaml: ${JSON.stringify(shape(copy))}`));
+}
+
+test('every blueprint that creates the group platform-readers creates it as 21-platform-test-accounts.yaml does', () => {
+  assert.deepEqual(copyFindings(blueprintTexts), []);
+});
+
+const readersCopy = /( {2}- id: platform-readers-group\n {4}model: authentik_core.group\n) {4}state: created\n( {4}identifiers:\n {6}name: platform-readers\n {4}attrs:\n {6}name: platform-readers\n)/;
+
+test('PLANTED DEFECT: a copy of the group that makes its members superusers, gives it a parent group or re-asserts it is found', () => {
+  const planted = {
+    'a group of superusers in 99-headlamp.yaml': ['99-headlamp.yaml', text => text.replace(readersCopy, '$1    state: created\n$2      is_superuser: true\n')],
+    'a parent group in 99-proxy-headlamp.yaml': ['99-proxy-headlamp.yaml', text => text.replace(readersCopy, '$1    state: created\n$2      parent: !Find [authentik_core.group, [name, admins]]\n')],
+    'the group re-asserted by 99-argocd.yaml': ['99-argocd.yaml', text => text.replace(readersCopy, '$1$2')],
+  };
+  for (const [name, [file, plant]] of Object.entries(planted)) {
+    const text = plant(blueprintTexts[file]);
+    assert.notEqual(text, blueprintTexts[file], `${name}: the plant matched nothing`);
+    assert.notDeepEqual(copyFindings({...blueprintTexts, [file]: text}), [], name);
+  }
+});
+
+test('PLANTED INNOCENT: a copy of the group under another id, with its keys in another order, is the same group', () => {
+  const reordered = blueprintTexts['99-argocd.yaml'].replace(readersCopy, '  - id: readers\n    model: authentik_core.group\n$2    state: created\n');
+  assert.notEqual(reordered, blueprintTexts['99-argocd.yaml'], 'the plant matched');
+  assert.deepEqual(copyFindings({...blueprintTexts, '99-argocd.yaml': reordered}), []);
 });
