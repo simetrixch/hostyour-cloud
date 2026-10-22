@@ -16,7 +16,7 @@ forgejo:
         DOMAIN: forgejo.master.digitacloud.app
         SSH_DOMAIN: forgejo.master.digitacloud.app
         ROOT_URL: https://forgejo.master.digitacloud.app/
-        SSH_PORT: 2222
+        SSH_PORT: 23
     oauth:
       - name: authentik
         provider: openidConnect
