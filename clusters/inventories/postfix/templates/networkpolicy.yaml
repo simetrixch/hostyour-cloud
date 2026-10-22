@@ -6,7 +6,10 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: mail
+      # The mail subchart names its pods for its alias `postfix`, so the name `mail` once selected no pod. The
+      # release label covers the relay and the hook that tests its key, the two pods of this release that
+      # mount it; the Service selects the relay alone, by name and instance.
+      app.kubernetes.io/instance: {{ .Release.Name }}
   policyTypes: [Ingress, Egress]
   ingress:
     # Namespaces allowed to talk to the mail relay on port 587 (no auth — restricted by
