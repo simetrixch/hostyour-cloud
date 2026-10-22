@@ -50,8 +50,13 @@ plane-ce:
     memoryLimit: 600Mi
 
   # The chart refuses to render its public default keys; every secret comes from the Secrets below.
+  # api_key_rate_limit is what Plane serves one API key in a minute; the chart's 60/minute stretches a carry of
+  # 45,000 requests to 13 hours. This Plane serves our own keys only, and a sequential client stays below
+  # 1200/minute by its own request latency. The api pod takes it at its start; the checksum annotation the
+  # vendored patch adds to its pod template rolls it.
   env:
     requireExplicitSecrets: true
+    api_key_rate_limit: "1200/minute"
   external_secrets:
     app_keys_existingSecret: plane-app-keys
     app_env_existingSecret: plane-app-env

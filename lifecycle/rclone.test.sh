@@ -489,7 +489,8 @@ HARNESS
 ( cd "$REAL" && env -i PATH="$REAL/bin:/usr/bin:/bin" TMPDIR="$REAL/tmp" bash "$REAL/program.sh" ) > "$REAL/program.out" 2>&1 \
   || fail "the helper could not put the pinned rclone $PIN on a machine from the owned address of its row: $(tail -n 3 "$REAL/program.out" | tr '\n' ' ' | cut -c1-400)"
 NEW_RCLONE="$REAL/bin/rclone"
-NEW_ANSWER="$("$NEW_RCLONE" --version | head -n 1)"
+rclone_version_of() { local answer; answer="$("$1" --version)" || return; printf '%s\n' "${answer%%$'\n'*}"; } # the first line of the answer of an rclone, read whole so that no writer is left on a closed pipe
+NEW_ANSWER="$(rclone_version_of "$NEW_RCLONE")"
 [ "$NEW_ANSWER" = "rclone $PIN" ] || fail "the executable the helper installed answers \"$NEW_ANSWER\", not \"rclone $PIN\""
 [ -z "$(ls -A "$REAL/tmp")" ] || fail 'the helper left a folder behind in the temporary folder'
 ok "the helper fetched the rclone $PIN package for $ARCH from the owned address of its row, held it to the row's digest, and the executable it extracted answers \"$NEW_ANSWER\" as the operator and as root"
@@ -570,7 +571,7 @@ copy_back newsmall "$NEW_RCLONE" small 60
 if [ -n "$OLD_RCLONE" ]; then
   copy_back old "$OLD_RCLONE" big 45
   OLD_CODE="$COPY_CODE"
-  OLD_VERSION="$("$OLD_RCLONE" --version | head -n 1)"
+  OLD_VERSION="$(rclone_version_of "$OLD_RCLONE")"
   read -r OLD_BYTES OLD_MILLIS <<< "$(sample_of old)"
   OLD_FIRST_COMPLETE="$(READBACK_EXPECTED="$BIG_BYTES" READBACK_STATS="$WORK/run-old/log" readback_project < "$WORK/run-old/log" | sed -n 's/^first complete record: \(.*\), transfers .*elapsedTime \([0-9.]*\) s.*/\2/p')"
   { [ "$OLD_CODE" = 124 ] || [ "$OLD_CODE" = 137 ]; } \
@@ -582,8 +583,8 @@ if [ -n "$OLD_RCLONE" ]; then
   ok "the rclone of Ubuntu ($OLD_VERSION, package $UBUNTU_VERSION, sha256 37124f89…8bee) reported all $OLD_BYTES of $BIG_BYTES bytes by ${OLD_FIRST_COMPLETE:-an unreadable time} s of its own clock (its newest statistics are of $OLD_MILLIS ms), wrote the file whole, and was still running when it was ended after 45 s (status $OLD_CODE); the same file below the cutoff ended 0"
   copy_back dbtools "$DBTOOLS_RCLONE" big 120
   { [ "$COPY_CODE" = 0 ] && [ "$(sha_of dbtools)" = "$BIG_SHA" ]; } \
-    || fail "the rclone of Debian 12 ($("$DBTOOLS_RCLONE" --version | head -n 1), package $DEBIAN_VERSION), the one the dbtools image of hostyour-manager installs, ended $COPY_CODE on the file above the multi-thread cutoff: it stalls, so dbtools needs the pinned rclone too"
-  ok "the rclone of Debian 12 ($("$DBTOOLS_RCLONE" --version | head -n 1), package $DEBIAN_VERSION, sha256 703722dc…d81a), the one the dbtools image of hostyour-manager installs, copied the same $BIG_BYTES bytes and ended 0 with the same sha256: it does not stall, and the image is left as it is"
+    || fail "the rclone of Debian 12 ($(rclone_version_of "$DBTOOLS_RCLONE"), package $DEBIAN_VERSION), the one the dbtools image of hostyour-manager installs, ended $COPY_CODE on the file above the multi-thread cutoff: it stalls, so dbtools needs the pinned rclone too"
+  ok "the rclone of Debian 12 ($(rclone_version_of "$DBTOOLS_RCLONE"), package $DEBIAN_VERSION, sha256 703722dc…d81a), the one the dbtools image of hostyour-manager installs, copied the same $BIG_BYTES bytes and ended 0 with the same sha256: it does not stall, and the image is left as it is"
 fi
 
 # ── B4: the actual log of the pinned executable through the production projection of the driver ──

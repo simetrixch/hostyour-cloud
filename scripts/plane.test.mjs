@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {cpSync, mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
@@ -244,14 +244,20 @@ function unmovedJobs(folder) {
   return found;
 }
 
-/** The chart folder with the vendored patch reversed: plane-ce as upstream ships it. */
-function upstreamChart() {
-  const root = mkdtempSync(join(tmpdir(), 'plane-upstream-'));
+/** A copy of the plane inventory and the library charts it builds on, for a render of a planted defect. The caller removes `root`. */
+function copyOfPlane() {
+  const root = mkdtempSync(join(tmpdir(), 'plane-copy-'));
   cpSync('clusters/inventories/plane', join(root, 'clusters/inventories/plane'), {recursive: true});
   cpSync('clusters/charts', join(root, 'clusters/charts'), {recursive: true});
-  execFileSync('patch', ['-R', '-p1', '-F0', '-s', '--no-backup-if-mismatch', '-i', join(process.cwd(), 'clusters/inventories/plane/vendor/plane-ce-1.8.5.patch')],
-    {cwd: join(root, 'clusters/inventories/plane/charts')});
   return {root, folder: join(root, 'clusters/inventories/plane')};
+}
+
+/** The chart folder with the vendored patch reversed: plane-ce as upstream ships it. */
+function upstreamChart() {
+  const copy = copyOfPlane();
+  execFileSync('patch', ['-R', '-p1', '-F0', '-s', '--no-backup-if-mismatch', '-i', join(process.cwd(), 'clusters/inventories/plane/vendor/plane-ce-1.8.5.patch')],
+    {cwd: join(copy.folder, 'charts')});
+  return copy;
 }
 
 test('the migration Job and the bucket Job are named by a hash of their images, and a new image gives each a new name', () => {
@@ -278,5 +284,55 @@ test('PLANTED INNOCENT: more replicas of the web app and a larger worker request
     const changed = renderChart('plane', args);
     assert.equal(jobName(changed, MIGRATION_JOB), jobName(plain, MIGRATION_JOB), args.join(' '));
     assert.equal(jobName(changed, BUCKET_JOB), jobName(plain, BUCKET_JOB), args.join(' '));
+  }
+});
+
+// Plane refuses more requests a minute than API_KEY_RATE_LIMIT for one API key, and the api reads the ConfigMap plane-app-vars that
+// holds it when its pod starts. Argo CD keeps the pod template's timestamp at its live value, so only a field of the template that
+// follows the ConfigMap rolls plane-api-wl: the vendored patch hashes the ConfigMap into the pod template.
+const checksumOf = objects => objects.find(o => o.kind === 'Deployment' && o.metadata.name === 'plane-api-wl').spec.template.metadata.annotations['checksum/app-vars'];
+const rateLimitOf = objects => objects.find(o => o.kind === 'ConfigMap' && o.metadata.name === 'plane-app-vars').data.API_KEY_RATE_LIMIT;
+
+test('the API key limit is 1200 a minute on every stage, and the api pod template carries the checksum of the ConfigMap that holds it', () => {
+  assert.equal(rateLimitOf(plain), '1200/minute');
+  for (const stage of ['dev', 'test', 'prod']) assert.equal(yq(['.plane-ce.env.api_key_rate_limit', `clusters/inventories/plane/values-${stage}.yaml`]), null, `values-${stage}.yaml sets no limit of its own`);
+  assert.match(checksumOf(plain) ?? '', /^[0-9a-f]{64}$/);
+});
+
+test('PLANTED DEFECT: another limit gives the api pod template another checksum, and the chart as upstream ships it has none', () => {
+  const other = renderChart('plane', ['--set', 'plane-ce.env.api_key_rate_limit=60/minute']);
+  assert.equal(rateLimitOf(other), '60/minute');
+  assert.notEqual(checksumOf(other), checksumOf(plain));
+  const {root, folder} = upstreamChart();
+  try {
+    assert.equal(checksumOf(renderChart('plane', [], folder)), undefined);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('PLANTED INNOCENT: a render a second later and more replicas of the web app keep the checksum', () => {
+  assert.equal(checksumOf(second), checksumOf(first));
+  assert.equal(checksumOf(renderChart('plane', ['--set', 'plane-ce.web.replicas=2'])), checksumOf(plain));
+});
+
+// The file holds the Secret of the app's connection strings above the ConfigMap, where the chart writes it. No secret value goes into a
+// pod template: a hash of the whole file would move with a database password, and is a fingerprint of it.
+test('the checksum covers the ConfigMap and never the Secret of the same file', () => {
+  const secretArgs = ['--set', 'plane-ce.external_secrets.app_env_existingSecret='];
+  const moved = [...secretArgs, '--set', 'plane-ce.env.pgdb_password=planted'];
+  assert.ok(renderChart('plane', secretArgs).some(o => o.kind === 'Secret' && o.metadata.name === 'plane-app-secrets'), 'the render writes the Secret');
+  assert.equal(checksumOf(renderChart('plane', moved)), checksumOf(renderChart('plane', secretArgs)), 'PLANTED INNOCENT: a database password, which only the Secret holds, keeps the checksum');
+
+  const {root, folder} = copyOfPlane();
+  try {
+    const template = join(folder, 'charts/plane-ce/templates/workloads/api.deployment.yaml');
+    const wholeFile = readFileSync(template, 'utf8').replace('regexFind "(?s)kind: ConfigMap.*" (include (print $.Template.BasePath "/config-secrets/app-env.yaml") .)',
+      'include (print $.Template.BasePath "/config-secrets/app-env.yaml") .');
+    assert.notEqual(wholeFile, readFileSync(template, 'utf8'), 'the planted template differs');
+    writeFileSync(template, wholeFile);
+    assert.notEqual(checksumOf(renderChart('plane', moved, folder)), checksumOf(renderChart('plane', secretArgs, folder)), 'PLANTED DEFECT: a hash of the whole file moves with a password');
+  } finally {
+    rmSync(root, {recursive: true, force: true});
   }
 });

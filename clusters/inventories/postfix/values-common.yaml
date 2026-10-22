@@ -30,7 +30,8 @@ postfix:
       # entry, the Manager writes it into installation/values/postfix-<stage>.yaml as
       # `[<apiHost of the unit's cluster>]:<port>`, and the relay hands every mail to
       # that entry over the tailnet; without one it delivers directly. Either way the
-      # relay signs with its DKIM key before the mail leaves it. No SASL: the tailnet
+      # relay signs the unit apex with its DKIM key before the mail leaves it; the platform
+      # domain's mail is signed by the entry it is handed to. No SASL: the tailnet
       # address and the one source the unit's fence admits are the boundary. The same
       # file states the target a second time as `relayTarget` below, for the relay's own
       # NetworkPolicy, which opens exactly that destination.
@@ -49,6 +50,15 @@ postfix:
       # no-reply@mail.<domain> are delivered locally into Maildir
       # instead of trying DNS/MX lookup on a closed port 25.
       mydestination: "$myhostname"
+
+      # THE ALLOWLIST ADMITS A DOMAIN AND NOT ITS SUBDOMAINS. The image checks the sender at RCPT TO
+      # against one `<domain> OK` row per word of ALLOWED_SENDER_DOMAINS, and access(5) says such a row
+      # also matches subdomains "only when the string smtpd_access_maps is listed in
+      # parent_domain_matches_subdomains", which Postfix's own default lists. With the default,
+      # `mail.<unit apex>` is admitted under the unit apex and leaves unsigned, with no key of its own.
+      # This is the default as `postconf -d parent_domain_matches_subdomains` prints it in the image,
+      # without smtpd_access_maps; an image bump re-reads it.
+      parent_domain_matches_subdomains: "debug_peer_list,fast_flush_domains,mynetworks,permit_mx_backup_networks,qmqpd_authorized_clients,relay_domains"
 
       # Store local delivery in Maildir format on the persistent volume
       home_mailbox: "Maildir/"
@@ -134,14 +144,18 @@ postfix:
   # pod.initContainers (which silently renders nothing). chown to opendkim
   # (101:104) so opendkim can read the key.
   #
-  # ONE FILE PER SENDER DOMAIN, NAMED FOR THE DOMAIN. The image builds its signing tables per domain
-  # of ALLOWED_SENDER_DOMAINS and expects each domain's key at /etc/opendkim/keys/<domain>.private
-  # (bokysan docker-postfix, scripts/functions.sh); a domain without its file is sent unsigned.
-  # The two sender domains of an installation are the two globals the relay's allowlist is
-  # rendered from — customer mail as the platform domain, alerts as the unit apex — and one key
-  # pair serves both (an installation whose two are one name copies the same file twice). Named for
-  # the cluster's own domain, as this once was, the file matched no sender domain and the relay
-  # signed nothing while holding a key.
+  # ONE KEY FILE, NAMED FOR THE UNIT APEX. The image builds its signing tables per domain of
+  # ALLOWED_SENDER_DOMAINS and expects each domain's key at /etc/opendkim/keys/<domain>.private
+  # (bokysan docker-postfix, scripts/functions.sh); a domain without its file is sent unsigned. The
+  # relay signs the alerts it sends as the unit apex with this pair, whose public half the Manager's
+  # mail-dns-publish writes under <selector>._domainkey.<unit apex> and templates/dkim-testkey.yaml
+  # tests at every sync. The platform domain gets no file: the mail service the relay hands that mail to
+  # signs it with the sender unit's key, which mail-dkim-publish publishes, and skips a message that is
+  # signed already. A relay file would sign it under the same selector with a key its record does not
+  # carry, and the right signature would never be made. Named for the cluster's own domain, as this
+  # once was, the file matched no sender domain and the relay signed nothing while holding a key.
+  # The image logs `ERROR Skipping DKIM for domain <platform domain>` at every start, because that
+  # domain has no file here. The line is expected and names no fault.
   extraInitContainers: |
     - name: fix-dkim-permissions
       image: busybox:latest
@@ -153,11 +167,10 @@ postfix:
           # not prepare; an empty key file is the one failure the volume mount does not catch.
           set -eu
           [ -s /dkim-source/dkim-private-key ] || { echo "fix-dkim-permissions: dkim-private-key is missing or empty" >&2; exit 1; }
-          for domain in "{{ .Values.global.platformDomain }}" "{{ .Values.global.unitApex }}"; do
+          domain="{{ .Values.global.unitApex }}"
           cp /dkim-source/dkim-private-key "/dkim-keys/$domain.private"
           chown 101:104 "/dkim-keys/$domain.private"
           chmod 600 "/dkim-keys/$domain.private"
-          done
           chown 101:104 /dkim-keys
           chmod 700 /dkim-keys
       volumeMounts:
